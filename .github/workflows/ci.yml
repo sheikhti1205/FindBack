@@ -17,6 +17,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Build shared package (types for api/mobile)
+        run: npm run build -w @findback/shared
       - name: Typecheck all workspaces
         run: npm run typecheck
       - name: Lint
