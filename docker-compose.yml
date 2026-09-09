@@ -1,0 +1,28 @@
+services:
+  api:
+    build: .
+    image: findback:local
+    container_name: findback-api
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      PUBLIC_URL: http://localhost:4000
+      # Optional: point /ai/help at any OpenAI-compatible endpoint.
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+    volumes:
+      - findback-data:/app/data
+      - findback-uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  findback-data:
+  findback-uploads:

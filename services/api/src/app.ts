@@ -183,6 +183,11 @@ export function createApp(): Express {
     }),
   );
 
+  // Optionally serve a built web/SPA shell at "/" (single-container demo image).
+  if (config.staticWebDir && fs.existsSync(config.staticWebDir)) {
+    app.use(express.static(config.staticWebDir, { index: "index.html", maxAge: "1h" }));
+  }
+
   // ---- AI help ----
   app.post("/ai/help", requireAuth, async (req, res) => {
     const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
