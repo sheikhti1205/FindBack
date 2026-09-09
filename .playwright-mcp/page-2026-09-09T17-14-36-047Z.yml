@@ -1,0 +1,60 @@
+- main [ref=e21]:
+  - generic [ref=e291]:
+    - generic [ref=e292]:
+      - link "Back to feed" [ref=e293] [cursor=pointer]:
+        - /url: "#/"
+      - generic [ref=e296]: Found item
+      - generic [ref=e297]: Posted Sep 9, 10:38 PM
+    - article [ref=e298]:
+      - generic [ref=e299]:
+        - heading "Black umbrella found near Central Library" [level=1] [ref=e300]
+        - paragraph [ref=e301]: "@tanvir_ce · Clothing"
+      - paragraph [ref=e302]: A black foldable umbrella was left on a bench near the Central Library entrance.
+      - generic [ref=e303]:
+        - generic [ref=e304]:
+          - term [ref=e305]: Status
+          - definition [ref=e306]: Open
+        - generic [ref=e307]:
+          - term [ref=e308]: Found on
+          - definition [ref=e309]: Sep 9, 2026
+        - generic [ref=e310]:
+          - term [ref=e311]: Location
+          - definition [ref=e312]: Central Library
+      - generic [ref=e313]:
+        - iframe [ref=e315]
+        - generic [ref=e316]: Central Library
+      - generic [ref=e321]:
+        - button "0" [ref=e322]
+        - button "0" [ref=e325]
+      - region "Rating" [ref=e328]:
+        - radiogroup "Rate this post (1 to 5 stars)" [ref=e330]:
+          - radio "1 star" [ref=e331]
+          - radio "2 stars" [ref=e334]
+          - radio "3 stars" [ref=e337]
+          - radio "4 stars" [ref=e340]
+          - radio "5 stars" [ref=e343]
+        - paragraph [ref=e346]: No ratings yet — be the first to rate.
+    - region "Comments" [ref=e347]:
+      - heading "Comments (3)" [level=2] [ref=e348]:
+        - text: Comments
+        - generic [ref=e349]: (3)
+      - generic [ref=e350]:
+        - textbox "Comment" [ref=e351]:
+          - /placeholder: Write a helpful comment…
+        - button "Post" [disabled] [ref=e352]
+      - list [ref=e353]:
+        - listitem [ref=e354]:
+          - generic [ref=e355]:
+            - generic [ref=e356]: "@shimu"
+            - generic [ref=e357]: Sep 7, 10:38 PM
+          - paragraph [ref=e358]: Thanks for posting this, I've asked around my friends.
+        - listitem [ref=e359]:
+          - generic [ref=e360]:
+            - generic [ref=e361]: "@arif_cse"
+            - generic [ref=e362]: Sep 7, 10:38 PM
+          - paragraph [ref=e363]: Have you tried asking the faculty office?
+        - listitem [ref=e364]:
+          - generic [ref=e365]:
+            - generic [ref=e366]: "@mitu"
+            - generic [ref=e367]: Sep 7, 10:38 PM
+          - paragraph [ref=e368]: I saw something similar yesterday near the same spot.
