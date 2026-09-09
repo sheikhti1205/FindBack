@@ -1,0 +1,101 @@
+- main [ref=f3e7]:
+  - generic [ref=f3e8]:
+    - generic [ref=f3e9]:
+      - link "Back to feed" [ref=f3e10] [cursor=pointer]:
+        - /url: "#/"
+      - generic [ref=f3e13]: Found item
+      - generic [ref=f3e14]: Posted Sep 9, 10:38 PM
+    - article [ref=f3e15]:
+      - generic [ref=f3e16]:
+        - heading "Black umbrella found near Central Library" [level=1] [ref=f3e17]
+        - paragraph [ref=f3e18]: "@tanvir_ce · Clothing"
+      - paragraph [ref=f3e19]: A black foldable umbrella was left on a bench near the Central Library entrance.
+      - generic [ref=f3e20]:
+        - generic [ref=f3e21]:
+          - term [ref=f3e22]: Status
+          - definition [ref=f3e23]: Open
+        - generic [ref=f3e24]:
+          - term [ref=f3e25]: Found on
+          - definition [ref=f3e26]: Sep 9, 2026
+        - generic [ref=f3e27]:
+          - term [ref=f3e28]: Location
+          - definition [ref=f3e29]: Central Library
+      - generic [ref=f3e30]:
+        - iframe [ref=f3e32]:
+          - generic [ref=f4e3]:
+            - generic:
+              - button "Keyboard shortcuts"
+            - region "Map" [ref=f4e4]
+            - generic [ref=f4e5]:
+              - generic [ref=f4e6] [cursor=pointer]
+              - iframe [aria-hidden] [ref=f4e27]
+              - img "Google" [ref=f4e29]
+              - generic [ref=f4e30]:
+                - button "Keyboard shortcuts" [ref=f4e36] [cursor=pointer]
+                - generic [ref=f4e37]: Map data ©2026
+                - link "Terms (opens in new tab)" [ref=f4e46] [cursor=pointer]:
+                  - /url: https://www.google.com/intl/en-US_US/help/terms_maps.html
+                  - text: Terms
+                - link "Report a map error (opens in new tab)" [ref=f4e51] [cursor=pointer]:
+                  - /url: https://www.google.com/maps/@22.4671,91.7868,16z/data=!10m1!1e1!12b1?source=apiv3&rapsrc=apiv3
+                  - text: Report a map error
+        - generic [ref=f3e33]: Central Library
+      - generic [ref=f3e38]:
+        - button "0" [ref=f3e39]
+        - button "0" [ref=f3e42]
+      - region "Rating" [ref=f3e45]:
+        - radiogroup "Rate this post (1 to 5 stars)" [ref=f3e47]:
+          - radio "1 star" [ref=f3e48]
+          - radio "2 stars" [ref=f3e51]
+          - radio "3 stars" [ref=f3e54]
+          - radio "4 stars" [ref=f3e57]
+          - radio "5 stars" [ref=f3e60]
+        - paragraph [ref=f3e63]: No ratings yet — be the first to rate.
+    - region "Comments" [ref=f3e64]:
+      - heading "Comments (7)" [level=2] [ref=f3e114]:
+        - text: Comments
+        - generic [ref=f3e66]: (7)
+      - generic [ref=f3e67]:
+        - textbox "Comment" [ref=f3e68]:
+          - /placeholder: Write a helpful comment…
+        - button "Post" [disabled] [ref=f3e69]
+      - list [ref=f3e70]:
+        - listitem [ref=f3e71]:
+          - generic [ref=f3e72]:
+            - generic [ref=f3e73]: "@shimu"
+            - generic [ref=f3e74]: Sep 7, 10:38 PM
+          - paragraph [ref=f3e75]: Thanks for posting this, I've asked around my friends.
+        - listitem [ref=f3e76]:
+          - generic [ref=f3e77]:
+            - generic [ref=f3e78]: "@arif_cse"
+            - generic [ref=f3e79]: Sep 7, 10:38 PM
+          - paragraph [ref=f3e80]: Have you tried asking the faculty office?
+        - listitem [ref=f3e81]:
+          - generic [ref=f3e82]:
+            - generic [ref=f3e83]: "@mitu"
+            - generic [ref=f3e84]: Sep 7, 10:38 PM
+          - paragraph [ref=f3e85]: I saw something similar yesterday near the same spot.
+        - listitem [ref=f3e86]:
+          - generic [ref=f3e87]:
+            - generic [ref=f3e88]: "@rafi_cu"
+            - generic [ref=f3e89]: Sep 9, 11:14 PM
+          - paragraph [ref=f3e90]: E2E test comment from rafi_cu
+          - button "Delete" [ref=f3e91]
+        - listitem [ref=f3e95]:
+          - generic [ref=f3e96]:
+            - generic [ref=f3e97]: "@rafi_cu"
+            - generic [ref=f3e98]: Sep 9, 11:15 PM
+          - paragraph [ref=f3e99]: Second e2e single comment check
+          - button "Delete" [ref=f3e100]
+        - listitem [ref=f3e104]:
+          - generic [ref=f3e105]:
+            - generic [ref=f3e106]: "@rafi_cu"
+            - generic [ref=f3e107]: Sep 9, 11:16 PM
+          - paragraph [ref=f3e108]: Dup probe three
+          - button "Delete" [ref=f3e109]
+        - listitem [ref=f3e115]:
+          - generic [ref=f3e116]:
+            - generic [ref=f3e117]: "@rafi_cu"
+            - generic [ref=f3e118]: Sep 9, 11:19 PM
+          - paragraph [ref=f3e119]: Final dup test
+          - button "Delete" [ref=f3e120]

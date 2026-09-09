@@ -40,9 +40,9 @@ export function PostDetail() {
   const load = useCallback(async () => {
     try {
       const [p, cs] = await Promise.all([fetchPost(id), fetchComments(id)]);
+      setError(null);
       setPost(p);
       setComments(cs);
-      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load post");
     } finally {
@@ -61,12 +61,10 @@ export function PostDetail() {
       onRealtime("comment:added", (payload) => {
         const p = payload as { comment: CommentItem };
         setComments((prev) => (prev.some((c) => c.id === p.comment.id) ? prev : [...prev, p.comment]));
-        setPost((prev) => (prev ? { ...prev, commentCount: prev.commentCount + 1 } : prev));
       }),
       onRealtime("comment:deleted", (payload) => {
         const p = payload as { commentId: string };
         setComments((prev) => prev.filter((c) => c.id !== p.commentId));
-        setPost((prev) => (prev ? { ...prev, commentCount: Math.max(0, prev.commentCount - 1) } : prev));
       }),
       onRealtime("reaction:changed", (payload) => {
         const p = payload as { postId: string; likeCount: number; dislikeCount: number };
@@ -132,9 +130,8 @@ export function PostDetail() {
     setBusy(true);
     try {
       const comment = await addComment(current.id, body);
-      setComments((prev) => [...prev, comment]);
+      setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
       setCommentText("");
-      setPost((prev) => (prev ? { ...prev, commentCount: prev.commentCount + 1 } : prev));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not comment");
     } finally {
@@ -146,7 +143,6 @@ export function PostDetail() {
     try {
       await deleteComment(current.id, commentId);
       setComments((prev) => prev.filter((c) => c.id !== commentId));
-      setPost((prev) => (prev ? { ...prev, commentCount: Math.max(0, prev.commentCount - 1) } : prev));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete comment");
     }
@@ -285,7 +281,7 @@ export function PostDetail() {
       {/* Comments */}
       <section className="flex flex-col gap-3 px-4" aria-label="Comments">
         <h2 className="text-base font-semibold">
-          Comments <span className="text-on-surface-variant">({post.commentCount})</span>
+          Comments <span className="text-on-surface-variant">({comments.length})</span>
         </h2>
 
         <form onSubmit={onComment} className="flex items-start gap-2">
