@@ -17,22 +17,28 @@ satisfy 24 mandatory teacher requirements for the Mobile App Development Lab
   reference-repo licenses verified; repo initialized. DONE in pass 1.
 - **P1 Scaffold** — monorepo: `apps/mobile`, `services/api`, `packages/shared`;
   theme tokens (Material 3 Expressive, monochrome); routing; API service; shared types.
+  DONE (commit 78856d4).
 - **P2 Core domain** — schema + seed; auth interfaces/local auth; register/login;
   live username check; email/phone verification UI+state; feed; create post; details.
+  DONE (commit 78856d4).
 - **P3 Mandatory interactions** — realtime comments; like/dislike; ratings;
-  pagination; search/filter; datepicker.
+  pagination; search/filter; datepicker. DONE (commits 7820f3d, e7b5108).
 - **P4 Integrations** — map; file/image upload; YouTube embed; on-device ML
   (TensorFlow.js category suggestion); AI Help Assistant (generic provider +
-  deterministic fallback).
-- **P5 APIs** — REST + GraphQL + JWT/session + authorization.
-- **P6 Reporting/devops** — ERD (source + SVG + PDF); Crystal data-source/query/setup
-  docs; Docker; GitHub Actions; requirements matrix; demo checklist.
-- **P7 QA/APK** — tests, accessibility/loading/empty states, web build, `cap sync
-  android`, Gradle `assembleDebug`, verify APK.
-- **P8 Archive** — delivery ZIP + handoff docs.
+  deterministic fallback). DONE (commits 7820f3d, e7b5108).
+- **P5 APIs** — REST + GraphQL + JWT/session + authorization. DONE
+  (commit 78856d4 + GraphiQL; see services/api tests).
+- **P6 Reporting/devops** — ERD (Mermaid source + vector PDF); Crystal
+  data-source/query/setup docs; Docker; GitHub Actions; requirements matrix;
+  demo checklist. DONE (649f8ee + 9af2e3d).
+- **P7 QA/APK** — tests (API 38, mobile 5), accessibility/loading/empty states,
+  web build, `cap sync android`, Gradle `assembleDebug`, APK verified.
+  DONE (commit 44fcc98; app-debug.apk built).
+- **P8 Archive** — delivery ZIP + handoff docs. DONE.
 
 ## Traceability
 24 teacher requirements map 1:1 into `docs/REQUIREMENTS_MATRIX.md`. Statuses:
 DONE / DONE_DEMO_PROVIDER / DEFERRED_EXTERNAL_PROVIDER /
 DEFERRED_EXTERNAL_TOOL / TODO. Goal: zero TODO at end; only externally-tool items
 (Crystal `.rpt`, real SMS/email, cloud, LLM key) stay deferred with exact wiring docs.
+All 24 rows are non-TODO as of the Phase 8 checkpoint.

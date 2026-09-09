@@ -49,12 +49,24 @@ npm run typecheck
 npm run lint
 npm run build
 
-# Android APK (after Phase 7 wiring)
-npm run apk   # → apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+# Android APK (from repo root)
+# Default bundle targets the local API. Point the bundle at your backend, e.g.
+# the Android-emulator host loopback, then build:
+VITE_API_URL=http://10.0.2.2:4000 npm run apk
+# → apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Demo login (seeded): any of `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`, … with
-password `password123`.
+Demo login (seeded): any of `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`,
+`arif_cse`, `mitu`, `sayeed_bsc`, `priya` with password `password123`.
+
+## Useful commands
+
+```bash
+# GraphQL playground         http://localhost:4000/graphql
+# Activity report (JSON/CSV) node scripts/report-activity.mjs [--csv out.csv]
+# Regenerate vector ERD PDF  python3 tools/render_erd.py
+# Docker single container   docker compose up --build   (needs Docker Engine)
+```
 
 ## Demo/dev credentials & provider mode
 
@@ -63,6 +75,15 @@ The API runs fully in a local demo mode: verification codes are returned by the
 server (`devCode`) instead of SMS/email; uploads are stored on disk; the AI Help
 Assistant answers from a deterministic fallback until `LLM_*` env vars are set.
 No secrets are committed; copy `.env.example` → `.env` and never commit `.env`.
+
+## Docs
+
+- `docs/REQUIREMENTS_MATRIX.md` — 24 teacher requirements → implementation
+- `docs/DEMO_CHECKLIST.md` — teacher walkthrough
+- `docs/erd/ERD.md` + `docs/erd/ERD.pdf` — schema & entity relationship diagram
+- `docs/reporting/REPORTING.md` — reporting API, report queries, Crystal import
+- `docs/DEFERRED_DECISIONS.md` — provider decisions & their swap points
+- `docs/OPEN_SOURCE_RESEARCH.md` — licensing research for reference repos
 
 ## License / provenance
 
