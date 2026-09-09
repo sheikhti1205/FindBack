@@ -1,0 +1,115 @@
+import crypto from "node:crypto";
+import { get, run } from "../db/db.js";
+import { config } from "../config.js";
+import { AppError, newId, nowIso } from "./helpers.js";
+import type { Row } from "../db/db.js";
+
+export type Channel = "EMAIL" | "PHONE";
+
+export interface VerificationProvider {
+  send(channel: Channel, destination: string, code: string): Promise<void>;
+}
+
+/**
+ * Development verification adapter.
+ *
+ * Honest scope: in dev mode the code is printed to the server log AND returned
+ * in the API response so the demo/OTP UI can be exercised end-to-end without a
+ * real SMS/email provider. It does NOT prove ownership of the email/phone.
+ * Swap this implementation for Supabase/Firebase/email+Twilio after the
+ * provider decision; the rest of the flow (challenges table, expiry, resend
+ * cooldown, user flags) is unchanged.
+ */
+export const devVerificationProvider: VerificationProvider = {
+  async send(channel, destination, code) {
+    console.log(`[dev-verification] ${channel} -> ${destination} code=${code}`);
+  },
+};
+
+const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const RESEND_COOLDOWN_MS = 30 * 1000; // 30 seconds
+
+function codeHash(code: string): string {
+  return crypto.createHash("sha256").update(code).digest("hex");
+}
+
+export function channelDestination(user: Row, channel: Channel): string {
+  return channel === "EMAIL" ? String(user.email) : String(user.phone);
+}
+
+export async function sendChallenge(
+  userId: string,
+  channel: Channel,
+  provider: VerificationProvider,
+): Promise<{ devCode?: string; expiresInSeconds: number; resendAfterSeconds: number }> {
+  const user = get<Row>("SELECT * FROM users WHERE id = ?", [userId]);
+  if (!user) throw new AppError(404, "User not found");
+
+  const pending = get<Row>(
+    `SELECT created_at FROM verification_challenges
+     WHERE user_id = ? AND channel = ? AND verified_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId, channel],
+  );
+  if (pending) {
+    const elapsed = Date.now() - Date.parse(String(pending.created_at));
+    if (elapsed < RESEND_COOLDOWN_MS) {
+      const remaining = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 1000);
+      throw new AppError(429, `Please wait ${remaining}s before resending`);
+    }
+  }
+
+  const code = crypto.randomInt(100000, 1000000).toString();
+  const id = newId();
+  const now = nowIso();
+  const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
+  run(
+    `INSERT INTO verification_challenges (id, user_id, channel, code_hash, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, userId, channel, codeHash(code), expiresAt, now],
+  );
+  await provider.send(channel, channelDestination(user, channel), code);
+
+  return {
+    // In dev only: hand the code back so the flow can be demonstrated without
+    // a real provider. Never echo real codes in production.
+    devCode: config.devMode ? code : undefined,
+    expiresInSeconds: CODE_TTL_MS / 1000,
+    resendAfterSeconds: RESEND_COOLDOWN_MS / 1000,
+  };
+}
+
+export function verifyChallenge(
+  userId: string,
+  channel: Channel,
+  code: string,
+): { emailVerified: boolean; phoneVerified: boolean } {
+  const challenge = get<Row>(
+    `SELECT * FROM verification_challenges
+     WHERE user_id = ? AND channel = ? AND verified_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId, channel],
+  );
+  if (!challenge) throw new AppError(400, `No pending ${channel} verification`);
+  if (Date.now() > Date.parse(String(challenge.expires_at))) {
+    throw new AppError(400, "Verification code expired. Request a new one");
+  }
+  if (codeHash(code) !== String(challenge.code_hash)) {
+    throw new AppError(400, "Incorrect verification code");
+  }
+
+  run("UPDATE verification_challenges SET verified_at = ? WHERE id = ?", [
+    nowIso(),
+    String(challenge.id),
+  ]);
+  const field = channel === "EMAIL" ? "email_verified" : "phone_verified";
+  run(`UPDATE users SET ${field} = 1, updated_at = ? WHERE id = ?`, [
+    nowIso(),
+    userId,
+  ]);
+  const user = get<Row>("SELECT * FROM users WHERE id = ?", [userId])!;
+  return {
+    emailVerified: Boolean(user.email_verified),
+    phoneVerified: Boolean(user.phone_verified),
+  };
+}

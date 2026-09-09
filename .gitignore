@@ -1,0 +1,37 @@
+# Dependencies / build
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Env / secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Android / Capacitor
+apps/mobile/android/app/build/
+apps/mobile/android/build/
+apps/mobile/android/.gradle/
+apps/mobile/android/local.properties
+apps/mobile/android/app/release/
+*.keystore
+*.jks
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/
+
+# Runtime artifacts
+*.log
+coverage/
+
+# Uploaded/dev runtime files (served locally by the dev API)
+services/api/data/
+services/api/uploads/
+
+# local test databases
+services/api/data-test/

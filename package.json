@@ -1,0 +1,31 @@
+{
+  "name": "findback",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FindBack \u2014 minimal lost & found reporting/recovery Android app (course project).",
+  "workspaces": [
+    "apps/mobile",
+    "services/api",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w services/api",
+    "dev:mobile": "npm run dev -w apps/mobile",
+    "build": "npm run build -w packages/shared && npm run build -w services/api && npm run build -w apps/mobile",
+    "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w services/api && npm run typecheck -w apps/mobile",
+    "lint": "eslint .",
+    "test": "npm run test -w services/api && npm run test -w apps/mobile",
+    "cap:add:android": "npm run cap:add:android -w apps/mobile",
+    "apk": "npm run build -w packages/shared && npm run build -w apps/mobile && npm run apk -w apps/mobile"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.1",
+    "eslint": "^9.30.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.44.1"
+  },
+  "type": "module"
+}

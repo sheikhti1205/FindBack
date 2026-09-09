@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* Material 3 Expressive-inspired monochrome tokens (Tailwind v4). */
+@theme inline {
+  --color-surface: var(--fb-surface);
+  --color-surface-container-low: var(--fb-surface-container-low);
+  --color-surface-container: var(--fb-surface-container);
+  --color-surface-container-high: var(--fb-surface-container-high);
+  --color-on-surface: var(--fb-on-surface);
+  --color-on-surface-variant: var(--fb-on-surface-variant);
+  --color-outline: var(--fb-outline);
+  --color-outline-variant: var(--fb-outline-variant);
+  --color-error: var(--fb-error);
+  --color-on-error: var(--fb-on-error);
+
+  --radius-m3-xs: 4px;
+  --radius-m3-sm: 8px;
+  --radius-m3-md: 12px;
+  --radius-m3-lg: 16px;
+  --radius-m3-xl: 28px;
+
+  --ease-fb: cubic-bezier(0.2, 0, 0, 1);
+}
+
+:root {
+  --fb-surface: #ffffff;
+  --fb-surface-container-low: #f7f7f5;
+  --fb-surface-container: #efefec;
+  --fb-surface-container-high: #e5e5e1;
+  --fb-on-surface: #1a1a1a;
+  --fb-on-surface-variant: #494945;
+  --fb-outline: #74746e;
+  --fb-outline-variant: #c9c9c2;
+  --fb-error: #ba1a1a;
+  --fb-on-error: #ffffff;
+  color-scheme: light;
+}
+
+.dark {
+  --fb-surface: #121212;
+  --fb-surface-container-low: #1d1d1d;
+  --fb-surface-container: #242424;
+  --fb-surface-container-high: #2f2f2f;
+  --fb-on-surface: #e6e6e0;
+  --fb-on-surface-variant: #c9c9c1;
+  --fb-outline: #8f8f88;
+  --fb-outline-variant: #494944;
+  --fb-error: #ffb4ab;
+  --fb-on-error: #690005;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --fb-surface: #121212;
+    --fb-surface-container-low: #1d1d1d;
+    --fb-surface-container: #242424;
+    --fb-surface-container-high: #2f2f2f;
+    --fb-on-surface: #e6e6e0;
+    --fb-on-surface-variant: #c9c9c1;
+    --fb-outline: #8f8f88;
+    --fb-outline-variant: #494944;
+    --fb-error: #ffb4ab;
+    --fb-on-error: #690005;
+    color-scheme: dark;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--fb-surface);
+  color: var(--fb-on-surface);
+  font-family:
+    "Roboto",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Visible but restrained keyboard/pointer focus ring. */
+:focus-visible {
+  outline: 2px solid var(--fb-on-surface);
+  outline-offset: 2px;
+}
+
+/* Respect reduced-motion preferences. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
