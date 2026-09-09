@@ -33,6 +33,7 @@ import {
   type Channel,
 } from "./domain/verificationService.js";
 import { recordUpload } from "./domain/storageService.js";
+import { activityReport, reportToCsv } from "./domain/reportingService.js";
 import { aiAssistantProvider } from "./providers/aiProvider.js";
 import { graphqlSchema } from "./graphql/schema.js";
 import { config } from "./config.js";
@@ -188,6 +189,20 @@ export function createApp(): Express {
     if (!question) return res.status(400).json({ error: "question is required" });
     if (question.length > 2000) return res.status(400).json({ error: "question too long" });
     res.json(await aiAssistantProvider.ask(question));
+  });
+
+  // ---- reporting ----
+  // GET /reports/activity?days=14&format=csv  (JSON or CSV)
+  app.get("/reports/activity", requireAuth, (req, res) => {
+    const format = String(req.query.format ?? "json");
+    const report = activityReport(req.query.days);
+    if (format === "csv") {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="findback-activity.csv"');
+      res.send(reportToCsv(report));
+      return;
+    }
+    res.json(report);
   });
 
   // ---- GraphQL ----
