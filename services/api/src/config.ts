@@ -26,6 +26,8 @@ export const config = {
   uploadsDir: process.env.UPLOADS_DIR ?? path.resolve(packageRoot, "uploads"),
   /** Public base URL the mobile/web app uses to reach this API. */
   publicUrl: process.env.PUBLIC_URL ?? `http://localhost:${Number(process.env.PORT ?? 4000)}`,
+  /** Optional directory of built web assets to serve at "/" (single-container demo). */
+  staticWebDir: process.env.STATIC_WEB_DIR ?? "",
   llm: {
     baseUrl: process.env.LLM_BASE_URL ?? "",
     apiKey: process.env.LLM_API_KEY ?? "",

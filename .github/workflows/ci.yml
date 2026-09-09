@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Lint, typecheck & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: API tests
+        run: npm test -w @findback/api
+      - name: Build mobile web shell
+        run: npm run build -w @findback/mobile
+        env:
+          CI: true
