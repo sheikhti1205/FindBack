@@ -24,11 +24,13 @@ ENV STATIC_WEB_DIR=/app/apps/mobile/dist
 ENV PUBLIC_URL=http://localhost:4000
 
 # Recreate dependency tree with only production deps.
+# --ignore-scripts: root "prepare" builds packages/shared, which needs dev
+# typescript; we instead copy the prebuilt shared dist from the build stage.
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY services/api/package.json services/api/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
-RUN npm ci --omit=dev && npm run build -w @findback/shared
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=build /app/packages/shared/dist packages/shared/dist
 COPY --from=build /app/services/api/dist services/api/dist
