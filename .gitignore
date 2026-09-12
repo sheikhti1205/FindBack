@@ -29,6 +29,9 @@ Thumbs.db
 *.log
 coverage/
 
+# Supabase CLI local state / temp
+supabase/.temp/
+
 # Uploaded/dev runtime files (served locally by the dev API)
 services/api/data/
 services/api/uploads/
