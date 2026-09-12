@@ -18,6 +18,23 @@ export interface PostRow extends Row {
   user_id: string;
 }
 
+/** Map attachments already embedded by a feed RPC row, if present. */
+function mapAttachments(value: unknown): PostItem["attachments"] {
+  if (!Array.isArray(value)) return [];
+  return value.map((raw) => {
+    const a = raw as Row;
+    return {
+      id: String(a.id),
+      postId: String(a.post_id),
+      fileUrl: String(a.file_url),
+      mimeType: String(a.mime_type),
+      fileName: String(a.file_name),
+      fileSize: Number(a.file_size),
+      createdAt: String(a.created_at),
+    };
+  });
+}
+
 export function rowToPost(row: Row): PostItem {
   const author = {
     id: String(row.user_id),
@@ -43,7 +60,7 @@ export function rowToPost(row: Row): PostItem {
     longitude: row.longitude == null ? null : Number(row.longitude),
     locationLabel: row.location_label ? String(row.location_label) : null,
     youtubeUrl: row.youtube_url ? String(row.youtube_url) : null,
-    attachments: [],
+    attachments: mapAttachments(row.attachments),
     likeCount: Number(row.like_count ?? 0),
     dislikeCount: Number(row.dislike_count ?? 0),
     ratingAvg: row.rating_avg == null ? null : Math.round(Number(row.rating_avg) * 100) / 100,
@@ -56,6 +73,8 @@ export function rowToPost(row: Row): PostItem {
 }
 
 async function attachFiles(post: PostItem): Promise<void> {
+  // Feed RPC rows already carry attachments; avoid a per-post round trip.
+  if (post.attachments.length > 0) return;
   const files = await getStore().listAttachments(post.id);
   post.attachments = files.map((f) => ({
     id: String(f.id),
