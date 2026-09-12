@@ -23,6 +23,16 @@ export const config = {
       ? ":memory:"
       : process.env.DB_FILE ??
         path.resolve(packageRoot, "data", "findback.db"),
+  /**
+   * Selects the persistence backend. Defaults to the working local SQLite
+   * provider; set DB_PROVIDER=postgres to use Supabase/PostgreSQL.
+   */
+  dbProvider: (process.env.DB_PROVIDER ?? "sqlite") as "sqlite" | "postgres",
+  /**
+   * PostgreSQL connection string (Supabase "Connect" → URI, includes the DB
+   * password). Only read when DB_PROVIDER=postgres. Never logged or echoed.
+   */
+  databaseUrl: process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? "",
   uploadsDir: process.env.UPLOADS_DIR ?? path.resolve(packageRoot, "uploads"),
   /** Public base URL the mobile/web app uses to reach this API. */
   publicUrl: process.env.PUBLIC_URL ?? `http://localhost:${Number(process.env.PORT ?? 4000)}`,

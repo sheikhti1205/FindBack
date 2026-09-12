@@ -3,9 +3,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { loginSchema, registerSchema, usernameSchema } from "@findback/shared";
 import { config } from "../config.js";
-import { all, get, run } from "../db/db.js";
+import { all, get, run } from "../db/index.js";
 import { AppError, newId, nowIso, toPublicUser } from "./helpers.js";
-import type { Row } from "../db/db.js";
+import type { Row } from "../db/index.js";
 
 export interface AuthToken {
   token: string;
@@ -40,7 +40,7 @@ export function verifyToken(token: string): { userId: string } {
 
 async function assertUnique(field: string, value: string): Promise<void> {
   const safeField = field === "email" ? "email" : field === "phone" ? "phone" : "username";
-  const row = get<Row>(`SELECT id FROM users WHERE lower(${safeField}) = lower(?)`, [value]);
+  const row = await get<Row>(`SELECT id FROM users WHERE lower(${safeField}) = lower(?)`, [value]);
   if (row) {
     throw new AppError(409, `${field} "${value}" is already registered`);
   }
@@ -55,42 +55,43 @@ export async function register(input: z.infer<typeof registerSchema>): Promise<A
   const id = newId();
   const now = nowIso();
   const passwordHash = await hashPassword(parsed.password);
-  run(
+  await run(
     `INSERT INTO users (id, username, email, phone, password_hash, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [id, parsed.username, parsed.email, parsed.phone, passwordHash, now, now],
   );
-  const row = get<Row>("SELECT * FROM users WHERE id = ?", [id])!;
-  return { token: signToken(id), user: toPublicUser(row) };
+  const row = await get<Row>("SELECT * FROM users WHERE id = ?", [id]);
+  return { token: signToken(id), user: toPublicUser(row!) };
 }
 
-export function login(input: z.infer<typeof loginSchema>): Promise<AuthToken> {
+export async function login(input: z.infer<typeof loginSchema>): Promise<AuthToken> {
   const parsed = loginSchema.parse(input);
-  const row = get<Row>(
+  const row = await get<Row>(
     "SELECT * FROM users WHERE lower(username) = lower(?) OR lower(email) = lower(?)",
     [parsed.identifier, parsed.identifier],
   );
   if (!row) throw new AppError(401, "Invalid credentials");
-  return verifyPassword(parsed.password, String(row.password_hash)).then((ok) => {
-    if (!ok) throw new AppError(401, "Invalid credentials");
-    return { token: signToken(String(row.id)), user: toPublicUser(row) };
-  });
+  const ok = await verifyPassword(parsed.password, String(row.password_hash));
+  if (!ok) throw new AppError(401, "Invalid credentials");
+  return { token: signToken(String(row.id)), user: toPublicUser(row) };
 }
 
-export async function checkUsername(username: string): Promise<{ available: boolean; normalized: string }> {
+export async function checkUsername(
+  username: string,
+): Promise<{ available: boolean; normalized: string }> {
   const parsed = usernameSchema.parse(username);
   const normalized = parsed.trim();
-  const row = get<Row>("SELECT id FROM users WHERE lower(username) = lower(?)", [normalized]);
+  const row = await get<Row>("SELECT id FROM users WHERE lower(username) = lower(?)", [normalized]);
   return { available: !row, normalized };
 }
 
-export function me(userId: string): ReturnType<typeof toPublicUser> {
-  const row = get<Row>("SELECT * FROM users WHERE id = ?", [userId]);
+export async function me(userId: string): Promise<ReturnType<typeof toPublicUser>> {
+  const row = await get<Row>("SELECT * FROM users WHERE id = ?", [userId]);
   if (!row) throw new AppError(404, "User not found");
   return toPublicUser(row);
 }
 
 /** List of one-line usernames used by the seeded demo users. */
-export function listUserIds(): string[] {
-  return all<Row>("SELECT id FROM users").map((r) => String(r.id));
+export async function listUserIds(): Promise<string[]> {
+  return (await all<Row>("SELECT id FROM users")).map((r) => String(r.id));
 }

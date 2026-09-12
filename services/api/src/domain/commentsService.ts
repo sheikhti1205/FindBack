@@ -1,9 +1,9 @@
 import type { CommentItem } from "@findback/shared";
 import { addCommentSchema } from "@findback/shared";
-import { all, get, run } from "../db/db.js";
+import { all, get, run } from "../db/index.js";
 import { AppError, newId, nowIso } from "./helpers.js";
 import { emitGateway } from "../realtime/gateway.js";
-import type { Row } from "../db/db.js";
+import type { Row } from "../db/index.js";
 
 function rowToComment(row: Row): CommentItem {
   const author = {
@@ -34,41 +34,47 @@ const COMMENT_SELECT = `
   FROM comments c JOIN users u ON u.id = c.user_id
 `;
 
-export function listComments(postId: string, limit = 200): CommentItem[] {
-  return all<Row>(
+export async function listComments(postId: string, limit = 200): Promise<CommentItem[]> {
+  const rows = await all<Row>(
     `${COMMENT_SELECT} WHERE c.post_id = ? ORDER BY c.created_at ASC LIMIT ?`,
     [postId, limit],
-  ).map(rowToComment);
+  );
+  return rows.map(rowToComment);
 }
 
-export function addComment(userId: string, postId: string, raw: unknown): CommentItem {
+export async function addComment(userId: string, postId: string, raw: unknown): Promise<CommentItem> {
   const input = addCommentSchema.parse(raw);
-  const exists = get<Row>("SELECT id FROM item_posts WHERE id = ?", [postId]);
+  const exists = await get<Row>("SELECT id FROM item_posts WHERE id = ?", [postId]);
   if (!exists) throw new AppError(404, "Post not found");
   const id = newId();
   const now = nowIso();
-  run(
+  await run(
     `INSERT INTO comments (id, post_id, user_id, body, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [id, postId, userId, input.body.trim(), now, now],
   );
-  const comment = rowToComment(get<Row>(`${COMMENT_SELECT} WHERE c.id = ?`, [id])!);
+  const row = await get<Row>(`${COMMENT_SELECT} WHERE c.id = ?`, [id]);
+  const comment = rowToComment(row!);
   emitGateway("comment:added", { postId, comment });
   return comment;
 }
 
-export function deleteComment(userId: string, postId: string, commentId: string): void {
-  const comment = get<Row>("SELECT * FROM comments WHERE id = ? AND post_id = ?", [
+export async function deleteComment(
+  userId: string,
+  postId: string,
+  commentId: string,
+): Promise<void> {
+  const comment = await get<Row>("SELECT * FROM comments WHERE id = ? AND post_id = ?", [
     commentId,
     postId,
   ]);
   if (!comment) throw new AppError(404, "Comment not found");
-  const post = get<Row>("SELECT user_id FROM item_posts WHERE id = ?", [postId]);
+  const post = await get<Row>("SELECT user_id FROM item_posts WHERE id = ?", [postId]);
   const isOwner = String(comment.user_id) === userId;
   const isPostAuthor = post && String(post.user_id) === userId;
   if (!isOwner && !isPostAuthor) {
     throw new AppError(403, "You can only delete your own comments");
   }
-  run("DELETE FROM comments WHERE id = ?", [commentId]);
+  await run("DELETE FROM comments WHERE id = ?", [commentId]);
   emitGateway("comment:deleted", { postId, commentId });
 }

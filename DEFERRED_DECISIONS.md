@@ -6,7 +6,7 @@ provider wiring, and document the exact files to change later.
 
 | Decision | Temporary choice | Options later | Files to change later | Must not block now |
 |---|---|---|---|---|
-| Backend/cloud platform | Local Node/TS API + `node:sqlite` | Supabase / Firebase / hybrid | `services/api/src/providers/*`, `services/api/src/db` | Yes |
+| Backend/cloud platform | Local Node/TS API; DB provider selectable (`DB_PROVIDER=sqlite` default, `postgres` adapter + `supabase/migrations/` in place) | Supabase / Firebase / hybrid | Set `DB_PROVIDER=postgres` + `DATABASE_URL`, run `npm run db:migrate` (`services/api/src/db/*`, `docs/DATABASE_MIGRATION.md`) | Yes |
 | Auth provider | Local JWT demo adapter | Supabase Auth / Firebase Auth | `services/api/src/auth`, mobile `src/services/auth.ts` | Yes |
 | Email verification | Dev adapter (returns code in dev log/response, not sent) | Supabase / Firebase / email provider | `services/api/src/providers/verification` | Yes |
 | Phone verification | Dev OTP adapter | Firebase Phone Auth / SMS provider | `services/api/src/providers/verification` | Yes |

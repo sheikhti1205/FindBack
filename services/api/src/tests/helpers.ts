@@ -1,7 +1,7 @@
 import request from "supertest";
 import { createApp } from "../app.js";
-import { get, all } from "../db/db.js";
-import type { Row } from "../db/db.js";
+import { get, all } from "../db/index.js";
+import type { Row } from "../db/index.js";
 
 export const app = createApp();
 
@@ -53,8 +53,8 @@ export async function loginAs(identifier: string): Promise<string> {
   return res.body.token as string;
 }
 
-export function seedUser(identifier: string): { id: string } {
-  const row = get<Row>(
+export async function seedUser(identifier: string): Promise<{ id: string }> {
+  const row = await get<Row>(
     "SELECT id FROM users WHERE lower(username) = lower(?) OR lower(email) = lower(?)",
     [identifier, identifier],
   );
@@ -62,15 +62,19 @@ export function seedUser(identifier: string): { id: string } {
   return { id: String(row.id) };
 }
 
-export function seededPostId(): string {
-  const row = get<Row>("SELECT id FROM item_posts ORDER BY created_at ASC LIMIT 1");
+export async function seededPostId(): Promise<string> {
+  const row = await get<Row>("SELECT id FROM item_posts ORDER BY created_at ASC LIMIT 1");
   if (!row) throw new Error("no seeded posts");
   return String(row.id);
 }
 
-export function countRows(table: string, where = "", params: unknown[] = []): number {
+export async function countRows(
+  table: string,
+  where = "",
+  params: unknown[] = [],
+): Promise<number> {
   const sql = `SELECT COUNT(*) AS c FROM ${table}${where ? ` WHERE ${where}` : ""}`;
-  const row = get<Row>(sql, params);
+  const row = await get<Row>(sql, params);
   return Number(row?.c ?? 0);
 }
 

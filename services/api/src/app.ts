@@ -89,15 +89,15 @@ export function createApp(): Express {
     // JWT is stateless for the local provider; the client discards the token.
     res.json({ ok: true });
   });
-  app.get("/auth/me", optionalAuth, (req, res) => {
+  app.get("/auth/me", optionalAuth, async (req, res) => {
     if (!req.userId) return res.status(401).json({ error: "Authentication required" });
-    res.json({ user: me(req.userId) });
+    res.json({ user: await me(req.userId) });
   });
 
   // ---- users ----
-  app.get("/users/check-username", (req, res) => {
+  app.get("/users/check-username", async (req, res) => {
     const q = parseQuery(zodSchemas.usernameCheckQuery, req.query);
-    void checkUsername(q.username).then((result) => res.json(result));
+    res.json(await checkUsername(q.username));
   });
 
   // ---- verification ----
@@ -109,64 +109,64 @@ export function createApp(): Express {
     const result = await sendChallenge(req.userId!, channel, devVerificationProvider);
     res.json(result);
   });
-  app.post("/verification/:channel/verify", requireAuth, (req, res) => {
+  app.post("/verification/:channel/verify", requireAuth, async (req, res) => {
     const channel = paramOf(req, "channel") as Channel;
     if (channel !== "EMAIL" && channel !== "PHONE") {
       return res.status(400).json({ error: "channel must be EMAIL or PHONE" });
     }
     const body = zodSchemas.verifyChallenge.parse(req.body);
-    res.json(verifyChallenge(req.userId!, channel, body.code));
+    res.json(await verifyChallenge(req.userId!, channel, body.code));
   });
 
   // ---- posts ----
-  app.get("/posts", optionalAuth, (req, res) => {
-    res.json(feed(req.query, req.userId));
+  app.get("/posts", optionalAuth, async (req, res) => {
+    res.json(await feed(req.query, req.userId));
   });
   app.post("/posts", requireAuth, async (req, res) => {
     res.status(201).json(await createPost(req.userId!, req.body));
   });
-  app.get("/posts/:id", optionalAuth, (req, res) => {
-    res.json(getPost(paramOf(req, "id"), req.userId));
+  app.get("/posts/:id", optionalAuth, async (req, res) => {
+    res.json(await getPost(paramOf(req, "id"), req.userId));
   });
-  app.patch("/posts/:id", requireAuth, (req, res) => {
-    res.json(updatePost(req.userId!, paramOf(req, "id"), req.body));
+  app.patch("/posts/:id", requireAuth, async (req, res) => {
+    res.json(await updatePost(req.userId!, paramOf(req, "id"), req.body));
   });
-  app.patch("/posts/:id/status", requireAuth, (req, res) => {
+  app.patch("/posts/:id/status", requireAuth, async (req, res) => {
     const body = parseQuery(zodSchemas.changeStatus, req.body);
-    res.json(changePostStatus(req.userId!, paramOf(req, "id"), body.status));
+    res.json(await changePostStatus(req.userId!, paramOf(req, "id"), body.status));
   });
-  app.delete("/posts/:id", requireAuth, (req, res) => {
-    deletePost(req.userId!, paramOf(req, "id"));
+  app.delete("/posts/:id", requireAuth, async (req, res) => {
+    await deletePost(req.userId!, paramOf(req, "id"));
     res.json({ ok: true });
   });
 
   // ---- my posts ----
-  app.get("/me/posts", requireAuth, (req, res) => {
-    res.json(myPosts(req.userId!, req.query));
+  app.get("/me/posts", requireAuth, async (req, res) => {
+    res.json(await myPosts(req.userId!, req.query));
   });
 
   // ---- comments ----
-  app.get("/posts/:id/comments", (req, res) => {
-    res.json(listComments(paramOf(req, "id")));
+  app.get("/posts/:id/comments", async (req, res) => {
+    res.json(await listComments(paramOf(req, "id")));
   });
-  app.post("/posts/:id/comments", requireAuth, (req, res) => {
-    res.status(201).json(addComment(req.userId!, paramOf(req, "id"), req.body));
+  app.post("/posts/:id/comments", requireAuth, async (req, res) => {
+    res.status(201).json(await addComment(req.userId!, paramOf(req, "id"), req.body));
   });
-  app.delete("/posts/:postId/comments/:commentId", requireAuth, (req, res) => {
-    deleteComment(req.userId!, paramOf(req, "postId"), paramOf(req, "commentId"));
+  app.delete("/posts/:postId/comments/:commentId", requireAuth, async (req, res) => {
+    await deleteComment(req.userId!, paramOf(req, "postId"), paramOf(req, "commentId"));
     res.json({ ok: true });
   });
 
   // ---- reactions + ratings ----
-  app.post("/posts/:id/react", requireAuth, (req, res) => {
+  app.post("/posts/:id/react", requireAuth, async (req, res) => {
     const type = req.body?.type ?? null;
     if (type !== "LIKE" && type !== "DISLIKE" && type !== null) {
       return res.status(400).json({ error: "type must be LIKE, DISLIKE or null" });
     }
-    res.json(react(req.userId!, paramOf(req, "id"), type));
+    res.json(await react(req.userId!, paramOf(req, "id"), type));
   });
-  app.put("/posts/:id/rating", requireAuth, (req, res) => {
-    res.json(rate(req.userId!, paramOf(req, "id"), req.body));
+  app.put("/posts/:id/rating", requireAuth, async (req, res) => {
+    res.json(await rate(req.userId!, paramOf(req, "id"), req.body));
   });
 
   // ---- uploads ----
@@ -198,9 +198,9 @@ export function createApp(): Express {
 
   // ---- reporting ----
   // GET /reports/activity?days=14&format=csv  (JSON or CSV)
-  app.get("/reports/activity", requireAuth, (req, res) => {
+  app.get("/reports/activity", requireAuth, async (req, res) => {
     const format = String(req.query.format ?? "json");
-    const report = activityReport(req.query.days);
+    const report = await activityReport(req.query.days);
     if (format === "csv") {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="findback-activity.csv"');

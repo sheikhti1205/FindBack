@@ -7,7 +7,7 @@ describe("social features: reactions, ratings, comments, realtime", () => {
   it("one reaction per user; can switch and remove (live count)", async () => {
     const agent1 = await registerAgent();
     const agent2 = await registerAgent();
-    const postId = seededPostId();
+    const postId = await seededPostId();
 
     const like1 = await request(app)
       .post(`/posts/${postId}/react`)
@@ -57,7 +57,7 @@ describe("social features: reactions, ratings, comments, realtime", () => {
 
   it("rates 1-5 once per user and updates live average", async () => {
     const agent = await registerAgent();
-    const postId = seededPostId();
+    const postId = await seededPostId();
 
     const first = await request(app)
       .put(`/posts/${postId}/rating`)
@@ -93,7 +93,7 @@ describe("social features: reactions, ratings, comments, realtime", () => {
 
   it("adds + lists + deletes comments", async () => {
     const agent = await registerAgent();
-    const postId = seededPostId();
+    const postId = await seededPostId();
 
     await request(app).post(`/posts/${postId}/comments`).send({ body: "nope" }).expect(401);
 
@@ -124,7 +124,7 @@ describe("social features: reactions, ratings, comments, realtime", () => {
     const off = onGatewayEvent((event, payload) => events.push({ event, payload }));
     try {
       const agent = await registerAgent();
-      const postId = seededPostId();
+      const postId = await seededPostId();
       await request(app)
         .post(`/posts/${postId}/comments`)
         .set("Authorization", `Bearer ${agent.token}`)
