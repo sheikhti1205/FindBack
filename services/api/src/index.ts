@@ -1,12 +1,12 @@
 import http from "node:http";
 import { createApp } from "./app.js";
 import { config } from "./config.js";
-import { getDb } from "./db/db.js";
+import { getAdapter } from "./db/index.js";
 import { seedDatabase } from "./db/seed.js";
 import { attachRealtime } from "./realtime/socket.js";
 
 async function main(): Promise<void> {
-  getDb();
+  await getAdapter().init();
   if (process.env.NODE_ENV !== "test") {
     await seedDatabase();
   }

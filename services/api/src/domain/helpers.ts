@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PublicUser } from "@findback/shared";
-import type { Row } from "../db/db.js";
+import type { Row } from "../db/index.js";
 
 export function newId(): string {
   return randomUUID();

@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { config } from "../config.js";
-import { run, get } from "../db/db.js";
+import { run, get } from "../db/index.js";
 import { newId, nowIso } from "./helpers.js";
-import type { Row } from "../db/db.js";
+import type { Row } from "../db/index.js";
 
 export interface StoredUpload {
   id: string;
@@ -50,7 +50,7 @@ export async function recordUpload(
     file.mimetype,
     file.originalname,
   );
-  run(
+  await run(
     `INSERT INTO uploads (id, user_id, file_name, mime_type, file_size, file_url, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [stored.id, userId, stored.fileName, stored.mimeType, stored.fileSize, stored.fileUrl, nowIso()],
@@ -58,7 +58,7 @@ export async function recordUpload(
   return stored;
 }
 
-export function getUpload(id: string): Row | undefined {
+export function getUpload(id: string): Promise<Row | undefined> {
   return get<Row>("SELECT * FROM uploads WHERE id = ?", [id]);
 }
 

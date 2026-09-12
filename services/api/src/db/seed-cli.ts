@@ -1,15 +1,16 @@
-import { getDb, closeDb } from "./db.js";
+import { closeDb, getAdapter } from "./index.js";
 import { seedDatabase } from "./seed.js";
 
 // Usage: npm run seed  (seeds only when the users table is empty)
-getDb();
-seedDatabase()
+getAdapter()
+  .init()
+  .then(() => seedDatabase())
   .then(() => {
     console.log("Seed complete.");
-    closeDb();
+    return closeDb();
   })
-  .catch((err) => {
+  .catch(async (err) => {
     console.error("Seed failed", err);
-    closeDb();
+    await closeDb();
     process.exit(1);
   });

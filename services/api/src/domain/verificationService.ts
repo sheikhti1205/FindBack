@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
-import { get, run } from "../db/db.js";
+import { get, run } from "../db/index.js";
 import { config } from "../config.js";
 import { AppError, newId, nowIso } from "./helpers.js";
-import type { Row } from "../db/db.js";
+import type { Row } from "../db/index.js";
 
 export type Channel = "EMAIL" | "PHONE";
 
@@ -42,10 +42,10 @@ export async function sendChallenge(
   channel: Channel,
   provider: VerificationProvider,
 ): Promise<{ devCode?: string; expiresInSeconds: number; resendAfterSeconds: number }> {
-  const user = get<Row>("SELECT * FROM users WHERE id = ?", [userId]);
+  const user = await get<Row>("SELECT * FROM users WHERE id = ?", [userId]);
   if (!user) throw new AppError(404, "User not found");
 
-  const pending = get<Row>(
+  const pending = await get<Row>(
     `SELECT created_at FROM verification_challenges
      WHERE user_id = ? AND channel = ? AND verified_at IS NULL
      ORDER BY created_at DESC LIMIT 1`,
@@ -63,7 +63,7 @@ export async function sendChallenge(
   const id = newId();
   const now = nowIso();
   const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
-  run(
+  await run(
     `INSERT INTO verification_challenges (id, user_id, channel, code_hash, expires_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [id, userId, channel, codeHash(code), expiresAt, now],
@@ -79,12 +79,12 @@ export async function sendChallenge(
   };
 }
 
-export function verifyChallenge(
+export async function verifyChallenge(
   userId: string,
   channel: Channel,
   code: string,
-): { emailVerified: boolean; phoneVerified: boolean } {
-  const challenge = get<Row>(
+): Promise<{ emailVerified: boolean; phoneVerified: boolean }> {
+  const challenge = await get<Row>(
     `SELECT * FROM verification_challenges
      WHERE user_id = ? AND channel = ? AND verified_at IS NULL
      ORDER BY created_at DESC LIMIT 1`,
@@ -98,18 +98,18 @@ export function verifyChallenge(
     throw new AppError(400, "Incorrect verification code");
   }
 
-  run("UPDATE verification_challenges SET verified_at = ? WHERE id = ?", [
+  await run("UPDATE verification_challenges SET verified_at = ? WHERE id = ?", [
     nowIso(),
     String(challenge.id),
   ]);
   const field = channel === "EMAIL" ? "email_verified" : "phone_verified";
-  run(`UPDATE users SET ${field} = 1, updated_at = ? WHERE id = ?`, [
+  await run(`UPDATE users SET ${field} = 1, updated_at = ? WHERE id = ?`, [
     nowIso(),
     userId,
   ]);
-  const user = get<Row>("SELECT * FROM users WHERE id = ?", [userId])!;
+  const user = await get<Row>("SELECT * FROM users WHERE id = ?", [userId]);
   return {
-    emailVerified: Boolean(user.email_verified),
-    phoneVerified: Boolean(user.phone_verified),
+    emailVerified: Boolean(user!.email_verified),
+    phoneVerified: Boolean(user!.phone_verified),
   };
 }

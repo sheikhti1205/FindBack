@@ -7,11 +7,11 @@ import {
   type UpdatePostInput,
 } from "@findback/shared";
 import { createPostSchema, feedQuerySchema } from "@findback/shared";
-import { all, get, run } from "../db/db.js";
+import { all, get, run } from "../db/index.js";
 import { AppError, newId, nowIso } from "./helpers.js";
 import { emitGateway } from "../realtime/gateway.js";
 import { getUpload } from "./storageService.js";
-import type { Row } from "../db/db.js";
+import type { Row } from "../db/index.js";
 
 export interface PostRow extends Row {
   id: string;
@@ -69,8 +69,8 @@ export function rowToPost(row: Row): PostItem {
   return post;
 }
 
-function attachFiles(post: PostItem): void {
-  const files = all<Row>(
+async function attachFiles(post: PostItem): Promise<void> {
+  const files = await all<Row>(
     "SELECT * FROM attachments WHERE post_id = ? ORDER BY created_at ASC",
     [post.id],
   );
@@ -85,29 +85,26 @@ function attachFiles(post: PostItem): void {
   }));
 }
 
-export function ensurePostExists(id: string): PostRow {
-  const row = get<PostRow>("SELECT * FROM item_posts WHERE id = ?", [id]);
+export async function ensurePostExists(id: string): Promise<PostRow> {
+  const row = await get<PostRow>("SELECT * FROM item_posts WHERE id = ?", [id]);
   if (!row) throw new AppError(404, "Post not found");
   return row;
 }
 
-export function getPost(id: string, _viewerId?: string): PostItem {
-  const row = get<Row>(`${POST_SELECT} WHERE p.id = ?`, [id]);
+export async function getPost(id: string, _viewerId?: string): Promise<PostItem> {
+  const row = await get<Row>(`${POST_SELECT} WHERE p.id = ?`, [id]);
   if (!row) throw new AppError(404, "Post not found");
   const post = rowToPost(row);
-  attachFiles(post);
+  await attachFiles(post);
   return post;
 }
 
-export async function createPost(
-  userId: string,
-  raw: unknown,
-): Promise<PostItem> {
+export async function createPost(userId: string, raw: unknown): Promise<PostItem> {
   const input = createPostSchema.parse(raw);
   const id = newId();
   const now = nowIso();
   const youtubeUrl = input.youtubeUrl ? input.youtubeUrl : null;
-  run(
+  await run(
     `INSERT INTO item_posts
        (id, user_id, type, title, description, category, status, event_date,
         latitude, longitude, location_label, youtube_url, created_at, updated_at)
@@ -130,12 +127,12 @@ export async function createPost(
   );
 
   if (input.attachmentKey) {
-    const upload = getUpload(input.attachmentKey);
+    const upload = await getUpload(input.attachmentKey);
     if (!upload) throw new AppError(400, "Attachment key does not exist");
     if (String(upload.user_id) !== userId) {
       throw new AppError(403, "Attachment was not uploaded by you");
     }
-    run(
+    await run(
       `INSERT INTO attachments (id, post_id, file_url, mime_type, file_name, file_size, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -154,8 +151,8 @@ export async function createPost(
   return getPost(id, userId);
 }
 
-export function updatePost(userId: string, postId: string, raw: unknown): PostItem {
-  const post = ensurePostExists(postId);
+export async function updatePost(userId: string, postId: string, raw: unknown): Promise<PostItem> {
+  const post = await ensurePostExists(postId);
   if (String(post.user_id) !== userId) throw new AppError(403, "You can only edit your own posts");
   const patch = raw as UpdatePostInput;
   const sets: string[] = [];
@@ -183,25 +180,29 @@ export function updatePost(userId: string, postId: string, raw: unknown): PostIt
   if (sets.length === 0) return getPost(postId, userId);
   sets.push("updated_at = ?");
   params.push(nowIso(), postId);
-  run(`UPDATE item_posts SET ${sets.join(", ")} WHERE id = ?`, params);
+  await run(`UPDATE item_posts SET ${sets.join(", ")} WHERE id = ?`, params);
   emitGateway("post:updated", { postId });
   return getPost(postId, userId);
 }
 
-export function changePostStatus(userId: string, postId: string, status: PostStatus): PostItem {
-  const post = ensurePostExists(postId);
+export async function changePostStatus(
+  userId: string,
+  postId: string,
+  status: PostStatus,
+): Promise<PostItem> {
+  const post = await ensurePostExists(postId);
   if (String(post.user_id) !== userId) {
     throw new AppError(403, "Only the owner can change the status");
   }
-  run("UPDATE item_posts SET status = ?, updated_at = ? WHERE id = ?", [status, nowIso(), postId]);
+  await run("UPDATE item_posts SET status = ?, updated_at = ? WHERE id = ?", [status, nowIso(), postId]);
   emitGateway("post:updated", { postId });
   return getPost(postId, userId);
 }
 
-export function deletePost(userId: string, postId: string): void {
-  const post = ensurePostExists(postId);
+export async function deletePost(userId: string, postId: string): Promise<void> {
+  const post = await ensurePostExists(postId);
   if (String(post.user_id) !== userId) throw new AppError(403, "Only the owner can delete a post");
-  run("DELETE FROM item_posts WHERE id = ?", [postId]);
+  await run("DELETE FROM item_posts WHERE id = ?", [postId]);
   emitGateway("post:deleted", { postId });
 }
 
@@ -231,7 +232,7 @@ export function encodeCursor(createdAt: string, id: string): string {
 }
 
 /** Keyspace cursor pagination over item_posts with search + filters. */
-export function feed(rawQuery: unknown, _viewerId?: string): FeedPage {
+export async function feed(rawQuery: unknown, _viewerId?: string): Promise<FeedPage> {
   const q = feedQuerySchema.parse(rawQuery);
   const where: string[] = [];
   const params: unknown[] = [];
@@ -273,27 +274,29 @@ export function feed(rawQuery: unknown, _viewerId?: string): FeedPage {
 
   const limit = Math.min(q.limit ?? 10, 20);
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const totalRow = get<Row>(`SELECT COUNT(*) AS c FROM item_posts p ${whereSql}`, params);
+  const totalRow = await get<Row>(`SELECT COUNT(*) AS c FROM item_posts p ${whereSql}`, params);
   const total = Number(totalRow?.c ?? 0);
 
-  const rows = all<Row>(
+  const rows = await all<Row>(
     `${POST_SELECT} ${whereSql} ORDER BY p.created_at ${order}, p.id ${order} LIMIT ?`,
     [...params, limit + 1],
   );
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
-  const items = pageRows.map((row) => {
-    const post = rowToPost(row);
-    attachFiles(post);
-    return post;
-  });
+  const items = await Promise.all(
+    pageRows.map(async (row) => {
+      const post = rowToPost(row);
+      await attachFiles(post);
+      return post;
+    }),
+  );
 
   const last = pageRows[pageRows.length - 1];
   const nextCursor = hasMore && last ? encodeCursor(String(last.created_at), String(last.id)) : null;
   return { items, nextCursor, total };
 }
 
-export function myPosts(userId: string, rawQuery: unknown): FeedPage {
+export async function myPosts(userId: string, rawQuery: unknown): Promise<FeedPage> {
   const q = feedQuerySchema.parse(rawQuery);
   const where = ["p.user_id = ?"];
   const params: unknown[] = [userId];
@@ -304,17 +307,19 @@ export function myPosts(userId: string, rawQuery: unknown): FeedPage {
     params.push(cursor.createdAt, cursor.createdAt, cursor.id);
   }
   const limit = Math.min(q.limit ?? 10, 20);
-  const rows = all<Row>(
+  const rows = await all<Row>(
     `${POST_SELECT} WHERE ${where.join(" AND ")} ORDER BY p.created_at ${order}, p.id ${order} LIMIT ?`,
     [...params, limit + 1],
   );
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
-  const items = pageRows.map((row) => {
-    const post = rowToPost(row);
-    attachFiles(post);
-    return post;
-  });
+  const items = await Promise.all(
+    pageRows.map(async (row) => {
+      const post = rowToPost(row);
+      await attachFiles(post);
+      return post;
+    }),
+  );
   const last = pageRows[pageRows.length - 1];
   const nextCursor = hasMore && last ? encodeCursor(String(last.created_at), String(last.id)) : null;
   return { items, nextCursor, total: items.length };

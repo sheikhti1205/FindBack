@@ -154,14 +154,18 @@ export const graphqlSchema = createSchema({
         updatePost(requireUser(ctx), args.id, args.input),
       changePostStatus: (_p: unknown, args: { id: string; status: string }, ctx: GraphQLContext) =>
         changePostStatus(requireUser(ctx), args.id, args.status as PostStatus),
-      deletePost: (_p: unknown, args: { id: string }, ctx: GraphQLContext) => {
-        deletePost(requireUser(ctx), args.id);
+      deletePost: async (_p: unknown, args: { id: string }, ctx: GraphQLContext) => {
+        await deletePost(requireUser(ctx), args.id);
         return true;
       },
       addComment: (_p: unknown, args: { postId: string; body: string }, ctx: GraphQLContext) =>
         addComment(requireUser(ctx), args.postId, { body: args.body }),
-      deleteComment: (_p: unknown, args: { postId: string; commentId: string }, ctx: GraphQLContext) => {
-        deleteComment(requireUser(ctx), args.postId, args.commentId);
+      deleteComment: async (
+        _p: unknown,
+        args: { postId: string; commentId: string },
+        ctx: GraphQLContext,
+      ) => {
+        await deleteComment(requireUser(ctx), args.postId, args.commentId);
         return true;
       },
       reactToPost: (_p: unknown, args: { postId: string; type: string | null }, ctx: GraphQLContext) =>

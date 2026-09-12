@@ -6,8 +6,9 @@ Status vocabulary (from the project brief):
 `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
 `DEFERRED_EXTERNAL_TOOL` · `TODO`
 
-Last updated: 2026-09-09 (Phase 8 checkpoint). Statuses are only non-TODO when
-verifiable end-to-end (API tests green + live mobile/UI flow exercised).
+Last updated: 2026-09-12 (Supabase database migration prep; no requirement status changed).
+Statuses are only non-TODO when verifiable end-to-end (API tests green + live
+mobile/UI flow exercised).
 
 | # | Teacher requirement | FindBack implementation | Code path | Demo steps | Tests | Status |
 |---|---|---|---|---|---|---|
@@ -44,6 +45,9 @@ verifiable end-to-end (API tests green + live mobile/UI flow exercised).
   documented in `DEFERRED_DECISIONS.md`.
 - #20's `.rpt` design file needs the licensed Windows-only Crystal Reports
   designer; FindBack commits the data layer and queries so it imports cleanly.
-- Verification evidence: API test suites (7 files / 38 tests), mobile unit
+- Verification evidence: API test suites (8 files / 44 tests), mobile unit
   tests, mobile production build, and a live browser E2E pass (sign-in, feed,
   comments with live dedupe, ratings, reactions, map embed).
+- Persistence now has a provider seam: `DB_PROVIDER=sqlite` (default/local demo)
+  or `postgres` (Supabase adapter + migration, not yet applied). See
+  `docs/DATABASE_MIGRATION.md`.

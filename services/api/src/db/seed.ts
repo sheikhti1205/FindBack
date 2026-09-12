@@ -1,5 +1,5 @@
 import type { Category, PostStatus, PostType } from "@findback/shared";
-import { get, run } from "../db/db.js";
+import { get, run } from "../db/index.js";
 import { hashPassword } from "../domain/authService.js";
 import { newId, nowIso } from "../domain/helpers.js";
 
@@ -8,7 +8,7 @@ import { newId, nowIso } from "../domain/helpers.js";
  * Reused by tests with NODE_ENV=test and by `npm run seed`.
  */
 export async function seedDatabase(): Promise<void> {
-  const existing = get<{ c: number }>("SELECT COUNT(*) AS c FROM users");
+  const existing = await get<{ c: number }>("SELECT COUNT(*) AS c FROM users");
   if (existing && Number(existing.c) > 0) return;
 
   const now = nowIso();
@@ -27,7 +27,7 @@ export async function seedDatabase(): Promise<void> {
   const userIds: Record<string, string> = {};
   for (const u of users) {
     const id = newId();
-    run(
+    await run(
       `INSERT INTO users (id, username, email, phone, password_hash, email_verified, phone_verified, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)`,
       [id, u.username, u.email, u.phone, hash, now, now],
@@ -148,7 +148,7 @@ export async function seedDatabase(): Promise<void> {
   for (const p of posts) {
     const id = newId();
     const created = iso(p.createdAt);
-    run(
+    await run(
       `INSERT INTO item_posts
          (id, user_id, type, title, description, category, status, event_date,
           latitude, longitude, location_label, created_at, updated_at)
@@ -177,7 +177,7 @@ export async function seedDatabase(): Promise<void> {
     const commentCount = 1 + (idx % 3);
     for (let c = 0; c < commentCount; c++) {
       const author = users[(idx + c + 1) % users.length]!.username;
-      run(
+      await run(
         `INSERT INTO comments (id, post_id, user_id, body, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [newId(), postId, userIds[author]!, commentLines[(idx + c) % commentLines.length]!, iso(d(idx % 6)), iso(d(idx % 6))],
@@ -186,7 +186,7 @@ export async function seedDatabase(): Promise<void> {
     const likeCount = (idx * 3) % 6;
     for (let r = 0; r < likeCount; r++) {
       const author = users[(idx + r) % users.length]!.username;
-      run(
+      await run(
         `INSERT INTO reactions (id, post_id, user_id, type, created_at)
          VALUES (?, ?, ?, ?, ?)`,
         [newId(), postId, userIds[author]!, reactionPool[r % 2], iso(d(idx % 6))],
@@ -197,7 +197,7 @@ export async function seedDatabase(): Promise<void> {
       const author = users[(idx + r + 2) % users.length]!.username;
       const score = 3 + ((idx + r) % 3);
       const created = iso(d(idx % 6));
-      run(
+      await run(
         `INSERT INTO ratings (id, post_id, user_id, score, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [newId(), postId, userIds[author]!, score, created, created],

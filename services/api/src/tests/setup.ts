@@ -1,5 +1,5 @@
 import { beforeAll } from "vitest";
-import { resetDb } from "../db/db.js";
+import { resetDb } from "../db/index.js";
 import { seedDatabase } from "../db/seed.js";
 
 /**
@@ -7,6 +7,6 @@ import { seedDatabase } from "../db/seed.js";
  * Requires vitest fileParallelism:false (shared data-test/findback.db).
  */
 beforeAll(async () => {
-  resetDb();
+  await resetDb();
   await seedDatabase();
 });
