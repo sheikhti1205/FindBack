@@ -1,10 +1,10 @@
 /**
- * Provider-agnostic database contract.
+ * SQL adapter contract for the SQLite test/demo backend.
  *
- * SQLite (`node:sqlite`) is synchronous; PostgreSQL (`pg`) is asynchronous.
- * To let both backends be selected at runtime (DB_PROVIDER), the whole data
- * access layer is async. Every SQL string keeps `?` placeholders — the
- * PostgreSQL adapter rewrites them to `$1, $2, ...`.
+ * Production persistence goes through the typed `Store` (Supabase Data API);
+ * this low-level SQL layer exists only so the automated test harness and local
+ * demo can run against an in-memory SQLite database. `node:sqlite` is
+ * synchronous, but the methods are async so callers stay backend-agnostic.
  */
 
 export type Row = Record<string, unknown>;
@@ -12,7 +12,7 @@ export type Row = Record<string, unknown>;
 /** Values a bound parameter may hold. */
 export type SqlValue = string | number | bigint | Uint8Array | null;
 
-export type Dialect = "sqlite" | "postgres";
+export type Dialect = "sqlite";
 
 export interface DbAdapter {
   readonly dialect: Dialect;

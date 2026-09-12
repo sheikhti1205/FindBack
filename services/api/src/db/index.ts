@@ -1,6 +1,5 @@
 import { config } from "../config.js";
 import { SqliteAdapter } from "./sqliteAdapter.js";
-import { PostgresAdapter, createPgPool } from "./postgresAdapter.js";
 import { SqliteStore } from "./store/sqliteStore.js";
 import { SupabaseStore } from "./store/supabaseStore.js";
 import type { Store } from "./store/types.js";
@@ -13,21 +12,12 @@ let adapter: DbAdapter | null = null;
 let store: Store | null = null;
 
 /**
- * The active database adapter, chosen once by DB_PROVIDER.
- * Defaults to SQLite so existing local/demo behavior is unchanged.
+ * The active SQL adapter. SQLite is the only SQL backend: it powers the
+ * automated test harness and local demo (`seed`). Production uses the
+ * Supabase Data API through `getStore()` and never touches this.
  */
 export function getAdapter(): DbAdapter {
-  if (adapter) return adapter;
-  if (config.dbProvider === "postgres") {
-    if (!config.databaseUrl) {
-      throw new Error(
-        "DB_PROVIDER=postgres requires DATABASE_URL (Supabase PostgreSQL connection string with password).",
-      );
-    }
-    adapter = new PostgresAdapter(createPgPool(config.databaseUrl));
-  } else {
-    adapter = new SqliteAdapter(config.dbFile);
-  }
+  if (!adapter) adapter = new SqliteAdapter(config.dbFile);
   return adapter;
 }
 
@@ -43,17 +33,16 @@ export async function closeDb(): Promise<void> {
 /**
  * The active typed Store used by the domain services.
  *
- * `supabase` targets the Supabase Data API with the backend-only secret key;
- * every other provider keeps using the SQL adapter (tests + local dev) until
- * the Supabase CRUD block lands.
+ * `supabase` targets the Supabase Data API with the backend-only secret key
+ * (the real application backend). `sqlite` is the in-memory test harness and
+ * local demo backend.
  */
 export function getStore(): Store {
   if (store) return store;
-  if (config.dbProvider === "supabase") {
-    store = new SupabaseStore(config.supabaseUrl, config.supabaseSecretKey);
-  } else {
-    store = new SqliteStore(getAdapter());
-  }
+  store =
+    config.dbProvider === "supabase"
+      ? new SupabaseStore(config.supabaseUrl, config.supabaseSecretKey)
+      : new SqliteStore(getAdapter());
   return store;
 }
 
