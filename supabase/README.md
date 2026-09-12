@@ -1,27 +1,34 @@
 # Supabase
 
-This directory holds the PostgreSQL/Supabase side of FindBack. It is applied by
-the API's migration runner (`npm run db:migrate` in `services/api`), not by the
-Supabase CLI, so no local Supabase project or CLI install is required.
+This directory holds the Supabase side of FindBack: the PostgreSQL schema, RLS
+hardening, and the backend RPCs. It is applied with the **Supabase CLI** to the
+remote project.
 
 ```
 supabase/
   migrations/
-    20260912000000_init.sql   # users, item_posts, attachments, comments,
-                              # reactions, ratings, verification_challenges, uploads
+    20260912000000_init.sql                        # tables, constraints, indexes, RLS
+    20260912170500_restrict_rls_auto_enable.sql    # lock down the RLS helper function
+    20260912181321_supabase_feed_and_report_rpcs.sql # findback_query_posts, findback_report
 ```
 
 ## Apply
 
 ```bash
-cd services/api
-DB_PROVIDER=postgres \
-DATABASE_URL="postgresql://postgres:<DB_PASSWORD>@<host>:5432/postgres" \
-npm run db:migrate
+# From the repo root, logged in with `npx supabase login`
+npx supabase migration new <name>      # create a change
+npx supabase db push --dry-run         # review
+npx supabase db push                   # apply to the remote project
+npx supabase migration list            # local vs remote
 ```
 
-Applied files are recorded in `public.schema_migrations`, so re-running is safe.
-The same SQL can be pasted into the Supabase SQL editor if you prefer.
+Applied migrations are recorded in `supabase_migrations.schema_migrations`.
+Never edit an already-applied migration to change schema — add a new one. Do not
+paste SQL into the Supabase Dashboard.
+
+The Node API reaches the data through the Supabase **Data API** using
+`@supabase/supabase-js` and the backend-only secret key; see
+`docs/DATABASE_MIGRATION.md`. There is no direct PostgreSQL runtime connection.
 
 ## Not in scope yet
 

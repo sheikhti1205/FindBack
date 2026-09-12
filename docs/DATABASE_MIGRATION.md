@@ -1,92 +1,96 @@
-# Database migration — SQLite → PostgreSQL/Supabase
+# Database
 
-Scope of this pass: **database only**. Auth, Storage, Realtime, AI, ML, Maps,
-GraphQL, REST routes and Android packaging are untouched and still use their
-existing demo providers.
+FindBack has exactly two persistence paths, and they never mix.
 
-## What changed
+```text
+Real application / deployment:
+Node / Express API → @supabase/supabase-js → Supabase Data API → Supabase PostgreSQL
 
-| Area | Before | After |
+Automated tests + local demo:
+Node / Express API → typed Store → SQLite (node:sqlite)
+
+Schema changes:
+supabase/migrations/*.sql → Supabase CLI → remote Supabase project
+```
+
+There is **no raw PostgreSQL runtime connection**: no `pg` driver, no
+`DATABASE_URL`, no custom PostgreSQL migration runner. The direct connection
+was removed once the Supabase Data API Store was complete.
+
+## Runtime — Supabase Data API
+
+The domain services talk to a typed `Store` seam (`db/store/types.ts`).
+`getStore()` (`db/index.ts`) selects the implementation from `DB_PROVIDER`:
+
+| `DB_PROVIDER` | Store | Use |
 |---|---|---|
-| Schema | SQLite-only, inline in `db/db.ts` | SQLite schema in `db/sqliteAdapter.ts`; PostgreSQL DDL in `supabase/migrations/20260912000000_init.sql` |
-| Data access | Sync helpers `run/get/all` from `db/db.ts` | Async `DbAdapter` contract (`db/types.ts`) with two implementations |
-| Providers | SQLite hard-coded | `DB_PROVIDER=sqlite` (default) or `DB_PROVIDER=postgres` |
-| PostgreSQL client | — | `PostgresAdapter` on `pg` (`db/postgresAdapter.ts`) |
-| Migrations | — | `npm run db:migrate` applies `supabase/migrations/*.sql` (`db/migrate.ts`) |
-| Env | — | `DB_PROVIDER`, `DATABASE_URL`; documented in `.env.example` |
+| `supabase` | `SupabaseStore` (Data API via `@supabase/supabase-js`) | real application + deployments |
+| `sqlite` | `SqliteStore` (in-memory/file SQLite) | automated tests + local demo |
 
-Key files:
+`SupabaseStore` uses the backend-only **secret key** (`SUPABASE_SECRET_KEY`,
+service role). It bypasses RLS and must never reach the mobile app, any
+`VITE_*` variable, API responses, logs, or build output. Backend-only aggregate
+reads use the `SECURITY INVOKER` RPCs `findback_query_posts` and
+`findback_report`, whose `EXECUTE` is granted only to `service_role`.
 
-- `services/api/src/db/types.ts` — `DbAdapter` interface + `Row`/`SqlValue`.
-- `services/api/src/db/sqliteAdapter.ts` — default provider (wraps `node:sqlite`).
-- `services/api/src/db/postgresAdapter.ts` — `pg` pool, `?`→`$n` rewrite, scoped schema reset.
-- `services/api/src/db/index.ts` — provider selection (`getAdapter`) + async `run/get/all/resetDb/closeDb`.
-- `services/api/src/db/migrate.ts` + `migrate-cli.ts` — ordered migration runner.
-- `supabase/migrations/20260912000000_init.sql` — `users`, `item_posts`, `attachments`, `comments`, `reactions`, `ratings`, `verification_challenges`, `uploads` + indexes/constraints.
-- `services/api/src/tests/postgresAdapter.test.ts` — adapter unit tests with a fake client.
-
-## How to apply (next, human-gated)
-
-The connection string contains the database password and is **not** in the repo.
-Supply it at run time only:
+Configure the app through a single gitignored root `.env` (see `.env.example`):
 
 ```bash
-cd ~/GitHub/FindBack
-DB_PROVIDER=postgres \
-DATABASE_URL="postgresql://postgres:<DB_PASSWORD>@<host>:5432/postgres" \
-npm run db:migrate
+DB_PROVIDER=supabase
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SECRET_KEY=<service-role-key>
 ```
 
-Get the URI from Supabase → Project Settings → Database → Connection string (URI).
-Then start the API with the same two variables to exercise the Postgres path:
+Deployments set the same variables through the platform environment.
+`config.ts` resolves `<repo>/.env` relative to the module, so it loads no matter
+the working directory, and process environment always wins.
+
+## Tests — SQLite only
+
+The API test suite always runs against in-memory SQLite (`:memory:`), seeded
+with fictional demo data (`db/seed.ts`, `tests/setup.ts`). Provider selection is
+pinned: `config.ts` forces `dbProvider = "sqlite"` whenever `NODE_ENV=test`, so
+tests can never reach the live Supabase project even if `DB_PROVIDER` is set.
+
+`npm run seed` and `npm run dev:api` with `DB_PROVIDER=sqlite` remain the local
+demo path. `db/sqliteAdapter.ts` holds the local SQLite schema; keep it in sync
+with `supabase/migrations/*.sql` when columns change.
+
+## Schema changes (Supabase CLI)
+
+Every schema change is a migration file applied to the remote project with the
+Supabase CLI. Do not paste SQL into the Dashboard.
 
 ```bash
-DB_PROVIDER=postgres DATABASE_URL="…" npm run dev:api
+# 1. Create a new timestamped migration
+npx supabase migration new <name>
+
+# 2. Edit supabase/migrations/<timestamp>_<name>.sql
+
+# 3. Review and apply
+npx supabase db push --dry-run
+npx supabase db push
+
+# Inspect applied vs local
+npx supabase migration list
 ```
 
-## What is needed from you
-
-- **`DATABASE_URL`** (Supabase PostgreSQL connection URI with the DB password).
-  Nothing else. `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` are for the later
-  Auth/Storage phase and are **not** used by the database adapter.
-- Do **not** paste the password into chat or commit it. Put it in the shell
-  command above or in the gitignored `.env`.
-
-## Compatibility notes (behavior preservation)
-
-- **Case-insensitive uniqueness**: SQLite used `COLLATE NOCASE`; PostgreSQL uses
-  `UNIQUE INDEX ... ON lower(username/email/phone)`. Queries already compare with
-  `lower(...)`, so lookups are unchanged.
-- **Booleans**: kept as `integer` 0/1 so `Boolean(row.x)` in the domain layer is unchanged.
-- **Timestamps**: kept as ISO-8601 `text`; day-bucketing casts `created_at::date`.
-- **Types**: the `pg` adapter sets int8/numeric parsers to `Number` so `COUNT(*)`/`AVG(score)` stay numbers.
-- **Upserts**: `ON CONFLICT(post_id, user_id) DO UPDATE` is valid in both engines.
-- **Reporting day series**: SQLite uses a recursive CTE; PostgreSQL uses
-  `generate_series` (`domain/reportingService.ts` branches on `getAdapter().dialect`).
+Already-applied migration files are historical record: never edit them to change
+schema. Send RLS/policy changes, new tables, and RPCs as new migrations.
 
 ## Row Level Security
 
-The migration enables RLS on all eight public tables **without policies**. With
-RLS on and no policies, the Supabase Data API (publishable/anon key) cannot read
-or write those tables; the Node server connects as the table owner and bypasses
-RLS, so the API is unchanged. Auth-based policies are added in the Supabase Auth
-phase. `FORCE ROW LEVEL SECURITY` is intentionally not used — it would also block
-the owner and break the server connection.
+RLS is enabled on all eight public tables. The Data API Store connects with the
+service role and bypasses RLS; the publishable/anon key cannot read or write
+those tables (and cannot execute the backend RPCs). Auth-scoped policies are a
+later phase. `FORCE ROW LEVEL SECURITY` is intentionally not used — it would
+also block the owner.
 
-## Still depends on SQLite
+## Files
 
-- The **default** provider and all local/demo flows (`DB_PROVIDER` unset).
-- The test suite (in-memory `:memory:` SQLite; `fileParallelism:false`).
-- `npm run seed` and `npm run dev:api` until `DB_PROVIDER=postgres` + `DATABASE_URL` are set.
-- The SQLite schema is duplicated in `sqliteAdapter.ts`; keep it in sync with the
-  migration file when columns change.
-
-## Verification (this pass)
-
-- `npm run typecheck` — clean (all workspaces).
-- `npm run lint` — clean.
-- `npm test` — API **44/44** (8 files, includes 6 new adapter tests), mobile **5/5**.
-- `npm run build -w @findback/api` — clean; `migrate.ts` discovers
-  `20260912000000_init.sql`.
-- **Not yet applied to Supabase** (no `DATABASE_URL`), so the Postgres schema is
-  written and unit-tested but not executed against a live database.
+- `services/api/src/db/store/types.ts` — typed `Store` contract.
+- `services/api/src/db/store/supabaseStore.ts` — production implementation (Data API + RPCs).
+- `services/api/src/db/store/sqliteStore.ts` — test/local implementation.
+- `services/api/src/db/sqliteAdapter.ts` — SQLite `DbAdapter` + local schema.
+- `services/api/src/db/index.ts` — `getStore()` selection, `getAdapter()`, test helpers.
+- `supabase/migrations/*.sql` — schema, RLS hardening, and RPCs.

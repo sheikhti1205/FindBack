@@ -48,6 +48,6 @@ mobile/UI flow exercised).
 - Verification evidence: API test suites (8 files / 44 tests), mobile unit
   tests, mobile production build, and a live browser E2E pass (sign-in, feed,
   comments with live dedupe, ratings, reactions, map embed).
-- Persistence now has a provider seam: `DB_PROVIDER=sqlite` (default/local demo)
-  or `postgres` (Supabase adapter + migration, not yet applied). See
+- Persistence has a Store seam: `SupabaseStore` (Data API) is the real
+  application backend; in-memory SQLite is the test/local-demo backend. See
   `docs/DATABASE_MIGRATION.md`.
