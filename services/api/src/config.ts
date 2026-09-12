@@ -20,6 +20,17 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const rootEnvPath = path.resolve(packageRoot, "..", "..", ".env");
 dotenv.config({ path: rootEnvPath, quiet: true });
 
+/**
+ * Persistence backend. `sqlite` is the safe default used by the automated test
+ * harness and local demo; the real application sets DB_PROVIDER=supabase.
+ * Tests are pinned to SQLite so they can never accidentally reach the live
+ * Supabase project even if DB_PROVIDER is set in the environment.
+ */
+const dbProvider: "sqlite" | "supabase" =
+  process.env.NODE_ENV === "test" || process.env.DB_PROVIDER !== "supabase"
+    ? "sqlite"
+    : "supabase";
+
 export const config = {
   packageRoot,
   port: Number(process.env.PORT ?? 4000),
@@ -36,11 +47,10 @@ export const config = {
       : process.env.DB_FILE ??
         path.resolve(packageRoot, "data", "findback.db"),
   /**
-   * Selects the persistence backend. Defaults to the local SQLite provider;
-   * set DB_PROVIDER=supabase to use the Supabase Data API. The legacy
-   * DB_PROVIDER=postgres path is retained until it is removed.
+   * Selects the persistence backend (see `dbProvider` above). `sqlite` powers
+   * the tests and local demo; `supabase` is the real application backend.
    */
-  dbProvider: (process.env.DB_PROVIDER ?? "sqlite") as "sqlite" | "postgres" | "supabase",
+  dbProvider,
   /**
    * Supabase project URL. Used by the Data API Store (server-side only).
    */
@@ -50,12 +60,6 @@ export const config = {
    * RLS and must NEVER be exposed to apps/mobile or any VITE_ variable.
    */
   supabaseSecretKey: process.env.SUPABASE_SECRET_KEY ?? "",
-  /**
-   * PostgreSQL connection string (Supabase "Connect" → URI, includes the DB
-   * password). Only read when DB_PROVIDER=postgres. Never logged or echoed.
-   * Deprecated: the runtime no longer requires a direct PostgreSQL connection.
-   */
-  databaseUrl: process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? "",
   uploadsDir: process.env.UPLOADS_DIR ?? path.resolve(packageRoot, "uploads"),
   /** Public base URL the mobile/web app uses to reach this API. */
   publicUrl: process.env.PUBLIC_URL ?? `http://localhost:${Number(process.env.PORT ?? 4000)}`,

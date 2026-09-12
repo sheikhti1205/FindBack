@@ -40,8 +40,8 @@ const COMMENT_SELECT = `
 `;
 
 /**
- * SQL-based Store. Uses the SQL adapter (SQLite today, legacy PostgreSQL until
- * it is removed) and is the backend for the automated test suite.
+ * SQLite-backed Store. Powers the automated test suite and local demo; the real
+ * application uses `SupabaseStore` against the Supabase Data API.
  */
 export class SqliteStore implements Store {
   readonly provider = "sqlite" as const;
@@ -398,17 +398,6 @@ export class SqliteStore implements Store {
   }
 
   async activityByDay(sinceDay: string): Promise<DayBucket[]> {
-    if (this.adapter.dialect === "postgres") {
-      return this.adapter.all<DayBucket>(
-        `
-    SELECT to_char(d, 'YYYY-MM-DD') AS date,
-           (SELECT COUNT(*) FROM item_posts WHERE created_at::date = d::date) AS posts,
-           (SELECT COUNT(*) FROM comments  WHERE created_at::date = d::date) AS comments,
-           (SELECT COUNT(*) FROM users     WHERE created_at::date = d::date) AS newUsers
-    FROM generate_series($1::date, CURRENT_DATE, interval '1 day') AS d`,
-        [sinceDay],
-      );
-    }
     return this.adapter.all<DayBucket>(
       `
     WITH RECURSIVE days(d) AS (
