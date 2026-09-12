@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { get, run } from "../db/index.js";
+import { getStore } from "../db/index.js";
 import { config } from "../config.js";
 import { AppError, newId, nowIso } from "./helpers.js";
 import type { Row } from "../db/index.js";
@@ -42,15 +42,10 @@ export async function sendChallenge(
   channel: Channel,
   provider: VerificationProvider,
 ): Promise<{ devCode?: string; expiresInSeconds: number; resendAfterSeconds: number }> {
-  const user = await get<Row>("SELECT * FROM users WHERE id = ?", [userId]);
+  const user = await getStore().findUserById(userId);
   if (!user) throw new AppError(404, "User not found");
 
-  const pending = await get<Row>(
-    `SELECT created_at FROM verification_challenges
-     WHERE user_id = ? AND channel = ? AND verified_at IS NULL
-     ORDER BY created_at DESC LIMIT 1`,
-    [userId, channel],
-  );
+  const pending = await getStore().findLatestPendingChallenge(userId, channel);
   if (pending) {
     const elapsed = Date.now() - Date.parse(String(pending.created_at));
     if (elapsed < RESEND_COOLDOWN_MS) {
@@ -63,11 +58,14 @@ export async function sendChallenge(
   const id = newId();
   const now = nowIso();
   const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
-  await run(
-    `INSERT INTO verification_challenges (id, user_id, channel, code_hash, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, userId, channel, codeHash(code), expiresAt, now],
-  );
+  await getStore().insertChallenge({
+    id,
+    user_id: userId,
+    channel,
+    code_hash: codeHash(code),
+    expires_at: expiresAt,
+    created_at: now,
+  });
   await provider.send(channel, channelDestination(user, channel), code);
 
   return {
@@ -84,12 +82,7 @@ export async function verifyChallenge(
   channel: Channel,
   code: string,
 ): Promise<{ emailVerified: boolean; phoneVerified: boolean }> {
-  const challenge = await get<Row>(
-    `SELECT * FROM verification_challenges
-     WHERE user_id = ? AND channel = ? AND verified_at IS NULL
-     ORDER BY created_at DESC LIMIT 1`,
-    [userId, channel],
-  );
+  const challenge = await getStore().findLatestPendingChallenge(userId, channel);
   if (!challenge) throw new AppError(400, `No pending ${channel} verification`);
   if (Date.now() > Date.parse(String(challenge.expires_at))) {
     throw new AppError(400, "Verification code expired. Request a new one");
@@ -98,16 +91,10 @@ export async function verifyChallenge(
     throw new AppError(400, "Incorrect verification code");
   }
 
-  await run("UPDATE verification_challenges SET verified_at = ? WHERE id = ?", [
-    nowIso(),
-    String(challenge.id),
-  ]);
+  await getStore().markChallengeVerified(String(challenge.id), nowIso());
   const field = channel === "EMAIL" ? "email_verified" : "phone_verified";
-  await run(`UPDATE users SET ${field} = 1, updated_at = ? WHERE id = ?`, [
-    nowIso(),
-    userId,
-  ]);
-  const user = await get<Row>("SELECT * FROM users WHERE id = ?", [userId]);
+  await getStore().setUserVerified(userId, field);
+  const user = await getStore().findUserById(userId);
   return {
     emailVerified: Boolean(user!.email_verified),
     phoneVerified: Boolean(user!.phone_verified),

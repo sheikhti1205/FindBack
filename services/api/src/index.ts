@@ -1,13 +1,13 @@
 import http from "node:http";
 import { createApp } from "./app.js";
 import { config } from "./config.js";
-import { getAdapter } from "./db/index.js";
+import { getStore } from "./db/index.js";
 import { seedDatabase } from "./db/seed.js";
 import { attachRealtime } from "./realtime/socket.js";
 
 async function main(): Promise<void> {
-  await getAdapter().init();
-  if (process.env.NODE_ENV !== "test") {
+  await getStore().init();
+  if (process.env.NODE_ENV !== "test" && config.dbProvider !== "supabase") {
     await seedDatabase();
   }
   const app = createApp();

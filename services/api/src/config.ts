@@ -1,4 +1,4 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,6 +7,18 @@ import { fileURLToPath } from "node:url";
  * and from dist/ (compiled node start).
  */
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Monorepo root (services/api -> repo root). There is exactly ONE environment
+ * file, `<repo>/.env`, resolved relative to this module so it loads no matter
+ * what process.cwd() is (repo root, services/api, or a deploy runner).
+ *
+ * dotenv never overrides variables already present in the real process
+ * environment, so platform-injected config wins. A missing file is fine —
+ * production can supply the variables directly.
+ */
+const rootEnvPath = path.resolve(packageRoot, "..", "..", ".env");
+dotenv.config({ path: rootEnvPath, quiet: true });
 
 export const config = {
   packageRoot,
@@ -24,13 +36,24 @@ export const config = {
       : process.env.DB_FILE ??
         path.resolve(packageRoot, "data", "findback.db"),
   /**
-   * Selects the persistence backend. Defaults to the working local SQLite
-   * provider; set DB_PROVIDER=postgres to use Supabase/PostgreSQL.
+   * Selects the persistence backend. Defaults to the local SQLite provider;
+   * set DB_PROVIDER=supabase to use the Supabase Data API. The legacy
+   * DB_PROVIDER=postgres path is retained until it is removed.
    */
-  dbProvider: (process.env.DB_PROVIDER ?? "sqlite") as "sqlite" | "postgres",
+  dbProvider: (process.env.DB_PROVIDER ?? "sqlite") as "sqlite" | "postgres" | "supabase",
+  /**
+   * Supabase project URL. Used by the Data API Store (server-side only).
+   */
+  supabaseUrl: process.env.SUPABASE_URL ?? "",
+  /**
+   * Supabase backend secret key (service role). Server-side only: it bypasses
+   * RLS and must NEVER be exposed to apps/mobile or any VITE_ variable.
+   */
+  supabaseSecretKey: process.env.SUPABASE_SECRET_KEY ?? "",
   /**
    * PostgreSQL connection string (Supabase "Connect" → URI, includes the DB
    * password). Only read when DB_PROVIDER=postgres. Never logged or echoed.
+   * Deprecated: the runtime no longer requires a direct PostgreSQL connection.
    */
   databaseUrl: process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? "",
   uploadsDir: process.env.UPLOADS_DIR ?? path.resolve(packageRoot, "uploads"),
