@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { config } from "../config.js";
-import { run, get } from "../db/index.js";
+import { getStore } from "../db/index.js";
 import { newId, nowIso } from "./helpers.js";
 import type { Row } from "../db/index.js";
 
@@ -50,16 +50,20 @@ export async function recordUpload(
     file.mimetype,
     file.originalname,
   );
-  await run(
-    `INSERT INTO uploads (id, user_id, file_name, mime_type, file_size, file_url, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [stored.id, userId, stored.fileName, stored.mimeType, stored.fileSize, stored.fileUrl, nowIso()],
-  );
+  await getStore().insertUpload({
+    id: stored.id,
+    user_id: userId,
+    file_name: stored.fileName,
+    mime_type: stored.mimeType,
+    file_size: stored.fileSize,
+    file_url: stored.fileUrl,
+    created_at: nowIso(),
+  });
   return stored;
 }
 
 export function getUpload(id: string): Promise<Row | undefined> {
-  return get<Row>("SELECT * FROM uploads WHERE id = ?", [id]);
+  return getStore().findUploadById(id);
 }
 
 export function randomIdForFile(): string {

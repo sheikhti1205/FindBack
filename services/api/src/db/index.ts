@@ -1,11 +1,16 @@
 import { config } from "../config.js";
 import { SqliteAdapter } from "./sqliteAdapter.js";
 import { PostgresAdapter, createPgPool } from "./postgresAdapter.js";
+import { SqliteStore } from "./store/sqliteStore.js";
+import { SupabaseStore } from "./store/supabaseStore.js";
+import type { Store } from "./store/types.js";
 import type { DbAdapter, Dialect, Row, SqlValue } from "./types.js";
 
 export type { DbAdapter, Dialect, Row, SqlValue };
+export type { Store } from "./store/types.js";
 
 let adapter: DbAdapter | null = null;
+let store: Store | null = null;
 
 /**
  * The active database adapter, chosen once by DB_PROVIDER.
@@ -32,6 +37,24 @@ export async function closeDb(): Promise<void> {
     await adapter.close();
     adapter = null;
   }
+  store = null;
+}
+
+/**
+ * The active typed Store used by the domain services.
+ *
+ * `supabase` targets the Supabase Data API with the backend-only secret key;
+ * every other provider keeps using the SQL adapter (tests + local dev) until
+ * the Supabase CRUD block lands.
+ */
+export function getStore(): Store {
+  if (store) return store;
+  if (config.dbProvider === "supabase") {
+    store = new SupabaseStore(config.supabaseUrl, config.supabaseSecretKey);
+  } else {
+    store = new SqliteStore(getAdapter());
+  }
+  return store;
 }
 
 /** Rebuild the active database (used by tests). */
