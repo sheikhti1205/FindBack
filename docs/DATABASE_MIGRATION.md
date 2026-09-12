@@ -78,6 +78,16 @@ npx supabase migration list
 Already-applied migration files are historical record: never edit them to change
 schema. Send RLS/policy changes, new tables, and RPCs as new migrations.
 
+## Auth migration progress
+
+`public.users.password_hash` is now **nullable** (migration
+`20260912190128_auth_password_hash_nullable`). Supabase Auth will own password
+storage, so a production profile row can be inserted without a password. The
+column itself is kept for now because the local/SQLite auth provider still uses
+it; dropping it is deferred until the Supabase Auth cutover is complete. User IDs
+stay `text` (a Supabase Auth UUID is stored as its string form) and no
+`auth.users` foreign key is added.
+
 ## Row Level Security
 
 RLS is enabled on all eight public tables. The Data API Store connects with the
