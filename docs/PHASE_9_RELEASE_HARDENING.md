@@ -5,7 +5,7 @@ This phase starts after the Phase 8 checkpoint. The codebase already has all 24 
 ## What the agent can complete autonomously
 
 - Keep lint, typecheck, API tests, mobile tests, and web build green.
-- Build the Android debug APK in GitHub Actions and upload it as a workflow artifact.
+- Build the Android debug APK **locally** with `npm run apk` (GitHub Actions does not build the app).
 - Audit the Android manifest, SDK targets, Capacitor configuration, runtime permissions, network-security assumptions, and package metadata.
 - Add or improve automated tests for the required feature paths.
 - Harden local/demo provider abstractions without choosing a production provider.
@@ -34,8 +34,7 @@ This phase starts after the Phase 8 checkpoint. The codebase already has all 24 
 - [ ] API tests pass.
 - [ ] Mobile tests pass.
 - [ ] Mobile production bundle builds.
-- [ ] Android debug APK builds in CI.
-- [ ] APK is uploaded as a downloadable workflow artifact.
+- [ ] Android debug APK builds locally (`npm run apk`).
 
 ### Android/device gate
 - [ ] Install APK on Android 14/15/16-capable device or emulator.
