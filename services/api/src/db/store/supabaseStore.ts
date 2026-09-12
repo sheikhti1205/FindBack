@@ -89,12 +89,6 @@ export class SupabaseStore implements Store {
     if (error) throw new Error(`Supabase Data API unreachable: ${error.message}`);
   }
 
-  private pending(name: string): Promise<never> {
-    return Promise.reject(
-      new Error(`SupabaseStore.${name}() is not supported yet (requires SQL RPC in a later block)`),
-    );
-  }
-
   // ---- users ----
   async findUserById(id: string): Promise<Row | undefined> {
     const { data, error } = await this.client
@@ -193,12 +187,38 @@ export class SupabaseStore implements Store {
     return row;
   }
 
-  queryPosts(filter: PostFilter, limit: number): Promise<Row[]> {
-    return this.pending(`queryPosts(${JSON.stringify(filter)},${limit})`);
+  private feedArgs(filter: PostFilter, limit: number): Record<string, unknown> {
+    return {
+      p_user_id: filter.userId ?? null,
+      p_type: filter.type ?? null,
+      p_category: filter.category ?? null,
+      p_status: filter.status ?? null,
+      p_q: filter.q ?? null,
+      p_date_from: filter.dateFrom ?? null,
+      p_date_to: filter.dateTo ?? null,
+      p_cursor_created_at: filter.cursor?.createdAt ?? null,
+      p_cursor_id: filter.cursor?.id ?? null,
+      p_order: filter.order,
+      p_limit: limit,
+    };
   }
 
-  countPosts(filter: PostFilter): Promise<number> {
-    return this.pending(`countPosts(${JSON.stringify(filter)})`);
+  async queryPosts(filter: PostFilter, limit: number): Promise<Row[]> {
+    const { data, error } = await this.client.rpc(
+      "findback_query_posts",
+      this.feedArgs(filter, limit),
+    );
+    if (error) fail("queryPosts", error);
+    return (data ?? []) as Row[];
+  }
+
+  async countPosts(filter: PostFilter): Promise<number> {
+    // Same RPC, one row requested: `total_count` is a window count over the
+    // fully filtered set, so no separate count query/RPC is needed.
+    const { data, error } = await this.client.rpc("findback_query_posts", this.feedArgs(filter, 1));
+    if (error) fail("countPosts", error);
+    const rows = (data ?? []) as Row[];
+    return rows.length ? Number(rows[0]!.total_count ?? 0) : 0;
   }
 
   async insertPost(row: PostInsert): Promise<void> {
@@ -421,21 +441,69 @@ export class SupabaseStore implements Store {
     return (data as Row | null) ?? undefined;
   }
 
-  // ---- reporting (RPC block; intentionally unsupported) ----
-  reportSummary(days: number): Promise<ReportSummary> {
-    return this.pending(`reportSummary(${days})`);
+  // ---- reporting (single findback_report RPC bundle) ----
+  private async fetchReport(days: number, topLimit = 8): Promise<Record<string, unknown>> {
+    const { data, error } = await this.client.rpc("findback_report", {
+      p_days: days,
+      p_top_limit: topLimit,
+    });
+    if (error) fail("findback_report", error);
+    return (data ?? {}) as Record<string, unknown>;
   }
 
-  activityByDay(sinceDay: string): Promise<DayBucket[]> {
-    return this.pending(`activityByDay(${sinceDay})`);
+  private daysFromSinceDay(sinceDay: string): number {
+    const since = Date.parse(`${sinceDay}T00:00:00.000Z`);
+    if (!Number.isFinite(since)) return 14;
+    const days = Math.floor((Date.now() - since) / 86_400_000);
+    return Math.min(90, Math.max(1, days));
   }
 
-  groupPostCount(field: "type" | "status" | "category"): Promise<GroupCount[]> {
-    return this.pending(`groupPostCount(${field})`);
+  async reportSummary(days: number): Promise<ReportSummary> {
+    const report = await this.fetchReport(days);
+    const s = (report.summary ?? {}) as Record<string, unknown>;
+    return {
+      totalPosts: Number(s.totalPosts ?? 0),
+      openPosts: Number(s.openPosts ?? 0),
+      recoveredPosts: Number(s.recoveredPosts ?? 0),
+      matchedPosts: Number(s.matchedPosts ?? 0),
+      closedPosts: Number(s.closedPosts ?? 0),
+      lostPosts: Number(s.lostPosts ?? 0),
+      foundPosts: Number(s.foundPosts ?? 0),
+      totalUsers: Number(s.totalUsers ?? 0),
+      totalComments: Number(s.totalComments ?? 0),
+      totalReactions: Number(s.totalReactions ?? 0),
+      totalRatings: Number(s.totalRatings ?? 0),
+      averageRating: s.averageRating == null ? null : Number(s.averageRating),
+      postsLast7Days: Number(s.postsLast7Days ?? 0),
+    };
   }
 
-  topContributors(limit: number): Promise<Contributor[]> {
-    return this.pending(`topContributors(${limit})`);
+  async activityByDay(sinceDay: string): Promise<DayBucket[]> {
+    const report = await this.fetchReport(this.daysFromSinceDay(sinceDay));
+    const rows = Array.isArray(report.byDay) ? (report.byDay as Row[]) : [];
+    return rows.map((r) => ({
+      date: String(r.date),
+      posts: Number(r.posts ?? 0),
+      comments: Number(r.comments ?? 0),
+      newUsers: Number(r.newUsers ?? 0),
+    }));
+  }
+
+  async groupPostCount(field: "type" | "status" | "category"): Promise<GroupCount[]> {
+    const report = await this.fetchReport(14);
+    const key = field === "type" ? "byType" : field === "status" ? "byStatus" : "byCategory";
+    const rows = Array.isArray(report[key]) ? (report[key] as Row[]) : [];
+    return rows.map((r) => ({ value: String(r.value), count: Number(r.count ?? 0) }));
+  }
+
+  async topContributors(limit: number): Promise<Contributor[]> {
+    const report = await this.fetchReport(14, limit);
+    const rows = Array.isArray(report.topContributors) ? (report.topContributors as Row[]) : [];
+    return rows.map((r) => ({
+      username: String(r.username),
+      posts: Number(r.posts ?? 0),
+      comments: Number(r.comments ?? 0),
+    }));
   }
 
   private async countRows(table: string, column: string, value: string): Promise<number> {
