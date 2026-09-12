@@ -105,3 +105,18 @@ create index if not exists idx_posts_category on item_posts (category);
 create index if not exists idx_posts_user on item_posts (user_id);
 create index if not exists idx_comments_post on comments (post_id, created_at);
 create index if not exists idx_challenges_user_channel on verification_challenges (user_id, channel);
+
+-- Row Level Security.
+-- Enabled with NO policies: the Supabase Data API (publishable/anon key) cannot
+-- read or write these tables. The Node/Postgres server connects as the table
+-- owner, which bypasses RLS, so the API keeps working unchanged. Auth-based
+-- policies are added in a later phase, after Supabase Auth is integrated.
+-- (Deliberately not FORCE ROW LEVEL SECURITY, which would also block the owner.)
+alter table users                  enable row level security;
+alter table item_posts             enable row level security;
+alter table attachments            enable row level security;
+alter table comments               enable row level security;
+alter table reactions              enable row level security;
+alter table ratings                enable row level security;
+alter table verification_challenges enable row level security;
+alter table uploads                enable row level security;

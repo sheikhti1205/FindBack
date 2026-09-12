@@ -64,6 +64,15 @@ DB_PROVIDER=postgres DATABASE_URL="…" npm run dev:api
 - **Reporting day series**: SQLite uses a recursive CTE; PostgreSQL uses
   `generate_series` (`domain/reportingService.ts` branches on `getAdapter().dialect`).
 
+## Row Level Security
+
+The migration enables RLS on all eight public tables **without policies**. With
+RLS on and no policies, the Supabase Data API (publishable/anon key) cannot read
+or write those tables; the Node server connects as the table owner and bypasses
+RLS, so the API is unchanged. Auth-based policies are added in the Supabase Auth
+phase. `FORCE ROW LEVEL SECURITY` is intentionally not used — it would also block
+the owner and break the server connection.
+
 ## Still depends on SQLite
 
 - The **default** provider and all local/demo flows (`DB_PROVIDER` unset).
