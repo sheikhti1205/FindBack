@@ -1,12 +1,14 @@
 import type { AuthProvider } from "./authProvider.js";
 import { LocalAuthProvider } from "./localAuthProvider.js";
 
-export type {
-  AuthProvider,
-  AuthSession,
-  VerificationChannel,
-  VerificationSendResult,
-  VerificationVerifyResult,
+export {
+  AuthRefreshUnsupportedError,
+  type AuthProvider,
+  type AuthRegistrationResult,
+  type AuthSession,
+  type VerificationChannel,
+  type VerificationResult,
+  type VerificationSendResult,
 } from "./authProvider.js";
 
 let provider: AuthProvider | null = null;

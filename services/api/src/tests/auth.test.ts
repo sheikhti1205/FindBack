@@ -116,4 +116,45 @@ describe("auth + verification", () => {
     const me = await request(app).get("/auth/me").set("Authorization", `Bearer ${token}`);
     expect(me.status).toBe(200);
   });
+
+  it("keeps session internals out of the public REST contract", async () => {
+    const suffix = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const payload = {
+      username: `contract_${suffix}`.slice(0, 20),
+      email: `contract${suffix}@example.com`,
+      phone: `019${String(Math.floor(10000000 + Math.random() * 89999999))}`,
+      password: "password123",
+    };
+
+    const reg = await request(app).post("/auth/register").send(payload).expect(201);
+    expect(Object.keys(reg.body).sort()).toEqual(["token", "user"]);
+    expect(reg.body.refreshToken).toBeUndefined();
+    expect(reg.body.expiresIn).toBeUndefined();
+    expect(reg.body.expiresAt).toBeUndefined();
+    expect(reg.body.emailVerificationRequired).toBeUndefined();
+
+    const login = await request(app)
+      .post("/auth/login")
+      .send({ identifier: payload.username, password: payload.password })
+      .expect(200);
+    expect(Object.keys(login.body).sort()).toEqual(["token", "user"]);
+
+    const logout = await request(app)
+      .post("/auth/logout")
+      .set("Authorization", `Bearer ${reg.body.token}`)
+      .expect(200);
+    expect(logout.body).toEqual({ ok: true });
+
+    const send = await request(app)
+      .post("/verification/EMAIL/send")
+      .set("Authorization", `Bearer ${reg.body.token}`)
+      .expect(200);
+    const verify = await request(app)
+      .post("/verification/EMAIL/verify")
+      .set("Authorization", `Bearer ${reg.body.token}`)
+      .send({ channel: "EMAIL", code: send.body.devCode })
+      .expect(200);
+    expect(Object.keys(verify.body).sort()).toEqual(["emailVerified", "phoneVerified"]);
+    expect(verify.body.session).toBeUndefined();
+  });
 });

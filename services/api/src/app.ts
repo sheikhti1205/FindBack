@@ -24,6 +24,7 @@ import {
   updatePost,
 } from "./domain/postsService.js";
 import { checkUsername, me } from "./domain/authService.js";
+import { AppError } from "./domain/helpers.js";
 import { react } from "./domain/reactionsService.js";
 import { rate } from "./domain/ratingsService.js";
 import { recordUpload } from "./domain/storageService.js";
@@ -75,13 +76,21 @@ export function createApp(): Express {
 
   // ---- auth ----
   app.post("/auth/register", async (req, res) => {
-    res.status(201).json(await getAuthProvider().register(req.body));
+    const { session, user } = await getAuthProvider().register(req.body);
+    if (!session) {
+      // Local signup always yields a session. Until a public pending-email
+      // contract exists (Supabase block), fail loudly instead of leaking shape.
+      throw new AppError(500, "Registration did not produce a session");
+    }
+    res.status(201).json({ token: session.token, user });
   });
   app.post("/auth/login", async (req, res) => {
     res.json(await getAuthProvider().login(req.body));
   });
-  app.post("/auth/logout", async (_req, res) => {
-    await getAuthProvider().signOut();
+  app.post("/auth/logout", async (req, res) => {
+    const header = req.headers.authorization;
+    const accessToken = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+    await getAuthProvider().signOut(accessToken);
     res.json({ ok: true });
   });
   app.get("/auth/me", optionalAuth, async (req, res) => {
@@ -109,7 +118,13 @@ export function createApp(): Express {
       return res.status(400).json({ error: "channel must be EMAIL or PHONE" });
     }
     const body = zodSchemas.verifyChallenge.parse(req.body);
-    res.json(await getAuthProvider().verifyVerificationCode(req.userId!, channel, body.code));
+    const result = await getAuthProvider().verifyVerificationCode(
+      req.userId!,
+      channel,
+      body.code,
+    );
+    // Public contract today exposes only the flags; never a session/token.
+    res.json({ emailVerified: result.emailVerified, phoneVerified: result.phoneVerified });
   });
 
   // ---- posts ----
