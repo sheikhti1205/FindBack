@@ -88,6 +88,14 @@ it; dropping it is deferred until the Supabase Auth cutover is complete. User ID
 stay `text` (a Supabase Auth UUID is stored as its string form) and no
 `auth.users` foreign key is added.
 
+The internal API `AuthProvider` contract is also future-proofed: it can now
+represent a registration with no session yet (pending email confirmation), a
+session that carries optional `refreshToken`/`expiresIn`/`expiresAt`, an explicit
+`refresh()` operation, and a verification result that may carry the first
+session. `LocalAuthProvider` still returns the existing local JWT and the public
+REST contract is unchanged; no Supabase Auth call or schema change is part of
+this step.
+
 ## Row Level Security
 
 RLS is enabled on all eight public tables. The Data API Store connects with the
