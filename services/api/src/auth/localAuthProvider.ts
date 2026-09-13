@@ -6,12 +6,14 @@ import {
   sendChallenge,
   verifyChallenge,
 } from "../domain/verificationService.js";
-import type {
-  AuthProvider,
-  AuthSession,
-  VerificationChannel,
-  VerificationSendResult,
-  VerificationVerifyResult,
+import {
+  AuthRefreshUnsupportedError,
+  type AuthProvider,
+  type AuthRegistrationResult,
+  type AuthSession,
+  type VerificationChannel,
+  type VerificationResult,
+  type VerificationSendResult,
 } from "./authProvider.js";
 
 /**
@@ -23,19 +25,30 @@ import type {
  * reimplementing them.
  */
 export class LocalAuthProvider implements AuthProvider {
-  register(input: z.infer<typeof registerSchema>): Promise<AuthSession> {
-    return register(input);
+  async register(input: z.infer<typeof registerSchema>): Promise<AuthRegistrationResult> {
+    const { token, user } = await register(input);
+    // Local signup is immediately authenticated; no email confirmation gate.
+    return {
+      user,
+      session: { token, user },
+      emailVerificationRequired: false,
+    };
   }
 
   login(input: z.infer<typeof loginSchema>): Promise<AuthSession> {
     return login(input);
   }
 
+  async refresh(_refreshToken: string): Promise<AuthSession> {
+    // Local JWTs are stateless and have no refresh concept.
+    throw new AuthRefreshUnsupportedError("LocalAuthProvider");
+  }
+
   async validateAccessToken(token: string): Promise<{ userId: string }> {
     return verifyToken(token);
   }
 
-  async signOut(): Promise<void> {
+  async signOut(_accessToken?: string): Promise<void> {
     // Local JWTs are stateless; the client discards its token. No revocation.
   }
 
@@ -50,7 +63,7 @@ export class LocalAuthProvider implements AuthProvider {
     userId: string,
     channel: VerificationChannel,
     code: string,
-  ): Promise<VerificationVerifyResult> {
+  ): Promise<VerificationResult> {
     return verifyChallenge(userId, channel, code);
   }
 }
