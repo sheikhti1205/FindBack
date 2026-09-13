@@ -109,6 +109,19 @@ unimplemented (a later block). The provider is **not selected** by
 Supabase Auth uses the publishable key for user operations and the secret key
 only for trusted admin operations, both server-side.
 
+Email signup verification is now implemented in `SupabaseAuthProvider` too:
+`resend({ type: "signup", email })` resends the confirmation, and
+`verifyOtp({ email, token, type: "email" })` verifies the six-digit code,
+sets `public.users.email_verified = 1`, and returns the first session. The
+internal verification contract addresses a target (`{ channel: "EMAIL", email?
+| userId? }` or `{ channel: "PHONE", userId }`) so a pending signup can be
+verified before a user/session exists. Phone verification is still unsupported,
+and the public `/verification/*` routes keep their current authenticated shape
+(the session is dropped). Hosted readiness (read-only check): email provider
+enabled, Confirm email enabled, but the hosted **Confirm signup** template does
+not yet contain `{{ .Token }}`, so a live six-digit email code cannot be
+delivered until that template is updated in a later block.
+
 ## Row Level Security
 
 RLS is enabled on all eight public tables. The Data API Store connects with the
