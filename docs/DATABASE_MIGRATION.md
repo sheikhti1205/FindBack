@@ -39,6 +39,7 @@ Configure the app through a single gitignored root `.env` (see `.env.example`):
 DB_PROVIDER=supabase
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SECRET_KEY=<service-role-key>
+SUPABASE_PUBLISHABLE_KEY=<publishable-anon-key>
 ```
 
 Deployments set the same variables through the platform environment.
@@ -95,6 +96,18 @@ session that carries optional `refreshToken`/`expiresIn`/`expiresAt`, an explici
 session. `LocalAuthProvider` still returns the existing local JWT and the public
 REST contract is unchanged; no Supabase Auth call or schema change is part of
 this step.
+
+`SupabaseAuthProvider` now implements the core operations against Supabase Auth:
+`register` calls `signUp` and writes the profile row with `password_hash = null`
+(rolling back the Auth user through the admin API if the profile insert fails),
+`login` resolves the identifier to an email and calls `signInWithPassword`,
+`refresh` calls `refreshSession`, `validateAccessToken` uses `getClaims` (JWKS
+verification for asymmetric signing keys), and `signOut` revokes only the current
+session through the admin API. Email/phone verification stays deliberately
+unimplemented (a later block). The provider is **not selected** by
+`getAuthProvider()`; the running application still uses `LocalAuthProvider`.
+Supabase Auth uses the publishable key for user operations and the secret key
+only for trusted admin operations, both server-side.
 
 ## Row Level Security
 

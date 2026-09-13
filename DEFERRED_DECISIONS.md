@@ -7,7 +7,7 @@ provider wiring, and document the exact files to change later.
 | Decision | Temporary choice | Options later | Files to change later | Must not block now |
 |---|---|---|---|---|
 | Backend/cloud platform | Supabase (project provisioned); Node/TS API reaches data via the Supabase Data API (`SupabaseStore`); SQLite is the test-only backend | Supabase / Firebase / hybrid | `docs/DATABASE_MIGRATION.md`, `supabase/migrations/` | Yes |
-| Auth provider | Local JWT demo adapter | Supabase Auth / Firebase Auth | `services/api/src/auth`, mobile `src/services/auth.ts` | Yes |
+| Auth provider | Local JWT demo adapter (SupabaseAuthProvider implemented but not selected yet) | Supabase Auth / Firebase Auth | `services/api/src/auth`, mobile `src/services/auth.ts` | Yes |
 | Email verification | Dev adapter (returns code in dev log/response, not sent) | Supabase / Firebase / email provider | `services/api/src/providers/verification` | Yes |
 | Phone verification | Dev OTP adapter | Firebase Phone Auth / SMS provider | `services/api/src/providers/verification` | Yes |
 | Cloud storage | Local file storage (served from API `/uploads`) | Supabase Storage / Firebase Storage / Cloudinary / S3 | `services/api/src/providers/storage` | Yes |
