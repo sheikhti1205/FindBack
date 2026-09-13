@@ -5,6 +5,23 @@ import type { loginSchema, registerSchema, PublicUser } from "@findback/shared";
 export type VerificationChannel = "EMAIL" | "PHONE";
 
 /**
+ * What a verification send/verify operates on.
+ *
+ * EMAIL may be addressed by `userId` (local, authenticated) or by `email` alone
+ * (a pending Supabase signup has no session/user yet). PHONE stays userId-only.
+ */
+export type VerificationTarget =
+  | {
+      channel: "EMAIL";
+      userId?: string;
+      email?: string;
+    }
+  | {
+      channel: "PHONE";
+      userId: string;
+    };
+
+/**
  * A provider-issued authenticated session, future-capable of carrying the
  * Supabase Auth shape.
  *
@@ -42,8 +59,10 @@ export interface AuthRegistrationResult {
 export interface VerificationSendResult {
   /** Dev-only: echoed code so the local/demo flow works without a provider. */
   devCode?: string;
-  expiresInSeconds: number;
-  resendAfterSeconds: number;
+  /** Seconds the code stays valid, when the provider knows (local does). */
+  expiresInSeconds?: number;
+  /** Minimum seconds before a resend, when the provider enforces it (local does). */
+  resendAfterSeconds?: number;
 }
 
 /**
@@ -91,13 +110,9 @@ export interface AuthProvider {
    * revoke server-side (Supabase); the local provider ignores it.
    */
   signOut(accessToken?: string): Promise<void>;
-  sendVerificationCode(
-    userId: string,
-    channel: VerificationChannel,
-  ): Promise<VerificationSendResult>;
+  sendVerificationCode(target: VerificationTarget): Promise<VerificationSendResult>;
   verifyVerificationCode(
-    userId: string,
-    channel: VerificationChannel,
+    target: VerificationTarget,
     code: string,
   ): Promise<VerificationResult>;
 }

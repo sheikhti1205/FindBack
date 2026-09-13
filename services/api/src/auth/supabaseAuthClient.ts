@@ -125,6 +125,17 @@ export function createSupabaseAuthOperations(client: SupabaseClient): SupabaseAu
         errorMessage: null,
       };
     },
+    async resendSignupEmail(email) {
+      // Resend type is "signup" (the OTP verification type is "email").
+      const { error } = await client.auth.resend({ type: "signup", email });
+      if (error) return { errorCode: error.code ?? null, errorMessage: error.message };
+      return { errorCode: null, errorMessage: null };
+    },
+    async verifyEmailOtp(email, token) {
+      return normalizeAuthOutcome(
+        await client.auth.verifyOtp({ email, token, type: "email" }),
+      );
+    },
   };
 }
 

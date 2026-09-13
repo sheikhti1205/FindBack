@@ -53,20 +53,44 @@ describe("AuthProvider contract (local)", () => {
 
   it("verification returns flags without a session", async () => {
     const registered = await getAuthProvider().register(freshPayload("verify"));
-    const send = await getAuthProvider().sendVerificationCode(
-      registered.user.id,
-      "EMAIL",
-    );
+    const send = await getAuthProvider().sendVerificationCode({
+      channel: "EMAIL",
+      userId: registered.user.id,
+    });
     expect(send.devCode).toMatch(/^\d{6}$/);
 
     const result = await getAuthProvider().verifyVerificationCode(
-      registered.user.id,
-      "EMAIL",
+      { channel: "EMAIL", userId: registered.user.id },
       send.devCode!,
     );
     expect(result.emailVerified).toBe(true);
     expect(result.phoneVerified).toBe(false);
     expect(result.session).toBeUndefined();
+  });
+
+  it("still verifies the phone channel locally", async () => {
+    const registered = await getAuthProvider().register(freshPayload("phone"));
+    const send = await getAuthProvider().sendVerificationCode({
+      channel: "PHONE",
+      userId: registered.user.id,
+    });
+    expect(send.devCode).toMatch(/^\d{6}$/);
+
+    const result = await getAuthProvider().verifyVerificationCode(
+      { channel: "PHONE", userId: registered.user.id },
+      send.devCode!,
+    );
+    expect(result.phoneVerified).toBe(true);
+    expect(result.emailVerified).toBe(false);
+  });
+
+  it("local verification requires a userId", async () => {
+    await expect(
+      getAuthProvider().sendVerificationCode({ channel: "EMAIL" }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      getAuthProvider().verifyVerificationCode({ channel: "EMAIL" }, "123456"),
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("refresh explicitly reports unsupported behavior", async () => {

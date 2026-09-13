@@ -32,7 +32,7 @@ import { activityReport, reportToCsv } from "./domain/reportingService.js";
 import { aiAssistantProvider } from "./providers/aiProvider.js";
 import { graphqlSchema } from "./graphql/schema.js";
 import { config } from "./config.js";
-import { getAuthProvider, type VerificationChannel } from "./auth/index.js";
+import { getAuthProvider, type VerificationChannel, type VerificationTarget } from "./auth/index.js";
 import { errorHandler, optionalAuth, requireAuth } from "./middleware/http.js";
 
 const zodSchemas = {
@@ -110,7 +110,11 @@ export function createApp(): Express {
     if (channel !== "EMAIL" && channel !== "PHONE") {
       return res.status(400).json({ error: "channel must be EMAIL or PHONE" });
     }
-    res.json(await getAuthProvider().sendVerificationCode(req.userId!, channel));
+    const target: VerificationTarget =
+      channel === "EMAIL"
+        ? { channel: "EMAIL", userId: req.userId! }
+        : { channel: "PHONE", userId: req.userId! };
+    res.json(await getAuthProvider().sendVerificationCode(target));
   });
   app.post("/verification/:channel/verify", requireAuth, async (req, res) => {
     const channel = paramOf(req, "channel") as VerificationChannel;
@@ -118,11 +122,11 @@ export function createApp(): Express {
       return res.status(400).json({ error: "channel must be EMAIL or PHONE" });
     }
     const body = zodSchemas.verifyChallenge.parse(req.body);
-    const result = await getAuthProvider().verifyVerificationCode(
-      req.userId!,
-      channel,
-      body.code,
-    );
+    const target: VerificationTarget =
+      channel === "EMAIL"
+        ? { channel: "EMAIL", userId: req.userId! }
+        : { channel: "PHONE", userId: req.userId! };
+    const result = await getAuthProvider().verifyVerificationCode(target, body.code);
     // Public contract today exposes only the flags; never a session/token.
     res.json({ emailVerified: result.emailVerified, phoneVerified: result.phoneVerified });
   });

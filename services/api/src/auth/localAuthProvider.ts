@@ -6,15 +6,25 @@ import {
   sendChallenge,
   verifyChallenge,
 } from "../domain/verificationService.js";
+import { AppError } from "../domain/helpers.js";
 import {
   AuthRefreshUnsupportedError,
   type AuthProvider,
   type AuthRegistrationResult,
   type AuthSession,
-  type VerificationChannel,
   type VerificationResult,
   type VerificationSendResult,
+  type VerificationTarget,
 } from "./authProvider.js";
+
+/** Local verification is always bound to an authenticated user. */
+function requireUserId(target: VerificationTarget): string {
+  const userId = "userId" in target ? target.userId : undefined;
+  if (!userId) {
+    throw new AppError(400, "Verification requires an authenticated user");
+  }
+  return userId;
+}
 
 /**
  * Local auth provider — the original FindBack behavior: bcrypt password hashing,
@@ -52,18 +62,16 @@ export class LocalAuthProvider implements AuthProvider {
     // Local JWTs are stateless; the client discards its token. No revocation.
   }
 
-  sendVerificationCode(
-    userId: string,
-    channel: VerificationChannel,
-  ): Promise<VerificationSendResult> {
-    return sendChallenge(userId, channel, devVerificationProvider);
+  async sendVerificationCode(target: VerificationTarget): Promise<VerificationSendResult> {
+    const userId = requireUserId(target);
+    return sendChallenge(userId, target.channel, devVerificationProvider);
   }
 
-  verifyVerificationCode(
-    userId: string,
-    channel: VerificationChannel,
+  async verifyVerificationCode(
+    target: VerificationTarget,
     code: string,
   ): Promise<VerificationResult> {
-    return verifyChallenge(userId, channel, code);
+    const userId = requireUserId(target);
+    return verifyChallenge(userId, target.channel, code);
   }
 }
