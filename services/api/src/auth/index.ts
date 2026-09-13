@@ -9,6 +9,7 @@ export {
   type VerificationChannel,
   type VerificationResult,
   type VerificationSendResult,
+  type VerificationTarget,
 } from "./authProvider.js";
 export {
   SupabaseAuthProvider,

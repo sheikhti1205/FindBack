@@ -101,6 +101,8 @@ function authOps(overrides: Partial<SupabaseAuthOperations>): SupabaseAuthOperat
     signInWithPassword: async () => emptyOutcome(),
     refreshSession: async () => emptyOutcome(),
     getClaims: async () => ({ sub: null, errorMessage: "unused" }),
+    resendSignupEmail: async () => ({ errorCode: null, errorMessage: null }),
+    verifyEmailOtp: async () => emptyOutcome(),
     ...overrides,
   };
 }
@@ -573,20 +575,255 @@ describe("SupabaseAuthProvider.signOut", () => {
   });
 });
 
-// ---- verification (intentionally unsupported) ----
+// ---- email verification (Supabase) ----
 
-describe("SupabaseAuthProvider verification", () => {
+describe("SupabaseAuthProvider email verification send", () => {
+  it("resends a signup confirmation to a direct email target", async () => {
+    const seen: string[] = [];
+    const provider = makeProvider(
+      new FakeStore(),
+      authOps({
+        resendSignupEmail: async (email) => {
+          seen.push(email);
+          return { errorCode: null, errorMessage: null };
+        },
+      }),
+    );
+
+    await expect(
+      provider.sendVerificationCode({ channel: "EMAIL", email: "New@Example.com " }),
+    ).resolves.toEqual({});
+    expect(seen).toEqual(["New@Example.com"]);
+  });
+
+  it("resolves the email from the Store when only a userId is given", async () => {
+    const store = new FakeStore();
+    store.seed({ id: "u1", email: "stored@example.com" });
+    const seen: string[] = [];
+    const provider = makeProvider(
+      store,
+      authOps({
+        resendSignupEmail: async (email) => {
+          seen.push(email);
+          return { errorCode: null, errorMessage: null };
+        },
+      }),
+    );
+
+    await provider.sendVerificationCode({ channel: "EMAIL", userId: "u1" });
+    expect(seen).toEqual(["stored@example.com"]);
+  });
+
+  it("rejects an EMAIL target with neither email nor userId", async () => {
+    const provider = makeProvider(new FakeStore(), authOps({}));
+    await expect(
+      provider.sendVerificationCode({ channel: "EMAIL" }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("maps resend rate limiting to 429", async () => {
+    const provider = makeProvider(
+      new FakeStore(),
+      authOps({
+        resendSignupEmail: async () => ({
+          errorCode: "over_email_send_rate_limit",
+          errorMessage: "Email rate limit exceeded",
+        }),
+      }),
+    );
+
+    await expect(
+      provider.sendVerificationCode({ channel: "EMAIL", email: "a@example.com" }),
+    ).rejects.toMatchObject({ status: 429 });
+  });
+
+  it("stays silent for unknown emails to avoid enumeration", async () => {
+    const provider = makeProvider(
+      new FakeStore(),
+      authOps({
+        resendSignupEmail: async () => ({
+          errorCode: "user_not_found",
+          errorMessage: "User not found",
+        }),
+      }),
+    );
+
+    await expect(
+      provider.sendVerificationCode({ channel: "EMAIL", email: "ghost@example.com" }),
+    ).resolves.toEqual({});
+  });
+});
+
+describe("SupabaseAuthProvider email verification verify", () => {
+  it("verifies the OTP, sets email_verified, and returns the first session", async () => {
+    const store = new FakeStore();
+    store.seed({
+      id: "auth-1",
+      username: "verify_user",
+      email: "verify@example.com",
+      email_verified: 0,
+      phone_verified: 1,
+    });
+    const calls: Array<[string, string]> = [];
+    const provider = makeProvider(
+      store,
+      authOps({
+        verifyEmailOtp: async (email, token) => {
+          calls.push([email, token]);
+          return {
+            user: authUser("auth-1", { email: "verify@example.com" }),
+            session: session({ accessToken: "access-9", refreshToken: "refresh-9" }),
+            errorMessage: null,
+          };
+        },
+      }),
+    );
+
+    const result = await provider.verifyVerificationCode(
+      { channel: "EMAIL", email: "verify@example.com" },
+      "123456",
+    );
+
+    expect(calls).toEqual([["verify@example.com", "123456"]]);
+    expect(result.emailVerified).toBe(true);
+    expect(result.phoneVerified).toBe(true);
+    expect(result.session?.token).toBe("access-9");
+    expect(result.session?.refreshToken).toBe("refresh-9");
+    expect(result.session?.expiresIn).toBe(3600);
+    expect(result.session?.expiresAt).toBe(1700000000);
+    expect(result.session?.user.id).toBe("auth-1");
+    expect(store.users.get("auth-1")?.email_verified).toBe(1);
+  });
+
+  it("maps invalid or expired OTP to 400", async () => {
+    const store = new FakeStore();
+    store.seed({ id: "auth-2", email: "v2@example.com" });
+    const provider = makeProvider(
+      store,
+      authOps({
+        verifyEmailOtp: async () => ({
+          user: null,
+          session: null,
+          errorCode: "otp_expired",
+          errorMessage: "Token has expired or is invalid",
+        }),
+      }),
+    );
+
+    await expect(
+      provider.verifyVerificationCode({ channel: "EMAIL", email: "v2@example.com" }, "000000"),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("rejects a malformed code before calling Supabase", async () => {
+    let called = false;
+    const provider = makeProvider(
+      new FakeStore(),
+      authOps({
+        verifyEmailOtp: async () => {
+          called = true;
+          return emptyOutcome();
+        },
+      }),
+    );
+
+    await expect(
+      provider.verifyVerificationCode({ channel: "EMAIL", email: "a@example.com" }, "12"),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(called).toBe(false);
+  });
+
+  it("rejects when no session is returned", async () => {
+    const store = new FakeStore();
+    store.seed({ id: "auth-3", email: "v3@example.com" });
+    const provider = makeProvider(
+      store,
+      authOps({
+        verifyEmailOtp: async () => ({
+          user: authUser("auth-3", { email: "v3@example.com" }),
+          session: null,
+          errorMessage: null,
+        }),
+      }),
+    );
+
+    await expect(
+      provider.verifyVerificationCode({ channel: "EMAIL", email: "v3@example.com" }, "123456"),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("rejects when the Auth user id is missing", async () => {
+    const provider = makeProvider(
+      new FakeStore(),
+      authOps({
+        verifyEmailOtp: async () => ({
+          user: null,
+          session: session(),
+          errorMessage: null,
+        }),
+      }),
+    );
+
+    await expect(
+      provider.verifyVerificationCode({ channel: "EMAIL", email: "a@example.com" }, "123456"),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("rejects when the public profile is missing", async () => {
+    const provider = makeProvider(
+      new FakeStore(),
+      authOps({
+        verifyEmailOtp: async () => ({
+          user: authUser("no-profile", { email: "a@example.com" }),
+          session: session(),
+          errorMessage: null,
+        }),
+      }),
+    );
+
+    await expect(
+      provider.verifyVerificationCode({ channel: "EMAIL", email: "a@example.com" }, "123456"),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("rejects an email mismatch and does not verify the profile", async () => {
+    const store = new FakeStore();
+    store.seed({ id: "victim", email: "victim@example.com", email_verified: 0 });
+    const provider = makeProvider(
+      store,
+      authOps({
+        verifyEmailOtp: async () => ({
+          user: authUser("victim", { email: "victim@example.com" }),
+          session: session(),
+          errorMessage: null,
+        }),
+      }),
+    );
+
+    await expect(
+      provider.verifyVerificationCode(
+        { channel: "EMAIL", email: "attacker@example.com" },
+        "123456",
+      ),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(store.users.get("victim")?.email_verified).toBe(0);
+  });
+});
+
+// ---- phone verification stays unsupported ----
+
+describe("SupabaseAuthProvider phone verification", () => {
   it("reports sendVerificationCode as not enabled", async () => {
     const provider = makeProvider(new FakeStore(), authOps({}));
-    await expect(provider.sendVerificationCode("u1", "EMAIL")).rejects.toBeInstanceOf(
-      SupabaseVerificationNotEnabledError,
-    );
+    await expect(
+      provider.sendVerificationCode({ channel: "PHONE", userId: "u1" }),
+    ).rejects.toBeInstanceOf(SupabaseVerificationNotEnabledError);
   });
 
   it("reports verifyVerificationCode as not enabled", async () => {
     const provider = makeProvider(new FakeStore(), authOps({}));
     await expect(
-      provider.verifyVerificationCode("u1", "PHONE", "123456"),
+      provider.verifyVerificationCode({ channel: "PHONE", userId: "u1" }, "123456"),
     ).rejects.toBeInstanceOf(SupabaseVerificationNotEnabledError);
   });
 });
@@ -660,6 +897,50 @@ describe("Supabase Auth adapters", () => {
 
     await createSupabaseAdminOperations(client).revokeSession("jwt-token");
     expect(calls).toEqual([["jwt-token", "local"]]);
+  });
+
+  it("resends the signup confirmation with type signup", async () => {
+    const calls: Array<{ type: string; email: string }> = [];
+    const client = {
+      auth: {
+        resend: async (params: { type: string; email: string }) => {
+          calls.push(params);
+          return { data: { user: null, session: null, messageId: "m" }, error: null };
+        },
+      },
+    } as unknown as SupabaseClient;
+
+    const result = await createSupabaseAuthOperations(client).resendSignupEmail(
+      "person@example.com",
+    );
+    expect(calls).toEqual([{ type: "signup", email: "person@example.com" }]);
+    expect(result).toEqual({ errorCode: null, errorMessage: null });
+  });
+
+  it("verifies the email OTP with type email and normalizes the session", async () => {
+    const calls: Array<{ email: string; token: string; type: string }> = [];
+    const client = {
+      auth: {
+        verifyOtp: async (params: { email: string; token: string; type: string }) => {
+          calls.push(params);
+          return {
+            data: {
+              user: { id: "u", email: "e@example.com", email_confirmed_at: "now", identities: [] },
+              session: { access_token: "a", refresh_token: "r", expires_in: 60, expires_at: 99 },
+            },
+            error: null,
+          };
+        },
+      },
+    } as unknown as SupabaseClient;
+
+    const outcome = await createSupabaseAuthOperations(client).verifyEmailOtp(
+      "e@example.com",
+      "123456",
+    );
+    expect(calls).toEqual([{ email: "e@example.com", token: "123456", type: "email" }]);
+    expect(outcome.session?.accessToken).toBe("a");
+    expect(outcome.user?.id).toBe("u");
   });
 });
 

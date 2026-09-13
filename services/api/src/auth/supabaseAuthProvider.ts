@@ -7,9 +7,9 @@ import type {
   AuthProvider,
   AuthRegistrationResult,
   AuthSession,
-  VerificationChannel,
   VerificationResult,
   VerificationSendResult,
+  VerificationTarget,
 } from "./authProvider.js";
 
 /**
@@ -49,12 +49,21 @@ export interface SupabaseClaimsResult {
   errorMessage: string | null;
 }
 
+export interface SupabaseResendResult {
+  errorCode?: string | null;
+  errorMessage: string | null;
+}
+
 /** Normal Supabase Auth operations (publishable key, user-facing). */
 export interface SupabaseAuthOperations {
   signUp(input: { email: string; password: string }): Promise<SupabaseAuthOutcome>;
   signInWithPassword(input: { email: string; password: string }): Promise<SupabaseAuthOutcome>;
   refreshSession(input: { refresh_token: string }): Promise<SupabaseAuthOutcome>;
   getClaims(token: string): Promise<SupabaseClaimsResult>;
+  /** Resend the signup confirmation email (`resend({ type: "signup" })`). */
+  resendSignupEmail(email: string): Promise<SupabaseResendResult>;
+  /** Verify a signup email OTP (`verifyOtp({ type: "email" })`). */
+  verifyEmailOtp(email: string, token: string): Promise<SupabaseAuthOutcome>;
 }
 
 /** Trusted admin operations (secret key, service-role). Never mobile-facing. */
@@ -109,6 +118,47 @@ function mapRegisterError(outcome: SupabaseAuthOutcome): AppError {
     outcome.errorCode === "phone_exists"
   ) {
     return new AppError(409, "An account with these details already exists");
+  }
+  return new AppError(500, "Authentication service error");
+}
+
+const RATE_LIMIT_CODES = new Set([
+  "over_email_send_rate_limit",
+  "over_request_rate_limit",
+  "rate_limit_exceeded",
+]);
+
+/**
+ * Map a failed confirmation-email resend. Returns `null` for errors that must
+ * stay silent so a resend cannot enumerate accounts (e.g. unknown email).
+ */
+function mapResendError(code?: string | null): AppError | null {
+  if (!code) return null;
+  if (RATE_LIMIT_CODES.has(code)) {
+    return new AppError(429, "Too many resend attempts. Please wait and try again");
+  }
+  if (code === "email_address_invalid" || code === "validation_failed") {
+    return new AppError(400, "A valid email address is required");
+  }
+  if (code === "user_not_found" || code === "email_not_confirmed") {
+    // Enumeration protection: behave as if the confirmation email was sent.
+    return null;
+  }
+  return new AppError(500, "Authentication service error");
+}
+
+/** Map a failed email OTP verification. */
+function mapOtpError(code?: string | null): AppError {
+  if (RATE_LIMIT_CODES.has(code ?? "")) {
+    return new AppError(429, "Too many attempts. Please wait and try again");
+  }
+  if (
+    code === "otp_expired" ||
+    code === "token_has_expired" ||
+    code === "invalid_otp" ||
+    code === "validation_failed"
+  ) {
+    return new AppError(400, "Invalid or expired verification code");
   }
   return new AppError(500, "Authentication service error");
 }
@@ -258,18 +308,80 @@ export class SupabaseAuthProvider implements AuthProvider {
     }
   }
 
-  sendVerificationCode(
-    _userId: string,
-    _channel: VerificationChannel,
-  ): Promise<VerificationSendResult> {
-    return Promise.reject(new SupabaseVerificationNotEnabledError("sendVerificationCode"));
+  /** Resolve the email for an EMAIL verification target. */
+  private async resolveEmail(
+    target: Extract<VerificationTarget, { channel: "EMAIL" }>,
+  ): Promise<string> {
+    if (target.email) {
+      const email = target.email.trim();
+      if (email) return email;
+    }
+    if (target.userId) {
+      const row = await this.store.findUserById(target.userId);
+      const email = row?.email ? String(row.email).trim() : "";
+      if (email) return email;
+    }
+    throw new AppError(400, "Email verification requires an email or authenticated user");
   }
 
-  verifyVerificationCode(
-    _userId: string,
-    _channel: VerificationChannel,
-    _code: string,
+  /**
+   * Send/resend the signup confirmation email. Supabase owns the code, expiry
+   * and rate limiting, so no dev code is returned.
+   */
+  async sendVerificationCode(target: VerificationTarget): Promise<VerificationSendResult> {
+    if (target.channel === "PHONE") {
+      throw new SupabaseVerificationNotEnabledError("sendVerificationCode");
+    }
+    const email = await this.resolveEmail(target);
+    const { errorCode, errorMessage } = await this.auth.resendSignupEmail(email);
+    if (errorMessage) {
+      const mapped = mapResendError(errorCode);
+      if (mapped) throw mapped;
+    }
+    return {};
+  }
+
+  /**
+   * Verify the signup email OTP and return the first session. The public REST
+   * route still drops the session until the cutover block.
+   */
+  async verifyVerificationCode(
+    target: VerificationTarget,
+    code: string,
   ): Promise<VerificationResult> {
-    return Promise.reject(new SupabaseVerificationNotEnabledError("verifyVerificationCode"));
+    if (target.channel === "PHONE") {
+      throw new SupabaseVerificationNotEnabledError("verifyVerificationCode");
+    }
+    const email = await this.resolveEmail(target);
+    if (!/^\d{6}$/.test(code)) {
+      throw new AppError(400, "Verification code must be 6 digits");
+    }
+
+    const outcome = await this.auth.verifyEmailOtp(email, code);
+    if (outcome.errorMessage) throw mapOtpError(outcome.errorCode);
+    const authUser = outcome.user;
+    const sessionData = outcome.session;
+    if (!authUser?.id || !sessionData) {
+      throw new AppError(400, "Email verification failed");
+    }
+
+    // The verified Auth identity must map to exactly one public profile.
+    const row = await this.store.findUserById(authUser.id);
+    if (!row) throw new AppError(401, "Email verification failed");
+    if (String(row.id) !== authUser.id) {
+      throw new AppError(401, "Email verification identity mismatch");
+    }
+    if (String(row.email).trim().toLowerCase() !== email.trim().toLowerCase()) {
+      throw new AppError(401, "Email verification identity mismatch");
+    }
+
+    await this.store.setUserVerified(authUser.id, "email_verified");
+    const reloaded = (await this.store.findUserById(authUser.id)) ?? row;
+    const user = toPublicUser(reloaded);
+    return {
+      emailVerified: true,
+      phoneVerified: Boolean(user.phoneVerified),
+      session: mapSession(sessionData, user),
+    };
   }
 }
