@@ -17,7 +17,12 @@ export interface UserInsert {
   username: string;
   email: string;
   phone: string;
-  password_hash: string;
+  /**
+   * Bcrypt hash for the local auth provider; `null` for Supabase Auth, where
+   * Supabase owns the password (the profile row keeps no hash). The SQLite
+   * (local/test) backend still requires a non-null hash and guards this.
+   */
+  password_hash: string | null;
   created_at: string;
   updated_at: string;
 }

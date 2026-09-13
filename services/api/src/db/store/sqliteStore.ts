@@ -83,6 +83,15 @@ export class SqliteStore implements Store {
   }
 
   async insertUser(row: UserInsert): Promise<void> {
+    // The local SQLite schema requires a bcrypt hash (`password_hash TEXT NOT
+    // NULL`). Only the Supabase Auth provider inserts null, and it never uses
+    // this store; fail clearly here instead of surfacing an opaque constraint
+    // error if that ever changes.
+    if (row.password_hash == null) {
+      throw new Error(
+        "SqliteStore.insertUser: password_hash is required for local/SQLite auth",
+      );
+    }
     await this.adapter.run(
       `INSERT INTO users (id, username, email, phone, password_hash, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,

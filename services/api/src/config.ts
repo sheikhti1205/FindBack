@@ -60,6 +60,12 @@ export const config = {
    * RLS and must NEVER be exposed to apps/mobile or any VITE_ variable.
    */
   supabaseSecretKey: process.env.SUPABASE_SECRET_KEY ?? "",
+  /**
+   * Supabase publishable (anon) key. Server-side only in FindBack: the Node API
+   * performs user Auth operations with it and validates JWTs via JWKS. It must
+   * never reach the mobile app or any VITE_ variable.
+   */
+  supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? "",
   uploadsDir: process.env.UPLOADS_DIR ?? path.resolve(packageRoot, "uploads"),
   /** Public base URL the mobile/web app uses to reach this API. */
   publicUrl: process.env.PUBLIC_URL ?? `http://localhost:${Number(process.env.PORT ?? 4000)}`,
