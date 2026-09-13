@@ -23,20 +23,15 @@ import {
   myPosts,
   updatePost,
 } from "./domain/postsService.js";
-import { checkUsername, login, me, register, verifyToken } from "./domain/authService.js";
+import { checkUsername, me } from "./domain/authService.js";
 import { react } from "./domain/reactionsService.js";
 import { rate } from "./domain/ratingsService.js";
-import {
-  sendChallenge,
-  verifyChallenge,
-  devVerificationProvider,
-  type Channel,
-} from "./domain/verificationService.js";
 import { recordUpload } from "./domain/storageService.js";
 import { activityReport, reportToCsv } from "./domain/reportingService.js";
 import { aiAssistantProvider } from "./providers/aiProvider.js";
 import { graphqlSchema } from "./graphql/schema.js";
 import { config } from "./config.js";
+import { getAuthProvider, type VerificationChannel } from "./auth/index.js";
 import { errorHandler, optionalAuth, requireAuth } from "./middleware/http.js";
 
 const zodSchemas = {
@@ -80,13 +75,13 @@ export function createApp(): Express {
 
   // ---- auth ----
   app.post("/auth/register", async (req, res) => {
-    res.status(201).json(await register(req.body));
+    res.status(201).json(await getAuthProvider().register(req.body));
   });
   app.post("/auth/login", async (req, res) => {
-    res.json(await login(req.body));
+    res.json(await getAuthProvider().login(req.body));
   });
-  app.post("/auth/logout", (req, res) => {
-    // JWT is stateless for the local provider; the client discards the token.
+  app.post("/auth/logout", async (_req, res) => {
+    await getAuthProvider().signOut();
     res.json({ ok: true });
   });
   app.get("/auth/me", optionalAuth, async (req, res) => {
@@ -102,20 +97,19 @@ export function createApp(): Express {
 
   // ---- verification ----
   app.post("/verification/:channel/send", requireAuth, async (req, res) => {
-    const channel = paramOf(req, "channel") as Channel;
+    const channel = paramOf(req, "channel") as VerificationChannel;
     if (channel !== "EMAIL" && channel !== "PHONE") {
       return res.status(400).json({ error: "channel must be EMAIL or PHONE" });
     }
-    const result = await sendChallenge(req.userId!, channel, devVerificationProvider);
-    res.json(result);
+    res.json(await getAuthProvider().sendVerificationCode(req.userId!, channel));
   });
   app.post("/verification/:channel/verify", requireAuth, async (req, res) => {
-    const channel = paramOf(req, "channel") as Channel;
+    const channel = paramOf(req, "channel") as VerificationChannel;
     if (channel !== "EMAIL" && channel !== "PHONE") {
       return res.status(400).json({ error: "channel must be EMAIL or PHONE" });
     }
     const body = zodSchemas.verifyChallenge.parse(req.body);
-    res.json(await verifyChallenge(req.userId!, channel, body.code));
+    res.json(await getAuthProvider().verifyVerificationCode(req.userId!, channel, body.code));
   });
 
   // ---- posts ----
@@ -216,12 +210,12 @@ export function createApp(): Express {
     graphiql: true,
     // Local demo API: surface domain error messages (auth/validation/forbidden).
     maskedErrors: false,
-    context: ({ request }) => {
+    context: async ({ request }) => {
       const header = request.headers.get("authorization");
       let userId: string | undefined;
       if (header?.startsWith("Bearer ")) {
         try {
-          userId = verifyToken(header.slice(7)).userId;
+          userId = (await getAuthProvider().validateAccessToken(header.slice(7))).userId;
         } catch {
           userId = undefined;
         }
