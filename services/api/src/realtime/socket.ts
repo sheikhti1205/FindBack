@@ -1,6 +1,6 @@
 import { Server } from "socket.io";
 import type { Server as HttpServer } from "node:http";
-import { verifyToken } from "../domain/authService.js";
+import { getAuthProvider } from "../auth/index.js";
 import { onGatewayEvent } from "./gateway.js";
 
 /**
@@ -17,13 +17,13 @@ export function attachRealtime(httpServer: HttpServer): Server {
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token as string | undefined;
     if (!token) return next(new Error("Authentication required"));
-    try {
-      const { userId } = verifyToken(token);
-      socket.data.userId = userId;
-      next();
-    } catch {
-      next(new Error("Invalid token"));
-    }
+    getAuthProvider()
+      .validateAccessToken(token)
+      .then(({ userId }) => {
+        socket.data.userId = userId;
+        next();
+      })
+      .catch(() => next(new Error("Invalid token")));
   });
 
   io.on("connection", (socket) => {

@@ -1,6 +1,6 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import type { ZodError } from "zod";
-import { verifyToken } from "../domain/authService.js";
+import { getAuthProvider } from "../auth/index.js";
 import { AppError } from "../domain/helpers.js";
 
 declare global {
@@ -20,11 +20,11 @@ function readBearer(req: Request): string | null {
 }
 
 /** Attach userId when a valid Bearer token is present; never rejects. */
-export const optionalAuth: RequestHandler = (req, _res, next) => {
+export const optionalAuth: RequestHandler = async (req, _res, next) => {
   const token = readBearer(req);
   if (token) {
     try {
-      req.userId = verifyToken(token).userId;
+      req.userId = (await getAuthProvider().validateAccessToken(token)).userId;
     } catch {
       // leave unauthenticated
     }
@@ -33,11 +33,11 @@ export const optionalAuth: RequestHandler = (req, _res, next) => {
 };
 
 /** Require a valid Bearer token. */
-export const requireAuth: RequestHandler = (req, _res, next) => {
+export const requireAuth: RequestHandler = async (req, _res, next) => {
   const token = readBearer(req);
   if (!token) return next(new AppError(401, "Authentication required"));
   try {
-    req.userId = verifyToken(token).userId;
+    req.userId = (await getAuthProvider().validateAccessToken(token)).userId;
   } catch {
     return next(new AppError(401, "Invalid or expired token"));
   }

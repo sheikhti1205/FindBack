@@ -6,6 +6,14 @@ import { config } from "../config.js";
 import { getStore } from "../db/index.js";
 import { AppError, newId, nowIso, toPublicUser } from "./helpers.js";
 
+/**
+ * Local auth implementation: bcrypt passwords, locally signed JWTs, and the
+ * profile lookups (`me`, `checkUsername`) the domain needs.
+ *
+ * Auth routes and middleware consume this through the `AuthProvider` seam
+ * (`LocalAuthProvider`), not directly; a `SupabaseAuthProvider` can replace it
+ * in a later block without touching those consumers.
+ */
 export interface AuthToken {
   token: string;
   user: ReturnType<typeof toPublicUser>;
