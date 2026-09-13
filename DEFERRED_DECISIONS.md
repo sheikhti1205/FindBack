@@ -8,7 +8,7 @@ provider wiring, and document the exact files to change later.
 |---|---|---|---|---|
 | Backend/cloud platform | Supabase (project provisioned); Node/TS API reaches data via the Supabase Data API (`SupabaseStore`); SQLite is the test-only backend | Supabase / Firebase / hybrid | `docs/DATABASE_MIGRATION.md`, `supabase/migrations/` | Yes |
 | Auth provider | Local JWT demo adapter (SupabaseAuthProvider implemented but not selected yet) | Supabase Auth / Firebase Auth | `services/api/src/auth`, mobile `src/services/auth.ts` | Yes |
-| Email verification | Dev adapter (returns code in dev log/response, not sent) | Supabase / Firebase / email provider | `services/api/src/providers/verification` | Yes |
+| Email verification | Dev adapter by default (Supabase email OTP implemented in `SupabaseAuthProvider`, not selected; hosted Confirm-signup template needs `{{ .Token }}` first) | Supabase / Firebase / email provider | `services/api/src/providers/verification`, `services/api/src/auth` | Yes |
 | Phone verification | Dev OTP adapter | Firebase Phone Auth / SMS provider | `services/api/src/providers/verification` | Yes |
 | Cloud storage | Local file storage (served from API `/uploads`) | Supabase Storage / Firebase Storage / Cloudinary / S3 | `services/api/src/providers/storage` | Yes |
 | Realtime provider | Socket.IO | Supabase Realtime / Firebase listeners | `services/api/src/realtime`, mobile socket client | Yes |
