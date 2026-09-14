@@ -21,7 +21,7 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 | Database | Supabase PostgreSQL (Data API) in production; SQLite `node:sqlite` for tests/local |
 | Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
 | Storage | Supabase Storage (public `findback-images` bucket) — the app normalizes images on-device and uploads directly under its own `<uid>/` folder (owner-scoped RLS); local uploads dir for tests/local |
-| AI | OpenAI-compatible HTTP provider + deterministic fallback |
+| AI | Supabase Edge Function `ai-help` (authenticated) → OpenAI-compatible HTTP provider when secrets are set, deterministic fallback otherwise |
 | ML | MobileNet V1 (TensorFlow.js) bundled locally; on-device inference with no external network requests |
 | CI | GitHub Actions |
 
@@ -64,9 +64,9 @@ the secret key is never bundled). The app authenticates directly with Supabase
 Auth, reads the feed / a single post / My Posts directly from Supabase, and now
 does post create/status, comments, reactions, ratings and image uploads directly
 too, and live updates now come from Supabase Realtime (private broadcast
-channels), while reporting and AI still go through the Node API during this
-transition. Post and comment payloads expose a public author profile only — never
-email or phone.
+channels) and AI Help from the Supabase Edge Function `ai-help`, while reporting
+still goes through the Node API during this transition. Post and comment payloads
+expose a public author profile only — never email or phone.
 
 Demo login (seeded): any of `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`,
 `arif_cse`, `mitu`, `sayeed_bsc`, `priya` with password `password123`.
