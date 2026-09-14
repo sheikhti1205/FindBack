@@ -15,16 +15,25 @@ type Handler = (payload: Record<string, unknown>) => void;
 let socket: Socket | null = null;
 const listeners = new Map<EventName, Set<Handler>>();
 
+/**
+ * Socket.IO handshake auth. A function (not a fixed object) so every
+ * (re)connection attempt reads the latest stored access token — a reconnect
+ * after a token refresh does not authenticate with a stale token.
+ */
+export function socketAuth(): (cb: (data: { token: string }) => void) => void {
+  return (cb) => cb({ token: getToken() ?? "" });
+}
+
 /** Connect (or reconnect) the Socket.IO transport with the current token. */
 export function connectRealtime(): void {
-  const token = getToken();
-  if (!token) return;
+  if (!getToken()) return;
+  const auth = socketAuth();
   if (socket) {
-    socket.auth = { token };
+    socket.auth = auth;
     return;
   }
   socket = io(apiBase(), {
-    auth: { token },
+    auth,
     transports: ["websocket"],
     reconnection: true,
   });
