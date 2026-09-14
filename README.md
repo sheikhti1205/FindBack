@@ -80,6 +80,7 @@ through the app (real email OTP) — there are no seeded production accounts.
 # Activity report (legacy Node)    node scripts/report-activity.mjs [--csv out.csv]
 # Regenerate vector ERD PDF        python3 tools/render_erd.py
 # Docker single container          docker compose up --build   (needs Docker Engine)
+# CI also builds the image, runs it and checks /health on every push (no local engine needed)
 ```
 
 ## Demo/dev credentials & provider mode
