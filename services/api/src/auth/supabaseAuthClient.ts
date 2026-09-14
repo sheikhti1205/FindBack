@@ -156,9 +156,8 @@ export function createSupabaseAdminOperations(client: SupabaseClient): SupabaseA
 }
 
 /**
- * Production wiring for `SupabaseAuthProvider`. Not selected by
- * `getAuthProvider()` yet — the running application still uses
- * `LocalAuthProvider` until the email/OTP cutover block.
+ * Production wiring for `SupabaseAuthProvider`. Selected by
+ * `getAuthProvider()` when `DB_PROVIDER=supabase`.
  */
 export function createSupabaseAuthProvider(): SupabaseAuthProvider {
   return new SupabaseAuthProvider(

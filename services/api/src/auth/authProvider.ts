@@ -100,7 +100,7 @@ export interface AuthProvider {
   login(input: z.infer<typeof loginSchema>): Promise<AuthSession>;
   /**
    * Exchange a refresh token for a new session. Providers without refresh
-   * tokens throw `AuthRefreshUnsupportedError`. No HTTP route exposes this yet.
+   * tokens throw `AuthRefreshUnsupportedError`; exposed at `POST /auth/refresh`.
    */
   refresh(refreshToken: string): Promise<AuthSession>;
   /** Verify an access token; throws AppError(401) when invalid or expired. */

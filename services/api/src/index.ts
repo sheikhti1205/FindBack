@@ -17,8 +17,8 @@ async function main(): Promise<void> {
   server.listen(config.port, config.host, () => {
     console.log(`FindBack API listening on http://${config.host}:${config.port}`);
     console.log(`  REST+uploads http://localhost:${config.port}   GraphQL /graphql`);
-    if (config.devMode) {
-      console.log("  dev mode ON: verification codes are echoed in API responses");
+    if (config.devMode && config.dbProvider === "sqlite") {
+      console.log("  local demo mode: verification codes are echoed in API responses");
     }
   });
 }

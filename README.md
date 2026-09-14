@@ -2,7 +2,9 @@
 
 FindBack is a minimal **lost & found reporting and recovery app** for the
 Mobile App Development Lab (University of Chittagong). It is delivered as an
-Android APK (Capacitor) with a local Node/TS + SQLite API and a monorepo layout.
+Android APK (Capacitor) over a Node/TS API. Production uses Supabase
+(PostgreSQL Data API + Auth + Storage); SQLite is the test/local-demo backend.
+Monorepo layout below.
 
 ## Requirements coverage (24 teacher requirements)
 
@@ -70,10 +72,10 @@ Demo login (seeded): any of `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`,
 
 ## Demo/dev credentials & provider mode
 
-All external providers are intentionally deferred (`docs/DEFERRED_DECISIONS.md`).
-The API runs fully in a local demo mode: verification codes are returned by the
-server (`devCode`) instead of SMS/email; uploads are stored in the Supabase
-Storage bucket in production and on local disk in demo/tests; the AI Help
+The real production stack is Supabase (PostgreSQL Data API, Auth, Storage) with
+the API in `DB_PROVIDER=supabase`; the API also runs fully in a local demo mode
+(`DB_PROVIDER=sqlite`): verification codes are returned by the server
+(`devCode`) instead of SMS, uploads are stored on local disk, and the AI Help
 Assistant answers from a deterministic fallback until `LLM_*` env vars are set.
 No secrets are committed; copy `.env.example` → `.env` and never commit `.env`.
 
@@ -83,7 +85,7 @@ No secrets are committed; copy `.env.example` → `.env` and never commit `.env`
 - `docs/DEMO_CHECKLIST.md` — teacher walkthrough
 - `docs/erd/ERD.md` + `docs/erd/ERD.pdf` — schema & entity relationship diagram
 - `docs/reporting/REPORTING.md` — reporting API, report queries, Crystal import
-- `docs/DEFERRED_DECISIONS.md` — provider decisions & their swap points
+- `DEFERRED_DECISIONS.md` — provider decisions & their swap points
 - `docs/OPEN_SOURCE_RESEARCH.md` — licensing research for reference repos
 
 ## License / provenance

@@ -5,9 +5,9 @@ import type { DbAdapter, Row, SqlValue } from "./types.js";
 
 /**
  * Local development schema (SQLite dialect). Mirrors
- * `supabase/migrations/20260912000000_init.sql`; keep the two in sync when
- * columns change. SQLite stays the default provider until the Supabase
- * migration is applied and verified.
+ * `supabase/migrations/20260912000000_init.sql` (production is Supabase
+ * PostgreSQL); keep the two in sync when columns change. SQLite is the
+ * test/local-demo provider only.
  */
 export const SQLITE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (

@@ -11,8 +11,8 @@ import { AppError, newId, nowIso, toPublicUser } from "./helpers.js";
  * profile lookups (`me`, `checkUsername`) the domain needs.
  *
  * Auth routes and middleware consume this through the `AuthProvider` seam
- * (`LocalAuthProvider`), not directly; a `SupabaseAuthProvider` can replace it
- * in a later block without touching those consumers.
+ * (`LocalAuthProvider`); production is served by `SupabaseAuthProvider`, selected
+ * by `getAuthProvider()` when `DB_PROVIDER=supabase`.
  */
 export interface AuthToken {
   token: string;

@@ -15,10 +15,9 @@ export interface VerificationProvider {
  *
  * Honest scope: in dev mode the code is printed to the server log AND returned
  * in the API response so the demo/OTP UI can be exercised end-to-end without a
- * real SMS/email provider. It does NOT prove ownership of the email/phone.
- * Swap this implementation for Supabase/Firebase/email+Twilio after the
- * provider decision; the rest of the flow (challenges table, expiry, resend
- * cooldown, user flags) is unchanged.
+ * real SMS provider. It does NOT prove ownership of the email/phone. Used only by
+ * `LocalAuthProvider` (tests + local demo); production email uses real Supabase
+ * Auth OTP and production phone still awaits an SMS provider.
  */
 export const devVerificationProvider: VerificationProvider = {
   async send(channel, destination, code) {

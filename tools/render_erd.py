@@ -173,8 +173,9 @@ def entity_card(name: str) -> Table:
 def build_story():
     parts = [Paragraph("FindBack — Entity Relationship Diagram", H1)]
     parts.append(Paragraph(
-        "SQLite schema (node:sqlite, WAL, foreign keys ON). Source of truth: "
-        "services/api/src/db/db.ts — Mermaid source in docs/erd/ERD.md.",
+        "Schema source of truth: supabase/migrations/20260912000000_init.sql "
+        "(Supabase PostgreSQL); local/test mirror services/api/src/db/sqliteAdapter.ts. "
+        "Mermaid source in docs/erd/ERD.md.",
         BODY,
     ))
     parts.append(Spacer(1, 2 * mm))

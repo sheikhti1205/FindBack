@@ -10,8 +10,9 @@ This document describes how to produce reports from FindBack data for the course
   1. a first-class, documented **REST reporting API** that returns JSON or CSV, and
   2. the exact **schema + queries** needed to connect a desktop reporting tool
      (Crystal Reports, Microsoft Report Builder, Excel/Power Query) to the same database.
-- A `.rpt` design file and the SQL Server/OLE-DB connection to SQLite would be produced
-  on a Windows machine with Crystal Reports installed (out of scope here).
+- A `.rpt` design file and a desktop reporting connection would be produced on a
+  Windows machine with Crystal Reports installed (out of scope here). Production
+  data lives in **Supabase PostgreSQL**; the local demo uses a SQLite file.
 
 ## 1. Reporting API
 
@@ -69,9 +70,14 @@ Crystal Reports' "database export" workflow.
 
 ## 2. Direct queries (for Crystal Reports / Report Builder)
 
-The whole database is one SQLite file: `services/api/data/findback.db` (default in
-development; override with the `DB_FILE` env var). Any ODBC/OLE-DB SQLite driver can open
-it read-only.
+Production data lives in the **Supabase PostgreSQL** database (see
+`docs/DATABASE_MIGRATION.md`); connect a desktop reporting tool to it with any
+PostgreSQL ODBC/OLE-DB driver using the project's pooled connection string. The
+SQL below is written in SQLite dialect for the **local demo** database
+(`services/api/data/findback.db`, `DB_PROVIDER=sqlite`); on PostgreSQL replace
+`strftime('%Y-%m', created_at)` with `to_char(created_at::timestamptz, 'YYYY-MM')`
+and `SUM(type = 'LOST')` with `COUNT(*) FILTER (WHERE type = 'LOST')`. The
+reporting REST API (section 1) and CSV export work against either backend.
 
 ### "Lost & Found activity" (main report)
 
@@ -135,8 +141,10 @@ node scripts/report-activity.mjs --csv out.csv
 
 ## 4. Crystal Reports import steps (external tool)
 
-1. Open Crystal Reports → *Create New Connection* → *ODBC* → SQLite ODBC driver.
-2. Point DSN at `services/api/data/findback.db`.
+1. Open Crystal Reports → *Create New Connection* → *PostgreSQL ODBC* (production)
+   or *SQLite ODBC* (local demo).
+2. Point the DSN at the Supabase PostgreSQL connection string, or at
+   `services/api/data/findback.db` for the local demo.
 3. Add the tables used by the queries above; link on primary/foreign keys.
 4. Re-create the SQL statements from section 2 as command objects.
 5. Design layout pages (monthly activity, category/status matrix, contributor ranking).
