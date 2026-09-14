@@ -17,6 +17,7 @@
     "@capacitor/android": "^8.5.1",
     "@capacitor/core": "^8.5.1",
     "@findback/shared": "*",
+    "@supabase/supabase-js": "2.116.0",
     "@tensorflow-models/mobilenet": "^2.1.1",
     "@tensorflow/tfjs": "^4.22.0",
     "framer-motion": "^13.2.0",

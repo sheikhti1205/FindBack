@@ -1,37 +1,41 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import { apiFetch, API_URL, clearAllAuth, getToken, onSignedOut } from "./api";
 import {
-  clearAllAuth,
-  getPendingEmail,
-  getRefreshToken,
-  getToken,
-  onSignedOut,
-  setPendingEmail,
-  setRefreshToken,
-  setToken,
-} from "./api";
-import {
-  fetchMe,
   login,
   logout,
-  persistSession,
   register,
   restoreSession,
   sendPendingEmailCode,
   verifyPendingEmailCode,
 } from "./auth";
-import { socketAuth } from "./realtime";
+import { isLikelySecretKey, SupabaseConfigError, validateSupabaseConfig } from "./supabaseClient";
 
-const USER: PublicUser = {
-  id: "u1",
-  username: "tester",
-  email: "tester@example.com",
-  phone: "01812345678",
-  emailVerified: true,
-  phoneVerified: false,
-  avatarUrl: null,
-  createdAt: "2026-01-01T00:00:00.000Z",
-};
+const { clientMock, singleMock } = vi.hoisted(() => {
+  const singleMock = vi.fn();
+  return {
+    singleMock,
+    clientMock: {
+      auth: {
+        signUp: vi.fn(),
+        signInWithPassword: vi.fn(),
+        getSession: vi.fn(),
+        getUser: vi.fn(),
+        signOut: vi.fn(),
+        resend: vi.fn(),
+        verifyOtp: vi.fn(),
+        refreshSession: vi.fn(),
+        onAuthStateChange: vi.fn(),
+      },
+      rpc: vi.fn(),
+      from: vi.fn(),
+    },
+  };
+});
+
+vi.mock("./supabaseClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./supabaseClient")>();
+  return { ...actual, getSupabase: () => clientMock };
+});
 
 const REGISTER_INPUT = {
   username: "tester",
@@ -40,6 +44,21 @@ const REGISTER_INPUT = {
   password: "password123",
 };
 
+const PROFILE_ROW = {
+  id: "u1",
+  username: "tester",
+  email: "tester@example.com",
+  phone: "01812345678",
+  email_verified: true,
+  phone_verified: false,
+  avatar_url: null,
+  created_at: "2026-01-01T00:00:00.000Z",
+};
+
+const USER = { id: "u1", email: "tester@example.com" };
+
+const fetchMock = vi.fn();
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -47,168 +66,268 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-const fetchMock = vi.fn();
+function base64url(value: string): string {
+  return btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function mockProfile(): void {
+  clientMock.auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
+  singleMock.mockResolvedValue({ data: PROFILE_ROW, error: null });
+}
 
 beforeEach(() => {
   clearAllAuth();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+  for (const fn of Object.values(clientMock.auth)) fn.mockReset();
+  clientMock.rpc.mockReset();
+  clientMock.from.mockReset();
+  clientMock.from.mockImplementation(() => ({
+    select: () => ({ eq: () => ({ single: singleMock }) }),
+  }));
+  singleMock.mockReset();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("mobile session model", () => {
-  it("login persists access + refresh tokens", async () => {
-    fetchMock.mockResolvedValueOnce(json({ token: "a1", refreshToken: "r1", user: USER }));
-    const res = await login({ identifier: "tester", password: "pw" });
-    persistSession(res);
-    expect(getToken()).toBe("a1");
-    expect(getRefreshToken()).toBe("r1");
+describe("supabase config validation", () => {
+  it("throws on an empty url", () => {
+    expect(() => validateSupabaseConfig("", "sb_publishable_abc")).toThrow(SupabaseConfigError);
   });
 
-  it("pending registration returns no token and shows pending email", async () => {
-    fetchMock.mockResolvedValueOnce(
-      json({ user: USER, emailVerificationRequired: true, email: USER.email }),
+  it("throws on an empty key", () => {
+    expect(() => validateSupabaseConfig("https://x.supabase.co", "")).toThrow(SupabaseConfigError);
+  });
+
+  it("throws on a non-http url", () => {
+    expect(() => validateSupabaseConfig("ftp://x.supabase.co", "sb_publishable_abc")).toThrow(
+      SupabaseConfigError,
     );
-    const res = await register(REGISTER_INPUT);
-    expect(res.emailVerificationRequired).toBe(true);
-    if (res.emailVerificationRequired) expect(res.email).toBe(USER.email);
-    expect(getToken()).toBeNull();
-    expect(getRefreshToken()).toBeNull();
   });
 
-  it("local/legacy registration returns an immediate token", async () => {
-    fetchMock.mockResolvedValueOnce(
-      json({ token: "a1", user: USER, emailVerificationRequired: false }),
+  it("returns trimmed values for a valid-looking publishable config", () => {
+    expect(
+      validateSupabaseConfig("  https://x.supabase.co  ", "  sb_publishable_abc  "),
+    ).toEqual({ url: "https://x.supabase.co", key: "sb_publishable_abc" });
+  });
+
+  it("rejects a service_role JWT (no secret value is ever used)", () => {
+    const serviceRoleJwt = `header.${base64url(JSON.stringify({ role: "service_role" }))}.signature`;
+    expect(isLikelySecretKey(serviceRoleJwt)).toBe(true);
+    expect(() => validateSupabaseConfig("https://x.supabase.co", serviceRoleJwt)).toThrow(
+      SupabaseConfigError,
     );
-    const res = await register(REGISTER_INPUT);
-    expect(res.emailVerificationRequired).toBe(false);
-    if (!res.emailVerificationRequired) expect(res.token).toBe("a1");
   });
 
-  it("OTP verification returns a session that persists access + refresh tokens", async () => {
-    fetchMock.mockResolvedValueOnce(
-      json({ token: "a2", refreshToken: "r2", emailVerified: true, phoneVerified: false, user: USER }),
-    );
-    const res = await verifyPendingEmailCode(USER.email, "123456");
-    persistSession(res);
-    expect(getToken()).toBe("a2");
-    expect(getRefreshToken()).toBe("r2");
-  });
-
-  it("resend posts to the public pending-email endpoint", async () => {
-    fetchMock.mockResolvedValueOnce(json({ ok: true }));
-    await sendPendingEmailCode(USER.email);
-    const [url] = fetchMock.mock.calls[0] as [string];
-    expect(url).toContain("/auth/email-verification/send");
+  it("rejects sb_secret_ keys and accepts sb_publishable_ keys", () => {
+    expect(isLikelySecretKey("sb_secret_abcdef")).toBe(true);
+    expect(isLikelySecretKey("sb_publishable_abcdef")).toBe(false);
+    expect(isLikelySecretKey("not-a-jwt")).toBe(false);
   });
 });
 
-describe("one-time 401 -> refresh -> retry", () => {
-  it("refreshes once and retries with the new access token", async () => {
-    setToken("old");
-    setRefreshToken("r1");
-    fetchMock
-      .mockResolvedValueOnce(json({ error: "expired" }, 401))
-      .mockResolvedValueOnce(json({ token: "new", refreshToken: "r2" }))
-      .mockResolvedValueOnce(json({ user: USER }));
-
-    const u = await fetchMe();
-    expect(u.id).toBe("u1");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    const retry = fetchMock.mock.calls[2] as [string, RequestInit];
-    expect(new Headers(retry[1].headers).get("authorization")).toBe("Bearer new");
-    expect(getRefreshToken()).toBe("r2");
+describe("register", () => {
+  it("returns pending when signUp yields no session", async () => {
+    clientMock.auth.signUp.mockResolvedValue({
+      data: {
+        user: {
+          id: "u1",
+          email: "tester@example.com",
+          created_at: "2026-01-01T00:00:00.000Z",
+          identities: [{ id: "i1" }],
+        },
+        session: null,
+      },
+      error: null,
+    });
+    const res = await register(REGISTER_INPUT);
+    expect(res.emailVerificationRequired).toBe(true);
+    expect(res.email).toBe("tester@example.com");
+    expect(res.user.id).toBe("u1");
+    expect(getToken()).toBeNull();
   });
 
-  it("collapses concurrent 401s into a single refresh", async () => {
-    setToken("old");
-    setRefreshToken("r1");
-    let refreshCount = 0;
-    fetchMock.mockImplementation(async (input: unknown, init?: RequestInit) => {
-      if (String(input).endsWith("/auth/refresh")) {
-        refreshCount += 1;
-        return json({ token: "new", refreshToken: "r2" });
-      }
-      const auth = new Headers(init?.headers).get("authorization");
-      return auth === "Bearer old" ? json({ error: "expired" }, 401) : json({ user: USER });
+  it("returns an authenticated user when signUp yields a session", async () => {
+    clientMock.auth.signUp.mockResolvedValue({
+      data: {
+        user: { id: "u1", email: "tester@example.com", identities: [{ id: "i1" }] },
+        session: { access_token: "tok" },
+      },
+      error: null,
     });
+    mockProfile();
+    const res = await register(REGISTER_INPUT);
+    expect(res.emailVerificationRequired).toBe(false);
+    expect(res.user.username).toBe("tester");
+    expect(getToken()).toBe("tok");
+  });
 
-    const [a, b] = await Promise.all([fetchMe(), fetchMe()]);
-    expect(a.id).toBe("u1");
-    expect(b.id).toBe("u1");
-    expect(refreshCount).toBe(1);
+  it("treats an empty-identity user as a duplicate", async () => {
+    clientMock.auth.signUp.mockResolvedValue({
+      data: { user: { id: "u1", email: "tester@example.com", identities: [] }, session: null },
+      error: null,
+    });
+    await expect(register(REGISTER_INPUT)).rejects.toThrow(/already exists/i);
+  });
+});
+
+describe("login", () => {
+  it("signs in with an email identifier without an rpc lookup", async () => {
+    clientMock.auth.signInWithPassword.mockResolvedValue({
+      data: { user: USER, session: { access_token: "tok" } },
+      error: null,
+    });
+    mockProfile();
+    const u = await login({ identifier: "tester@example.com", password: "pw" });
+    expect(u.id).toBe("u1");
+    expect(clientMock.rpc).not.toHaveBeenCalled();
+  });
+
+  it("resolves a username to an email via rpc before signing in", async () => {
+    clientMock.rpc.mockResolvedValue({ data: "tester@example.com", error: null });
+    clientMock.auth.signInWithPassword.mockResolvedValue({
+      data: { user: USER, session: { access_token: "tok" } },
+      error: null,
+    });
+    mockProfile();
+    const u = await login({ identifier: "tester", password: "pw" });
+    expect(u.id).toBe("u1");
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_login_email", {
+      p_identifier: "tester",
+    });
+    expect(clientMock.auth.signInWithPassword).toHaveBeenCalledWith({
+      email: "tester@example.com",
+      password: "pw",
+    });
+  });
+
+  it("maps invalid credentials to a friendly error", async () => {
+    clientMock.auth.signInWithPassword.mockResolvedValue({
+      data: { user: null, session: null },
+      error: { message: "Invalid login credentials", code: "invalid_credentials", status: 400 },
+    });
+    await expect(login({ identifier: "tester@example.com", password: "bad" })).rejects.toThrow(
+      "Invalid credentials",
+    );
+  });
+});
+
+describe("pending email verification", () => {
+  it("verifies a code and returns the user", async () => {
+    clientMock.auth.verifyOtp.mockResolvedValue({
+      data: { user: USER, session: { access_token: "tok" } },
+      error: null,
+    });
+    mockProfile();
+    const u = await verifyPendingEmailCode("tester@example.com", "123456");
+    expect(u.id).toBe("u1");
+    expect(getToken()).toBe("tok");
+  });
+
+  it("rejects malformed codes before calling Supabase", async () => {
+    await expect(verifyPendingEmailCode("tester@example.com", "12")).rejects.toThrow(
+      "Invalid or expired verification code",
+    );
+    expect(clientMock.auth.verifyOtp).not.toHaveBeenCalled();
+  });
+
+  it("maps an expired code to a friendly error", async () => {
+    clientMock.auth.verifyOtp.mockResolvedValue({
+      data: { user: null, session: null },
+      error: { message: "Token has expired or is invalid", code: "otp_expired", status: 400 },
+    });
+    await expect(verifyPendingEmailCode("tester@example.com", "123456")).rejects.toThrow(
+      "Invalid or expired verification code",
+    );
+  });
+
+  it("swallows enumeration errors on resend", async () => {
+    clientMock.auth.resend.mockResolvedValue({
+      data: { user: null, session: null },
+      error: { message: "User not found", code: "user_not_found", status: 400 },
+    });
+    await expect(sendPendingEmailCode("missing@example.com")).resolves.toBeUndefined();
+  });
+});
+
+describe("session lifecycle", () => {
+  it("logout signs out of Supabase", async () => {
+    clientMock.auth.signOut.mockResolvedValue({ error: null });
+    await logout();
+    expect(clientMock.auth.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("restoreSession throws when there is no session", async () => {
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    await expect(restoreSession()).rejects.toThrow("Session expired");
+  });
+
+  it("restoreSession returns the user when a session exists", async () => {
+    clientMock.auth.getSession.mockResolvedValue({
+      data: { session: { access_token: "tok" } },
+      error: null,
+    });
+    mockProfile();
+    const u = await restoreSession();
+    expect(u.id).toBe("u1");
+    expect(getToken()).toBe("tok");
+  });
+});
+
+describe("legacy Node API bridge", () => {
+  it("sends the Supabase access token to the legacy Node URL", async () => {
+    clientMock.auth.getSession.mockResolvedValue({
+      data: { session: { access_token: "sb-token" } },
+      error: null,
+    });
+    fetchMock.mockResolvedValueOnce(json({ ok: true }));
+
+    await apiFetch("/posts");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_URL}/posts`);
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer sb-token");
+  });
+
+  it("refreshes once on 401 and retries with the new token", async () => {
+    clientMock.auth.getSession
+      .mockResolvedValueOnce({ data: { session: { access_token: "old" } }, error: null })
+      .mockResolvedValueOnce({ data: { session: { access_token: "new" } }, error: null });
+    clientMock.auth.refreshSession.mockResolvedValue({
+      data: { session: { access_token: "new" } },
+      error: null,
+    });
+    fetchMock
+      .mockResolvedValueOnce(json({ error: "expired" }, 401))
+      .mockResolvedValueOnce(json({ ok: true }));
+
+    const res = await apiFetch<{ ok: boolean }>("/me/posts");
+
+    expect(res.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const retry = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(new Headers(retry[1].headers).get("authorization")).toBe("Bearer new");
   });
 
   it("clears the session and notifies when refresh fails", async () => {
-    setToken("old");
-    setRefreshToken("r1");
+    clientMock.auth.getSession.mockResolvedValue({
+      data: { session: { access_token: "old" } },
+      error: null,
+    });
+    clientMock.auth.refreshSession.mockResolvedValue({
+      data: { session: null },
+      error: { message: "bad refresh", code: "refresh_token_not_found" },
+    });
     const signedOut = vi.fn();
     const off = onSignedOut(signedOut);
-    fetchMock
-      .mockResolvedValueOnce(json({ error: "expired" }, 401))
-      .mockResolvedValueOnce(json({ error: "bad refresh" }, 401));
+    fetchMock.mockResolvedValueOnce(json({ error: "expired" }, 401));
 
-    await expect(fetchMe()).rejects.toBeTruthy();
+    await expect(apiFetch("/me/posts")).rejects.toBeTruthy();
+
     expect(getToken()).toBeNull();
-    expect(getRefreshToken()).toBeNull();
     expect(signedOut).toHaveBeenCalledTimes(1);
     off();
-  });
-
-  it("never refreshes on an auth endpoint", async () => {
-    setToken("old");
-    setRefreshToken("r1");
-    fetchMock.mockResolvedValueOnce(json({ error: "invalid credentials" }, 401));
-
-    await expect(login({ identifier: "x", password: "y" })).rejects.toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(getRefreshToken()).toBe("r1");
-  });
-});
-
-describe("startup restoration and logout", () => {
-  it("restores by refreshing when only a refresh token remains", async () => {
-    setRefreshToken("r1");
-    fetchMock
-      .mockResolvedValueOnce(json({ token: "a2", refreshToken: "r2" }))
-      .mockResolvedValueOnce(json({ user: USER }));
-
-    const u = await restoreSession();
-    expect(u.id).toBe("u1");
-    expect(getToken()).toBe("a2");
-    expect(getRefreshToken()).toBe("r2");
-  });
-
-  it("logout calls the endpoint; local clearing removes both tokens + pending email", async () => {
-    setToken("a1");
-    setRefreshToken("r1");
-    setPendingEmail("pending@example.com");
-    fetchMock.mockResolvedValueOnce(json({ ok: true }));
-
-    await logout();
-    const [url] = fetchMock.mock.calls[0] as [string];
-    expect(url).toContain("/auth/logout");
-
-    clearAllAuth();
-    expect(getToken()).toBeNull();
-    expect(getRefreshToken()).toBeNull();
-    expect(getPendingEmail()).toBeNull();
-  });
-});
-
-describe("Socket.IO auth", () => {
-  it("reads the latest access token on each (re)connection attempt", () => {
-    setToken("a1");
-    const first = vi.fn();
-    socketAuth()(first);
-    expect(first).toHaveBeenCalledWith({ token: "a1" });
-
-    setToken("a2");
-    const second = vi.fn();
-    socketAuth()(second);
-    expect(second).toHaveBeenCalledWith({ token: "a2" });
   });
 });
