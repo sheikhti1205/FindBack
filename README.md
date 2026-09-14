@@ -18,7 +18,7 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 | API | Node/TS — Express (REST) + GraphQL-Yoga + Socket.IO |
 | Database | Supabase PostgreSQL (Data API) in production; SQLite `node:sqlite` for tests/local |
 | Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
-| Storage | local uploads dir (cloud adapter swappable) |
+| Storage | Supabase Storage (public `findback-images` bucket, backend-only writes) in production; local uploads dir for tests/local |
 | AI | OpenAI-compatible HTTP provider + deterministic fallback |
 | ML | On-device TensorFlow.js category suggestion |
 | CI | GitHub Actions |
@@ -72,7 +72,8 @@ Demo login (seeded): any of `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`,
 
 All external providers are intentionally deferred (`docs/DEFERRED_DECISIONS.md`).
 The API runs fully in a local demo mode: verification codes are returned by the
-server (`devCode`) instead of SMS/email; uploads are stored on disk; the AI Help
+server (`devCode`) instead of SMS/email; uploads are stored in the Supabase
+Storage bucket in production and on local disk in demo/tests; the AI Help
 Assistant answers from a deterministic fallback until `LLM_*` env vars are set.
 No secrets are committed; copy `.env.example` → `.env` and never commit `.env`.
 

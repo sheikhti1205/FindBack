@@ -10,6 +10,8 @@ supabase/
     20260912000000_init.sql                        # tables, constraints, indexes, RLS
     20260912170500_restrict_rls_auto_enable.sql    # lock down the RLS helper function
     20260912181321_supabase_feed_and_report_rpcs.sql # findback_query_posts, findback_report
+    20260912190128_auth_password_hash_nullable.sql # Supabase Auth owns passwords
+    20260914062145_create_findback_images_bucket.sql # public findback-images bucket
 ```
 
 ## Apply
@@ -32,5 +34,7 @@ The Node API reaches the data through the Supabase **Data API** using
 
 ## Not in scope yet
 
-Auth, Storage, Realtime and Edge Functions are intentionally untouched. Those
-are wired in a later phase (see `docs/DEFERRED_DECISIONS.md`).
+Realtime and Edge Functions are intentionally untouched. Those are wired in a
+later phase (see `docs/DEFERRED_DECISIONS.md`). Auth and Storage are live: the
+public `findback-images` bucket is created by a migration and written to only by
+the Node backend (`docs/DATABASE_MIGRATION.md`).
