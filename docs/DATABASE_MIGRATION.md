@@ -162,16 +162,26 @@ Custom SMTP is configured and live email OTP verification passed.
 
 ## Direct mobile Supabase Auth (transition)
 
-Block 10B moved **Auth only** into the app: mobile calls Supabase Auth directly
-with `@supabase/supabase-js` and the **publishable key** (`VITE_SUPABASE_URL`,
+Block 10B moved **Auth** into the app and Block 10C moved the **register-time
+username availability check**. Mobile calls Supabase directly with
+`@supabase/supabase-js` and the **publishable key** (`VITE_SUPABASE_URL`,
 `VITE_SUPABASE_PUBLISHABLE_KEY`). Those values are public and safe to bundle; the
 secret/service-role key is never in the app.
 
-This is a dual-run transition, not full Node independence. The app sends the
-current Supabase access token as a `Bearer` token to the retained Node API, which
-keeps validating Supabase tokens. Posts, feed, My Posts, comments, reactions,
-ratings, uploads, Socket.IO realtime, reporting, and AI Help still go through
-Node; only Auth moved.
+This is a dual-run transition, not full Node independence.
+
+Direct Supabase today:
+
+- signup / login / logout / session restore / emailed signup OTP
+- own profile read (`public.users`, self-only)
+- username availability (`public.users`, anon, `username` column only)
+
+Temporarily on Node (still Bearer-validated with the Supabase access token):
+
+- posts / feed / My Posts, create/edit/delete reports
+- comments, reactions, ratings
+- uploads / Storage, Socket.IO realtime, reporting, AI Help
+- other legacy endpoints (including the still-present `GET /users/check-username`)
 
 Migrations:
 
@@ -190,12 +200,23 @@ Migrations:
   `public.findback_login_email(text)`. Login is **email-only**: a username is the
   unique public profile identity, not an authentication identifier, so the
   anonymous `SECURITY DEFINER` resolver (an account-enumeration surface) is gone.
+- `20260914170000_username_availability_lookup.sql` — grants `anon` SELECT on the
+  `username` column only, plus a SELECT-only RLS policy, so the Register
+  availability check can run before authentication with no `SECURITY DEFINER`
+  function. `anon` still has no INSERT/UPDATE/DELETE and cannot read email,
+  phone, `password_hash`, or verification state.
 
 `public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
-live: profile creation; `anon` cannot read `users` (42501); `authenticated` reads
-only its own row; email + password sign-in works; signOut works; the resolver is
+live: profile creation; `anon` cannot read `users` email/phone/verification and
+cannot write; `anon` reads only the `username` column; `authenticated` reads only
+its own row; email + password sign-in works; signOut works; the resolver is
 gone; and a Supabase access token authenticates the legacy Node `/auth/me` and
 `/posts`.
+
+The availability check mirrors `ux_users_username_lower` exactly: it is
+case-insensitive and treats `_` literally (LIKE metacharacters are escaped, so
+there is no wildcard false-positive). The database unique index remains the final
+authority — a signup race still surfaces as a clean duplicate-account error.
 
 A live end-to-end acceptance ran through the mobile UI: a fresh signup was
 submitted, Supabase delivered the real confirmation code by email (Brevo SMTP),
