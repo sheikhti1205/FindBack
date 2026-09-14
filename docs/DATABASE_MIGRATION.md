@@ -178,27 +178,34 @@ Migrations:
 - `20260914120000_direct_auth_profiles.sql` — `auth.users` → `public.users`
   profile trigger built from validated metadata (never from user-supplied
   `email_verified`/`phone_verified`); `email_verified` sync trigger on auth
-  updates; `findback_login_email` username/email resolver; `users` RLS
-  self-only SELECT plus column grants.
+  updates; `users` RLS self-only SELECT plus column grants.
 - `20260914130000_direct_auth_profiles_legacy_tolerant.sql` — the profile trigger
   skips when username/phone metadata is absent, so the legacy Node registration
   path still works.
 - `20260914140000_auth_profile_delete_cascade.sql` — deleting an auth user
   deletes the profile, cascading to the user's posts/comments/reactions/ratings.
 - `20260914150000_tighten_function_security.sql` — pins `findback_uid()`'s
-  `search_path` and revokes the resolver from `authenticated` (login is an anon
-  action).
+  `search_path`.
+- `20260914160000_drop_username_login_resolver.sql` — drops
+  `public.findback_login_email(text)`. Login is **email-only**: a username is the
+  unique public profile identity, not an authentication identifier, so the
+  anonymous `SECURITY DEFINER` resolver (an account-enumeration surface) is gone.
 
 `public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
-live: the trigger creates the profile; `anon` cannot read `users` (42501);
-`authenticated` reads only its own row; username-or-email login resolves;
-signIn/signOut work; and a Supabase access token authenticates the legacy Node
-`/auth/me` and `/posts`.
+live: profile creation; `anon` cannot read `users` (42501); `authenticated` reads
+only its own row; email + password sign-in works; signOut works; the resolver is
+gone; and a Supabase access token authenticates the legacy Node `/auth/me` and
+`/posts`.
 
-Remaining advisors: the `SECURITY DEFINER` `findback_login_email` resolver stays
-executable by `anon` (accepted trade-off to keep username login; email-only
-login would remove it), and Auth "leaked password protection" stays disabled (a
-Supabase project setting, unchanged in this block).
+A live end-to-end acceptance ran through the mobile UI: a fresh signup was
+submitted, Supabase delivered the real confirmation code by email (Brevo SMTP),
+the code verified and opened the first session, the profile row was provisioned
+with the right username, the session survived a reload, sign-out worked, and a
+subsequent email + password sign-in succeeded; the temporary account was then
+deleted.
+
+Remaining advisor: Auth "leaked password protection" stays disabled (a Supabase
+project setting, unchanged in this block).
 
 ## Supabase Storage (listing images)
 
