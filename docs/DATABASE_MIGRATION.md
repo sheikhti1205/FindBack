@@ -162,8 +162,9 @@ Custom SMTP is configured and live email OTP verification passed.
 
 ## Direct mobile Supabase Auth (transition)
 
-Block 10B moved **Auth** into the app and Block 10C moved the **register-time
-username availability check**. Mobile calls Supabase directly with
+Block 10B moved **Auth** into the app, Block 10C moved the **register-time
+username availability check**, and Block 10D moved the **post reads** (feed /
+single post / My Posts). Mobile calls Supabase directly with
 `@supabase/supabase-js` and the **publishable key** (`VITE_SUPABASE_URL`,
 `VITE_SUPABASE_PUBLISHABLE_KEY`). Those values are public and safe to bundle; the
 secret/service-role key is never in the app.
@@ -173,12 +174,13 @@ This is a dual-run transition, not full Node independence.
 Direct Supabase today:
 
 - signup / login / logout / session restore / emailed signup OTP
-- own profile read (`public.users`, self-only)
+- own profile read (`public.users`: safe public columns + Auth session identity)
 - username availability (`public.users`, anon, `username` column only)
+- feed / single post / My Posts reads (`findback_query_posts_client`, authenticated)
 
 Temporarily on Node (still Bearer-validated with the Supabase access token):
 
-- posts / feed / My Posts, create/edit/delete reports
+- create / edit / delete reports and post status changes
 - comments, reactions, ratings
 - uploads / Storage, Socket.IO realtime, reporting, AI Help
 - other legacy endpoints (including the still-present `GET /users/check-username`)
@@ -205,13 +207,41 @@ Migrations:
   availability check can run before authentication with no `SECURITY DEFINER`
   function. `anon` still has no INSERT/UPDATE/DELETE and cannot read email,
   phone, `password_hash`, or verification state.
+- `20260914180000_client_post_reads.sql` — the read boundary for Block 10D.
+  `authenticated` keeps SELECT on the **safe public** `users` columns only
+  (`id, username, email_verified, phone_verified, avatar_url, created_at`) and may
+  read them for every user; `email`, `phone`, and `updated_at` are revoked. The
+  self-only policy is replaced by `users_select_public_authenticated`. Feed tables
+  (`item_posts`, `attachments`) and aggregate-only columns
+  (`comments(id,post_id)`, `reactions(id,post_id,type)`, `ratings(id,post_id,score)`)
+  are granted SELECT to `authenticated` with SELECT-only policies — no writes.
+  `verification_challenges`/`uploads` keep zero client access. The client-safe
+  RPC `findback_query_posts_client` (SECURITY INVOKER, EXECUTE `authenticated`
+  only) returns public author fields without email/phone, supports exact post
+  lookup and keyset pagination, and clamps the page size to 20 in SQL. The
+  original `findback_query_posts` (which still returns `author_email`/
+  `author_phone`) stays `service_role`-only.
 
 `public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
 live: profile creation; `anon` cannot read `users` email/phone/verification and
-cannot write; `anon` reads only the `username` column; `authenticated` reads only
-its own row; email + password sign-in works; signOut works; the resolver is
+cannot write; `anon` reads only the `username` column; `authenticated` reads the
+safe public columns for every user but cannot read any user's email/phone/
+`password_hash`; email + password sign-in works; signOut works; the resolver is
 gone; and a Supabase access token authenticates the legacy Node `/auth/me` and
 `/posts`.
+
+Block 10D was verified live against the hosted project with two temporary
+accounts (created by exact id, then deleted; the pre-existing account was
+untouched). Confirmed: `anon` cannot read posts or execute the client RPC;
+`authenticated` reads the feed and a single post with **no** `author_email`/
+`author_phone` in the payload (raw RPC response and rendered UI); cross-user
+reads are allowed; safe profile columns are readable for all users while
+`email`/`phone`/`password_hash` return `42501`; comment bodies and reaction/rating
+user ids are not readable; `authenticated` cannot insert posts (writes stay on
+Node); the private `findback_query_posts` still returns email/phone to
+`service_role` only. The mobile UI rendered the feed, search, post detail (with
+Node-served comments) and My Posts, and Profile still showed the signed-in user's
+own email (Auth session) and phone (signup metadata).
 
 The availability check mirrors `ux_users_username_lower` exactly: it is
 case-insensitive and treats `_` literally (LIKE metacharacters are escaped, so
