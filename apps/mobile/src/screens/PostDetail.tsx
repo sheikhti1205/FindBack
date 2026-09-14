@@ -15,6 +15,7 @@ import {
   deleteComment,
   fetchComments,
   fetchPost,
+  fetchSocialState,
   ratePost,
   reactToPost,
   updatePostStatus,
@@ -39,10 +40,16 @@ export function PostDetail() {
 
   const load = useCallback(async () => {
     try {
-      const [p, cs] = await Promise.all([fetchPost(id), fetchComments(id)]);
+      const [p, cs, social] = await Promise.all([
+        fetchPost(id),
+        fetchComments(id),
+        fetchSocialState(id),
+      ]);
       setError(null);
       setPost(p);
       setComments(cs);
+      setMyReaction(social.myReaction);
+      setMyRating(social.myRating);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load post");
     } finally {

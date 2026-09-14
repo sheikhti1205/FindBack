@@ -7,7 +7,7 @@ import type {
   PostStatus,
   PostType,
 } from "@findback/shared";
-import { apiFetch, apiBase, getToken, ApiError } from "./api";
+import { apiBase, getToken, ApiError } from "./api";
 import { getSupabase } from "./supabaseClient";
 
 export interface FeedFilters {
@@ -232,19 +232,71 @@ export async function updatePostStatus(id: string, status: PostStatus): Promise<
   return fetchPost(id);
 }
 
+/** A comment RPC row carries only public author fields — never email/phone. */
+interface ClientCommentRow {
+  id: string;
+  post_id: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  author_id: string;
+  author_username: string;
+  author_email_verified: number | boolean | null;
+  author_phone_verified: number | boolean | null;
+  author_avatar_url: string | null;
+  author_created_at: string;
+}
+
+function mapClientComment(row: ClientCommentRow): CommentItem {
+  return {
+    id: row.id,
+    postId: row.post_id,
+    author: {
+      id: row.author_id,
+      username: row.author_username,
+      emailVerified: Boolean(row.author_email_verified),
+      phoneVerified: Boolean(row.author_phone_verified),
+      avatarUrl: row.author_avatar_url ?? null,
+      createdAt: row.author_created_at,
+    },
+    body: row.body,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function socialErrorStatus(code: string | undefined): number {
+  if (code === "42501") return 403;
+  if (code === "P0002") return 404;
+  if (code === "28000") return 401;
+  return 400;
+}
+
+/** Comments for a post, read directly from Supabase. */
 export async function fetchComments(postId: string): Promise<CommentItem[]> {
-  return apiFetch<CommentItem[]>(`/posts/${postId}/comments`);
+  const { data, error } = await getSupabase().rpc("findback_list_comments_client", {
+    p_post_id: postId,
+  });
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  return ((data ?? []) as ClientCommentRow[]).map(mapClientComment);
 }
 
 export async function addComment(postId: string, body: string): Promise<CommentItem> {
-  return apiFetch<CommentItem>(`/posts/${postId}/comments`, {
-    method: "POST",
-    body: JSON.stringify({ body }),
+  const { data, error } = await getSupabase().rpc("findback_add_comment_client", {
+    p_post_id: postId,
+    p_body: body,
   });
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  const row = ((data ?? []) as ClientCommentRow[])[0];
+  if (!row) throw new ApiError("Comment was not created", 400);
+  return mapClientComment(row);
 }
 
-export async function deleteComment(postId: string, commentId: string): Promise<void> {
-  await apiFetch(`/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
+export async function deleteComment(_postId: string, commentId: string): Promise<void> {
+  const { error } = await getSupabase().rpc("findback_delete_comment_client", {
+    p_comment_id: commentId,
+  });
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
 }
 
 export interface ReactionResult {
@@ -254,14 +306,37 @@ export interface ReactionResult {
   myReaction: "LIKE" | "DISLIKE" | null;
 }
 
+interface ClientReactionRow {
+  post_id: string;
+  like_count: number | null;
+  dislike_count: number | null;
+  my_reaction: string | null;
+}
+
 export async function reactToPost(
   postId: string,
   type: "LIKE" | "DISLIKE" | null,
 ): Promise<ReactionResult> {
-  return apiFetch<ReactionResult>(`/posts/${postId}/react`, {
-    method: "POST",
-    body: JSON.stringify({ type }),
+  const { data, error } = await getSupabase().rpc("findback_react_client", {
+    p_post_id: postId,
+    p_type: type,
   });
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  const row = ((data ?? []) as ClientReactionRow[])[0];
+  if (!row) throw new ApiError("Reaction was not saved", 400);
+  return {
+    postId: row.post_id,
+    likeCount: Number(row.like_count ?? 0),
+    dislikeCount: Number(row.dislike_count ?? 0),
+    myReaction: (row.my_reaction as "LIKE" | "DISLIKE" | null) ?? null,
+  };
+}
+
+interface ClientRatingRow {
+  post_id: string;
+  score: number;
+  rating_avg: number | string | null;
+  rating_count: number | null;
 }
 
 export async function ratePost(postId: string, score: number): Promise<{
@@ -270,10 +345,34 @@ export async function ratePost(postId: string, score: number): Promise<{
   ratingAvg: number | null;
   ratingCount: number;
 }> {
-  return apiFetch(`/posts/${postId}/rating`, {
-    method: "PUT",
-    body: JSON.stringify({ score }),
+  const { data, error } = await getSupabase().rpc("findback_rate_client", {
+    p_post_id: postId,
+    p_score: score,
   });
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  const row = ((data ?? []) as ClientRatingRow[])[0];
+  if (!row) throw new ApiError("Rating was not saved", 400);
+  return {
+    postId: row.post_id,
+    score: Number(row.score),
+    ratingAvg: row.rating_avg == null ? null : Math.round(Number(row.rating_avg) * 100) / 100,
+    ratingCount: Number(row.rating_count ?? 0),
+  };
+}
+
+/** The caller's own reaction/rating for a post (reload hydration). */
+export async function fetchSocialState(
+  postId: string,
+): Promise<{ myReaction: "LIKE" | "DISLIKE" | null; myRating: number | null }> {
+  const { data, error } = await getSupabase().rpc("findback_post_social_state_client", {
+    p_post_id: postId,
+  });
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  const row = ((data ?? []) as { my_reaction: string | null; my_rating: number | null }[])[0];
+  return {
+    myReaction: (row?.my_reaction as "LIKE" | "DISLIKE" | null) ?? null,
+    myRating: row?.my_rating == null ? null : Number(row.my_rating),
+  };
 }
 
 /** The signed-in user's own posts, read directly from Supabase. */

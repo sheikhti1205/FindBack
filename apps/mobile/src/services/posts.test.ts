@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  addComment,
   createPost,
+  deleteComment,
+  fetchComments,
   fetchFeed,
   fetchMyPosts,
   fetchPost,
+  fetchSocialState,
+  ratePost,
+  reactToPost,
   updatePostStatus,
 } from "./posts";
 
@@ -250,5 +256,160 @@ describe("updatePostStatus", () => {
       { p_post_id: "p1", p_status: "RECOVERED" },
     );
     expect(post.status).toBe("RECOVERED");
+  });
+});
+
+function commentRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "c1",
+    post_id: "p1",
+    body: "hope you find it",
+    created_at: "2026-09-02T00:00:00.000Z",
+    updated_at: "2026-09-02T00:00:00.000Z",
+    author_id: "u2",
+    author_username: "bob",
+    author_email_verified: 1,
+    author_phone_verified: 0,
+    author_avatar_url: null,
+    author_created_at: "2026-01-02T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("fetchComments", () => {
+  it("reads comments via the client RPC with a public-only author", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [commentRow()], error: null });
+
+    const comments = await fetchComments("p1");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_list_comments_client", {
+      p_post_id: "p1",
+    });
+    expect(comments[0]).toEqual({
+      id: "c1",
+      postId: "p1",
+      author: {
+        id: "u2",
+        username: "bob",
+        emailVerified: true,
+        phoneVerified: false,
+        avatarUrl: null,
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+      body: "hope you find it",
+      createdAt: "2026-09-02T00:00:00.000Z",
+      updatedAt: "2026-09-02T00:00:00.000Z",
+    });
+    expect("email" in comments[0]!.author).toBe(false);
+    expect("phone" in comments[0]!.author).toBe(false);
+  });
+});
+
+describe("addComment", () => {
+  it("creates a comment and maps the returned row", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [commentRow({ id: "c9" })], error: null });
+
+    const comment = await addComment("p1", "thanks!");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_client", {
+      p_post_id: "p1",
+      p_body: "thanks!",
+    });
+    expect(comment.id).toBe("c9");
+  });
+
+  it("maps a missing post to 404", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "Post not found", code: "P0002" },
+    });
+    await expect(addComment("missing", "hi")).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("deleteComment", () => {
+  it("deletes by comment id", async () => {
+    clientMock.rpc.mockResolvedValue({ data: true, error: null });
+
+    await deleteComment("p1", "c1");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_delete_comment_client", {
+      p_comment_id: "c1",
+    });
+  });
+
+  it("maps a not-owner rejection to 403", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "Comment not found or not allowed", code: "42501" },
+    });
+    await expect(deleteComment("p1", "c1")).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("reactToPost", () => {
+  it("returns counts and the caller reaction", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ post_id: "p1", like_count: 3, dislike_count: 1, my_reaction: "LIKE" }],
+      error: null,
+    });
+
+    const res = await reactToPost("p1", "LIKE");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: "LIKE",
+    });
+    expect(res).toEqual({ postId: "p1", likeCount: 3, dislikeCount: 1, myReaction: "LIKE" });
+  });
+
+  it("treats a null reaction as removal", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ post_id: "p1", like_count: 0, dislike_count: 0, my_reaction: null }],
+      error: null,
+    });
+
+    const res = await reactToPost("p1", null);
+
+    expect(res.myReaction).toBeNull();
+    expect(res.likeCount).toBe(0);
+  });
+});
+
+describe("ratePost", () => {
+  it("returns the live average/count for the caller score", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ post_id: "p1", score: 5, rating_avg: "4.33", rating_count: 3 }],
+      error: null,
+    });
+
+    const res = await ratePost("p1", 5);
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_rate_client", {
+      p_post_id: "p1",
+      p_score: 5,
+    });
+    expect(res).toEqual({ postId: "p1", score: 5, ratingAvg: 4.33, ratingCount: 3 });
+  });
+});
+
+describe("fetchSocialState", () => {
+  it("hydrates the caller's own reaction and rating", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ my_reaction: "DISLIKE", my_rating: 2 }],
+      error: null,
+    });
+
+    const state = await fetchSocialState("p1");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_post_social_state_client", {
+      p_post_id: "p1",
+    });
+    expect(state).toEqual({ myReaction: "DISLIKE", myRating: 2 });
+  });
+
+  it("returns nulls when the caller has no reaction or rating", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [{ my_reaction: null, my_rating: null }], error: null });
+    expect(await fetchSocialState("p1")).toEqual({ myReaction: null, myRating: null });
   });
 });
