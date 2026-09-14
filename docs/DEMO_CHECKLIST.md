@@ -21,6 +21,8 @@ Run the API and the Android app (or the mobile web shell) before starting.
 | Register → check the email inbox → enter the emailed code on the **Verify** screen | #5: production email is a real Supabase Auth OTP (8 digits) sent via SMTP; the local demo (SQLite) shows the code on screen instead. Phone verification still needs an SMS provider. |
 | Log out and log back in | #11: Supabase access session + rotating refresh token; guarded routes remain authenticated across reloads |
 
+_Signup and login now go directly from the app to Supabase Auth (publishable key); email confirmation remains a real emailed OTP._
+
 ## 2 · Create a report (req 6, 13, 12, 14, 9, 10, 16)
 
 1. **Report** tab → choose *I lost something / I found something* (req 6).

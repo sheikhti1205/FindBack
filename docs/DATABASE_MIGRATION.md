@@ -146,9 +146,11 @@ REST session contract:
   and still expose only `{ emailVerified, phoneVerified }`.
 
 Access tokens are validated with `getClaims` everywhere (REST middleware, GraphQL
-context, Socket.IO handshake). The mobile app stores the access + rotating
-refresh token, refreshes once on `401` (single-flight) and retries, and never
-talks to Supabase directly.
+context, Socket.IO handshake). The mobile app now authenticates directly with
+Supabase Auth using the publishable key (see "Direct mobile Supabase Auth"
+below), stores the access + rotating refresh token, refreshes once on `401`
+(single-flight) and retries, and sends the current Supabase access token to the
+retained Node API as a `Bearer` token.
 
 Hosted readiness (read-only checks): email provider enabled, Confirm email
 required, custom SMTP configured, Confirm-signup template contains `{{ .Token }}`.
@@ -158,6 +160,46 @@ The project's `mailer_otp_length` is **8**, so code validation accepts 6–10 di
 → refresh → logout → refresh rejected), and the test user was fully removed.
 Custom SMTP is configured and live email OTP verification passed.
 
+## Direct mobile Supabase Auth (transition)
+
+Block 10B moved **Auth only** into the app: mobile calls Supabase Auth directly
+with `@supabase/supabase-js` and the **publishable key** (`VITE_SUPABASE_URL`,
+`VITE_SUPABASE_PUBLISHABLE_KEY`). Those values are public and safe to bundle; the
+secret/service-role key is never in the app.
+
+This is a dual-run transition, not full Node independence. The app sends the
+current Supabase access token as a `Bearer` token to the retained Node API, which
+keeps validating Supabase tokens. Posts, feed, My Posts, comments, reactions,
+ratings, uploads, Socket.IO realtime, reporting, and AI Help still go through
+Node; only Auth moved.
+
+Migrations:
+
+- `20260914120000_direct_auth_profiles.sql` — `auth.users` → `public.users`
+  profile trigger built from validated metadata (never from user-supplied
+  `email_verified`/`phone_verified`); `email_verified` sync trigger on auth
+  updates; `findback_login_email` username/email resolver; `users` RLS
+  self-only SELECT plus column grants.
+- `20260914130000_direct_auth_profiles_legacy_tolerant.sql` — the profile trigger
+  skips when username/phone metadata is absent, so the legacy Node registration
+  path still works.
+- `20260914140000_auth_profile_delete_cascade.sql` — deleting an auth user
+  deletes the profile, cascading to the user's posts/comments/reactions/ratings.
+- `20260914150000_tighten_function_security.sql` — pins `findback_uid()`'s
+  `search_path` and revokes the resolver from `authenticated` (login is an anon
+  action).
+
+`public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
+live: the trigger creates the profile; `anon` cannot read `users` (42501);
+`authenticated` reads only its own row; username-or-email login resolves;
+signIn/signOut work; and a Supabase access token authenticates the legacy Node
+`/auth/me` and `/posts`.
+
+Remaining advisors: the `SECURITY DEFINER` `findback_login_email` resolver stays
+executable by `anon` (accepted trade-off to keep username login; email-only
+login would remove it), and Auth "leaked password protection" stays disabled (a
+Supabase project setting, unchanged in this block).
+
 ## Supabase Storage (listing images)
 
 Production uploads go only through the Node API:
@@ -165,8 +207,8 @@ Production uploads go only through the Node API:
 `POST /uploads` (Multer) → image normalization (`sharp`) → `StorageProvider` →
 Supabase Storage bucket `findback-images` → public object URL → `uploads` row.
 The mobile app keeps calling the same `/uploads` endpoint and never talks to
-Supabase Storage directly (no `@supabase` dependency, no publishable-key Storage
-access).
+Supabase Storage directly; Storage stays backend-only (the app's Supabase SDK
+client is used only for Auth).
 
 - Bucket `findback-images` is **public** (reads use plain public URLs, no signed
   URLs), `file_size_limit` 8 MB (hard safety ceiling) and `allowed_mime_types`
@@ -194,9 +236,10 @@ access).
 
 RLS is enabled on all eight public tables. The Data API Store connects with the
 service role and bypasses RLS; the publishable/anon key cannot read or write
-those tables (and cannot execute the backend RPCs). Auth-scoped policies are a
-later phase. `FORCE ROW LEVEL SECURITY` is intentionally not used — it would
-also block the owner.
+those tables (and cannot execute the backend RPCs). The Block 10B
+`public.users` self-only SELECT policy is the first auth-scoped policy; broader
+auth-scoped policies remain a later phase. `FORCE ROW LEVEL SECURITY` is
+intentionally not used — it would also block the owner.
 
 ## Files
 
