@@ -21,7 +21,7 @@ Run the API and the Android app (or the mobile web shell) before starting.
 | Register → check the email inbox → enter the emailed code on the **Verify** screen | #5: production email is a real Supabase Auth OTP (8 digits) sent via SMTP; the local demo (SQLite) shows the code on screen instead. Phone verification still needs an SMS provider. |
 | Log out and log back in | #11: Supabase access session + rotating refresh token; guarded routes remain authenticated across reloads |
 
-_Signup and login now go directly from the app to Supabase Auth (publishable key); login is email + password (username stays the public profile identity), the live username availability check is also direct to Supabase, and email confirmation remains a real emailed OTP. Browsing the feed, opening a post and viewing My Posts now also read directly from Supabase (a public-author-only payload — email/phone never travel with a post); creating/editing reports, comments, reactions and ratings still go through the Node API for now._
+_Signup and login now go directly from the app to Supabase Auth (publishable key); login is email + password (username stays the public profile identity), the live username availability check is also direct to Supabase, and email confirmation remains a real emailed OTP. Browsing the feed, opening a post and viewing My Posts, creating/editing reports, and comments/reactions/ratings now also go directly to Supabase (a public-author-only payload — email/phone never travel with a post; reaction/rating user lists are never exposed); realtime, uploads, reporting and AI still go through the Node API for now._
 
 ## 2 · Create a report (req 6, 13, 12, 14, 9, 10, 16)
 
