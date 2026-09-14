@@ -78,9 +78,12 @@ export interface SupabaseAdminOperations {
  * `LocalAuthProvider`.
  */
 export class SupabaseVerificationNotEnabledError extends AppError {
+  readonly operation: string;
   constructor(operation: string) {
-    super(501, `SupabaseAuthProvider.${operation} is not enabled yet`);
+    // User-facing message is intentionally generic; `operation` stays internal.
+    super(501, "Phone verification is not available yet");
     this.name = "SupabaseVerificationNotEnabledError";
+    this.operation = operation;
   }
 }
 
@@ -353,8 +356,9 @@ export class SupabaseAuthProvider implements AuthProvider {
       throw new SupabaseVerificationNotEnabledError("verifyVerificationCode");
     }
     const email = await this.resolveEmail(target);
-    if (!/^\d{6}$/.test(code)) {
-      throw new AppError(400, "Verification code must be 6 digits");
+    // Supabase OTP length is configurable (6-10); accept the whole range.
+    if (!/^\d{6,10}$/.test(code)) {
+      throw new AppError(400, "Verification code must be 6-10 digits");
     }
 
     const outcome = await this.auth.verifyEmailOtp(email, code);

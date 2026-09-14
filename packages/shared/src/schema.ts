@@ -53,7 +53,25 @@ export const sendVerificationSchema = z.object({
 
 export const verifyChallengeSchema = z.object({
   channel: z.enum(VERIFICATION_CHANNELS),
-  code: z.string().regex(/^\d{6}$/, "Verification code must be 6 digits"),
+  code: z.string().regex(/^\d{6,10}$/, "Verification code must be 6-10 digits"),
+});
+
+/**
+ * Public pending-signup email verification (no session yet). Supabase owns the
+ * one-time code, so the client only sends the email/username-free target.
+ */
+export const emailVerificationSendSchema = z.object({
+  email: emailSchema,
+});
+
+export const emailVerificationVerifySchema = z.object({
+  email: emailSchema,
+  code: z.string().regex(/^\d{6,10}$/, "Verification code must be 6-10 digits"),
+});
+
+/** Exchange a rotating refresh token for a fresh session. */
+export const refreshSchema = z.object({
+  refreshToken: z.string().min(1, "Refresh token is required"),
 });
 
 export const createPostSchema = z.object({
@@ -110,6 +128,9 @@ export type RatePostInput = z.infer<typeof ratePostSchema>;
 export type ChangeStatusInput = z.infer<typeof changeStatusSchema>;
 export type SendVerificationInput = z.infer<typeof sendVerificationSchema>;
 export type VerifyChallengeInput = z.infer<typeof verifyChallengeSchema>;
+export type EmailVerificationSendInput = z.infer<typeof emailVerificationSendSchema>;
+export type EmailVerificationVerifyInput = z.infer<typeof emailVerificationVerifySchema>;
+export type RefreshInput = z.infer<typeof refreshSchema>;
 
 export interface PublicUser {
   id: string;

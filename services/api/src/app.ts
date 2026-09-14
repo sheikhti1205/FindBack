@@ -6,6 +6,9 @@ import multer from "multer";
 import { createYoga } from "graphql-yoga";
 import {
   changeStatusSchema,
+  emailVerificationSendSchema,
+  emailVerificationVerifySchema,
+  refreshSchema,
   usernameCheckQuerySchema,
   verifyChallengeSchema,
 } from "@findback/shared";
@@ -32,14 +35,56 @@ import { activityReport, reportToCsv } from "./domain/reportingService.js";
 import { aiAssistantProvider } from "./providers/aiProvider.js";
 import { graphqlSchema } from "./graphql/schema.js";
 import { config } from "./config.js";
-import { getAuthProvider, type VerificationChannel, type VerificationTarget } from "./auth/index.js";
+import {
+  AuthRefreshUnsupportedError,
+  getAuthProvider,
+  type AuthRegistrationResult,
+  type AuthSession,
+  type VerificationChannel,
+  type VerificationTarget,
+} from "./auth/index.js";
 import { errorHandler, optionalAuth, requireAuth } from "./middleware/http.js";
 
 const zodSchemas = {
   usernameCheckQuery: usernameCheckQuerySchema,
   verifyChallenge: verifyChallengeSchema,
+  emailVerificationSend: emailVerificationSendSchema,
+  emailVerificationVerify: emailVerificationVerifySchema,
+  refresh: refreshSchema,
   changeStatus: changeStatusSchema,
 };
+
+/**
+ * Public REST shape of an authenticated session. Optional fields stay
+ * `undefined` for providers without them (the local JWT has no refresh/expiry),
+ * and `JSON.stringify` omits them, preserving the legacy `{ token, user }`.
+ */
+function sessionPayload(session: AuthSession) {
+  return {
+    token: session.token,
+    refreshToken: session.refreshToken,
+    expiresIn: session.expiresIn,
+    expiresAt: session.expiresAt,
+    user: session.user,
+  };
+}
+
+/**
+ * Registration is a union: Supabase with email confirmation ON returns a
+ * pending account with no token, while an immediate session (local, or Supabase
+ * when confirmation is off) returns the full session. No fake token is ever
+ * issued for a pending signup.
+ */
+function registrationPayload(result: AuthRegistrationResult) {
+  if (result.session) {
+    return { ...sessionPayload(result.session), emailVerificationRequired: false };
+  }
+  return {
+    user: result.user,
+    emailVerificationRequired: true,
+    email: result.email,
+  };
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -76,16 +121,24 @@ export function createApp(): Express {
 
   // ---- auth ----
   app.post("/auth/register", async (req, res) => {
-    const { session, user } = await getAuthProvider().register(req.body);
-    if (!session) {
-      // Local signup always yields a session. Until a public pending-email
-      // contract exists (Supabase block), fail loudly instead of leaking shape.
-      throw new AppError(500, "Registration did not produce a session");
-    }
-    res.status(201).json({ token: session.token, user });
+    const result = await getAuthProvider().register(req.body);
+    res.status(201).json(registrationPayload(result));
   });
   app.post("/auth/login", async (req, res) => {
-    res.json(await getAuthProvider().login(req.body));
+    res.json(sessionPayload(await getAuthProvider().login(req.body)));
+  });
+  app.post("/auth/refresh", async (req, res) => {
+    const body = parseQuery(zodSchemas.refresh, req.body);
+    try {
+      res.json(sessionPayload(await getAuthProvider().refresh(body.refreshToken)));
+    } catch (err) {
+      // The local provider has no refresh concept; report the capability gap
+      // rather than a generic 500. The token itself is never logged.
+      if (err instanceof AuthRefreshUnsupportedError) {
+        throw new AppError(501, "Refresh tokens are not supported by the current auth provider");
+      }
+      throw err;
+    }
   });
   app.post("/auth/logout", async (req, res) => {
     const header = req.headers.authorization;
@@ -96,6 +149,31 @@ export function createApp(): Express {
   app.get("/auth/me", optionalAuth, async (req, res) => {
     if (!req.userId) return res.status(401).json({ error: "Authentication required" });
     res.json({ user: await me(req.userId) });
+  });
+
+  // ---- public pending-signup email verification (no session yet) ----
+  // A new Supabase signup has no access token, so these two routes are open.
+  // They are narrow: EMAIL only, and never expose a code, session or identity.
+  app.post("/auth/email-verification/send", async (req, res) => {
+    const { email } = parseQuery(zodSchemas.emailVerificationSend, req.body);
+    await getAuthProvider().sendVerificationCode({ channel: "EMAIL", email });
+    // Generic response: never reveal whether an account exists (enumeration).
+    res.json({ ok: true });
+  });
+  app.post("/auth/email-verification/verify", async (req, res) => {
+    const { email, code } = parseQuery(zodSchemas.emailVerificationVerify, req.body);
+    const result = await getAuthProvider().verifyVerificationCode(
+      { channel: "EMAIL", email },
+      code,
+    );
+    if (!result.session) {
+      throw new AppError(400, "Email verification did not produce a session");
+    }
+    res.json({
+      ...sessionPayload(result.session),
+      emailVerified: result.emailVerified,
+      phoneVerified: result.phoneVerified,
+    });
   });
 
   // ---- users ----
