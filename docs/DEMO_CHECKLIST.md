@@ -69,12 +69,21 @@ Crystal Reports designer.
 
 ## 7 · Modern API layer (req 18, 19, 22, 23)
 
-1. Open http://localhost:4000/graphql → run a query in GraphiQL (req 18);
-   e.g. `{ feed(first: 3) { items { title } } }`.
-2. `curl http://localhost:4000/reports/activity?days=7` (req 19).
-3. Show `docker-compose.yml` / `Dockerfile` and the GitHub Actions workflow
+The runtime API is the hosted Supabase project (see `docs/API_DEMO.md`); the Node
+server below is kept as a Docker/coursework reference.
+
+1. **REST (PostgREST)** — anon username lookup (req 19):
+   `curl "$SUPABASE_URL/rest/v1/users?select=username&username=eq.rafi_cu" -H "apikey: $SUPABASE_PUBLISHABLE_KEY"`,
+   then the authenticated feed RPC
+   `POST /rest/v1/rpc/findback_query_posts_client` with an access token.
+2. **GraphQL (`pg_graphql`)** — `POST /graphql/v1` with
+   `{ item_postsCollection(first: 1) { edges { node { id title status } } } }`
+   (req 18); the schema is role-filtered, so `users { email }` is not a field.
+3. Legacy reference server: http://localhost:4000/graphql (GraphiQL) and
+   `curl http://localhost:4000/reports/activity?days=7`.
+4. Show `docker-compose.yml` / `Dockerfile` and the GitHub Actions workflow
    (req 22) — CI runs the same lint/typecheck/test commands locally.
-4. **Profile → Help Assistant**: ask "How do I report a lost item?" — answers
+5. **Profile → Help Assistant**: ask "How do I report a lost item?" — answers
    from the deterministic fallback (or a configured LLM) (req 23).
 
 ## 8 · Show the deliverable (req 17, 21, 24)

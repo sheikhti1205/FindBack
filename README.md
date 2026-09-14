@@ -17,7 +17,7 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 |---|---|
 | Mobile UI | React + TypeScript + Vite + Tailwind CSS + Framer Motion |
 | Android packaging | Capacitor → Gradle debug APK |
-| API | Node/TS — Express (REST) + GraphQL-Yoga + Socket.IO |
+| API | Hosted Supabase: PostgREST/Data API (REST) + `pg_graphql` (GraphQL); the Node/TS Express + GraphQL-Yoga + Socket.IO server is retained as a Docker/coursework reference |
 | Database | Supabase PostgreSQL (Data API) in production; SQLite `node:sqlite` for tests/local |
 | Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
 | Storage | Supabase Storage (public `findback-images` bucket) — the app normalizes images on-device and uploads directly under its own `<uid>/` folder (owner-scoped RLS); local uploads dir for tests/local |

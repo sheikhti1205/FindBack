@@ -272,6 +272,12 @@ Migrations:
   (`WITH CHECK user_id = auth.uid()`) and `uploads_delete_own` (`USING
   user_id = auth.uid()`) alongside the 10E SELECT-own policy. The bucket stays
   public for delivery (public URLs need no policy), and no anon access is added.
+- `20260914230000_enable_pg_graphql.sql` — enables the Supabase GraphQL API for
+  Block 10I (`create extension if not exists pg_graphql with schema graphql`).
+  Auth/RLS are unchanged: PostgREST resolves each request as the JWT role, so
+  GraphQL types are filtered by column grants (the same public profile columns)
+  and rows by the existing policies. Field names are the literal table names
+  (`item_postsCollection`, `usersCollection`); introspection stays disabled.
 
 `public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
 live: profile creation; `anon` cannot read `users` email/phone/verification and
@@ -343,6 +349,24 @@ deleted.
 
 Remaining advisor: Auth "leaked password protection" stays disabled (a Supabase
 project setting, unchanged in this block).
+
+Block 10I verified REST (PostgREST) and GraphQL (`pg_graphql`) live with a
+temporary account (created by exact id, then deleted): the anon username lookup
+returned only the `username` column, `select=email` and `item_posts` reads were
+`401` for anon, the authenticated feed RPC returned the post with no
+email/phone column, `item_postsCollection` resolved for `authenticated` but not
+`anon`, `users { email }` was not a field, and `findback_report` worked for
+`service_role` and was denied to `anon`. Details and reproducible examples are in
+`docs/API_DEMO.md`.
+
+Enabling `pg_graphql` makes the Supabase advisor emit one
+`pg_graphql_*_table_exposed` WARN per table the `anon`/`authenticated` roles can
+SELECT (users, item_posts, comments, attachments, reactions, ratings, uploads),
+plus the pre-existing leaked-password WARN. These are expected and intentional:
+GraphQL is teacher requirement #18, and exposure is bounded by the same column
+grants and RLS policies as the Data API (GraphQL resolves as the caller's role,
+so `users.email`/`phone` and the reaction/rating user ids are never selectable).
+No new access was granted to enable GraphQL beyond creating the extension.
 
 ## Supabase Storage (listing images)
 
