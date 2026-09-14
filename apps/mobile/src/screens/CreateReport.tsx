@@ -30,6 +30,7 @@ export function CreateReport() {
     longitude: null,
   });
   const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [upload, setUpload] = useState<StoredUpload | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -42,10 +43,15 @@ export function CreateReport() {
   async function onPickImage(file: File | undefined) {
     if (!file) return;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
+    // The selected File is kept in memory: it drives the local preview and the
+    // on-device ML suggestion. The cloud upload proceeds independently.
+    setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     setSuggestion(null);
-    setUploading(true);
     setMlError(null);
+    setUpload(null);
+    setError(null);
+    setUploading(true);
     try {
       const stored = await uploadImage(file);
       setUpload(stored);
@@ -56,15 +62,24 @@ export function CreateReport() {
     }
   }
 
+  function clearPhoto() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setSelectedFile(null);
+    setUpload(null);
+    setSuggestion(null);
+    setMlError(null);
+  }
+
   async function onSuggestCategory() {
+    if (!selectedFile) return;
     setSuggesting(true);
     setMlError(null);
     try {
-      if (!upload) throw new Error("Upload an image first");
-      const file = await blobFromUrl(upload.fileUrl);
-      const result = await suggestCategoryFromImage(file);
+      // Runs against the local File — no upload/download and no network needed.
+      const result = await suggestCategoryFromImage(selectedFile);
       if (result) setSuggestion(result);
-      else setMlError("Could not recognize the image — choose manually.");
+      else setMlError("Could not recognize the image — choose the category manually.");
     } catch (e) {
       setMlError(e instanceof Error ? e.message : "ML is unavailable right now.");
     } finally {
@@ -179,16 +194,16 @@ export function CreateReport() {
             <button
               type="button"
               aria-label="Remove photo"
-              onClick={() => {
-                URL.revokeObjectURL(previewUrl);
-                setPreviewUrl(null);
-                setUpload(null);
-                setSuggestion(null);
-              }}
+              onClick={clearPhoto}
               className="absolute right-2 top-2 rounded-full bg-surface/90 p-1.5 text-on-surface shadow"
             >
               <X size={16} />
             </button>
+            {uploading && (
+              <span className="absolute bottom-2 left-2 rounded-full bg-surface/90 px-2.5 py-1 text-xs text-on-surface shadow">
+                Uploading…
+              </span>
+            )}
           </div>
         ) : (
           <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-m3-sm border border-dashed border-outline px-4 text-center text-sm text-on-surface-variant hover:bg-surface-container">
@@ -203,7 +218,7 @@ export function CreateReport() {
           </label>
         )}
 
-        {upload && (
+        {selectedFile && (
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="outline" size="md" loading={suggesting} onClick={onSuggestCategory}>
               <Sparkles size={16} aria-hidden />
@@ -224,7 +239,8 @@ export function CreateReport() {
         )}
         {mlError && <p className="text-xs text-error">{mlError}</p>}
         <p className="text-[11px] text-on-surface-variant">
-          Runs locally on this device (TensorFlow.js). You can always pick the category yourself.
+          Runs on this device with TensorFlow.js — your photo is not sent anywhere for the
+          category suggestion. You can always pick the category yourself.
         </p>
       </section>
 
@@ -246,12 +262,4 @@ export function CreateReport() {
       </Button>
     </form>
   );
-}
-
-async function blobFromUrl(url: string): Promise<File> {
-  const res = await fetch(url);
-  const blob = await res.blob();
-  const name = url.split("/").pop() ?? "photo.jpg";
-  const mime = blob.type || "image/jpeg";
-  return new File([blob], name, { type: mime });
 }
