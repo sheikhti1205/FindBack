@@ -58,6 +58,12 @@ VITE_API_URL=http://10.0.2.2:4000 npm run apk
 # → apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Mobile builds additionally read two public, bundle-safe Supabase values:
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (publishable key only;
+the secret key is never bundled). The app authenticates directly with Supabase
+Auth, while posts, comments, realtime, uploads, reporting, and AI still go
+through the Node API during this transition.
+
 Demo login (seeded): any of `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`,
 `arif_cse`, `mitu`, `sayeed_bsc`, `priya` with password `password123`.
 
