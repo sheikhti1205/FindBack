@@ -1,71 +1,60 @@
-import fs from "node:fs";
-import path from "node:path";
-import crypto from "node:crypto";
-import { config } from "../config.js";
 import { getStore } from "../db/index.js";
-import { newId, nowIso } from "./helpers.js";
+import { AppError, nowIso } from "./helpers.js";
+import { normalizeImage } from "../storage/imageNormalizer.js";
+import { getStorageProvider } from "../storage/index.js";
+import type { StoredUpload } from "../storage/storageProvider.js";
 import type { Row } from "../db/index.js";
 
-export interface StoredUpload {
-  id: string;
-  fileName: string;
-  mimeType: string;
-  fileSize: number;
-  fileUrl: string;
-}
-
-export interface StorageProvider {
-  save(buffer: Buffer, mimeType: string, originalName: string): Promise<StoredUpload>;
-}
+export type { StorageProvider, StoredUpload } from "../storage/storageProvider.js";
+export { FINDBACK_IMAGES_BUCKET } from "../storage/supabaseStorageProvider.js";
 
 /**
- * Development storage adapter: files are written under services/api/uploads and
- * served statically at /uploads/<key>. The cloud adapter (Supabase Storage /
- * Firebase Storage / S3 / Cloudinary) is a drop-in replacement for this object.
+ * Validate + normalize the uploaded image, persist it through the active
+ * StorageProvider, then record the `uploads` row.
+ *
+ * Ordering matters: if the object write succeeds but the DB insert fails, the
+ * just-written object is removed so we never leave an orphan. A failed object
+ * write means no `uploads` row is created at all.
  */
-export const localStorageProvider: StorageProvider = {
-  async save(buffer, mimeType, originalName) {
-    fs.mkdirSync(config.uploadsDir, { recursive: true });
-    const ext = path.extname(originalName).slice(0, 10) || "";
-    const safeName = path.basename(originalName).replace(/[^\w.\- ]/g, "_").slice(0, 120);
-    const id = newId();
-    const key = `${id}${ext}`;
-    fs.writeFileSync(path.join(config.uploadsDir, key), buffer);
-    return {
-      id,
-      fileName: safeName,
-      mimeType,
-      fileSize: buffer.byteLength,
-      fileUrl: `${config.publicUrl}/uploads/${key}`,
-    };
-  },
-};
-
 export async function recordUpload(
   userId: string,
   file: { buffer: Buffer; mimetype: string; originalname: string },
 ): Promise<StoredUpload> {
-  const stored = await localStorageProvider.save(
-    file.buffer,
-    file.mimetype,
+  let normalized;
+  try {
+    normalized = await normalizeImage(file.buffer, file.mimetype);
+  } catch {
+    throw new AppError(400, "Unsupported or corrupt image file");
+  }
+
+  const provider = getStorageProvider();
+  const stored = await provider.save(
+    normalized.buffer,
+    normalized.mimeType,
     file.originalname,
+    { userId },
   );
-  await getStore().insertUpload({
-    id: stored.id,
-    user_id: userId,
-    file_name: stored.fileName,
-    mime_type: stored.mimeType,
-    file_size: stored.fileSize,
-    file_url: stored.fileUrl,
-    created_at: nowIso(),
-  });
-  return stored;
+  const { objectKey, ...upload } = stored;
+
+  try {
+    await getStore().insertUpload({
+      id: upload.id,
+      user_id: userId,
+      file_name: upload.fileName,
+      mime_type: upload.mimeType,
+      file_size: upload.fileSize,
+      file_url: upload.fileUrl,
+      created_at: nowIso(),
+    });
+  } catch (err) {
+    // Roll back only this object; never touch unrelated objects.
+    await provider.remove(objectKey).catch(() => {});
+    throw err;
+  }
+
+  return upload;
 }
 
 export function getUpload(id: string): Promise<Row | undefined> {
   return getStore().findUploadById(id);
-}
-
-export function randomIdForFile(): string {
-  return crypto.randomBytes(16).toString("hex");
 }
