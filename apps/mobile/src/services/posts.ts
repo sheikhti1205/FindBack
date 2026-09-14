@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   Category,
   CommentItem,
   FeedPage,
@@ -6,7 +7,8 @@ import type {
   PostStatus,
   PostType,
 } from "@findback/shared";
-import { apiFetch, apiBase, getToken } from "./api";
+import { apiFetch, apiBase, getToken, ApiError } from "./api";
+import { getSupabase } from "./supabaseClient";
 
 export interface FeedFilters {
   type?: PostType | "";
@@ -18,27 +20,177 @@ export interface FeedFilters {
   dateTo?: string;
 }
 
-export function feedUrl(filters: FeedFilters, cursor?: string): string {
-  const params = new URLSearchParams();
-  if (filters.type) params.set("type", filters.type);
-  if (filters.category) params.set("category", filters.category);
-  if (filters.status) params.set("status", filters.status);
-  if (filters.q) params.set("q", filters.q);
-  if (filters.sort === "oldest") params.set("sort", "oldest");
-  if (filters.dateFrom) params.set("dateFrom", filters.dateFrom);
-  if (filters.dateTo) params.set("dateTo", filters.dateTo);
-  if (cursor) params.set("cursor", cursor);
-  params.set("limit", "10");
-  const qs = params.toString();
-  return `/posts${qs ? `?${qs}` : ""}`;
+/**
+ * Post reads go straight to Supabase via `findback_query_posts_client`.
+ * The SQL function independently caps the page size at 20; the client asks for
+ * one extra row to detect whether another page exists.
+ */
+const PAGE_LIMIT = 10;
+const CLIENT_FEED_RPC = "findback_query_posts_client";
+
+interface PostCursor {
+  createdAt: string;
+  id: string;
 }
 
+interface AttachmentRow {
+  id: unknown;
+  post_id: unknown;
+  file_url: unknown;
+  mime_type: unknown;
+  file_name: unknown;
+  file_size: unknown;
+  created_at: unknown;
+}
+
+interface ClientPostRow {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  description: string;
+  category: string;
+  status: string;
+  event_date: string;
+  latitude: number | null;
+  longitude: number | null;
+  location_label: string | null;
+  youtube_url: string | null;
+  created_at: string;
+  updated_at: string;
+  author_username: string;
+  author_email_verified: number | boolean | null;
+  author_phone_verified: number | boolean | null;
+  author_avatar_url: string | null;
+  author_created_at: string;
+  like_count: number | null;
+  dislike_count: number | null;
+  rating_avg: number | string | null;
+  rating_count: number | null;
+  comment_count: number | null;
+  attachments: AttachmentRow[] | null;
+  total_count: number | null;
+}
+
+function decodeCursor(cursor?: string): PostCursor | null {
+  if (!cursor) return null;
+  try {
+    const base64 = cursor.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const parsed = JSON.parse(atob(padded)) as unknown;
+    if (Array.isArray(parsed) && typeof parsed[0] === "string" && typeof parsed[1] === "string") {
+      return { createdAt: parsed[0], id: parsed[1] };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function encodeCursor(createdAt: string, id: string): string {
+  return btoa(JSON.stringify([createdAt, id]))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function mapAttachments(rows: AttachmentRow[] | null): Attachment[] {
+  return (rows ?? []).map((a) => ({
+    id: String(a.id),
+    postId: String(a.post_id),
+    fileUrl: String(a.file_url),
+    mimeType: String(a.mime_type),
+    fileName: String(a.file_name),
+    fileSize: Number(a.file_size),
+    createdAt: String(a.created_at),
+  }));
+}
+
+/** A feed RPC row carries only public author fields — never email/phone. */
+function mapClientPost(row: ClientPostRow): PostItem {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    author: {
+      id: row.user_id,
+      username: row.author_username,
+      emailVerified: Boolean(row.author_email_verified),
+      phoneVerified: Boolean(row.author_phone_verified),
+      avatarUrl: row.author_avatar_url ?? null,
+      createdAt: row.author_created_at,
+    },
+    type: row.type as PostType,
+    title: row.title,
+    description: row.description,
+    category: row.category as Category,
+    status: row.status as PostStatus,
+    eventDate: row.event_date,
+    latitude: row.latitude == null ? null : Number(row.latitude),
+    longitude: row.longitude == null ? null : Number(row.longitude),
+    locationLabel: row.location_label ?? null,
+    youtubeUrl: row.youtube_url ?? null,
+    attachments: mapAttachments(row.attachments),
+    likeCount: Number(row.like_count ?? 0),
+    dislikeCount: Number(row.dislike_count ?? 0),
+    ratingAvg: row.rating_avg == null ? null : Math.round(Number(row.rating_avg) * 100) / 100,
+    ratingCount: Number(row.rating_count ?? 0),
+    commentCount: Number(row.comment_count ?? 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function feedArgs(
+  filters: FeedFilters,
+  limit: number,
+  cursor: PostCursor | null,
+): Record<string, unknown> {
+  return {
+    p_type: filters.type || null,
+    p_category: filters.category || null,
+    p_status: filters.status || null,
+    p_q: filters.q || null,
+    p_date_from: filters.dateFrom || null,
+    p_date_to: filters.dateTo || null,
+    p_cursor_created_at: cursor?.createdAt ?? null,
+    p_cursor_id: cursor?.id ?? null,
+    p_order: filters.sort === "oldest" ? "asc" : "desc",
+    p_limit: limit,
+  };
+}
+
+function toFeedPage(rows: ClientPostRow[], pagedTotal: boolean): FeedPage {
+  const hasMore = rows.length > PAGE_LIMIT;
+  const pageRows = hasMore ? rows.slice(0, PAGE_LIMIT) : rows;
+  const items = pageRows.map(mapClientPost);
+  const last = pageRows[pageRows.length - 1];
+  return {
+    items,
+    nextCursor: hasMore && last ? encodeCursor(last.created_at, last.id) : null,
+    total: pagedTotal ? items.length : rows.length ? Number(rows[0]!.total_count ?? 0) : 0,
+  };
+}
+
+/** Authenticated feed/search, read directly from Supabase. */
 export async function fetchFeed(filters: FeedFilters, cursor?: string): Promise<FeedPage> {
-  return apiFetch<FeedPage>(feedUrl(filters, cursor));
+  const { data, error } = await getSupabase().rpc(
+    CLIENT_FEED_RPC,
+    feedArgs(filters, PAGE_LIMIT + 1, decodeCursor(cursor)),
+  );
+  if (error) throw new ApiError(error.message, 400);
+  return toFeedPage((data ?? []) as ClientPostRow[], false);
 }
 
+/** Single post by id, read directly from Supabase. */
 export async function fetchPost(id: string): Promise<PostItem> {
-  return apiFetch<PostItem>(`/posts/${id}`);
+  const { data, error } = await getSupabase().rpc(CLIENT_FEED_RPC, {
+    p_post_id: id,
+    p_limit: 1,
+  });
+  if (error) throw new ApiError(error.message, 400);
+  const rows = (data ?? []) as ClientPostRow[];
+  if (rows.length === 0) throw new ApiError("Post not found", 404);
+  return mapClientPost(rows[0]!);
 }
 
 export interface CreatePostInput {
@@ -112,8 +264,17 @@ export async function ratePost(postId: string, score: number): Promise<{
   });
 }
 
+/** The signed-in user's own posts, read directly from Supabase. */
 export async function fetchMyPosts(): Promise<FeedPage> {
-  return apiFetch<FeedPage>("/me/posts");
+  const { data, error } = await getSupabase().auth.getUser();
+  if (error || !data.user) throw new ApiError("Not authenticated", 401);
+  const res = await getSupabase().rpc(CLIENT_FEED_RPC, {
+    p_user_id: data.user.id,
+    p_order: "desc",
+    p_limit: PAGE_LIMIT + 1,
+  });
+  if (res.error) throw new ApiError(res.error.message, 400);
+  return toFeedPage((res.data ?? []) as ClientPostRow[], true);
 }
 
 export interface StoredUpload {
