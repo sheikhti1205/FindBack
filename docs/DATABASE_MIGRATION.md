@@ -185,11 +185,13 @@ Direct Supabase today:
   `findback_rate_client`, `findback_post_social_state_client`)
 - live comments / reactions / ratings / post changes (Supabase Realtime
   Broadcast, private channels)
+- image upload to Supabase Storage (client-side normalization, then a staging
+  `uploads` row bound by the create-post RPC)
 
 Temporarily on Node (still Bearer-validated with the Supabase access token):
 
 - post edit/delete from the legacy API (no mobile UI yet)
-- uploads / Storage, reporting, AI Help
+- reporting, AI Help
 - other legacy endpoints (including the still-present `GET /users/check-username`)
 
 Migrations:
@@ -260,6 +262,16 @@ Migrations:
   topics; a SELECT policy on `realtime.messages` lets `authenticated` receive and
   anon cannot. No tables are added to the `supabase_realtime` publication and no
   `REPLICA IDENTITY` changes are needed.
+- `20260914220000_direct_storage_uploads.sql` — direct Storage uploads for Block
+  10H. `authenticated` may INSERT/DELETE `storage.objects` in
+  `findback-images` only when the first path segment is `auth.uid()`
+  (`(storage.foldername(name))[1] = (select auth.uid())::text`); a matching
+  owner-scoped SELECT policy is added because Storage's `remove()` reads the row
+  before deleting (it grants access to the caller's own objects only, never a
+  broad listing). `uploads` gains INSERT/DELETE grants with `uploads_insert_own`
+  (`WITH CHECK user_id = auth.uid()`) and `uploads_delete_own` (`USING
+  user_id = auth.uid()`) alongside the 10E SELECT-own policy. The bucket stays
+  public for delivery (public URLs need no policy), and no anon access is added.
 
 `public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
 live: profile creation; `anon` cannot read `users` email/phone/verification and
@@ -305,6 +317,18 @@ change, and an anonymous client received nothing on the private topic. In the
 browser, inserting a post server-side made the Home feed change from 0 → 1 item
 with no reload, and all temp rows/accounts were removed afterwards.
 
+Block 10H was verified live against the hosted project with two temporary
+accounts (created by exact id, then deleted; the pre-existing account was
+untouched): the uploader wrote an object into its own `<uid>/` folder and the
+public URL served it with the right content type; `anon` and a second user could
+not write into that folder; the owner staged/read/deleted its own `uploads` row
+while a second user could not stage a row for it or bind its staging key to a
+post (`22023`); the second user's `remove()` did not delete the owner's object;
+the create-post RPC bound the staging row and the attachment stored the public
+URL; and the owner's exact object + row were then deleted. Normalization itself
+is covered by unit tests (scale/never-enlarge/MIME/quality/GIF passthrough) and
+by device proof on the physical pass.
+
 The availability check mirrors `ux_users_username_lower` exactly: it is
 case-insensitive and treats `_` literally (LIKE metacharacters are escaped, so
 there is no wildcard false-positive). The database unique index remains the final
@@ -322,31 +346,37 @@ project setting, unchanged in this block).
 
 ## Supabase Storage (listing images)
 
-Production uploads go only through the Node API:
+Production uploads now go **directly from the app to Supabase Storage** (Block
+10H):
 
-`POST /uploads` (Multer) → image normalization (`sharp`) → `StorageProvider` →
-Supabase Storage bucket `findback-images` → public object URL → `uploads` row.
-The mobile app keeps calling the same `/uploads` endpoint and never talks to
-Supabase Storage directly; Storage stays backend-only (the app's Supabase SDK
-client is used only for Auth).
+`pick image → normalize on-device (canvas) → Storage object <uid>/<uploadId>.<ext>
+→ public URL → staging uploads row → create-post RPC binds the attachment`.
+
+The legacy Node path (`POST /uploads` → `sharp` → `StorageProvider`) is retained
+for the Docker/reference API and its tests but is no longer used by the mobile
+app.
 
 - Bucket `findback-images` is **public** (reads use plain public URLs, no signed
   URLs), `file_size_limit` 8 MB (hard safety ceiling) and `allowed_mime_types`
   `image/png`, `image/jpeg`, `image/webp`, `image/gif`. It is created/updated by
   a migration through `storage.buckets`, not the dashboard.
-- Mutations are backend-only: the Node API writes with the secret key. No
-  anon/authenticated Storage policies are added.
-- Provider selection mirrors auth: `config.dbProvider` — `supabase` →
-  `SupabaseStorageProvider`, `sqlite`/tests → `LocalStorageProvider`. Tests can
-  never reach live Storage, and Supabase selection without configuration throws
-  instead of falling back to disk.
-- Object keys are opaque `<userId>/<uploadId>`; the client filename is metadata
+- Client writes are owner-scoped by Storage RLS: INSERT/DELETE/SELECT are allowed
+  only when the first path segment equals `auth.uid()`. Anonymous users get no
+  Storage access, and no user can touch another user's object.
+- `uploads` staging rows are owner-scoped too (INSERT/DELETE own, SELECT own from
+  10E); the create-post RPC rejects a staging key that is not the caller's.
+- Provider selection for the retained Node path: `config.dbProvider` —
+  `supabase` → `SupabaseStorageProvider`, `sqlite`/tests →
+  `LocalStorageProvider`. The Node tests never reach live Storage.
+- Object keys are opaque `<userId>/<uuid>.<ext>`; the client filename is metadata
   only and no client-supplied path is trusted.
-- Normalization (`sharp`): EXIF orientation applied, longest edge capped at
-  1920 px (never enlarged), re-encoded at web quality; GIFs pass through
-  unchanged so animation is preserved. The stored `mime_type`/`file_size` always
-  describe the final bytes while the API's 8 MB limit remains the incoming
-  ceiling.
+- Normalization (`apps/mobile/src/services/image.ts`): EXIF orientation honored,
+  longest edge capped at 1920 px (never enlarged), JPEG/WebP re-encoded at 82 %,
+  PNG kept lossless for transparency (WebP falls back to PNG when the encoder is
+  unavailable), and GIFs pass through unchanged so animation is preserved. A
+  generation loss only applies to already-lossy input. The stored
+  `mime_type`/`file_size` describe the final bytes while the bucket's 8 MB limit
+  remains the incoming ceiling.
 - Rollback: if the object write succeeds but the `uploads` insert fails, the
   just-written object is removed; a failed object write creates no row.
 - Local mode mounts `/uploads` static serving only when `DB_PROVIDER=sqlite`, so
@@ -370,4 +400,5 @@ intentionally not used — it would also block the owner.
 - `services/api/src/db/index.ts` — `getStore()` selection, `getAdapter()`, test helpers.
 - `services/api/src/storage/*` — `StorageProvider` seam, local + Supabase adapters, selector, `sharp` normalizer.
 - `services/api/src/domain/storageService.ts` — `recordUpload` (normalize → persist → record → rollback).
+- `apps/mobile/src/services/image.ts` — client-side image normalization (injectable decode/encode) used by the direct-Storage upload.
 - `supabase/migrations/*.sql` — schema, RLS hardening, RPCs, and the `findback-images` bucket.
