@@ -127,11 +127,16 @@ describe("auth + verification", () => {
     };
 
     const reg = await request(app).post("/auth/register").send(payload).expect(201);
-    expect(Object.keys(reg.body).sort()).toEqual(["token", "user"]);
+    // Local signup is an immediate session; Supabase may instead return pending.
+    expect(Object.keys(reg.body).sort()).toEqual([
+      "emailVerificationRequired",
+      "token",
+      "user",
+    ]);
+    expect(reg.body.emailVerificationRequired).toBe(false);
     expect(reg.body.refreshToken).toBeUndefined();
     expect(reg.body.expiresIn).toBeUndefined();
     expect(reg.body.expiresAt).toBeUndefined();
-    expect(reg.body.emailVerificationRequired).toBeUndefined();
 
     const login = await request(app)
       .post("/auth/login")
