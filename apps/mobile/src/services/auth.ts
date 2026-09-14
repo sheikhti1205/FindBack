@@ -1,6 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 import { getSupabase } from "./supabaseClient";
-import { apiFetch, ApiError, setToken } from "./api";
+import { ApiError, setToken } from "./session";
 import type { PublicUser } from "@findback/shared";
 
 /** Supabase signup with Confirm-email ON: account created, no session yet. */
@@ -233,22 +233,6 @@ export async function checkUsername(
   return { available: !data || data.length === 0, normalized };
 }
 
-export async function sendVerificationCode(
-  channel: "EMAIL" | "PHONE",
-): Promise<{ devCode?: string; expiresInSeconds?: number; resendAfterSeconds?: number }> {
-  return apiFetch(`/verification/${channel}/send`, { method: "POST" });
-}
-
-export async function verifyCode(
-  channel: "EMAIL" | "PHONE",
-  code: string,
-): Promise<{ emailVerified: boolean; phoneVerified: boolean }> {
-  return apiFetch(`/verification/${channel}/verify`, {
-    method: "POST",
-    body: JSON.stringify({ channel, code }),
-  });
-}
-
 export async function askAiHelp(question: string): Promise<{
   text: string;
   source: "llm" | "fallback";
@@ -260,4 +244,4 @@ export async function askAiHelp(question: string): Promise<{
   return data as { text: string; source: "llm" | "fallback" };
 }
 
-export { ApiError, getAccessToken, getToken } from "./api";
+export { ApiError, getToken } from "./session";

@@ -23,7 +23,7 @@ import {
   onSignedOut,
   setPendingEmail as persistPendingEmail,
   setToken,
-} from "./services/api";
+} from "./services/session";
 import { getSupabase } from "./services/supabaseClient";
 import { connectRealtime, disconnectRealtime } from "./services/realtime";
 

@@ -5,11 +5,8 @@ const config: CapacitorConfig = {
   appName: "FindBack",
   webDir: "dist",
   server: {
-    // Web assets live inside the APK; the API base is injected via VITE_API_URL.
+    // Web assets live inside the APK; the app talks only to hosted Supabase (HTTPS).
     androidScheme: "https",
-  },
-  android: {
-    allowMixedContent: true,
   },
 };
 
