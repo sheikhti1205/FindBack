@@ -37,7 +37,7 @@ interface AuthContextValue {
   booting: boolean;
   /** Email awaiting pending-signup verification (Supabase Confirm-email ON). */
   pendingEmail: string | null;
-  login: (identifier: string, password: string) => Promise<PublicUser>;
+  login: (email: string, password: string) => Promise<PublicUser>;
   register: (input: {
     username: string;
     email: string;
@@ -133,8 +133,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUserState(await fetchMe());
   }, []);
 
-  const login = useCallback(async (identifier: string, password: string) => {
-    const next = await apiLogin({ identifier, password });
+  const login = useCallback(async (email: string, password: string) => {
+    const next = await apiLogin({ email, password });
     setUserState(next);
     return next;
   }, []);
