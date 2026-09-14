@@ -14,6 +14,14 @@ const DUPLICATE_ACCOUNT_MESSAGE = "An account with these details already exists.
 const RATE_LIMIT_MESSAGE = "Too many attempts. Please wait a moment and try again.";
 const INVALID_CODE_MESSAGE = "Invalid or expired verification code";
 
+/** Same syntax/length the registration trigger enforces (^[A-Za-z0-9_]{3,20}$). */
+const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
+
+/** Escape LIKE metacharacters so `_` is matched literally, not as a wildcard. */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 interface AuthErrorLike {
   message?: string;
   code?: string | undefined;
@@ -209,9 +217,17 @@ export async function verifyPendingEmailCode(email: string, code: string): Promi
 export async function checkUsername(
   username: string,
 ): Promise<{ available: boolean; normalized: string }> {
-  return apiFetch<{ available: boolean; normalized: string }>(
-    `/users/check-username?username=${encodeURIComponent(username)}`,
-  );
+  const normalized = username.trim().toLowerCase();
+  if (!USERNAME_PATTERN.test(normalized)) throw new ApiError("Invalid username", 400);
+
+  const { data, error } = await getSupabase()
+    .from("users")
+    .select("username")
+    .ilike("username", escapeLikePattern(normalized))
+    .limit(1);
+  if (error) throw new ApiError(error.message, 400);
+
+  return { available: !data || data.length === 0, normalized };
 }
 
 export async function sendVerificationCode(

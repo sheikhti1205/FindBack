@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch, API_URL, clearAllAuth, getToken, onSignedOut } from "./api";
 import {
+  checkUsername,
   login,
   logout,
   register,
@@ -10,10 +11,14 @@ import {
 } from "./auth";
 import { isLikelySecretKey, SupabaseConfigError, validateSupabaseConfig } from "./supabaseClient";
 
-const { clientMock, singleMock } = vi.hoisted(() => {
+const { clientMock, singleMock, ilikeMock, limitMock } = vi.hoisted(() => {
   const singleMock = vi.fn();
+  const limitMock = vi.fn();
+  const ilikeMock = vi.fn(() => ({ limit: limitMock }));
   return {
     singleMock,
+    limitMock,
+    ilikeMock,
     clientMock: {
       auth: {
         signUp: vi.fn(),
@@ -83,8 +88,13 @@ beforeEach(() => {
   clientMock.rpc.mockReset();
   clientMock.from.mockReset();
   clientMock.from.mockImplementation(() => ({
-    select: () => ({ eq: () => ({ single: singleMock }) }),
+    select: () => ({
+      eq: () => ({ single: singleMock }),
+      ilike: ilikeMock,
+    }),
   }));
+  ilikeMock.mockClear();
+  limitMock.mockReset();
   singleMock.mockReset();
 });
 
@@ -324,5 +334,50 @@ describe("legacy Node API bridge", () => {
     expect(getToken()).toBeNull();
     expect(signedOut).toHaveBeenCalledTimes(1);
     off();
+  });
+});
+
+describe("checkUsername", () => {
+  it("reports an unused username as available and returns it lowercased", async () => {
+    limitMock.mockResolvedValue({ data: [], error: null });
+    const res = await checkUsername("  New_User  ");
+    expect(res).toEqual({ available: true, normalized: "new_user" });
+    expect(clientMock.from).toHaveBeenCalledWith("users");
+  });
+
+  it("reports an existing username as unavailable", async () => {
+    limitMock.mockResolvedValue({ data: [{ username: "taken" }], error: null });
+    const res = await checkUsername("Taken");
+    expect(res).toEqual({ available: false, normalized: "taken" });
+  });
+
+  it("queries case-insensitively with the lowercased value", async () => {
+    limitMock.mockResolvedValue({ data: [], error: null });
+    await checkUsername("TaWsIf");
+    expect(ilikeMock).toHaveBeenCalledWith("username", "tawsif");
+  });
+
+  it("escapes underscore so it is matched literally, not as a wildcard", async () => {
+    limitMock.mockResolvedValue({ data: [], error: null });
+    await checkUsername("a_b");
+    expect(ilikeMock).toHaveBeenCalledWith("username", "a\\_b");
+  });
+
+  it("rejects an invalid username without querying Supabase", async () => {
+    await expect(checkUsername("ab")).rejects.toThrow("Invalid username");
+    await expect(checkUsername("has space")).rejects.toThrow("Invalid username");
+    expect(clientMock.from).not.toHaveBeenCalled();
+    expect(ilikeMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a Supabase error to ApiError", async () => {
+    limitMock.mockResolvedValue({ data: null, error: { message: "boom" } });
+    await expect(checkUsername("valid_user")).rejects.toThrow("boom");
+  });
+
+  it("never calls the Node API", async () => {
+    limitMock.mockResolvedValue({ data: [], error: null });
+    await checkUsername("valid_user");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
