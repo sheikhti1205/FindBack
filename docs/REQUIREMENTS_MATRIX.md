@@ -6,7 +6,7 @@ Status vocabulary (from the project brief):
 `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
 `DEFERRED_EXTERNAL_TOOL` · `TODO`
 
-Last updated: 2026-09-14 (Block 10J documentation pass: the Help Assistant now runs on a Supabase Edge Function `ai-help` invoked with `supabase.functions.invoke` — JWT-verified and authenticated-only, calling an OpenAI-compatible provider when secrets are present and the deterministic fallback otherwise; the Node `/ai/help` route is retained as reference. The fallback facts were corrected to the real Supabase email OTP and unconfigured phone SMS.)
+Last updated: 2026-09-14 (Block 10K documentation pass: the mobile runtime is now **Supabase-only** — no Node API base URL, no `apiFetch`/`apiBase`, no `socket.io-client`, no cleartext/mixed-content Android allowances, and no localhost/LAN/port-4000 escape hatch. Auth/session, feed, post create/status, comments, reactions, ratings, Realtime, Storage uploads and AI Help were exercised in the browser with the Node server stopped and only `*.supabase.co` traffic observed.)
 Statuses are only non-TODO when verifiable end-to-end (API tests green + live
 mobile/UI flow exercised).
 
@@ -16,7 +16,7 @@ mobile/UI flow exercised).
 | 2 | Real-time comments (own DB) | Supabase Realtime Broadcast (private `post:<id>` channel) + direct comment RPCs | `supabase/migrations/20260914210000_realtime_broadcast.sql`; mobile `services/realtime.ts`, `screens/PostDetail.tsx` | two sessions, comment appears live | `realtime.test.ts`, `social.test.ts` | DONE |
 | 3 | Like/dislike live count | reactions upsert + Supabase Realtime broadcast (aggregate counts, no user ids) | `supabase/migrations/20260914210000_realtime_broadcast.sql`, `20260914200000_social_client_rpcs.sql` | two sessions | `social.test.ts`, `realtime.test.ts` | DONE |
 | 4 | Live unique username check | debounced direct Supabase username lookup in the register form (anon, `username` column only) | mobile `screens/Register.tsx`, `services/auth.ts`; Supabase grants + RLS instead of `/users/check-username` | type username, see taken/free | `services/auth.test.ts` | DONE |
-| 5 | Email + phone verification | Email: real Supabase Auth OTP via custom SMTP (live). Phone: still demo/deferred — Supabase phone provider disabled, no SMS provider (returns `501`) | `auth/supabaseAuthProvider.ts`, `domain/verificationService.ts`; mobile `screens/Verify.tsx` | register → verify email (real OTP) + phone (demo/local) | `auth.test.ts`, `supabaseAuthProvider.test.ts` | DONE_DEMO_PROVIDER |
+| 5 | Email + phone verification | Email: real Supabase Auth OTP via custom SMTP (live). Phone: deferred — no SMS provider configured, so the app shows the stored number as **unverified** and calls no verification service (the Node dev phone route is reference-only and no longer used by mobile) | mobile `screens/Verify.tsx`, `services/auth.ts`; `services/api/src/domain/verificationService.ts` (reference) | register → verify email (real emailed OTP); phone shown unverified | mobile `auth.test.ts`, api `supabaseAuthProvider.test.ts` | DONE_DEMO_PROVIDER |
 | 6 | Multiple text boxes + dropdowns | create-report form: text, textarea, date, selects | mobile `screens/CreateReport.tsx`, components | fill form, change dropdowns | posts API tests | DONE |
 | 7 | Interactive real-time rating | 1–5 stars, upsert via RPC, live average via Supabase Realtime broadcast | `supabase/migrations/20260914200000_social_client_rpcs.sql`, `20260914210000_realtime_broadcast.sql` | rate; second session updates | `social.test.ts`, `realtime.test.ts` | DONE |
 | 8 | Pagination | cursor-based feed + infinite scroll; mobile reads pages directly from Supabase (`findback_query_posts_client`, keyset cursor) | `supabase/migrations/20260914180000_client_post_reads.sql`, mobile `services/posts.ts`, `hooks/useFeed.ts`, `components/PostList.tsx` | scroll feed, load more | `posts.test.ts`, mobile `services/posts.test.ts` | DONE |
@@ -56,3 +56,7 @@ mobile/UI flow exercised).
 - Persistence has a Store seam: `SupabaseStore` (Data API) is the real
   application backend; in-memory SQLite is the test/local-demo backend. See
   `docs/DATABASE_MIGRATION.md`.
+- The mobile app has **zero Node runtime dependency**: it is built with only
+  `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY` and talks exclusively to
+  hosted Supabase. The Node Express/GraphQL/Socket.IO server is retained for the
+  Docker image and as reference, not as an app dependency.

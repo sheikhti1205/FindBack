@@ -2,9 +2,9 @@
 
 FindBack is a minimal **lost & found reporting and recovery app** for the
 Mobile App Development Lab (University of Chittagong). It is delivered as an
-Android APK (Capacitor) over a Node/TS API. Production uses Supabase
-(PostgreSQL Data API + Auth + Storage); SQLite is the test/local-demo backend.
-Monorepo layout below.
+Android APK (Capacitor) that talks **directly to hosted Supabase** (Auth,
+PostgreSQL Data API/REST, GraphQL, Realtime, Storage, Edge Functions); SQLite is
+only the Node reference/demo test backend. Monorepo layout below.
 
 ## Requirements coverage (24 teacher requirements)
 
@@ -42,7 +42,7 @@ npm install
 # API (SQLite file in services/api/data; auto-seeds demo data)
 npm run dev:api                # http://localhost:4000  (GraphQL: /graphql)
 
-# Mobile web dev (talks to the API at localhost:4000)
+# Mobile web dev (talks directly to hosted Supabase)
 npm run dev:mobile
 
 # Tests / checks / build
@@ -51,43 +51,47 @@ npm run typecheck
 npm run lint
 npm run build
 
-# Android APK (from repo root)
-# Default bundle targets the local API. Point the bundle at your backend, e.g.
-# the Android-emulator host loopback, then build:
-VITE_API_URL=http://10.0.2.2:4000 npm run apk
+# Android APK (from repo root) — public Supabase values only, no API URL
+VITE_SUPABASE_URL=https://<ref>.supabase.co \
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_... \
+npm run apk
 # → apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Mobile builds additionally read two public, bundle-safe Supabase values:
-`VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (publishable key only;
-the secret key is never bundled). The app authenticates directly with Supabase
-Auth, reads the feed / a single post / My Posts directly from Supabase, and now
-does post create/status, comments, reactions, ratings and image uploads directly
-too, and live updates now come from Supabase Realtime (private broadcast
-channels) and AI Help from the Supabase Edge Function `ai-help`, while reporting
-still goes through the Node API during this transition. Post and comment payloads
-expose a public author profile only — never email or phone.
+Mobile builds read two public, bundle-safe Supabase values: `VITE_SUPABASE_URL`
+and `VITE_SUPABASE_PUBLISHABLE_KEY` (publishable key only; the secret key is never
+bundled). The app talks **only** to hosted Supabase — Auth, the Data API (feed,
+posts, comments, reactions, ratings), Realtime (private broadcast channels),
+Storage (on-device-normalized image uploads) and the `ai-help` Edge Function. The
+Node Express API remains in the repo as a Docker/coursework reference but is not
+part of the mobile runtime. Post and comment payloads expose a public author
+profile only — never email or phone.
 
-Demo login (seeded): any of `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`,
-`arif_cse`, `mitu`, `sayeed_bsc`, `priya` with password `password123`.
+Demo login for the **local/demo backend** (`DB_PROVIDER=sqlite` seed only): any of
+`rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`, `arif_cse`, `mitu`, `sayeed_bsc`,
+`priya` with password `password123`. Against hosted Supabase, create an account
+through the app (real email OTP) — there are no seeded production accounts.
 
 ## Useful commands
 
 ```bash
-# GraphQL playground         http://localhost:4000/graphql
-# Activity report (JSON/CSV) node scripts/report-activity.mjs [--csv out.csv]
-# Regenerate vector ERD PDF  python3 tools/render_erd.py
-# Docker single container   docker compose up --build   (needs Docker Engine)
+# Supabase REST/GraphQL examples   docs/API_DEMO.md
+# Legacy Node reference server     npm run dev:api   (GraphiQL at :4000/graphql)
+# Activity report (legacy Node)    node scripts/report-activity.mjs [--csv out.csv]
+# Regenerate vector ERD PDF        python3 tools/render_erd.py
+# Docker single container          docker compose up --build   (needs Docker Engine)
 ```
 
 ## Demo/dev credentials & provider mode
 
-The real production stack is Supabase (PostgreSQL Data API, Auth, Storage) with
-the API in `DB_PROVIDER=supabase`; the API also runs fully in a local demo mode
-(`DB_PROVIDER=sqlite`): verification codes are returned by the server
-(`devCode`) instead of SMS, uploads are stored on local disk, and the AI Help
-Assistant answers from a deterministic fallback until `LLM_*` env vars are set.
-No secrets are committed; copy `.env.example` → `.env` and never commit `.env`.
+The real production stack is hosted Supabase — Auth, the Data API, Realtime,
+Storage and the `ai-help` Edge Function — used directly by the app. The Node
+Express API (`services/api`, `DB_PROVIDER=supabase|sqlite`) remains as a
+Docker/coursework reference and for the local demo mode: verification codes are
+returned by the server (`devCode`) instead of SMS, uploads are stored on local
+disk, and the AI Help Assistant answers from a deterministic fallback until
+`LLM_*` env vars are set. No secrets are committed; copy `.env.example` → `.env`
+and never commit `.env`.
 
 ## Docs
 
