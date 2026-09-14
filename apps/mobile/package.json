@@ -11,7 +11,7 @@
     "test": "vitest run",
     "cap:add:android": "cap add android",
     "cap:sync": "cap sync android",
-    "apk": "cap sync android && cd android && ./gradlew assembleDebug"
+    "apk": "node ../../scripts/check-apk-api-url.mjs && cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.1",
@@ -29,9 +29,12 @@
   "devDependencies": {
     "@capacitor/cli": "^8.5.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "jsdom": "^30.0.1",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "vite": "^8.2.2"
