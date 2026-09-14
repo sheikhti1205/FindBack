@@ -6,7 +6,7 @@ Status vocabulary (from the project brief):
 `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
 `DEFERRED_EXTERNAL_TOOL` · `TODO`
 
-Last updated: 2026-09-14 (Block 10F documentation pass: mobile reads the feed, a single post and My Posts and creates/changes post status directly from Supabase, and now lists/adds/deletes comments, reacts, and rates directly too — all through client-safe authenticated RPCs with a public-author-only privacy boundary and no reaction/rating user lists; realtime, uploads, reporting and AI remain on the Node API).
+Last updated: 2026-09-14 (Block 10G documentation pass: mobile reads the feed, a single post and My Posts, creates/changes post status, and lists/adds/deletes comments, reacts, and rates directly from Supabase — all through client-safe authenticated RPCs with a public-author-only privacy boundary and no reaction/rating user lists; live comments/reactions/ratings/post changes now arrive via Supabase Realtime private broadcast channels, while uploads, reporting and AI remain on the Node API).
 Statuses are only non-TODO when verifiable end-to-end (API tests green + live
 mobile/UI flow exercised).
 
