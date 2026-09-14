@@ -38,14 +38,7 @@ export function App() {
                 </GuestOnly>
               }
             />
-            <Route
-              path="/verify"
-              element={
-                <RequireAuth>
-                  <Verify />
-                </RequireAuth>
-              }
-            />
+            <Route path="/verify" element={<Verify />} />
             <Route
               element={
                 <RequireAuth>

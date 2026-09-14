@@ -36,9 +36,10 @@ function VerifyRow({ channel }: { channel: Channel }) {
     try {
       const res = await sendVerificationCode(channel);
       if (res.devCode) setDemoCode(res.devCode);
-      setResendIn(res.resendAfterSeconds);
+      setResendIn(res.resendAfterSeconds ?? 0);
       setMessage(`Code sent to ${destination}.`);
     } catch (err) {
+      // e.g. phone verification is not enabled on the active provider.
       setError(err instanceof Error ? err.message : "Could not send code");
     } finally {
       setSending(false);
@@ -105,14 +106,14 @@ function VerifyRow({ channel }: { channel: Channel }) {
 
       <div className="flex gap-2">
         <TextField
-          label="6-digit code"
+          label="Verification code"
           value={code}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
           inputMode="numeric"
-          placeholder="000000"
+          placeholder="00000000"
           className="flex-1"
         />
-        <Button onClick={onVerify} loading={verifying} disabled={code.length !== 6} className="mt-6">
+        <Button onClick={onVerify} loading={verifying} disabled={code.length < 6} className="mt-6">
           Verify
         </Button>
       </div>
@@ -120,10 +121,108 @@ function VerifyRow({ channel }: { channel: Channel }) {
   );
 }
 
-export function Verify() {
-  const { user } = useAuth();
+/**
+ * Pending-signup mode: the user has no session yet, so this uses the public
+ * `/auth/email-verification/*` endpoints. On success the first Supabase session
+ * is stored and the app is entered.
+ */
+function PendingEmailVerify({ email }: { email: string }) {
+  const { verifyPendingEmail, resendPendingEmail } = useAuth();
   const navigate = useNavigate();
-  if (!user) return <Navigate to="/signin" replace />;
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(
+    `We sent a verification code to your email.`,
+  );
+  const [verifying, setVerifying] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
+
+  async function onResend() {
+    setResending(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await resendPendingEmail();
+      setResendIn(30);
+      setMessage("We sent a new verification code to your email.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not resend code");
+    } finally {
+      setResending(false);
+    }
+  }
+
+  async function onVerify() {
+    setVerifying(true);
+    setError(null);
+    try {
+      await verifyPendingEmail(code.trim());
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto flex min-h-full max-w-md flex-col gap-5 bg-surface px-5 py-10 text-on-surface">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">Confirm your email</h1>
+        <p className="mt-1 text-sm text-on-surface-variant">
+          Enter the code sent to <span className="font-medium text-on-surface">{email}</span> to
+          finish creating your account.
+        </p>
+      </header>
+
+      <div className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-4">
+        {message && <p className="text-sm text-on-surface-variant">{message}</p>}
+        {error && (
+          <p className="text-sm text-error" role="alert">
+            {error}
+          </p>
+        )}
+
+        <TextField
+          label="Verification code"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
+          inputMode="numeric"
+          placeholder="00000000"
+        />
+
+        <Button onClick={onVerify} loading={verifying} disabled={code.length < 6} size="lg">
+          Verify and continue
+        </Button>
+
+        <Button
+          variant="outline"
+          onClick={onResend}
+          loading={resending}
+          disabled={resendIn > 0}
+        >
+          {resendIn > 0 ? `Resend in ${resendIn}s` : "Resend code"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function Verify() {
+  const { user, pendingEmail, booting } = useAuth();
+  const navigate = useNavigate();
+
+  if (booting) return null;
+  if (!user && !pendingEmail) return <Navigate to="/signin" replace />;
+  if (!user && pendingEmail) return <PendingEmailVerify email={pendingEmail} />;
+
   return (
     <div className="mx-auto flex min-h-full max-w-md flex-col gap-5 bg-surface px-5 py-10 text-on-surface">
       <header>
