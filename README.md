@@ -22,7 +22,7 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 | Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
 | Storage | Supabase Storage (public `findback-images` bucket, backend-only writes) in production; local uploads dir for tests/local |
 | AI | OpenAI-compatible HTTP provider + deterministic fallback |
-| ML | On-device TensorFlow.js category suggestion |
+| ML | MobileNet V1 (TensorFlow.js) bundled locally; on-device inference with no external network requests |
 | CI | GitHub Actions |
 
 ## Repo layout

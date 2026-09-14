@@ -6,7 +6,7 @@ Status vocabulary (from the project brief):
 `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
 `DEFERRED_EXTERNAL_TOOL` · `TODO`
 
-Last updated: 2026-09-14 (Block 8 requirements/production-readiness audit: reconciled req 5/11/12/20/22 wording, current test counts, and the Supabase Auth/Storage reality).
+Last updated: 2026-09-14 (Block 9 documentation pass: req 12 now runs fully on-device with bundled MobileNet V1 weights and no CDN fallback; APK builds are guarded by explicit API URL validation).
 Statuses are only non-TODO when verifiable end-to-end (API tests green + live
 mobile/UI flow exercised).
 
@@ -23,7 +23,7 @@ mobile/UI flow exercised).
 | 9 | Embedded external audio/video | YouTube URL, id extraction + iframe embed | mobile `components/YouTubeEmbed.tsx`, shared `extractYouTubeId` | paste YouTube link, play in post | unit validation tests | DONE |
 | 10 | Google Maps / embedded map | one-time location picker + embedded map on post | mobile `components/LocationPicker.tsx`, `MapEmbed.tsx` | pin approximate location | — | DONE |
 | 11 | Session/JWT auth | Supabase Auth access JWT + rotating refresh token in production; boot restore, single-flight 401 refresh/retry, logout; local JWT for tests/local | `auth/*`, `middleware/http.ts`; mobile `auth.tsx`, `services/api.ts` | login/logout, restore session, inspect stored token | `auth.test.ts`, `authCutover.test.ts`, mobile `services/auth.test.ts` | DONE |
-| 12 | TFLite / on-device ML | On-device TensorFlow.js MobileNet → category suggestion (inference runs in the WebView; weights currently load from the TF CDN unless bundled — see Block 8 gap) | mobile `services/ml.ts`; create-report "Suggest category" | photo → suggested category | category-mapping unit tests (ml map in shared) | DONE_DEMO_PROVIDER |
+| 12 | TFLite / on-device ML | On-device TensorFlow.js MobileNet V1 (alpha 0.25) with ~1.92 MB weights bundled in the app (`public/models/mobilenet/`); inference runs entirely in the WebView with no CDN fallback, and "Suggest category" works from the selected local file before the upload completes | mobile `services/ml.ts`, `public/models/mobilenet/*`; create-report "Suggest category" | attach photo → suggest category before publishing | `ml.test.ts`, category-mapping unit tests (ml map in shared) | DONE |
 | 13 | Image upload + cloud storage | Upload API + `sharp` normalization; Supabase Storage (`findback-images`) in production, local disk in demo/tests | `services/api/src/storage/*`, `domain/storageService.ts`; mobile create report attach | attach photo, preview, publish; public image URL | `uploads.test.ts`, `supabaseStorageProvider.test.ts`, `imageNormalizer.test.ts` | DONE |
 | 14 | Datepicker | native date input in create report | mobile `screens/CreateReport.tsx` | choose date | — | DONE |
 | 15 | GSAP/Framer Motion animations | Framer Motion entrance + transitions | mobile `components/PostCard.tsx`, `screens/Splash.tsx`, `index.css` | open app, feed card entrance | — | DONE |
@@ -49,7 +49,7 @@ mobile/UI flow exercised).
   imports cleanly against the Supabase PostgreSQL database (or the local SQLite
   demo).
 - Verification evidence: API test suites (15 files / 134 tests), mobile unit
-  tests (2 files / 17 tests), full typecheck/lint, the mobile production build,
+  tests (5 files / 35 tests), full typecheck/lint, the mobile production build,
   a locally built Android debug APK, and live E2E passes for Supabase Auth email
   OTP and Supabase Storage image upload.
 - Persistence has a Store seam: `SupabaseStore` (Data API) is the real
