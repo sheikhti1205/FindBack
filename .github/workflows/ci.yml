@@ -12,8 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -32,4 +32,30 @@ jobs:
         run: npm run build -w @findback/mobile
         env:
           CI: true
+
+  docker:
+    name: Docker build & health check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image
+        run: docker build -t findback:ci .
+      - name: Run container
+        run: docker run -d --name findback-ci -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:ci
+      - name: Wait for health
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/health >/dev/null; then
+              echo "container healthy"
+              curl -fsS http://localhost:4000/health
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "container did not become healthy"
+          exit 1
+      - name: Container logs
+        if: always()
+        run: docker logs findback-ci
 
