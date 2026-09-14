@@ -1,7 +1,7 @@
-import { io, type Socket } from "socket.io-client";
-import { apiBase, getToken } from "./api";
+import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
+import { getSupabase } from "./supabaseClient";
 
-type EventName =
+export type RealtimeEvent =
   | "feed:changed"
   | "post:updated"
   | "post:deleted"
@@ -12,61 +12,112 @@ type EventName =
 
 type Handler = (payload: Record<string, unknown>) => void;
 
-let socket: Socket | null = null;
-const listeners = new Map<EventName, Set<Handler>>();
+const listeners = new Map<RealtimeEvent, Set<Handler>>();
+const postChannels = new Map<string, RealtimeChannel>();
+const desiredPosts = new Set<string>();
+let client: SupabaseClient | null = null;
+let feedChannel: RealtimeChannel | null = null;
+let ready: Promise<void> = Promise.resolve();
+
+/** Wire a private Supabase channel, translating DB event names to app events. */
+function bind(channel: RealtimeChannel, bindings: Array<[string, RealtimeEvent]>): RealtimeChannel {
+  for (const [wireEvent, appEvent] of bindings) {
+    channel.on("broadcast", { event: wireEvent }, (message) => {
+      dispatch(appEvent, (message?.payload ?? {}) as Record<string, unknown>);
+    });
+  }
+  channel.subscribe();
+  return channel;
+}
+
+function dispatch(event: RealtimeEvent, payload: Record<string, unknown>): void {
+  const set = listeners.get(event);
+  if (!set) return;
+  for (const handler of set) handler(payload);
+}
 
 /**
- * Socket.IO handshake auth. A function (not a fixed object) so every
- * (re)connection attempt reads the latest stored access token — a reconnect
- * after a token refresh does not authenticate with a stale token.
+ * Lazily create the client and push the current session's access token into the
+ * Realtime socket. Private-channel RLS is checked against that token, so channels
+ * must only be opened after this resolves (the `ready` gate below).
  */
-export function socketAuth(): (cb: (data: { token: string }) => void) => void {
-  return (cb) => cb({ token: getToken() ?? "" });
+function ensureClient(): SupabaseClient | null {
+  if (client) return client;
+  try {
+    client = getSupabase();
+  } catch {
+    return null;
+  }
+  const c = client;
+  ready = c.auth
+    .getSession()
+    .then(({ data }) => {
+      if (data.session) c.realtime.setAuth(data.session.access_token);
+    })
+    .catch(() => undefined);
+  return c;
 }
 
-/** Connect (or reconnect) the Socket.IO transport with the current token. */
+/** Open the authenticated Realtime connection. Idempotent and safe on every auth change. */
 export function connectRealtime(): void {
-  if (!getToken()) return;
-  const auth = socketAuth();
-  if (socket) {
-    socket.auth = auth;
-    return;
-  }
-  socket = io(apiBase(), {
-    auth,
-    transports: ["websocket"],
-    reconnection: true,
+  const c = ensureClient();
+  if (!c || feedChannel) return;
+  void ready.then(() => {
+    if (client !== c || feedChannel) return;
+    feedChannel = bind(c.channel("feed", { config: { private: true } }), [
+      ["post:changed", "feed:changed"],
+    ]);
   });
-  for (const [event, set] of listeners) {
-    for (const handler of set) {
-      socket.on(event, handler as (payload: unknown) => void);
-    }
-  }
 }
 
+/** Tear down every channel (logout/unmount). The listener registry is kept. */
 export function disconnectRealtime(): void {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
+  desiredPosts.clear();
+  if (!client) return;
+  if (feedChannel) {
+    void client.removeChannel(feedChannel);
+    feedChannel = null;
   }
+  for (const [postId, channel] of postChannels) {
+    void client.removeChannel(channel);
+    postChannels.delete(postId);
+  }
+  client = null;
+  ready = Promise.resolve();
 }
 
-/** Subscribe to a realtime event; returns an unsubscribe function. */
-export function onRealtime(event: EventName, handler: Handler): () => void {
+/** Subscribe to an app-level realtime event; returns an unsubscribe function. */
+export function onRealtime(event: RealtimeEvent, handler: Handler): () => void {
   if (!listeners.has(event)) listeners.set(event, new Set());
   listeners.get(event)!.add(handler);
-  socket?.on(event, handler as (payload: unknown) => void);
   return () => {
     listeners.get(event)?.delete(handler);
-    socket?.off(event, handler as (payload: unknown) => void);
   };
 }
 
-/** Join the room for a post so its live events arrive. */
+/** Subscribe to a post's private topic so its live events arrive. */
 export function joinPostRoom(postId: string): void {
-  socket?.emit("join", postId);
+  desiredPosts.add(postId);
+  const c = ensureClient();
+  if (!c) return;
+  void ready.then(() => {
+    if (client !== c || !desiredPosts.has(postId) || postChannels.has(postId)) return;
+    const channel = bind(c.channel(`post:${postId}`, { config: { private: true } }), [
+      ["post:updated", "post:updated"],
+      ["post:deleted", "post:deleted"],
+      ["comment:added", "comment:added"],
+      ["comment:deleted", "comment:deleted"],
+      ["reaction:changed", "reaction:changed"],
+      ["rating:changed", "rating:changed"],
+    ]);
+    postChannels.set(postId, channel);
+  });
 }
 
 export function leavePostRoom(postId: string): void {
-  socket?.emit("leave", postId);
+  desiredPosts.delete(postId);
+  const channel = postChannels.get(postId);
+  if (!channel || !client) return;
+  void client.removeChannel(channel);
+  postChannels.delete(postId);
 }
