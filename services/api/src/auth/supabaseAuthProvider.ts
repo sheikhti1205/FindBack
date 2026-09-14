@@ -73,9 +73,9 @@ export interface SupabaseAdminOperations {
 }
 
 /**
- * Thrown by verification methods that are intentionally not wired to Supabase
- * yet (a later block). Unreachable while `getAuthProvider()` still selects
- * `LocalAuthProvider`.
+ * Thrown by verification methods that are intentionally not wired to Supabase.
+ * Email verification is live; PHONE is unsupported until an SMS provider is
+ * chosen (Supabase phone provider disabled).
  */
 export class SupabaseVerificationNotEnabledError extends AppError {
   readonly operation: string;
@@ -173,12 +173,11 @@ function errorMessageOf(err: unknown): string {
 /**
  * Supabase Auth implementation of the `AuthProvider` seam.
  *
- * Core operations (register/login/refresh/validate/signOut) are implemented;
- * email/phone verification is deliberately left for a later block. All
- * dependencies are injected so unit tests run fully offline.
+ * Core operations (register/login/refresh/validate/signOut) plus email OTP
+ * verification are implemented; PHONE verification is deferred pending an SMS
+ * provider. All dependencies are injected so unit tests run fully offline.
  *
- * NOT selected by `getAuthProvider()` yet — the running application still uses
- * `LocalAuthProvider`.
+ * Selected by `getAuthProvider()` when `DB_PROVIDER=supabase`.
  */
 export class SupabaseAuthProvider implements AuthProvider {
   constructor(
@@ -346,7 +345,7 @@ export class SupabaseAuthProvider implements AuthProvider {
 
   /**
    * Verify the signup email OTP and return the first session. The public REST
-   * route still drops the session until the cutover block.
+   * route (`POST /auth/email-verification/verify`) returns that session.
    */
   async verifyVerificationCode(
     target: VerificationTarget,

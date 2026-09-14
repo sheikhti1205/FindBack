@@ -124,7 +124,7 @@ export interface StoredUpload {
   fileUrl: string;
 }
 
-/** Upload an image to the local storage provider (swap-in cloud later). */
+/** Upload an image through the FindBack API (Supabase Storage in production). */
 export async function uploadImage(file: File): Promise<StoredUpload> {
   const form = new FormData();
   form.append("file", file);

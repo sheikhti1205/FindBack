@@ -1,7 +1,9 @@
 # FindBack — Database Schema & Entity Relationship Diagram
 
-Source of truth: `services/api/src/db/db.ts`. Storage engine is SQLite (via `node:sqlite`),
-WAL mode, foreign keys enforced. All timestamps are ISO-8601 UTC strings.
+Source of truth: `supabase/migrations/20260912000000_init.sql` (production:
+Supabase PostgreSQL). The local/test mirror is
+`services/api/src/db/sqliteAdapter.ts` (SQLite `node:sqlite`, WAL mode, foreign
+keys enforced). All timestamps are ISO-8601 UTC strings.
 
 ## ERD (Mermaid)
 

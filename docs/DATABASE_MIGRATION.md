@@ -79,7 +79,11 @@ npx supabase migration list
 Already-applied migration files are historical record: never edit them to change
 schema. Send RLS/policy changes, new tables, and RPCs as new migrations.
 
-## Auth migration progress
+## Auth migration progress (historical — see the cutover section below)
+
+_This section records the earlier step-by-step preparation. Supabase Auth later
+became the live production provider (see "Supabase Auth cutover" below), so
+future-tense statements here are superseded._
 
 `public.users.password_hash` is now **nullable** (migration
 `20260912190128_auth_password_hash_nullable`). Supabase Auth will own password

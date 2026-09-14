@@ -9,25 +9,27 @@ Run the API and the Android app (or the mobile web shell) before starting.
    (auto-seeds the demo database on first run).
 2. Open the mobile app (Android APK on an emulator pointing at the host, or
    the web shell at http://localhost:5173).
-3. Log in with `rafi_cu` / `password123` (or register a new account).
+3. Log in with `rafi_cu` / `password123` (seeded local/demo accounts), or
+   register a new account. In Supabase production there are no seeded users —
+   register and verify by real email.
 
 ## 1 · Auth & verification (req 5, 11, 4)
 
 | What to do | What the teacher sees |
 | --- | --- |
 | Register a fresh account (username, email, phone + password) | #4: while typing the username it live-reports "available/taken" |
-| After registration, open **Profile → verify email** | #5: 6-digit code is sent; dev mode shows the code on the API console/screen → enter it → "email verified". Repeat for phone. |
-| Log out and log back in | #11: JWT session; guarded routes work |
+| Register → check the email inbox → enter the emailed code on the **Verify** screen | #5: production email is a real Supabase Auth OTP (8 digits) sent via SMTP; the local demo (SQLite) shows the code on screen instead. Phone verification still needs an SMS provider. |
+| Log out and log back in | #11: Supabase access session + rotating refresh token; guarded routes remain authenticated across reloads |
 
 ## 2 · Create a report (req 6, 13, 12, 14, 9, 10, 16)
 
 1. **Report** tab → choose *I lost something / I found something* (req 6).
 2. Fill multiple text boxes (title/description), pick a **category dropdown**
-   and the **date picker** (req 14), and choose a location on the one-time map
-   (req 10).
+   and the **date picker** (req 14), and capture an approximate location with the
+   one-time "Use my location" button plus a free-text label (req 10).
 3. Attach a photo (req 13) and press **Suggest category (on-device ML)** —
-   TensorFlow.js runs on the device and suggests a category from the image
-   (req 12).
+   TensorFlow.js MobileNet runs inference on the device and suggests a category
+   from the image (req 12; weights may download once unless bundled).
 4. Paste a YouTube link and watch the embedded player render live (req 9).
 5. Publish → open the post (tailwind-styled, animated card entrance — req 16/15).
 
