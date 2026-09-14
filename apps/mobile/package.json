@@ -11,7 +11,7 @@
     "test": "vitest run",
     "cap:add:android": "cap add android",
     "cap:sync": "cap sync android",
-    "apk": "node ../../scripts/check-apk-api-url.mjs && cap sync android && cd android && ./gradlew assembleDebug"
+    "apk": "cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.1",
@@ -24,8 +24,7 @@
     "lucide-react": "^1.43.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router": "^8.3.1",
-    "socket.io-client": "^4.8.3"
+    "react-router": "^8.3.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.1",

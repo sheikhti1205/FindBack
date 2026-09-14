@@ -4,23 +4,18 @@ import { CheckCircle2, Mail, Phone } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
-import { sendVerificationCode, verifyCode } from "../services/auth";
+import { sendPendingEmailCode, verifyPendingEmailCode } from "../services/auth";
 
 type Channel = "EMAIL" | "PHONE";
 
 function VerifyRow({ channel }: { channel: Channel }) {
   const { user, refreshUser } = useAuth();
   const [code, setCode] = useState("");
-  const [demoCode, setDemoCode] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [resendIn, setResendIn] = useState(0);
-
-  if (!user) return null;
-  const verified = channel === "EMAIL" ? user.emailVerified : user.phoneVerified;
-  const destination = channel === "EMAIL" ? user.email : user.phone;
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -28,18 +23,19 @@ function VerifyRow({ channel }: { channel: Channel }) {
     return () => clearTimeout(t);
   }, [resendIn]);
 
+  if (!user) return null;
+  const verified = channel === "EMAIL" ? user.emailVerified : user.phoneVerified;
+  const destination = channel === "EMAIL" ? user.email : user.phone;
+
   async function onSend() {
     setSending(true);
     setError(null);
     setMessage(null);
-    setDemoCode(null);
     try {
-      const res = await sendVerificationCode(channel);
-      if (res.devCode) setDemoCode(res.devCode);
-      setResendIn(res.resendAfterSeconds ?? 0);
+      await sendPendingEmailCode(user!.email);
+      setResendIn(30);
       setMessage(`Code sent to ${destination}.`);
     } catch (err) {
-      // e.g. phone verification is not enabled on the active provider.
       setError(err instanceof Error ? err.message : "Could not send code");
     } finally {
       setSending(false);
@@ -50,10 +46,9 @@ function VerifyRow({ channel }: { channel: Channel }) {
     setVerifying(true);
     setError(null);
     try {
-      await verifyCode(channel, code.trim());
+      await verifyPendingEmailCode(user!.email, code.trim());
       await refreshUser();
       setCode("");
-      setDemoCode(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
@@ -75,16 +70,30 @@ function VerifyRow({ channel }: { channel: Channel }) {
     );
   }
 
+  // Phone verification is deferred (no SMS provider configured): show the stored
+  // number truthfully as unverified rather than calling an unavailable service.
+  if (channel === "PHONE") {
+    return (
+      <div className="flex items-start gap-3 rounded-m3-md border border-outline-variant p-4">
+        <Phone className="mt-0.5 shrink-0 text-on-surface-variant" size={20} aria-hidden />
+        <div>
+          <p className="font-medium">Phone · unverified</p>
+          <p className="text-sm text-on-surface-variant">{destination}</p>
+          <p className="mt-1 text-sm text-on-surface-variant">
+            Phone verification isn't available yet — no SMS provider is configured. Your number
+            is saved but unverified.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-4">
       <div className="flex items-center gap-3">
-        {channel === "EMAIL" ? (
-          <Mail size={20} aria-hidden />
-        ) : (
-          <Phone size={20} aria-hidden />
-        )}
+        <Mail size={20} aria-hidden />
         <div className="flex-1">
-          <p className="font-medium">{channel === "EMAIL" ? "Verify email" : "Verify phone"}</p>
+          <p className="font-medium">Verify email</p>
           <p className="text-sm text-on-surface-variant">{destination}</p>
         </div>
         <Button variant="outline" size="md" onClick={onSend} loading={sending} disabled={resendIn > 0}>
@@ -93,11 +102,6 @@ function VerifyRow({ channel }: { channel: Channel }) {
       </div>
 
       {message && <p className="text-sm text-on-surface-variant">{message}</p>}
-      {demoCode && (
-        <p className="rounded-m3-xs bg-surface-container px-3 py-1.5 text-xs text-on-surface-variant">
-          Demo mode — code shown by the dev server: <strong className="font-mono">{demoCode}</strong>
-        </p>
-      )}
       {error && (
         <p className="text-sm text-error" role="alert">
           {error}

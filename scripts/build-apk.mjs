@@ -1,45 +1,43 @@
 #!/usr/bin/env node
 /**
- * Cross-platform Android APK build with an explicit, validated API base URL.
+ * Cross-platform Android APK build for the Supabase-native app (Block 10K).
  *
  * Usage:
- *   VITE_API_URL=http://192.168.x.x:4000 npm run apk    # physical phone (LAN IP)
- *   npm run apk:emulator                                # Android emulator (10.0.2.2)
+ *   VITE_SUPABASE_URL=https://<ref>.supabase.co \
+ *   VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_... \
+ *   npm run apk
  *
- * Refuses to build when VITE_API_URL is missing or points at the device itself
- * (localhost / 127.0.0.1), unless APK_ALLOW_LOCALHOST=1 is set explicitly.
+ * Only the public Supabase URL + publishable key are baked into the bundle. No
+ * API base URL is needed — the app talks exclusively to hosted Supabase (Auth /
+ * Data API / Realtime / Storage / Edge Functions). The secret key must never be
+ * provided here.
  */
 import { spawnSync } from "node:child_process";
 
-const emulator = process.argv.includes("--emulator");
-const allowLocalhost = process.env.APK_ALLOW_LOCALHOST === "1";
+const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-const npm = (args, env) => {
+if (!supabaseUrl || !publishableKey) {
+  console.error(
+    "build-apk: set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (publishable key only).",
+  );
+  process.exit(1);
+}
+if (/service_role|sb_secret_/i.test(publishableKey)) {
+  console.error("build-apk: refusing to build — that looks like a secret key, not a publishable key.");
+  process.exit(1);
+}
+
+const npm = (args) => {
   const result = spawnSync("npm", args, {
     stdio: "inherit",
-    env,
+    env: process.env,
     shell: process.platform === "win32",
   });
   if (result.status !== 0) process.exit(result.status ?? 1);
 };
 
-// Build the shared package first so @findback/shared resolves for validation.
-npm(["run", "build", "-w", "packages/shared"], process.env);
-
-const { resolveApkApiUrl } = await import("@findback/shared");
-
-let apiUrl = process.env.VITE_API_URL;
-if (!apiUrl && emulator) apiUrl = "http://10.0.2.2:4000";
-
-const result = resolveApkApiUrl(apiUrl, { allowLocalhost });
-if (!result.ok) {
-  console.error(`build-apk: ${result.error}`);
-  console.error("Set VITE_API_URL, or run `npm run apk:emulator` for the Android emulator.");
-  process.exit(1);
-}
-
-console.log(`build-apk: API base = ${result.url}`);
-const env = { ...process.env, VITE_API_URL: result.url };
-
-npm(["run", "build", "-w", "apps/mobile"], env);
-npm(["run", "apk", "-w", "apps/mobile"], env);
+console.log(`build-apk: Supabase = ${supabaseUrl}`);
+npm(["run", "build", "-w", "packages/shared"]);
+npm(["run", "build", "-w", "apps/mobile"]);
+npm(["run", "apk", "-w", "apps/mobile"]);

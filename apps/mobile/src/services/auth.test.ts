@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiFetch, API_URL, clearAllAuth, getToken, onSignedOut } from "./api";
+import { clearAllAuth, getToken } from "./session";
 import {
   askAiHelp,
   checkUsername,
@@ -70,13 +70,6 @@ const USER = {
 };
 
 const fetchMock = vi.fn();
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
 
 function base64url(value: string): string {
   return btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -315,62 +308,6 @@ describe("fetchMe", () => {
   it("throws when there is no authenticated user", async () => {
     clientMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: null });
     await expect(fetchMe()).rejects.toThrow("Not authenticated");
-  });
-});
-
-describe("legacy Node API bridge", () => {
-  it("sends the Supabase access token to the legacy Node URL", async () => {
-    clientMock.auth.getSession.mockResolvedValue({
-      data: { session: { access_token: "sb-token" } },
-      error: null,
-    });
-    fetchMock.mockResolvedValueOnce(json({ ok: true }));
-
-    await apiFetch("/posts");
-
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`${API_URL}/posts`);
-    expect(new Headers(init.headers).get("authorization")).toBe("Bearer sb-token");
-  });
-
-  it("refreshes once on 401 and retries with the new token", async () => {
-    clientMock.auth.getSession
-      .mockResolvedValueOnce({ data: { session: { access_token: "old" } }, error: null })
-      .mockResolvedValueOnce({ data: { session: { access_token: "new" } }, error: null });
-    clientMock.auth.refreshSession.mockResolvedValue({
-      data: { session: { access_token: "new" } },
-      error: null,
-    });
-    fetchMock
-      .mockResolvedValueOnce(json({ error: "expired" }, 401))
-      .mockResolvedValueOnce(json({ ok: true }));
-
-    const res = await apiFetch<{ ok: boolean }>("/me/posts");
-
-    expect(res.ok).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const retry = fetchMock.mock.calls[1] as [string, RequestInit];
-    expect(new Headers(retry[1].headers).get("authorization")).toBe("Bearer new");
-  });
-
-  it("clears the session and notifies when refresh fails", async () => {
-    clientMock.auth.getSession.mockResolvedValue({
-      data: { session: { access_token: "old" } },
-      error: null,
-    });
-    clientMock.auth.refreshSession.mockResolvedValue({
-      data: { session: null },
-      error: { message: "bad refresh", code: "refresh_token_not_found" },
-    });
-    const signedOut = vi.fn();
-    const off = onSignedOut(signedOut);
-    fetchMock.mockResolvedValueOnce(json({ error: "expired" }, 401));
-
-    await expect(apiFetch("/me/posts")).rejects.toBeTruthy();
-
-    expect(getToken()).toBeNull();
-    expect(signedOut).toHaveBeenCalledTimes(1);
-    off();
   });
 });
 

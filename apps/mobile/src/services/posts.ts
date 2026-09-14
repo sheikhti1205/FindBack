@@ -7,7 +7,7 @@ import type {
   PostStatus,
   PostType,
 } from "@findback/shared";
-import { ApiError } from "./api";
+import { ApiError } from "./session";
 import { normalizeImage } from "./image";
 import { getSupabase } from "./supabaseClient";
 
