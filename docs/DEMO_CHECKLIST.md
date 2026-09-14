@@ -84,7 +84,8 @@ server below is kept as a Docker/coursework reference.
 3. Legacy reference server: http://localhost:4000/graphql (GraphiQL) and
    `curl http://localhost:4000/reports/activity?days=7`.
 4. Show `docker-compose.yml` / `Dockerfile` and the GitHub Actions workflow
-   (req 22) — CI runs the same lint/typecheck/test commands locally.
+   (req 22) — CI runs the same lint/typecheck/tests/web build, plus a Docker job
+   that builds the image, runs it and passes the `/health` check.
 5. **Profile → Help Assistant**: ask "How do I report a lost item?" — answers
    from the deterministic fallback (or a configured LLM) (req 23).
 
