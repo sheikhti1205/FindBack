@@ -132,6 +132,22 @@ export type EmailVerificationSendInput = z.infer<typeof emailVerificationSendSch
 export type EmailVerificationVerifyInput = z.infer<typeof emailVerificationVerifySchema>;
 export type RefreshInput = z.infer<typeof refreshSchema>;
 
+/**
+ * Public author projection embedded in posts and comments.
+ *
+ * Deliberately excludes email and phone: those are private account fields and
+ * must never travel with a public post/comment payload.
+ */
+export interface PublicProfile {
+  id: string;
+  username: string;
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  avatarUrl: string | null;
+  createdAt: string;
+}
+
+/** The signed-in user's own account. Email/phone are only ever shown to them. */
 export interface PublicUser {
   id: string;
   username: string;
@@ -156,7 +172,7 @@ export interface Attachment {
 export interface PostItem {
   id: string;
   userId: string;
-  author: PublicUser;
+  author: PublicProfile;
   type: PostType;
   title: string;
   description: string;
@@ -180,7 +196,7 @@ export interface PostItem {
 export interface CommentItem {
   id: string;
   postId: string;
-  author: PublicUser;
+  author: PublicProfile;
   body: string;
   createdAt: string;
   updatedAt: string;

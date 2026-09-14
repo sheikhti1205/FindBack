@@ -18,12 +18,10 @@ import type {
   UserInsert,
 } from "./types.js";
 
-const AUTHOR_COLUMNS = "username, email, phone, email_verified, phone_verified, avatar_url, created_at";
+const AUTHOR_COLUMNS = "username, email_verified, phone_verified, avatar_url, created_at";
 
 interface EmbeddedAuthor {
   username?: unknown;
-  email?: unknown;
-  phone?: unknown;
   email_verified?: unknown;
   phone_verified?: unknown;
   avatar_url?: unknown;
@@ -47,8 +45,6 @@ function flattenAuthor(row: Row): Row {
   const author = row.author as EmbeddedAuthor | undefined;
   if (author) {
     row.author_username = author.username;
-    row.author_email = author.email;
-    row.author_phone = author.phone;
     row.author_email_verified = author.email_verified;
     row.author_phone_verified = author.phone_verified;
     row.author_avatar_url = author.avatar_url ?? null;

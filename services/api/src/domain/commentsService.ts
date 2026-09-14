@@ -9,8 +9,6 @@ function rowToComment(row: Row): CommentItem {
   const author = {
     id: String(row.user_id),
     username: String(row.author_username),
-    email: String(row.author_email),
-    phone: String(row.author_phone),
     emailVerified: Boolean(row.author_email_verified),
     phoneVerified: Boolean(row.author_phone_verified),
     avatarUrl: row.author_avatar_url ? String(row.author_avatar_url) : null,

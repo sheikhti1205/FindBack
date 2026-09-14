@@ -19,7 +19,7 @@ import type {
 
 const POST_SELECT = `
   SELECT p.*,
-         u.username AS author_username, u.email AS author_email, u.phone AS author_phone,
+         u.username AS author_username,
          u.email_verified AS author_email_verified, u.phone_verified AS author_phone_verified,
          u.avatar_url AS author_avatar_url, u.created_at AS author_created_at,
          (SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.id AND r.type = 'LIKE') AS like_count,
@@ -32,8 +32,8 @@ const POST_SELECT = `
 `;
 
 const COMMENT_SELECT = `
-  SELECT c.*, u.username AS author_username, u.email AS author_email,
-         u.phone AS author_phone, u.email_verified AS author_email_verified,
+  SELECT c.*, u.username AS author_username,
+         u.email_verified AS author_email_verified,
          u.phone_verified AS author_phone_verified,
          u.avatar_url AS author_avatar_url, u.created_at AS author_created_at
   FROM comments c JOIN users u ON u.id = c.user_id
