@@ -207,17 +207,29 @@ export interface CreatePostInput {
 }
 
 export async function createPost(input: CreatePostInput): Promise<PostItem> {
-  return apiFetch<PostItem>("/posts", {
-    method: "POST",
-    body: JSON.stringify(input),
+  const { data, error } = await getSupabase().rpc("findback_create_post_client", {
+    p_type: input.type,
+    p_title: input.title,
+    p_description: input.description,
+    p_category: input.category,
+    p_event_date: input.eventDate,
+    p_latitude: input.latitude ?? null,
+    p_longitude: input.longitude ?? null,
+    p_location_label: input.locationLabel ?? null,
+    p_youtube_url: input.youtubeUrl ?? null,
+    p_attachment_key: input.attachmentKey ?? null,
   });
+  if (error) throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
+  return fetchPost(String(data));
 }
 
 export async function updatePostStatus(id: string, status: PostStatus): Promise<PostItem> {
-  return apiFetch<PostItem>(`/posts/${id}/status`, {
-    method: "PATCH",
-    body: JSON.stringify({ status }),
+  const { error } = await getSupabase().rpc("findback_change_post_status_client", {
+    p_post_id: id,
+    p_status: status,
   });
+  if (error) throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
+  return fetchPost(id);
 }
 
 export async function fetchComments(postId: string): Promise<CommentItem[]> {

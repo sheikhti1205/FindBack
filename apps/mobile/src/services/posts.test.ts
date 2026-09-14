@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchFeed, fetchMyPosts, fetchPost } from "./posts";
+import {
+  createPost,
+  fetchFeed,
+  fetchMyPosts,
+  fetchPost,
+  updatePostStatus,
+} from "./posts";
 
 const { clientMock } = vi.hoisted(() => ({
   clientMock: {
@@ -188,5 +194,61 @@ describe("fetchMyPosts", () => {
   it("requires an authenticated session", async () => {
     clientMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: null });
     await expect(fetchMyPosts()).rejects.toThrow("Not authenticated");
+  });
+});
+
+describe("createPost", () => {
+  const input = {
+    type: "LOST" as const,
+    title: "Lost phone",
+    description: "a black phone lost on campus",
+    category: "Electronics" as const,
+    eventDate: "2026-09-10",
+  };
+
+  it("calls the create RPC and returns the fresh public post", async () => {
+    clientMock.rpc
+      .mockResolvedValueOnce({ data: "new-id", error: null })
+      .mockResolvedValueOnce({ data: [row({ id: "new-id" })], error: null });
+
+    const post = await createPost(input);
+
+    expect(clientMock.rpc).toHaveBeenNthCalledWith(
+      1,
+      "findback_create_post_client",
+      expect.objectContaining({
+        p_type: "LOST",
+        p_title: "Lost phone",
+        p_category: "Electronics",
+        p_event_date: "2026-09-10",
+        p_attachment_key: null,
+      }),
+    );
+    expect(post.id).toBe("new-id");
+  });
+
+  it("maps an ownership rejection to 403", async () => {
+    clientMock.rpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: "Attachment was not uploaded by you", code: "42501" },
+    });
+    await expect(createPost(input)).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("updatePostStatus", () => {
+  it("changes status then refetches the post", async () => {
+    clientMock.rpc
+      .mockResolvedValueOnce({ data: true, error: null })
+      .mockResolvedValueOnce({ data: [row({ status: "RECOVERED" })], error: null });
+
+    const post = await updatePostStatus("p1", "RECOVERED");
+
+    expect(clientMock.rpc).toHaveBeenNthCalledWith(
+      1,
+      "findback_change_post_status_client",
+      { p_post_id: "p1", p_status: "RECOVERED" },
+    );
+    expect(post.status).toBe("RECOVERED");
   });
 });
