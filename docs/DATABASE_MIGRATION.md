@@ -177,10 +177,12 @@ Direct Supabase today:
 - own profile read (`public.users`: safe public columns + Auth session identity)
 - username availability (`public.users`, anon, `username` column only)
 - feed / single post / My Posts reads (`findback_query_posts_client`, authenticated)
+- create post / change post status (`findback_create_post_client`,
+  `findback_change_post_status_client`, authenticated)
 
 Temporarily on Node (still Bearer-validated with the Supabase access token):
 
-- create / edit / delete reports and post status changes
+- post edit/delete from the legacy API (no mobile UI yet)
 - comments, reactions, ratings
 - uploads / Storage, Socket.IO realtime, reporting, AI Help
 - other legacy endpoints (including the still-present `GET /users/check-username`)
@@ -221,6 +223,17 @@ Migrations:
   lookup and keyset pagination, and clamps the page size to 20 in SQL. The
   original `findback_query_posts` (which still returns `author_email`/
   `author_phone`) stays `service_role`-only.
+- `20260914190000_post_mutations.sql` — direct authenticated post writes.
+  `findback_create_post_client` / `findback_update_post_client` /
+  `findback_change_post_status_client` / `findback_delete_post_client`
+  (SECURITY INVOKER, EXECUTE `authenticated` only) always use `auth.uid()` as the
+  actor, never a caller-supplied owner; create starts `OPEN` and atomically binds
+  a staging upload that must belong to the caller. Grants: `authenticated` may
+  INSERT/UPDATE/`DELETE` `item_posts`, INSERT `attachments`, and SELECT its own
+  `uploads`, each behind owner-scoped RLS (`UPDATE` has `USING` + `WITH CHECK`).
+- `20260914191000_fix_rls_initplan.sql` — wraps `auth.uid()` in `(select
+  auth.uid())` inside those policies so the planner evaluates it once
+  (`auth_rls_initplan` advisor cleared).
 
 `public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
 live: profile creation; `anon` cannot read `users` email/phone/verification and
