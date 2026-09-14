@@ -12,21 +12,19 @@ import {
   fetchMe,
   login as apiLogin,
   logout as apiLogout,
-  persistSession,
   register as apiRegister,
   restoreSession,
   sendPendingEmailCode,
   verifyPendingEmailCode,
-  type AuthSessionPayload,
 } from "./services/auth";
 import {
   clearAllAuth,
   getPendingEmail,
-  getRefreshToken,
-  getToken,
   onSignedOut,
   setPendingEmail as persistPendingEmail,
+  setToken,
 } from "./services/api";
+import { getSupabase } from "./services/supabaseClient";
 import { connectRealtime, disconnectRealtime } from "./services/realtime";
 
 export type RegisterOutcome =
@@ -62,13 +60,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [pendingEmail, setPendingEmailState] = useState<string | null>(() => getPendingEmail());
   const [booting, setBooting] = useState(true);
 
-  // Boot: restore a stored session (refreshing an expired access token once).
+  // Boot: restore a stored Supabase session.
   useEffect(() => {
     let cancelled = false;
-    if (!getToken() && !getRefreshToken()) {
-      setBooting(false);
-      return;
-    }
     (async () => {
       try {
         const restored = await restoreSession();
@@ -85,6 +79,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Keep the token cache and user state in sync with Supabase Auth.
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    try {
+      const { data } = getSupabase().auth.onAuthStateChange((event, session) => {
+        setToken(session?.access_token ?? null);
+        if (event === "SIGNED_OUT") {
+          disconnectRealtime();
+          setUserState(null);
+          setPendingEmailState(null);
+          return;
+        }
+        if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+          // Defer network work: awaiting Supabase inside this callback can deadlock.
+          setTimeout(() => {
+            void fetchMe()
+              .then((next) => setUserState(next))
+              .catch(() => {
+                /* ignore transient profile fetch errors */
+              });
+          }, 0);
+        }
+      });
+      unsubscribe = () => data.subscription.unsubscribe();
+    } catch {
+      /* Supabase not configured; boot handling already cleared state */
+    }
+    return () => unsubscribe?.();
   }, []);
 
   // A failed mid-session refresh signs the user out in place.
@@ -109,40 +133,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUserState(await fetchMe());
   }, []);
 
-  const applySession = useCallback((session: AuthSessionPayload): PublicUser => {
-    const next = persistSession(session);
+  const login = useCallback(async (identifier: string, password: string) => {
+    const next = await apiLogin({ identifier, password });
     setUserState(next);
     return next;
   }, []);
-
-  const login = useCallback(
-    async (identifier: string, password: string) =>
-      applySession(await apiLogin({ identifier, password })),
-    [applySession],
-  );
 
   const register = useCallback(
     async (input: { username: string; email: string; phone: string; password: string }) => {
       const result = await apiRegister(input);
       if (result.emailVerificationRequired) {
-        persistPendingEmail(result.email);
-        setPendingEmailState(result.email);
-        return { status: "pending", email: result.email } as const;
+        const email = result.email ?? input.email;
+        persistPendingEmail(email);
+        setPendingEmailState(email);
+        return { status: "pending", email } as const;
       }
-      return { status: "authenticated", user: applySession(result) } as const;
+      setUserState(result.user);
+      return { status: "authenticated", user: result.user } as const;
     },
-    [applySession],
+    [],
   );
 
   const verifyPendingEmail = useCallback(
     async (code: string) => {
       if (!pendingEmail) throw new Error("No pending email verification");
-      const restored = applySession(await verifyPendingEmailCode(pendingEmail, code));
+      const next = await verifyPendingEmailCode(pendingEmail, code);
       persistPendingEmail(null);
       setPendingEmailState(null);
-      return restored;
+      setUserState(next);
+      return next;
     },
-    [pendingEmail, applySession],
+    [pendingEmail],
   );
 
   const resendPendingEmail = useCallback(async () => {

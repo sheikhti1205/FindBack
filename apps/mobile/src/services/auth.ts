@@ -1,31 +1,106 @@
-import {
-  apiFetch,
-  ApiError,
-  getRefreshToken,
-  getToken,
-  refreshAccessToken,
-  setRefreshToken,
-  setToken,
-} from "./api";
+import type { User } from "@supabase/supabase-js";
+import { getSupabase } from "./supabaseClient";
+import { apiFetch, ApiError, setToken } from "./api";
 import type { PublicUser } from "@findback/shared";
 
-/** A provider session as returned by the FindBack API. */
-export interface AuthSessionPayload {
-  token: string;
-  refreshToken?: string;
-  expiresIn?: number;
-  expiresAt?: number;
-  user: PublicUser;
-}
-
 /** Supabase signup with Confirm-email ON: account created, no session yet. */
-export interface RegisterPending {
+export interface RegisterResult {
   user: PublicUser;
-  emailVerificationRequired: true;
-  email: string;
+  emailVerificationRequired: boolean;
+  email?: string;
 }
 
-export type RegisterResult = RegisterPending | (AuthSessionPayload & { emailVerificationRequired: false });
+const DUPLICATE_ACCOUNT_MESSAGE = "An account with these details already exists.";
+const RATE_LIMIT_MESSAGE = "Too many attempts. Please wait a moment and try again.";
+const INVALID_CODE_MESSAGE = "Invalid or expired verification code";
+
+interface AuthErrorLike {
+  message?: string;
+  code?: string | undefined;
+  status?: number | undefined;
+}
+
+function isRateLimited(code: string, message: string): boolean {
+  return (
+    code === "over_email_send_rate_limit" ||
+    code === "over_request_rate_limit" ||
+    code === "over_sms_send_rate_limit" ||
+    message.includes("rate limit") ||
+    message.includes("too many requests")
+  );
+}
+
+function isEnumerationError(code: string): boolean {
+  return code === "user_not_found" || code === "email_not_confirmed";
+}
+
+/** Map SDK errors to user-facing messages without leaking provider internals. */
+function mapAuthError(error: AuthErrorLike): ApiError {
+  const code = error.code ?? "";
+  const message = (error.message ?? "").toLowerCase();
+
+  if (code === "user_already_exists" || code === "email_exists" || code === "phone_exists") {
+    return new ApiError(DUPLICATE_ACCOUNT_MESSAGE, 409);
+  }
+  if (message.includes("invalid username") || message.includes("invalid phone")) {
+    return new ApiError("Please check your username and phone number.", 400);
+  }
+  if (
+    message.includes("unique constraint") ||
+    message.includes("duplicate key") ||
+    code === "23505"
+  ) {
+    return new ApiError(DUPLICATE_ACCOUNT_MESSAGE, 409);
+  }
+  if (isRateLimited(code, message)) {
+    return new ApiError(RATE_LIMIT_MESSAGE, 429);
+  }
+  if (code === "email_not_confirmed") {
+    return new ApiError("Email not confirmed. Verify your email to continue.", 403);
+  }
+  if (
+    code === "invalid_credentials" ||
+    code === "user_not_found" ||
+    code === "invalid_grant" ||
+    message.includes("invalid login credentials")
+  ) {
+    return new ApiError("Invalid credentials", 401);
+  }
+  if (
+    code === "otp_expired" ||
+    code === "invalid_otp" ||
+    code === "token_has_expired" ||
+    message.includes("token has expired") ||
+    message.includes("invalid otp")
+  ) {
+    return new ApiError(INVALID_CODE_MESSAGE, 400);
+  }
+  return new ApiError("Authentication failed. Please try again.", error.status ?? 400);
+}
+
+function pendingUser(user: User | null, input: { username: string; email: string; phone: string }): PublicUser {
+  return {
+    id: user?.id ?? "",
+    username: input.username,
+    email: user?.email ?? input.email,
+    phone: input.phone,
+    emailVerified: false,
+    phoneVerified: false,
+    avatarUrl: null,
+    createdAt: user?.created_at ?? new Date().toISOString(),
+  };
+}
+
+interface ProfileRow {
+  id: string;
+  username: string;
+  email: string | null;
+  phone: string | null;
+  email_verified: boolean | null;
+  phone_verified: boolean | null;
+  avatar_url: string | null;
+  created_at: string;
+}
 
 export async function register(input: {
   username: string;
@@ -33,53 +108,111 @@ export async function register(input: {
   phone: string;
   password: string;
 }): Promise<RegisterResult> {
-  return apiFetch<RegisterResult>("/auth/register", {
-    method: "POST",
-    body: JSON.stringify(input),
+  const { data, error } = await getSupabase().auth.signUp({
+    email: input.email,
+    password: input.password,
+    options: { data: { username: input.username, phone: input.phone } },
   });
+
+  if (error) throw mapAuthError(error);
+
+  // Supabase returns an empty-identity user instead of an error to avoid
+  // leaking which emails are registered.
+  if (data.user && (data.user.identities?.length ?? 0) === 0 && !data.session) {
+    throw new ApiError(DUPLICATE_ACCOUNT_MESSAGE, 409);
+  }
+
+  if (data.session) {
+    setToken(data.session.access_token);
+    return { user: await fetchMe(), emailVerificationRequired: false };
+  }
+
+  return {
+    user: pendingUser(data.user, input),
+    emailVerificationRequired: true,
+    email: input.email,
+  };
 }
 
 export async function login(input: {
   identifier: string;
   password: string;
-}): Promise<AuthSessionPayload> {
-  return apiFetch<AuthSessionPayload>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify(input),
+}): Promise<PublicUser> {
+  let email = input.identifier;
+  if (!input.identifier.includes("@")) {
+    const { data } = await getSupabase().rpc("findback_login_email", {
+      p_identifier: input.identifier,
+    });
+    if (typeof data !== "string" || !data) throw new ApiError("Invalid credentials", 401);
+    email = data;
+  }
+
+  const { data, error } = await getSupabase().auth.signInWithPassword({
+    email,
+    password: input.password,
   });
+  if (error) throw mapAuthError(error);
+  if (data.session) setToken(data.session.access_token);
+  return fetchMe();
 }
 
 export async function fetchMe(): Promise<PublicUser> {
-  const res = await apiFetch<{ user: PublicUser }>("/auth/me");
-  return res.user;
+  const {
+    data: { user },
+  } = await getSupabase().auth.getUser();
+  if (!user) throw new ApiError("Not authenticated", 401);
+
+  const { data: row, error } = await getSupabase()
+    .from("users")
+    .select("id,username,email,phone,email_verified,phone_verified,avatar_url,created_at")
+    .eq("id", user.id)
+    .single<ProfileRow>();
+  if (error || !row) throw new ApiError(error?.message ?? "Could not load profile", 400);
+
+  return {
+    id: row.id,
+    username: row.username,
+    email: row.email ?? user.email ?? "",
+    phone: row.phone ?? "",
+    emailVerified: Boolean(row.email_verified),
+    phoneVerified: Boolean(row.phone_verified),
+    avatarUrl: row.avatar_url ?? null,
+    createdAt: row.created_at,
+  };
 }
 
-/**
- * Persist a session payload: access token, rotated refresh token, and the
- * pending-email flag cleared. Returns the authenticated user.
- */
-export function persistSession(session: AuthSessionPayload): PublicUser {
-  setToken(session.token);
-  setRefreshToken(session.refreshToken ?? null);
-  return session.user;
-}
-
-/**
- * Boot-time restoration. When only a refresh token is present (the access token
- * was cleared), obtain one first; `apiFetch` handles an expired access token by
- * refreshing transparently. Refresh failure surfaces as an error so the caller
- * can clear the session.
- */
 export async function restoreSession(): Promise<PublicUser> {
-  if (!getToken() && getRefreshToken()) {
-    const ok = await refreshAccessToken();
-    if (!ok) throw new ApiError("Session expired", 401);
-  }
+  const { data } = await getSupabase().auth.getSession();
+  if (!data.session) throw new ApiError("Session expired", 401);
+  setToken(data.session.access_token);
   return fetchMe();
 }
 
 export async function logout(): Promise<void> {
-  await apiFetch("/auth/logout", { method: "POST" });
+  try {
+    await getSupabase().auth.signOut();
+  } catch {
+    /* best effort: local state is cleared by the caller */
+  }
+}
+
+export async function sendPendingEmailCode(email: string): Promise<void> {
+  const { error } = await getSupabase().auth.resend({ type: "signup", email });
+  if (!error) return;
+  if (isEnumerationError(error.code ?? "")) return;
+  throw mapAuthError(error);
+}
+
+export async function verifyPendingEmailCode(email: string, code: string): Promise<PublicUser> {
+  if (!/^\d{6,10}$/.test(code)) throw new ApiError(INVALID_CODE_MESSAGE, 400);
+  const { data, error } = await getSupabase().auth.verifyOtp({
+    email,
+    token: code,
+    type: "email",
+  });
+  if (error) throw mapAuthError(error);
+  if (data.session) setToken(data.session.access_token);
+  return fetchMe();
 }
 
 export async function checkUsername(
@@ -106,25 +239,6 @@ export async function verifyCode(
   });
 }
 
-/** Public pending-signup resend (no session needed). */
-export async function sendPendingEmailCode(email: string): Promise<{ ok: true }> {
-  return apiFetch("/auth/email-verification/send", {
-    method: "POST",
-    body: JSON.stringify({ email }),
-  });
-}
-
-/** Public pending-signup verify: establishes the first Supabase session. */
-export async function verifyPendingEmailCode(
-  email: string,
-  code: string,
-): Promise<AuthSessionPayload & { emailVerified: boolean; phoneVerified: boolean }> {
-  return apiFetch("/auth/email-verification/verify", {
-    method: "POST",
-    body: JSON.stringify({ email, code }),
-  });
-}
-
 export async function askAiHelp(question: string): Promise<{
   text: string;
   source: "llm" | "fallback";
@@ -135,4 +249,4 @@ export async function askAiHelp(question: string): Promise<{
   });
 }
 
-export { getToken, getRefreshToken, setToken, setRefreshToken, ApiError };
+export { ApiError, getAccessToken, getToken } from "./api";

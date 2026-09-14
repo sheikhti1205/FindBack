@@ -2,7 +2,9 @@
 declare const __API_URL__: string;
 
 import { storage } from "./storage";
+import { getSupabase } from "./supabaseClient";
 
+/** Base URL of the legacy Node API (posts, comments, realtime, reporting, AI). */
 export const API_URL: string = __API_URL__;
 
 export function apiBase(): string {
@@ -10,12 +12,29 @@ export function apiBase(): string {
 }
 
 /**
- * Auth session storage. Access + refresh tokens (and the pending-signup email)
- * are the only auth state persisted; no password, OTP or provider key is ever
- * stored. Capacitor Preferences swap stays isolated behind these helpers.
+ * In-memory cache of the current Supabase access token. The Supabase SDK owns
+ * persistence; this cache only lets synchronous callers (realtime handshake)
+ * read the token without awaiting.
  */
-const ACCESS_KEY = "findback.auth.token";
-const REFRESH_KEY = "findback.auth.refresh";
+let accessToken: string | null = null;
+
+export function getToken(): string | null {
+  return accessToken;
+}
+
+export function setToken(token: string | null): void {
+  accessToken = token;
+}
+
+/** Read the current Supabase session and refresh the in-memory cache. */
+export async function getAccessToken(): Promise<string | null> {
+  const { data } = await getSupabase().auth.getSession();
+  const token = data.session?.access_token ?? null;
+  accessToken = token;
+  return token;
+}
+
+/** Email awaiting pending-signup verification (Supabase Confirm-email ON). */
 const PENDING_EMAIL_KEY = "findback.auth.pendingEmail";
 
 function read(key: string): string | null {
@@ -35,24 +54,6 @@ function write(key: string, value: string | null): void {
   }
 }
 
-export function getToken(): string | null {
-  return read(ACCESS_KEY);
-}
-
-export function setToken(token: string | null): void {
-  write(ACCESS_KEY, token);
-}
-
-/** Supabase refresh token (rotating); absent for the local provider. */
-export function getRefreshToken(): string | null {
-  return read(REFRESH_KEY);
-}
-
-export function setRefreshToken(token: string | null): void {
-  write(REFRESH_KEY, token);
-}
-
-/** Email awaiting pending-signup verification (Supabase Confirm-email ON). */
 export function getPendingEmail(): string | null {
   return read(PENDING_EMAIL_KEY);
 }
@@ -61,15 +62,8 @@ export function setPendingEmail(email: string | null): void {
   write(PENDING_EMAIL_KEY, email);
 }
 
-/** Persist a whole session, keeping any existing refresh token if omitted. */
-export function setSession(session: { token: string; refreshToken?: string | null }): void {
-  setToken(session.token);
-  if (session.refreshToken !== undefined) setRefreshToken(session.refreshToken ?? null);
-}
-
 export function clearSession(): void {
   setToken(null);
-  setRefreshToken(null);
 }
 
 export function clearAllAuth(): void {
@@ -92,45 +86,16 @@ function notifySignedOut(): void {
 
 // ---- 401 -> refresh -> retry (single-flight) ----
 
-/**
- * Endpoints that must never trigger an automatic refresh: the auth handshake
- * endpoints (including the public pending-email verification pair) and logout.
- */
-const AUTH_ENDPOINTS = [
-  "/auth/login",
-  "/auth/register",
-  "/auth/refresh",
-  "/auth/logout",
-  "/auth/email-verification",
-];
-
-function isAuthEndpoint(path: string): boolean {
-  return AUTH_ENDPOINTS.some((prefix) => path.startsWith(prefix));
-}
-
 let refreshPromise: Promise<boolean> | null = null;
 
-/**
- * Exchange the stored refresh token for a new session. The rotated refresh
- * token replaces the old one (Supabase invalidates the previous token).
- * Concurrent callers share one in-flight refresh.
- */
+/** Refresh the Supabase session once, sharing one in-flight refresh. */
 export function refreshAccessToken(): Promise<boolean> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return Promise.resolve(false);
   if (!refreshPromise) {
     refreshPromise = (async () => {
       try {
-        const res = await fetch(`${apiBase()}/auth/refresh`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ refreshToken }),
-        });
-        if (!res.ok) return false;
-        const data = (await res.json()) as { token?: string; refreshToken?: string };
-        if (!data.token) return false;
-        setToken(data.token);
-        setRefreshToken(data.refreshToken ?? null);
+        const { data, error } = await getSupabase().auth.refreshSession();
+        if (error || !data.session?.access_token) return false;
+        setToken(data.session.access_token);
         return true;
       } catch {
         return false;
@@ -143,7 +108,7 @@ export function refreshAccessToken(): Promise<boolean> {
 }
 
 async function rawFetch(path: string, init: RequestInit): Promise<Response> {
-  const token = getToken();
+  const token = await getAccessToken();
   const headers = new Headers(init.headers);
   if (init.body && typeof init.body === "string") headers.set("content-type", "application/json");
   if (token) headers.set("authorization", `Bearer ${token}`);
@@ -163,7 +128,7 @@ async function toApiError(res: Response): Promise<ApiError> {
 
 async function request<T>(path: string, init: RequestInit, allowRefresh: boolean): Promise<T> {
   const res = await rawFetch(path, init);
-  if (res.status === 401 && allowRefresh && !isAuthEndpoint(path) && getRefreshToken()) {
+  if (res.status === 401 && allowRefresh && getToken()) {
     const refreshed = await refreshAccessToken();
     if (refreshed) return request<T>(path, init, false);
     clearSession();
