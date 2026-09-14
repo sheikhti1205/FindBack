@@ -183,11 +183,13 @@ Direct Supabase today:
   `findback_add_comment_client`, `findback_delete_comment_client`)
 - like/dislike/remove + rating + caller hydration (`findback_react_client`,
   `findback_rate_client`, `findback_post_social_state_client`)
+- live comments / reactions / ratings / post changes (Supabase Realtime
+  Broadcast, private channels)
 
 Temporarily on Node (still Bearer-validated with the Supabase access token):
 
 - post edit/delete from the legacy API (no mobile UI yet)
-- uploads / Storage, Socket.IO realtime, reporting, AI Help
+- uploads / Storage, reporting, AI Help
 - other legacy endpoints (including the still-present `GET /users/check-username`)
 
 Migrations:
@@ -248,6 +250,16 @@ Migrations:
   RLS policy and locate the caller's own row by a deterministic id
   (`md5('<kind>|<post_id>|<uid>')`); `findback_post_social_state_client` hydrates
   the caller's own reaction/rating from that same id without reading `user_id`.
+- `20260914210000_realtime_broadcast.sql` — Supabase Realtime cutover for Block
+  10G. Mobile subscribes to **private Broadcast** channels instead of the Node
+  Socket.IO gateway. Postgres Changes was rejected because it streams the whole
+  WAL row to any subscriber passing the table's SELECT policy, which would ship
+  `reactions.user_id` / `ratings.user_id` to every client; Broadcast triggers
+  send sanitized payloads only (public comment projections, aggregate counts).
+  `realtime.send(..., true)` publishes to the private `feed` and `post:<id>`
+  topics; a SELECT policy on `realtime.messages` lets `authenticated` receive and
+  anon cannot. No tables are added to the `supabase_realtime` publication and no
+  `REPLICA IDENTITY` changes are needed.
 
 `public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
 live: profile creation; `anon` cannot read `users` email/phone/verification and
@@ -282,6 +294,16 @@ The mobile UI added a comment, reacted, rated, reloaded (selection hydrated
 correctly), toggled the reaction off, deleted the comment, and the temp rows
 were removed afterwards. Advisors return to the prior baseline (no
 `SECURITY DEFINER` findings).
+
+Block 10G was verified live with two temporary authenticated clients subscribed
+to the private `post:<id>` topic (and the `feed` topic): a comment, a reaction,
+a rating, a status change and a comment delete each produced exactly one
+sanitized event on the second client (`comment:added` with a public author and no
+email/phone, `reaction:changed` with counts and no user identity,
+`rating:changed` with avg/count, `post:updated`), the feed topic fired on each
+change, and an anonymous client received nothing on the private topic. In the
+browser, inserting a post server-side made the Home feed change from 0 → 1 item
+with no reload, and all temp rows/accounts were removed afterwards.
 
 The availability check mirrors `ux_users_username_lower` exactly: it is
 case-insensitive and treats `_` literally (LIKE metacharacters are escaped, so

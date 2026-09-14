@@ -62,10 +62,11 @@ Mobile builds additionally read two public, bundle-safe Supabase values:
 `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (publishable key only;
 the secret key is never bundled). The app authenticates directly with Supabase
 Auth, reads the feed / a single post / My Posts directly from Supabase, and now
-does post create/status, comments, reactions and ratings directly too, while
-realtime, uploads, reporting, and AI still go through the Node API during this
-transition. Post and comment payloads expose a public author profile only —
-never email or phone.
+does post create/status, comments, reactions and ratings directly too, and live
+updates now come from Supabase Realtime (private broadcast channels), while
+uploads, reporting, and AI still go through the Node API during this transition.
+Post and comment payloads expose a public author profile only — never email or
+phone.
 
 Demo login (seeded): any of `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`,
 `arif_cse`, `mitu`, `sayeed_bsc`, `priya` with password `password123`.
