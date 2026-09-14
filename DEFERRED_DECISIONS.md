@@ -10,7 +10,7 @@ provider wiring, and document the exact files to change later.
 | Auth provider | Supabase Auth when `DB_PROVIDER=supabase`; Local JWT for tests/local SQLite | Supabase Auth / Firebase Auth | `services/api/src/auth`, mobile `src/services/auth.ts` | Yes |
 | Email verification | Supabase email OTP via custom SMTP in production; dev adapter for local/tests | Supabase / Firebase / email provider | `services/api/src/providers/verification`, `services/api/src/auth` | Yes |
 | Phone verification | Dev OTP adapter locally; Supabase phone provider not enabled (returns "not available yet") | Firebase Phone Auth / SMS provider (Twilio, Vonage, ...) | `services/api/src/providers/verification`, `services/api/src/auth` | Yes |
-| Cloud storage | Local file storage (served from API `/uploads`) | Supabase Storage / Firebase Storage / Cloudinary / S3 | `services/api/src/providers/storage` | Yes |
+| Cloud storage | Supabase Storage in production (`DB_PROVIDER=supabase`, public `findback-images` bucket, backend-only writes); local disk for tests/`DB_PROVIDER=sqlite` | Supabase Storage / Firebase Storage / Cloudinary / S3 | `services/api/src/storage`, `supabase/migrations/` | Yes |
 | Realtime provider | Socket.IO | Supabase Realtime / Firebase listeners | `services/api/src/realtime`, mobile socket client | Yes |
 | Generative AI | Generic OpenAI-compatible HTTP adapter + deterministic fallback | DeepSeek / Gemini / OpenAI | `services/api/src/providers/ai`, mobile `ai-help` | Yes |
 | Hosting | Local + Docker | Render/Railway/Fly | `docker-compose.yml`, CI | Yes |

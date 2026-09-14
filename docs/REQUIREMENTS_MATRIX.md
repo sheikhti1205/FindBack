@@ -6,7 +6,7 @@ Status vocabulary (from the project brief):
 `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
 `DEFERRED_EXTERNAL_TOOL` · `TODO`
 
-Last updated: 2026-09-12 (Supabase database migration prep; no requirement status changed).
+Last updated: 2026-09-14 (Supabase Storage cutover for image uploads; requirement 13 → DONE).
 Statuses are only non-TODO when verifiable end-to-end (API tests green + live
 mobile/UI flow exercised).
 
@@ -24,7 +24,7 @@ mobile/UI flow exercised).
 | 10 | Google Maps / embedded map | one-time location picker + embedded map on post | mobile `components/LocationPicker.tsx`, `MapEmbed.tsx` | pin approximate location | — | DONE |
 | 11 | Session/JWT auth | JWT login/register, guarded routes, token storage | `domain/authService.ts`, `middleware/http.ts`; mobile `auth.tsx` | login/logout, inspect stored token | `auth.test.ts` | DONE |
 | 12 | TFLite / on-device ML | on-device TensorFlow.js MobileNet → category suggestion | mobile `services/ml.ts`; create-report "Suggest category" | photo → suggested category | category-mapping unit tests (ml map in shared) | DONE_DEMO_PROVIDER |
-| 13 | Image upload + cloud storage | upload API + local storage adapter (cloud swappable) | `domain/storageService.ts`, `recordUpload`; mobile create report attach | attach photo, preview, publish | uploads REST (posts tests) | DONE_DEMO_PROVIDER |
+| 13 | Image upload + cloud storage | Upload API + `sharp` normalization; Supabase Storage (`findback-images`) in production, local disk in demo/tests | `services/api/src/storage/*`, `domain/storageService.ts`; mobile create report attach | attach photo, preview, publish; public image URL | `uploads.test.ts`, `supabaseStorageProvider.test.ts`, `imageNormalizer.test.ts` | DONE |
 | 14 | Datepicker | native date input in create report | mobile `screens/CreateReport.tsx` | choose date | — | DONE |
 | 15 | GSAP/Framer Motion animations | Framer Motion entrance + transitions | mobile `components/PostCard.tsx`, `screens/Splash.tsx`, `index.css` | open app, feed card entrance | — | DONE |
 | 16 | SASS/Tailwind | Tailwind v4 theme tokens + utility classes | mobile `src/theme.tsx`, `index.css` | inspect classes/theme switch | — | DONE |

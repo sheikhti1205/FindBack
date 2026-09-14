@@ -154,6 +154,38 @@ The project's `mailer_otp_length` is **8**, so code validation accepts 6–10 di
 → refresh → logout → refresh rejected), and the test user was fully removed.
 Custom SMTP is configured and live email OTP verification passed.
 
+## Supabase Storage (listing images)
+
+Production uploads go only through the Node API:
+
+`POST /uploads` (Multer) → image normalization (`sharp`) → `StorageProvider` →
+Supabase Storage bucket `findback-images` → public object URL → `uploads` row.
+The mobile app keeps calling the same `/uploads` endpoint and never talks to
+Supabase Storage directly (no `@supabase` dependency, no publishable-key Storage
+access).
+
+- Bucket `findback-images` is **public** (reads use plain public URLs, no signed
+  URLs), `file_size_limit` 8 MB (hard safety ceiling) and `allowed_mime_types`
+  `image/png`, `image/jpeg`, `image/webp`, `image/gif`. It is created/updated by
+  a migration through `storage.buckets`, not the dashboard.
+- Mutations are backend-only: the Node API writes with the secret key. No
+  anon/authenticated Storage policies are added.
+- Provider selection mirrors auth: `config.dbProvider` — `supabase` →
+  `SupabaseStorageProvider`, `sqlite`/tests → `LocalStorageProvider`. Tests can
+  never reach live Storage, and Supabase selection without configuration throws
+  instead of falling back to disk.
+- Object keys are opaque `<userId>/<uploadId>`; the client filename is metadata
+  only and no client-supplied path is trusted.
+- Normalization (`sharp`): EXIF orientation applied, longest edge capped at
+  1920 px (never enlarged), re-encoded at web quality; GIFs pass through
+  unchanged so animation is preserved. The stored `mime_type`/`file_size` always
+  describe the final bytes while the API's 8 MB limit remains the incoming
+  ceiling.
+- Rollback: if the object write succeeds but the `uploads` insert fails, the
+  just-written object is removed; a failed object write creates no row.
+- Local mode mounts `/uploads` static serving only when `DB_PROVIDER=sqlite`, so
+  it cannot shadow Supabase public URLs in production.
+
 ## Row Level Security
 
 RLS is enabled on all eight public tables. The Data API Store connects with the
@@ -169,4 +201,6 @@ also block the owner.
 - `services/api/src/db/store/sqliteStore.ts` — test/local implementation.
 - `services/api/src/db/sqliteAdapter.ts` — SQLite `DbAdapter` + local schema.
 - `services/api/src/db/index.ts` — `getStore()` selection, `getAdapter()`, test helpers.
-- `supabase/migrations/*.sql` — schema, RLS hardening, and RPCs.
+- `services/api/src/storage/*` — `StorageProvider` seam, local + Supabase adapters, selector, `sharp` normalizer.
+- `services/api/src/domain/storageService.ts` — `recordUpload` (normalize → persist → record → rollback).
+- `supabase/migrations/*.sql` — schema, RLS hardening, RPCs, and the `findback-images` bucket.
