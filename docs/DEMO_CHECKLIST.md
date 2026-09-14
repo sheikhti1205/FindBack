@@ -27,9 +27,10 @@ Run the API and the Android app (or the mobile web shell) before starting.
 2. Fill multiple text boxes (title/description), pick a **category dropdown**
    and the **date picker** (req 14), and capture an approximate location with the
    one-time "Use my location" button plus a free-text label (req 10).
-3. Attach a photo (req 13) and press **Suggest category (on-device ML)** —
-   TensorFlow.js MobileNet runs inference on the device and suggests a category
-   from the image (req 12; weights may download once unless bundled).
+3. Attach a photo (req 13) and press **Suggest category (on-device ML)** before
+   publishing — TensorFlow.js MobileNet V1 runs inference on the device using
+   weights bundled in the app (~1.92 MB), with no CDN fallback and no network
+   request; the photo never leaves the device (req 12).
 4. Paste a YouTube link and watch the embedded player render live (req 9).
 5. Publish → open the post (tailwind-styled, animated card entrance — req 16/15).
 
