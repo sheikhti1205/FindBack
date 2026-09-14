@@ -179,11 +179,14 @@ Direct Supabase today:
 - feed / single post / My Posts reads (`findback_query_posts_client`, authenticated)
 - create post / change post status (`findback_create_post_client`,
   `findback_change_post_status_client`, authenticated)
+- comments list/add/delete-own (`findback_list_comments_client`,
+  `findback_add_comment_client`, `findback_delete_comment_client`)
+- like/dislike/remove + rating + caller hydration (`findback_react_client`,
+  `findback_rate_client`, `findback_post_social_state_client`)
 
 Temporarily on Node (still Bearer-validated with the Supabase access token):
 
 - post edit/delete from the legacy API (no mobile UI yet)
-- comments, reactions, ratings
 - uploads / Storage, Socket.IO realtime, reporting, AI Help
 - other legacy endpoints (including the still-present `GET /users/check-username`)
 
@@ -234,6 +237,17 @@ Migrations:
 - `20260914191000_fix_rls_initplan.sql` — wraps `auth.uid()` in `(select
   auth.uid())` inside those policies so the planner evaluates it once
   (`auth_rls_initplan` advisor cleared).
+- `20260914200000_social_client_rpcs.sql` — direct social reads/writes for
+  Block 10F, all SECURITY INVOKER and EXECUTE `authenticated` only. Comments are
+  public content: `findback_list_comments_client` / `findback_add_comment_client`
+  / `findback_delete_comment_client` return a `PublicProfile` author and never
+  email/phone; insert/delete are owner-scoped (a post owner may also delete a
+  comment on their own post, matching the Node moderation rule). Reactions and
+  ratings stay **aggregate-only** to clients — `authenticated` never receives
+  `user_id`, so `findback_react_client` / `findback_rate_client` scope writes by
+  RLS policy and locate the caller's own row by a deterministic id
+  (`md5('<kind>|<post_id>|<uid>')`); `findback_post_social_state_client` hydrates
+  the caller's own reaction/rating from that same id without reading `user_id`.
 
 `public.users.id` stays `text` storing the Supabase Auth UUID string. Verified
 live: profile creation; `anon` cannot read `users` email/phone/verification and
@@ -255,6 +269,19 @@ Node); the private `findback_query_posts` still returns email/phone to
 `service_role` only. The mobile UI rendered the feed, search, post detail (with
 Node-served comments) and My Posts, and Profile still showed the signed-in user's
 own email (Auth session) and phone (signup metadata).
+
+Block 10F was verified live against the hosted project with two temporary
+accounts (created by exact id, then deleted; the pre-existing account was
+untouched). Anon is denied every social RPC; comments carry the real
+`auth.uid()` actor and a public-only author; a comment author and the post owner
+can delete, another user cannot; like → dislike → remove keeps exactly one row
+per user; ratings upsert by caller and the live average/count are returned;
+`myReaction`/`myRating` are correct after reload; and `reactions.user_id` /
+`ratings.user_id` are not readable (`42501`) while the feed still counts them.
+The mobile UI added a comment, reacted, rated, reloaded (selection hydrated
+correctly), toggled the reaction off, deleted the comment, and the temp rows
+were removed afterwards. Advisors return to the prior baseline (no
+`SECURITY DEFINER` findings).
 
 The availability check mirrors `ux_users_username_lower` exactly: it is
 case-insensitive and treats `_` literally (LIKE metacharacters are escaped, so
