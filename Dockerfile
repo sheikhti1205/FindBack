@@ -6,7 +6,9 @@ COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY services/api/package.json services/api/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
-RUN npm ci
+# --ignore-scripts: the root "prepare" builds packages/shared, whose sources are
+# copied below; install deps first, then build explicitly.
+RUN npm ci --ignore-scripts
 COPY packages/shared packages/shared
 COPY services/api services/api
 COPY apps/mobile apps/mobile
