@@ -103,6 +103,25 @@ curl -X POST "$SUPABASE_URL/rest/v1/rpc/findback_report" \
   -H "Content-Type: application/json" -d '{"p_days":7,"p_top_limit":5}'
 ```
 
+## AI Help (Supabase Edge Function)
+
+`POST /functions/v1/ai-help` — JWT-verified, authenticated users only.
+
+```bash
+curl -X POST "$SUPABASE_URL/functions/v1/ai-help" \
+  -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"how do I report a lost item?"}'
+# → {"text":"…","source":"fallback"}
+```
+
+With no provider secret configured the deterministic fallback answers
+(`source: "fallback"`); setting `LLM_BASE_URL` + `LLM_API_KEY` Edge Function
+secrets switches it to a real OpenAI-compatible model (`source: "llm"`). An
+unauthenticated call is rejected before the handler, and empty/over-long
+questions return `400`.
+
 ## RLS behaviour summary
 
 | Caller | Feed (`item_posts`) | `users` | Social user ids | `findback_report` |

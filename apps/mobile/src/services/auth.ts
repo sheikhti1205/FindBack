@@ -253,10 +253,11 @@ export async function askAiHelp(question: string): Promise<{
   text: string;
   source: "llm" | "fallback";
 }> {
-  return apiFetch("/ai/help", {
-    method: "POST",
-    body: JSON.stringify({ question }),
+  const { data, error } = await getSupabase().functions.invoke("ai-help", {
+    body: { question },
   });
+  if (error) throw new ApiError(error.message || "AI Help is unavailable right now", 502);
+  return data as { text: string; source: "llm" | "fallback" };
 }
 
 export { ApiError, getAccessToken, getToken } from "./api";

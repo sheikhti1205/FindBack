@@ -187,11 +187,12 @@ Direct Supabase today:
   Broadcast, private channels)
 - image upload to Supabase Storage (client-side normalization, then a staging
   `uploads` row bound by the create-post RPC)
+- AI Help (Supabase Edge Function `ai-help`)
 
 Temporarily on Node (still Bearer-validated with the Supabase access token):
 
 - post edit/delete from the legacy API (no mobile UI yet)
-- reporting, AI Help
+- reporting
 - other legacy endpoints (including the still-present `GET /users/check-username`)
 
 Migrations:
@@ -359,6 +360,13 @@ email/phone column, `item_postsCollection` resolved for `authenticated` but not
 `service_role` and was denied to `anon`. Details and reproducible examples are in
 `docs/API_DEMO.md`.
 
+Block 10J was verified live against the deployed `ai-help` Edge Function with a
+temporary account (created by exact id, then deleted): an unauthenticated call was
+rejected (`401`) before the handler, an authenticated question returned a bounded
+deterministic answer (`source: "fallback"` — no provider secret is configured),
+the fallback states the real Supabase email OTP (no "6-digit dev server") and that
+phone SMS is not enabled, and empty/over-long questions returned `400`.
+
 Enabling `pg_graphql` makes the Supabase advisor emit one
 `pg_graphql_*_table_exposed` WARN per table the `anon`/`authenticated` roles can
 SELECT (users, item_posts, comments, attachments, reactions, ratings, uploads),
@@ -405,6 +413,26 @@ app.
   just-written object is removed; a failed object write creates no row.
 - Local mode mounts `/uploads` static serving only when `DB_PROVIDER=sqlite`, so
   it cannot shadow Supabase public URLs in production.
+
+## Supabase Edge Functions (AI Help)
+
+The Help Assistant runs on the Edge Function `supabase/functions/ai-help`
+(Block 10J), invoked from the app with `supabase.functions.invoke("ai-help", …)`:
+
+`mobile (signed-in user) → ai-help (JWT verified) → OpenAI-compatible provider if
+LLM_BASE_URL + LLM_API_KEY secrets are set → deterministic fallback otherwise`.
+
+- Uses `@supabase/server` (`withSupabase({ auth: "user" }, …)`), which verifies
+  the caller's JWT, builds a user-scoped client, and handles CORS; the function
+  rejects anonymous calls (`401`) before the handler runs.
+- The provider secret lives only in Edge Function secrets (`supabase secrets
+  set`), never in the mobile bundle or source, and is never logged.
+- Input is length-validated (non-empty, ≤ 500 chars) and the answer is bounded
+  (≤ 1200 chars). The deterministic fallback answer reflects the real product
+  (a real emailed Supabase OTP; phone SMS not enabled).
+- Deployed with `npx supabase functions deploy ai-help` (bundled without Docker).
+  The Node `/ai/help` route and `providers/aiProvider.ts` remain as reference and
+  for the Docker image.
 
 ## Row Level Security
 

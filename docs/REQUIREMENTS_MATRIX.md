@@ -6,7 +6,7 @@ Status vocabulary (from the project brief):
 `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
 `DEFERRED_EXTERNAL_TOOL` · `TODO`
 
-Last updated: 2026-09-14 (Block 10I documentation pass: the runtime API is now verified as hosted Supabase — PostgREST/Data API for REST (anon username lookup + authenticated feed RPC, RLS-enforced) and `pg_graphql` for GraphQL at `/graphql/v1` (role-filtered schema, no private profile fields); reporting stays a `service_role`-only JSONB RPC. See `docs/API_DEMO.md`.)
+Last updated: 2026-09-14 (Block 10J documentation pass: the Help Assistant now runs on a Supabase Edge Function `ai-help` invoked with `supabase.functions.invoke` — JWT-verified and authenticated-only, calling an OpenAI-compatible provider when secrets are present and the deterministic fallback otherwise; the Node `/ai/help` route is retained as reference. The fallback facts were corrected to the real Supabase email OTP and unconfigured phone SMS.)
 Statuses are only non-TODO when verifiable end-to-end (API tests green + live
 mobile/UI flow exercised).
 
@@ -34,7 +34,7 @@ mobile/UI flow exercised).
 | 20 | Crystal Report | Reporting API (JSON/CSV) over Supabase PostgreSQL + ready-to-run report queries + setup doc; no `.rpt` (needs licensed Windows Crystal Reports) | `docs/reporting/REPORTING.md`, `/reports/activity`, `scripts/report-activity.mjs` | generate CSV → open in Excel/Crystal | `reporting.test.ts` | DEFERRED_EXTERNAL_TOOL |
 | 21 | Modern frontend framework | React 19 web shell (Capacitor → APK) | `apps/mobile` | run app | mobile unit tests | DONE |
 | 22 | Docker / CI/CD | Dockerfile + compose + GitHub Actions; CI green on `main` (lint/typecheck/tests/web build, Android build intentionally excluded); Docker image not built here (no Docker Engine in this environment) | `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` | `docker compose up` (needs Docker Engine); CI runs lint/typecheck/tests | CI steps mirror local commands | DONE |
-| 23 | Generative AI (minimal) | Help Assistant chat with deterministic fallback + optional OpenAI-compatible LLM | `providers/aiProvider.ts`; mobile `screens/Help.tsx` | ask a question in Help | `ai.test.ts` | DONE_DEMO_PROVIDER |
+| 23 | Generative AI (minimal) | Help Assistant on a Supabase Edge Function `ai-help` (JWT-verified, authenticated users only); calls an OpenAI-compatible provider when `LLM_BASE_URL`/`LLM_API_KEY` secrets are configured, otherwise a deterministic fallback (no provider secret set here → fallback verified, provider-capable but not a live LLM) | `supabase/functions/ai-help/index.ts`; mobile `screens/Help.tsx`, `services/auth.ts` | Profile → Help, ask a question | mobile `auth.test.ts`; live Edge Function check (9/9) | DONE_DEMO_PROVIDER |
 | 24 | Task-specific deliverable | Installable Android debug APK + progressive web shell with realtime features | `apps/mobile/android/`, `npm run apk` | install `app-debug.apk` on emulator/device | — | DONE |
 
 ## Notes

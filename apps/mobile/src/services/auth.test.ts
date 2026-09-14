@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch, API_URL, clearAllAuth, getToken, onSignedOut } from "./api";
 import {
+  askAiHelp,
   checkUsername,
   fetchMe,
   login,
@@ -36,6 +37,7 @@ const { clientMock, singleMock, ilikeMock, limitMock, selectMock } = vi.hoisted(
       },
       rpc: vi.fn(),
       from: vi.fn(),
+      functions: { invoke: vi.fn() },
     },
   };
 });
@@ -92,6 +94,7 @@ beforeEach(() => {
   for (const fn of Object.values(clientMock.auth)) fn.mockReset();
   clientMock.rpc.mockReset();
   clientMock.from.mockReset();
+  clientMock.functions.invoke.mockReset();
   clientMock.from.mockImplementation(() => ({ select: selectMock }));
   selectMock.mockReset();
   selectMock.mockImplementation(() => ({
@@ -412,6 +415,34 @@ describe("checkUsername", () => {
   it("never calls the Node API", async () => {
     limitMock.mockResolvedValue({ data: [], error: null });
     await checkUsername("valid_user");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("askAiHelp", () => {
+  it("invokes the ai-help Edge Function with the question", async () => {
+    clientMock.functions.invoke.mockResolvedValue({
+      data: { text: "Tap + Report.", source: "fallback" },
+      error: null,
+    });
+
+    const res = await askAiHelp("how do I report a lost item?");
+
+    expect(clientMock.functions.invoke).toHaveBeenCalledWith("ai-help", {
+      body: { question: "how do I report a lost item?" },
+    });
+    expect(res).toEqual({ text: "Tap + Report.", source: "fallback" });
+  });
+
+  it("maps a function error to ApiError", async () => {
+    clientMock.functions.invoke.mockResolvedValue({ data: null, error: { message: "edge down" } });
+
+    await expect(askAiHelp("hi")).rejects.toThrow("edge down");
+  });
+
+  it("does not call the Node API", async () => {
+    clientMock.functions.invoke.mockResolvedValue({ data: { text: "ok", source: "llm" }, error: null });
+    await askAiHelp("hello");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
