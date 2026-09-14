@@ -174,33 +174,28 @@ describe("register", () => {
 });
 
 describe("login", () => {
-  it("signs in with an email identifier without an rpc lookup", async () => {
+  it("signs in directly with email and password", async () => {
     clientMock.auth.signInWithPassword.mockResolvedValue({
       data: { user: USER, session: { access_token: "tok" } },
       error: null,
     });
     mockProfile();
-    const u = await login({ identifier: "tester@example.com", password: "pw" });
+    const u = await login({ email: "tester@example.com", password: "pw" });
     expect(u.id).toBe("u1");
-    expect(clientMock.rpc).not.toHaveBeenCalled();
-  });
-
-  it("resolves a username to an email via rpc before signing in", async () => {
-    clientMock.rpc.mockResolvedValue({ data: "tester@example.com", error: null });
-    clientMock.auth.signInWithPassword.mockResolvedValue({
-      data: { user: USER, session: { access_token: "tok" } },
-      error: null,
-    });
-    mockProfile();
-    const u = await login({ identifier: "tester", password: "pw" });
-    expect(u.id).toBe("u1");
-    expect(clientMock.rpc).toHaveBeenCalledWith("findback_login_email", {
-      p_identifier: "tester",
-    });
     expect(clientMock.auth.signInWithPassword).toHaveBeenCalledWith({
       email: "tester@example.com",
       password: "pw",
     });
+  });
+
+  it("never performs a username lookup (email-only login)", async () => {
+    clientMock.auth.signInWithPassword.mockResolvedValue({
+      data: { user: USER, session: { access_token: "tok" } },
+      error: null,
+    });
+    mockProfile();
+    await login({ email: "tester@example.com", password: "pw" });
+    expect(clientMock.rpc).not.toHaveBeenCalled();
   });
 
   it("maps invalid credentials to a friendly error", async () => {
@@ -208,7 +203,7 @@ describe("login", () => {
       data: { user: null, session: null },
       error: { message: "Invalid login credentials", code: "invalid_credentials", status: 400 },
     });
-    await expect(login({ identifier: "tester@example.com", password: "bad" })).rejects.toThrow(
+    await expect(login({ email: "tester@example.com", password: "bad" })).rejects.toThrow(
       "Invalid credentials",
     );
   });

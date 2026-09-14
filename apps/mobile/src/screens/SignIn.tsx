@@ -7,7 +7,7 @@ import { motion } from "framer-motion";
 
 export function SignIn() {
   const { user, login } = useAuth();
-  const [identifier, setIdentifier] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -19,7 +19,7 @@ export function SignIn() {
     setError(null);
     setBusy(true);
     try {
-      await login(identifier.trim(), password);
+      await login(email.trim(), password);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
     } finally {
@@ -48,11 +48,14 @@ export function SignIn() {
           </p>
         )}
         <TextField
-          label="Username or email"
-          value={identifier}
-          onChange={(e) => setIdentifier(e.target.value)}
+          label="Email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
           autoCapitalize="none"
           autoCorrect="off"
+          autoComplete="email"
+          inputMode="email"
           required
         />
         <TextField
@@ -75,8 +78,8 @@ export function SignIn() {
       </p>
 
       <div className="rounded-m3-md border border-outline-variant bg-surface-container-low p-3 text-xs text-on-surface-variant">
-        Demo account — username <code className="font-mono">rafi_cu</code>{" "}
-        password <code className="font-mono">password123</code> (or register fresh)
+        Sign in with the email and password you registered. New accounts are
+        confirmed with a real emailed code.
       </div>
     </motion.div>
   );

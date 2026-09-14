@@ -135,20 +135,11 @@ export async function register(input: {
 }
 
 export async function login(input: {
-  identifier: string;
+  email: string;
   password: string;
 }): Promise<PublicUser> {
-  let email = input.identifier;
-  if (!input.identifier.includes("@")) {
-    const { data } = await getSupabase().rpc("findback_login_email", {
-      p_identifier: input.identifier,
-    });
-    if (typeof data !== "string" || !data) throw new ApiError("Invalid credentials", 401);
-    email = data;
-  }
-
   const { data, error } = await getSupabase().auth.signInWithPassword({
-    email,
+    email: input.email,
     password: input.password,
   });
   if (error) throw mapAuthError(error);
