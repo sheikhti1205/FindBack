@@ -6,7 +6,7 @@ Status vocabulary (from the project brief):
 `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
 `DEFERRED_EXTERNAL_TOOL` · `TODO`
 
-Last updated: 2026-09-14 (Block 10H documentation pass: the app now normalizes a picked image on-device and uploads it directly to Supabase Storage under its own `<uid>/` folder, then stages an owner-scoped `uploads` row the create-post RPC binds — no Node `/uploads` call; live comments/reactions/ratings/post changes arrive via Supabase Realtime private broadcast channels, and reporting and AI remain on the Node API).
+Last updated: 2026-09-14 (Block 10I documentation pass: the runtime API is now verified as hosted Supabase — PostgREST/Data API for REST (anon username lookup + authenticated feed RPC, RLS-enforced) and `pg_graphql` for GraphQL at `/graphql/v1` (role-filtered schema, no private profile fields); reporting stays a `service_role`-only JSONB RPC. See `docs/API_DEMO.md`.)
 Statuses are only non-TODO when verifiable end-to-end (API tests green + live
 mobile/UI flow exercised).
 
@@ -29,8 +29,8 @@ mobile/UI flow exercised).
 | 15 | GSAP/Framer Motion animations | Framer Motion entrance + transitions | mobile `components/PostCard.tsx`, `screens/Splash.tsx`, `index.css` | open app, feed card entrance | — | DONE |
 | 16 | SASS/Tailwind | Tailwind v4 theme tokens + utility classes | mobile `src/theme.tsx`, `index.css` | inspect classes/theme switch | — | DONE |
 | 17 | Git + Vite workflow | Git repo + Vite web shell | repo root, `apps/mobile` | `git log`, `npm run build -w @findback/mobile` | — | DONE |
-| 18 | GraphQL or modern API | GraphQL (Yoga) over the shared domain | `services/api/src/graphql/*` | GraphiQL at /graphql | `graphql.test.ts` | DONE |
-| 19 | RESTful API | Express REST endpoints (auth, posts, comments, reactions, ratings, uploads, reports, AI) | `services/api/src/app.ts` | curl / Postman | api suites | DONE |
+| 18 | GraphQL or modern API | Supabase GraphQL (`pg_graphql`) at `/graphql/v1`, resolving as the JWT role (grant- and RLS-filtered schema; no `users.email`/`phone`, anon sees no `item_postsCollection`); legacy GraphQL-Yoga retained as reference | `supabase/migrations/20260914230000_enable_pg_graphql.sql`; `docs/API_DEMO.md`; `services/api/src/graphql/*` (legacy) | GraphQL query for `item_postsCollection` / `usersCollection` with an access token | `docs/API_DEMO.md` live verification (14/14) | DONE |
+| 19 | RESTful API | Supabase PostgREST / Data API (`/rest/v1`) — anon username lookup, authenticated feed RPC and table reads, RLS-enforced; legacy Express REST retained as reference | `docs/API_DEMO.md`; `services/api/src/app.ts` (legacy) | `GET /rest/v1/users?select=username&username=eq.…`; `POST /rest/v1/rpc/findback_query_posts_client` | `docs/API_DEMO.md` live verification (14/14) | DONE |
 | 20 | Crystal Report | Reporting API (JSON/CSV) over Supabase PostgreSQL + ready-to-run report queries + setup doc; no `.rpt` (needs licensed Windows Crystal Reports) | `docs/reporting/REPORTING.md`, `/reports/activity`, `scripts/report-activity.mjs` | generate CSV → open in Excel/Crystal | `reporting.test.ts` | DEFERRED_EXTERNAL_TOOL |
 | 21 | Modern frontend framework | React 19 web shell (Capacitor → APK) | `apps/mobile` | run app | mobile unit tests | DONE |
 | 22 | Docker / CI/CD | Dockerfile + compose + GitHub Actions; CI green on `main` (lint/typecheck/tests/web build, Android build intentionally excluded); Docker image not built here (no Docker Engine in this environment) | `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` | `docker compose up` (needs Docker Engine); CI runs lint/typecheck/tests | CI steps mirror local commands | DONE |
