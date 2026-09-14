@@ -16,8 +16,8 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 | Mobile UI | React + TypeScript + Vite + Tailwind CSS + Framer Motion |
 | Android packaging | Capacitor → Gradle debug APK |
 | API | Node/TS — Express (REST) + GraphQL-Yoga + Socket.IO |
-| Database | SQLite via built-in `node:sqlite` (local provider) |
-| Auth | JWT (local provider) |
+| Database | Supabase PostgreSQL (Data API) in production; SQLite `node:sqlite` for tests/local |
+| Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
 | Storage | local uploads dir (cloud adapter swappable) |
 | AI | OpenAI-compatible HTTP provider + deterministic fallback |
 | ML | On-device TensorFlow.js category suggestion |
@@ -27,7 +27,7 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 
 ```
 apps/mobile      React + Vite + Tailwind + Framer Motion + Capacitor
-services/api     local provider: REST + GraphQL + Socket.IO + SQLite
+services/api     REST + GraphQL + Socket.IO (Supabase in production, SQLite locally)
 packages/shared  shared Zod schemas, types, constants
 docs/            requirements matrix, ERD, reporting, demo checklist
 ```

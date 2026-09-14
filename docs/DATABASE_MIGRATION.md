@@ -97,30 +97,62 @@ session. `LocalAuthProvider` still returns the existing local JWT and the public
 REST contract is unchanged; no Supabase Auth call or schema change is part of
 this step.
 
-`SupabaseAuthProvider` now implements the core operations against Supabase Auth:
+`SupabaseAuthProvider` implements the core operations against Supabase Auth:
 `register` calls `signUp` and writes the profile row with `password_hash = null`
 (rolling back the Auth user through the admin API if the profile insert fails),
 `login` resolves the identifier to an email and calls `signInWithPassword`,
 `refresh` calls `refreshSession`, `validateAccessToken` uses `getClaims` (JWKS
 verification for asymmetric signing keys), and `signOut` revokes only the current
-session through the admin API. Email/phone verification stays deliberately
-unimplemented (a later block). The provider is **not selected** by
-`getAuthProvider()`; the running application still uses `LocalAuthProvider`.
-Supabase Auth uses the publishable key for user operations and the secret key
-only for trusted admin operations, both server-side.
+session through the admin API. Supabase Auth uses the publishable key for user
+operations and the secret key only for trusted admin operations, both
+server-side.
 
-Email signup verification is now implemented in `SupabaseAuthProvider` too:
-`resend({ type: "signup", email })` resends the confirmation, and
-`verifyOtp({ email, token, type: "email" })` verifies the six-digit code,
-sets `public.users.email_verified = 1`, and returns the first session. The
-internal verification contract addresses a target (`{ channel: "EMAIL", email?
-| userId? }` or `{ channel: "PHONE", userId }`) so a pending signup can be
-verified before a user/session exists. Phone verification is still unsupported,
-and the public `/verification/*` routes keep their current authenticated shape
-(the session is dropped). Hosted readiness (read-only check): email provider
-enabled, Confirm email enabled, but the hosted **Confirm signup** template does
-not yet contain `{{ .Token }}`, so a live six-digit email code cannot be
-delivered until that template is updated in a later block.
+Email signup verification is implemented too: `resend({ type: "signup", email })`
+resends the confirmation, and `verifyOtp({ email, token, type: "email" })`
+verifies the one-time code, sets `public.users.email_verified = 1`, and returns
+the first session. The internal verification contract addresses a target
+(`{ channel: "EMAIL", email? | userId? }` or `{ channel: "PHONE", userId }`) so a
+pending signup can be verified before a user/session exists. Phone verification
+remains unsupported (`501 "Phone verification is not available yet"`); no SMS
+provider is wired.
+
+## Supabase Auth cutover (production is live)
+
+`getAuthProvider()` now selects by backend: `DB_PROVIDER=supabase` →
+`SupabaseAuthProvider`, and `sqlite` (tests + local demo) → `LocalAuthProvider`.
+`config.dbProvider` is pinned to `sqlite` under `NODE_ENV=test`, so tests always
+use the local provider even if `DB_PROVIDER=supabase` is set; if Supabase is
+selected without its configuration, provider construction throws instead of
+silently falling back.
+
+REST session contract:
+
+- `POST /auth/register` returns a union: a **pending** account
+  (`{ user, emailVerificationRequired: true, email }`, no token — Supabase
+  Confirm-email is ON) or an immediate full session when confirmation is off.
+- `POST /auth/login` returns `{ token, refreshToken?, expiresIn?, expiresAt?, user }`
+  (local omits the refresh/expiry fields).
+- `POST /auth/refresh` exchanges a refresh token; Supabase rotates it, so the
+  client must replace the stored refresh token. The local provider reports the
+  capability gap as `501`.
+- `POST /auth/email-verification/send` and `/verify` are **public** (a pending
+  signup has no access token). Send is generic (enumeration-resistant); verify
+  returns the first session and is EMAIL-only.
+- The old authenticated `/verification/:channel/*` routes stay for compatibility
+  and still expose only `{ emailVerified, phoneVerified }`.
+
+Access tokens are validated with `getClaims` everywhere (REST middleware, GraphQL
+context, Socket.IO handshake). The mobile app stores the access + rotating
+refresh token, refreshes once on `401` (single-flight) and retries, and never
+talks to Supabase directly.
+
+Hosted readiness (read-only checks): email provider enabled, Confirm email
+required, custom SMTP configured, Confirm-signup template contains `{{ .Token }}`.
+The project's `mailer_otp_length` is **8**, so code validation accepts 6–10 digits
+(Supabase's configurable range) rather than 6. A live end-to-end pass succeeded
+(register → emailed code → `verifyOtp` session → `/auth/me` → GraphQL → Socket.IO
+→ refresh → logout → refresh rejected), and the test user was fully removed.
+Custom SMTP is configured and live email OTP verification passed.
 
 ## Row Level Security
 
