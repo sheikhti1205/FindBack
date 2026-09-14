@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import cors from "cors";
-import express, { type Express, type Request } from "express";
+import express, { type Express, type Request, type RequestHandler } from "express";
 import multer from "multer";
 import { createYoga } from "graphql-yoga";
 import {
@@ -98,6 +98,20 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+/** Map Multer rejections (bad MIME, too large) to clean 400 responses. */
+function uploadSingle(field: string): RequestHandler {
+  return (req, res, next) => {
+    upload.single(field)(req, res, (err: unknown) => {
+      if (!err) return next();
+      if (err instanceof multer.MulterError) {
+        const message = err.code === "LIMIT_FILE_SIZE" ? "File too large (max 8 MB)" : err.message;
+        return next(new AppError(400, message));
+      }
+      return next(new AppError(400, err instanceof Error ? err.message : "Invalid upload"));
+    });
+  };
+}
 
 function parseQuery<T>(schema: { parse: (v: unknown) => T }, raw: Request["query"]): T {
   return schema.parse(raw);
@@ -261,18 +275,22 @@ export function createApp(): Express {
   });
 
   // ---- uploads ----
-  app.post("/uploads", requireAuth, upload.single("file"), async (req, res) => {
+  app.post("/uploads", requireAuth, uploadSingle("file"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded (field name: file)" });
     const stored = await recordUpload(req.userId!, req.file);
     res.status(201).json({ upload: stored, message: "Use upload.id as attachmentKey when publishing" });
   });
-  app.use(
-    "/uploads",
-    express.static(fs.existsSync(config.uploadsDir) ? config.uploadsDir : path.join(config.packageRoot, "uploads"), {
-      maxAge: "7d",
-      fallthrough: true,
-    }),
-  );
+  // Local filesystem uploads are only served when the local provider is active;
+  // production stores images in Supabase Storage and serves them from there.
+  if (config.dbProvider === "sqlite") {
+    app.use(
+      "/uploads",
+      express.static(fs.existsSync(config.uploadsDir) ? config.uploadsDir : path.join(config.packageRoot, "uploads"), {
+        maxAge: "7d",
+        fallthrough: true,
+      }),
+    );
+  }
 
   // Optionally serve a built web/SPA shell at "/" (single-container demo image).
   if (config.staticWebDir && fs.existsSync(config.staticWebDir)) {
