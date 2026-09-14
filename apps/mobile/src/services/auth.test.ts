@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch, API_URL, clearAllAuth, getToken, onSignedOut } from "./api";
 import {
   checkUsername,
+  fetchMe,
   login,
   logout,
   register,
@@ -11,14 +12,16 @@ import {
 } from "./auth";
 import { isLikelySecretKey, SupabaseConfigError, validateSupabaseConfig } from "./supabaseClient";
 
-const { clientMock, singleMock, ilikeMock, limitMock } = vi.hoisted(() => {
+const { clientMock, singleMock, ilikeMock, limitMock, selectMock } = vi.hoisted(() => {
   const singleMock = vi.fn();
   const limitMock = vi.fn();
   const ilikeMock = vi.fn(() => ({ limit: limitMock }));
+  const selectMock = vi.fn();
   return {
     singleMock,
     limitMock,
     ilikeMock,
+    selectMock,
     clientMock: {
       auth: {
         signUp: vi.fn(),
@@ -52,15 +55,17 @@ const REGISTER_INPUT = {
 const PROFILE_ROW = {
   id: "u1",
   username: "tester",
-  email: "tester@example.com",
-  phone: "01812345678",
   email_verified: true,
   phone_verified: false,
   avatar_url: null,
   created_at: "2026-01-01T00:00:00.000Z",
 };
 
-const USER = { id: "u1", email: "tester@example.com" };
+const USER = {
+  id: "u1",
+  email: "tester@example.com",
+  user_metadata: { phone: "01812345678" },
+};
 
 const fetchMock = vi.fn();
 
@@ -87,11 +92,11 @@ beforeEach(() => {
   for (const fn of Object.values(clientMock.auth)) fn.mockReset();
   clientMock.rpc.mockReset();
   clientMock.from.mockReset();
-  clientMock.from.mockImplementation(() => ({
-    select: () => ({
-      eq: () => ({ single: singleMock }),
-      ilike: ilikeMock,
-    }),
+  clientMock.from.mockImplementation(() => ({ select: selectMock }));
+  selectMock.mockReset();
+  selectMock.mockImplementation(() => ({
+    eq: () => ({ single: singleMock }),
+    ilike: ilikeMock,
   }));
   ilikeMock.mockClear();
   limitMock.mockReset();
@@ -278,6 +283,35 @@ describe("session lifecycle", () => {
     const u = await restoreSession();
     expect(u.id).toBe("u1");
     expect(getToken()).toBe("tok");
+  });
+});
+
+describe("fetchMe", () => {
+  it("reads safe profile columns and sources identity from the session", async () => {
+    mockProfile();
+    const u = await fetchMe();
+    expect(u.username).toBe("tester");
+    expect(u.email).toBe("tester@example.com");
+    expect(u.phone).toBe("01812345678");
+    expect(u.emailVerified).toBe(true);
+    expect(u.phoneVerified).toBe(false);
+  });
+
+  it("never selects the private email/phone columns from users", async () => {
+    mockProfile();
+    await fetchMe();
+    const columns = (selectMock.mock.calls[0]![0] as string)
+      .split(",")
+      .map((c) => c.trim());
+    expect(columns).toContain("username");
+    expect(columns).toContain("email_verified");
+    expect(columns).not.toContain("email");
+    expect(columns).not.toContain("phone");
+  });
+
+  it("throws when there is no authenticated user", async () => {
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    await expect(fetchMe()).rejects.toThrow("Not authenticated");
   });
 });
 

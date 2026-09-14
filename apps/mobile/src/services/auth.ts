@@ -102,8 +102,6 @@ function pendingUser(user: User | null, input: { username: string; email: string
 interface ProfileRow {
   id: string;
   username: string;
-  email: string | null;
-  phone: string | null;
   email_verified: boolean | null;
   phone_verified: boolean | null;
   avatar_url: string | null;
@@ -161,18 +159,23 @@ export async function fetchMe(): Promise<PublicUser> {
   } = await getSupabase().auth.getUser();
   if (!user) throw new ApiError("Not authenticated", 401);
 
+  // public.users no longer exposes email/phone to the authenticated role (both
+  // are private). Read only the safe public columns here; the signed-in user's
+  // own email comes from the Auth session and their phone from signup metadata
+  // (display only — never used for authorization).
   const { data: row, error } = await getSupabase()
     .from("users")
-    .select("id,username,email,phone,email_verified,phone_verified,avatar_url,created_at")
+    .select("id,username,email_verified,phone_verified,avatar_url,created_at")
     .eq("id", user.id)
     .single<ProfileRow>();
   if (error || !row) throw new ApiError(error?.message ?? "Could not load profile", 400);
 
+  const metadataPhone = user.user_metadata?.phone;
   return {
     id: row.id,
     username: row.username,
-    email: row.email ?? user.email ?? "",
-    phone: row.phone ?? "",
+    email: user.email ?? "",
+    phone: typeof metadataPhone === "string" ? metadataPhone : "",
     emailVerified: Boolean(row.email_verified),
     phoneVerified: Boolean(row.phone_verified),
     avatarUrl: row.avatar_url ?? null,
