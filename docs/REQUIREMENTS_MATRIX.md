@@ -6,7 +6,7 @@ Status vocabulary (from the project brief):
 `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
 `DEFERRED_EXTERNAL_TOOL` · `TODO`
 
-Last updated: 2026-09-14 (Block 10B documentation pass: mobile now authenticates directly with Supabase Auth using the publishable key, while the Node API retains token validation and still serves all non-auth features).
+Last updated: 2026-09-14 (Block 10D documentation pass: mobile reads the feed, a single post and My Posts directly from Supabase through the client-safe `findback_query_posts_client` RPC with a public-author-only privacy boundary; post mutations, comments, reactions and ratings remain on the Node API).
 Statuses are only non-TODO when verifiable end-to-end (API tests green + live
 mobile/UI flow exercised).
 
@@ -19,7 +19,7 @@ mobile/UI flow exercised).
 | 5 | Email + phone verification | Email: real Supabase Auth OTP via custom SMTP (live). Phone: still demo/deferred — Supabase phone provider disabled, no SMS provider (returns `501`) | `auth/supabaseAuthProvider.ts`, `domain/verificationService.ts`; mobile `screens/Verify.tsx` | register → verify email (real OTP) + phone (demo/local) | `auth.test.ts`, `supabaseAuthProvider.test.ts` | DONE_DEMO_PROVIDER |
 | 6 | Multiple text boxes + dropdowns | create-report form: text, textarea, date, selects | mobile `screens/CreateReport.tsx`, components | fill form, change dropdowns | posts API tests | DONE |
 | 7 | Interactive real-time rating | 1–5 stars, upsert, live average broadcast | `domain/ratingsService.ts` | rate; second session updates | `social.test.ts` | DONE |
-| 8 | Pagination | cursor-based feed + infinite scroll | `domain/postsService.ts` (feed), `hooks/useFeed.ts`, `components/PostList.tsx` | scroll feed, load more | `posts.test.ts` | DONE |
+| 8 | Pagination | cursor-based feed + infinite scroll; mobile reads pages directly from Supabase (`findback_query_posts_client`, keyset cursor) | `supabase/migrations/20260914180000_client_post_reads.sql`, mobile `services/posts.ts`, `hooks/useFeed.ts`, `components/PostList.tsx` | scroll feed, load more | `posts.test.ts`, mobile `services/posts.test.ts` | DONE |
 | 9 | Embedded external audio/video | YouTube URL, id extraction + iframe embed | mobile `components/YouTubeEmbed.tsx`, shared `extractYouTubeId` | paste YouTube link, play in post | unit validation tests | DONE |
 | 10 | Google Maps / embedded map | one-time location picker + embedded map on post | mobile `components/LocationPicker.tsx`, `MapEmbed.tsx` | pin approximate location | — | DONE |
 | 11 | Session/JWT auth | Mobile authenticates directly with Supabase Auth (email + password, publishable key) for the access JWT + rotating refresh token; the Node API retains Supabase token validation. Boot restore, single-flight 401 refresh/retry, logout; local JWT for tests/local | mobile `auth.tsx`, `services/auth.ts`, `services/supabaseClient.ts`, `services/api.ts`; API `auth/*`, `middleware/http.ts` | login/logout, restore session, inspect stored token | `auth.test.ts`, `authCutover.test.ts`, mobile `services/auth.test.ts` | DONE |
