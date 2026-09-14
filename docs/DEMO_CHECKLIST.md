@@ -1,17 +1,19 @@
 # FindBack — teacher demo checklist
 
 A 10–15 minute walkthrough mapping demo steps to the 24 course requirements.
-Run the API and the Android app (or the mobile web shell) before starting.
+The app runs against hosted Supabase only; the optional Node reference API is
+only needed for the reporting/legacy-API steps.
 
 ## 0 · Prepare
 
-1. Start the API: `npm run dev:api` → http://localhost:4000
-   (auto-seeds the demo database on first run).
-2. Open the mobile app (Android APK on an emulator pointing at the host, or
-   the web shell at http://localhost:5173).
-3. Log in with `rafi_cu` / `password123` (seeded local/demo accounts), or
-   register a new account. In Supabase production there are no seeded users —
-   register and verify by real email.
+1. Open the mobile app (Android APK on a device with ordinary internet, or the
+   web shell at http://localhost:5173 built with the public Supabase URL +
+   publishable key). No laptop API server is required for any app flow.
+2. (Optional, reporting/legacy REST only) start the Node reference API:
+   `npm run dev:api` → http://localhost:4000.
+3. Register a new account and finish the real emailed Supabase OTP — there are no
+   seeded production users. The seeded `rafi_cu` / `password123` accounts exist
+   only in the local SQLite demo backend.
 
 ## 1 · Auth & verification (req 5, 11, 4)
 

@@ -189,7 +189,8 @@ Direct Supabase today:
   `uploads` row bound by the create-post RPC)
 - AI Help (Supabase Edge Function `ai-help`)
 
-Temporarily on Node (still Bearer-validated with the Supabase access token):
+Still in the repo on Node (reference / Docker image only — the mobile app does
+not call it; Bearer-validated with the Supabase access token):
 
 - post edit/delete from the legacy API (no mobile UI yet)
 - reporting
@@ -366,6 +367,17 @@ rejected (`401`) before the handler, an authenticated question returned a bounde
 deterministic answer (`source: "fallback"` — no provider secret is configured),
 the fallback states the real Supabase email OTP (no "6-digit dev server") and that
 phone SMS is not enabled, and empty/over-long questions returned `400`.
+
+Block 10K removed the mobile app's Node runtime dependency. `services/api.ts`
+(API base URL + `apiFetch`), the `VITE_API_URL`/`__API_URL__` build plumbing,
+`resolveApkApiUrl` (shared) + `check-apk-api-url.mjs`, the `apk:emulator` LAN
+escape hatch, `socket.io-client`, and the Android cleartext/mixed-content
+allowances are gone. Session/error helpers moved to `services/session.ts`, and
+the Verify screen verifies email with the real Supabase OTP while showing an
+unverified phone as "not available (no SMS provider)". Verified in the browser
+with the Node server stopped: sign-in, session restore on reload, the feed RPC
+and AI Help all succeeded with only `*.supabase.co` traffic (auth, `rest/v1`,
+`functions/v1/ai-help`) — no localhost/LAN/port-4000 request.
 
 Enabling `pg_graphql` makes the Supabase advisor emit one
 `pg_graphql_*_table_exposed` WARN per table the `anon`/`authenticated` roles can
