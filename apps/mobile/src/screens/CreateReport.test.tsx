@@ -2,17 +2,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { uploadImageMock, suggestMock } = vi.hoisted(() => ({
-  uploadImageMock: vi.fn(),
+const { publishReportMock, suggestMock } = vi.hoisted(() => ({
+  publishReportMock: vi.fn(),
   suggestMock: vi.fn(),
 }));
 
 vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
-vi.mock("../services/posts", () => ({
-  uploadImage: uploadImageMock,
-  createPost: vi.fn(),
-}));
+vi.mock("../services/posts", () => ({ publishReport: publishReportMock }));
 vi.mock("../services/ml", () => ({ suggestCategoryFromImage: suggestMock }));
 
 import { CreateReport } from "./CreateReport";
@@ -26,7 +23,7 @@ function pickFile(file: File) {
 }
 
 beforeEach(() => {
-  uploadImageMock.mockReset();
+  publishReportMock.mockReset();
   suggestMock.mockReset();
   (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => "blob:preview");
   (URL as unknown as Record<string, unknown>).revokeObjectURL = vi.fn();
@@ -37,31 +34,22 @@ afterEach(() => {
 });
 
 describe("CreateReport on-device ML", () => {
-  it("suggests from the selected local File even before the upload finishes", async () => {
-    let resolveUpload!: (value: unknown) => void;
-    uploadImageMock.mockReturnValue(
-      new Promise((resolve) => {
-        resolveUpload = resolve;
-      }),
-    );
+  it("suggests from the selected local File", async () => {
     suggestMock.mockResolvedValue({ category: "Electronics", confidence: 0.8, rawLabel: "laptop" });
 
     render(<CreateReport />);
     const file = new File(["abc"], "phone.jpg", { type: "image/jpeg" });
     pickFile(file);
 
-    // The upload is still pending, yet local ML is available.
     const button = await screen.findByRole("button", { name: SUGGEST });
     fireEvent.click(button);
 
     await waitFor(() => expect(suggestMock).toHaveBeenCalledTimes(1));
     expect(suggestMock.mock.calls[0]![0]).toBe(file);
 
-    resolveUpload({ id: "up1", fileUrl: "https://cdn.example.com/phone.jpg" });
   });
 
   it("clears the selected file and preview when the photo is removed", async () => {
-    uploadImageMock.mockResolvedValue({ id: "up1", fileUrl: "https://cdn.example.com/p.jpg" });
     render(<CreateReport />);
     pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
 
@@ -74,7 +62,6 @@ describe("CreateReport on-device ML", () => {
   });
 
   it("uses the newly selected File after replacing the photo", async () => {
-    uploadImageMock.mockResolvedValue({ id: "up1", fileUrl: "https://cdn.example.com/p.jpg" });
     suggestMock.mockResolvedValue({ category: "Other", confidence: 0.1, rawLabel: "thing" });
     render(<CreateReport />);
 
@@ -92,22 +79,38 @@ describe("CreateReport on-device ML", () => {
     expect(suggestMock.mock.calls[0]![0]).toBe(second);
   });
 
-  it("keeps local ML usable when the cloud upload fails", async () => {
-    uploadImageMock.mockRejectedValue(new Error("Upload failed"));
-    suggestMock.mockResolvedValue({ category: "Electronics", confidence: 0.9, rawLabel: "laptop" });
+  it("does not upload when a photo is selected", async () => {
     render(<CreateReport />);
+    pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("button", { name: /remove photo/i });
+    expect(publishReportMock).not.toHaveBeenCalled();
+  });
+
+  it("publishes with the selected photo on submit", async () => {
+    publishReportMock.mockResolvedValue("p1");
+    render(<CreateReport />);
+    fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
+    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
+    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     const file = new File(["abc"], "p.jpg", { type: "image/jpeg" });
     pickFile(file);
+    fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
+    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Lost phone" }), file));
+  });
 
-    await screen.findByRole("alert");
-    fireEvent.click(await screen.findByRole("button", { name: SUGGEST }));
-
-    await waitFor(() => expect(suggestMock).toHaveBeenCalledTimes(1));
-    expect(suggestMock.mock.calls[0]![0]).toBe(file);
+  it("keeps the selected photo when publish fails", async () => {
+    publishReportMock.mockRejectedValue(new Error("Could not publish"));
+    render(<CreateReport />);
+    fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
+    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
+    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
+    fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
+    await screen.findByText(/could not publish/i);
+    expect(screen.getByRole("img", { name: /attachment preview/i })).toBeTruthy();
   });
 
   it("shows a clear message when the bundled model is unavailable", async () => {
-    uploadImageMock.mockResolvedValue({ id: "up1", fileUrl: "https://cdn.example.com/p.jpg" });
     suggestMock.mockRejectedValue(
       new Error("On-device category model is unavailable in this build."),
     );
