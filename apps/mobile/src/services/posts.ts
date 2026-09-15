@@ -8,8 +8,14 @@ import type {
   PostType,
 } from "@findback/shared";
 import { ApiError } from "./session";
-import { normalizeImage } from "./image";
 import { getSupabase } from "./supabaseClient";
+import { createPost, type CreatePostInput } from "./postsCreate";
+import { removeStagedUpload, uploadImage } from "./postsUpload";
+
+export { createPost } from "./postsCreate";
+export type { CreatePostInput } from "./postsCreate";
+export { removeStagedUpload, uploadImage } from "./postsUpload";
+export type { StoredUpload } from "./postsUpload";
 
 export interface FeedFilters {
   type?: PostType | "";
@@ -194,36 +200,6 @@ export async function fetchPost(id: string): Promise<PostItem> {
   return mapClientPost(rows[0]!);
 }
 
-export interface CreatePostInput {
-  type: PostType;
-  title: string;
-  description: string;
-  category: Category;
-  eventDate: string;
-  locationLabel?: string;
-  latitude?: number | null;
-  longitude?: number | null;
-  youtubeUrl?: string;
-  attachmentKey?: string;
-}
-
-export async function createPost(input: CreatePostInput): Promise<PostItem> {
-  const { data, error } = await getSupabase().rpc("findback_create_post_client", {
-    p_type: input.type,
-    p_title: input.title,
-    p_description: input.description,
-    p_category: input.category,
-    p_event_date: input.eventDate,
-    p_latitude: input.latitude ?? null,
-    p_longitude: input.longitude ?? null,
-    p_location_label: input.locationLabel ?? null,
-    p_youtube_url: input.youtubeUrl ?? null,
-    p_attachment_key: input.attachmentKey ?? null,
-  });
-  if (error) throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
-  return fetchPost(String(data));
-}
-
 export async function updatePostStatus(id: string, status: PostStatus): Promise<PostItem> {
   const { error } = await getSupabase().rpc("findback_change_post_status_client", {
     p_post_id: id,
@@ -389,71 +365,13 @@ export async function fetchMyPosts(): Promise<FeedPage> {
   return toFeedPage((res.data ?? []) as ClientPostRow[], true);
 }
 
-export interface StoredUpload {
-  id: string;
-  fileName: string;
-  mimeType: string;
-  fileSize: number;
-  fileUrl: string;
-}
-
-const IMAGES_BUCKET = "findback-images";
-
-function extensionFor(mimeType: string): string {
-  if (mimeType === "image/png") return "png";
-  if (mimeType === "image/webp") return "webp";
-  if (mimeType === "image/gif") return "gif";
-  return "jpg";
-}
-
-function safeFileName(name: string): string {
-  const base = name.split(/[\\/]/).pop()?.trim() ?? "";
-  return (base || "image").slice(0, 120);
-}
-
-/**
- * Normalize an image on this device, upload it straight to Supabase Storage under
- * the caller's own folder, then stage an `uploads` row the create-post RPC binds.
- * If staging fails the just-uploaded object is removed so nothing is orphaned.
- */
-export async function uploadImage(file: File): Promise<StoredUpload> {
-  const supabase = getSupabase();
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user) throw new ApiError("Not authenticated", 401);
-
-  const normalized = await normalizeImage(file);
-  const id = crypto.randomUUID();
-  const objectKey = `${userData.user.id}/${id}.${extensionFor(normalized.mimeType)}`;
-
-  const { error: uploadError } = await supabase.storage
-    .from(IMAGES_BUCKET)
-    .upload(objectKey, normalized.blob, {
-      contentType: normalized.mimeType,
-      upsert: false,
-    });
-  if (uploadError) throw new ApiError(uploadError.message || "Upload failed", 502);
-
-  const fileUrl = supabase.storage.from(IMAGES_BUCKET).getPublicUrl(objectKey).data.publicUrl;
-  const fileName = safeFileName(file.name);
-  const { error: stageError } = await supabase.from("uploads").insert({
-    id,
-    user_id: userData.user.id,
-    file_name: fileName,
-    mime_type: normalized.mimeType,
-    file_size: normalized.blob.size,
-    file_url: fileUrl,
-    created_at: new Date().toISOString(),
-  });
-  if (stageError) {
-    await supabase.storage.from(IMAGES_BUCKET).remove([objectKey]);
-    throw new ApiError(stageError.message || "Could not stage the upload", 500);
+export async function publishReport(input: CreatePostInput, photo: File | null): Promise<string> {
+  if (!photo) return createPost(input);
+  const stored = await uploadImage(photo);
+  try {
+    return await createPost({ ...input, attachmentKey: stored.id });
+  } catch (err) {
+    await removeStagedUpload(stored);
+    throw err;
   }
-
-  return {
-    id,
-    fileName,
-    mimeType: normalized.mimeType,
-    fileSize: normalized.blob.size,
-    fileUrl,
-  };
 }
