@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Camera, ImageUp, Sparkles, X } from "lucide-react";
 import type { Category, PostType } from "@findback/shared";
@@ -9,7 +9,7 @@ import { Segmented } from "../components/Segmented";
 import { CategoryField } from "../components/CategoryField";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
-import { createPost, uploadImage, type StoredUpload } from "../services/posts";
+import { publishReport } from "../services/posts";
 import { suggestCategoryFromImage, type CategorySuggestion } from "../services/ml";
 import { todayInputValue } from "../utils/dates";
 
@@ -31,42 +31,28 @@ export function CreateReport() {
   });
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [upload, setUpload] = useState<StoredUpload | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [suggestion, setSuggestion] = useState<CategorySuggestion | null>(null);
   const [mlError, setMlError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submitting = useRef(false);
 
-  async function onPickImage(file: File | undefined) {
+  function onPickImage(file: File | undefined) {
     if (!file) return;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-    // The selected File is kept in memory: it drives the local preview and the
-    // on-device ML suggestion. The cloud upload proceeds independently.
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     setSuggestion(null);
     setMlError(null);
-    setUpload(null);
     setError(null);
-    setUploading(true);
-    try {
-      const stored = await uploadImage(file);
-      setUpload(stored);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
-    } finally {
-      setUploading(false);
-    }
   }
 
   function clearPhoto() {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setSelectedFile(null);
-    setUpload(null);
     setSuggestion(null);
     setMlError(null);
   }
@@ -96,29 +82,34 @@ export function CreateReport() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
     setError(null);
     if (!title.trim() || !description.trim() || !category) {
       setError("Title, description and category are required.");
       return;
     }
+    submitting.current = true;
     setBusy(true);
     try {
-      const postId = await createPost({
-        type,
-        title: title.trim(),
-        description: description.trim(),
-        category,
-        eventDate,
-        locationLabel: location.label.trim() || undefined,
-        latitude: location.latitude,
-        longitude: location.longitude,
-        youtubeUrl: youtubeUrl.trim() || undefined,
-        attachmentKey: upload?.id,
-      });
+      const postId = await publishReport(
+        {
+          type,
+          title: title.trim(),
+          description: description.trim(),
+          category,
+          eventDate,
+          locationLabel: location.label.trim() || undefined,
+          latitude: location.latitude,
+          longitude: location.longitude,
+          youtubeUrl: youtubeUrl.trim() || undefined,
+        },
+        selectedFile,
+      );
       navigate(`/posts/${postId}`, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not publish");
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -199,16 +190,11 @@ export function CreateReport() {
             >
               <X size={16} />
             </button>
-            {uploading && (
-              <span className="absolute bottom-2 left-2 rounded-full bg-surface/90 px-2.5 py-1 text-xs text-on-surface shadow">
-                Uploading…
-              </span>
-            )}
           </div>
         ) : (
           <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-m3-sm border border-dashed border-outline px-4 text-center text-sm text-on-surface-variant hover:bg-surface-container">
             <ImageUp size={22} aria-hidden />
-            {uploading ? "Uploading…" : "Tap to choose an image"}
+            Tap to choose an image
             <input
               type="file"
               accept="image/png,image/jpeg,image/webp,image/gif"
