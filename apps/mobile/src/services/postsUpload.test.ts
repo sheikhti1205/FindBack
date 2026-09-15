@@ -58,7 +58,12 @@ describe("uploadImage", () => {
         file_url: "https://cdn.test/findback-images/u/x.jpg",
       }),
     );
-    expect(stored).toMatchObject({ fileName: "photo.jpg", mimeType: "image/jpeg", fileSize: 10 });
+    expect(stored).toMatchObject({
+      fileName: "photo.jpg",
+      mimeType: "image/jpeg",
+      fileSize: 10,
+      objectKey: expect.stringMatching(/^user-1\/[0-9a-f-]{36}\.jpg$/),
+    });
   });
 
   it("removes the exact object when staging the uploads row fails", async () => {

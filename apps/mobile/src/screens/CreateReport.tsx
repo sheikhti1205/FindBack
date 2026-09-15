@@ -103,7 +103,7 @@ export function CreateReport() {
     }
     setBusy(true);
     try {
-      const post = await createPost({
+      const postId = await createPost({
         type,
         title: title.trim(),
         description: description.trim(),
@@ -115,7 +115,7 @@ export function CreateReport() {
         youtubeUrl: youtubeUrl.trim() || undefined,
         attachmentKey: upload?.id,
       });
-      navigate(`/posts/${post.id}`, { replace: true });
+      navigate(`/posts/${postId}`, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not publish");
     } finally {

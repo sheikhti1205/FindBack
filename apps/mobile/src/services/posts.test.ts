@@ -212,25 +212,17 @@ describe("createPost", () => {
     eventDate: "2026-09-10",
   };
 
-  it("calls the create RPC and returns the fresh public post", async () => {
-    clientMock.rpc
-      .mockResolvedValueOnce({ data: "new-id", error: null })
-      .mockResolvedValueOnce({ data: [row({ id: "new-id" })], error: null });
+  it("calls the create RPC once and returns the new id without refetching", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: "new-id", error: null });
 
-    const post = await createPost(input);
+    const id = await createPost(input);
 
-    expect(clientMock.rpc).toHaveBeenNthCalledWith(
-      1,
+    expect(id).toBe("new-id");
+    expect(clientMock.rpc).toHaveBeenCalledTimes(1);
+    expect(clientMock.rpc).toHaveBeenCalledWith(
       "findback_create_post_client",
-      expect.objectContaining({
-        p_type: "LOST",
-        p_title: "Lost phone",
-        p_category: "Electronics",
-        p_event_date: "2026-09-10",
-        p_attachment_key: null,
-      }),
+      expect.objectContaining({ p_type: "LOST", p_attachment_key: null }),
     );
-    expect(post.id).toBe("new-id");
   });
 
   it("maps an ownership rejection to 403", async () => {
