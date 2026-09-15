@@ -5,15 +5,6 @@
 -- later create failure rolls the deletion back and the client never needs a
 -- second round-trip. Ownership is still enforced by the caller's own RLS.
 
--- PostgreSQL requires UPDATE privilege and an UPDATE policy for FOR UPDATE.
--- Restrict the grant to the primary key and reject every actual updated row.
-grant update (id) on public.uploads to authenticated;
-drop policy if exists uploads_lock_own on public.uploads;
-create policy uploads_lock_own
-  on public.uploads for update to authenticated
-  using (user_id = (select auth.uid())::text)
-  with check (false);
-
 create or replace function public.findback_create_post_client(
   p_type text,
   p_title text,
