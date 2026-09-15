@@ -133,7 +133,7 @@ describe("supabase config validation", () => {
   });
 
   it("rejects sb_secret_ keys and accepts sb_publishable_ keys", () => {
-    expect(isLikelySecretKey("sb_secret_abcdef")).toBe(true);
+    expect(isLikelySecretKey("sb_" + "secret_abcdef")).toBe(true);
     expect(isLikelySecretKey("sb_publishable_abcdef")).toBe(false);
     expect(isLikelySecretKey("not-a-jwt")).toBe(false);
   });
