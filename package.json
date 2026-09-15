@@ -17,7 +17,9 @@
     "lint": "eslint .",
     "test": "npm run build -w packages/shared && npm run test -w services/api && npm run test -w apps/mobile",
     "cap:add:android": "npm run cap:add:android -w apps/mobile",
-    "apk": "node scripts/build-apk.mjs"
+    "apk": "node scripts/build-apk.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "scan:apk": "node scripts/scan-apk.mjs"
   },
   "engines": {
     "node": ">=22"

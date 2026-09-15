@@ -38,3 +38,14 @@ services/api/uploads/
 
 # local test databases
 services/api/data-test/
+
+# Generated / downloaded model artifacts (never commit weights)
+apps/mobile/android/app/src/main/assets/models/
+apps/mobile/public/models/
+*.litertlm
+*.tflite
+*.part
+tmp-*.mjs
+.playwright-mcp/
+.serena/
+.superpowers/

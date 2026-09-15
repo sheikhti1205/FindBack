@@ -24,6 +24,8 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
+      - name: Secret scan
+        run: npm run scan:secrets
       - name: API tests
         run: npm test -w @findback/api
       - name: Mobile tests
@@ -58,4 +60,3 @@ jobs:
       - name: Container logs
         if: always()
         run: docker logs findback-ci
-
