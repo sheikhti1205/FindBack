@@ -31,12 +31,11 @@ _Signup and login now go directly from the app to Supabase Auth (publishable key
 2. Fill multiple text boxes (title/description), pick a **category dropdown**
    and the **date picker** (req 14), and capture an approximate location with the
    one-time "Use my location" button plus a free-text label (req 10).
-3. Attach a photo (req 13) and press **Suggest category (on-device ML)** before
-   publishing — TensorFlow.js MobileNet V1 runs inference on the device using
-   weights bundled in the app (~1.92 MB), with no CDN fallback and no network
-   request; the photo never leaves the device (req 12).
-4. Paste a YouTube link and watch the embedded player render live (req 9).
-5. Publish → open the post (tailwind-styled, animated card entrance — req 16/15).
+3. Attach a photo (req 13) and press **Possible Matches (on-device text embeddings)** before
+   publishing — local sentence embeddings + cosine similarity (top 3, never a probability, no vector DB, no server AI) runs on the device using weights bundled in the app, with no CDN fallback and no network request; the photo never leaves the device (req 12).
+4. Press **Generate report (local VLM on GPU)** — LiteRT-LM / SmolVLM2 runs inference on the GPU delegate with no CPU fallback (policy + build property); the structured report is applied as suggestions to the form fields (req 23).
+5. Paste a YouTube link and watch the embedded player render live (req 9).
+6. Publish → open the post (tailwind-styled, animated card entrance — req 16/15).
 
 ## 3 · Realtime engagement (req 2, 3, 7, 8)
 
@@ -109,5 +108,5 @@ server below is kept as a Docker/coursework reference.
 | 8 | §3 | 20 | §6 |
 | 9 | §2 | 21 | §8 |
 | 10 | §2 | 22 | §7 |
-| 11 | §1 | 23 | §7 |
+| 11 | §1 | 23 | §2 |
 | 12 | §2 | 24 | §8 |

@@ -32,7 +32,8 @@ Status vocabulary: `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER
      ├─ Supabase GraphQL   /graphql/v1 (pg_graphql)                  https
      ├─ Supabase Realtime  private Broadcast channels                wss
      ├─ Supabase Storage   findback-images (on-device normalized)    https
-     └─ Supabase Edge Fn   ai-help (JWT-verified)                    https
+     ├─ Supabase Edge Fn   ai-help (JWT-verified)                    https
+     └─ On-device AI       text embeddings (cosine top-3) + VLM (GPU)  local
    Node Express + GraphQL-Yoga + Socket.IO  → Docker/coursework reference only
    ```
 8. **Android does not require Node**: confirmed — no `apiBase`/`apiFetch`,
@@ -41,11 +42,19 @@ Status vocabulary: `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER
    `*.supabase.co` only.
 9. **No VITE_API_URL / LAN / localhost / port-4000 dependency**: confirmed by
    source grep, built-`dist` grep and APK bundle grep.
-10. **Remaining purpose of `services/api`**: Docker image + local demo and the
-    retained Node tests/reference (reporting, legacy REST/GraphQL, auth provider
-    adapters). Not used by the app.
-11. **Remaining purpose of Docker**: a working containerized reference/demo
-    (web shell + Node REST/GraphQL, SQLite mode) for the Docker/CI requirement.
+10. **On-device AI — no CPU fallback (policy + build property)**: the VLM path
+     uses the LiteRT GPU delegate exclusively; there is **no CPU delegate**, no
+     XNNPACK, and no `TfLiteRuntime` fallback path in the build. The text
+     embeddings path runs in the WebView (TF.js/WASM) with no server fallback.
+11. **Runtime GPU proof and 256M readiness are BLOCKED on the ARM64 phone pass**:
+     they must not be claimed from a host `x86_64` build. The phone-pass items
+     (real 500M GPU generation, the 256M diagnostic outcome, and the final
+     photo-picker → VLM walkthrough) are recorded in `DEFERRED_DECISIONS.md`.
+12. **Remaining purpose of `services/api`**: Docker image + local demo and the
+     retained Node tests/reference (reporting, legacy REST/GraphQL, auth provider
+     adapters). Not used by the app.
+13. **Remaining purpose of Docker**: a working containerized reference/demo
+     (web shell + Node REST/GraphQL, SQLite mode) for the Docker/CI requirement.
 
 ## Direct Supabase capabilities
 
@@ -168,7 +177,7 @@ device** (implementation and desktop/browser equivalents are covered above).
 | 9 | DONE | YouTube embed | — |
 | 10 | DONE | location picker + map embed | — |
 | 11 | DONE | Supabase Auth session/JWT; browser restore proof | — |
-| 12 | DONE | bundled MobileNet + unit tests | **physical offline proof pending (10L)** |
+| 12 | DONE | local sentence embeddings + cosine top-3 (unit tests) | **GPU VLM proof blocked on ARM64 phone pass** |
 | 13 | DONE | direct Storage upload; live 20/20 | — |
 | 14 | DONE | date picker | — |
 | 15 | DONE | Framer Motion | — |
@@ -179,7 +188,7 @@ device** (implementation and desktop/browser equivalents are covered above).
 | 20 | DEFERRED_EXTERNAL_TOOL | reporting RPC + SQL + CSV | no genuine `.rpt` (needs licensed tool) |
 | 21 | DONE | React 19 shell | — |
 | 22 | DONE | CI Docker build + run + `/health` (run `34880260112`) | no local engine; proof is CI |
-| 23 | DONE_DEMO_PROVIDER | `ai-help` Edge Function; live 9/9 | no LLM key → fallback only, not a live LLM |
+| 23 | DONE_DEMO_PROVIDER | local VLM (LiteRT-LM/SmolVLM2 on GPU) + Edge Function fallback | **GPU proof & 256M readiness blocked on ARM64 phone pass** |
 | 24 | **NOT_DONE** | APK builds + bundle inspected | physical install/run not observed (10L blocked) |
 
 ## Remaining limitations
@@ -187,21 +196,25 @@ device** (implementation and desktop/browser equivalents are covered above).
 75. **Known limitations** — (a) no physical-device run yet; (b) phone SMS not
     configured; (c) Crystal `.rpt` needs licensed Windows tooling; (d) no external
     LLM key, so AI Help runs the deterministic fallback; (e) 7 intentional
-    `pg_graphql_*_table_exposed` advisor warnings; (f) no local Docker engine.
+    `pg_graphql_*_table_exposed` advisor warnings; (f) no local Docker engine;
+    (g) **on-device VLM GPU delegate proof and 256M readiness are BLOCKED on the ARM64 phone pass** (no CPU fallback by policy).
 76. **Deferred external/manual items** — phone provider, Crystal `.rpt`, optional
-    LLM key.
+    LLM key, **ARM64 phone pass for on-device AI (GPU delegate, 256M diagnostic, photo-picker → VLM walkthrough)**.
 77. **User actions before submission** — install `adb` (`android-tools`) and
     connect/authorize a physical Android phone, then run 10L to complete #24 and
     the #12 offline proof. Optionally set `LLM_BASE_URL`/`LLM_API_KEY` or an SMS
-    provider.
+    provider. **The ARM64 phone pass is required to unblock GPU VLM proof and 256M readiness.**
 
 ## Final recommendation
 
 78. **Not fully ready for a 100 %-accepted submission**: 22/24 requirements are
     `DONE`, 2 are `DONE_DEMO_PROVIDER`, 1 is `DEFERRED_EXTERNAL_TOOL`, and **#24 is
     `NOT_DONE`** solely because the physical install/run walkthrough is blocked.
+    **#12 and #23 on-device AI GPU proofs remain BLOCKED on the ARM64 phone pass.**
 79. **Exact minimal remaining actions** — (1) provide an authorized physical
-    Android device + `adb`, then execute 10L (install, launch, offline MobileNet
-    proof, realtime two-client, network proof) — this flips #12's device proof and
-    #24 to `DONE`; (2) optionally configure an SMS provider and/or an LLM key; the
-    Crystal `.rpt` may stay `DEFERRED_EXTERNAL_TOOL`.
+    Android device + `adb`, then execute 10L (install, launch, offline text
+    embeddings proof, realtime two-client, network proof) — this flips #12's device
+    proof and #24 to `DONE`; (2) **ARM64 phone pass for on-device VLM (GPU delegate,
+    real 500M generation, 256M diagnostic, photo-picker → VLM walkthrough)** — this
+    unblocks #23's GPU proof and 256M readiness; (3) optionally configure an SMS
+    provider and/or an LLM key; the Crystal `.rpt` may stay `DEFERRED_EXTERNAL_TOOL`.

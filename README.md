@@ -21,8 +21,8 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 | Database | Supabase PostgreSQL (Data API) in production; SQLite `node:sqlite` for tests/local |
 | Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
 | Storage | Supabase Storage (public `findback-images` bucket) — the app normalizes images on-device and uploads directly under its own `<uid>/` folder (owner-scoped RLS); local uploads dir for tests/local |
-| AI | Supabase Edge Function `ai-help` (authenticated) → OpenAI-compatible HTTP provider when secrets are set, deterministic fallback otherwise |
-| ML | MobileNet V1 (TensorFlow.js) bundled locally; on-device inference with no external network requests |
+| AI | Supabase Edge Function `ai-help` (authenticated) → OpenAI-compatible HTTP provider when secrets are set, deterministic fallback otherwise; **on-device: local sentence embeddings (cosine top-3, no vector DB) + LiteRT-LM/SmolVLM2 VLM on GPU delegate (no CPU fallback)** |
+| ML | MobileNet V1 (TensorFlow.js) bundled locally; on-device inference with no external network requests; **text embeddings (Universal Sentence Encoder, TF.js/WASM) + VLM (LiteRT GPU)** |
 | CI | GitHub Actions |
 
 ## Repo layout
@@ -66,6 +66,15 @@ Storage (on-device-normalized image uploads) and the `ai-help` Edge Function. Th
 Node Express API remains in the repo as a Docker/coursework reference but is not
 part of the mobile runtime. Post and comment payloads expose a public author
 profile only — never email or phone.
+
+**On-device AI (no network):** the create-report screen runs local sentence
+embeddings (Universal Sentence Encoder via TF.js/WASM) for "Possible Matches"
+(top-3 cosine similarity, never a probability, no vector DB, no server AI) and
+a local VLM (LiteRT-LM / SmolVLM2 on the GPU delegate, **no CPU fallback by
+policy**) for "Generate report". The Help Assistant (Edge Function `ai-help`)
+remains available as a secondary fallback. Runtime GPU proof and 256M readiness
+are **BLOCKED on the ARM64 phone pass** and must not be claimed from a host
+`x86_64` build.
 
 Demo login for the **local/demo backend** (`DB_PROVIDER=sqlite` seed only): any of
 `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`, `arif_cse`, `mitu`, `sayeed_bsc`,
