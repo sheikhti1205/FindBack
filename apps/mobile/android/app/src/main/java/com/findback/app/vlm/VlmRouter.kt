@@ -10,6 +10,11 @@ data class RetryPlan(
     val switchTo: VlmModelId?
 )
 
+sealed class AnalysisSelection {
+    data class Ready(val modelId: VlmModelId) : AnalysisSelection()
+    data class Unsupported(val reason: String) : AnalysisSelection()
+}
+
 /**
  * Router for selecting VLM models based on backend mode and model states.
  * GPU-strict: only READY_GPU is considered usable. No CPU branch anywhere.
@@ -27,6 +32,14 @@ object VlmRouter {
             BackendMode.AUTO -> chooseAuto(states)
             BackendMode.FAST -> chooseFast(states)
             BackendMode.QUALITY -> chooseQuality(states)
+        }
+    }
+
+    fun selectForAnalysis(mode: BackendMode, states: Map<VlmModelId, VlmState>): AnalysisSelection {
+        return when (val modelId = choose(mode, states)) {
+            null -> AnalysisSelection.Unsupported("No READY_GPU model available for mode ${mode.wire}")
+            VlmModelId.SMOLVLM_256M -> AnalysisSelection.Unsupported("smolvlm-256m does not support complete image generation")
+            VlmModelId.SMOLVLM2_500M -> AnalysisSelection.Ready(modelId)
         }
     }
 

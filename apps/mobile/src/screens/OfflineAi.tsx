@@ -112,11 +112,10 @@ function ModelRow({
                 ? `Downloading ${Math.round(downloadProgress.progress * 100)}%`
                 : stateLabel}
             </span>
-            {info.state === "GPU_UNAVAILABLE" && info.lastError && info.lastError.message !== stateLabel && (
-              <span className="text-xs text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">{info.lastError.message}</span>
-            )}
-            {info.state !== "GPU_UNAVAILABLE" && info.lastError && (
-              <span className="text-xs text-red-700 bg-red-50 px-2 py-0.5 rounded-full">{info.lastError.message}</span>
+            {info.error && info.error !== stateLabel && (
+              <span className={`text-xs px-2 py-0.5 rounded-full ${info.state === "GPU_UNAVAILABLE" ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50"}`}>
+                {info.error}
+              </span>
             )}
           </div>
 

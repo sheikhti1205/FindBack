@@ -22,6 +22,25 @@ beforeEach(() => {
 });
 
 describe("vlmPlugin native payload unwrapping", () => {
+  it("unwraps the real native getCapabilities payload", async () => {
+    native.getCapabilities.mockResolvedValue({
+      capabilities: {
+        abi: "arm64-v8a",
+        androidVersion: "14",
+        apiLevel: 34,
+        hardware: "pixel",
+        deviceCategory: "physical",
+        gpuVendor: "Qualcomm",
+        gpuRenderer: "Adreno 730",
+        memoryClassMb: 256,
+        freeAppStorageMb: 1024,
+        gpuRuntimePresent: true,
+        runtimeVersion: "0.16.0",
+      },
+    });
+    await expect(getVlmBridge().getCapabilities()).resolves.toMatchObject({ freeAppStorageMb: 1024 });
+  });
+
   it("unwraps getSettings {mode}", async () => {
     native.getSettings.mockResolvedValue({ mode: "QUALITY" });
     await expect(getVlmBridge().getSettings()).resolves.toEqual({ mode: "QUALITY" });
