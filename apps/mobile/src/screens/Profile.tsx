@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { CheckCircle2, LogOut, ShieldQuestion, FileStack } from "lucide-react";
+import { CheckCircle2, LogOut, ShieldQuestion, FileStack, Cpu } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { Segmented } from "../components/Segmented";
@@ -55,6 +55,13 @@ export function Profile() {
         >
           <ShieldQuestion size={18} aria-hidden />
           Help Assistant
+        </Link>
+        <Link
+          to="/offline-ai"
+          className="flex min-h-[48px] items-center gap-3 rounded-m3-md border border-outline-variant px-4 text-sm font-medium hover:bg-surface-container"
+        >
+          <Cpu size={18} aria-hidden />
+          Offline AI settings
         </Link>
       </nav>
 
