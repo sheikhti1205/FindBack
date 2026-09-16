@@ -19,6 +19,7 @@ const LOCATION_DECAY_RADIUS_KM = 20;
 export interface MatchCandidate {
   id: string;
   title: string;
+  description?: string;
   category: Category;
   eventDate: string | null;
   locationLabel: string | null;
@@ -104,14 +105,26 @@ function locationProximityBonus(
   return LOCATION_BONUS_MAX * (1 - (distanceKm - LOCATION_FULL_RADIUS_KM) / (LOCATION_DECAY_RADIUS_KM - LOCATION_FULL_RADIUS_KM));
 }
 
+/** Minimum base cosine similarity (raw, before mapping) for a candidate to
+ * be considered. Candidates below this threshold are dropped regardless of
+ * bonus points. Tuned per the spec: "cosine as similarity, not probability."
+ * 0.0 means only negatively-correlated candidates are dropped. */
+export const MIN_COSINE_CUTOFF = 0.0;
+
 /** Ranks candidates by base score plus transparent bonuses.
- * Returns at most 3 matches, sorted by score desc then id asc. */
+ * Drops candidates whose mapped base score is below the cutoff (or all
+ * candidates if no cutoff). Returns at most 3 matches, sorted by score desc
+ * then id asc. */
 export function rankMatches(
   target: MatchCandidate,
   candidates: MatchCandidate[],
   baseScores: Map<string, number>,
+  cosineCutoff?: number,
 ): PossibleMatch[] {
+  const cutoffMapped = cosineCutoff != null ? (cosineCutoff + 1) / 2 : 0;
+
   const ranked = candidates
+    .filter((c) => (baseScores.get(c.id) ?? 0) >= cutoffMapped)
     .map((candidate) => {
       const baseScore = baseScores.get(candidate.id) ?? 0;
       const clampedBase = Math.max(0, Math.min(1, baseScore));

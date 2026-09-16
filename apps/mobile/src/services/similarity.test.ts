@@ -34,4 +34,17 @@ describe("rankMatches", () => {
     const ranked = rankMatches(target, [candidate({ id: "b" }), candidate({ id: "a" })], new Map([["a", 0.4], ["b", 0.4]]));
     expect(ranked.map((m) => m.post.id)).toEqual(["a", "b"]);
   });
+
+  it("drops candidates below the cosine cutoff", () => {
+    const scores = new Map([["a", 0.9], ["b", 0.5], ["c", 0.4]]);
+    // cutoff 0.0 raw cosine => mapped 0.5; c (0.4) is dropped.
+    const ranked = rankMatches(target, [candidate({ id: "a" }), candidate({ id: "b" }), candidate({ id: "c" })], scores, 0.0);
+    expect(ranked.map((m) => m.post.id)).toEqual(["a", "b"]);
+  });
+
+  it("keeps all candidates when no cutoff is given", () => {
+    const scores = new Map([["a", 0.9], ["b", 0.4]]);
+    const ranked = rankMatches(target, [candidate({ id: "a" }), candidate({ id: "b" })], scores);
+    expect(ranked.map((m) => m.post.id)).toEqual(["a", "b"]);
+  });
 });
