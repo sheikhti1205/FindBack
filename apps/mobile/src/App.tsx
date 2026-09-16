@@ -14,6 +14,7 @@ import { PostDetail } from "./screens/PostDetail";
 import { Profile } from "./screens/Profile";
 import { MyPosts } from "./screens/MyPosts";
 import { Help } from "./screens/Help";
+import { OfflineAi } from "./screens/OfflineAi";
 
 export function App() {
   return (
@@ -53,6 +54,7 @@ export function App() {
               <Route path="/my" element={<MyPosts />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/help" element={<Help />} />
+              <Route path="/offline-ai" element={<OfflineAi />} />
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />
           </Routes>

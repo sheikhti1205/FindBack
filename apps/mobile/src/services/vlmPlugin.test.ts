@@ -32,9 +32,16 @@ describe("vlmPlugin native payload unwrapping", () => {
     await expect(getVlmBridge().getModelStates()).resolves.toHaveLength(1);
   });
 
-  it("unwraps runGpuSelfTest {state}", async () => {
+  it("unwraps runGpuSelfTest {state} with imageUri", async () => {
     native.runGpuSelfTest.mockResolvedValue({ state: "GPU_UNAVAILABLE" });
-    await expect(getVlmBridge().runGpuSelfTest("smolvlm-256m")).resolves.toBe("GPU_UNAVAILABLE");
+    await expect(getVlmBridge().runGpuSelfTest("smolvlm-256m", "content://test-image")).resolves.toBe("GPU_UNAVAILABLE");
+    expect(native.runGpuSelfTest).toHaveBeenCalledWith({ modelId: "smolvlm-256m", imageUri: "content://test-image" });
+  });
+
+  it("unwraps runGpuSelfTest {state} without imageUri", async () => {
+    native.runGpuSelfTest.mockResolvedValue({ state: "GPU_UNSUPPORTED" });
+    await expect(getVlmBridge().runGpuSelfTest("smolvlm-256m")).resolves.toBe("GPU_UNSUPPORTED");
+    expect(native.runGpuSelfTest).toHaveBeenCalledWith({ modelId: "smolvlm-256m" });
   });
 
   it("unwraps embedTexts {vectors}", async () => {

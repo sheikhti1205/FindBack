@@ -65,6 +65,7 @@ export interface VlmModelInfo {
   state: VlmState;
   sizeBytes?: number;
   error?: string;
+  lastError?: ModelError;
 }
 
 /** Settings. */
@@ -177,7 +178,7 @@ interface NativeVlmBridge {
   cancelDownload(options: { modelId: VlmModelId }): Promise<void>;
   deleteModel(options: { modelId: VlmModelId }): Promise<void>;
   embedTexts(options: { texts: string[] }): Promise<{ vectors: number[][] }>;
-  runGpuSelfTest(options: { modelId: VlmModelId }): Promise<{ state: GpuSelfTestState }>;
+  runGpuSelfTest(options: { modelId: VlmModelId; imageUri?: string }): Promise<{ state: GpuSelfTestState }>;
   analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
@@ -198,7 +199,7 @@ export interface VlmBridge {
   cancelDownload(modelId: VlmModelId): Promise<void>;
   deleteModel(modelId: VlmModelId): Promise<void>;
   embedTexts(texts: string[]): Promise<number[][]>;
-  runGpuSelfTest(modelId: VlmModelId): Promise<GpuSelfTestState>;
+  runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestState>;
   analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
@@ -261,7 +262,7 @@ class WebVlmBridge implements VlmBridge {
     this.refuse("embedTexts");
   }
 
-  async runGpuSelfTest(_modelId: VlmModelId): Promise<GpuSelfTestState> {
+  async runGpuSelfTest(_modelId: VlmModelId, _imageUri?: string): Promise<GpuSelfTestState> {
     this.refuse("runGpuSelfTest");
   }
 
@@ -335,8 +336,8 @@ class AndroidVlmBridge implements VlmBridge {
     return result.vectors;
   }
 
-  async runGpuSelfTest(modelId: VlmModelId): Promise<GpuSelfTestState> {
-    const result = await this.native.runGpuSelfTest({ modelId });
+  async runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestState> {
+    const result = await this.native.runGpuSelfTest({ modelId, imageUri });
     return result.state;
   }
 
