@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from "react-router";
 import { Home, PlusCircle, Search, UserRound } from "lucide-react";
+import { TabTapProvider, useTabTap } from "./TabTap";
 
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -16,16 +17,21 @@ export function Shell() {
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
 
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col bg-surface text-on-surface">
-      <main className="flex-1 pb-20">
-        <Outlet />
-      </main>
-      {showNav && <BottomNav />}
-    </div>
+    <TabTapProvider>
+      <div className="mx-auto flex min-h-full max-w-md flex-col bg-surface text-on-surface">
+        <main className="flex-1 pb-20">
+          <Outlet />
+        </main>
+        {showNav && <BottomNav />}
+      </div>
+    </TabTapProvider>
   );
 }
 
 function BottomNav() {
+  const { notifyTabTap } = useTabTap();
+  const { pathname } = useLocation();
+
   return (
     <nav
       aria-label="Primary"
@@ -37,6 +43,12 @@ function BottomNav() {
             key={to}
             to={to}
             end={end}
+            onClick={() => {
+              // Active-tab tap: signal the screen to refresh/scroll-top.
+              const isActive =
+                end ? pathname === to : pathname.startsWith(to);
+              if (isActive) notifyTabTap();
+            }}
             className={({ isActive }) =>
               `flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-[11px] ${
                 isActive

@@ -1,19 +1,28 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import type { PostType } from "@findback/shared";
 import { Segmented } from "../components/Segmented";
 import { PostList } from "../components/PostList";
+import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
+import { NewPostsPill } from "../components/NewPostsPill";
 import { useFeed } from "../hooks/useFeed";
 import { onRealtime } from "../services/realtime";
 import { useAuth } from "../auth";
+import { useTabTap } from "../components/TabTap";
+import { clearNewPostCount, getNewPostCount, incrementNewPostCount } from "../hooks/feedCache";
 
 type TypeFilter = PostType | "ALL";
 
+const HOME_CACHE_KEY = "home:feed";
+
 export function Home() {
   const { user } = useAuth();
+  const { tapCount } = useTabTap();
   const [type, setType] = useState<TypeFilter>("ALL");
   const [query, setQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
+  const [newPostCount, setNewPostCount] = useState(() => getNewPostCount(HOME_CACHE_KEY));
+  const scrollRef = useRef<PullToRefreshHandle>(null);
 
   // Debounce the search box so each keystroke does not hit the API.
   useEffect(() => {
@@ -21,21 +30,56 @@ export function Home() {
     return () => clearTimeout(t);
   }, [query]);
 
-  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed({
-    type: type === "ALL" ? "" : type,
-    q: appliedQuery || undefined,
-  });
+  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
+    {
+      type: type === "ALL" ? "" : type,
+      q: appliedQuery || undefined,
+    },
+    { cacheKey: HOME_CACHE_KEY, scrollRef },
+  );
+
+  // Active Home tab tap: refresh + scroll top.
+  useEffect(() => {
+    if (tapCount === 0) return;
+    void refresh();
+    scrollRef.current?.scrollToTop();
+    setNewPostCount(0);
+    clearNewPostCount(HOME_CACHE_KEY);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tapCount]);
 
   // Live: a new/changed post elsewhere refreshes this feed without reload.
+  // If the reader is scrolled down, do NOT yank them — show the pill instead.
   useEffect(() => {
     const off = onRealtime("feed:changed", () => {
+      const scrolled = (scrollRef.current?.scrollTop ?? 0) > 40;
+      if (scrolled) {
+        incrementNewPostCount(HOME_CACHE_KEY, 1);
+        setNewPostCount(getNewPostCount(HOME_CACHE_KEY));
+      } else {
+        void refresh();
+      }
+    });
+    return off;
+  }, [refresh]);
+
+  // A post was deleted: reconcile the list in place.
+  useEffect(() => {
+    const off = onRealtime("post:deleted", () => {
       void refresh();
     });
     return off;
   }, [refresh]);
 
+  function onNewPostsTap() {
+    void refresh();
+    scrollRef.current?.scrollToTop();
+    setNewPostCount(0);
+    clearNewPostCount(HOME_CACHE_KEY);
+  }
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex h-full flex-col gap-4">
       <header className="px-4 pt-5">
         <h1 className="text-xl font-semibold tracking-tight">FindBack</h1>
         <p className="text-xs text-on-surface-variant">
@@ -71,20 +115,24 @@ export function Home() {
         </label>
       </div>
 
-      <PostList
-        items={items}
-        loading={loading}
-        loadingMore={loadingMore}
-        error={error}
-        hasMore={hasMore}
-        onLoadMore={loadMore}
-        emptyTitle={appliedQuery ? "No matches" : "Nothing here yet"}
-        emptySubtitle={
-          appliedQuery
-            ? `No posts match “${appliedQuery}”.`
-            : "Tap Report below to post a lost or found item."
-        }
-      />
+      <NewPostsPill count={newPostCount} onTap={onNewPostsTap} />
+
+      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading} className="flex-1">
+        <PostList
+          items={items}
+          loading={loading}
+          loadingMore={loadingMore}
+          error={error}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          emptyTitle={appliedQuery ? "No matches" : "Nothing here yet"}
+          emptySubtitle={
+            appliedQuery
+              ? `No posts match “${appliedQuery}”.`
+              : "Tap Report below to post a lost or found item."
+          }
+        />
+      </PullToRefresh>
     </div>
   );
 }
