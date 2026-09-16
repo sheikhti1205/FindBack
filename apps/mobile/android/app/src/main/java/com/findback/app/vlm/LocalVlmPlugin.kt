@@ -226,51 +226,90 @@ class LocalVlmPlugin : Plugin() {
         val modelIdWire = call.getString("modelId") ?: return
         val imageUri = call.getString("imageUri") // Optional image for real self-test
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            if (modelId != VlmModelId.SMOLVLM2_500M) {
-                val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNSUPPORTED, "Only smolvlm2-500m supports GPU self-test")
-                call.resolve(result.toJSObject())
-                return
-            }
-
-            val engine = engine500 ?: run {
-                val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model not installed")
-                call.resolve(result.toJSObject())
-                return
-            }
-
-            scope.launch {
-                try {
-                    updateModelState(modelId, VlmState.GPU_SELF_TESTING)
-                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
-
-                    val instruction = "Describe this image briefly."
-                    val (success, diagnostics) = engine.runSelfTest(imageUri, instruction)
-
-                    if (success) {
-                        updateModelState(modelId, VlmState.READY_GPU)
-                        notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
-                        val result = GpuSelfTestResult(GpuSelfTestState.GPU_AVAILABLE)
+            when (modelId) {
+                VlmModelId.SMOLVLM2_500M -> {
+                    val engine = engine500 ?: run {
+                        val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model not installed")
                         call.resolve(result.toJSObject())
-                    } else {
-                        // Without image, leave as INSTALLED_UNVERIFIED; with image failure, mark error
-                        val finalState = if (imageUri != null) {
-                            VlmState.GPU_UNAVAILABLE
-                        } else {
-                            VlmState.INSTALLED_UNVERIFIED
-                        }
-                        updateModelState(modelId, finalState, error = diagnostics.joinToString("; "))
-                        notifyListeners("inferenceState", InferenceStateEvent(modelId, finalState, error = diagnostics.joinToString("; ")).toJSObject())
-                        val result = GpuSelfTestResult(
-                            if (imageUri != null) GpuSelfTestState.GPU_UNAVAILABLE else GpuSelfTestState.GPU_UNSUPPORTED,
-                            diagnostics.joinToString("; ")
-                        )
-                        call.resolve(result.toJSObject())
+                        return
                     }
-                } catch (e: Exception) {
-                    updateModelState(modelId, VlmState.RUNTIME_ERROR, error = e.message)
-                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = e.message).toJSObject())
-                    val result = GpuSelfTestResult(GpuSelfTestState.ERROR, e.message)
-                    call.resolve(result.toJSObject())
+
+                    scope.launch {
+                        try {
+                            updateModelState(modelId, VlmState.GPU_SELF_TESTING)
+                            notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
+
+                            val instruction = "Describe this image briefly."
+                            val (success, diagnostics) = engine.runSelfTest(imageUri, instruction)
+
+                            if (success) {
+                                updateModelState(modelId, VlmState.READY_GPU)
+                                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
+                                val result = GpuSelfTestResult(GpuSelfTestState.GPU_AVAILABLE)
+                                call.resolve(result.toJSObject())
+                            } else {
+                                // Without image, leave as INSTALLED_UNVERIFIED; with image failure, mark error
+                                val finalState = if (imageUri != null) {
+                                    VlmState.GPU_UNAVAILABLE
+                                } else {
+                                    VlmState.INSTALLED_UNVERIFIED
+                                }
+                                updateModelState(modelId, finalState, error = diagnostics.joinToString("; "))
+                                notifyListeners("inferenceState", InferenceStateEvent(modelId, finalState, error = diagnostics.joinToString("; ")).toJSObject())
+                                val result = GpuSelfTestResult(
+                                    if (imageUri != null) GpuSelfTestState.GPU_UNAVAILABLE else GpuSelfTestState.GPU_UNSUPPORTED,
+                                    diagnostics.joinToString("; ")
+                                )
+                                call.resolve(result.toJSObject())
+                            }
+                        } catch (e: Exception) {
+                            updateModelState(modelId, VlmState.RUNTIME_ERROR, error = e.message)
+                            notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = e.message).toJSObject())
+                            val result = GpuSelfTestResult(GpuSelfTestState.ERROR, e.message)
+                            call.resolve(result.toJSObject())
+                        }
+                    }
+                }
+                VlmModelId.SMOLVLM_256M -> {
+                    // Check if model files exist
+                    val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
+                    val tfliteSpec = manifest.files.single { it.path.endsWith(".tflite") }
+                    val tokenizerSpec = manifest.files.single { it.path == "tokenizer.model" }
+                    val tfliteFile = store.finalFile(manifest, tfliteSpec)
+                    val tokenizerFile = store.finalFile(manifest, tokenizerSpec)
+
+                    if (!tfliteFile.exists() || !tokenizerFile.exists()) {
+                        val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model files not found")
+                        updateModelState(modelId, VlmState.GPU_UNAVAILABLE, error = "Model files not found")
+                        notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_UNAVAILABLE, error = "Model files not found").toJSObject())
+                        call.resolve(result.toJSObject())
+                        return
+                    }
+
+                    scope.launch {
+                        try {
+                            updateModelState(modelId, VlmState.GPU_SELF_TESTING)
+                            notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
+
+                            val probe = Tflite256Probe(getContext(), store, ImagePreparer)
+                            val (outcome, errorCode) = probe.runProbe()
+
+                            updateModelState(modelId, outcome, error = errorCode?.wire)
+                            notifyListeners("inferenceState", InferenceStateEvent(modelId, outcome, error = errorCode?.wire).toJSObject())
+
+                            val gpuSelfTestState = when (outcome) {
+                                VlmState.READY_GPU -> GpuSelfTestState.GPU_AVAILABLE
+                                else -> GpuSelfTestState.GPU_UNAVAILABLE
+                            }
+                            val result = GpuSelfTestResult(gpuSelfTestState, errorCode?.wire)
+                            call.resolve(result.toJSObject())
+                        } catch (e: Exception) {
+                            updateModelState(modelId, VlmState.RUNTIME_ERROR, error = e.message)
+                            notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = e.message).toJSObject())
+                            val result = GpuSelfTestResult(GpuSelfTestState.ERROR, e.message)
+                            call.resolve(result.toJSObject())
+                        }
+                    }
                 }
             }
         } ?: call.reject("Invalid modelId: $modelIdWire")
