@@ -35,6 +35,30 @@ jobs:
         env:
           CI: true
 
+  android:
+    name: Android build & JVM tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - name: Fetch pinned USE asset
+        run: node scripts/fetch-use-model.mjs
+      - name: Capacitor sync
+        run: npm run cap:sync -w @findback/mobile
+      - name: Android JVM tests + debug APK
+        run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
+      - name: Strict APK scan (DEX/assets secrets, forbidden weights, JNI, 16 KiB)
+        run: npm run scan:apk -- --strict
+
   docker:
     name: Docker build & health check
     runs-on: ubuntu-latest
