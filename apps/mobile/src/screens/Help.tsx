@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Bot, SendHorizonal, User } from "lucide-react";
 import { useAuth } from "../auth";
+import { BackButton } from "../components/BackButton";
 import { askAiHelp } from "../services/auth";
 
 interface Message {
@@ -65,13 +66,12 @@ export function Help() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="border-b border-outline-variant px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Bot size={20} aria-hidden />
-          <div>
-            <h1 className="text-base font-semibold leading-tight">Help Assistant</h1>
-            <p className="text-xs text-on-surface-variant">Generative AI · demo fallback active</p>
-          </div>
+      <header className="flex items-center gap-2 border-b border-outline-variant px-4 py-3">
+        <BackButton fallbackTo="/profile" label="Back to profile" />
+        <Bot size={20} aria-hidden />
+        <div>
+          <h1 className="text-base font-semibold leading-tight">Help Assistant</h1>
+          <p className="text-xs text-on-surface-variant">Generative AI · demo fallback active</p>
         </div>
       </header>
 

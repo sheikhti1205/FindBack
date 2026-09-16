@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
+import { BackButton } from "../components/BackButton";
 import { getVlmBridge } from "../services/vlmPlugin";
 import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent } from "../services/vlmPlugin";
 
@@ -387,9 +388,12 @@ export function OfflineAi() {
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      <header className="px-4 pt-2">
-        <h1 className="text-xl font-semibold tracking-tight">Offline AI</h1>
-        <p className="text-xs text-on-surface-variant">Manage local models, inference mode, and GPU self-test.</p>
+      <header className="flex items-center gap-2 px-4 pt-2">
+        <BackButton fallbackTo="/profile" label="Back to profile" />
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Offline AI</h1>
+          <p className="text-xs text-on-surface-variant">Manage local models, inference mode, and GPU self-test.</p>
+        </div>
       </header>
 
       <section className="px-4 space-y-4" aria-labelledby="mode-heading">

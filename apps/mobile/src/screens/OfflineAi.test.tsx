@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { bridge } = vi.hoisted(() => ({ bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() } }));
@@ -30,7 +31,7 @@ describe("OfflineAi", () => {
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
-    render(<OfflineAi />);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     expect(await screen.findByText(/360\.8 MB/)).toBeTruthy();
     bridge.downloadModel.mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole("button", { name: /download smolvlm2 500m/i }));
@@ -45,7 +46,7 @@ describe("OfflineAi", () => {
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm-256m", state: "GPU_UNAVAILABLE", error: "GPU runtime lacks the required delegate" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
-    render(<OfflineAi />);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     expect(await screen.findByText(/GPU runtime lacks the required delegate/i)).toBeTruthy();
     expect(screen.queryByText(/ready/i)).toBeNull();
   });
@@ -60,7 +61,7 @@ describe("OfflineAi", () => {
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     bridge.downloadModel.mockResolvedValue(undefined);
-    render(<OfflineAi />);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: /install both/i }));
     fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
     await waitFor(() => expect(bridge.downloadModel).toHaveBeenNthCalledWith(2, "smolvlm-256m"));
