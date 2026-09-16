@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
 
 android {
     namespace = "com.findback.app"
@@ -22,6 +23,9 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    kotlinOptions {
+        jvmTarget = '21'
+    }
 }
 
 repositories {
@@ -40,6 +44,12 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+    implementation "com.google.ai.edge.litertlm:litertlm-android:0.16.0"
+    implementation "com.google.ai.edge.litert:litert:1.4.2"
+    implementation "com.google.ai.edge.litert:litert-gpu:1.4.2"
+    implementation "com.google.mediapipe:tasks-text:1.0.0"
+    implementation "androidx.exifinterface:exifinterface:$androidxExifInterfaceVersion"
+    testImplementation "org.jetbrains.kotlin:kotlin-test-junit:2.2.21"
 }
 
 apply from: 'capacitor.build.gradle'
