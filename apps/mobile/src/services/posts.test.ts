@@ -158,6 +158,17 @@ describe("fetchFeed", () => {
     );
   });
 
+  it("passes a userId filter for My Reports pagination", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [], error: null });
+
+    await fetchFeed({ userId: "u9" });
+
+    expect(clientMock.rpc).toHaveBeenCalledWith(
+      "findback_query_posts_client",
+      expect.objectContaining({ p_user_id: "u9" }),
+    );
+  });
+
   it("reports an empty feed without a cursor", async () => {
     clientMock.rpc.mockResolvedValue({ data: [], error: null });
     expect(await fetchFeed({})).toEqual({ items: [], nextCursor: null, total: 0 });
