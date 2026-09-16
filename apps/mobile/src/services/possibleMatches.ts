@@ -1,7 +1,7 @@
 import { fetchFeed } from "./posts";
 import { embeddingInput, embedTexts } from "./embeddings";
 import type { PostItem, PostType } from "@findback/shared";
-import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch } from "./similarity";
+import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
 
 /** Maximum number of candidate posts to fetch per page (client-side cap). */
 const PAGE_LIMIT = 10;
@@ -18,6 +18,7 @@ function toMatchCandidate(post: PostItem): MatchCandidate {
   return {
     id: post.id,
     title: post.title,
+    description: post.description,
     category: post.category,
     eventDate: post.eventDate,
     locationLabel: post.locationLabel,
@@ -57,7 +58,7 @@ export async function findPossibleMatches(
 
   // Build embedding inputs: target first, then candidates (even if empty, to detect embed failure)
   const targetInput = embeddingInput(target.title, target.description);
-  const candidateInputs = candidates.map((c) => embeddingInput(c.title, ""));
+  const candidateInputs = candidates.map((c) => embeddingInput(c.title, c.description ?? ""));
 
   let vectors: number[][];
   try {
@@ -84,7 +85,7 @@ export async function findPossibleMatches(
   }
 
   const targetCandidate = toMatchCandidate(target);
-  const matches = rankMatches(targetCandidate, candidates, baseScores);
+  const matches = rankMatches(targetCandidate, candidates, baseScores, MIN_COSINE_CUTOFF);
 
   return {
     matches,
