@@ -218,3 +218,57 @@ device** (implementation and desktop/browser equivalents are covered above).
     real 500M generation, 256M diagnostic, photo-picker → VLM walkthrough)** — this
     unblocks #23's GPU proof and 256M readiness; (3) optionally configure an SMS
     provider and/or an LLM key; the Crystal `.rpt` may stay `DEFERRED_EXTERNAL_TOOL`.
+
+## Non-device verification gate (Task 22) — 2026-09-16
+
+**Base commit**: `89f0e35` (docs(ai): record on-device AI architecture and evidence)
+
+### Step 1: Full JS/TS gate
+```bash
+npm ci && npm run build -w @findback/shared && npm run typecheck && npm run lint && npm test -w @findback/api && npm test -w @findback/mobile && npm run scan:secrets
+```
+**Result**: PASS
+- `npm ci`: 510 packages installed, 3 moderate vulns (no fix without breaking changes)
+- `npm run build -w @findback/shared`: TypeScript compilation successful
+- `npm run typecheck`: clean (shared + api + mobile)
+- `npm run lint`: clean (`eslint .`)
+- `npm test -w @findback/api`: 16 test files, **136 tests passed**
+- `npm test -w @findback/mobile`: 18 test files, **127 tests passed**
+- `npm run scan:secrets`: **clean (284 file(s))**
+
+### Step 2: Fetch assets, sync and build the APK
+```bash
+node scripts/fetch-use-model.mjs && npm run cap:sync -w @findback/mobile && cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
+```
+**Result**: PASS
+- `fetch-use-model.mjs`: **Asset already verified** at `apps/mobile/android/app/src/main/assets/models/use/universal_sentence_encoder.tflite` (6120274 bytes, SHA-256 `89ad3c74175dd8caa398cc22b657296d94302d20c525c12b58b29420f7249749`)
+- `cap:sync`: Sync finished in 0.231s; 1 Capacitor plugin (@capacitor/camera@8.2.4)
+- `./gradlew :app:testDebugUnitTest :app:assembleDebug`: **BUILD SUCCESSFUL** (103 actionable tasks, 58 executed, 45 up-to-date)
+
+### Step 3: Strict APK gate
+```bash
+npm run scan:apk -- --strict
+```
+**Result**: PASS
+- APK: `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`
+- **1022 entries**, **16 KiB aligned** (zipalign verification passed)
+- Required USE asset present: `assets/models/use/universal_sentence_encoder.tflite`
+- **No forbidden model assets** (no `.litertlm`/`.tflite` except the pinned USE asset)
+- **Both `arm64-v8a` and `x86_64` LiteRT-LM JNI libraries present** (`liblitertlm` in both ABIs)
+- **DEX/assets secret scan clean** (no `sb_secret_`, `SUPABASE_SERVICE_ROLE_KEY`, or JWT patterns)
+
+### Step 4: Prove nothing generated is tracked
+```bash
+git ls-files | grep -E "\.(litertlm|tflite|part)$" ; git status --porcelain
+```
+**Result**: PASS
+- `grep` prints **nothing** (no weight files tracked in Git)
+- `git status --porcelain` is **clean** (no untracked/modified files in product repo)
+
+### BLOCKED items (require ARM64 physical device)
+The following remain **BLOCKED**, not failed — they cannot be verified on this `x86_64` host:
+- Real SmolVLM2-500M text generation on GPU (the 500M `.litertlm` runtime ships `arm64-v8a` + `x86_64`; only the device proves the GPU path)
+- The 256M diagnostic verdict: prove or refute a complete image-to-text generation through a small, proven runtime; otherwise record `GPU_UNAVAILABLE_ON_CURRENT_RUNTIME`
+- The end-to-end walkthrough: photo select → local VLM analyze → apply suggestions → publish-only upload → Possible Matches
+- `runGpuSelfTest` with a real selected photo (never a bundled or synthetic image)
+- Network/offline checks on a real device
