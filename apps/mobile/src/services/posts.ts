@@ -25,6 +25,8 @@ export interface FeedFilters {
   sort?: "newest" | "oldest";
   dateFrom?: string;
   dateTo?: string;
+  /** Restrict to one author (used by My Reports pagination). */
+  userId?: string;
 }
 
 /**
@@ -159,6 +161,7 @@ function feedArgs(
     p_q: filters.q || null,
     p_date_from: filters.dateFrom || null,
     p_date_to: filters.dateTo || null,
+    p_user_id: filters.userId || null,
     p_cursor_created_at: cursor?.createdAt ?? null,
     p_cursor_id: cursor?.id ?? null,
     p_order: filters.sort === "oldest" ? "asc" : "desc",

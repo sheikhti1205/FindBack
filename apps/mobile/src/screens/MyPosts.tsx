@@ -1,44 +1,52 @@
-import { useEffect, useState } from "react";
-import type { PostItem } from "@findback/shared";
-import { fetchMyPosts } from "../services/posts";
-import { PostCard } from "../components/PostCard";
-import { PostCardContent } from "../components/PostCardContent";
-import { EmptyState, Spinner } from "../components/PostCard";
-import { FileQuestion } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { PostList } from "../components/PostList";
+import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
+import { useFeed } from "../hooks/useFeed";
+import { useTabTap } from "../components/TabTap";
+import { useAuth } from "../auth";
+
+const MY_CACHE_KEY = "my:reports";
 
 export function MyPosts() {
-  const [items, setItems] = useState<PostItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
+  const { tapCount } = useTabTap();
+  const scrollRef = useRef<PullToRefreshHandle>(null);
 
+  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
+    { userId: user?.id },
+    { cacheKey: MY_CACHE_KEY, scrollRef },
+  );
+
+  // Active Profile tab tap does not reach here (My Reports is a sub-screen),
+  // but keep the same refresh+top behavior for consistency.
   useEffect(() => {
-    fetchMyPosts()
-      .then((page) => setItems(page.items))
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not load your reports"));
-  }, []);
+    if (tapCount === 0) return;
+    void refresh();
+    scrollRef.current?.scrollToTop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tapCount]);
 
   return (
-    <div className="flex flex-col gap-4 py-5">
+    <div className="flex h-full flex-col gap-4 py-5">
       <header className="px-4">
         <h1 className="text-xl font-semibold tracking-tight">My reports</h1>
         <p className="text-sm text-on-surface-variant">
-          Manage the status of items you have reported.
+          {total} report{total === 1 ? "" : "s"} · manage the status of items you have reported.
         </p>
       </header>
 
-      {items === null && !error && <Spinner label="Loading your reports…" />}
-      {error && <EmptyState icon={<FileQuestion size={28} />} title="Could not load" subtitle={error} />}
-      {items && items.length === 0 && (
-        <EmptyState icon={<FileQuestion size={28} />} title="You have no reports yet" subtitle="Tap Report to post a lost or found item." />
-      )}
-      {items && items.length > 0 && (
-        <div className="flex flex-col gap-3 px-4">
-          {items.map((post, i) => (
-            <PostCard key={post.id} to={`/posts/${post.id}`} index={i}>
-              <PostCardContent post={post} />
-            </PostCard>
-          ))}
-        </div>
-      )}
+      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading} className="flex-1">
+        <PostList
+          items={items}
+          loading={loading}
+          loadingMore={loadingMore}
+          error={error}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          emptyTitle="You have no reports yet"
+          emptySubtitle="Tap Report to post a lost or found item."
+        />
+      </PullToRefresh>
     </div>
   );
 }
