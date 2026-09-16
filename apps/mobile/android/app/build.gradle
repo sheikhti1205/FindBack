@@ -28,6 +28,15 @@ android {
     }
 }
 
+// Fetch USE model task - runs before preBuild
+def repoRoot = rootProject.projectDir.parentFile.parentFile.parentFile
+tasks.register("fetchUseModel", Exec) {
+    commandLine "node", new File(repoRoot, "scripts/fetch-use-model.mjs").absolutePath
+    outputs.file(new File(projectDir, "src/main/assets/models/use/universal_sentence_encoder.tflite"))
+    onlyIf { !outputs.files.singleFile.exists() }
+}
+tasks.named("preBuild").configure { dependsOn("fetchUseModel") }
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'

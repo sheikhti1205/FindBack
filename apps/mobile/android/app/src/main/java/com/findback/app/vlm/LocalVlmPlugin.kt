@@ -215,10 +215,31 @@ class LocalVlmPlugin : Plugin() {
         for (i in 0 until textsArray.length()) {
             texts.add(textsArray.getString(i) ?: "")
         }
-        // Static/empty implementation for now
-        val vectors = texts.map { List(384) { 0.0f } } // 384-dim placeholder
-        val result = EmbedTextsResult(vectors)
-        call.resolve(result.toJSObject())
+
+        // Try to acquire inference mutex
+        if (!inferenceMutex.tryAcquire()) {
+            call.reject("Inference already in progress", "MODEL_UNAVAILABLE")
+            return
+        }
+
+        scope.launch {
+            try {
+                val embedder = UniversalSentenceEmbedder.getInstance(getContext())
+                if (embedder == null) {
+                    call.reject("Embedding model not available", "MODEL_UNAVAILABLE")
+                    return@launch
+                }
+
+                val vectors = embedder.embedTexts(texts)
+                val result = EmbedTextsResult(vectors)
+                call.resolve(result.toJSObject())
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "Embedding failed"
+                call.reject("Embedding failed: $errorMsg", "MODEL_UNAVAILABLE")
+            } finally {
+                inferenceMutex.release()
+            }
+        }
     }
 
     @PluginMethod
