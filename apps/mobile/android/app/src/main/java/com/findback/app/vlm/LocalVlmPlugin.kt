@@ -29,6 +29,16 @@ class LocalVlmPlugin : Plugin() {
     private val prefs: SharedPreferences by lazy { getContext().getSharedPreferences("findback_vlm", Context.MODE_PRIVATE) }
     private val activeDownloads = ConcurrentHashMap<VlmModelId, Job>()
     private var currentMode: BackendMode = BackendMode.AUTO
+    private var eventCollector: Job? = null
+
+    // Single-resident warm engine lease (~60s idle TTL): the engine stays
+    // loaded while the active report AI flow continues; each inference
+    // refreshes the lease. Never keep both VLM engines resident together.
+    private val warmLease = WarmEngineLease(
+        clock = object : WarmEngineLease.Clock {
+            override fun nowMs(): Long = System.currentTimeMillis()
+        }
+    )
 
     // Inference mutex to serialize inference calls
     private val inferenceMutex = InferenceMutex()
@@ -52,6 +62,38 @@ class LocalVlmPlugin : Plugin() {
     private fun releaseEngine500() {
         engine500?.release()
         engine500 = null
+    }
+
+    /**
+     * Releases the resident engine when the warm-lease TTL expired.
+     * Called on inference entry points and state reads so idle engines are
+     * reclaimed without a timer, and Stage 1 -> Stage 2 stays warm.
+     */
+    private fun reclaimExpiredLease() {
+        warmLease.releaseIfExpired {
+            releaseEngine500()
+            true
+        }
+    }
+
+    override fun load() {
+        super.load()
+        eventCollector?.cancel()
+        eventCollector = scope.launch {
+            TransferEvents.events.collect { event ->
+                updateModelState(event.modelId, event.state, error = event.error)
+                if (event.state == VlmState.DOWNLOADING && event.totalBytes > 0) {
+                    val progress = event.downloadedBytes.toFloat() / event.totalBytes
+                    notifyListeners(
+                        "downloadProgress",
+                        DownloadProgressEvent(event.modelId, progress, event.downloadedBytes, event.totalBytes).toJSObject()
+                    )
+                }
+                if (event.state == VlmState.INSTALLED_UNVERIFIED && event.modelId == VlmModelId.SMOLVLM2_500M) {
+                    engine500 = initializeEngine500()
+                }
+            }
+        }
     }
 
     init {
@@ -140,7 +182,9 @@ class LocalVlmPlugin : Plugin() {
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
             val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
             val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
-            if (currentState == VlmState.DOWNLOADING || currentState == VlmState.INSTALLED_UNVERIFIED || currentState == VlmState.READY_GPU) {
+            if (currentState == VlmState.DOWNLOADING || currentState == VlmState.QUEUED ||
+                currentState == VlmState.INSTALLED_UNVERIFIED || currentState == VlmState.READY_GPU
+            ) {
                 call.reject("Model already downloaded or downloading")
                 return
             }
@@ -155,14 +199,38 @@ class LocalVlmPlugin : Plugin() {
                 return
             }
 
-            // Start download in background
+            TransferControls.setUserPaused(getContext(), modelId, false)
+            updateModelState(modelId, VlmState.QUEUED)
+
+            // Platform scheduler (UIDT on API 34+, WorkManager below) running
+            // the shared chunk engine. Resolve immediately so the confirmation
+            // dialog closes and progress/cancel UI stays visible.
+            val scheduled = try {
+                ModelDownloadScheduler.schedule(getContext(), modelId)
+            } catch (e: Exception) {
+                false
+            }
+            if (scheduled) {
+                call.resolve()
+                return
+            }
+
+            // Fallback: direct foreground download with the same chunk engine.
             val job = scope.launch {
                 try {
                     updateModelState(modelId, VlmState.DOWNLOADING)
-                    val finalState = downloader.download(manifest) { downloaded, total ->
-                        val progress = if (total > 0) downloaded.toFloat() / total else 0f
-                        notifyListeners("downloadProgress", DownloadProgressEvent(modelId, progress, downloaded, total).toJSObject())
-                    }
+                    val finalState = downloader.download(
+                        manifest = manifest,
+                        onProgress = { downloaded, total ->
+                            val progress = if (total > 0) downloaded.toFloat() / total else 0f
+                            notifyListeners("downloadProgress", DownloadProgressEvent(modelId, progress, downloaded, total).toJSObject())
+                        },
+                        onState = { transferState ->
+                            if (transferState != VlmState.DOWNLOADING) {
+                                updateModelState(modelId, transferState)
+                            }
+                        }
+                    )
                     updateModelState(modelId, finalState)
                     if (finalState == VlmState.INSTALLED_UNVERIFIED) {
                         // Persist the installed state
@@ -186,15 +254,98 @@ class LocalVlmPlugin : Plugin() {
     }
 
     @PluginMethod
-    fun cancelDownload(call: PluginCall) {
+    fun pauseDownload(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            val job = activeDownloads.remove(modelId)
-            job?.cancel()
+            // Graceful stop preserving verified chunks; the pause sticks
+            // across scheduler restarts until resume.
+            TransferControls.setUserPaused(getContext(), modelId, true)
+            activeDownloads[modelId]?.let { downloader.requestPause() }
+            ModelDownloadScheduler.cancel(getContext(), modelId)
+            updateModelState(modelId, VlmState.PAUSING)
+            call.resolve()
+        } ?: call.reject("Invalid modelId: $modelIdWire")
+    }
+
+    @PluginMethod
+    fun resumeDownload(call: PluginCall) {
+        val modelIdWire = call.getString("modelId") ?: return
+        VlmModelId.fromWire(modelIdWire)?.let { modelId ->
             val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
-            if (currentState == VlmState.DOWNLOADING) {
-                updateModelState(modelId, VlmState.NOT_INSTALLED)
+            if (currentState == VlmState.DOWNLOADING || currentState == VlmState.QUEUED) {
+                call.reject("Download already in progress")
+                return
             }
+            TransferControls.setUserPaused(getContext(), modelId, false)
+            updateModelState(modelId, VlmState.QUEUED)
+            // Resume continues missing chunks only; verified ranges are kept.
+            val scheduled = try {
+                ModelDownloadScheduler.schedule(getContext(), modelId)
+            } catch (e: Exception) {
+                false
+            }
+            if (!scheduled) {
+                call.reject("Unable to schedule download")
+                return
+            }
+            call.resolve()
+        } ?: call.reject("Invalid modelId: $modelIdWire")
+    }
+
+    /**
+     * Repair path for REPAIR_NEEDED/CORRUPT/MANIFEST_MISMATCH: rescans chunks,
+     * preserves good bytes, and re-fetches only bad ranges. Never loops
+     * automatically on manifest mismatch.
+     */
+    @PluginMethod
+    fun repairModel(call: PluginCall) {
+        val modelIdWire = call.getString("modelId") ?: return
+        VlmModelId.fromWire(modelIdWire)?.let { modelId ->
+            TransferControls.setUserPaused(getContext(), modelId, false)
+            updateModelState(modelId, VlmState.REPAIR_NEEDED)
+            val scheduled = try {
+                ModelDownloadScheduler.schedule(getContext(), modelId)
+            } catch (e: Exception) {
+                false
+            }
+            if (!scheduled) {
+                call.reject("Unable to schedule repair")
+                return
+            }
+            call.resolve()
+        } ?: call.reject("Invalid modelId: $modelIdWire")
+    }
+
+    @PluginMethod
+    fun cancelDownload(call: PluginCall) {
+        val modelIdWire = call.getString("modelId") ?: return
+        // Keep downloaded data for later (default) vs remove partial download.
+        val removePartial = call.getBoolean("removePartial") ?: false
+        VlmModelId.fromWire(modelIdWire)?.let { modelId ->
+            val job = activeDownloads.remove(modelId)
+            downloader.requestCancel(removePartial)
+            job?.cancel()
+            ModelDownloadScheduler.cancel(getContext(), modelId)
+            val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
+            if (currentState == VlmState.DOWNLOADING || currentState == VlmState.QUEUED ||
+                currentState == VlmState.PAUSING
+            ) {
+                if (removePartial) {
+                    val manifest = MODEL_MANIFESTS.singleOrNull { it.id == modelId.wire }
+                    if (manifest != null) {
+                        for (spec in manifest.files) {
+                            store.partFile(manifest, spec).delete()
+                            store.journalFile(manifest, spec).delete()
+                            store.chunkTmpFile(manifest, spec).delete()
+                        }
+                    }
+                    updateModelState(modelId, VlmState.NOT_INSTALLED)
+                } else {
+                    // Keep verified chunks for later resume.
+                    updateModelState(modelId, VlmState.PAUSED)
+                }
+            }
+            downloader.resetControl()
             call.resolve()
         } ?: call.reject("Invalid modelId: $modelIdWire")
     }
@@ -203,15 +354,25 @@ class LocalVlmPlugin : Plugin() {
     fun deleteModel(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            // Cancel any active download
+            // Confirmation is handled in UI; deletion here is exact and scoped:
+            // stop inference, unload engine, cancel transfer, remove only this
+            // model's directory. The other model is unaffected.
+            if (inferenceMutex.isHeld()) {
+                inferenceMutex.release()
+            }
             val job = activeDownloads.remove(modelId)
+            downloader.requestCancel(removePartial = true)
             job?.cancel()
+            downloader.resetControl()
+            ModelDownloadScheduler.cancel(getContext(), modelId)
+            TransferControls.setUserPaused(getContext(), modelId, false)
 
             // Delete model files from store (preserves other models)
             store.deleteModel(modelId)
 
             // Release engine if it exists
             if (modelId == VlmModelId.SMOLVLM2_500M) {
+                warmLease.releaseNow()
                 releaseEngine500()
             }
 
@@ -403,6 +564,12 @@ class LocalVlmPlugin : Plugin() {
             return
         }
 
+        // Single-resident warm lease: Stage 1 -> Stage 2 stays warm, each
+        // inference refreshes the ~60s TTL, model switch releases the old
+        // engine. No silent CPU fallback anywhere on this path.
+        reclaimExpiredLease()
+        warmLease.acquire(modelId) { warmLease.releaseNow(); releaseEngine500() }
+
         // Try to acquire inference mutex
         if (!inferenceMutex.tryAcquire()) {
             call.reject("Inference already in progress")
@@ -421,6 +588,9 @@ class LocalVlmPlugin : Plugin() {
 
                 // Run inference
                 val resultText = engineInstance.analyze(prepared, instruction, maxOutputTokens, temperature)
+
+                // Inference completed: refresh the warm lease.
+                warmLease.refresh()
 
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.9f).toJSObject())
 
@@ -462,12 +632,25 @@ class LocalVlmPlugin : Plugin() {
         activeDownloads.values.forEach { it.cancel() }
         activeDownloads.clear()
 
-        // Release engines
+        // Release engines + warm lease immediately (memory trim / teardown).
+        warmLease.releaseNow()
         releaseEngine500()
 
         // Cancel coroutine scope
+        eventCollector?.cancel()
         scope.cancel()
 
+        call.resolve()
+    }
+
+    /**
+     * Releases the warm engine lease immediately (leaving the AI flow,
+     * memory trim, sustained background). The next inference re-acquires.
+     */
+    @PluginMethod
+    fun releaseWarmLease(call: PluginCall) {
+        warmLease.releaseNow()
+        releaseEngine500()
         call.resolve()
     }
 
