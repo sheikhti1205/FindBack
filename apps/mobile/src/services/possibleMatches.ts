@@ -1,7 +1,7 @@
 import { fetchFeed } from "./posts";
 import { embeddingInput, embedTexts } from "./embeddings";
 import type { PostItem, PostType } from "@findback/shared";
-import { rankMatches, type MatchCandidate, type PossibleMatch } from "./similarity";
+import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch } from "./similarity";
 
 /** Maximum number of candidate posts to fetch per page (client-side cap). */
 const PAGE_LIMIT = 10;
@@ -91,26 +91,4 @@ export async function findPossibleMatches(
     candidatesConsidered: candidates.length,
     available: true,
   };
-}
-
-/** Re-export cosineSimilarity for use in possibleMatches */
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
-
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let i = 0; i < a.length; i++) {
-    const ai = a[i] ?? 0;
-    const bi = b[i] ?? 0;
-    dot += ai * bi;
-    normA += ai * ai;
-    normB += bi * bi;
-  }
-
-  if (normA === 0 || normB === 0) return 0;
-
-  const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB));
-  return Math.max(-1, Math.min(1, similarity));
 }
