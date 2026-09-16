@@ -189,7 +189,7 @@ export function PostDetail() {
 
       <article className="flex flex-col gap-4 px-4">
         {image && (
-          <img src={image.fileUrl} alt="" className="max-h-72 w-full rounded-m3-md border border-outline-variant object-cover" />
+          <img src={image.fileUrl} alt={`Photo for ${post.title}`} className="max-h-72 w-full rounded-m3-md border border-outline-variant object-contain" />
         )}
 
         <div>

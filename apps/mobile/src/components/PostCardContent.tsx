@@ -25,9 +25,9 @@ export function PostCardContent({ post }: { post: PostItem }) {
       {image && (
         <img
           src={image.fileUrl}
-          alt=""
+          alt={`Photo for ${post.title}`}
           loading="lazy"
-          className="h-40 w-full rounded-m3-sm border border-outline-variant object-cover"
+          className="aspect-[4/3] w-full rounded-m3-sm border border-outline-variant object-cover"
         />
       )}
 
