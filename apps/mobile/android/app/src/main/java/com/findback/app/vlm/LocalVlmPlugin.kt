@@ -99,7 +99,9 @@ class LocalVlmPlugin : Plugin() {
             gpuRuntimePresent = gpuRuntimePresent,
             runtimeVersion = runtimeVersion
         )
-        call.resolve(capabilities.toJSObject())
+        val result = JSObject()
+        result.put("capabilities", capabilities.toJSObject())
+        call.resolve(result)
     }
 
     @PluginMethod
@@ -355,79 +357,94 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun analyzeImage(call: PluginCall) {
-        val modelIdWire = call.getString("modelId") ?: return
-        val imageUri = call.getString("imageUri") ?: return
-        val instruction = call.getString("instruction") ?: return
+        val modeWire = call.getString("mode") ?: run {
+            call.reject("Missing mode")
+            return
+        }
+        val mode = BackendMode.fromWire(modeWire) ?: run {
+            call.reject("Invalid mode: $modeWire")
+            return
+        }
+        val imageUri = call.getString("imageUri") ?: run {
+            call.reject("Missing imageUri")
+            return
+        }
+        val instruction = call.getString("instruction") ?: run {
+            call.reject("Missing instruction")
+            return
+        }
         val maxOutputTokens = call.getInt("maxOutputTokens") ?: 224
         val temperature = call.getFloat("temperature") ?: 0.1f
 
-        VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            if (modelId != VlmModelId.SMOLVLM2_500M) {
-                call.reject("Only smolvlm2-500m supports image analysis")
+        val selectedModel = VlmRouter.selectForAnalysis(mode, modelStates.mapValues { it.value.state })
+        val modelId = when (selectedModel) {
+            is AnalysisSelection.Ready -> selectedModel.modelId
+            is AnalysisSelection.Unsupported -> {
+                call.reject(selectedModel.reason)
                 return
             }
+        }
 
-            // Ensure engine is initialized (handles case where model was downloaded but engine not yet created)
-            var engine = engine500
-            if (engine == null) {
-                engine = initializeEngine500()
-                engine500 = engine
+        // Ensure engine is initialized (handles case where model was downloaded but engine not yet created)
+        var engine = engine500
+        if (engine == null) {
+            engine = initializeEngine500()
+            engine500 = engine
+        }
+        val engineInstance = engine ?: run {
+            call.reject("Model not installed or not ready")
+            return
+        }
+
+        // Check if model is ready
+        val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
+        if (currentState != VlmState.READY_GPU) {
+            call.reject("Model not ready for inference. State: ${currentState.wire}")
+            return
+        }
+
+        // Try to acquire inference mutex
+        if (!inferenceMutex.tryAcquire()) {
+            call.reject("Inference already in progress")
+            notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = "Busy").toJSObject())
+            return
+        }
+
+        scope.launch {
+            try {
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.1f).toJSObject())
+
+                // Prepare image
+                val prepared = ImagePreparer.prepare(getContext(), imageUri)
+
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.3f).toJSObject())
+
+                // Run inference
+                val resultText = engineInstance.analyze(prepared, instruction, maxOutputTokens, temperature)
+
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.9f).toJSObject())
+
+                // Cleanup temp file
+                ImagePreparer.cleanup(prepared)
+
+                // Return result
+                val result = AnalyzeResult(
+                    text = resultText,
+                    modelId = modelId,
+                    backend = EnginePolicy.backendName(),
+                    runtime = "0.16.0",
+                    diagnostics = emptyList()
+                )
+                call.resolve(result.toJSObject())
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 1.0f).toJSObject())
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "Inference failed"
+                call.reject("Inference failed: $errorMsg")
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = errorMsg).toJSObject())
+            } finally {
+                inferenceMutex.release()
             }
-            val engineInstance = engine ?: run {
-                call.reject("Model not installed or not ready")
-                return
-            }
-
-            // Check if model is ready
-            val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
-            if (currentState != VlmState.READY_GPU) {
-                call.reject("Model not ready for inference. State: ${currentState.wire}")
-                return
-            }
-
-            // Try to acquire inference mutex
-            if (!inferenceMutex.tryAcquire()) {
-                call.reject("Inference already in progress")
-                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = "Busy").toJSObject())
-                return
-            }
-
-            scope.launch {
-                try {
-                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.1f).toJSObject())
-
-                    // Prepare image
-                    val prepared = ImagePreparer.prepare(getContext(), imageUri)
-
-                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.3f).toJSObject())
-
-                    // Run inference
-                    val resultText = engine.analyze(prepared, instruction, maxOutputTokens, temperature)
-
-                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.9f).toJSObject())
-
-                    // Cleanup temp file
-                    ImagePreparer.cleanup(prepared)
-
-                    // Return result
-                    val result = AnalyzeResult(
-                        text = resultText,
-                        modelId = modelId,
-                        backend = EnginePolicy.backendName(),
-                        runtime = "0.16.0",
-                        diagnostics = emptyList()
-                    )
-                    call.resolve(result.toJSObject())
-                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 1.0f).toJSObject())
-                } catch (e: Exception) {
-                    val errorMsg = e.message ?: "Inference failed"
-                    call.reject("Inference failed: $errorMsg")
-                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = errorMsg).toJSObject())
-                } finally {
-                    inferenceMutex.release()
-                }
-            }
-        } ?: call.reject("Invalid modelId: $modelIdWire")
+        }
     }
 
     @PluginMethod

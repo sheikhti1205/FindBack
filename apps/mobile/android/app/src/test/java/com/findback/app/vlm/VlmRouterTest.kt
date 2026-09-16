@@ -21,6 +21,21 @@ class VlmRouterTest {
         assertNull(VlmRouter.choose(BackendMode.QUALITY, mapOf(VlmModelId.SMOLVLM_256M to VlmState.READY_GPU)))
     }
 
+    @Test fun analysisSelectionRejectsMissingRouteAndDiagnosticOnly256Model() {
+        assertEquals(
+            AnalysisSelection.Unsupported("No READY_GPU model available for mode QUALITY"),
+            VlmRouter.selectForAnalysis(BackendMode.QUALITY, emptyMap())
+        )
+        assertEquals(
+            AnalysisSelection.Unsupported("smolvlm-256m does not support complete image generation"),
+            VlmRouter.selectForAnalysis(BackendMode.FAST, mapOf(VlmModelId.SMOLVLM_256M to VlmState.READY_GPU))
+        )
+        assertEquals(
+            AnalysisSelection.Ready(VlmModelId.SMOLVLM2_500M),
+            VlmRouter.selectForAnalysis(BackendMode.AUTO, mapOf(VlmModelId.SMOLVLM2_500M to VlmState.READY_GPU))
+        )
+    }
+
     @Test fun autoReinitializesOnceThenSwitchesToTheOtherGpuModel() {
         val states = mapOf(VlmModelId.SMOLVLM2_500M to VlmState.READY_GPU, VlmModelId.SMOLVLM_256M to VlmState.READY_GPU)
         assertEquals(RetryPlan(true, null), VlmRouter.retryPlan(BackendMode.AUTO, VlmModelId.SMOLVLM2_500M, states))

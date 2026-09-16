@@ -65,7 +65,6 @@ export interface VlmModelInfo {
   state: VlmState;
   sizeBytes?: number;
   error?: string;
-  lastError?: ModelError;
 }
 
 /** Settings. */
