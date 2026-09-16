@@ -33,18 +33,25 @@ class LocalVlmPlugin : Plugin() {
     // Inference mutex to serialize inference calls
     private val inferenceMutex = InferenceMutex()
 
-    // Engine instances (lazy initialized per model)
-    private val engine500: VlmEngine500? by lazy {
+    // Engine instances (initialized on demand, re-initialized after model changes)
+    private var engine500: VlmEngine500? = null
+
+    private fun initializeEngine500(): VlmEngine500? {
         val context = getContext()
         val manifest = MODEL_MANIFESTS.find { it.id == VlmModelId.SMOLVLM2_500M.wire }
         val modelFile = manifest?.files?.firstOrNull()?.let { spec ->
             store.finalFile(manifest, spec)
         }
-        modelFile?.let { file ->
+        return modelFile?.let { file ->
             if (file.exists()) {
                 VlmEngine500(context, file.absolutePath, context.cacheDir)
             } else null
         }
+    }
+
+    private fun releaseEngine500() {
+        engine500?.release()
+        engine500 = null
     }
 
     init {
@@ -158,6 +165,10 @@ class LocalVlmPlugin : Plugin() {
                     if (finalState == VlmState.INSTALLED_UNVERIFIED) {
                         // Persist the installed state
                         persistModelState(modelId, manifest, finalState)
+                        // Re-initialize engine if this is the 500M model
+                        if (modelId == VlmModelId.SMOLVLM2_500M) {
+                            engine500 = initializeEngine500()
+                        }
                     }
                     call.resolve()
                 } catch (e: Exception) {
@@ -199,7 +210,7 @@ class LocalVlmPlugin : Plugin() {
 
             // Release engine if it exists
             if (modelId == VlmModelId.SMOLVLM2_500M) {
-                engine500?.release()
+                releaseEngine500()
             }
 
             // Reset state
@@ -249,7 +260,13 @@ class LocalVlmPlugin : Plugin() {
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
             when (modelId) {
                 VlmModelId.SMOLVLM2_500M -> {
-                    val engine = engine500 ?: run {
+                    // Ensure engine is initialized (handles case where model was downloaded but engine not yet created)
+                    var engine = engine500
+                    if (engine == null) {
+                        engine = initializeEngine500()
+                        engine500 = engine
+                    }
+                    val engineInstance = engine ?: run {
                         val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model not installed")
                         call.resolve(result.toJSObject())
                         return
@@ -350,7 +367,13 @@ class LocalVlmPlugin : Plugin() {
                 return
             }
 
-            val engine = engine500 ?: run {
+            // Ensure engine is initialized (handles case where model was downloaded but engine not yet created)
+            var engine = engine500
+            if (engine == null) {
+                engine = initializeEngine500()
+                engine500 = engine
+            }
+            val engineInstance = engine ?: run {
                 call.reject("Model not installed or not ready")
                 return
             }
@@ -423,23 +446,12 @@ class LocalVlmPlugin : Plugin() {
         activeDownloads.clear()
 
         // Release engines
-        engine500?.release()
+        releaseEngine500()
 
         // Cancel coroutine scope
         scope.cancel()
 
         call.resolve()
-    }
-
-    @PluginMethod
-    override fun addListener(call: PluginCall) {
-        val eventName = call.getString("eventName") ?: return
-        when (eventName) {
-            "downloadProgress", "modelStateChange", "inferenceState" -> {
-                call.resolve(JSObject().put("remove", JSObject()))
-            }
-            else -> call.reject("Unknown event: $eventName")
-        }
     }
 
     private fun updateModelState(

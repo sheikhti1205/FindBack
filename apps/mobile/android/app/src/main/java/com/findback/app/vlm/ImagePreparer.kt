@@ -130,6 +130,9 @@ object ImagePreparer {
     private fun rotateAndSaveToTemp(context: Context, sourcePath: String, exifOrientation: Int): String {
         val degrees = ImageOrientation.degreesFor(exifOrientation)
         val bitmap = BitmapFactory.decodeFile(sourcePath)
+        if (bitmap == null) {
+            throw IllegalArgumentException("Failed to decode image file: $sourcePath")
+        }
         val rotatedBitmap = if (degrees != 0) {
             val matrix = Matrix()
             matrix.postRotate(degrees.toFloat())

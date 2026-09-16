@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import kotlinx.coroutines.delay
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -131,15 +132,15 @@ class ModelDownloader(
                 // Verify hash
                 val actualHash = Sha256.ofFile(partFile)
                 if (actualHash != spec.sha256) {
-                    // Hash mismatch - delete corrupt file and retry
-                    partFile.delete()
-                    partBytes = 0L
-                    retries++
-                    if (retries <= MAX_RETRIES) {
-                        Thread.sleep(calculateBackoff(retries))
-                        continue
-                    }
-                    return VlmState.CORRUPT
+// Hash mismatch - delete corrupt file and retry
+                partFile.delete()
+                partBytes = 0L
+                retries++
+                if (retries <= MAX_RETRIES) {
+                    delay(calculateBackoff(retries))
+                    continue
+                }
+                return VlmState.CORRUPT
                 }
 
                 // Hash matches - rename to final name
@@ -152,7 +153,7 @@ class ModelDownloader(
             } catch (e: Exception) {
                 retries++
                 if (retries <= MAX_RETRIES) {
-                    Thread.sleep(calculateBackoff(retries))
+                    delay(calculateBackoff(retries))
                 } else {
                     return VlmState.DOWNLOAD_FAILED
                 }

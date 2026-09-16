@@ -38,6 +38,7 @@ tasks.register("fetchUseModel", Exec) {
 tasks.named("preBuild").configure { dependsOn("fetchUseModel") }
 
 repositories {
+    mavenCentral()
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
     }
@@ -59,6 +60,7 @@ dependencies {
     implementation "com.google.mediapipe:tasks-text:1.0.0"
     implementation "androidx.exifinterface:exifinterface:$androidxExifInterfaceVersion"
     testImplementation "org.jetbrains.kotlin:kotlin-test-junit:2.2.21"
+    testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0"
 }
 
 apply from: 'capacitor.build.gradle'
