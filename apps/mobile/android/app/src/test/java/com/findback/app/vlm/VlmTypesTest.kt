@@ -32,7 +32,10 @@ class VlmTypesTest {
     @Test fun vlmStateHasAllRequiredStatesNoCpuReady() {
         val states = VlmState.values().map { it.wire }.toSet()
         val expected = setOf(
-            "NOT_INSTALLED", "DOWNLOADING", "PAUSED", "VERIFYING_HASH",
+            "NOT_INSTALLED", "QUEUED", "WAITING_FOR_NETWORK", "WAITING_FOR_WIFI",
+            "DOWNLOADING", "PAUSING", "PAUSED", "PAUSED_ERROR",
+            "VERIFYING_CHUNK", "VERIFYING_HASH", "VERIFYING_FILE",
+            "REPAIR_NEEDED", "REPAIRING", "MANIFEST_MISMATCH",
             "INSTALLED_UNVERIFIED", "GPU_SELF_TESTING", "READY_GPU",
             "GPU_UNAVAILABLE", "CORRUPT", "INSUFFICIENT_STORAGE",
             "DOWNLOAD_FAILED", "RUNTIME_ERROR"
