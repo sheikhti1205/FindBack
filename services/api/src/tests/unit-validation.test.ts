@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  ML_KEYWORD_TO_CATEGORY,
   extractYouTubeId,
   normalizePhone,
   toFieldErrors,
@@ -46,13 +45,5 @@ describe("shared validation + helpers", () => {
     expect(extractYouTubeId(`https://www.youtube.com/embed/${id}`)).toBe(id);
     expect(extractYouTubeId(`https://www.youtube.com/shorts/${id}`)).toBe(id);
     expect(extractYouTubeId("not a url")).toBeNull();
-  });
-
-  it("maps ML keywords to FindBack categories (transparent, no magic)", () => {
-    expect(ML_KEYWORD_TO_CATEGORY["phone"]).toBe("Electronics");
-    expect(ML_KEYWORD_TO_CATEGORY["wallet"]).toBe("Bags & Wallets");
-    expect(ML_KEYWORD_TO_CATEGORY["key"]).toBe("Keys");
-    expect(ML_KEYWORD_TO_CATEGORY["book"]).toBe("Books & Stationery");
-    expect(Object.values(ML_KEYWORD_TO_CATEGORY).every((c) => c)).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { Camera as CameraIcon, ImageUp, Sparkles, X } from "lucide-react";
+import { ImageUp, X } from "lucide-react";
 import type { Category, PostType } from "@findback/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
@@ -11,7 +11,6 @@ import { LocationPicker, type LocationValue } from "../components/LocationPicker
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { VlmSuggestions } from "../components/VlmSuggestions";
 import { publishReport } from "../services/posts";
-import { suggestCategoryFromImage, type CategorySuggestion } from "../services/ml";
 import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue } from "../utils/dates";
@@ -36,9 +35,6 @@ export function CreateReport() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [pickedPhoto, setPickedPhoto] = useState<PickedPhoto | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [suggesting, setSuggesting] = useState(false);
-  const [suggestion, setSuggestion] = useState<CategorySuggestion | null>(null);
-  const [mlError, setMlError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
@@ -49,8 +45,6 @@ export function CreateReport() {
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     if (photo) setPickedPhoto(photo);
-    setSuggestion(null);
-    setMlError(null);
     setError(null);
   }
 
@@ -59,37 +53,12 @@ export function CreateReport() {
     setPreviewUrl(null);
     setSelectedFile(null);
     setPickedPhoto(null);
-    setSuggestion(null);
-    setMlError(null);
   }
 
   function applyVlmSuggestion(patch: Partial<VlmAnalysis>) {
     if (patch.suggestedTitle !== undefined) setTitle(patch.suggestedTitle ?? "");
     if (patch.suggestedDescription !== undefined) setDescription(patch.suggestedDescription ?? "");
     if (patch.suggestedCategory !== undefined && patch.suggestedCategory !== null) setCategory(patch.suggestedCategory);
-  }
-
-  function applySuggestion() {
-    if (suggestion && suggestion.category !== "Other") {
-      setCategory(suggestion.category);
-      setSuggestion(null);
-    }
-  }
-
-  async function onSuggestCategory() {
-    if (!selectedFile) return;
-    setSuggesting(true);
-    setMlError(null);
-    try {
-      // Runs against the local File — no upload/download and no network needed.
-      const result = await suggestCategoryFromImage(selectedFile);
-      if (result) setSuggestion(result);
-      else setMlError("Could not recognize the image — choose the category manually.");
-    } catch (e) {
-      setMlError(e instanceof Error ? e.message : "ML is unavailable right now.");
-    } finally {
-      setSuggesting(false);
-    }
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -188,7 +157,7 @@ export function CreateReport() {
 
       <LocationPicker value={location} onChange={setLocation} />
 
-      {/* Photo + optional on-device ML category suggestion */}
+      {/* Photo (optional) */}
       <section className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-3">
         <p className="text-sm font-medium">Photo (optional)</p>
         {previewUrl ? (
@@ -219,7 +188,7 @@ export function CreateReport() {
                     }
                   }}
                 >
-                  <CameraIcon size={18} aria-hidden />
+                  <ImageUp size={18} aria-hidden />
                   Take photo
                 </Button>
                 <Button
@@ -251,31 +220,6 @@ export function CreateReport() {
             </label>
           </>
         )}
-
-        {selectedFile && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" size="md" loading={suggesting} onClick={onSuggestCategory}>
-              <Sparkles size={16} aria-hidden />
-              Suggest category (on-device ML)
-            </Button>
-            {suggestion && (
-              <span className="flex items-center gap-2 rounded-full border border-outline px-3 py-1 text-sm">
-                <CameraIcon size={14} aria-hidden />
-                {suggestion.category} · {(suggestion.confidence * 100).toFixed(0)}%
-                {suggestion.category !== "Other" && (
-                  <button type="button" onClick={applySuggestion} className="font-semibold underline">
-                    Use
-                  </button>
-                )}
-              </span>
-            )}
-          </div>
-        )}
-        {mlError && <p className="text-xs text-error">{mlError}</p>}
-        <p className="text-[11px] text-on-surface-variant">
-          Runs on this device with TensorFlow.js — your photo is not sent anywhere for the
-          category suggestion. You can always pick the category yourself.
-        </p>
       </section>
 
       {/* Local VLM report assistant — only on Android with native camera */}
