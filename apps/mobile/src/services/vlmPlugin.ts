@@ -3,24 +3,36 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 /** VLM model identifiers. */
 export type VlmModelId =
   | "smolvlm-256m"
-  | "smolvlm2-500m"
-  | "smolvlm2-2b"
-  | "gemma-3n-2b"
-  | "gemma-3n-4b";
+  | "smolvlm2-500m";
 
-/** VLM inference mode. */
-export type VlmMode = "AUTO" | "QUALITY" | "SPEED";
+/** VLM inference backend mode. */
+export type BackendMode = "AUTO" | "FAST" | "QUALITY";
 
 /** VLM backend type. */
 export type VlmBackend = "cpu" | "gpu";
 
 /** Model state. */
-export type VlmModelState =
-  | "NOT_DOWNLOADED"
+export type VlmState =
+  | "NOT_INSTALLED"
   | "DOWNLOADING"
-  | "READY_CPU"
+  | "PAUSED"
+  | "VERIFYING_HASH"
+  | "INSTALLED_UNVERIFIED"
+  | "GPU_SELF_TESTING"
   | "READY_GPU"
-  | "ERROR";
+  | "GPU_UNAVAILABLE"
+  | "CORRUPT"
+  | "INSUFFICIENT_STORAGE"
+  | "DOWNLOAD_FAILED"
+  | "RUNTIME_ERROR";
+
+/** VLM error codes. */
+export type VlmErrorCode =
+  | "GPU_UNAVAILABLE_ON_CURRENT_RUNTIME"
+  | "DOWNLOAD_FAILED"
+  | "HASH_MISMATCH"
+  | "INSUFFICIENT_STORAGE"
+  | "RUNTIME_ERROR";
 
 /** GPU self-test state. */
 export type GpuSelfTestState =
@@ -50,20 +62,20 @@ export interface VlmCapabilities {
 /** Model state info. */
 export interface VlmModelInfo {
   id: VlmModelId;
-  state: VlmModelState;
+  state: VlmState;
   sizeBytes?: number;
   error?: string;
 }
 
 /** Settings. */
 export interface VlmSettings {
-  mode: VlmMode;
+  mode: BackendMode;
 }
 
 /** Inference state event. */
 export interface InferenceStateEvent {
   modelId: VlmModelId;
-  state: VlmModelState;
+  state: VlmState;
   progress?: number;
   error?: string;
 }
@@ -76,11 +88,20 @@ export interface DownloadProgressEvent {
   totalBytes: number;
 }
 
+/** Analyze image request. */
+export interface AnalyzeRequest {
+  mode: BackendMode;
+  imageUri: string;
+  instruction: string;
+  maxOutputTokens: number;
+  temperature: number;
+}
+
 /** Analyze image result. */
-export interface AnalyzeImageResult {
+export interface AnalyzeResult {
   text: string;
   modelId: VlmModelId;
-  backend: VlmBackend;
+  backend: string;
   runtime: string;
   diagnostics: string[];
 }
@@ -96,24 +117,68 @@ export interface GpuSelfTestResult {
   error?: string;
 }
 
+/** Model error. */
+export interface ModelError {
+  code: VlmErrorCode;
+  message: string;
+}
+
+/** Model file spec. */
+export interface ModelFileSpec {
+  path: string;
+  expectedBytes: number;
+  sha256: string;
+}
+
+/** Model manifest. */
+export interface ModelManifest {
+  id: string;
+  sourceRepo: string;
+  revision: string;
+  files: ModelFileSpec[];
+  runtime: string;
+}
+
+/** Installed file record. */
+export interface InstalledFileRecord {
+  path: string;
+  expectedBytes: number;
+  installedBytes: number;
+  expectedSha256: string;
+  installedSha256: string;
+}
+
+/** Model state record. */
+export interface ModelStateRecord {
+  modelId: VlmModelId;
+  state: VlmState;
+  files: InstalledFileRecord[];
+  installedBytes: number;
+  installTimestamp: number;
+  runtimeVersion: string;
+  appVersion: string;
+  fingerprint: string;
+  abi: string;
+  gpuVendor: string | null;
+  gpuRenderer: string | null;
+  revision: string;
+  sha256: string;
+  lastGpuSelfTest: number | null;
+  lastError: ModelError | null;
+}
+
 /** Native plugin interface (wrapped payloads). */
 interface NativeVlmBridge {
   getCapabilities(): Promise<{ capabilities: VlmCapabilities }>;
-  getSettings(): Promise<{ mode: VlmMode }>;
-  setMode(options: { mode: VlmMode }): Promise<void>;
+  getSettings(): Promise<{ mode: BackendMode }>;
+  setMode(options: { mode: BackendMode }): Promise<void>;
   getModelStates(): Promise<{ models: VlmModelInfo[] }>;
   downloadModel(options: { modelId: VlmModelId }): Promise<void>;
   cancelDownload(options: { modelId: VlmModelId }): Promise<void>;
   deleteModel(options: { modelId: VlmModelId }): Promise<void>;
   embedTexts(options: { texts: string[] }): Promise<{ vectors: number[][] }>;
   runGpuSelfTest(options: { modelId: VlmModelId }): Promise<{ state: GpuSelfTestState }>;
-  analyzeImage(options: {
-    mode: VlmMode;
-    imageUri: string;
-    instruction: string;
-    maxOutputTokens: number;
-    temperature: number;
-  }): Promise<AnalyzeImageResult>;
+  analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
   addListener<T extends InferenceStateEvent | DownloadProgressEvent | VlmModelInfo>(
@@ -127,20 +192,14 @@ export interface VlmBridge {
   platform: "android" | "web";
   getCapabilities(): Promise<VlmCapabilities>;
   getSettings(): Promise<VlmSettings>;
-  setMode(mode: VlmMode): Promise<void>;
+  setMode(mode: BackendMode): Promise<void>;
   getModelStates(): Promise<VlmModelInfo[]>;
   downloadModel(modelId: VlmModelId): Promise<void>;
   cancelDownload(modelId: VlmModelId): Promise<void>;
   deleteModel(modelId: VlmModelId): Promise<void>;
   embedTexts(texts: string[]): Promise<number[][]>;
   runGpuSelfTest(modelId: VlmModelId): Promise<GpuSelfTestState>;
-  analyzeImage(options: {
-    mode: VlmMode;
-    imageUri: string;
-    instruction: string;
-    maxOutputTokens: number;
-    temperature: number;
-  }): Promise<AnalyzeImageResult>;
+  analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
   onInferenceState(listener: (event: InferenceStateEvent) => void): Promise<() => void>;
@@ -178,7 +237,7 @@ class WebVlmBridge implements VlmBridge {
     return { mode: "AUTO" };
   }
 
-  async setMode(_mode: VlmMode): Promise<void> {
+  async setMode(_mode: BackendMode): Promise<void> {
     this.refuse("setMode");
   }
 
@@ -206,13 +265,7 @@ class WebVlmBridge implements VlmBridge {
     this.refuse("runGpuSelfTest");
   }
 
-  async analyzeImage(_options: {
-    mode: VlmMode;
-    imageUri: string;
-    instruction: string;
-    maxOutputTokens: number;
-    temperature: number;
-  }): Promise<AnalyzeImageResult> {
+  async analyzeImage(_options: AnalyzeRequest): Promise<AnalyzeResult> {
     this.refuse("analyzeImage");
   }
 
@@ -256,7 +309,7 @@ class AndroidVlmBridge implements VlmBridge {
     return { mode: result.mode };
   }
 
-  async setMode(mode: VlmMode): Promise<void> {
+  async setMode(mode: BackendMode): Promise<void> {
     await this.native.setMode({ mode });
   }
 
@@ -287,13 +340,7 @@ class AndroidVlmBridge implements VlmBridge {
     return result.state;
   }
 
-  async analyzeImage(options: {
-    mode: VlmMode;
-    imageUri: string;
-    instruction: string;
-    maxOutputTokens: number;
-    temperature: number;
-  }): Promise<AnalyzeImageResult> {
+  async analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult> {
     // Never send modelId to native; native picks based on mode
     return this.native.analyzeImage(options);
   }

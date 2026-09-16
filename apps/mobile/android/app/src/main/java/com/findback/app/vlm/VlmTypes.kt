@@ -4,13 +4,11 @@ import com.getcapacitor.JSObject
 
 /**
  * VLM model identifiers with their wire-format strings.
+ * Exactly two models as per Locked Interfaces.
  */
 enum class VlmModelId(val wire: String) {
-    SMOLVLM_256M("smolvlm-256m"),
     SMOLVLM2_500M("smolvlm2-500m"),
-    SMOLVLM2_2B("smolvlm2-2b"),
-    GEMMA_3N_2B("gemma-3n-2b"),
-    GEMMA_3N_4B("gemma-3n-4b");
+    SMOLVLM_256M("smolvlm-256m");
 
     companion object {
         fun fromWire(wire: String): VlmModelId? = values().firstOrNull { it.wire == wire }
@@ -18,58 +16,116 @@ enum class VlmModelId(val wire: String) {
 }
 
 /**
- * VLM inference mode.
+ * VLM inference backend mode.
+ * FAST instead of SPEED as per Locked Interfaces.
  */
-enum class VlmMode(val wire: String) {
+enum class BackendMode(val wire: String) {
     AUTO("AUTO"),
-    QUALITY("QUALITY"),
-    SPEED("SPEED");
+    FAST("FAST"),
+    QUALITY("QUALITY");
 
     companion object {
-        fun fromWire(wire: String): VlmMode? = values().firstOrNull { it.wire == wire }
+        fun fromWire(wire: String): BackendMode? = values().firstOrNull { it.wire == wire }
     }
 }
 
 /**
- * VLM backend type.
+ * VLM model state.
+ * No CPU state, includes all required states as per Locked Interfaces.
  */
-enum class VlmBackend(val wire: String) {
-    CPU("cpu"),
-    GPU("gpu");
-
-    companion object {
-        fun fromWire(wire: String): VlmBackend? = values().firstOrNull { it.wire == wire }
-    }
-}
-
-/**
- * Model state.
- */
-enum class VlmModelState(val wire: String) {
-    NOT_DOWNLOADED("NOT_DOWNLOADED"),
+enum class VlmState(val wire: String) {
+    NOT_INSTALLED("NOT_INSTALLED"),
     DOWNLOADING("DOWNLOADING"),
-    READY_CPU("READY_CPU"),
+    PAUSED("PAUSED"),
+    VERIFYING_HASH("VERIFYING_HASH"),
+    INSTALLED_UNVERIFIED("INSTALLED_UNVERIFIED"),
+    GPU_SELF_TESTING("GPU_SELF_TESTING"),
     READY_GPU("READY_GPU"),
-    ERROR("ERROR");
+    GPU_UNAVAILABLE("GPU_UNAVAILABLE"),
+    CORRUPT("CORRUPT"),
+    INSUFFICIENT_STORAGE("INSUFFICIENT_STORAGE"),
+    DOWNLOAD_FAILED("DOWNLOAD_FAILED"),
+    RUNTIME_ERROR("RUNTIME_ERROR");
 
     companion object {
-        fun fromWire(wire: String): VlmModelState? = values().firstOrNull { it.wire == wire }
+        fun fromWire(wire: String): VlmState? = values().firstOrNull { it.wire == wire }
     }
 }
 
 /**
- * GPU self-test state.
+ * VLM error codes.
  */
-enum class GpuSelfTestState(val wire: String) {
-    GPU_AVAILABLE("GPU_AVAILABLE"),
-    GPU_UNAVAILABLE("GPU_UNAVAILABLE"),
-    GPU_UNSUPPORTED("GPU_UNSUPPORTED"),
-    ERROR("ERROR");
+enum class VlmErrorCode(val wire: String) {
+    GPU_UNAVAILABLE_ON_CURRENT_RUNTIME("GPU_UNAVAILABLE_ON_CURRENT_RUNTIME"),
+    DOWNLOAD_FAILED("DOWNLOAD_FAILED"),
+    HASH_MISMATCH("HASH_MISMATCH"),
+    INSUFFICIENT_STORAGE("INSUFFICIENT_STORAGE"),
+    RUNTIME_ERROR("RUNTIME_ERROR");
 
     companion object {
-        fun fromWire(wire: String): GpuSelfTestState? = values().firstOrNull { it.wire == wire }
+        fun fromWire(wire: String): VlmErrorCode? = values().firstOrNull { it.wire == wire }
     }
 }
+
+/**
+ * Specification for a model file.
+ */
+data class ModelFileSpec(
+    val path: String,
+    val expectedBytes: Long,
+    val sha256: String
+)
+
+/**
+ * A model manifest with pinned revision, source repo, and file list.
+ */
+data class ModelManifest(
+    val id: String,
+    val sourceRepo: String,
+    val revision: String,
+    val files: List<ModelFileSpec>,
+    val runtime: String
+)
+
+/**
+ * Model error with code and message.
+ */
+data class ModelError(
+    val code: VlmErrorCode,
+    val message: String
+)
+
+/**
+ * Record of an installed file with expected and actual values.
+ */
+data class InstalledFileRecord(
+    val path: String,
+    val expectedBytes: Long,
+    val installedBytes: Long,
+    val expectedSha256: String,
+    val installedSha256: String
+)
+
+/**
+ * Record of model state for persistence.
+ */
+data class ModelStateRecord(
+    val modelId: VlmModelId,
+    val state: VlmState,
+    val files: List<InstalledFileRecord>,
+    val installedBytes: Long,
+    val installTimestamp: Long,
+    val runtimeVersion: String,
+    val appVersion: String,
+    val fingerprint: String,
+    val abi: String,
+    val gpuVendor: String?,
+    val gpuRenderer: String?,
+    val revision: String,
+    val sha256: String,
+    val lastGpuSelfTest: Long?,
+    val lastError: ModelError?
+)
 
 /**
  * Device category.
@@ -86,6 +142,7 @@ enum class DeviceCategory(val wire: String) {
 
 /**
  * Capabilities reported by the native plugin.
+ * Expanded device info kept as the plugin needs it.
  */
 data class VlmCapabilities(
     val abi: String,
@@ -118,29 +175,10 @@ data class VlmCapabilities(
 }
 
 /**
- * Model state info.
- */
-data class VlmModelInfo(
-    val id: VlmModelId,
-    val state: VlmModelState,
-    val sizeBytes: Long? = null,
-    val error: String? = null
-) {
-    fun toJSObject(): JSObject {
-        val obj = JSObject()
-        obj.put("id", id.wire)
-        obj.put("state", state.wire)
-        sizeBytes?.let { obj.put("sizeBytes", it) }
-        error?.let { obj.put("error", it) }
-        return obj
-    }
-}
-
-/**
  * Settings.
  */
 data class VlmSettings(
-    val mode: VlmMode
+    val mode: BackendMode
 ) {
     fun toJSObject(): JSObject {
         val obj = JSObject()
@@ -150,11 +188,43 @@ data class VlmSettings(
 }
 
 /**
+ * Analyze request.
+ */
+data class AnalyzeRequest(
+    val mode: BackendMode,
+    val imageUri: String,
+    val instruction: String,
+    val maxOutputTokens: Int,
+    val temperature: Float
+)
+
+/**
+ * Analyze result.
+ */
+data class AnalyzeResult(
+    val text: String,
+    val modelId: VlmModelId,
+    val backend: String,
+    val runtime: String,
+    val diagnostics: List<String>
+) {
+    fun toJSObject(): JSObject {
+        val obj = JSObject()
+        obj.put("text", text)
+        obj.put("modelId", modelId.wire)
+        obj.put("backend", backend)
+        obj.put("runtime", runtime)
+        obj.put("diagnostics", diagnostics.toTypedArray())
+        return obj
+    }
+}
+
+/**
  * Inference state event.
  */
 data class InferenceStateEvent(
     val modelId: VlmModelId,
-    val state: VlmModelState,
+    val state: VlmState,
     val progress: Float? = null,
     val error: String? = null
 ) {
@@ -188,36 +258,16 @@ data class DownloadProgressEvent(
 }
 
 /**
- * Analyze image result.
+ * GPU self-test state.
  */
-data class AnalyzeImageResult(
-    val text: String,
-    val modelId: VlmModelId,
-    val backend: VlmBackend,
-    val runtime: String,
-    val diagnostics: List<String>
-) {
-    fun toJSObject(): JSObject {
-        val obj = JSObject()
-        obj.put("text", text)
-        obj.put("modelId", modelId.wire)
-        obj.put("backend", backend.wire)
-        obj.put("runtime", runtime)
-        obj.put("diagnostics", diagnostics)
-        return obj
-    }
-}
+enum class GpuSelfTestState(val wire: String) {
+    GPU_AVAILABLE("GPU_AVAILABLE"),
+    GPU_UNAVAILABLE("GPU_UNAVAILABLE"),
+    GPU_UNSUPPORTED("GPU_UNSUPPORTED"),
+    ERROR("ERROR");
 
-/**
- * Embed texts result.
- */
-data class EmbedTextsResult(
-    val vectors: List<List<Float>>
-) {
-    fun toJSObject(): JSObject {
-        val obj = JSObject()
-        obj.put("vectors", vectors.map { it.toTypedArray() }.toTypedArray())
-        return obj
+    companion object {
+        fun fromWire(wire: String): GpuSelfTestState? = values().firstOrNull { it.wire == wire }
     }
 }
 
@@ -232,6 +282,19 @@ data class GpuSelfTestResult(
         val obj = JSObject()
         obj.put("state", state.wire)
         error?.let { obj.put("error", it) }
+        return obj
+    }
+}
+
+/**
+ * Embed texts result.
+ */
+data class EmbedTextsResult(
+    val vectors: List<List<Float>>
+) {
+    fun toJSObject(): JSObject {
+        val obj = JSObject()
+        obj.put("vectors", vectors.map { it.toTypedArray() }.toTypedArray())
         return obj
     }
 }

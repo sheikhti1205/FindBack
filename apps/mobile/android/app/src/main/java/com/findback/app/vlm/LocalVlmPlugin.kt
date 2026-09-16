@@ -15,12 +15,12 @@ class LocalVlmPlugin : Plugin() {
 
     private val mutex = InferenceMutex()
     private val modelStates = ConcurrentHashMap<VlmModelId, VlmModelInfo>()
-    private var currentMode: VlmMode = VlmMode.AUTO
+    private var currentMode: BackendMode = BackendMode.AUTO
 
     init {
-        // Initialize all models as NOT_DOWNLOADED
+        // Initialize all models as NOT_INSTALLED
         for (modelId in VlmModelId.values()) {
-            modelStates[modelId] = VlmModelInfo(modelId, VlmModelState.NOT_DOWNLOADED)
+            modelStates[modelId] = VlmModelInfo(modelId, VlmState.NOT_INSTALLED)
         }
     }
 
@@ -68,7 +68,7 @@ class LocalVlmPlugin : Plugin() {
     @PluginMethod
     fun setMode(call: PluginCall) {
         val modeWire = call.getString("mode") ?: return
-        VlmMode.fromWire(modeWire)?.let { mode ->
+        BackendMode.fromWire(modeWire)?.let { mode ->
             currentMode = mode
             call.resolve()
         } ?: call.reject("Invalid mode: $modeWire")
@@ -86,24 +86,24 @@ class LocalVlmPlugin : Plugin() {
     fun downloadModel(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            val currentState = modelStates[modelId]?.state ?: VlmModelState.NOT_DOWNLOADED
-            if (currentState == VlmModelState.DOWNLOADING || currentState == VlmModelState.READY_CPU || currentState == VlmModelState.READY_GPU) {
+            val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
+            if (currentState == VlmState.DOWNLOADING || currentState == VlmState.INSTALLED_UNVERIFIED || currentState == VlmState.READY_GPU) {
                 call.reject("Model already downloaded or downloading")
                 return
             }
-            modelStates[modelId] = VlmModelInfo(modelId, VlmModelState.DOWNLOADING)
+            modelStates[modelId] = VlmModelInfo(modelId, VlmState.DOWNLOADING)
             notifyListeners("modelStateChange", modelStates[modelId]!!.toJSObject())
 
             // Simulate download progress
             // In real implementation, this would download the model file
-            // For now, just mark as READY_CPU after a short delay
+            // For now, just mark as INSTALLED_UNVERIFIED after a short delay
             bridge?.execute {
                 try {
                     Thread.sleep(100)
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
                 }
-                modelStates[modelId] = VlmModelInfo(modelId, VlmModelState.READY_CPU, sizeBytes = 100_000_000L)
+                modelStates[modelId] = VlmModelInfo(modelId, VlmState.INSTALLED_UNVERIFIED, sizeBytes = 100_000_000L)
                 notifyListeners("modelStateChange", modelStates[modelId]!!.toJSObject())
                 notifyListeners("downloadProgress", DownloadProgressEvent(modelId, 1.0f, 100_000_000L, 100_000_000L).toJSObject())
                 call.resolve()
@@ -115,9 +115,9 @@ class LocalVlmPlugin : Plugin() {
     fun cancelDownload(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            val currentState = modelStates[modelId]?.state ?: VlmModelState.NOT_DOWNLOADED
-            if (currentState == VlmModelState.DOWNLOADING) {
-                modelStates[modelId] = VlmModelInfo(modelId, VlmModelState.NOT_DOWNLOADED)
+            val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
+            if (currentState == VlmState.DOWNLOADING) {
+                modelStates[modelId] = VlmModelInfo(modelId, VlmState.NOT_INSTALLED)
                 notifyListeners("modelStateChange", modelStates[modelId]!!.toJSObject())
             }
             call.resolve()
@@ -128,7 +128,7 @@ class LocalVlmPlugin : Plugin() {
     fun deleteModel(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            modelStates[modelId] = VlmModelInfo(modelId, VlmModelState.NOT_DOWNLOADED)
+            modelStates[modelId] = VlmModelInfo(modelId, VlmState.NOT_INSTALLED)
             notifyListeners("modelStateChange", modelStates[modelId]!!.toJSObject())
             call.resolve()
         } ?: call.reject("Invalid modelId: $modelIdWire")
@@ -200,5 +200,24 @@ class LocalVlmPlugin : Plugin() {
         } catch (e: ClassNotFoundException) {
             false
         }
+    }
+}
+
+/**
+ * Model state info for plugin events.
+ */
+data class VlmModelInfo(
+    val id: VlmModelId,
+    val state: VlmState,
+    val sizeBytes: Long? = null,
+    val error: String? = null
+) {
+    fun toJSObject(): JSObject {
+        val obj = JSObject()
+        obj.put("id", id.wire)
+        obj.put("state", state.wire)
+        sizeBytes?.let { obj.put("sizeBytes", it) }
+        error?.let { obj.put("error", it) }
+        return obj
     }
 }
