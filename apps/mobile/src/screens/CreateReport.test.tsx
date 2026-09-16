@@ -7,6 +7,9 @@ const { publishReportMock, suggestMock } = vi.hoisted(() => ({
   suggestMock: vi.fn(),
 }));
 
+vi.mock("@capacitor/core", () => ({
+  Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" },
+}));
 vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../services/posts", () => ({ publishReport: publishReportMock }));

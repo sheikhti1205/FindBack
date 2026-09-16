@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { Camera, ImageUp, Sparkles, X } from "lucide-react";
+import { Camera as CameraIcon, ImageUp, Sparkles, X } from "lucide-react";
 import type { Category, PostType } from "@findback/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
@@ -11,6 +11,7 @@ import { LocationPicker, type LocationValue } from "../components/LocationPicker
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { publishReport } from "../services/posts";
 import { suggestCategoryFromImage, type CategorySuggestion } from "../services/ml";
+import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile } from "../services/photo";
 import { todayInputValue } from "../utils/dates";
 
 const inputCls =
@@ -192,16 +193,52 @@ export function CreateReport() {
             </button>
           </div>
         ) : (
-          <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-m3-sm border border-dashed border-outline px-4 text-center text-sm text-on-surface-variant hover:bg-surface-container">
-            <ImageUp size={22} aria-hidden />
-            Tap to choose an image
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              className="sr-only"
-              onChange={(e) => onPickImage(e.target.files?.[0])}
-            />
-          </label>
+          <>
+            {isNativeCameraAvailable() && (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  onClick={async () => {
+                    const picked = await takePhoto();
+                    if (picked) {
+                      const file = await photoToFile(picked);
+                      onPickImage(file);
+                    }
+                  }}
+                >
+                  <CameraIcon size={18} aria-hidden />
+                  Take photo
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  onClick={async () => {
+                    const picked = await chooseFromGallery();
+                    if (picked) {
+                      const file = await photoToFile(picked);
+                      onPickImage(file);
+                    }
+                  }}
+                >
+                  <ImageUp size={18} aria-hidden />
+                  Choose from gallery
+                </Button>
+              </div>
+            )}
+            <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-m3-sm border border-dashed border-outline px-4 text-center text-sm text-on-surface-variant hover:bg-surface-container">
+              <ImageUp size={22} aria-hidden />
+              {isNativeCameraAvailable() ? "Or tap to choose a file" : "Tap to choose an image"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="sr-only"
+                onChange={(e) => onPickImage(e.target.files?.[0])}
+              />
+            </label>
+          </>
         )}
 
         {selectedFile && (
@@ -212,7 +249,7 @@ export function CreateReport() {
             </Button>
             {suggestion && (
               <span className="flex items-center gap-2 rounded-full border border-outline px-3 py-1 text-sm">
-                <Camera size={14} aria-hidden />
+                <CameraIcon size={14} aria-hidden />
                 {suggestion.category} · {(suggestion.confidence * 100).toFixed(0)}%
                 {suggestion.category !== "Other" && (
                   <button type="button" onClick={applySuggestion} className="font-semibold underline">
