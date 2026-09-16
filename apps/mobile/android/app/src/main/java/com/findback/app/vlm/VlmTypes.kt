@@ -1,7 +1,6 @@
 package com.findback.app.vlm
 
 import com.getcapacitor.JSObject
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * VLM model identifiers with their wire-format strings.

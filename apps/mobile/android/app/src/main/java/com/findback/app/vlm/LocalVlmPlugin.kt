@@ -2,14 +2,12 @@ package com.findback.app.vlm
 
 import android.content.Context
 import android.os.Build
-import android.util.Log
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 @CapacitorPlugin(name = "LocalVlm")
