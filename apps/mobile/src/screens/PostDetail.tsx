@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router";
-import { ArrowLeft, Star, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { useParams } from "react-router";
+import { Star, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
+import { BackButton } from "../components/BackButton";
 import { Button } from "../components/Button";
 import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
@@ -170,13 +171,7 @@ export function PostDetail() {
   return (
     <div className="flex flex-col gap-5">
       <header className="flex items-center gap-3 px-4 pt-5">
-        <Link
-          to="/"
-          aria-label="Back to feed"
-          className="flex min-h-[40px] items-center rounded-m3-xs text-on-surface hover:bg-surface-container"
-        >
-          <ArrowLeft size={20} />
-        </Link>
+        <BackButton fallbackTo="/" label="Back to feed" />
         <span className="rounded-full border border-outline px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide">
           {post.type === "LOST" ? "Lost item" : "Found item"}
         </span>
