@@ -30,6 +30,23 @@ class LocalVlmPlugin : Plugin() {
     private val activeDownloads = ConcurrentHashMap<VlmModelId, Job>()
     private var currentMode: BackendMode = BackendMode.AUTO
 
+    // Inference mutex to serialize inference calls
+    private val inferenceMutex = InferenceMutex()
+
+    // Engine instances (lazy initialized per model)
+    private val engine500: VlmEngine500? by lazy {
+        val context = getContext()
+        val manifest = MODEL_MANIFESTS.find { it.id == VlmModelId.SMOLVLM2_500M.wire }
+        val modelFile = manifest?.files?.firstOrNull()?.let { spec ->
+            store.finalFile(manifest, spec)
+        }
+        modelFile?.let { file ->
+            if (file.exists()) {
+                VlmEngine500(context, file.absolutePath, context.cacheDir)
+            } else null
+        }
+    }
+
     init {
         // Load persisted mode
         val modeWire = prefs.getString("mode", null)
@@ -180,6 +197,11 @@ class LocalVlmPlugin : Plugin() {
             // Delete model files from store (preserves other models)
             store.deleteModel(modelId)
 
+            // Release engine if it exists
+            if (modelId == VlmModelId.SMOLVLM2_500M) {
+                engine500?.release()
+            }
+
             // Reset state
             updateModelState(modelId, VlmState.NOT_INSTALLED)
             call.resolve()
@@ -202,22 +224,135 @@ class LocalVlmPlugin : Plugin() {
     @PluginMethod
     fun runGpuSelfTest(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
+        val imageUri = call.getString("imageUri") // Optional image for real self-test
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            // Static/empty implementation for now
-            val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE)
-            call.resolve(result.toJSObject())
+            if (modelId != VlmModelId.SMOLVLM2_500M) {
+                val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNSUPPORTED, "Only smolvlm2-500m supports GPU self-test")
+                call.resolve(result.toJSObject())
+                return
+            }
+
+            val engine = engine500 ?: run {
+                val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model not installed")
+                call.resolve(result.toJSObject())
+                return
+            }
+
+            scope.launch {
+                try {
+                    updateModelState(modelId, VlmState.GPU_SELF_TESTING)
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
+
+                    val instruction = "Describe this image briefly."
+                    val (success, diagnostics) = engine.runSelfTest(imageUri, instruction)
+
+                    if (success) {
+                        updateModelState(modelId, VlmState.READY_GPU)
+                        notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
+                        val result = GpuSelfTestResult(GpuSelfTestState.GPU_AVAILABLE)
+                        call.resolve(result.toJSObject())
+                    } else {
+                        // Without image, leave as INSTALLED_UNVERIFIED; with image failure, mark error
+                        val finalState = if (imageUri != null) {
+                            VlmState.GPU_UNAVAILABLE
+                        } else {
+                            VlmState.INSTALLED_UNVERIFIED
+                        }
+                        updateModelState(modelId, finalState, error = diagnostics.joinToString("; "))
+                        notifyListeners("inferenceState", InferenceStateEvent(modelId, finalState, error = diagnostics.joinToString("; ")).toJSObject())
+                        val result = GpuSelfTestResult(
+                            if (imageUri != null) GpuSelfTestState.GPU_UNAVAILABLE else GpuSelfTestState.GPU_UNSUPPORTED,
+                            diagnostics.joinToString("; ")
+                        )
+                        call.resolve(result.toJSObject())
+                    }
+                } catch (e: Exception) {
+                    updateModelState(modelId, VlmState.RUNTIME_ERROR, error = e.message)
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = e.message).toJSObject())
+                    val result = GpuSelfTestResult(GpuSelfTestState.ERROR, e.message)
+                    call.resolve(result.toJSObject())
+                }
+            }
         } ?: call.reject("Invalid modelId: $modelIdWire")
     }
 
     @PluginMethod
     fun analyzeImage(call: PluginCall) {
-        // Reject with "Not implemented yet" as specified
-        call.reject("Not implemented yet")
+        val modelIdWire = call.getString("modelId") ?: return
+        val imageUri = call.getString("imageUri") ?: return
+        val instruction = call.getString("instruction") ?: return
+        val maxOutputTokens = call.getInt("maxOutputTokens") ?: 224
+        val temperature = call.getFloat("temperature") ?: 0.1f
+
+        VlmModelId.fromWire(modelIdWire)?.let { modelId ->
+            if (modelId != VlmModelId.SMOLVLM2_500M) {
+                call.reject("Only smolvlm2-500m supports image analysis")
+                return
+            }
+
+            val engine = engine500 ?: run {
+                call.reject("Model not installed or not ready")
+                return
+            }
+
+            // Check if model is ready
+            val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
+            if (currentState != VlmState.READY_GPU) {
+                call.reject("Model not ready for inference. State: ${currentState.wire}")
+                return
+            }
+
+            // Try to acquire inference mutex
+            if (!inferenceMutex.tryAcquire()) {
+                call.reject("Inference already in progress")
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = "Busy").toJSObject())
+                return
+            }
+
+            scope.launch {
+                try {
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.1f).toJSObject())
+
+                    // Prepare image
+                    val prepared = ImagePreparer.prepare(getContext(), imageUri)
+
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.3f).toJSObject())
+
+                    // Run inference
+                    val resultText = engine.analyze(prepared, instruction, maxOutputTokens, temperature)
+
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.9f).toJSObject())
+
+                    // Cleanup temp file
+                    ImagePreparer.cleanup(prepared)
+
+                    // Return result
+                    val result = AnalyzeResult(
+                        text = resultText,
+                        modelId = modelId,
+                        backend = EnginePolicy.backendName(),
+                        runtime = "0.16.0",
+                        diagnostics = emptyList()
+                    )
+                    call.resolve(result.toJSObject())
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 1.0f).toJSObject())
+                } catch (e: Exception) {
+                    val errorMsg = e.message ?: "Inference failed"
+                    call.reject("Inference failed: $errorMsg")
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = errorMsg).toJSObject())
+                } finally {
+                    inferenceMutex.release()
+                }
+            }
+        } ?: call.reject("Invalid modelId: $modelIdWire")
     }
 
     @PluginMethod
     fun cancelInference(call: PluginCall) {
-        // Static/empty implementation for now
+        // Release mutex if held (best effort)
+        if (inferenceMutex.isHeld()) {
+            inferenceMutex.release()
+        }
         call.resolve()
     }
 
@@ -226,7 +361,13 @@ class LocalVlmPlugin : Plugin() {
         // Cancel all active downloads
         activeDownloads.values.forEach { it.cancel() }
         activeDownloads.clear()
+
+        // Release engines
+        engine500?.release()
+
+        // Cancel coroutine scope
         scope.cancel()
+
         call.resolve()
     }
 
@@ -275,7 +416,7 @@ class LocalVlmPlugin : Plugin() {
             gpuRenderer = null,
             revision = manifest.revision,
             sha256 = aggregateSha256,
-            lastGpuSelfTest = null,
+            lastGpuSelfTest = if (state == VlmState.READY_GPU) System.currentTimeMillis() else null,
             lastError = null
         )
         store.saveRecord(record)
