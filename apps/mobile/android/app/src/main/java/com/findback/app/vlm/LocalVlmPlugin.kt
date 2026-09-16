@@ -1,6 +1,7 @@
 package com.findback.app.vlm
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.Build
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -8,19 +9,37 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 @CapacitorPlugin(name = "LocalVlm")
 class LocalVlmPlugin : Plugin() {
 
-    private val mutex = InferenceMutex()
     private val modelStates = ConcurrentHashMap<VlmModelId, VlmModelInfo>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val executor = Executors.newSingleThreadExecutor()
+    private val store: ModelStore by lazy { ModelStore.create(getContext()) }
+    private val downloader: ModelDownloader by lazy { ModelDownloader(getContext(), store) }
+    private val prefs: SharedPreferences by lazy { getContext().getSharedPreferences("findback_vlm", Context.MODE_PRIVATE) }
+    private val activeDownloads = ConcurrentHashMap<VlmModelId, Job>()
     private var currentMode: BackendMode = BackendMode.AUTO
 
     init {
-        // Initialize all models as NOT_INSTALLED
+        // Load persisted mode
+        val modeWire = prefs.getString("mode", null)
+        modeWire?.let { BackendMode.fromWire(it)?.let { currentMode = it } }
+
+        // Initialize model states from persisted records
         for (modelId in VlmModelId.values()) {
-            modelStates[modelId] = VlmModelInfo(modelId, VlmState.NOT_INSTALLED)
+            val record = store.loadRecord(modelId)
+            val state = record?.state ?: VlmState.NOT_INSTALLED
+            modelStates[modelId] = VlmModelInfo(modelId, state, record?.installedBytes)
         }
     }
 
@@ -70,13 +89,20 @@ class LocalVlmPlugin : Plugin() {
         val modeWire = call.getString("mode") ?: return
         BackendMode.fromWire(modeWire)?.let { mode ->
             currentMode = mode
+            prefs.edit().putString("mode", mode.wire).apply()
             call.resolve()
         } ?: call.reject("Invalid mode: $modeWire")
     }
 
     @PluginMethod
     fun getModelStates(call: PluginCall) {
-        val models = modelStates.values.map { it.toJSObject() }.toTypedArray()
+        // Reload from store to get latest state
+        val models = VlmModelId.values().map { modelId ->
+            val record = store.loadRecord(modelId)
+            val state = record?.state ?: VlmState.NOT_INSTALLED
+            val info = VlmModelInfo(modelId, state, record?.installedBytes, record?.lastError?.message)
+            info.toJSObject()
+        }.toTypedArray()
         val result = JSObject()
         result.put("models", models)
         call.resolve(result)
@@ -86,28 +112,46 @@ class LocalVlmPlugin : Plugin() {
     fun downloadModel(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
+            val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
             val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
             if (currentState == VlmState.DOWNLOADING || currentState == VlmState.INSTALLED_UNVERIFIED || currentState == VlmState.READY_GPU) {
                 call.reject("Model already downloaded or downloading")
                 return
             }
-            modelStates[modelId] = VlmModelInfo(modelId, VlmState.DOWNLOADING)
-            notifyListeners("modelStateChange", modelStates[modelId]!!.toJSObject())
 
-            // Simulate download progress
-            // In real implementation, this would download the model file
-            // For now, just mark as INSTALLED_UNVERIFIED after a short delay
-            bridge?.execute {
-                try {
-                    Thread.sleep(100)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-                modelStates[modelId] = VlmModelInfo(modelId, VlmState.INSTALLED_UNVERIFIED, sizeBytes = 100_000_000L)
-                notifyListeners("modelStateChange", modelStates[modelId]!!.toJSObject())
-                notifyListeners("downloadProgress", DownloadProgressEvent(modelId, 1.0f, 100_000_000L, 100_000_000L).toJSObject())
-                call.resolve()
+            // Check storage upfront
+            val totalExpectedBytes = manifest.files.sumOf { it.expectedBytes }
+            val freeBytes = getFreeBytes()
+            if (!ModelInstallPolicy.canInstall(freeBytes, totalExpectedBytes)) {
+                val error = ModelError(VlmErrorCode.INSUFFICIENT_STORAGE, "Insufficient storage space")
+                updateModelState(modelId, VlmState.INSUFFICIENT_STORAGE, error = error.message)
+                call.reject("Insufficient storage")
+                return
             }
+
+            // Start download in background
+            val job = scope.launch {
+                try {
+                    updateModelState(modelId, VlmState.DOWNLOADING)
+                    val finalState = downloader.download(manifest) { downloaded, total ->
+                        val progress = if (total > 0) downloaded.toFloat() / total else 0f
+                        notifyListeners("downloadProgress", DownloadProgressEvent(modelId, progress, downloaded, total).toJSObject())
+                    }
+                    updateModelState(modelId, finalState)
+                    if (finalState == VlmState.INSTALLED_UNVERIFIED) {
+                        // Persist the installed state
+                        persistModelState(modelId, manifest, finalState)
+                    }
+                    call.resolve()
+                } catch (e: Exception) {
+                    val error = ModelError(VlmErrorCode.DOWNLOAD_FAILED, e.message ?: "Download failed")
+                    updateModelState(modelId, VlmState.DOWNLOAD_FAILED, error = error.message)
+                    call.reject("Download failed: ${e.message}")
+                } finally {
+                    activeDownloads.remove(modelId)
+                }
+            }
+            activeDownloads[modelId] = job
         } ?: call.reject("Invalid modelId: $modelIdWire")
     }
 
@@ -115,10 +159,11 @@ class LocalVlmPlugin : Plugin() {
     fun cancelDownload(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
+            val job = activeDownloads.remove(modelId)
+            job?.cancel()
             val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
             if (currentState == VlmState.DOWNLOADING) {
-                modelStates[modelId] = VlmModelInfo(modelId, VlmState.NOT_INSTALLED)
-                notifyListeners("modelStateChange", modelStates[modelId]!!.toJSObject())
+                updateModelState(modelId, VlmState.NOT_INSTALLED)
             }
             call.resolve()
         } ?: call.reject("Invalid modelId: $modelIdWire")
@@ -128,8 +173,15 @@ class LocalVlmPlugin : Plugin() {
     fun deleteModel(call: PluginCall) {
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            modelStates[modelId] = VlmModelInfo(modelId, VlmState.NOT_INSTALLED)
-            notifyListeners("modelStateChange", modelStates[modelId]!!.toJSObject())
+            // Cancel any active download
+            val job = activeDownloads.remove(modelId)
+            job?.cancel()
+
+            // Delete model files from store (preserves other models)
+            store.deleteModel(modelId)
+
+            // Reset state
+            updateModelState(modelId, VlmState.NOT_INSTALLED)
             call.resolve()
         } ?: call.reject("Invalid modelId: $modelIdWire")
     }
@@ -171,7 +223,10 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun release(call: PluginCall) {
-        // Static/empty implementation for now
+        // Cancel all active downloads
+        activeDownloads.values.forEach { it.cancel() }
+        activeDownloads.clear()
+        scope.cancel()
         call.resolve()
     }
 
@@ -186,6 +241,52 @@ class LocalVlmPlugin : Plugin() {
         }
     }
 
+    private fun updateModelState(
+        modelId: VlmModelId,
+        state: VlmState,
+        sizeBytes: Long? = null,
+        error: String? = null
+    ) {
+        val info = VlmModelInfo(modelId, state, sizeBytes, error)
+        modelStates[modelId] = info
+        notifyListeners("modelStateChange", info.toJSObject())
+    }
+
+    private fun persistModelState(modelId: VlmModelId, manifest: ModelManifest, state: VlmState) {
+        val files = manifest.files.map { spec ->
+            val finalFile = store.finalFile(manifest, spec)
+            val installedBytes = if (finalFile.exists()) finalFile.length() else spec.expectedBytes
+            val installedSha256 = if (finalFile.exists()) Sha256.ofFile(finalFile) else spec.sha256
+            InstalledFileRecord(spec.path, spec.expectedBytes, installedBytes, spec.sha256, installedSha256)
+        }
+        val totalInstalledBytes = files.sumOf { it.installedBytes }
+        val aggregateSha256 = files.joinToString("") { it.installedSha256 }
+        val record = ModelStateRecord(
+            modelId = modelId,
+            state = state,
+            files = files,
+            installedBytes = totalInstalledBytes,
+            installTimestamp = System.currentTimeMillis(),
+            runtimeVersion = manifest.runtime,
+            appVersion = "1.0",
+            fingerprint = Build.FINGERPRINT,
+            abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
+            gpuVendor = null,
+            gpuRenderer = null,
+            revision = manifest.revision,
+            sha256 = aggregateSha256,
+            lastGpuSelfTest = null,
+            lastError = null
+        )
+        store.saveRecord(record)
+    }
+
+    private fun getFreeBytes(): Long {
+        val file = getContext().filesDir
+        val stat = android.os.StatFs(file.path)
+        return stat.availableBlocksLong * stat.blockSizeLong
+    }
+
     private fun getFreeAppStorageMb(context: Context): Long {
         val file = context.filesDir
         val stat = android.os.StatFs(file.path)
@@ -193,7 +294,6 @@ class LocalVlmPlugin : Plugin() {
     }
 
     private fun checkGpuRuntimePresent(): Boolean {
-        // Check if GPU delegate is available
         return try {
             Class.forName("com.google.ai.edge.litert.gpu.GpuDelegate")
             true
