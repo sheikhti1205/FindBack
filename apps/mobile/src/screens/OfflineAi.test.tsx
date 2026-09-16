@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { bridge } = vi.hoisted(() => ({ bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() } }));
+const { bridge } = vi.hoisted(() => ({ bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() } }));
 vi.mock("../services/vlmPlugin", () => ({ getVlmBridge: () => bridge }));
 
 import { OfflineAi } from "./OfflineAi";
@@ -64,5 +64,68 @@ describe("OfflineAi", () => {
     fireEvent.click(await screen.findByRole("button", { name: /install both/i }));
     fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
     await waitFor(() => expect(bridge.downloadModel).toHaveBeenNthCalledWith(2, "smolvlm-256m"));
+  });
+
+  it("keeps Cancel enabled even when free space is low", async () => {
+    bridge.getCapabilities.mockResolvedValue({ ...capabilities, freeAppStorageMb: 0 });
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "DOWNLOADING" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<OfflineAi />);
+    const cancel = await screen.findByRole("button", { name: /cancel smolvlm2/i });
+    expect((cancel as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("offers Repair that keeps verified chunks on corrupt data", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "CORRUPT" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.repairModel.mockResolvedValue(undefined);
+    render(<OfflineAi />);
+    expect(await screen.findByText(/verified chunks will be kept/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /repair smolvlm2/i }));
+    await waitFor(() => expect(bridge.repairModel).toHaveBeenCalledWith("smolvlm2-500m"));
+  });
+
+  it("closes the confirm dialog immediately so progress and cancel stay visible", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    // Never-resolving download: the dialog must still close right away.
+    bridge.downloadModel.mockReturnValue(new Promise(() => {}));
+    render(<OfflineAi />);
+    fireEvent.click(await screen.findByRole("button", { name: /download smolvlm2 500m/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
+    await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm2-500m"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("shows the real pinned revision in technical details, never a placeholder", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const { container } = render(<OfflineAi />);
+    expect((await screen.findAllByText(/technical details/i)).length).toBeGreaterThan(0);
+    expect(container.textContent).toMatch(/dad030b6e56756201d670cfb4d042736a2ce3a5c/);
+    expect(container.textContent).not.toMatch(/a1b2c3d4/);
+  });
+
+  it("pauses an in-flight download without discarding progress", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "DOWNLOADING" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.pauseDownload.mockResolvedValue(undefined);
+    render(<OfflineAi />);
+    fireEvent.click(await screen.findByRole("button", { name: /pause smolvlm2/i }));
+    await waitFor(() => expect(bridge.pauseDownload).toHaveBeenCalledWith("smolvlm2-500m"));
   });
 });

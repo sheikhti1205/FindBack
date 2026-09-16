@@ -14,9 +14,19 @@ export type VlmBackend = "cpu" | "gpu";
 /** Model state. */
 export type VlmState =
   | "NOT_INSTALLED"
+  | "QUEUED"
+  | "WAITING_FOR_NETWORK"
+  | "WAITING_FOR_WIFI"
   | "DOWNLOADING"
+  | "PAUSING"
   | "PAUSED"
+  | "PAUSED_ERROR"
+  | "VERIFYING_CHUNK"
   | "VERIFYING_HASH"
+  | "VERIFYING_FILE"
+  | "REPAIR_NEEDED"
+  | "REPAIRING"
+  | "MANIFEST_MISMATCH"
   | "INSTALLED_UNVERIFIED"
   | "GPU_SELF_TESTING"
   | "READY_GPU"
@@ -174,13 +184,17 @@ interface NativeVlmBridge {
   setMode(options: { mode: BackendMode }): Promise<void>;
   getModelStates(): Promise<{ models: VlmModelInfo[] }>;
   downloadModel(options: { modelId: VlmModelId }): Promise<void>;
-  cancelDownload(options: { modelId: VlmModelId }): Promise<void>;
+  pauseDownload(options: { modelId: VlmModelId }): Promise<void>;
+  resumeDownload(options: { modelId: VlmModelId }): Promise<void>;
+  repairModel(options: { modelId: VlmModelId }): Promise<void>;
+  cancelDownload(options: { modelId: VlmModelId; removePartial?: boolean }): Promise<void>;
   deleteModel(options: { modelId: VlmModelId }): Promise<void>;
   embedTexts(options: { texts: string[] }): Promise<{ vectors: number[][] }>;
   runGpuSelfTest(options: { modelId: VlmModelId; imageUri?: string }): Promise<{ state: GpuSelfTestState }>;
   analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
+  releaseWarmLease(): Promise<void>;
   addListener<T extends InferenceStateEvent | DownloadProgressEvent | VlmModelInfo>(
     eventName: string,
     listener: (event: T) => void
@@ -195,13 +209,17 @@ export interface VlmBridge {
   setMode(mode: BackendMode): Promise<void>;
   getModelStates(): Promise<VlmModelInfo[]>;
   downloadModel(modelId: VlmModelId): Promise<void>;
-  cancelDownload(modelId: VlmModelId): Promise<void>;
+  pauseDownload(modelId: VlmModelId): Promise<void>;
+  resumeDownload(modelId: VlmModelId): Promise<void>;
+  repairModel(modelId: VlmModelId): Promise<void>;
+  cancelDownload(modelId: VlmModelId, removePartial?: boolean): Promise<void>;
   deleteModel(modelId: VlmModelId): Promise<void>;
   embedTexts(texts: string[]): Promise<number[][]>;
   runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestState>;
   analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
+  releaseWarmLease(): Promise<void>;
   onInferenceState(listener: (event: InferenceStateEvent) => void): Promise<() => void>;
   onDownloadProgress(listener: (event: DownloadProgressEvent) => void): Promise<() => void>;
   onModelStateChange(listener: (event: VlmModelInfo) => void): Promise<() => void>;
@@ -253,6 +271,18 @@ class WebVlmBridge implements VlmBridge {
     this.refuse("cancelDownload");
   }
 
+  async pauseDownload(_modelId: VlmModelId): Promise<void> {
+    this.refuse("pauseDownload");
+  }
+
+  async resumeDownload(_modelId: VlmModelId): Promise<void> {
+    this.refuse("resumeDownload");
+  }
+
+  async repairModel(_modelId: VlmModelId): Promise<void> {
+    this.refuse("repairModel");
+  }
+
   async deleteModel(_modelId: VlmModelId): Promise<void> {
     this.refuse("deleteModel");
   }
@@ -275,6 +305,10 @@ class WebVlmBridge implements VlmBridge {
 
   async release(): Promise<void> {
     this.refuse("release");
+  }
+
+  async releaseWarmLease(): Promise<void> {
+    this.refuse("releaseWarmLease");
   }
 
   async onInferenceState(_listener: (event: InferenceStateEvent) => void): Promise<() => void> {
@@ -322,8 +356,20 @@ class AndroidVlmBridge implements VlmBridge {
     await this.native.downloadModel({ modelId });
   }
 
-  async cancelDownload(modelId: VlmModelId): Promise<void> {
-    await this.native.cancelDownload({ modelId });
+  async cancelDownload(modelId: VlmModelId, removePartial?: boolean): Promise<void> {
+    await this.native.cancelDownload({ modelId, removePartial });
+  }
+
+  async pauseDownload(modelId: VlmModelId): Promise<void> {
+    await this.native.pauseDownload({ modelId });
+  }
+
+  async resumeDownload(modelId: VlmModelId): Promise<void> {
+    await this.native.resumeDownload({ modelId });
+  }
+
+  async repairModel(modelId: VlmModelId): Promise<void> {
+    await this.native.repairModel({ modelId });
   }
 
   async deleteModel(modelId: VlmModelId): Promise<void> {
@@ -351,6 +397,10 @@ class AndroidVlmBridge implements VlmBridge {
 
   async release(): Promise<void> {
     await this.native.release();
+  }
+
+  async releaseWarmLease(): Promise<void> {
+    await this.native.releaseWarmLease();
   }
 
   async onInferenceState(listener: (event: InferenceStateEvent) => void): Promise<() => void> {

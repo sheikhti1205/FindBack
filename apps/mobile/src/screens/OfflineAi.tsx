@@ -3,17 +3,39 @@ import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, Ha
 import { getVlmBridge } from "../services/vlmPlugin";
 import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent } from "../services/vlmPlugin";
 
-const MODEL_SPECS: Record<VlmModelId, { label: string; sizeMb: number; revision: string }> = {
-  "smolvlm2-500m": { label: "SmolVLM2 500M", sizeMb: 360.8, revision: "a1b2c3d4" },
-  "smolvlm-256m": { label: "SmolVLM 256M", sizeMb: 274.9, revision: "e5f6g7h8" },
+const MODEL_SPECS: Record<VlmModelId, { label: string; sizeMb: number; revision: string; sourceRepo: string; runtime: string }> = {
+  "smolvlm2-500m": {
+    label: "SmolVLM2 500M",
+    sizeMb: 360.8,
+    revision: "dad030b6e56756201d670cfb4d042736a2ce3a5c",
+    sourceRepo: "litert-community/SmolVLM2-500M",
+    runtime: "com.google.ai.edge.litertlm:litertlm-android:0.16.0",
+  },
+  "smolvlm-256m": {
+    label: "SmolVLM 256M",
+    sizeMb: 274.9,
+    revision: "dc16f6046d86c646bcc5dfe249c879d028f8b2f2",
+    sourceRepo: "litert-community/SmolVLM-256M-Instruct",
+    runtime: "com.google.ai.edge.litert:litert:1.4.2+litert-gpu:1.4.2",
+  },
 };
 
 const STATE_LABELS: Record<VlmState, string> = {
   NOT_INSTALLED: "Not installed",
+  QUEUED: "Queued",
+  WAITING_FOR_NETWORK: "Waiting for network",
+  WAITING_FOR_WIFI: "Waiting for Wi-Fi",
   DOWNLOADING: "Downloading…",
+  PAUSING: "Pausing…",
   PAUSED: "Paused",
+  PAUSED_ERROR: "Paused (error)",
+  VERIFYING_CHUNK: "Verifying…",
   VERIFYING_HASH: "Verifying…",
-  INSTALLED_UNVERIFIED: "Installed (unverified)",
+  VERIFYING_FILE: "Verifying…",
+  REPAIR_NEEDED: "Repair needed",
+  REPAIRING: "Repairing…",
+  MANIFEST_MISMATCH: "Source mismatch",
+  INSTALLED_UNVERIFIED: "Installed — GPU test required",
   GPU_SELF_TESTING: "GPU self-test…",
   READY_GPU: "Ready (GPU)",
   GPU_UNAVAILABLE: "GPU unavailable on this runtime",
@@ -40,6 +62,9 @@ function ModelRow({
   onDelete,
   onRunGpuSelfTest,
   onCancelDownload,
+  onPauseDownload,
+  onResumeDownload,
+  onRepair,
   downloadProgress,
 }: {
   modelId: VlmModelId;
@@ -50,14 +75,19 @@ function ModelRow({
   onDelete: (modelId: VlmModelId) => void;
   onRunGpuSelfTest: (modelId: VlmModelId, imageUri: string) => void;
   onCancelDownload: (modelId: VlmModelId) => void;
+  onPauseDownload: (modelId: VlmModelId) => void;
+  onResumeDownload: (modelId: VlmModelId) => void;
+  onRepair: (modelId: VlmModelId) => void;
   downloadProgress: DownloadProgressEvent | null;
 }) {
   const spec = MODEL_SPECS[modelId];
   const stateLabel = STATE_LABELS[info.state] ?? info.state;
-  const isDownloading = info.state === "DOWNLOADING";
+  const isDownloading = info.state === "DOWNLOADING" || info.state === "QUEUED" || info.state === "VERIFYING_CHUNK";
+  const isPaused = info.state === "PAUSED" || info.state === "PAUSED_ERROR" || info.state === "INSUFFICIENT_STORAGE" || info.state === "DOWNLOAD_FAILED";
+  const needsRepair = info.state === "CORRUPT" || info.state === "REPAIR_NEEDED" || info.state === "MANIFEST_MISMATCH";
   const isInstalled = ["READY_GPU", "GPU_UNAVAILABLE", "INSTALLED_UNVERIFIED"].includes(info.state);
-  const canRunSelfTest = info.state === "READY_GPU" || info.state === "GPU_UNAVAILABLE";
-  const showProgress = isDownloading && downloadProgress?.modelId === modelId;
+  const canRunSelfTest = info.state === "READY_GPU" || info.state === "GPU_UNAVAILABLE" || info.state === "INSTALLED_UNVERIFIED";
+  const showProgress = (info.state === "DOWNLOADING") && downloadProgress?.modelId === modelId;
 
   const requiredSpaceMb = spec.sizeMb * 1.2;
   const freeSpaceMb = capabilities?.freeAppStorageMb ?? Number.MAX_SAFE_INTEGER;
@@ -94,16 +124,25 @@ function ModelRow({
             </span>
           </div>
 
+          <details className="mt-2 text-xs text-on-surface-variant">
+            <summary className="cursor-pointer">Technical details</summary>
+            <dl className="mt-1 space-y-0.5">
+              <div><dt className="inline font-medium">Source: </dt><dd className="inline break-all">{spec.sourceRepo}</dd></div>
+              <div><dt className="inline font-medium">Revision: </dt><dd className="inline break-all">{spec.revision}</dd></div>
+              <div><dt className="inline font-medium">Runtime: </dt><dd className="inline break-all">{spec.runtime}</dd></div>
+            </dl>
+          </details>
+
           <div className="mt-2 flex items-center gap-2">
             <span
               className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
                 info.state === "READY_GPU"
                   ? "bg-green-100 text-green-800"
-                  : info.state === "GPU_UNAVAILABLE"
+                  : info.state === "GPU_UNAVAILABLE" || info.state === "INSTALLED_UNVERIFIED"
                   ? "bg-amber-100 text-amber-800"
-                  : info.state === "DOWNLOADING" || info.state === "VERIFYING_HASH" || info.state === "GPU_SELF_TESTING"
+                  : info.state === "DOWNLOADING" || info.state === "QUEUED" || info.state === "VERIFYING_HASH" || info.state === "VERIFYING_FILE" || info.state === "VERIFYING_CHUNK" || info.state === "GPU_SELF_TESTING" || info.state === "REPAIRING"
                   ? "bg-blue-100 text-blue-800"
-                  : info.state === "DOWNLOAD_FAILED" || info.state === "CORRUPT" || info.state === "RUNTIME_ERROR" || info.state === "INSUFFICIENT_STORAGE"
+                  : info.state === "DOWNLOAD_FAILED" || info.state === "CORRUPT" || info.state === "RUNTIME_ERROR" || info.state === "INSUFFICIENT_STORAGE" || info.state === "MANIFEST_MISMATCH" || info.state === "PAUSED_ERROR" || info.state === "REPAIR_NEEDED"
                   ? "bg-red-100 text-red-800"
                   : "bg-surface-variant text-on-surface-variant"
               }`}
@@ -125,19 +164,65 @@ function ModelRow({
             </div>
           )}
 
+          {needsRepair && (
+            <p className="mt-2 text-xs text-red-600">
+              Integrity check found damaged data. Repair re-downloads only the damaged parts — verified chunks will be kept.
+            </p>
+          )}
+
           {info.state === "DOWNLOAD_FAILED" && info.error && (
             <p className="mt-2 text-xs text-red-600">{info.error}</p>
+          )}
+          {info.state === "PAUSED_ERROR" && (
+            <p className="mt-2 text-xs text-amber-700">Paused after repeated network errors. Your verified progress is kept — resume to continue.</p>
+          )}
+          {info.state === "MANIFEST_MISMATCH" && (
+            <p className="mt-2 text-xs text-red-600">The downloaded bytes do not match the pinned source manifest. Automatic retry is stopped; nothing was deleted.</p>
           )}
         </div>
 
         <div className="flex flex-col items-end gap-2 shrink-0">
           {isDownloading ? (
+            <>
+              <button
+                onClick={() => onPauseDownload(modelId)}
+                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-variant transition-colors"
+                aria-label={`Pause ${spec.label}`}
+              >
+                Pause
+              </button>
+              <button
+                onClick={() => onCancelDownload(modelId)}
+                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-variant transition-colors"
+                aria-label={`Cancel ${spec.label}`}
+              >
+                Cancel
+              </button>
+            </>
+          ) : isPaused ? (
+            <>
+              <button
+                onClick={() => onResumeDownload(modelId)}
+                className="px-3 py-1.5 text-sm bg-primary text-on-primary rounded-lg hover:opacity-90 transition-opacity"
+                aria-label={`Resume ${spec.label}`}
+              >
+                Resume
+              </button>
+              <button
+                onClick={() => onCancelDownload(modelId)}
+                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-variant transition-colors"
+                aria-label={`Cancel ${spec.label}`}
+              >
+                Cancel
+              </button>
+            </>
+          ) : needsRepair ? (
             <button
-              onClick={() => onCancelDownload(modelId)}
-              className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-variant transition-colors"
-              disabled={!hasSpace}
+              onClick={() => onRepair(modelId)}
+              className="px-3 py-1.5 text-sm bg-primary text-on-primary rounded-lg hover:opacity-90 transition-opacity"
+              aria-label={`Repair ${spec.label}`}
             >
-              Cancel
+              Repair
             </button>
           ) : !isInstalled ? (
             <button
@@ -237,23 +322,48 @@ export function OfflineAi() {
     setConfirmDownload({ modelId: "both", sizes });
   };
 
-  const handleConfirmDownload = async () => {
+  const handleConfirmDownload = () => {
     if (!confirmDownload) return;
-    if (confirmDownload.modelId === "both") {
-      await bridge.downloadModel("smolvlm2-500m");
-      await bridge.downloadModel("smolvlm-256m");
-    } else {
-      await bridge.downloadModel(confirmDownload.modelId);
-    }
+    const target = confirmDownload.modelId;
+    // Close the dialog immediately after scheduling so progress and
+    // pause/cancel UI stay visible; transfers run in the background.
     setConfirmDownload(null);
+    void (async () => {
+      try {
+        if (target === "both") {
+          // Install Both queues models sequentially.
+          await bridge.downloadModel("smolvlm2-500m");
+          await bridge.downloadModel("smolvlm-256m");
+        } else {
+          await bridge.downloadModel(target);
+        }
+      } catch {
+        // Scheduling failures surface through model state events.
+      }
+    })();
   };
 
   const handleDelete = async (modelId: VlmModelId) => {
+    if (!window.confirm(`Delete ${MODEL_SPECS[modelId].label}? This stops inference, unloads the engine, and removes only this model. The other model is unaffected.`)) {
+      return;
+    }
     await bridge.deleteModel(modelId);
   };
 
   const handleCancelDownload = async (modelId: VlmModelId) => {
     await bridge.cancelDownload(modelId);
+  };
+
+  const handlePauseDownload = async (modelId: VlmModelId) => {
+    await bridge.pauseDownload(modelId);
+  };
+
+  const handleResumeDownload = async (modelId: VlmModelId) => {
+    await bridge.resumeDownload(modelId);
+  };
+
+  const handleRepair = async (modelId: VlmModelId) => {
+    await bridge.repairModel(modelId);
   };
 
   const handleRunGpuSelfTest = async (modelId: VlmModelId, imageUri: string) => {
@@ -302,7 +412,8 @@ export function OfflineAi() {
           ))}
         </div>
         <p className="text-xs text-on-surface-variant">
-          AUTO: prefers GPU, falls back to CPU. FAST: CPU only. QUALITY: GPU only.
+          GPU-strict: only a GPU-proven model runs analysis. There is no silent CPU fallback.
+          AUTO prefers SmolVLM2 500M, FAST uses SmolVLM 256M diagnostics, QUALITY uses SmolVLM2 500M.
         </p>
       </section>
 
@@ -333,6 +444,9 @@ export function OfflineAi() {
                 onDelete={handleDelete}
                 onRunGpuSelfTest={handleRunGpuSelfTest}
                 onCancelDownload={handleCancelDownload}
+                onPauseDownload={handlePauseDownload}
+                onResumeDownload={handleResumeDownload}
+                onRepair={handleRepair}
                 downloadProgress={downloadProgress}
               />
             );
