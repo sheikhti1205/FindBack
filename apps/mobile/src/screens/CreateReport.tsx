@@ -9,9 +9,11 @@ import { Segmented } from "../components/Segmented";
 import { CategoryField } from "../components/CategoryField";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
+import { VlmSuggestions } from "../components/VlmSuggestions";
 import { publishReport } from "../services/posts";
 import { suggestCategoryFromImage, type CategorySuggestion } from "../services/ml";
-import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile } from "../services/photo";
+import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
+import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue } from "../utils/dates";
 
 const inputCls =
@@ -32,6 +34,7 @@ export function CreateReport() {
   });
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [pickedPhoto, setPickedPhoto] = useState<PickedPhoto | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [suggestion, setSuggestion] = useState<CategorySuggestion | null>(null);
@@ -40,11 +43,12 @@ export function CreateReport() {
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
 
-  function onPickImage(file: File | undefined) {
+  function onPickImage(file: File | undefined, photo?: PickedPhoto) {
     if (!file) return;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
+    if (photo) setPickedPhoto(photo);
     setSuggestion(null);
     setMlError(null);
     setError(null);
@@ -54,8 +58,22 @@ export function CreateReport() {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setSelectedFile(null);
+    setPickedPhoto(null);
     setSuggestion(null);
     setMlError(null);
+  }
+
+  function applyVlmSuggestion(patch: Partial<VlmAnalysis>) {
+    if (patch.suggestedTitle !== undefined) setTitle(patch.suggestedTitle ?? "");
+    if (patch.suggestedDescription !== undefined) setDescription(patch.suggestedDescription ?? "");
+    if (patch.suggestedCategory !== undefined && patch.suggestedCategory !== null) setCategory(patch.suggestedCategory);
+  }
+
+  function applySuggestion() {
+    if (suggestion && suggestion.category !== "Other") {
+      setCategory(suggestion.category);
+      setSuggestion(null);
+    }
   }
 
   async function onSuggestCategory() {
@@ -71,13 +89,6 @@ export function CreateReport() {
       setMlError(e instanceof Error ? e.message : "ML is unavailable right now.");
     } finally {
       setSuggesting(false);
-    }
-  }
-
-  function applySuggestion() {
-    if (suggestion && suggestion.category !== "Other") {
-      setCategory(suggestion.category);
-      setSuggestion(null);
     }
   }
 
@@ -204,7 +215,7 @@ export function CreateReport() {
                     const picked = await takePhoto();
                     if (picked) {
                       const file = await photoToFile(picked);
-                      onPickImage(file);
+                      onPickImage(file, picked);
                     }
                   }}
                 >
@@ -219,7 +230,7 @@ export function CreateReport() {
                     const picked = await chooseFromGallery();
                     if (picked) {
                       const file = await photoToFile(picked);
-                      onPickImage(file);
+                      onPickImage(file, picked);
                     }
                   }}
                 >
@@ -266,6 +277,11 @@ export function CreateReport() {
           category suggestion. You can always pick the category yourself.
         </p>
       </section>
+
+      {/* Local VLM report assistant — only on Android with native camera */}
+      {isNativeCameraAvailable() && pickedPhoto && (
+        <VlmSuggestions imageUri={pickedPhoto.nativeUri} onApply={applyVlmSuggestion} />
+      )}
 
       {/* Optional external YouTube media */}
       <label className="block">
