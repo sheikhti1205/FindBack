@@ -9,6 +9,7 @@ import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { MapEmbed } from "../components/MapEmbed";
 import { EmptyState, Spinner } from "../components/PostCard";
+import { PossibleMatches } from "../components/PossibleMatches";
 import { formatEventDate, formatTimestamp } from "../utils/dates";
 import {
   addComment,
@@ -199,6 +200,8 @@ export function PostDetail() {
         </div>
 
         <p className="whitespace-pre-line text-[15px] leading-relaxed">{post.description}</p>
+
+        {post.status === "OPEN" && <PossibleMatches post={post} />}
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 text-sm">
           <div>
