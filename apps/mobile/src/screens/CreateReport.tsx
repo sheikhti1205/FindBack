@@ -13,7 +13,7 @@ import { VlmSuggestions } from "../components/VlmSuggestions";
 import { publishReport } from "../services/posts";
 import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
 import type { VlmAnalysis } from "../services/vlmParser";
-import { todayInputValue } from "../utils/dates";
+import { todayInputValue, isFutureDate } from "../utils/dates";
 
 const inputCls =
   "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
@@ -67,6 +67,10 @@ export function CreateReport() {
     setError(null);
     if (!title.trim() || !description.trim() || !category) {
       setError("Title, description and category are required.");
+      return;
+    }
+    if (isFutureDate(eventDate)) {
+      setError("The date can't be in the future.");
       return;
     }
     submitting.current = true;
@@ -149,10 +153,16 @@ export function CreateReport() {
         <input
           type="date"
           value={eventDate}
+          max={todayInputValue()}
           onChange={(e) => setEventDate(e.target.value)}
           className={inputCls}
           required
         />
+        {isFutureDate(eventDate) && (
+          <span className="mt-1 block text-xs text-error">
+            The date can't be in the future.
+          </span>
+        )}
       </label>
 
       <LocationPicker value={location} onChange={setLocation} />

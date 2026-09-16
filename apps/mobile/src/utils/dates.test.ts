@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatEventDate, timeAgo, todayInputValue } from "../utils/dates";
+import { formatEventDate, isFutureDate, timeAgo, todayInputValue } from "../utils/dates";
 
 describe("dates util", () => {
   it("formats an event date", () => {
@@ -27,5 +27,19 @@ describe("dates util", () => {
   it("produces a YYYY-MM-DD input value for today", () => {
     const v = todayInputValue();
     expect(v).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("flags future dates", () => {
+    expect(isFutureDate("2999-01-01")).toBe(true);
+  });
+
+  it("accepts today and past dates", () => {
+    expect(isFutureDate(todayInputValue())).toBe(false);
+    expect(isFutureDate("2020-01-01")).toBe(false);
+  });
+
+  it("treats empty or unparseable input as not future", () => {
+    expect(isFutureDate("")).toBe(false);
+    expect(isFutureDate("not-a-date")).toBe(false);
   });
 });
