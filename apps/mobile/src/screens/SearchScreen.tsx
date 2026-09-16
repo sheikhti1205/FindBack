@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import type { Category, PostStatus, PostType } from "@findback/shared";
 import { Segmented, STATUS_OPTIONS } from "../components/Segmented";
@@ -15,13 +15,20 @@ export function SearchScreen() {
   const [status, setStatus] = useState<PostStatus | "">("");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
   const [query, setQuery] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
+
+  // Debounce search input ~400ms — do not network-fetch every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setAppliedQuery(query.trim()), 400);
+    return () => clearTimeout(t);
+  }, [query]);
 
   const { items, total, loading, loadingMore, error, hasMore, loadMore } = useFeed({
     type: type === "ALL" ? "" : type,
     category: category || undefined,
     status: status || undefined,
     sort,
-    q: query.trim() || undefined,
+    q: appliedQuery || undefined,
   });
 
   return (

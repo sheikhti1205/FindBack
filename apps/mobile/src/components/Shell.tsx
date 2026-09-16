@@ -1,15 +1,14 @@
 import { NavLink, Outlet, useLocation } from "react-router";
-import { Home, PlusCircle, Search, UserRound, Cpu } from "lucide-react";
+import { Home, PlusCircle, Search, UserRound } from "lucide-react";
 
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/search", label: "Search", icon: Search },
   { to: "/report", label: "Report", icon: PlusCircle },
-  { to: "/offline-ai", label: "Offline AI", icon: Cpu },
   { to: "/profile", label: "Profile", icon: UserRound },
 ];
 
-/** Bottom navigation appears on tab screens only (not on detail/help screens). */
+/** Bottom navigation appears on tab screens only (not on detail/help/offline-ai screens). */
 const HIDE_NAV = ["/help", "/posts/", "/offline-ai"];
 
 export function Shell() {
