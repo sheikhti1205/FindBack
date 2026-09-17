@@ -45,7 +45,6 @@ export function Home() {
     scrollRef.current?.scrollToTop();
     setNewPostCount(0);
     clearNewPostCount(HOME_CACHE_KEY);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tapCount]);
 
   // Live: a new/changed post elsewhere refreshes this feed without reload.

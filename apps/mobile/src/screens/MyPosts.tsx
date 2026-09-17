@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { PostList } from "../components/PostList";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { useFeed } from "../hooks/useFeed";
@@ -23,7 +23,6 @@ export function MyPosts() {
     if (tapCount === 0) return;
     void refresh();
     scrollRef.current?.scrollToTop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tapCount]);
 
   return (
