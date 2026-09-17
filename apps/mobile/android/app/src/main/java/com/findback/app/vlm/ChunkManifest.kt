@@ -3,10 +3,11 @@ package com.findback.app.vlm
 /**
  * Trusted per-chunk hash descriptor for an 8 MiB chunked transfer manifest.
  *
- * Real chunk hashes must be generated from the exact pinned immutable model
- * source and are never invented. This checkout ships no trusted chunk hashes
- * for the real weights, so [ChunkManifest.chunksFor] returns empty (legacy
- * whole-file path) until a generated manifest is added.
+ * Real chunk hashes are generated from the exact pinned immutable model
+ * source and are never invented. Trusted manifests are bundled under
+ * `assets/chunks/` (see PROVENANCE.md) and loaded via the
+ * context-aware [ChunkManifest.chunksFor] overload; callers fall back to
+ * the legacy whole-file path only when no manifest is bundled.
  */
 data class ChunkSpec(
     val index: Int,
@@ -14,6 +15,19 @@ data class ChunkSpec(
     val length: Long,
     val sha256: String
 )
+
+/**
+ * Outcome of validating a chunk layout for exact coverage.
+ */
+sealed class ChunkLayoutValidation {
+    data object Ok : ChunkLayoutValidation()
+    data class Gap(val expectedOffset: Long, val actualOffset: Long) : ChunkLayoutValidation()
+    data class Overlap(val expectedOffset: Long, val actualOffset: Long) : ChunkLayoutValidation()
+    data class SizeMismatch(val expectedBytes: Long, val coveredBytes: Long) : ChunkLayoutValidation()
+    data class BadIndex(val expectedIndex: Int, val actualIndex: Int) : ChunkLayoutValidation()
+    data class BadLength(val index: Int) : ChunkLayoutValidation()
+    data class BadHash(val index: Int) : ChunkLayoutValidation()
+}
 
 /**
  * Chunk layout + manifest JSON helpers for the 8 MiB trusted per-chunk
@@ -42,10 +56,104 @@ object ChunkManifest {
     }
 
     /**
-     * Returns trusted chunks for a file spec, or empty when no chunk manifest
-     * is available (legacy whole-file verification path).
+     * Legacy overload without an Android context: always empty (no asset
+     * access possible). Production code must use the
+     * [chunksFor]-with-context overload below, which loads the trusted
+     * manifests bundled under `assets/chunks/` (see PROVENANCE.md).
      */
     fun chunksFor(spec: ModelFileSpec): List<ChunkSpec> = emptyList()
+
+    /**
+     * Loads trusted chunks for [spec] from a generated JSON manifest bundled
+     * under `assets/chunks/` (added by tooling from the exact pinned model
+     * source), or empty when no manifest is bundled (legacy path). The file
+     * name is `<manifest.id>__<sanitized spec.path>.json`.
+     */
+    fun chunksFor(
+        context: android.content.Context,
+        manifest: ModelManifest,
+        spec: ModelFileSpec
+    ): List<ChunkSpec> {
+        val json = try {
+            context.assets.open("chunks/${bundledName(manifest, spec)}")
+                .bufferedReader().use { it.readText() }
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        return chunksFromManifestJson(json, spec)
+    }
+
+    fun bundledName(manifest: ModelManifest, spec: ModelFileSpec): String {
+        val sanitized = spec.path.map { ch ->
+            if (ch.isLetterOrDigit() || ch == '.' || ch == '-') ch else '_'
+        }.joinToString("")
+        return "${manifest.id}__$sanitized.json"
+    }
+
+    /**
+     * Parses [json] (produced by [toJson]) and returns trusted chunks only
+     * when the header matches [spec] exactly and the layout validates.
+     * Returns empty on any mismatch so callers fall back to the legacy path.
+     */
+    fun chunksFromManifestJson(json: String, spec: ModelFileSpec): List<ChunkSpec> {
+        val path = Regex("\"path\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+            .find(json)?.groupValues?.get(1) ?: return emptyList()
+        val expectedBytes = Regex("\"expectedBytes\"\\s*:\\s*(\\d+)")
+            .find(json)?.groupValues?.get(1)?.toLongOrNull() ?: return emptyList()
+        val sha = Regex("\"sha256\"\\s*:\\s*\"([^\"]*)\"")
+            .find(json)?.groupValues?.get(1) ?: return emptyList()
+        if (path != spec.path) return emptyList()
+        if (expectedBytes != spec.expectedBytes) return emptyList()
+        if (!sha.equals(spec.sha256, ignoreCase = true)) return emptyList()
+        val chunks = parseJson(json)
+        if (chunks.isEmpty()) return emptyList()
+        return if (validateLayout(spec.expectedBytes, chunks) is ChunkLayoutValidation.Ok) {
+            chunks
+        } else {
+            emptyList()
+        }
+    }
+
+    /**
+     * Validates chunk layout: contiguous indexes from 0, no gaps, no
+     * overlaps, exact coverage of `[0, expectedBytes)`, positive lengths,
+     * and non-blank SHA-256 hashes.
+     */
+    fun validateLayout(expectedBytes: Long, chunks: List<ChunkSpec>): ChunkLayoutValidation {
+        if (chunks.isEmpty()) {
+            return if (expectedBytes == 0L) {
+                ChunkLayoutValidation.Ok
+            } else {
+                ChunkLayoutValidation.SizeMismatch(expectedBytes, 0L)
+            }
+        }
+        val sorted = chunks.sortedBy { it.index }
+        for ((position, chunk) in sorted.withIndex()) {
+            if (chunk.index != position) {
+                return ChunkLayoutValidation.BadIndex(position, chunk.index)
+            }
+            if (chunk.length <= 0) {
+                return ChunkLayoutValidation.BadLength(chunk.index)
+            }
+            if (chunk.sha256.isBlank()) {
+                return ChunkLayoutValidation.BadHash(chunk.index)
+            }
+        }
+        var expectedOffset = 0L
+        for (chunk in sorted) {
+            if (chunk.offset > expectedOffset) {
+                return ChunkLayoutValidation.Gap(expectedOffset, chunk.offset)
+            }
+            if (chunk.offset < expectedOffset) {
+                return ChunkLayoutValidation.Overlap(expectedOffset, chunk.offset)
+            }
+            expectedOffset += chunk.length
+        }
+        if (expectedOffset != expectedBytes) {
+            return ChunkLayoutValidation.SizeMismatch(expectedBytes, expectedOffset)
+        }
+        return ChunkLayoutValidation.Ok
+    }
 
     /**
      * Serializes a chunk manifest to JSON.

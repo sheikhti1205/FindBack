@@ -25,4 +25,16 @@ object Sha256 {
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
+
+    /**
+     * Returns true when [file] exists and its SHA-256 matches [expectedHex]
+     * (case-insensitive). Never throws: I/O errors mean "not matching".
+     */
+    fun matchesFile(file: File, expectedHex: String): Boolean {
+        return try {
+            ofFile(file).equals(expectedHex, ignoreCase = true)
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

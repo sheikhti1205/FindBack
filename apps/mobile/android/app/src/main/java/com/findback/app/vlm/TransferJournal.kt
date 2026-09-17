@@ -117,6 +117,19 @@ object TransferJournalStore {
         )
     }
 
+    /**
+     * Verified byte count for a file: sums the layout lengths of verified
+     * chunk indexes. This is the only honest persisted `installedBytes`
+     * during transfer — never the preallocated `.part` length.
+     */
+    fun verifiedBytes(expectedBytes: Long, journal: TransferJournal?): Long {
+        if (journal == null || journal.verifiedChunks.isEmpty()) return 0L
+        if (journal.expectedBytes != expectedBytes) return 0L
+        val layout = ChunkManifest.chunkLayout(expectedBytes, journal.chunkSize)
+        val lengths = layout.associate { it.index to it.length }
+        return journal.verifiedChunks.sumOf { lengths[it] ?: 0L }
+    }
+
     private fun serialize(journal: TransferJournal): String {
         val sb = StringBuilder()
         sb.append("{\"revision\":")

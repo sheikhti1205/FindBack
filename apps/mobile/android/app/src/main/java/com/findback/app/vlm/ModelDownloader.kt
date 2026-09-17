@@ -112,7 +112,7 @@ class ModelDownloader(
             return VlmState.INSTALLED_UNVERIFIED
         }
 
-        val trusted = ChunkManifest.chunksFor(spec)
+        val trusted = ChunkManifest.chunksFor(context, manifest, spec)
 
         // Load or rebuild the journal; never delete the part file here.
         var journal = TransferJournalStore.load(journalFile)
@@ -137,8 +137,11 @@ class ModelDownloader(
                 downloadLegacy(manifest, spec, journal, downloadUrl, onProgress, onState)
             }
             if (result == VlmState.INSTALLED_UNVERIFIED) {
-                if (!partFile.renameTo(finalFile)) {
-                    throw DownloadException("Failed to rename part file to final name")
+                // Atomic final replace: the part already passed whole-file
+                // verification. A good final is never deleted before the
+                // verified replacement is in place.
+                if (!store.promotePartToFinal(manifest, spec)) {
+                    throw DownloadException("Failed to promote verified part file to final name")
                 }
                 journalFile.delete()
                 chunkTmp.delete()
@@ -596,8 +599,10 @@ class ModelDownloader(
         if (pauseRequested) throw PauseRequested()
     }
 
+    // NOTE: URL uses spec.remotePath (exact upstream filename), never the
+    // local spec.path spelling. See assets/chunks/PROVENANCE.md.
     private fun buildDownloadUrl(manifest: ModelManifest, spec: ModelFileSpec): String {
-        return "https://huggingface.co/${manifest.sourceRepo}/resolve/${manifest.revision}/${spec.path}"
+        return "https://huggingface.co/${manifest.sourceRepo}/resolve/${manifest.revision}/${spec.remotePath}"
     }
 
     private fun openConnection(urlString: String, partBytes: Long): HttpURLConnection {

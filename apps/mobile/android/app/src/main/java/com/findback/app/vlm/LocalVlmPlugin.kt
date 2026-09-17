@@ -3,12 +3,15 @@ package com.findback.app.vlm
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -24,9 +27,16 @@ class LocalVlmPlugin : Plugin() {
     private val modelStates = ConcurrentHashMap<VlmModelId, VlmModelInfo>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val executor = Executors.newSingleThreadExecutor()
-    private val store: ModelStore by lazy { ModelStore.create(getContext()) }
-    private val downloader: ModelDownloader by lazy { ModelDownloader(getContext(), store) }
-    private val prefs: SharedPreferences by lazy { getContext().getSharedPreferences("findback_vlm", Context.MODE_PRIVATE) }
+
+    // Initialized in load() after super.load(): getContext() is only valid
+    // once the plugin is loaded, so no context-dependent work may happen in
+    // init{} or lazy initializers.
+    private var store: ModelStore? = null
+    private var downloader: ModelDownloader? = null
+    private var prefs: SharedPreferences? = null
+    private var expiryHandler: Handler? = null
+    @Volatile private var initialized = false
+
     private val activeDownloads = ConcurrentHashMap<VlmModelId, Job>()
     private var currentMode: BackendMode = BackendMode.AUTO
     private var eventCollector: Job? = null
@@ -43,14 +53,34 @@ class LocalVlmPlugin : Plugin() {
     // Inference mutex to serialize inference calls
     private val inferenceMutex = InferenceMutex()
 
+    // Cancellation token + native-running guard for the active inference.
+    // Cancel only flips the token so the stale result is ignored; the mutex
+    // stays held until the native analyze() returns (see finally below).
+    private val activeInference = ActiveInferenceController()
+
     // Engine instances (initialized on demand, re-initialized after model changes)
     private var engine500: VlmEngine500? = null
+
+    private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
+    private fun requireDownloader(): ModelDownloader = downloader ?: throw IllegalStateException("Plugin not initialized")
+    private fun requirePrefs(): SharedPreferences = prefs ?: throw IllegalStateException("Plugin not initialized")
+
+    /**
+     * Rejects the call when load() has not completed yet.
+     */
+    private fun ensureInitialized(call: PluginCall): Boolean {
+        if (!initialized || store == null || downloader == null || prefs == null) {
+            call.reject("Plugin not initialized")
+            return false
+        }
+        return true
+    }
 
     private fun initializeEngine500(): VlmEngine500? {
         val context = getContext()
         val manifest = MODEL_MANIFESTS.find { it.id == VlmModelId.SMOLVLM2_500M.wire }
         val modelFile = manifest?.files?.firstOrNull()?.let { spec ->
-            store.finalFile(manifest, spec)
+            requireStore().finalFile(manifest, spec)
         }
         return modelFile?.let { file ->
             if (file.exists()) {
@@ -68,16 +98,75 @@ class LocalVlmPlugin : Plugin() {
      * Releases the resident engine when the warm-lease TTL expired.
      * Called on inference entry points and state reads so idle engines are
      * reclaimed without a timer, and Stage 1 -> Stage 2 stays warm.
+     * Never releases underneath a running native inference.
      */
     private fun reclaimExpiredLease() {
-        warmLease.releaseIfExpired {
-            releaseEngine500()
-            true
+        if (activeInference.isNativeRunning()) return
+        val expired = warmLease.takeExpiredResident() ?: return
+        releaseEngine500()
+        notifyListeners("warmLeaseExpired", warmLeaseEvent(expired))
+    }
+
+    private fun warmLeaseEvent(modelId: VlmModelId): JSObject {
+        val obj = JSObject()
+        obj.put("modelId", modelId.wire)
+        return obj
+    }
+
+    /**
+     * Self-expiring lease: posts a Handler reclaim for the TTL deadline on
+     * every acquire/refresh instead of polling with a timer.
+     */
+    private val leaseExpiryRunnable = Runnable {
+        reclaimExpiredLease()
+    }
+
+    private fun scheduleLeaseExpiry() {
+        val handler = expiryHandler ?: return
+        handler.removeCallbacks(leaseExpiryRunnable)
+        val delayMs = warmLease.timeUntilExpiryMs()
+        if (delayMs > 0) {
+            handler.postDelayed(leaseExpiryRunnable, delayMs)
         }
+    }
+
+    private fun cancelLeaseExpiry() {
+        expiryHandler?.removeCallbacks(leaseExpiryRunnable)
     }
 
     override fun load() {
         super.load()
+        // getContext() is valid from here on; nothing above may touch it.
+        store = ModelStore.create(getContext())
+        downloader = ModelDownloader(getContext(), requireStore())
+        prefs = getContext().getSharedPreferences("findback_vlm", Context.MODE_PRIVATE)
+        expiryHandler = Handler(Looper.getMainLooper())
+
+        // Restore persisted mode.
+        val modeWire = requirePrefs().getString("mode", null)
+        modeWire?.let { BackendMode.fromWire(it)?.let { currentMode = it } }
+
+        // Restore persisted model states. A persisted transient transfer
+        // state with no live job means the process died mid-transfer:
+        // reconcile to PAUSED (resume preserved via journal + verified
+        // chunks) instead of showing a stuck DOWNLOADING.
+        for (manifest in MODEL_MANIFESTS) {
+            val modelId = VlmModelId.fromWire(manifest.id) ?: continue
+            var record = requireStore().loadRecord(modelId)
+            var state = record?.state ?: VlmState.NOT_INSTALLED
+            val reconciled = TransferReconcile.reconcileState(
+                state,
+                hasLiveJob = activeDownloads.containsKey(modelId)
+            )
+            if (reconciled != state) {
+                requireStore().saveTransferRecord(manifest, reconciled)
+                record = requireStore().loadRecord(modelId)
+                state = reconciled
+            }
+            modelStates[modelId] = VlmModelInfo(modelId, state, record?.installedBytes)
+        }
+        initialized = true
+
         eventCollector?.cancel()
         eventCollector = scope.launch {
             TransferEvents.events.collect { event ->
@@ -96,21 +185,9 @@ class LocalVlmPlugin : Plugin() {
         }
     }
 
-    init {
-        // Load persisted mode
-        val modeWire = prefs.getString("mode", null)
-        modeWire?.let { BackendMode.fromWire(it)?.let { currentMode = it } }
-
-        // Initialize model states from persisted records
-        for (modelId in VlmModelId.values()) {
-            val record = store.loadRecord(modelId)
-            val state = record?.state ?: VlmState.NOT_INSTALLED
-            modelStates[modelId] = VlmModelInfo(modelId, state, record?.installedBytes)
-        }
-    }
-
     @PluginMethod
     fun getCapabilities(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val context = getContext()
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
         val androidVersion = Build.VERSION.RELEASE
@@ -148,25 +225,28 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun getSettings(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val settings = VlmSettings(currentMode)
         call.resolve(settings.toJSObject())
     }
 
     @PluginMethod
     fun setMode(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modeWire = call.getString("mode") ?: return
         BackendMode.fromWire(modeWire)?.let { mode ->
             currentMode = mode
-            prefs.edit().putString("mode", mode.wire).apply()
+            requirePrefs().edit().putString("mode", mode.wire).apply()
             call.resolve()
         } ?: call.reject("Invalid mode: $modeWire")
     }
 
     @PluginMethod
     fun getModelStates(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         // Reload from store to get latest state
         val models = VlmModelId.values().map { modelId ->
-            val record = store.loadRecord(modelId)
+            val record = requireStore().loadRecord(modelId)
             val state = record?.state ?: VlmState.NOT_INSTALLED
             val info = VlmModelInfo(modelId, state, record?.installedBytes, record?.lastError?.message)
             info.toJSObject()
@@ -178,6 +258,7 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun downloadModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
             val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
@@ -219,7 +300,7 @@ class LocalVlmPlugin : Plugin() {
             val job = scope.launch {
                 try {
                     updateModelState(modelId, VlmState.DOWNLOADING)
-                    val finalState = downloader.download(
+                    val finalState = requireDownloader().download(
                         manifest = manifest,
                         onProgress = { downloaded, total ->
                             val progress = if (total > 0) downloaded.toFloat() / total else 0f
@@ -241,6 +322,10 @@ class LocalVlmPlugin : Plugin() {
                         }
                     }
                     call.resolve()
+                } catch (e: CancellationException) {
+                    // Job cancelled (pause/cancel/teardown): not a failure.
+                    // The scheduler path or a later resume owns the state.
+                    throw e
                 } catch (e: Exception) {
                     val error = ModelError(VlmErrorCode.DOWNLOAD_FAILED, e.message ?: "Download failed")
                     updateModelState(modelId, VlmState.DOWNLOAD_FAILED, error = error.message)
@@ -255,12 +340,13 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun pauseDownload(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
             // Graceful stop preserving verified chunks; the pause sticks
             // across scheduler restarts until resume.
             TransferControls.setUserPaused(getContext(), modelId, true)
-            activeDownloads[modelId]?.let { downloader.requestPause() }
+            activeDownloads[modelId]?.let { requireDownloader().requestPause() }
             ModelDownloadScheduler.cancel(getContext(), modelId)
             updateModelState(modelId, VlmState.PAUSING)
             call.resolve()
@@ -269,6 +355,7 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun resumeDownload(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
             val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
@@ -299,6 +386,7 @@ class LocalVlmPlugin : Plugin() {
      */
     @PluginMethod
     fun repairModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
             TransferControls.setUserPaused(getContext(), modelId, false)
@@ -318,12 +406,13 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun cancelDownload(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modelIdWire = call.getString("modelId") ?: return
         // Keep downloaded data for later (default) vs remove partial download.
         val removePartial = call.getBoolean("removePartial") ?: false
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
             val job = activeDownloads.remove(modelId)
-            downloader.requestCancel(removePartial)
+            requireDownloader().requestCancel(removePartial)
             job?.cancel()
             ModelDownloadScheduler.cancel(getContext(), modelId)
             val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
@@ -334,9 +423,9 @@ class LocalVlmPlugin : Plugin() {
                     val manifest = MODEL_MANIFESTS.singleOrNull { it.id == modelId.wire }
                     if (manifest != null) {
                         for (spec in manifest.files) {
-                            store.partFile(manifest, spec).delete()
-                            store.journalFile(manifest, spec).delete()
-                            store.chunkTmpFile(manifest, spec).delete()
+                            requireStore().partFile(manifest, spec).delete()
+                            requireStore().journalFile(manifest, spec).delete()
+                            requireStore().chunkTmpFile(manifest, spec).delete()
                         }
                     }
                     updateModelState(modelId, VlmState.NOT_INSTALLED)
@@ -345,33 +434,38 @@ class LocalVlmPlugin : Plugin() {
                     updateModelState(modelId, VlmState.PAUSED)
                 }
             }
-            downloader.resetControl()
+            requireDownloader().resetControl()
             call.resolve()
         } ?: call.reject("Invalid modelId: $modelIdWire")
     }
 
     @PluginMethod
     fun deleteModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modelIdWire = call.getString("modelId") ?: return
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
-            // Confirmation is handled in UI; deletion here is exact and scoped:
-            // stop inference, unload engine, cancel transfer, remove only this
-            // model's directory. The other model is unaffected.
-            if (inferenceMutex.isHeld()) {
-                inferenceMutex.release()
+            // Never close the engine or delete files underneath a running
+            // inference: reject BUSY so the UI can retry after completion.
+            if (activeInference.isActive()) {
+                call.reject("Inference in progress", "BUSY")
+                return
             }
+            // Confirmation is handled in UI; deletion here is exact and scoped:
+            // unload engine, cancel transfer, remove only this model's
+            // directory. The other model is unaffected.
             val job = activeDownloads.remove(modelId)
-            downloader.requestCancel(removePartial = true)
+            requireDownloader().requestCancel(removePartial = true)
             job?.cancel()
-            downloader.resetControl()
+            requireDownloader().resetControl()
             ModelDownloadScheduler.cancel(getContext(), modelId)
             TransferControls.setUserPaused(getContext(), modelId, false)
 
             // Delete model files from store (preserves other models)
-            store.deleteModel(modelId)
+            requireStore().deleteModel(modelId)
 
             // Release engine if it exists
             if (modelId == VlmModelId.SMOLVLM2_500M) {
+                cancelLeaseExpiry()
                 warmLease.releaseNow()
                 releaseEngine500()
             }
@@ -384,6 +478,7 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun embedTexts(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val textsArray = call.getArray("texts") ?: return
         val texts = mutableListOf<String>()
         for (i in 0 until textsArray.length()) {
@@ -418,6 +513,7 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun runGpuSelfTest(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modelIdWire = call.getString("modelId") ?: return
         val imageUri = call.getString("imageUri") // Optional image for real self-test
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
@@ -476,8 +572,8 @@ class LocalVlmPlugin : Plugin() {
                     val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
                     val tfliteSpec = manifest.files.single { it.path.endsWith(".tflite") }
                     val tokenizerSpec = manifest.files.single { it.path == "tokenizer.model" }
-                    val tfliteFile = store.finalFile(manifest, tfliteSpec)
-                    val tokenizerFile = store.finalFile(manifest, tokenizerSpec)
+                    val tfliteFile = requireStore().finalFile(manifest, tfliteSpec)
+                    val tokenizerFile = requireStore().finalFile(manifest, tokenizerSpec)
 
                     if (!tfliteFile.exists() || !tokenizerFile.exists()) {
                         val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model files not found")
@@ -492,7 +588,7 @@ class LocalVlmPlugin : Plugin() {
                             updateModelState(modelId, VlmState.GPU_SELF_TESTING)
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
 
-                            val probe = Tflite256Probe(getContext(), store, ImagePreparer)
+                            val probe = Tflite256Probe(getContext(), requireStore(), ImagePreparer)
                             val (outcome, errorCode) = probe.runProbe()
 
                             updateModelState(modelId, outcome, error = errorCode?.wire)
@@ -518,6 +614,7 @@ class LocalVlmPlugin : Plugin() {
 
     @PluginMethod
     fun analyzeImage(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         val modeWire = call.getString("mode") ?: run {
             call.reject("Missing mode")
             return
@@ -569,6 +666,7 @@ class LocalVlmPlugin : Plugin() {
         // engine. No silent CPU fallback anywhere on this path.
         reclaimExpiredLease()
         warmLease.acquire(modelId) { warmLease.releaseNow(); releaseEngine500() }
+        scheduleLeaseExpiry()
 
         // Try to acquire inference mutex
         if (!inferenceMutex.tryAcquire()) {
@@ -576,26 +674,46 @@ class LocalVlmPlugin : Plugin() {
             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = "Busy").toJSObject())
             return
         }
+        // Cancellation token for this inference. cancelInference() flips the
+        // token so the stale result is ignored, but the mutex stays held
+        // until the native analyze() returns (released in finally below).
+        val token = activeInference.begin()
+        if (token == null) {
+            inferenceMutex.release()
+            call.reject("Inference already in progress")
+            notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = "Busy").toJSObject())
+            return
+        }
 
         scope.launch {
+            var prepared: ImagePreparer.PreparedImage? = null
             try {
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.1f).toJSObject())
 
-                // Prepare image
-                val prepared = ImagePreparer.prepare(getContext(), imageUri)
+                // Prepare image (temp file tracked for guaranteed cleanup).
+                prepared = ImagePreparer.prepare(getContext(), imageUri)
 
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.3f).toJSObject())
 
-                // Run inference
-                val resultText = engineInstance.analyze(prepared, instruction, maxOutputTokens, temperature)
+                // Run inference with the native-running flag held so
+                // delete/release paths defer instead of closing underneath.
+                activeInference.markNativeRunning(token, true)
+                val resultText = try {
+                    engineInstance.analyze(prepared, instruction, maxOutputTokens, temperature)
+                } finally {
+                    activeInference.markNativeRunning(token, false)
+                }
+
+                // A cancelled inference never resolves JS: drop the stale result.
+                if (activeInference.isCancelled(token)) {
+                    return@launch
+                }
 
                 // Inference completed: refresh the warm lease.
                 warmLease.refresh()
+                scheduleLeaseExpiry()
 
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.9f).toJSObject())
-
-                // Cleanup temp file
-                ImagePreparer.cleanup(prepared)
 
                 // Return result
                 val result = AnalyzeResult(
@@ -607,34 +725,54 @@ class LocalVlmPlugin : Plugin() {
                 )
                 call.resolve(result.toJSObject())
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 1.0f).toJSObject())
+            } catch (e: CancellationException) {
+                // Cancelled coroutine: never resolve the stale call.
+                throw e
             } catch (e: Exception) {
-                val errorMsg = e.message ?: "Inference failed"
-                call.reject("Inference failed: $errorMsg")
-                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = errorMsg).toJSObject())
+                if (!activeInference.isCancelled(token)) {
+                    val errorMsg = e.message ?: "Inference failed"
+                    call.reject("Inference failed: $errorMsg")
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = errorMsg).toJSObject())
+                }
             } finally {
+                prepared?.let { ImagePreparer.cleanup(it) }
+                val deferredRelease = activeInference.finishNative(token)
                 inferenceMutex.release()
+                if (deferredRelease) {
+                    releaseEngine500()
+                }
             }
         }
     }
 
     @PluginMethod
     fun cancelInference(call: PluginCall) {
-        // Release mutex if held (best effort)
-        if (inferenceMutex.isHeld()) {
-            inferenceMutex.release()
-        }
+        if (!ensureInitialized(call)) return
+        // Best effort: flag the active inference cancelled so its eventual
+        // result is ignored. The mutex stays held until the native analyze()
+        // returns — never unlock early, never resolve the stale call.
+        activeInference.cancel()
         call.resolve()
     }
 
     @PluginMethod
     fun release(call: PluginCall) {
+        if (!ensureInitialized(call)) return
         // Cancel all active downloads
         activeDownloads.values.forEach { it.cancel() }
         activeDownloads.clear()
 
-        // Release engines + warm lease immediately (memory trim / teardown).
+        // Release engines + warm lease immediately (memory trim / teardown),
+        // unless native inference is running: then flag cancel and defer the
+        // engine close until the native call returns (see analyze finally).
+        cancelLeaseExpiry()
         warmLease.releaseNow()
-        releaseEngine500()
+        if (activeInference.isNativeRunning()) {
+            activeInference.cancel()
+            activeInference.deferEngineRelease()
+        } else {
+            releaseEngine500()
+        }
 
         // Cancel coroutine scope
         eventCollector?.cancel()
@@ -649,6 +787,12 @@ class LocalVlmPlugin : Plugin() {
      */
     @PluginMethod
     fun releaseWarmLease(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        if (activeInference.isActive()) {
+            call.reject("Inference in progress", "BUSY")
+            return
+        }
+        cancelLeaseExpiry()
         warmLease.releaseNow()
         releaseEngine500()
         call.resolve()
@@ -667,10 +811,24 @@ class LocalVlmPlugin : Plugin() {
 
     private fun persistModelState(modelId: VlmModelId, manifest: ModelManifest, state: VlmState) {
         val files = manifest.files.map { spec ->
-            val finalFile = store.finalFile(manifest, spec)
-            val installedBytes = if (finalFile.exists()) finalFile.length() else spec.expectedBytes
-            val installedSha256 = if (finalFile.exists()) Sha256.ofFile(finalFile) else spec.sha256
-            InstalledFileRecord(spec.path, spec.expectedBytes, installedBytes, spec.sha256, installedSha256)
+            val finalFile = requireStore().finalFile(manifest, spec)
+            if (finalFile.exists() && finalFile.length() == spec.expectedBytes &&
+                Sha256.matchesFile(finalFile, spec.sha256)
+            ) {
+                // Whole-file verified: report true bytes + hash.
+                InstalledFileRecord(spec.path, spec.expectedBytes, finalFile.length(), spec.sha256, spec.sha256)
+            } else {
+                // Not verified: installed bytes are verified journal bytes
+                // (never the preallocated .part length) and no installed SHA.
+                val journal = TransferJournalStore.load(requireStore().journalFile(manifest, spec))
+                InstalledFileRecord(
+                    spec.path,
+                    spec.expectedBytes,
+                    TransferJournalStore.verifiedBytes(spec.expectedBytes, journal),
+                    spec.sha256,
+                    ""
+                )
+            }
         }
         val totalInstalledBytes = files.sumOf { it.installedBytes }
         val aggregateSha256 = files.joinToString("") { it.installedSha256 }
@@ -691,7 +849,7 @@ class LocalVlmPlugin : Plugin() {
             lastGpuSelfTest = if (state == VlmState.READY_GPU) System.currentTimeMillis() else null,
             lastError = null
         )
-        store.saveRecord(record)
+        requireStore().saveRecord(record)
     }
 
     private fun getFreeBytes(): Long {
