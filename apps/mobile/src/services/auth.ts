@@ -233,13 +233,32 @@ export async function checkUsername(
   return { available: !data || data.length === 0, normalized };
 }
 
-export async function askAiHelp(question: string): Promise<{
+export interface AiHelpMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/**
+ * Safe optional Help context: current route, app version, online state.
+ * Never identity (no email/phone/user id), GPS, post/comment contents, or paths.
+ */
+export interface AiHelpContext {
+  route?: string;
+  appVersion?: string;
+  online?: boolean;
+}
+
+export async function askAiHelp(
+  question: string,
+  opts?: { history?: AiHelpMessage[]; context?: AiHelpContext },
+): Promise<{
   text: string;
   source: "llm" | "fallback";
 }> {
-  const { data, error } = await getSupabase().functions.invoke("ai-help", {
-    body: { question },
-  });
+  const body: Record<string, unknown> = { question };
+  if (opts?.history?.length) body.history = opts.history.slice(-6);
+  if (opts?.context) body.context = opts.context;
+  const { data, error } = await getSupabase().functions.invoke("ai-help", { body });
   if (error) throw new ApiError(error.message || "AI Help is unavailable right now", 502);
   return data as { text: string; source: "llm" | "fallback" };
 }
