@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Crosshair, ExternalLink, MapPin } from "lucide-react";
 import { Button } from "./Button";
+import { announce } from "./LiveRegion";
 import { MapEmbed } from "./MapEmbed";
 import {
   FIND_IN_MAPS_HELP,
@@ -47,6 +48,7 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
           latitude: Number(pos.coords.latitude.toFixed(6)),
           longitude: Number(pos.coords.longitude.toFixed(6)),
         });
+        announce("Location imported.");
         setLocating(false);
       },
       () => {

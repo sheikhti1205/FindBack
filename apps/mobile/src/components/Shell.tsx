@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation } from "react-router";
 import { Home, PlusCircle, Search, UserRound } from "lucide-react";
 import { TabTapProvider, useTabTap } from "./TabTap";
+import { LiveRegion } from "./LiveRegion";
 
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -23,6 +24,7 @@ export function Shell() {
           <Outlet />
         </main>
         {showNav && <BottomNav />}
+        <LiveRegion />
       </div>
     </TabTapProvider>
   );
@@ -35,7 +37,7 @@ function BottomNav() {
   return (
     <nav
       aria-label="Primary"
-      className="fixed inset-x-0 bottom-0 z-20 mx-auto max-w-md border-t border-outline-variant bg-surface/95 backdrop-blur"
+      className="fixed inset-x-0 bottom-0 z-20 mx-auto max-w-md border-t border-outline-variant bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
     >
       <div className="grid grid-cols-4">
         {NAV.map(({ to, label, icon: Icon, end }) => (
