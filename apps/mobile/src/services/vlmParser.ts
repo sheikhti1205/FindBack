@@ -43,10 +43,29 @@ function buildControlCharRegex(): RegExp {
 const CONTROL_CHAR_REGEX = buildControlCharRegex();
 const MARKDOWN_FENCE_REGEX = /^```(?:json)?\s*|\s*```$/g;
 
+const SENSITIVE_PATTERNS = [
+  /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/,
+  /\b\+?\d[\d\s().-]{7,}\d\b/,
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
+  /\b(id|passport|license|nid)\b[\s\S]{0,12}?[A-Z0-9-]{4,}/i,
+  /\b(?:otp|one[\s-]?time|verification|code|pin)[\s:]*\d{4,8}\b/i,
+  /\b\d{6}\b/,
+  /\bhttps?:\/\/\S+/i,
+  /\bWIFI:[^\s]+/i,
+  /\bBEGIN:(?:VCARD|VEVENT)/i,
+];
+
+function redactSensitiveText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+  return SENSITIVE_PATTERNS.some((re) => re.test(trimmed)) ? "[redacted]" : trimmed;
+}
+
 function sanitizeString(value: unknown, maxLength: number): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string") return null;
   let sanitized = value.replace(CONTROL_CHAR_REGEX, "").replace(MARKDOWN_FENCE_REGEX, "");
+  sanitized = redactSensitiveText(sanitized);
   if (sanitized.length > maxLength) {
     sanitized = sanitized.slice(0, maxLength);
   }
@@ -60,6 +79,7 @@ function sanitizeArray(value: unknown, maxItems: number, maxItemLength: number):
     if (result.length >= maxItems) break;
     if (typeof item !== "string") continue;
     let sanitized = item.replace(CONTROL_CHAR_REGEX, "").replace(MARKDOWN_FENCE_REGEX, "");
+    sanitized = redactSensitiveText(sanitized);
     if (sanitized.length > maxItemLength) {
       sanitized = sanitized.slice(0, maxItemLength);
     }

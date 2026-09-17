@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { Sparkles, AlertCircle, Download } from "lucide-react";
 import { Button } from "./Button";
 import { MarkdownView } from "./MarkdownView";
-import { analyzeImageLocally, VlmUnstructuredOutputError } from "../services/vlm";
+import { VlmUnstructuredOutputError } from "../services/vlm";
 import {
   discoverObjectsLocally,
   suggestForPrimaryLocally,
@@ -48,6 +49,12 @@ function hasValue(value: VlmAnalysis[keyof VlmAnalysis]): boolean {
 type Phase = "idle" | "discovering" | "review" | "generating" | "done";
 
 export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
+  let navigate: (to: string) => void = () => {};
+  try {
+    navigate = useNavigate();
+  } catch {
+    navigate = () => {};
+  }
   const [phase, setPhase] = useState<Phase>("idle");
   const [selections, setSelections] = useState<ObjectSelection[]>([]);
   const [instruction, setInstruction] = useState("");
@@ -114,11 +121,9 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
       const objects = await discoverObjectsLocally({ imageUri, mode: "AUTO" });
       if (generation.current !== gen) return;
       if (objects.length === 0) {
-        // No candidates: fall back to the classic single-object analysis.
-        const result = await analyzeImageLocally({ imageUri, mode: "AUTO", userContext: { title: "", description: "" } });
-        if (generation.current !== gen) return;
-        setAnalysis(result);
-        setPhase("done");
+        setSelections([]);
+        setError("No clear object found — please fill the details manually.");
+        setPhase("idle");
       } else {
         setSelections(
           objects.map((o, i) => ({ ...o, role: i === 0 ? "PRIMARY" : "IGNORE" as ObjectRole })),
@@ -138,8 +143,7 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
     setSelections((prev) =>
       prev.map((s, i) => {
         if (i === index) return { ...s, role };
-        // Exactly one PRIMARY: promoting demotes the previous one to INCLUDE.
-        if (role === "PRIMARY" && s.role === "PRIMARY") return { ...s, role: "INCLUDE" };
+        if (role === "PRIMARY" && s.role === "PRIMARY") return { ...s, role: "IGNORE" };
         return s;
       }),
     );
@@ -148,6 +152,7 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
   async function handleGenerate() {
     const primary = selections.find((s) => s.role === "PRIMARY");
     if (!primary || busy) return;
+    if (selections.filter((s) => s.role === "PRIMARY").length !== 1) return;
     const gen = ++generation.current;
     setBusy(true);
     setError(null);
@@ -158,6 +163,7 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
         mode: "AUTO",
         primary: primary.objectName,
         include: selections.filter((s) => s.role === "INCLUDE").map((s) => s.objectName),
+        ignore: selections.filter((s) => s.role === "IGNORE").map((s) => s.objectName),
         userInstruction: instruction,
         userContext: { title: "", description: "" },
       });
@@ -210,7 +216,7 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
           <AlertCircle size={16} aria-hidden />
           <span>{error}</span>
           {(error.includes("Model not available") || error.includes("GPU_UNAVAILABLE") || error.includes("MODEL_UNAVAILABLE")) && (
-            <Button type="button" variant="text" size="md" onClick={handleDiscover}>
+            <Button type="button" variant="text" size="md" onClick={() => navigate("/offline-ai")}>
               <Download size={14} aria-hidden />
               Download model
             </Button>
@@ -254,7 +260,8 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
             </span>
             <input
               value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
+              onChange={(e) => setInstruction(e.target.value.slice(0, 300))}
+              maxLength={300}
               placeholder="Anything the photo does not show clearly…"
               className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
             />
@@ -275,6 +282,9 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
 
       {phase === "done" && analysis && (
         <div className="flex flex-col gap-2">
+          <Button type="button" variant="outline" size="md" onClick={() => setPhase("review")}>
+            Choose different item
+          </Button>
           {APPLY_FIELDS.map((field) => {
             const value = analysis[field];
             if (!hasValue(value)) return null;

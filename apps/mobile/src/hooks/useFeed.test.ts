@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useFeed } from "./useFeed";
+import { buildFeedCacheKey, clearFeedCaches, feedFilterKey } from "./feedCache";
 
 const { fetchFeedMock } = vi.hoisted(() => ({ fetchFeedMock: vi.fn() }));
 
@@ -16,6 +17,11 @@ function page(items: Array<{ id: string }>, nextCursor: string | null, total: nu
 }
 
 describe("useFeed", () => {
+  beforeEach(() => {
+    fetchFeedMock.mockReset();
+    clearFeedCaches();
+  });
+
   it("ignores a stale response after filters change (generation guard)", async () => {
     let resolveFirst: (p: unknown) => void;
     const first = new Promise((r) => {
@@ -107,5 +113,43 @@ describe("useFeed", () => {
     );
     expect(second.current.items.map((i) => i.id)).toEqual(["fresh"]);
     expect(second.current.loading).toBe(false);
+  });
+
+  it("normalizes filter identity for cache keys (trimmed search)", () => {
+    expect(feedFilterKey({ q: "  hello " })).toBe(feedFilterKey({ q: "hello" }));
+    expect(buildFeedCacheKey("home:feed", { q: "hello" })).toBe(
+      buildFeedCacheKey("home:feed", { q: "  hello " }),
+    );
+    expect(buildFeedCacheKey("home:feed", { q: "a" })).not.toBe(
+      buildFeedCacheKey("home:feed", { q: "b" }),
+    );
+  });
+
+  it("changing filter starts a new fetch with the new filters", async () => {
+    fetchFeedMock
+      .mockResolvedValueOnce(page([{ id: "a" }], null, 1))
+      .mockResolvedValueOnce(page([{ id: "b" }], null, 1));
+    const { result, rerender } = renderHook(({ q }) => useFeed({ q }, { cacheKey: "test:filter" }), {
+      initialProps: { q: "first" },
+    });
+    await waitFor(() => expect(result.current.items.map((i) => i.id)).toEqual(["a"]));
+    expect(fetchFeedMock).toHaveBeenCalledTimes(1);
+    rerender({ q: "second" });
+    await waitFor(() => expect(result.current.items.map((i) => i.id)).toEqual(["b"]));
+    expect(fetchFeedMock).toHaveBeenCalledTimes(2);
+    expect(fetchFeedMock).toHaveBeenLastCalledWith(expect.objectContaining({ q: "second" }), undefined);
+  });
+
+  it("restores per-filter results without refetch after unmount", async () => {
+    fetchFeedMock.mockResolvedValue(page([{ id: "kept" }], "cur-1", 1));
+    const { unmount } = renderHook(() => useFeed({ q: "same" }, { cacheKey: "test:restore" }));
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    unmount();
+    fetchFeedMock.mockClear();
+    const { result: second } = renderHook(() => useFeed({ q: "same" }, { cacheKey: "test:restore" }));
+    expect(second.current.items.map((i) => i.id)).toEqual(["kept"]);
+    expect(second.current.loading).toBe(false);
+    expect(second.current.hasMore).toBe(true);
+    expect(fetchFeedMock).not.toHaveBeenCalled();
   });
 });

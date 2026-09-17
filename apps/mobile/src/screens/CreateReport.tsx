@@ -15,7 +15,7 @@ import { announce } from "../components/LiveRegion";
 import { publishReport } from "../services/posts";
 import { clearDraft, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
-import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
+import { copyFileToNativeTemp, isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, toNativeImageUri, type PickedPhoto } from "../services/photo";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
 
@@ -40,20 +40,39 @@ export function CreateReport() {
   );
   const [youtubeUrl, setYoutubeUrl] = useState(initialDraft?.youtubeUrl ?? "");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [pickedPhoto, setPickedPhoto] = useState<PickedPhoto | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [pickedPhoto, setPickedPhoto] = useState<PickedPhoto | null>(() => {
+    const uri = initialDraft?.photoNativeUri;
+    if (!uri || uri.startsWith("blob:")) return null;
+    const web = initialDraft?.photoWebPath;
+    return { nativeUri: uri, webPath: web && !web.startsWith("blob:") ? web : uri, format: initialDraft?.photoFormat ?? "jpg" };
+  });
+  const [previewUrl, setPreviewUrl] = useState<string | null>(() => {
+    const web = initialDraft?.photoWebPath;
+    return web && !web.startsWith("blob:") ? web : null;
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
 
   // Preserve the draft across in-app navigation (Help, map helper, model setup).
   useEffect(() => {
-    saveDraft({ type, title, description, category, eventDate, location, youtubeUrl });
-  }, [type, title, description, category, eventDate, location, youtubeUrl]);
+    saveDraft({
+      type,
+      title,
+      description,
+      category,
+      eventDate,
+      location,
+      youtubeUrl,
+      photoNativeUri: pickedPhoto?.nativeUri ?? null,
+      photoWebPath: pickedPhoto?.webPath ?? previewUrl,
+      photoFormat: pickedPhoto?.format ?? null,
+    });
+  }, [type, title, description, category, eventDate, location, youtubeUrl, pickedPhoto, previewUrl]);
 
   function discardDraft() {
     const current = { type, title, description, category, eventDate, location, youtubeUrl };
-    if (!draftIsMeaningful(current)) return;
+    if (!draftIsMeaningful(current) && !pickedPhoto && !selectedFile) return;
     if (!window.confirm("Discard this report draft? Your photo selection stays until you leave.")) return;
     clearDraft();
     setType("LOST");
@@ -69,15 +88,23 @@ export function CreateReport() {
 
   function onPickImage(file: File | undefined, photo?: PickedPhoto) {
     if (!file) return;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setSelectedFile(file);
-    setPreviewUrl(URL.createObjectURL(file));
-    if (photo) setPickedPhoto(photo);
+    if (photo?.nativeUri && !photo.nativeUri.startsWith("blob:")) {
+      setPickedPhoto(photo);
+      setPreviewUrl(photo.webPath);
+    } else {
+      setPreviewUrl(URL.createObjectURL(file));
+      if (photo) setPickedPhoto(photo);
+      void copyFileToNativeTemp(file).then((copied) => {
+        if (copied) setPickedPhoto(copied);
+      });
+    }
     setError(null);
   }
 
   function clearPhoto() {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setSelectedFile(null);
     setPickedPhoto(null);
@@ -119,6 +146,10 @@ export function CreateReport() {
         selectedFile,
       );
       clearDraft();
+      if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+      setSelectedFile(null);
+      setPickedPhoto(null);
       announce("Report published.");
       navigate(`/posts/${postId}`, { replace: true });
     } catch (err) {
@@ -258,8 +289,32 @@ export function CreateReport() {
       </section>
 
       {/* Local VLM report assistant — only on Android with native camera */}
-      {isNativeCameraAvailable() && pickedPhoto && (
-        <VlmSuggestions imageUri={pickedPhoto.nativeUri} onApply={applyVlmSuggestion} />
+      {isNativeCameraAvailable() && pickedPhoto && toNativeImageUri(pickedPhoto) && (
+        <VlmSuggestions imageUri={toNativeImageUri(pickedPhoto)!} onApply={applyVlmSuggestion} />
+      )}
+      {isNativeCameraAvailable() && pickedPhoto && !toNativeImageUri(pickedPhoto) && (
+        <Button
+          type="button"
+          variant="outline"
+          size="md"
+          onClick={() => {
+            saveDraft({
+              type,
+              title,
+              description,
+              category,
+              eventDate,
+              location,
+              youtubeUrl,
+              photoNativeUri: pickedPhoto?.nativeUri ?? null,
+              photoWebPath: pickedPhoto?.webPath ?? previewUrl,
+              photoFormat: pickedPhoto?.format ?? null,
+            });
+            navigate("/offline-ai");
+          }}
+        >
+          Download model
+        </Button>
       )}
 
       {/* Optional external YouTube media */}

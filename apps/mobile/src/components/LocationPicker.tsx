@@ -32,7 +32,19 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
   const [geoError, setGeoError] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
-  const [approx, setApprox] = useState(false);
+  const [approx, setApprox] = useState(true);
+  const [sourceText, setSourceText] = useState(value.label);
+
+  function applyCoords(label: string, lat: number | null, lng: number | null, exact: boolean) {
+    if (lat != null && lng != null && !exact) {
+      const rounded = roundToApproximate(lat, lng);
+      onChange({ label, latitude: rounded.lat, longitude: rounded.lng });
+      setApprox(true);
+    } else {
+      onChange({ label, latitude: lat, longitude: lng });
+      setApprox(!exact && lat != null);
+    }
+  }
 
   function useCurrentLocation() {
     if (!("geolocation" in navigator)) {
@@ -43,12 +55,10 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
     setGeoError(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        onChange({
-          ...value,
-          latitude: Number(pos.coords.latitude.toFixed(6)),
-          longitude: Number(pos.coords.longitude.toFixed(6)),
-        });
-        announce("Location imported.");
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        applyCoords(value.label || "Pinned location", lat, lng, false);
+        announce("Approximate location imported (~100 m).");
         setLocating(false);
       },
       () => {
@@ -60,19 +70,15 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
   }
 
   function handleInput(raw: string) {
+    setSourceText(raw);
     const parsed = parseLocationInput(raw);
     setParseError(parsed.error);
-    setApprox(false);
     if (parsed.needsResolve) {
       setResolving(true);
       void resolveShortLink(raw)
         .then((finalUrl) => {
           const resolved = parseLocationInput(finalUrl);
-          onChange({
-            label: resolved.label,
-            latitude: resolved.latitude,
-            longitude: resolved.longitude,
-          });
+          applyCoords(resolved.label, resolved.latitude, resolved.longitude, false);
           setParseError(resolved.error);
         })
         .catch((err: unknown) => {
@@ -81,6 +87,11 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
         .finally(() => setResolving(false));
       return;
     }
+    if (parsed.latitude != null && parsed.longitude != null) {
+      applyCoords(parsed.label, parsed.latitude, parsed.longitude, false);
+      return;
+    }
+    setApprox(true);
     onChange({
       label: parsed.label,
       latitude: parsed.latitude,
@@ -95,6 +106,10 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
     setApprox(true);
   }
 
+  function handleUseExact() {
+    setApprox(false);
+  }
+
   const hasCoords = value.latitude != null && value.longitude != null;
 
   return (
@@ -105,12 +120,15 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
         </span>
         <div className="flex gap-2">
           <input
-            value={value.label}
+            value={sourceText}
             onChange={(e) => handleInput(e.target.value)}
             placeholder="Place, decimal coords, or a Google Maps link"
             className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
           />
         </div>
+        {value.label && value.label !== sourceText && (
+          <p className="mt-1 text-xs text-on-surface-variant">Parsed: {value.label}</p>
+        )}
       </label>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -124,8 +142,17 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
           <Crosshair size={16} aria-hidden />
           Use my location once
         </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="md"
+          onClick={() => void openInMaps(null, null, sourceText || "FindBack")}
+        >
+          <ExternalLink size={16} aria-hidden />
+          Find location in Maps
+        </Button>
         {hasCoords && (
-          <Button type="button" variant="text" size="md" onClick={() => openInMaps(value.latitude, value.longitude, value.label)}>
+          <Button type="button" variant="text" size="md" onClick={() => void openInMaps(value.latitude, value.longitude, value.label)}>
             <ExternalLink size={16} aria-hidden />
             Open in Maps
           </Button>
@@ -139,25 +166,30 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
       </div>
 
       {hasCoords && !approx && (
-        <div className="flex flex-wrap items-center gap-2 rounded-m3-sm bg-surface-container px-3 py-2">
-          <p className="text-xs text-on-surface-variant">
-            This pin is exact. For privacy you can round it to ~100 m.
+        <div className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-amber-300 bg-amber-50 px-3 py-2">
+          <p className="text-xs text-amber-800">
+            Warning: this is an exact pin and will be shown publicly. Prefer the approximate area.
           </p>
           <Button type="button" variant="outline" size="md" onClick={handleApproximate}>
             Round to ~100 m
           </Button>
         </div>
       )}
-      {approx && (
-        <p className="text-xs text-on-surface-variant">
-          Pin rounded to ~100 m precision.
-        </p>
+      {hasCoords && approx && (
+        <div className="flex flex-wrap items-center gap-2 rounded-m3-sm bg-surface-container px-3 py-2">
+          <p className="text-xs text-on-surface-variant">
+            Pin rounded to ~100 m precision.
+          </p>
+          <Button type="button" variant="text" size="md" onClick={handleUseExact}>
+            Use exact pin
+          </Button>
+        </div>
       )}
 
       {(geoError || parseError) && (
         <p className="text-xs text-error">{geoError ?? parseError}</p>
       )}
-      <p className="text-xs text-on-surface-variant">{FIND_IN_MAPS_HELP}</p>
+      <p className="text-xs text-on-surface-variant">{FIND_IN_MAPS_HELP} Paste the coordinates or link back here.</p>
 
       <MapEmbed lat={value.latitude} lng={value.longitude} label={value.label} />
     </div>

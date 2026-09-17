@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
 import { BackButton } from "../components/BackButton";
 import { getVlmBridge } from "../services/vlmPlugin";
+import { chooseFromGallery, takePhoto, toNativeImageUri } from "../services/photo";
 import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent } from "../services/vlmPlugin";
 
 const MODEL_SPECS: Record<VlmModelId, { label: string; sizeMb: number; revision: string; sourceRepo: string; runtime: string }> = {
@@ -149,7 +150,7 @@ function ModelRow({
               }`}
             >
               {info.state === "DOWNLOADING" && showProgress && downloadProgress
-                ? `Downloading ${Math.round(downloadProgress.progress * 100)}%`
+                ? `Downloading ${formatBytes(downloadProgress.downloadedBytes)} / ${formatBytes(downloadProgress.totalBytes)} (${Math.round(downloadProgress.progress * 100)}%)`
                 : stateLabel}
             </span>
             {info.error && info.error !== stateLabel && (
@@ -187,14 +188,14 @@ function ModelRow({
             <>
               <button
                 onClick={() => onPauseDownload(modelId)}
-                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                 aria-label={`Pause ${spec.label}`}
               >
                 Pause
               </button>
               <button
                 onClick={() => onCancelDownload(modelId)}
-                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                 aria-label={`Cancel ${spec.label}`}
               >
                 Cancel
@@ -204,14 +205,14 @@ function ModelRow({
             <>
               <button
                 onClick={() => onResumeDownload(modelId)}
-                className="px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
+                className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
                 aria-label={`Resume ${spec.label}`}
               >
                 Resume
               </button>
               <button
                 onClick={() => onCancelDownload(modelId)}
-                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                 aria-label={`Cancel ${spec.label}`}
               >
                 Cancel
@@ -220,7 +221,7 @@ function ModelRow({
           ) : needsRepair ? (
             <button
               onClick={() => onRepair(modelId)}
-              className="px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
+              className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
               aria-label={`Repair ${spec.label}`}
             >
               Repair
@@ -228,7 +229,7 @@ function ModelRow({
           ) : !isInstalled ? (
             <button
               onClick={() => onDownload(modelId)}
-              className="px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
+              className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
               disabled={!hasSpace}
               aria-label={`Download ${spec.label}`}
             >
@@ -238,30 +239,34 @@ function ModelRow({
           ) : (
             <>
               {canRunSelfTest && (
-                <button
-                  onClick={() => {
-                    const input = document.createElement("input");
-                    input.type = "file";
-                    input.accept = "image/*";
-                    input.capture = "environment";
-                    input.onchange = () => {
-                      const file = input.files?.[0];
-                      if (file) {
-                        const url = URL.createObjectURL(file);
-                        onRunGpuSelfTest(modelId, url);
-                      }
-                    };
-                    input.click();
-                  }}
-                  className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
-                >
-                  <Cpu size={14} aria-hidden />
-                  Run GPU self-test
-                </button>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={async () => {
+                      const picked = await takePhoto();
+                      const uri = toNativeImageUri(picked);
+                      if (uri) onRunGpuSelfTest(modelId, uri);
+                    }}
+                    className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+                  >
+                    <Cpu size={14} aria-hidden />
+                    Run GPU self-test (camera)
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const picked = await chooseFromGallery();
+                      const uri = toNativeImageUri(picked);
+                      if (uri) onRunGpuSelfTest(modelId, uri);
+                    }}
+                    className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+                  >
+                    <Cpu size={14} aria-hidden />
+                    Run GPU self-test (gallery)
+                  </button>
+                </div>
               )}
               <button
                 onClick={() => onDelete(modelId)}
-                className="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1"
+                className="min-h-[48px] px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1"
               >
                 <Trash2 size={14} aria-hidden />
                 Delete
@@ -278,6 +283,7 @@ export function OfflineAi() {
   const bridge = getVlmBridge();
   const [capabilities, setCapabilities] = useState<VlmCapabilities | null>(null);
   const [mode, setModeState] = useState<BackendMode>("AUTO");
+  const [wifiOnly, setWifiOnly] = useState(true);
   const [modelStates, setModelStates] = useState<VlmModelInfo[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressEvent | null>(null);
   const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId | "both"; sizes: number[] } | null>(null);
@@ -326,20 +332,32 @@ export function OfflineAi() {
   const handleConfirmDownload = () => {
     if (!confirmDownload) return;
     const target = confirmDownload.modelId;
+    const allowCellular = !wifiOnly;
     // Close the dialog immediately after scheduling so progress and
     // pause/cancel UI stay visible; transfers run in the background.
     setConfirmDownload(null);
     void (async () => {
-      try {
-        if (target === "both") {
-          // Install Both queues models sequentially.
-          await bridge.downloadModel("smolvlm2-500m");
-          await bridge.downloadModel("smolvlm-256m");
-        } else {
-          await bridge.downloadModel(target);
+      const opts = allowCellular ? { allowCellular: true } : undefined;
+      if (target === "both") {
+        try {
+          if (opts) await bridge.downloadModel("smolvlm2-500m", opts);
+          else await bridge.downloadModel("smolvlm2-500m");
+        } catch {
+          return;
         }
-      } catch {
-        // Scheduling failures surface through model state events.
+        try {
+          if (opts) await bridge.downloadModel("smolvlm-256m", opts);
+          else await bridge.downloadModel("smolvlm-256m");
+        } catch {
+          // First model stays intact when the second fails.
+        }
+      } else {
+        try {
+          if (opts) await bridge.downloadModel(target, opts);
+          else await bridge.downloadModel(target);
+        } catch {
+          // Scheduling failures surface through model state events.
+        }
       }
     })();
   };
@@ -368,6 +386,7 @@ export function OfflineAi() {
   };
 
   const handleRunGpuSelfTest = async (modelId: VlmModelId, imageUri: string) => {
+    if (!imageUri || imageUri.startsWith("blob:")) return;
     setGpuSelfTestModel(modelId);
     setGpuSelfTestState("running");
     setGpuSelfTestResult(null);
@@ -419,6 +438,24 @@ export function OfflineAi() {
           GPU-strict: only a GPU-proven model runs analysis. There is no silent CPU fallback.
           AUTO prefers SmolVLM2 500M, FAST uses SmolVLM 256M diagnostics, QUALITY uses SmolVLM2 500M.
         </p>
+        <div className="flex gap-2" role="radiogroup" aria-label="Download network">
+          {(["wifi-only", "wifi-or-cellular"] as const).map((opt) => (
+            <button
+              key={opt}
+              onClick={() => setWifiOnly(opt === "wifi-only")}
+              role="radio"
+              aria-checked={wifiOnly === (opt === "wifi-only")}
+              className={`min-h-[48px] flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                wifiOnly === (opt === "wifi-only")
+                  ? "bg-on-surface text-surface"
+                  : "bg-surface-container text-on-surface-variant hover:bg-surface-container/80"
+              }`}
+            >
+              {opt === "wifi-only" ? "Wi-Fi only" : "Wi-Fi or cellular"}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-on-surface-variant">Wi-Fi only is the default; cellular needs explicit opt-in.</p>
       </section>
 
       <section className="px-4 space-y-4" aria-labelledby="models-heading">
@@ -426,7 +463,7 @@ export function OfflineAi() {
           <h2 id="models-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Models</h2>
           <button
             onClick={handleInstallBoth}
-            className="px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
+            className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
             disabled={modelStates.every((m) => ["READY_GPU", "GPU_UNAVAILABLE", "INSTALLED_UNVERIFIED"].includes(m.state))}
           >
             <Download size={14} aria-hidden />

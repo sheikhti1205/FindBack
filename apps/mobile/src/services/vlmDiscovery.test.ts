@@ -31,6 +31,14 @@ describe("redactSensitiveText", () => {
     expect(redactSensitiveText("ID No AB123456")).toBe("[redacted]");
     expect(redactSensitiveText("black wallet")).toBe("black wallet");
   });
+
+  it("redacts OTP and QR payloads", () => {
+    expect(redactSensitiveText("OTP 483921")).toBe("[redacted]");
+    expect(redactSensitiveText("483921")).toBe("[redacted]");
+    expect(redactSensitiveText("https://evil.example/qr")).toBe("[redacted]");
+    expect(redactSensitiveText("WIFI:S:home;T:WPA;P:secret")).toBe("[redacted]");
+    expect(redactSensitiveText("black wallet")).toBe("black wallet");
+  });
 });
 
 describe("parseDiscoveryOutput", () => {

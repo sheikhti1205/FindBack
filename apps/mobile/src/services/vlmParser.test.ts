@@ -50,4 +50,26 @@ describe("parseVlmOutput", () => {
     expect(parsed.suggestedTitle).toBeNull();
     expect(parsed.colors).toEqual([]);
   });
+
+  it("redacts email/phone/card/IDs/OTP/QR on all Stage-2 text fields", () => {
+    const tainted = JSON.stringify({
+      objectName: "card 4111-1111-1111-1111",
+      suggestedCategory: "Clothing",
+      colors: ["+880 1712-345678"],
+      visibleBrand: "owner@example.com",
+      visibleText: ["ID No AB123456", "OTP 483921", "https://evil.example/qr"],
+      identifyingFeatures: ["WIFI:S:home;T:WPA;P:secret", "black strap"],
+      suggestedTitle: "CODE 123456",
+      suggestedDescription: "Call +880 1712-345678",
+      uncertainFields: ["visibleBrand"],
+    });
+    const parsed = parseVlmOutput(tainted, CATEGORIES)!;
+    expect(parsed.objectName).toBe("[redacted]");
+    expect(parsed.colors).toEqual(["[redacted]"]);
+    expect(parsed.visibleBrand).toBe("[redacted]");
+    expect(parsed.visibleText).toEqual(["[redacted]", "[redacted]", "[redacted]"]);
+    expect(parsed.identifyingFeatures).toContain("[redacted]");
+    expect(parsed.suggestedTitle).toBe("[redacted]");
+    expect(parsed.suggestedDescription).toBe("[redacted]");
+  });
 });
