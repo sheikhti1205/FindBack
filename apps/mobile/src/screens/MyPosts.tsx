@@ -5,16 +5,17 @@ import { useFeed } from "../hooks/useFeed";
 import { useTabTap } from "../components/TabTap";
 import { useAuth } from "../auth";
 
-const MY_CACHE_KEY = "my:reports";
+const MY_CACHE_BASE = "my:reports";
 
 export function MyPosts() {
   const { user } = useAuth();
   const { tapCount } = useTabTap();
   const scrollRef = useRef<PullToRefreshHandle>(null);
+  const myCacheKey = user?.id ? `${MY_CACHE_BASE}:${user.id}` : MY_CACHE_BASE;
 
   const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
     { userId: user?.id },
-    { cacheKey: MY_CACHE_KEY, scrollRef },
+    { cacheKey: myCacheKey, scrollRef },
   );
 
   // Active Profile tab tap does not reach here (My Reports is a sub-screen),
@@ -42,6 +43,7 @@ export function MyPosts() {
           error={error}
           hasMore={hasMore}
           onLoadMore={loadMore}
+          onRetry={refresh}
           emptyTitle="You have no reports yet"
           emptySubtitle="Tap Report to post a lost or found item."
         />

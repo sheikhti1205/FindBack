@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FeedPage, PostItem } from "@findback/shared";
 import { fetchFeed, type FeedFilters } from "../services/posts";
-import { loadFeedCache, saveFeedCache } from "./feedCache";
+import { feedFilterKey, loadFeedCache, saveFeedCache } from "./feedCache";
 
 export interface FeedState {
   items: PostItem[];
@@ -36,7 +36,9 @@ interface UseFeedOptions {
  * or refetch.
  */
 export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): FeedState {
-  const { cacheKey, scrollRef } = options;
+  const { cacheKey: baseCacheKey, scrollRef } = options;
+  const filterKey = feedFilterKey(filters);
+  const cacheKey = baseCacheKey ? `${baseCacheKey}:${filterKey}` : undefined;
   const [items, setItems] = useState<PostItem[]>(() => {
     if (cacheKey) {
       const cached = loadFeedCache(cacheKey);
@@ -60,7 +62,28 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
   }
   const generationRef = useRef(0);
 
-  const filterKey = JSON.stringify(filters);
+  // Changing filter starts a new fetch: restore per-filter cache or reset.
+  const prevCacheKeyRef = useRef(cacheKey);
+  useEffect(() => {
+    if (prevCacheKeyRef.current === cacheKey) return;
+    prevCacheKeyRef.current = cacheKey;
+    cursorRef.current = null;
+    if (cacheKey) {
+      const cached = loadFeedCache(cacheKey);
+      if (cached) {
+        cursorRef.current = cached.cursor;
+        setItems(cached.items);
+        setTotal(cached.total);
+        setError(null);
+        setLoading(false);
+        setLoadingMore(false);
+        return;
+      }
+    }
+    setItems([]);
+    setTotal(0);
+    setError(null);
+  }, [cacheKey]);
 
   // Restore scroll position once the cached items are rendered.
   useEffect(() => {
@@ -116,7 +139,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     // When a session cache exists, restore it without a top flash/refetch.
     if (cacheKey && loadFeedCache(cacheKey)) return;
     void load(null, false);
-  }, [filterKey, load]);
+  }, [cacheKey, filterKey, load]);
 
   const refresh = useCallback(async () => {
     cursorRef.current = null;

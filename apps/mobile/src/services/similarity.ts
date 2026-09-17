@@ -108,7 +108,9 @@ function locationProximityBonus(
 /** Minimum base cosine similarity (raw, before mapping) for a candidate to
  * be considered. Candidates below this threshold are dropped regardless of
  * bonus points. Tuned per the spec: "cosine as similarity, not probability."
- * 0.0 means only negatively-correlated candidates are dropped. */
+ * 0.0 means only negatively-correlated candidates are dropped.
+ * DEVICE-CALIBRATION: raising this needs on-device measurement.
+ * TODO(DEVICE-CALIBRATION): calibrate with fixture tests before any bump. */
 export const MIN_COSINE_CUTOFF = 0.0;
 
 /** Ranks candidates by base score plus transparent bonuses.

@@ -304,8 +304,38 @@ export function mapsSearchUrl(lat: number | null, lng: number | null, label: str
 
 /** Open a location in the external Maps app via ACTION_VIEW. */
 export function openInMaps(lat: number | null, lng: number | null, label: string): void {
-  const url = lat != null && lng != null ? geoUri(lat, lng) : mapsSearchUrl(null, null, label);
-  window.open(url, "_blank", "noopener,noreferrer");
+  void openInMapsNative(lat, lng, label);
+}
+
+/** Universal Maps URL (openable everywhere) for a coordinate pair or label. */
+export function universalMapsUrl(lat: number | null, lng: number | null, label: string): string {
+  return mapsSearchUrl(lat, lng, label);
+}
+
+/**
+ * Native map handoff: geo: URI on device, universal URL fallback.
+ * Uses Capacitor Browser/App when present, else window.open.
+ */
+export async function openInMapsNative(lat: number | null, lng: number | null, label: string): Promise<void> {
+  const geo = lat != null && lng != null ? geoUri(lat, lng) : null;
+  const universal = universalMapsUrl(lat, lng, label);
+  try {
+    const cap = window as unknown as { Capacitor?: { Plugins?: Record<string, unknown> } };
+    const plugins = cap.Capacitor?.Plugins as
+      | { Browser?: { open?: (opts: { url: string }) => Promise<unknown> }; App?: { openUrl?: (opts: { url: string }) => Promise<unknown> } }
+      | undefined;
+    if (geo && plugins?.App?.openUrl) {
+      await plugins.App.openUrl({ url: geo });
+      return;
+    }
+    if (plugins?.Browser?.open) {
+      await plugins.Browser.open({ url: universal });
+      return;
+    }
+  } catch {
+    /* fall through to window.open */
+  }
+  window.open(geo ?? universal, "_blank", "noopener,noreferrer");
 }
 
 /** Helper text for the Find-in-Maps flow. */

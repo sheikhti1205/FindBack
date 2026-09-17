@@ -56,15 +56,15 @@ describe("VlmSuggestions multi-object flow", () => {
     expect(checked(groups[0]!)).toBe("Primary");
     expect(checked(groups[1]!)).toBe("Ignore");
 
-    // Promoting the second demotes the first to INCLUDE.
+    // Promoting the second demotes the first to IGNORE.
     fireEvent.click(within(groups[1]!).getByRole("radio", { name: "Primary" }));
     expect(checked(groups[1]!)).toBe("Primary");
-    expect(checked(groups[0]!)).toBe("Include");
+    expect(checked(groups[0]!)).toBe("Ignore");
 
     fireEvent.click(screen.getByRole("button", { name: /generate suggestions/i }));
     await screen.findAllByText(/black umbrella/i);
     expect(suggestMock).toHaveBeenCalledWith(
-      expect.objectContaining({ primary: "keys", include: ["black umbrella"] }),
+      expect.objectContaining({ primary: "keys", include: [], ignore: ["black umbrella"] }),
     );
     expect(onApply).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /use title/i }));
@@ -73,13 +73,13 @@ describe("VlmSuggestions multi-object flow", () => {
     expect(onApply).toHaveBeenCalledWith({ suggestedDescription: "A black umbrella." });
   });
 
-  it("falls back to single analysis when nothing is discovered", async () => {
+  it("falls back to manual entry when nothing is discovered", async () => {
     discoverMock.mockResolvedValue([]);
     analyzeMock.mockResolvedValue(analysis);
     render(<VlmSuggestions imageUri="content://photo" onApply={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /analyze photo/i }));
-    await screen.findAllByText(/black umbrella/i);
-    expect(analyzeMock).toHaveBeenCalled();
+    await screen.findByText(/fill the details manually/i);
+    expect(analyzeMock).not.toHaveBeenCalled();
   });
 
   it("surfaces unstructured output as a manual-entry fallback", async () => {

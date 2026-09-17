@@ -1,4 +1,5 @@
 import type { PostItem } from "@findback/shared";
+import type { FeedFilters } from "../services/posts";
 
 interface FeedCacheEntry {
   items: PostItem[];
@@ -13,6 +14,31 @@ interface FeedCacheEntry {
 /** Per-session in-memory cache keyed by filter string. */
 const sessionCache = new Map<string, FeedCacheEntry>();
 const STALE_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Normalized filter identity: type/search/query trimmed, empties collapsed. */
+export function feedFilterKey(filters: FeedFilters): string {
+  const normalized = {
+    type: (filters.type ?? "").trim(),
+    category: (filters.category ?? "").trim(),
+    status: (filters.status ?? "").trim(),
+    q: (filters.q ?? "").trim(),
+    sort: (filters.sort ?? "").trim(),
+    dateFrom: (filters.dateFrom ?? "").trim(),
+    dateTo: (filters.dateTo ?? "").trim(),
+    userId: (filters.userId ?? "").trim(),
+  };
+  return JSON.stringify(normalized);
+}
+
+/** Full session key: base scope plus normalized filter identity. */
+export function buildFeedCacheKey(base: string, filters: FeedFilters): string {
+  return `${base}:${feedFilterKey(filters)}`;
+}
+
+/** Clear all per-session feed caches (logout). */
+export function clearFeedCaches(): void {
+  sessionCache.clear();
+}
 
 export function saveFeedCache(
   filterKey: string,

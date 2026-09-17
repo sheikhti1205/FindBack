@@ -60,3 +60,54 @@ export async function photoToFile(photo: PickedPhoto, name?: string): Promise<Fi
   const fileName = name ?? `photo.${photo.format}`;
   return new File([blob], fileName, { type: blob.type || "image/jpeg" });
 }
+
+/** True for object URLs that native code cannot resolve. */
+export function isBlobUri(uri: string | null | undefined): boolean {
+  return !!uri && uri.startsWith("blob:");
+}
+
+/** Native URI safe to pass to LocalVlm, or null when unavailable. Never returns blob:. */
+export function toNativeImageUri(photo: PickedPhoto | null): string | null {
+  if (!photo) return null;
+  const uri = photo.nativeUri?.trim();
+  if (!uri || isBlobUri(uri)) return null;
+  return uri;
+}
+
+/**
+ * Copy a generic web File into app-private native temp so it gains a
+ * native URI supporting preview + VLM + publish. Returns null when the
+ * Filesystem plugin is unavailable or the file is too large to copy
+ * without base64 of multi-MB images.
+ */
+export async function copyFileToNativeTemp(file: File): Promise<PickedPhoto | null> {
+  if (!isNativeCameraAvailable()) return null;
+  if (file.size > 1024 * 1024) return null;
+  try {
+    const plugins = (Capacitor as unknown as { Plugins?: Record<string, unknown> }).Plugins;
+    const fs = plugins?.Filesystem as
+      | {
+          writeFile?: (opts: Record<string, unknown>) => Promise<unknown>;
+          getUri?: (opts: Record<string, unknown>) => Promise<{ uri?: string }>;
+        }
+      | undefined;
+    if (!fs?.writeFile || !fs?.getUri) return null;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const base64 = dataUrl.split(",")[1] ?? "";
+    if (!base64) return null;
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase().slice(0, 4);
+    const name = `upload-${Date.now()}.${ext}`;
+    await fs.writeFile({ path: name, data: base64, directory: "CACHE", recursive: true });
+    const uriRes = await fs.getUri({ path: name, directory: "CACHE" });
+    const nativeUri = uriRes?.uri?.trim() ?? "";
+    if (!nativeUri || isBlobUri(nativeUri)) return null;
+    return { nativeUri, webPath: nativeUri, format: ext };
+  } catch {
+    return null;
+  }
+}

@@ -10,6 +10,9 @@ export interface ReportDraft {
   eventDate: string;
   location: LocationValue;
   youtubeUrl: string;
+  photoNativeUri?: string | null;
+  photoWebPath?: string | null;
+  photoFormat?: string | null;
 }
 
 let draft: ReportDraft | null = null;

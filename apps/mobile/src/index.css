@@ -104,3 +104,16 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+.fb-markdown p { margin: 0 0 0.5rem; }
+.fb-markdown p:last-child { margin-bottom: 0; }
+.fb-markdown ul, .fb-markdown ol { margin: 0 0 0.5rem 1.25rem; padding: 0; }
+.fb-markdown li { margin: 0.125rem 0; }
+.fb-markdown blockquote { margin: 0 0 0.5rem; padding-left: 0.75rem; border-left: 3px solid var(--fb-outline-variant); color: var(--fb-on-surface-variant); }
+.fb-markdown code { font-family: ui-monospace, monospace; font-size: 0.85em; background: var(--fb-surface-container); padding: 0.1rem 0.3rem; border-radius: 4px; }
+.fb-markdown pre { margin: 0 0 0.5rem; padding: 0.5rem; background: var(--fb-surface-container); border-radius: 8px; }
+.fb-markdown pre code { background: none; padding: 0; }
+.fb-markdown table { width: 100%; border-collapse: collapse; margin: 0 0 0.5rem; font-size: 0.85rem; }
+.fb-markdown th, .fb-markdown td { border: 1px solid var(--fb-outline-variant); padding: 0.35rem 0.5rem; text-align: left; }
+.fb-markdown a { text-decoration: underline; word-break: break-all; }
+.fb-markdown h3, .fb-markdown h4 { margin: 0.75rem 0 0.35rem; font-weight: 600; line-height: 1.3; }

@@ -80,22 +80,36 @@ export interface VlmModelInfo {
 /** Settings. */
 export interface VlmSettings {
   mode: BackendMode;
+  wifiOnly?: boolean;
 }
+
+/** Typed inference phases only — never fake 10/30/90% progress. */
+export type VlmInferencePhase =
+  | "PREPARING_IMAGE"
+  | "LOADING_MODEL"
+  | "RUNNING"
+  | "POSTPROCESSING";
 
 /** Inference state event. */
 export interface InferenceStateEvent {
   modelId: VlmModelId;
   state: VlmState;
+  phase?: VlmInferencePhase;
   progress?: number;
   error?: string;
 }
 
-/** Download progress event. */
+/** Download progress event: progress is real bytes/totalBytes, never faked. */
 export interface DownloadProgressEvent {
   modelId: VlmModelId;
   progress: number;
   downloadedBytes: number;
   totalBytes: number;
+}
+
+/** Download scheduling options. */
+export interface DownloadOptions {
+  allowCellular?: boolean;
 }
 
 /** Analyze image request. */
@@ -183,7 +197,7 @@ interface NativeVlmBridge {
   getSettings(): Promise<{ mode: BackendMode }>;
   setMode(options: { mode: BackendMode }): Promise<void>;
   getModelStates(): Promise<{ models: VlmModelInfo[] }>;
-  downloadModel(options: { modelId: VlmModelId }): Promise<void>;
+  downloadModel(options: { modelId: VlmModelId; allowCellular?: boolean }): Promise<void>;
   pauseDownload(options: { modelId: VlmModelId }): Promise<void>;
   resumeDownload(options: { modelId: VlmModelId }): Promise<void>;
   repairModel(options: { modelId: VlmModelId }): Promise<void>;
@@ -208,7 +222,7 @@ export interface VlmBridge {
   getSettings(): Promise<VlmSettings>;
   setMode(mode: BackendMode): Promise<void>;
   getModelStates(): Promise<VlmModelInfo[]>;
-  downloadModel(modelId: VlmModelId): Promise<void>;
+  downloadModel(modelId: VlmModelId, options?: DownloadOptions): Promise<void>;
   pauseDownload(modelId: VlmModelId): Promise<void>;
   resumeDownload(modelId: VlmModelId): Promise<void>;
   repairModel(modelId: VlmModelId): Promise<void>;
@@ -263,7 +277,7 @@ class WebVlmBridge implements VlmBridge {
     return [];
   }
 
-  async downloadModel(_modelId: VlmModelId): Promise<void> {
+  async downloadModel(_modelId: VlmModelId, _options?: DownloadOptions): Promise<void> {
     this.refuse("downloadModel");
   }
 
@@ -352,8 +366,8 @@ class AndroidVlmBridge implements VlmBridge {
     return result.models;
   }
 
-  async downloadModel(modelId: VlmModelId): Promise<void> {
-    await this.native.downloadModel({ modelId });
+  async downloadModel(modelId: VlmModelId, options?: DownloadOptions): Promise<void> {
+    await this.native.downloadModel({ modelId, allowCellular: options?.allowCellular ?? false });
   }
 
   async cancelDownload(modelId: VlmModelId, removePartial?: boolean): Promise<void> {
@@ -382,6 +396,7 @@ class AndroidVlmBridge implements VlmBridge {
   }
 
   async runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestState> {
+    if (imageUri?.startsWith("blob:")) throw new Error("blob: URIs cannot be sent to native");
     const result = await this.native.runGpuSelfTest({ modelId, imageUri });
     return result.state;
   }
