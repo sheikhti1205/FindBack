@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
 import { BackButton } from "../components/BackButton";
-import { getVlmBridge } from "../services/vlmPlugin";
+import { getVlmBridge, isInstalledState } from "../services/vlmPlugin";
 import { chooseFromGallery, takePhoto, toNativeImageUri } from "../services/photo";
 import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent } from "../services/vlmPlugin";
 
@@ -339,12 +339,23 @@ export function OfflineAi() {
     void (async () => {
       const opts = allowCellular ? { allowCellular: true } : undefined;
       if (target === "both") {
+        // Real sequencing: native resolves on scheduling, not completion, so
+        // await the settled state of the first model before starting the
+        // second. Only one heavyweight transfer runs at a time, and the first
+        // stays intact if the second fails.
         try {
           if (opts) await bridge.downloadModel("smolvlm2-500m", opts);
           else await bridge.downloadModel("smolvlm2-500m");
         } catch {
           return;
         }
+        let first: { state: VlmState };
+        try {
+          first = await bridge.waitForSettled("smolvlm2-500m");
+        } catch {
+          return;
+        }
+        if (!isInstalledState(first.state)) return;
         try {
           if (opts) await bridge.downloadModel("smolvlm-256m", opts);
           else await bridge.downloadModel("smolvlm-256m");
