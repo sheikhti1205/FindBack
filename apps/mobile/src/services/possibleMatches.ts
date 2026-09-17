@@ -1,5 +1,6 @@
 import { fetchFeed } from "./posts";
 import { embeddingInput, embedTexts } from "./embeddings";
+import { stripMarkdown } from "../utils/stripMarkdown";
 import type { PostItem, PostType } from "@findback/shared";
 import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
 
@@ -18,7 +19,7 @@ function toMatchCandidate(post: PostItem): MatchCandidate {
   return {
     id: post.id,
     title: post.title,
-    description: post.description,
+    description: post.description ?? null,
     category: post.category,
     eventDate: post.eventDate,
     locationLabel: post.locationLabel,
@@ -57,8 +58,14 @@ export async function findPossibleMatches(
   }
 
   // Build embedding inputs: target first, then candidates (even if empty, to detect embed failure)
-  const targetInput = embeddingInput(target.title, target.description);
-  const candidateInputs = candidates.map((c) => embeddingInput(c.title, c.description ?? ""));
+  // Plain-text embedding inputs: never embed Markdown syntax clutter.
+  const targetInput = embeddingInput(
+    stripMarkdown(target.title),
+    stripMarkdown(target.description),
+  );
+  const candidateInputs = candidates.map((c) =>
+    embeddingInput(stripMarkdown(c.title), stripMarkdown(c.description ?? "")),
+  );
 
   let vectors: number[][];
   try {

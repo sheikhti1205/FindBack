@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { ImageUp, X } from "lucide-react";
 import type { Category, PostType } from "@findback/shared";
@@ -7,10 +7,14 @@ import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import { Segmented } from "../components/Segmented";
 import { CategoryField } from "../components/CategoryField";
+import { MarkdownComposer } from "../components/MarkdownComposer";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { VlmSuggestions } from "../components/VlmSuggestions";
+import { announce } from "../components/LiveRegion";
 import { publishReport } from "../services/posts";
+import { clearDraft, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
+import { friendlyError } from "../utils/friendlyErrors";
 import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
@@ -21,23 +25,47 @@ const inputCls =
 export function CreateReport() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [type, setType] = useState<PostType>("LOST");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState<Category | "">("");
-  const [eventDate, setEventDate] = useState(todayInputValue());
-  const [location, setLocation] = useState<LocationValue>({
-    label: "",
-    latitude: null,
-    longitude: null,
-  });
-  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [initialDraft] = useState(loadDraft);
+  const [type, setType] = useState<PostType>(initialDraft?.type ?? "LOST");
+  const [title, setTitle] = useState(initialDraft?.title ?? "");
+  const [description, setDescription] = useState(initialDraft?.description ?? "");
+  const [category, setCategory] = useState<Category | "">(initialDraft?.category ?? "");
+  const [eventDate, setEventDate] = useState(initialDraft?.eventDate ?? todayInputValue());
+  const [location, setLocation] = useState<LocationValue>(
+    initialDraft?.location ?? {
+      label: "",
+      latitude: null,
+      longitude: null,
+    },
+  );
+  const [youtubeUrl, setYoutubeUrl] = useState(initialDraft?.youtubeUrl ?? "");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [pickedPhoto, setPickedPhoto] = useState<PickedPhoto | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
+
+  // Preserve the draft across in-app navigation (Help, map helper, model setup).
+  useEffect(() => {
+    saveDraft({ type, title, description, category, eventDate, location, youtubeUrl });
+  }, [type, title, description, category, eventDate, location, youtubeUrl]);
+
+  function discardDraft() {
+    const current = { type, title, description, category, eventDate, location, youtubeUrl };
+    if (!draftIsMeaningful(current)) return;
+    if (!window.confirm("Discard this report draft? Your photo selection stays until you leave.")) return;
+    clearDraft();
+    setType("LOST");
+    setTitle("");
+    setDescription("");
+    setCategory("");
+    setEventDate(todayInputValue());
+    setLocation({ label: "", latitude: null, longitude: null });
+    setYoutubeUrl("");
+    clearPhoto();
+    announce("Report draft discarded.");
+  }
 
   function onPickImage(file: File | undefined, photo?: PickedPhoto) {
     if (!file) return;
@@ -90,9 +118,11 @@ export function CreateReport() {
         },
         selectedFile,
       );
+      clearDraft();
+      announce("Report published.");
       navigate(`/posts/${postId}`, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not publish");
+      setError(friendlyError(err).message);
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -132,17 +162,12 @@ export function CreateReport() {
         required
       />
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium">Description</span>
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          rows={4}
-          placeholder="Colour, brand, markings, when and where it happened…"
-          className={inputCls}
-          required
-        />
-      </label>
+      <MarkdownComposer
+        label="Description"
+        value={description}
+        onChange={setDescription}
+        placeholder="Colour, brand, markings, when and where it happened…"
+      />
 
       <CategoryField value={category} onChange={setCategory} />
 
@@ -252,6 +277,9 @@ export function CreateReport() {
 
       <Button type="submit" size="lg" loading={busy}>
         Publish {type === "LOST" ? "lost" : "found"} report
+      </Button>
+      <Button type="button" variant="text" size="md" onClick={discardDraft}>
+        Discard draft
       </Button>
     </form>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Sparkles, AlertCircle, Download } from "lucide-react";
 import { Button } from "./Button";
+import { MarkdownView } from "./MarkdownView";
 import { analyzeImageLocally, VlmUnstructuredOutputError } from "../services/vlm";
 import { getVlmBridge, type InferenceStateEvent, type VlmState } from "../services/vlmPlugin";
 import type { VlmAnalysis } from "../services/vlmParser";
@@ -25,6 +26,7 @@ const FIELD_LABELS: Record<keyof VlmAnalysis, string> = {
 const APPLY_FIELDS: (keyof VlmAnalysis)[] = [
   "suggestedTitle",
   "suggestedCategory",
+  "suggestedDescription",
 ];
 
 function formatValue(value: VlmAnalysis[keyof VlmAnalysis]): string {
@@ -127,7 +129,7 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
       </Button>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-m3-sm border border-error bg-error-container px-3 py-2 text-sm text-error">
+        <div className="flex items-center gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
           <AlertCircle size={16} aria-hidden />
           <span>{error}</span>
           {(error.includes("Model not available") || error.includes("GPU_UNAVAILABLE") || error.includes("MODEL_UNAVAILABLE")) && (
@@ -148,7 +150,11 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
               <div key={String(field)} className="flex items-center justify-between gap-2 rounded-m3-sm border border-outline-variant p-2">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-on-surface-variant">{FIELD_LABELS[field]}</p>
-                  <p className="text-sm text-on-surface truncate">{formatValue(value)}</p>
+                  {field === "suggestedDescription" ? (
+                    <MarkdownView text={String(value ?? "")} />
+                  ) : (
+                    <p className="text-sm text-on-surface truncate">{formatValue(value)}</p>
+                  )}
                 </div>
                 <Button
                   type="button"

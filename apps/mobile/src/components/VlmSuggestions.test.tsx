@@ -31,10 +31,12 @@ describe("VlmSuggestions", () => {
     const onApply = vi.fn();
     render(<VlmSuggestions imageUri="content://photo" onApply={onApply} />);
     fireEvent.click(screen.getByRole("button", { name: /analyze photo/i }));
-    await screen.findByText(/black umbrella/i);
+    await screen.findAllByText(/black umbrella/i);
     expect(onApply).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /apply title/i }));
     expect(onApply).toHaveBeenCalledWith({ suggestedTitle: "Black umbrella" });
+    fireEvent.click(screen.getByRole("button", { name: /apply description/i }));
+    expect(onApply).toHaveBeenCalledWith({ suggestedDescription: "A black umbrella." });
   });
 
   it("surfaces unstructured output as a manual-entry fallback", async () => {
