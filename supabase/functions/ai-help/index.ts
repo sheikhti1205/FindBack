@@ -37,7 +37,7 @@ export default {
   fetch: withSupabase({ auth: "user" }, async (req, _ctx) => {
     let question = "";
     let history: HistoryItem[] = [];
-    let context: SafeContext = {};
+    const context: SafeContext = {};
     try {
       const body = await req.json();
       question = typeof body?.question === "string" ? body.question.trim() : "";
@@ -121,7 +121,7 @@ export function fallbackAnswer(questionRaw: string): string {
 
   if (has("lost", "report", "reporting") && (has("item", "how", "found") || q.includes("report"))) {
     return (
-      "To report a lost item: tap the + Report button on Home, choose Lost, then fill in the " +
+      "To report a lost item: tap the Report bottom tab, choose Lost, then fill in the " +
       "title, description, category dropdown, the date it happened, and an approximate " +
       "location from the map. You can add a photo and an optional YouTube link. Tap Publish " +
       "and it will appear on the feed instantly."
@@ -129,7 +129,7 @@ export function fallbackAnswer(questionRaw: string): string {
   }
   if (has("found")) {
     return (
-      "Found something? Tap + Report, choose Found, and include as many details as possible: " +
+      "Found something? Tap the Report bottom tab, choose Found, and include as many details as possible: " +
       "category, date, map location and a clear photo. Anyone searching that category can then " +
       "contact you through a comment to arrange a match. Remember to mark it Recovered once " +
       "the owner collects it."
@@ -144,8 +144,9 @@ export function fallbackAnswer(questionRaw: string): string {
   }
   if (has("search", "filter", "find")) {
     return (
-      "Use the Search tab or the search bar on Home. You can switch between Lost and Found, " +
-      "filter by category or status, and sort newest/oldest. Results paginate automatically."
+      "Use the Search bottom tab or the search bar on Home (tabs: Home, Search, Report, Profile). " +
+      "You can switch between Lost and Found, filter by category or status, and sort newest/oldest. " +
+      "Recovered items stop appearing in the open feed. Results paginate automatically."
     );
   }
   if (has("comment")) {

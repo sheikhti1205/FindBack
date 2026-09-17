@@ -52,6 +52,8 @@ jobs:
       - run: npm ci
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
+      - name: Build mobile web dist (Capacitor webDir)
+        run: npm run build -w @findback/mobile
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Android JVM tests + debug APK
