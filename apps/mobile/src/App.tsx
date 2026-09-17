@@ -1,4 +1,5 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router";
+import { MotionConfig } from "framer-motion";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
 import { GuestOnly, RequireAuth } from "./components/Guards";
@@ -18,6 +19,7 @@ import { OfflineAi } from "./screens/OfflineAi";
 
 export function App() {
   return (
+    <MotionConfig reducedMotion="user">
     <ThemeProvider>
       <AuthProvider>
         <HashRouter>
@@ -61,5 +63,6 @@ export function App() {
         </HashRouter>
       </AuthProvider>
     </ThemeProvider>
+    </MotionConfig>
   );
 }

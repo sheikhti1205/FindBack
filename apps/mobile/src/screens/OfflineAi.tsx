@@ -145,7 +145,7 @@ function ModelRow({
                   ? "bg-blue-100 text-blue-800"
                   : info.state === "DOWNLOAD_FAILED" || info.state === "CORRUPT" || info.state === "RUNTIME_ERROR" || info.state === "INSUFFICIENT_STORAGE" || info.state === "MANIFEST_MISMATCH" || info.state === "PAUSED_ERROR" || info.state === "REPAIR_NEEDED"
                   ? "bg-red-100 text-red-800"
-                  : "bg-surface-variant text-on-surface-variant"
+                  : "bg-surface-container text-on-surface-variant"
               }`}
             >
               {info.state === "DOWNLOADING" && showProgress && downloadProgress
@@ -160,8 +160,8 @@ function ModelRow({
           </div>
 
           {showProgress && downloadProgress && (
-            <div className="mt-2 h-1.5 bg-surface-variant rounded-full overflow-hidden" role="progressbar" aria-valuenow={Math.round(downloadProgress.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
-              <div className="h-full bg-primary transition-all duration-300" style={{ width: `${downloadProgress.progress * 100}%` }} />
+            <div className="mt-2 h-1.5 bg-surface-container rounded-full overflow-hidden" role="progressbar" aria-valuenow={Math.round(downloadProgress.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+              <div className="h-full bg-on-surface transition-all duration-300" style={{ width: `${downloadProgress.progress * 100}%` }} />
             </div>
           )}
 
@@ -187,14 +187,14 @@ function ModelRow({
             <>
               <button
                 onClick={() => onPauseDownload(modelId)}
-                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-variant transition-colors"
+                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                 aria-label={`Pause ${spec.label}`}
               >
                 Pause
               </button>
               <button
                 onClick={() => onCancelDownload(modelId)}
-                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-variant transition-colors"
+                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                 aria-label={`Cancel ${spec.label}`}
               >
                 Cancel
@@ -204,14 +204,14 @@ function ModelRow({
             <>
               <button
                 onClick={() => onResumeDownload(modelId)}
-                className="px-3 py-1.5 text-sm bg-primary text-on-primary rounded-lg hover:opacity-90 transition-opacity"
+                className="px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
                 aria-label={`Resume ${spec.label}`}
               >
                 Resume
               </button>
               <button
                 onClick={() => onCancelDownload(modelId)}
-                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-variant transition-colors"
+                className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                 aria-label={`Cancel ${spec.label}`}
               >
                 Cancel
@@ -220,7 +220,7 @@ function ModelRow({
           ) : needsRepair ? (
             <button
               onClick={() => onRepair(modelId)}
-              className="px-3 py-1.5 text-sm bg-primary text-on-primary rounded-lg hover:opacity-90 transition-opacity"
+              className="px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
               aria-label={`Repair ${spec.label}`}
             >
               Repair
@@ -228,7 +228,7 @@ function ModelRow({
           ) : !isInstalled ? (
             <button
               onClick={() => onDownload(modelId)}
-              className="px-3 py-1.5 text-sm bg-primary text-on-primary rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
+              className="px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
               disabled={!hasSpace}
               aria-label={`Download ${spec.label}`}
             >
@@ -253,7 +253,7 @@ function ModelRow({
                     };
                     input.click();
                   }}
-                  className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-variant transition-colors flex items-center gap-1"
+                  className="px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
                 >
                   <Cpu size={14} aria-hidden />
                   Run GPU self-test
@@ -407,8 +407,8 @@ export function OfflineAi() {
               aria-checked={mode === m}
               className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 mode === m
-                  ? "bg-primary text-on-primary"
-                  : "bg-surface-variant text-on-surface-variant hover:bg-surface-variant/80"
+                  ? "bg-on-surface text-surface"
+                  : "bg-surface-container text-on-surface-variant hover:bg-surface-container/80"
               }`}
             >
               {m}
@@ -426,7 +426,7 @@ export function OfflineAi() {
           <h2 id="models-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Models</h2>
           <button
             onClick={handleInstallBoth}
-            className="px-3 py-1.5 text-sm bg-primary text-on-primary rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
+            className="px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
             disabled={modelStates.every((m) => ["READY_GPU", "GPU_UNAVAILABLE", "INSTALLED_UNVERIFIED"].includes(m.state))}
           >
             <Download size={14} aria-hidden />
@@ -465,7 +465,7 @@ export function OfflineAi() {
             <p className="text-sm text-on-surface-variant mb-4">Testing {MODEL_SPECS[gpuSelfTestModel].label} on GPU…</p>
             {gpuSelfTestState === "running" && (
               <div className="flex items-center justify-center gap-3">
-                <Loader2 size={24} className="animate-spin text-primary" aria-hidden />
+                <Loader2 size={24} className="animate-spin text-on-surface" aria-hidden />
                 <span>Running GPU self-test…</span>
               </div>
             )}
@@ -497,7 +497,7 @@ export function OfflineAi() {
                 setGpuSelfTestState("idle");
                 setGpuSelfTestResult(null);
               }}
-              className="mt-4 w-full px-4 py-2 bg-primary text-on-primary rounded-lg"
+              className="mt-4 min-h-[48px] w-full px-4 py-2 bg-on-surface text-surface rounded-lg"
             >
               Close
             </button>
@@ -521,13 +521,14 @@ export function OfflineAi() {
             <div className="flex gap-3 justify-end">
               <button
                 onClick={() => setConfirmDownload(null)}
-                className="px-4 py-2 border border-outline-variant rounded-lg hover:bg-surface-variant"
+                className="min-h-[48px] px-4 py-2 border border-outline-variant rounded-lg hover:bg-surface-container"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmDownload}
-                className="px-4 py-2 bg-primary text-on-primary rounded-lg hover:opacity-90"
+                autoFocus
+                className="min-h-[48px] px-4 py-2 bg-on-surface text-surface rounded-lg hover:opacity-90"
               >
                 Confirm download
               </button>

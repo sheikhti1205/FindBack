@@ -28,7 +28,7 @@ export function BackButton({ fallbackTo, label }: BackButtonProps) {
       type="button"
       onClick={goBack}
       aria-label={label}
-      className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-m3-xs text-on-surface hover:bg-surface-container"
+      className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs text-on-surface hover:bg-surface-container"
     >
       <ArrowLeft size={20} aria-hidden />
     </button>
