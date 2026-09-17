@@ -39,7 +39,6 @@ export function SearchScreen() {
     if (tapCount === 0) return;
     void refresh();
     scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tapCount]);
 
   return (

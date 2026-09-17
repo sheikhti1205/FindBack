@@ -69,7 +69,6 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     if (cached && cached.scrollTop > 0) {
       scrollRef.current.scrollTop = cached.scrollTop;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKey, items.length]);
 
   // Save scroll position on unmount so Detail→Back restores it.
@@ -84,7 +83,6 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
         scrollTop: el?.scrollTop ?? 0,
       });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKey, items, total]);
 
   const load = useCallback(
@@ -118,7 +116,6 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     // When a session cache exists, restore it without a top flash/refetch.
     if (cacheKey && loadFeedCache(cacheKey)) return;
     void load(null, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKey, load]);
 
   const refresh = useCallback(async () => {
