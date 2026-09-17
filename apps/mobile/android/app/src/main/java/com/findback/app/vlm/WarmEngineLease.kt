@@ -62,6 +62,36 @@ class WarmEngineLease(
     }
 
     /**
+     * Milliseconds until the lease expires. Returns 0 when no engine is
+     * resident or the TTL already elapsed. The plugin uses this to schedule
+     * a Handler postDelayed reclaim instead of polling with a timer.
+     */
+    @Synchronized
+    fun timeUntilExpiryMs(): Long {
+        if (resident == null) return 0L
+        return (leaseExpiresAtMs - clock.nowMs()).coerceAtLeast(0L)
+    }
+
+    /**
+     * Absolute deadline (same clock as [Clock.nowMs]) or 0 when no lease.
+     */
+    @Synchronized
+    fun deadlineMs(): Long = if (resident == null) 0L else leaseExpiresAtMs
+
+    /**
+     * Returns the resident model when the TTL expired and clears the lease
+     * in one step, or null when resident-and-fresh or empty. The caller
+     * performs the actual engine release for the returned model.
+     */
+    @Synchronized
+    fun takeExpiredResident(): VlmModelId? {
+        if (!isExpired()) return null
+        val expired = resident
+        resident = null
+        return expired
+    }
+
+    /**
      * Releases the engine if the TTL expired. [releaseEngine] performs the
      * actual release and returns true on success.
      */

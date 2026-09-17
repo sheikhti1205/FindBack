@@ -27,7 +27,11 @@ val MODEL_MANIFESTS: List<ModelManifest> = listOf(
             ModelFileSpec(
                 path = "smolvlm-256m-instruct_q8_ekv2048_single_image.tflite",
                 expectedBytes = 288229208L,
-                sha256 = "48991855eb6365aae8cd1d8fe3013e6059dfea44b4ae26dd76dfa2a942dba3c4"
+                sha256 = "48991855eb6365aae8cd1d8fe3013e6059dfea44b4ae26dd76dfa2a942dba3c4",
+                // Upstream filename carries the typo `smalvlm` (verified:
+                // the corrected-spelling URL 404s with "Entry not found").
+                // See assets/chunks/PROVENANCE.md.
+                remotePath = "smalvlm-256m-instruct_q8_ekv2048_single_image.tflite"
             ),
             ModelFileSpec(
                 path = "tokenizer.model",

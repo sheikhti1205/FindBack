@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.CancellationException
 
 /**
  * Foreground-capable WorkManager fallback for API 24-33 running the same
@@ -39,10 +40,15 @@ class ModelDownloadWorker(
         store.saveTransferRecord(manifest, VlmState.QUEUED)
 
         return try {
+            val throttler = ProgressThrottler()
             val finalState = engine.download(
                 manifest = manifest,
                 onProgress = { downloaded, total ->
-                    TransferEvents.emit(TransferEvent(modelId, VlmState.DOWNLOADING, downloaded, total))
+                    // Throttled: chunk callbacks are far more frequent than
+                    // useful foreground updates.
+                    if (throttler.shouldEmit(downloaded, System.currentTimeMillis())) {
+                        TransferEvents.emit(TransferEvent(modelId, VlmState.DOWNLOADING, downloaded, total))
+                    }
                 },
                 onState = { transferState ->
                     TransferEvents.emit(TransferEvent(modelId, transferState))
@@ -51,6 +57,7 @@ class ModelDownloadWorker(
             )
             TransferEvents.emit(TransferEvent(modelId, finalState))
             store.saveTransferRecord(manifest, finalState)
+            showTerminalNotification(modelId, finalState, totalBytes)
             if (finalState == VlmState.INSTALLED_UNVERIFIED ||
                 finalState == VlmState.PAUSED ||
                 finalState == VlmState.PAUSED_ERROR ||
@@ -61,6 +68,13 @@ class ModelDownloadWorker(
             } else {
                 Result.retry()
             }
+        } catch (e: CancellationException) {
+            // System stop / explicit cancel: not a failure. Verified chunks
+            // and the journal are preserved; report PAUSED so resume works.
+            TransferEvents.emit(TransferEvent(modelId, VlmState.PAUSED, 0L, totalBytes))
+            store.saveTransferRecord(manifest, VlmState.PAUSED)
+            showTerminalNotification(modelId, VlmState.PAUSED, totalBytes)
+            Result.success()
         } catch (e: Exception) {
             TransferEvents.emit(TransferEvent(modelId, VlmState.PAUSED_ERROR, error = e.message))
             store.saveTransferRecord(manifest, VlmState.PAUSED_ERROR, e.message)
@@ -98,6 +112,33 @@ class ModelDownloadWorker(
                 NotificationChannel(CHANNEL_ID, "Model downloads", NotificationManager.IMPORTANCE_LOW)
             )
         }
+    }
+
+    /**
+     * Terminal notification: dismissible (`ongoing = false`), never left as
+     * an ongoing foreground-style entry.
+     */
+    private fun showTerminalNotification(modelId: VlmModelId, state: VlmState, totalBytes: Long) {
+        if (Build.VERSION.SDK_INT < 26) return
+        ensureChannel()
+        val text = when (state) {
+            VlmState.INSTALLED_UNVERIFIED -> "Download complete — integrity verified"
+            VlmState.PAUSED, VlmState.PAUSED_ERROR -> "Download paused"
+            VlmState.INSUFFICIENT_STORAGE -> "Download paused — storage full"
+            VlmState.MANIFEST_MISMATCH -> "Download stopped — source mismatch"
+            else -> "Download ${state.wire.lowercase().replace('_', ' ')}"
+        }
+        val progress = if (state == VlmState.INSTALLED_UNVERIFIED) 100 else 0
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setContentTitle("Downloading ${modelId.wire}")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setProgress(100, progress, totalBytes <= 0)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .build()
+        applicationContext.getSystemService(NotificationManager::class.java)
+            ?.notify(NOTIFICATION_ID, notification)
     }
 
     companion object {

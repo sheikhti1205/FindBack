@@ -39,6 +39,39 @@ class WarmEngineLeaseTest {
         assertEquals(VlmModelId.SMOLVLM_256M, lease.residentModel())
     }
 
+    @Test fun timeUntilExpiryCountsDownForHandlerSchedule() {
+        val clock = FakeClock(0L)
+        val lease = WarmEngineLease(clock)
+        assertEquals(0L, lease.timeUntilExpiryMs())
+        lease.acquire(VlmModelId.SMOLVLM2_500M)
+        assertEquals(60_000L, lease.timeUntilExpiryMs())
+        clock.advance(10_000L)
+        assertEquals(50_000L, lease.timeUntilExpiryMs())
+        lease.refresh()
+        assertEquals(60_000L, lease.timeUntilExpiryMs())
+    }
+
+    @Test fun takeExpiredResidentClearsInOneStep() {
+        val clock = FakeClock(0L)
+        val lease = WarmEngineLease(clock)
+        assertNull(lease.takeExpiredResident())
+        lease.acquire(VlmModelId.SMOLVLM2_500M)
+        assertNull(lease.takeExpiredResident())
+        assertTrue(lease.isResident())
+        clock.advance(61_000L)
+        assertEquals(VlmModelId.SMOLVLM2_500M, lease.takeExpiredResident())
+        assertFalse(lease.isResident())
+        assertEquals(0L, lease.timeUntilExpiryMs())
+        assertEquals(0L, lease.deadlineMs())
+    }
+
+    @Test fun deadlineMatchesAcquirePlusTtl() {
+        val clock = FakeClock(5_000L)
+        val lease = WarmEngineLease(clock)
+        lease.acquire(VlmModelId.SMOLVLM_256M)
+        assertEquals(65_000L, lease.deadlineMs())
+    }
+
     @Test fun memoryTrimReleasesImmediately() {
         val clock = FakeClock(0L)
         val lease = WarmEngineLease(clock)

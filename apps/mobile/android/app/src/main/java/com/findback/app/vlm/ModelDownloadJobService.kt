@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -57,6 +58,7 @@ class ModelDownloadJobService : JobService() {
         store.saveTransferRecord(manifest, VlmState.QUEUED)
 
         activeJob = scope.launch {
+            val throttler = ProgressThrottler()
             try {
                 TransferEvents.emit(TransferEvent(modelId, VlmState.DOWNLOADING, 0L, totalBytes))
                 store.saveTransferRecord(manifest, VlmState.DOWNLOADING)
@@ -64,7 +66,10 @@ class ModelDownloadJobService : JobService() {
                     manifest = manifest,
                     onProgress = { downloaded, total ->
                         TransferEvents.emit(TransferEvent(modelId, VlmState.DOWNLOADING, downloaded, total))
-                        updateNotification(modelId, downloaded, total)
+                        // Throttled: chunk callbacks far outnumber useful UI updates.
+                        if (throttler.shouldEmit(downloaded, System.currentTimeMillis())) {
+                            updateNotification(modelId, downloaded, total)
+                        }
                     },
                     onState = { transferState ->
                         TransferEvents.emit(TransferEvent(modelId, transferState))
@@ -74,6 +79,13 @@ class ModelDownloadJobService : JobService() {
                 TransferEvents.emit(TransferEvent(modelId, finalState))
                 store.saveTransferRecord(manifest, finalState)
                 showTerminalNotification(modelId, finalState)
+            } catch (e: CancellationException) {
+                // System stop / explicit cancel: not a failure. Verified
+                // chunks and the journal are preserved; report PAUSED.
+                TransferEvents.emit(TransferEvent(modelId, VlmState.PAUSED, 0L, totalBytes))
+                store.saveTransferRecord(manifest, VlmState.PAUSED)
+                showTerminalNotification(modelId, VlmState.PAUSED)
+                throw e
             } catch (e: Exception) {
                 val state = VlmState.PAUSED_ERROR
                 TransferEvents.emit(TransferEvent(modelId, state, error = e.message))
@@ -123,20 +135,30 @@ class ModelDownloadJobService : JobService() {
         }
         val manifest = MODEL_MANIFESTS.singleOrNull { it.id == modelId.wire }
         val total = manifest?.files?.sumOf { it.expectedBytes } ?: 0L
-        nm.notify(NOTIFICATION_TAG, TRANSFER_NOTIFICATION_ID, buildNotification(modelId, text, total, total))
+        // Terminal entries are dismissible, never ongoing.
+        nm.notify(NOTIFICATION_TAG, TRANSFER_NOTIFICATION_ID, buildNotification(modelId, text, total, total, ongoing = false))
     }
 
-    private fun buildNotification(modelId: VlmModelId, text: String, downloaded: Long, total: Long): Notification {
+    private fun buildNotification(
+        modelId: VlmModelId,
+        text: String,
+        downloaded: Long,
+        total: Long,
+        ongoing: Boolean = true
+    ): Notification {
         ensureChannel()
         val title = "Downloading ${modelId.wire}"
         val progress = if (total > 0) (downloaded * 100 / total).toInt().coerceIn(0, 100) else 0
-        return Notification.Builder(this, CHANNEL_ID)
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setProgress(100, progress, total <= 0)
-            .setOngoing(true)
-            .build()
+            .setOngoing(ongoing)
+        if (!ongoing && Build.VERSION.SDK_INT >= 26) {
+            builder.setAutoCancel(true)
+        }
+        return builder.build()
     }
 
     private fun ensureChannel() {

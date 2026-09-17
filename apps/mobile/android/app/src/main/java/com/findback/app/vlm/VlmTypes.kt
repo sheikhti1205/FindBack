@@ -79,11 +79,18 @@ enum class VlmErrorCode(val wire: String) {
 
 /**
  * Specification for a model file.
+ *
+ * [path] is the local on-device storage name. [remotePath] is the exact
+ * filename on the pinned Hugging Face revision; it defaults to [path] but
+ * MUST differ when the upstream filename does not match (e.g. the 256M
+ * TFLite, whose upstream file contains the typo `smalvlm`). Download URLs
+ * are built from [remotePath] so a spelling mismatch can never 404 on device.
  */
 data class ModelFileSpec(
     val path: String,
     val expectedBytes: Long,
-    val sha256: String
+    val sha256: String,
+    val remotePath: String = path
 )
 
 /**

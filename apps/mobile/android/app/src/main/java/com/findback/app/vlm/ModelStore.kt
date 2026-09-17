@@ -106,7 +106,10 @@ class ModelStore(val root: File) {
     /**
      * Persists a transfer-state record (QUEUED/DOWNLOADING/VERIFYING/terminal).
      * Keeps one model unaffected by another: only this manifest's model ID is
-     * touched. Installed byte counts prefer final files, then partials.
+     * touched. Installed byte counts prefer final files, then verified journal
+     * bytes — never the preallocated `.part` length. The installed SHA is
+     * carried only when a complete final file exists; otherwise it stays empty
+     * until whole-file verification passes.
      */
     fun saveTransferRecord(
         manifest: ModelManifest,
@@ -117,19 +120,24 @@ class ModelStore(val root: File) {
         val previous = loadRecord(modelId)
         val files = manifest.files.map { spec ->
             val finalFile = finalFile(manifest, spec)
-            val part = partFile(manifest, spec)
-            val installedBytes = when {
-                finalFile.exists() -> finalFile.length()
-                part.exists() -> part.length()
-                else -> 0L
+            if (finalFile.exists() && finalFile.length() == spec.expectedBytes) {
+                InstalledFileRecord(
+                    path = spec.path,
+                    expectedBytes = spec.expectedBytes,
+                    installedBytes = finalFile.length(),
+                    expectedSha256 = spec.sha256,
+                    installedSha256 = previous?.files?.singleOrNull { it.path == spec.path }?.installedSha256 ?: ""
+                )
+            } else {
+                val journal = TransferJournalStore.load(journalFile(manifest, spec))
+                InstalledFileRecord(
+                    path = spec.path,
+                    expectedBytes = spec.expectedBytes,
+                    installedBytes = TransferJournalStore.verifiedBytes(spec.expectedBytes, journal),
+                    expectedSha256 = spec.sha256,
+                    installedSha256 = ""
+                )
             }
-            InstalledFileRecord(
-                path = spec.path,
-                expectedBytes = spec.expectedBytes,
-                installedBytes = installedBytes,
-                expectedSha256 = spec.sha256,
-                installedSha256 = previous?.files?.singleOrNull { it.path == spec.path }?.installedSha256 ?: spec.sha256
-            )
         }
         saveRecord(
             ModelStateRecord(
@@ -150,6 +158,77 @@ class ModelStore(val root: File) {
                 lastError = error?.let { ModelError(VlmErrorCode.DOWNLOAD_FAILED, it) } ?: previous?.lastError
             )
         )
+    }
+
+    /**
+     * Promotes a verified `.part` file to its final name. The part must
+     * already have passed whole-file verification (size + SHA) — verified
+     * again here as a final gate. Uses an atomic move with REPLACE_EXISTING;
+     * the fallback quarantines an invalid final aside first and never deletes
+     * a good final before the verified replacement is in place.
+     *
+     * @return true when the final file is the verified content.
+     */
+    fun promotePartToFinal(manifest: ModelManifest, spec: ModelFileSpec): Boolean {
+        val part = partFile(manifest, spec)
+        val final = finalFile(manifest, spec)
+        if (!part.exists() || part.length() != spec.expectedBytes) return false
+        if (!Sha256.matchesFile(part, spec.sha256)) return false
+        final.parentFile?.mkdirs()
+        return try {
+            java.nio.file.Files.move(
+                part.toPath(),
+                final.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE
+            )
+            true
+        } catch (e: java.nio.file.AtomicMoveNotSupportedException) {
+            moveWithQuarantineFallback(part, final, spec)
+        } catch (e: java.io.IOException) {
+            moveWithQuarantineFallback(part, final, spec)
+        }
+    }
+
+    private fun moveWithQuarantineFallback(part: File, final: File, spec: ModelFileSpec): Boolean {
+        if (final.exists() && !isValidFinal(final, spec)) {
+            quarantineInvalidFinal(final)
+        }
+        return try {
+            java.nio.file.Files.move(
+                part.toPath(),
+                final.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+            isValidFinal(final, spec)
+        } catch (e: java.io.IOException) {
+            false
+        }
+    }
+
+    private fun isValidFinal(final: File, spec: ModelFileSpec): Boolean {
+        return final.exists() &&
+            final.length() == spec.expectedBytes &&
+            Sha256.matchesFile(final, spec.sha256)
+    }
+
+    /**
+     * Moves an invalid final file aside for diagnosis instead of deleting it
+     * outright. A good final is never quarantined.
+     */
+    fun quarantineInvalidFinal(final: File): File? {
+        if (!final.exists()) return null
+        val backup = File(final.parentFile, "${final.name}.corrupt-${System.currentTimeMillis()}.bak")
+        return try {
+            java.nio.file.Files.move(
+                final.toPath(),
+                backup.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+            backup
+        } catch (e: java.io.IOException) {
+            null
+        }
     }
 
     /**
