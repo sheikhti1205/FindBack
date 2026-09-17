@@ -8,6 +8,9 @@
  */
 export const CAPABILITIES_VERSION = "1.0.0";
 
+/** Mirrors apps/mobile/package.json for Help context (no PII). */
+export const APP_VERSION = "0.1.0";
+
 export interface AppCapabilities {
   version: string;
   tabs: string[];
