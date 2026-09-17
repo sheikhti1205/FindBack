@@ -10,7 +10,10 @@ import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { MapEmbed } from "../components/MapEmbed";
 import { EmptyState, Spinner } from "../components/PostCard";
+import { MarkdownView } from "../components/MarkdownView";
 import { PossibleMatches } from "../components/PossibleMatches";
+import { announce } from "../components/LiveRegion";
+import { friendlyError } from "../utils/friendlyErrors";
 import { formatEventDate, formatTimestamp } from "../utils/dates";
 import {
   addComment,
@@ -53,7 +56,7 @@ export function PostDetail() {
       setMyReaction(social.myReaction);
       setMyRating(social.myRating);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load post");
+      setError(friendlyError(err).message);
     } finally {
       setLoading(false);
     }
@@ -115,7 +118,7 @@ export function PostDetail() {
       );
     } catch (e) {
       setMyReaction(myReaction);
-      setError(e instanceof Error ? e.message : "Action failed");
+      setError(friendlyError(e).message);
     }
   }
 
@@ -128,7 +131,7 @@ export function PostDetail() {
       );
     } catch (e) {
       setMyRating(myRating);
-      setError(e instanceof Error ? e.message : "Rating failed");
+      setError(friendlyError(e).message);
     }
   }
 
@@ -142,7 +145,7 @@ export function PostDetail() {
       setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
       setCommentText("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not comment");
+      setError(friendlyError(err).message);
     } finally {
       setBusy(false);
     }
@@ -153,7 +156,7 @@ export function PostDetail() {
       await deleteComment(current.id, commentId);
       setComments((prev) => prev.filter((c) => c.id !== commentId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete comment");
+      setError(friendlyError(err).message);
     }
   }
 
@@ -161,8 +164,9 @@ export function PostDetail() {
     try {
       const updated = await updatePostStatus(current.id, status);
       setPost(updated);
+      announce(`Status updated to ${statusLabel(updated.status)}.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update status");
+      setError(friendlyError(err).message);
     }
   }
 
@@ -194,7 +198,7 @@ export function PostDetail() {
           </p>
         </div>
 
-        <p className="whitespace-pre-line text-[15px] leading-relaxed">{post.description}</p>
+        <MarkdownView text={post.description} />
 
         {post.status === "OPEN" && <PossibleMatches post={post} />}
 
@@ -224,49 +228,50 @@ export function PostDetail() {
           <Button
             variant={myReaction === "LIKE" ? "primary" : "outline"}
             onClick={() => toggleReaction("LIKE")}
+            aria-label={`Helpful, ${post.likeCount} ${post.likeCount === 1 ? "vote" : "votes"}`}
+            aria-pressed={myReaction === "LIKE"}
           >
             <ThumbsUp size={16} aria-hidden /> {post.likeCount}
           </Button>
           <Button
             variant={myReaction === "DISLIKE" ? "primary" : "outline"}
             onClick={() => toggleReaction("DISLIKE")}
+            aria-label={`Not helpful, ${post.dislikeCount} ${post.dislikeCount === 1 ? "vote" : "votes"}`}
+            aria-pressed={myReaction === "DISLIKE"}
           >
             <ThumbsDown size={16} aria-hidden /> {post.dislikeCount}
           </Button>
         </div>
 
-        {/* Rating */}
+        {/* Rating: community average and the user's own rating are separate. */}
         <section aria-label="Rating">
-          <div className="flex items-center gap-2">
-            <div className="flex" role="radiogroup" aria-label="Rate this post (1 to 5 stars)">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  role="radio"
-                  aria-checked={myRating === star}
-                  aria-label={`${star} star${star > 1 ? "s" : ""}`}
-                  onClick={() => onRate(star)}
-                  className="p-1 text-on-surface-variant hover:opacity-80"
-                >
-                  <Star
-                    size={26}
-                    aria-hidden
-                    className={
-                      (myRating ?? 0) >= star || (myRating === null && post.ratingAvg != null && post.ratingAvg >= star)
-                        ? "fill-on-surface text-on-surface"
-                        : ""
-                    }
-                  />
-                </button>
-              ))}
-            </div>
-          </div>
-          <p className="mt-1 text-xs text-on-surface-variant">
+          <p className="text-sm text-on-surface" aria-live="polite">
             {post.ratingCount > 0
-              ? `${post.ratingAvg?.toFixed(1) ?? "—"} / 5 from ${post.ratingCount} rating${post.ratingCount === 1 ? "" : "s"}`
-              : "No ratings yet — be the first to rate."}
+              ? `Community rating: ${post.ratingAvg?.toFixed(1) ?? "—"} / 5 from ${post.ratingCount} rating${post.ratingCount === 1 ? "" : "s"}`
+              : "No community ratings yet — be the first to rate."}
           </p>
+          <p className="mt-2 text-sm font-medium" id="your-rating-label">
+            Your rating{myRating != null ? `: ${myRating} out of 5` : ""}
+          </p>
+          <div className="flex" role="radiogroup" aria-labelledby="your-rating-label">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <button
+                key={star}
+                type="button"
+                role="radio"
+                aria-checked={myRating === star}
+                aria-label={`${star} star${star > 1 ? "s" : ""}`}
+                onClick={() => onRate(star)}
+                className="flex min-h-[48px] min-w-[48px] items-center justify-center text-on-surface-variant hover:opacity-80"
+              >
+                <Star
+                  size={26}
+                  aria-hidden
+                  className={(myRating ?? 0) >= star ? "fill-on-surface text-on-surface" : ""}
+                />
+              </button>
+            ))}
+          </div>
         </section>
 
         {/* Owner status control */}
@@ -316,12 +321,15 @@ export function PostDetail() {
                     {formatTimestamp(c.createdAt)}
                   </span>
                 </div>
-                <p className="mt-1 text-sm leading-relaxed">{c.body}</p>
+                <div className="mt-1 text-sm leading-relaxed">
+                  <MarkdownView text={c.body} />
+                </div>
                 {mine && (
                   <button
                     type="button"
                     onClick={() => onDeleteComment(c.id)}
-                    className="mt-2 inline-flex items-center gap-1 text-xs text-on-surface-variant hover:text-error"
+                    aria-label={`Delete comment by ${c.author.username}`}
+                    className="mt-2 inline-flex min-h-[48px] items-center gap-1 px-2 text-xs text-on-surface-variant hover:text-error"
                   >
                     <Trash2 size={13} aria-hidden /> Delete
                   </button>

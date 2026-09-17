@@ -19,7 +19,7 @@ const LOCATION_DECAY_RADIUS_KM = 20;
 export interface MatchCandidate {
   id: string;
   title: string;
-  description?: string;
+  description: string | null;
   category: Category;
   eventDate: string | null;
   locationLabel: string | null;
