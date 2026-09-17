@@ -22,7 +22,7 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 | Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
 | Storage | Supabase Storage (public `findback-images` bucket) — the app normalizes images on-device and uploads directly under its own `<uid>/` folder (owner-scoped RLS); local uploads dir for tests/local |
 | AI | Supabase Edge Function `ai-help` (authenticated) → OpenAI-compatible HTTP provider when secrets are set, deterministic fallback otherwise; **on-device: local sentence embeddings (cosine top-3, no vector DB) + LiteRT-LM/SmolVLM2 VLM on GPU delegate (no CPU fallback)** |
-| ML | MobileNet V1 (TensorFlow.js) bundled locally; on-device inference with no external network requests; **text embeddings (Universal Sentence Encoder, TF.js/WASM) + VLM (LiteRT GPU)** |
+| ML | No bundled image classifier (legacy MobileNet was retired); **on-device text embeddings (Universal Sentence Encoder, cosine top-3) + SmolVLM2 VLM via LiteRT GPU delegate, no CPU fallback** |
 | CI | GitHub Actions |
 
 ## Repo layout
