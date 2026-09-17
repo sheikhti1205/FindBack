@@ -7,17 +7,25 @@
  * logged. Input is length-validated and output is bounded.
  */
 import { withSupabase } from "npm:@supabase/server";
+import { buildSystemPrompt, CAPABILITIES_VERSION } from "./capabilities.ts";
 
 const MAX_QUESTION = 500;
 const MAX_ANSWER = 1200;
+const MAX_HISTORY = 6;
+const MAX_HISTORY_ITEM = 500;
 const LLM_TIMEOUT_MS = 15_000;
 
-const SYSTEM_PROMPT = [
-  "You are the FindBack Help Assistant, a small support bot for a lost-and-found app.",
-  "Answer only short, practical questions about using FindBack: reporting a lost or found item,",
-  "marking an item recovered/matched, adding photos, locations, search, comments, ratings and safety.",
-  "Keep replies under 120 words. If a question is off-topic, politely say you can only help with FindBack.",
-].join(" ");
+interface HistoryItem {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/** Safe optional client context: route/app/network only — never identity, contacts, GPS, or content. */
+interface SafeContext {
+  route?: string;
+  appVersion?: string;
+  online?: boolean;
+}
 
 interface AiAnswer {
   text: string;
@@ -28,32 +36,65 @@ interface AiAnswer {
 export default {
   fetch: withSupabase({ auth: "user" }, async (req, _ctx) => {
     let question = "";
+    let history: HistoryItem[] = [];
+    let context: SafeContext = {};
     try {
       const body = await req.json();
       question = typeof body?.question === "string" ? body.question.trim() : "";
+      if (Array.isArray(body?.history)) {
+        history = body.history
+          .filter(
+            (h: unknown): h is HistoryItem =>
+              typeof h === "object" &&
+              h !== null &&
+              ((h as HistoryItem).role === "user" || (h as HistoryItem).role === "assistant") &&
+              typeof (h as HistoryItem).text === "string",
+          )
+          .slice(-MAX_HISTORY)
+          .map((h: HistoryItem) => ({ role: h.role, text: h.text.slice(0, MAX_HISTORY_ITEM) }));
+      }
+      if (body?.context && typeof body.context === "object") {
+        const c = body.context as Record<string, unknown>;
+        if (typeof c.route === "string") context.route = c.route.slice(0, 64);
+        if (typeof c.appVersion === "string") context.appVersion = c.appVersion.slice(0, 32);
+        if (typeof c.online === "boolean") context.online = c.online;
+      }
     } catch {
       // fall through to the empty-question error
     }
     if (!question) return Response.json({ error: "question is required" }, { status: 400 });
     if (question.length > MAX_QUESTION) return Response.json({ error: "question too long" }, { status: 400 });
 
-    return Response.json(await answerQuestion(question));
+    return Response.json(await answerQuestion(question, history, context));
   }),
 };
 
-async function answerQuestion(question: string): Promise<AiAnswer> {
+async function answerQuestion(
+  question: string,
+  history: HistoryItem[],
+  context: SafeContext,
+): Promise<AiAnswer> {
   const baseUrl = Deno.env.get("LLM_BASE_URL");
   const apiKey = Deno.env.get("LLM_API_KEY");
   const model = Deno.env.get("LLM_MODEL") ?? "gpt-4o-mini";
   if (baseUrl && apiKey) {
     try {
+      const contextLine = [
+        context.route ? `User is on screen: ${context.route}.` : "",
+        context.appVersion ? `App version: ${context.appVersion}.` : "",
+        typeof context.online === "boolean" ? (context.online ? "Device online." : "Device offline.") : "",
+        `Capability source version: ${CAPABILITIES_VERSION}.`,
+      ]
+        .filter(Boolean)
+        .join(" ");
       const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           model,
           messages: [
-            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: `${buildSystemPrompt()} ${contextLine}` },
+            ...history.map((h) => ({ role: h.role, content: h.text })),
             { role: "user", content: question },
           ],
           max_tokens: 300,
