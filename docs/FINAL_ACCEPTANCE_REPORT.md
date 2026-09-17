@@ -133,7 +133,9 @@ device** (implementation and desktop/browser equivalents are covered above).
 47. Feed/search/filter/pagination — verified live/server + browser.
 48–51. Photo picker / direct Storage upload / MobileNet suggestion / offline ML —
     implementation + unit tests + live Storage API only; **offline device proof
-    pending**.
+    pending**. (Superseded: the legacy MobileNet suggestion was retired and
+    replaced by on-device VLM suggestions; this line records the state at the
+    time of the audit.)
 52–53. Location permission / map — not performed on device.
 54. YouTube — implementation only.
 55–58. Publish/detail, comments, reactions, rating — verified live/server + browser.
