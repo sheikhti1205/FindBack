@@ -112,6 +112,45 @@ export interface DownloadOptions {
   allowCellular?: boolean;
 }
 
+/**
+ * States where a transfer/verify/settle step is still running. A state is
+ * "settled" when it is not in this set, which is the signal used to sequence
+ * one heavyweight transfer after another.
+ */
+const IN_PROGRESS_STATES: VlmState[] = [
+  "QUEUED",
+  "WAITING_FOR_NETWORK",
+  "WAITING_FOR_WIFI",
+  "DOWNLOADING",
+  "PAUSING",
+  "VERIFYING_CHUNK",
+  "VERIFYING_HASH",
+  "VERIFYING_FILE",
+  "REPAIRING",
+  "GPU_SELF_TESTING",
+];
+
+/** A model is usable/installed once it reaches one of these settled states. */
+const INSTALLED_STATES: VlmState[] = [
+  "INSTALLED_UNVERIFIED",
+  "READY_GPU",
+  "GPU_UNAVAILABLE",
+];
+
+export function isSettledState(state: VlmState): boolean {
+  return !IN_PROGRESS_STATES.includes(state);
+}
+
+export function isInstalledState(state: VlmState): boolean {
+  return INSTALLED_STATES.includes(state);
+}
+
+/** Options for awaiting a model's settled state. */
+export interface WaitForSettledOptions {
+  timeoutMs?: number;
+  intervalMs?: number;
+}
+
 /** Analyze image request. */
 export interface AnalyzeRequest {
   mode: BackendMode;
@@ -223,6 +262,7 @@ export interface VlmBridge {
   setMode(mode: BackendMode): Promise<void>;
   getModelStates(): Promise<VlmModelInfo[]>;
   downloadModel(modelId: VlmModelId, options?: DownloadOptions): Promise<void>;
+  waitForSettled(modelId: VlmModelId, options?: WaitForSettledOptions): Promise<VlmModelInfo>;
   pauseDownload(modelId: VlmModelId): Promise<void>;
   resumeDownload(modelId: VlmModelId): Promise<void>;
   repairModel(modelId: VlmModelId): Promise<void>;
@@ -275,6 +315,10 @@ class WebVlmBridge implements VlmBridge {
 
   async getModelStates(): Promise<VlmModelInfo[]> {
     return [];
+  }
+
+  async waitForSettled(_modelId: VlmModelId, _options?: WaitForSettledOptions): Promise<VlmModelInfo> {
+    this.refuse("waitForSettled");
   }
 
   async downloadModel(_modelId: VlmModelId, _options?: DownloadOptions): Promise<void> {
@@ -368,6 +412,26 @@ class AndroidVlmBridge implements VlmBridge {
 
   async downloadModel(modelId: VlmModelId, options?: DownloadOptions): Promise<void> {
     await this.native.downloadModel({ modelId, allowCellular: options?.allowCellular ?? false });
+  }
+
+  /**
+   * Resolves once [modelId] leaves every in-progress state (or rejects on
+   * timeout). Native scheduling resolves immediately when a job is merely
+   * enqueued, so real sequencing must await the settled state, not the call.
+   */
+  async waitForSettled(modelId: VlmModelId, options?: WaitForSettledOptions): Promise<VlmModelInfo> {
+    const timeoutMs = options?.timeoutMs ?? 6 * 60 * 60 * 1000;
+    const intervalMs = options?.intervalMs ?? 1500;
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const states = await this.getModelStates();
+      const info = states.find((m) => m.id === modelId);
+      if (info && isSettledState(info.state)) return info;
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for ${modelId} to settle`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
   }
 
   async cancelDownload(modelId: VlmModelId, removePartial?: boolean): Promise<void> {

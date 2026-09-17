@@ -3,8 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { bridge } = vi.hoisted(() => ({ bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() } }));
-vi.mock("../services/vlmPlugin", () => ({ getVlmBridge: () => bridge }));
+const { bridge } = vi.hoisted(() => ({ bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() } }));
+vi.mock("../services/vlmPlugin", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/vlmPlugin")>();
+  return { ...actual, getVlmBridge: () => bridge };
+});
 
 import { OfflineAi } from "./OfflineAi";
 
@@ -51,7 +54,34 @@ describe("OfflineAi", () => {
     expect(screen.queryByText(/ready/i)).toBeNull();
   });
 
-  it("installs both models sequentially with one confirmation", async () => {
+  it("installs both models sequentially, waiting for the first to settle", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([
+      { id: "smolvlm2-500m", state: "NOT_INSTALLED" },
+      { id: "smolvlm-256m", state: "NOT_INSTALLED" },
+    ]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    // First model settles only after the test releases it, proving the second
+    // transfer is not scheduled while the first is still running.
+    let releaseFirst: (v: { id: "smolvlm2-500m"; state: "INSTALLED_UNVERIFIED" }) => void = () => {};
+    const firstSettled = new Promise<{ id: "smolvlm2-500m"; state: "INSTALLED_UNVERIFIED" }>((resolve) => {
+      releaseFirst = resolve;
+    });
+    bridge.downloadModel.mockResolvedValue(undefined);
+    bridge.waitForSettled.mockReturnValue(firstSettled);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /install both/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
+    await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm2-500m"));
+    await waitFor(() => expect(bridge.waitForSettled).toHaveBeenCalledWith("smolvlm2-500m"));
+    expect(bridge.downloadModel).not.toHaveBeenCalledWith("smolvlm-256m");
+    releaseFirst({ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" });
+    await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm-256m"));
+  });
+
+  it("does not start the second install when the first does not install", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
     bridge.getModelStates.mockResolvedValue([
@@ -61,10 +91,12 @@ describe("OfflineAi", () => {
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     bridge.downloadModel.mockResolvedValue(undefined);
+    bridge.waitForSettled.mockResolvedValue({ id: "smolvlm2-500m", state: "DOWNLOAD_FAILED" });
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: /install both/i }));
     fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
-    await waitFor(() => expect(bridge.downloadModel).toHaveBeenNthCalledWith(2, "smolvlm-256m"));
+    await waitFor(() => expect(bridge.waitForSettled).toHaveBeenCalledWith("smolvlm2-500m"));
+    expect(bridge.downloadModel).not.toHaveBeenCalledWith("smolvlm-256m");
   });
 
   it("keeps Cancel enabled even when free space is low", async () => {

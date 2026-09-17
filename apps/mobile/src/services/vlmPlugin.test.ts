@@ -13,12 +13,13 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: () => native,
 }));
 
-import { getVlmBridge, resetVlmBridgeCache } from "./vlmPlugin";
+import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState } from "./vlmPlugin";
 
 beforeEach(() => {
   state.native = true;
   Object.values(native).forEach((f) => f.mockReset());
   native.addListener.mockResolvedValue({ remove: vi.fn() });
+  resetVlmBridgeCache();
 });
 
 describe("vlmPlugin native payload unwrapping", () => {
@@ -92,5 +93,34 @@ describe("vlmPlugin native payload unwrapping", () => {
     await expect(
       getVlmBridge().analyzeImage({ mode: "AUTO", imageUri: "x", instruction: "y", maxOutputTokens: 224, temperature: 0.1 }),
     ).rejects.toThrow(/Android/i);
+  });
+
+  it("classifies settled vs installed states for transfer sequencing", () => {
+    expect(isSettledState("DOWNLOADING")).toBe(false);
+    expect(isSettledState("QUEUED")).toBe(false);
+    expect(isSettledState("VERIFYING_FILE")).toBe(false);
+    expect(isSettledState("GPU_SELF_TESTING")).toBe(false);
+    expect(isSettledState("INSTALLED_UNVERIFIED")).toBe(true);
+    expect(isSettledState("DOWNLOAD_FAILED")).toBe(true);
+    expect(isInstalledState("READY_GPU")).toBe(true);
+    expect(isInstalledState("INSTALLED_UNVERIFIED")).toBe(true);
+    expect(isInstalledState("GPU_UNAVAILABLE")).toBe(true);
+    expect(isInstalledState("PAUSED")).toBe(false);
+  });
+
+  it("waitForSettled resolves only after the model leaves in-progress states", async () => {
+    native.getModelStates
+      .mockResolvedValueOnce({ models: [{ id: "smolvlm2-500m", state: "DOWNLOADING" }] })
+      .mockResolvedValue({ models: [{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }] });
+    const info = await getVlmBridge().waitForSettled("smolvlm2-500m", { intervalMs: 1, timeoutMs: 2000 });
+    expect(info.state).toBe("INSTALLED_UNVERIFIED");
+    expect(native.getModelStates).toHaveBeenCalledTimes(2);
+  });
+
+  it("waitForSettled rejects on timeout rather than resolving falsely", async () => {
+    native.getModelStates.mockResolvedValue({ models: [{ id: "smolvlm2-500m", state: "DOWNLOADING" }] });
+    await expect(
+      getVlmBridge().waitForSettled("smolvlm2-500m", { intervalMs: 1, timeoutMs: 5 }),
+    ).rejects.toThrow(/Timed out/i);
   });
 });

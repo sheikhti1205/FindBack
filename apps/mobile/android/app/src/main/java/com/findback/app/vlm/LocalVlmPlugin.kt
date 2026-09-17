@@ -287,12 +287,20 @@ class LocalVlmPlugin : Plugin() {
             // the shared chunk engine. Resolve immediately so the confirmation
             // dialog closes and progress/cancel UI stays visible.
             val scheduled = try {
-                ModelDownloadScheduler.schedule(getContext(), modelId)
+                ModelDownloadScheduler.schedule(getContext(), modelId, networkPolicy(call))
             } catch (e: Exception) {
                 false
             }
             if (scheduled) {
                 call.resolve()
+                return
+            }
+
+            // Foreground fallback must still honor Wi-Fi-only: never pull a
+            // multi-hundred-MB model over a metered link without opt-in.
+            if (networkPolicy(call) == ModelDownloadScheduler.NetworkPolicy.WIFI_ONLY && !isUnmetered()) {
+                updateModelState(modelId, VlmState.WAITING_FOR_WIFI)
+                call.reject("Waiting for Wi-Fi (enable Wi-Fi or allow cellular)")
                 return
             }
 
@@ -367,7 +375,7 @@ class LocalVlmPlugin : Plugin() {
             updateModelState(modelId, VlmState.QUEUED)
             // Resume continues missing chunks only; verified ranges are kept.
             val scheduled = try {
-                ModelDownloadScheduler.schedule(getContext(), modelId)
+                ModelDownloadScheduler.schedule(getContext(), modelId, networkPolicy(call))
             } catch (e: Exception) {
                 false
             }
@@ -392,7 +400,7 @@ class LocalVlmPlugin : Plugin() {
             TransferControls.setUserPaused(getContext(), modelId, false)
             updateModelState(modelId, VlmState.REPAIR_NEEDED)
             val scheduled = try {
-                ModelDownloadScheduler.schedule(getContext(), modelId)
+                ModelDownloadScheduler.schedule(getContext(), modelId, networkPolicy(call))
             } catch (e: Exception) {
                 false
             }
@@ -850,6 +858,29 @@ class LocalVlmPlugin : Plugin() {
             lastError = null
         )
         requireStore().saveRecord(record)
+    }
+
+    /**
+     * Network policy for a transfer call. Defaults to Wi-Fi only; the JS
+     * layer must explicitly pass `allowCellular: true` for the user's
+     * Wi-Fi-or-cellular setting. Never silently downloads over metered links.
+     */
+    private fun networkPolicy(call: PluginCall): ModelDownloadScheduler.NetworkPolicy =
+        if (call.getBoolean("allowCellular") == true) {
+            ModelDownloadScheduler.NetworkPolicy.WIFI_OR_CELLULAR
+        } else {
+            ModelDownloadScheduler.NetworkPolicy.WIFI_ONLY
+        }
+
+    private fun isUnmetered(): Boolean {
+        return try {
+            val cm = getContext().getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val net = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(net) ?: return false
+            caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun getFreeBytes(): Long {
