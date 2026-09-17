@@ -73,7 +73,7 @@ describe("OfflineAi", () => {
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "DOWNLOADING" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
-    render(<OfflineAi />);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     const cancel = await screen.findByRole("button", { name: /cancel smolvlm2/i });
     expect((cancel as HTMLButtonElement).disabled).toBe(false);
   });
@@ -85,7 +85,7 @@ describe("OfflineAi", () => {
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     bridge.repairModel.mockResolvedValue(undefined);
-    render(<OfflineAi />);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     expect(await screen.findByText(/verified chunks will be kept/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /repair smolvlm2/i }));
     await waitFor(() => expect(bridge.repairModel).toHaveBeenCalledWith("smolvlm2-500m"));
@@ -99,7 +99,7 @@ describe("OfflineAi", () => {
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     // Never-resolving download: the dialog must still close right away.
     bridge.downloadModel.mockReturnValue(new Promise(() => {}));
-    render(<OfflineAi />);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: /download smolvlm2 500m/i }));
     fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
     await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm2-500m"));
@@ -112,7 +112,7 @@ describe("OfflineAi", () => {
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
-    const { container } = render(<OfflineAi />);
+    const { container } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     expect((await screen.findAllByText(/technical details/i)).length).toBeGreaterThan(0);
     expect(container.textContent).toMatch(/dad030b6e56756201d670cfb4d042736a2ce3a5c/);
     expect(container.textContent).not.toMatch(/a1b2c3d4/);
@@ -125,7 +125,7 @@ describe("OfflineAi", () => {
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     bridge.pauseDownload.mockResolvedValue(undefined);
-    render(<OfflineAi />);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: /pause smolvlm2/i }));
     await waitFor(() => expect(bridge.pauseDownload).toHaveBeenCalledWith("smolvlm2-500m"));
   });
