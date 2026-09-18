@@ -36,7 +36,7 @@ export function Home() {
     return () => clearTimeout(t);
   }, [query]);
 
-  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
+  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore, removeItem } = useFeed(
     feedFilters,
     { cacheKey: HOME_CACHE_KEY, scrollRef },
   );
@@ -81,13 +81,15 @@ export function Home() {
     return off;
   }, [refresh, scopedCacheKey]);
 
-  // A post was deleted: reconcile the list in place.
+  // A post was deleted: reconcile it in place. Never refetch here — a full
+  // refresh would rerender/reorder the list underneath a scrolled reader.
   useEffect(() => {
-    const off = onRealtime("post:deleted", () => {
-      void refresh();
+    const off = onRealtime("post:deleted", (payload) => {
+      const postId = (payload as { postId?: unknown })?.postId;
+      if (typeof postId === "string") removeItem(postId);
     });
     return off;
-  }, [refresh]);
+  }, [removeItem]);
 
   useEffect(() => {
     setNewPostCount(getNewPostCount(scopedCacheKey));
