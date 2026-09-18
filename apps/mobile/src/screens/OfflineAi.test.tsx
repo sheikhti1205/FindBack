@@ -15,10 +15,10 @@ const capabilities = {
   abi: "arm64-v8a",
   androidVersion: "14",
   apiLevel: 34,
-  hardware: "pixel",
+  hardware: "mt6895",
   deviceCategory: "physical" as const,
-  gpuVendor: "Qualcomm",
-  gpuRenderer: "Adreno 730",
+  gpuVendor: "ARM",
+  gpuRenderer: "Mali-G610 MC6",
   memoryClassMb: 256,
   freeAppStorageMb: 1024,
   gpuRuntimePresent: true,
@@ -43,18 +43,7 @@ describe("OfflineAi", () => {
     await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm2-500m"));
   });
 
-  it("shows the runtime-specific reason instead of pretending the 256M model is ready", async () => {
-    bridge.getCapabilities.mockResolvedValue(capabilities);
-    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
-    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm-256m", state: "GPU_UNAVAILABLE", error: "GPU runtime lacks the required delegate" }]);
-    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
-    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
-    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    expect(await screen.findByText(/GPU runtime lacks the required delegate/i)).toBeTruthy();
-    expect(screen.queryByText(/ready/i)).toBeNull();
-  });
-
-  it("installs both models sequentially, waiting for the first to settle", async () => {
+  it("does not expose the 256M model or the FAST mode (no report runtime)", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
     bridge.getModelStates.mockResolvedValue([
@@ -63,40 +52,49 @@ describe("OfflineAi", () => {
     ]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
-    // First model settles only after the test releases it, proving the second
-    // transfer is not scheduled while the first is still running.
-    let releaseFirst: (v: { id: "smolvlm2-500m"; state: "INSTALLED_UNVERIFIED" }) => void = () => {};
-    const firstSettled = new Promise<{ id: "smolvlm2-500m"; state: "INSTALLED_UNVERIFIED" }>((resolve) => {
-      releaseFirst = resolve;
-    });
-    bridge.downloadModel.mockResolvedValue(undefined);
-    bridge.waitForSettled.mockReturnValue(firstSettled);
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /install both/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
-    await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm2-500m"));
-    await waitFor(() => expect(bridge.waitForSettled).toHaveBeenCalledWith("smolvlm2-500m"));
-    expect(bridge.downloadModel).not.toHaveBeenCalledWith("smolvlm-256m");
-    releaseFirst({ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" });
-    await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm-256m"));
+    await screen.findByRole("heading", { name: /SmolVLM2 500M/ });
+    expect(screen.queryByText(/256M/)).toBeNull();
+    expect(screen.queryByRole("radio", { name: "FAST" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /install both/i })).toBeNull();
+    expect(screen.getByRole("radio", { name: "AUTO" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "QUALITY" })).toBeTruthy();
   });
 
-  it("does not start the second install when the first does not install", async () => {
+  it("maps a stored FAST mode to AUTO", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "FAST" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const auto = await screen.findByRole("radio", { name: "AUTO" });
+    expect(auto.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("requires the native policy (model + headroom), not size x 1.2", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    // 360.8 MB + max(256 MiB, 25%) = 616.8 MB.
+    expect(await screen.findByText(/needs 616\.8 mb free/i)).toBeTruthy();
+    // Native requiredBytes wins when reported.
+    expect(screen.queryByText(/433|432/)).toBeNull();
+  });
+
+  it("uses native requiredBytes when the plugin reports it", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
     bridge.getModelStates.mockResolvedValue([
-      { id: "smolvlm2-500m", state: "NOT_INSTALLED" },
-      { id: "smolvlm-256m", state: "NOT_INSTALLED" },
+      { id: "smolvlm2-500m", state: "NOT_INSTALLED", requiredBytes: 700 * 1024 * 1024 },
     ]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
-    bridge.downloadModel.mockResolvedValue(undefined);
-    bridge.waitForSettled.mockResolvedValue({ id: "smolvlm2-500m", state: "DOWNLOAD_FAILED" });
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /install both/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
-    await waitFor(() => expect(bridge.waitForSettled).toHaveBeenCalledWith("smolvlm2-500m"));
-    expect(bridge.downloadModel).not.toHaveBeenCalledWith("smolvlm-256m");
+    expect(await screen.findByText(/needs 700 mb free/i)).toBeTruthy();
   });
 
   it("keeps Cancel enabled even when free space is low", async () => {
@@ -191,7 +189,7 @@ describe("OfflineAi", () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
     bridge.getModelStates.mockResolvedValue([
-      { id: "smolvlm-256m", state: "GPU_UNAVAILABLE", error: "GPU_UNAVAILABLE_ON_CURRENT_RUNTIME" },
+      { id: "smolvlm2-500m", state: "GPU_UNAVAILABLE", error: "GPU_UNAVAILABLE_ON_CURRENT_RUNTIME" },
     ]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());

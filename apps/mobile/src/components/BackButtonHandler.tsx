@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
-import { consumeHistorySuppression } from "./backNavigation";
+import { consumeBackIntercept, consumeHistorySuppression } from "./backNavigation";
 
 export interface BackContext {
   /** React Router history has an entry before the current one. */
@@ -71,6 +71,9 @@ export function BackButtonHandler() {
     let removeListener: (() => void) | undefined;
 
     void CapacitorApp.addListener("backButton", () => {
+      // An open dialog consumes the press before any navigation.
+      if (consumeBackIntercept()) return;
+
       const action = resolveBackAction({
         canGoBack: historyIndex() > 0,
         pathname: pathRef.current,

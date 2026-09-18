@@ -250,7 +250,7 @@ export interface AiHelpContext {
 
 export async function askAiHelp(
   question: string,
-  opts?: { history?: AiHelpMessage[]; context?: AiHelpContext },
+  opts?: { history?: AiHelpMessage[]; context?: AiHelpContext; signal?: AbortSignal },
 ): Promise<{
   text: string;
   source: "llm" | "fallback";
@@ -258,8 +258,18 @@ export async function askAiHelp(
   const body: Record<string, unknown> = { question };
   if (opts?.history?.length) body.history = opts.history.slice(-6);
   if (opts?.context) body.context = opts.context;
-  const { data, error } = await getSupabase().functions.invoke("ai-help", { body });
-  if (error) throw new ApiError(error.message || "AI Help is unavailable right now", 502);
+  const { data, error } = await getSupabase().functions.invoke("ai-help", {
+    body,
+    signal: opts?.signal,
+  });
+  if (error) {
+    if (opts?.signal?.aborted) {
+      const aborted = new Error("Cancelled");
+      aborted.name = "AbortError";
+      throw aborted;
+    }
+    throw new ApiError(error.message || "AI Help is unavailable right now", 502);
+  }
   return data as { text: string; source: "llm" | "fallback" };
 }
 

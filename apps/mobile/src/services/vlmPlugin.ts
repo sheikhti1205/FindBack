@@ -74,6 +74,8 @@ export interface VlmModelInfo {
   id: VlmModelId;
   state: VlmState;
   sizeBytes?: number;
+  /** Native-computed install requirement (model + headroom). Authoritative. */
+  requiredBytes?: number;
   error?: string;
 }
 

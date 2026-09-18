@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
 import { BackButton } from "../components/BackButton";
-import { getVlmBridge, isInstalledState } from "../services/vlmPlugin";
+import { getVlmBridge } from "../services/vlmPlugin";
 import { chooseFromGallery, takePhoto, toNativeImageUri } from "../services/photo";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useModalBack } from "../hooks/useModalBack";
 import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent } from "../services/vlmPlugin";
 
 const MODEL_SPECS: Record<VlmModelId, { label: string; sizeMb: number; revision: string; sourceRepo: string; runtime: string }> = {
@@ -71,6 +72,40 @@ function friendlyError(code: string | undefined | null): string | null {
   return ERROR_LABELS[code] ?? code.replace(/_/g, " ").toLowerCase();
 }
 
+const INSTALL_HEADROOM_BYTES = 256 * 1024 * 1024;
+const INSTALL_HEADROOM_FRACTION = 0.25;
+
+/** Mirrors the native install policy when native hasn't reported requiredBytes. */
+function fallbackRequiredBytes(sizeMb: number): number {
+  const bytes = sizeMb * 1024 * 1024;
+  return bytes + Math.max(INSTALL_HEADROOM_BYTES, bytes * INSTALL_HEADROOM_FRACTION);
+}
+
+/** Only modes backed by a real full report-generation runtime are exposed. */
+const EXPOSED_MODES: BackendMode[] = ["AUTO", "QUALITY"];
+
+/** Only models that can actually generate a report are downloadable. */
+const EXPOSED_MODELS: VlmModelId[] = ["smolvlm2-500m"];
+
+const WIFI_PREF_KEY = "findback:offline-ai:wifi-only";
+
+function loadWifiOnly(): boolean {
+  try {
+    const raw = localStorage.getItem(WIFI_PREF_KEY);
+    return raw === null ? true : raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function saveWifiOnly(value: boolean): void {
+  try {
+    localStorage.setItem(WIFI_PREF_KEY, String(value));
+  } catch {
+    /* private mode / storage disabled */
+  }
+}
+
 function ModelRow({
   modelId,
   info,
@@ -107,9 +142,11 @@ function ModelRow({
   const canRunSelfTest = info.state === "READY_GPU" || info.state === "GPU_UNAVAILABLE" || info.state === "INSTALLED_UNVERIFIED";
   const showProgress = (info.state === "DOWNLOADING") && downloadProgress?.modelId === modelId;
 
-  const requiredSpaceMb = spec.sizeMb * 1.2;
-  const freeSpaceMb = capabilities?.freeAppStorageMb ?? Number.MAX_SAFE_INTEGER;
-  const hasSpace = freeSpaceMb >= requiredSpaceMb;
+  // The native requiredBytes is authoritative; the fallback mirrors the native
+  // policy (model + max(256 MiB, 25%)) so the button never lies.
+  const requiredBytes = info.requiredBytes ?? fallbackRequiredBytes(spec.sizeMb);
+  const freeBytes = capabilities ? capabilities.freeAppStorageMb * 1024 * 1024 : Number.MAX_SAFE_INTEGER;
+  const hasSpace = freeBytes >= requiredBytes;
 
   return (
     <div className="border border-outline-variant rounded-xl p-4 bg-surface">
@@ -123,18 +160,18 @@ function ModelRow({
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
             <span className="flex items-center gap-1 whitespace-nowrap">
               <HardDrive size={12} aria-hidden />
-              Needs {requiredSpaceMb.toFixed(0)} MB free
+              Needs {formatBytes(requiredBytes)} free
             </span>
             <span className="flex items-center gap-1 whitespace-nowrap">
               {hasSpace ? (
                 <>
-                  <CheckCircle size={12} className="text-green-500" aria-hidden />
-                  {formatBytes(freeSpaceMb * 1024 * 1024)} available
+                  <CheckCircle size={12} className="text-on-surface" aria-hidden />
+                  {formatBytes(freeBytes)} available
                 </>
               ) : (
                 <>
-                  <AlertTriangle size={12} className="text-amber-500" aria-hidden />
-                  Only {formatBytes(freeSpaceMb * 1024 * 1024)} available
+                  <AlertTriangle size={12} className="text-error" aria-hidden />
+                  Only {formatBytes(freeBytes)} available
                 </>
               )}
             </span>
@@ -151,16 +188,16 @@ function ModelRow({
 
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span
-              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
+              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs border ${
                 info.state === "READY_GPU"
-                  ? "bg-green-100 text-green-800"
+                  ? "bg-on-surface text-surface border-on-surface"
                   : info.state === "GPU_UNAVAILABLE" || info.state === "INSTALLED_UNVERIFIED"
-                  ? "bg-amber-100 text-amber-800"
+                  ? "border-outline-variant text-on-surface"
                   : info.state === "DOWNLOADING" || info.state === "QUEUED" || info.state === "VERIFYING_HASH" || info.state === "VERIFYING_FILE" || info.state === "VERIFYING_CHUNK" || info.state === "GPU_SELF_TESTING" || info.state === "REPAIRING"
-                  ? "bg-blue-100 text-blue-800"
+                  ? "bg-surface-container text-on-surface border-outline-variant"
                   : info.state === "DOWNLOAD_FAILED" || info.state === "CORRUPT" || info.state === "RUNTIME_ERROR" || info.state === "INSUFFICIENT_STORAGE" || info.state === "MANIFEST_MISMATCH" || info.state === "PAUSED_ERROR" || info.state === "REPAIR_NEEDED"
-                  ? "bg-red-100 text-red-800"
-                  : "bg-surface-container text-on-surface-variant"
+                  ? "border-error text-error"
+                  : "bg-surface-container text-on-surface-variant border-outline-variant"
               }`}
             >
               {info.state === "DOWNLOADING" && showProgress && downloadProgress
@@ -168,7 +205,7 @@ function ModelRow({
                 : stateLabel}
             </span>
             {friendlyError(info.error) && (
-              <span className={`text-xs px-2 py-0.5 rounded-full break-words ${info.state === "GPU_UNAVAILABLE" ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50"}`}>
+              <span className={`text-xs px-2 py-0.5 rounded-full border break-words ${info.state === "GPU_UNAVAILABLE" ? "border-outline-variant text-on-surface-variant" : "border-error text-error"}`}>
                 {friendlyError(info.error)}
               </span>
             )}
@@ -181,19 +218,19 @@ function ModelRow({
           )}
 
           {needsRepair && (
-            <p className="mt-2 text-xs text-red-600">
+            <p className="mt-2 text-xs text-error">
               Integrity check found damaged data. Repair re-downloads only the damaged parts — verified chunks will be kept.
             </p>
           )}
 
           {info.state === "DOWNLOAD_FAILED" && info.error && (
-            <p className="mt-2 text-xs text-red-600">{info.error}</p>
+            <p className="mt-2 text-xs text-error">{friendlyError(info.error)}</p>
           )}
           {info.state === "PAUSED_ERROR" && (
-            <p className="mt-2 text-xs text-amber-700">Paused after repeated network errors. Your verified progress is kept — resume to continue.</p>
+            <p className="mt-2 text-xs text-on-surface-variant">Paused after repeated network errors. Your verified progress is kept — resume to continue.</p>
           )}
           {info.state === "MANIFEST_MISMATCH" && (
-            <p className="mt-2 text-xs text-red-600">The downloaded bytes do not match the pinned source manifest. Automatic retry is stopped; nothing was deleted.</p>
+            <p className="mt-2 text-xs text-error">The downloaded bytes do not match the pinned source manifest. Automatic retry is stopped; nothing was deleted.</p>
           )}
         </div>
 
@@ -278,13 +315,13 @@ function ModelRow({
                   </button>
                 </div>
               )}
-              <button
-                onClick={() => onDelete(modelId)}
-                className="min-h-[48px] px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1"
-              >
-                <Trash2 size={14} aria-hidden />
-                Delete
-              </button>
+            <button
+              onClick={() => onDelete(modelId)}
+              className="min-h-[48px] px-3 py-1.5 text-sm border border-error text-error rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+            >
+              <Trash2 size={14} aria-hidden />
+              Delete
+            </button>
             </>
           )}
         </div>
@@ -297,10 +334,10 @@ export function OfflineAi() {
   const bridge = getVlmBridge();
   const [capabilities, setCapabilities] = useState<VlmCapabilities | null>(null);
   const [mode, setModeState] = useState<BackendMode>("AUTO");
-  const [wifiOnly, setWifiOnly] = useState(true);
+  const [wifiOnly, setWifiOnly] = useState(loadWifiOnly);
   const [modelStates, setModelStates] = useState<VlmModelInfo[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressEvent | null>(null);
-  const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId | "both"; sizes: number[] } | null>(null);
+  const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId; requiredBytes: number[] } | null>(null);
   const [gpuSelfTestModel, setGpuSelfTestModel] = useState<VlmModelId | null>(null);
   const [gpuSelfTestState, setGpuSelfTestState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [gpuSelfTestResult, setGpuSelfTestResult] = useState<string | null>(null);
@@ -311,10 +348,22 @@ export function OfflineAi() {
   useFocusTrap(gpuSelfTestRef, () => { setGpuSelfTestModel(null); setGpuSelfTestState("idle"); setGpuSelfTestResult(null); });
   useFocusTrap(confirmDownloadRef, () => setConfirmDownload(null));
 
+  // Hardware Back dismisses an open dialog before navigating away.
+  useModalBack(gpuSelfTestModel !== null && gpuSelfTestState !== "idle", () => {
+    setGpuSelfTestModel(null);
+    setGpuSelfTestState("idle");
+    setGpuSelfTestResult(null);
+  });
+  useModalBack(confirmDownload !== null, () => setConfirmDownload(null));
+
   useEffect(() => {
     let mounted = true;
     bridge.getCapabilities().then((c) => mounted && setCapabilities(c));
-    bridge.getSettings().then((s) => mounted && setModeState(s.mode));
+    bridge.getSettings().then((s) => {
+      if (!mounted) return;
+      // FAST has no working report-generation runtime; treat a stored FAST as AUTO.
+      setModeState(s.mode === "FAST" ? "AUTO" : s.mode);
+    });
     bridge.getModelStates().then((m) => mounted && setModelStates(m));
 
     const offProgress = bridge.onDownloadProgress((event) => {
@@ -340,13 +389,9 @@ export function OfflineAi() {
   }, []);
 
   const handleDownload = (modelId: VlmModelId) => {
-    const spec = MODEL_SPECS[modelId];
-    setConfirmDownload({ modelId, sizes: [spec.sizeMb] });
-  };
-
-  const handleInstallBoth = () => {
-    const sizes = ["smolvlm2-500m", "smolvlm-256m"].map((id) => MODEL_SPECS[id as VlmModelId].sizeMb);
-    setConfirmDownload({ modelId: "both", sizes });
+    const info = modelStates.find((m) => m.id === modelId);
+    const required = info?.requiredBytes ?? fallbackRequiredBytes(MODEL_SPECS[modelId].sizeMb);
+    setConfirmDownload({ modelId, requiredBytes: [required] });
   };
 
   const handleConfirmDownload = () => {
@@ -354,41 +399,15 @@ export function OfflineAi() {
     const target = confirmDownload.modelId;
     const allowCellular = !wifiOnly;
     // Close the dialog immediately after scheduling so progress and
-    // pause/cancel UI stay visible; transfers run in the background.
+    // pause/cancel UI stay visible; the transfer runs in the background.
     setConfirmDownload(null);
     void (async () => {
       const opts = allowCellular ? { allowCellular: true } : undefined;
-      if (target === "both") {
-        // Real sequencing: native resolves on scheduling, not completion, so
-        // await the settled state of the first model before starting the
-        // second. Only one heavyweight transfer runs at a time, and the first
-        // stays intact if the second fails.
-        try {
-          if (opts) await bridge.downloadModel("smolvlm2-500m", opts);
-          else await bridge.downloadModel("smolvlm2-500m");
-        } catch {
-          return;
-        }
-        let first: { state: VlmState };
-        try {
-          first = await bridge.waitForSettled("smolvlm2-500m");
-        } catch {
-          return;
-        }
-        if (!isInstalledState(first.state)) return;
-        try {
-          if (opts) await bridge.downloadModel("smolvlm-256m", opts);
-          else await bridge.downloadModel("smolvlm-256m");
-        } catch {
-          // First model stays intact when the second fails.
-        }
-      } else {
-        try {
-          if (opts) await bridge.downloadModel(target, opts);
-          else await bridge.downloadModel(target);
-        } catch {
-          // Scheduling failures surface through model state events.
-        }
+      try {
+        if (opts) await bridge.downloadModel(target, opts);
+        else await bridge.downloadModel(target);
+      } catch {
+        // Scheduling failures surface through model state events.
       }
     })();
   };
@@ -449,7 +468,7 @@ export function OfflineAi() {
       <section className="px-4 space-y-4" aria-labelledby="mode-heading">
         <h2 id="mode-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Inference Mode</h2>
         <div className="flex gap-2" role="radiogroup" aria-label="Inference mode">
-          {(["AUTO", "FAST", "QUALITY"] as BackendMode[]).map((m) => (
+          {EXPOSED_MODES.map((m) => (
             <button
               key={m}
               onClick={() => handleModeChange(m)}
@@ -466,14 +485,18 @@ export function OfflineAi() {
           ))}
         </div>
         <p className="text-xs text-on-surface-variant">
-          Only a GPU-verified model runs analysis — there is no silent CPU fallback. AUTO and
-          QUALITY use SmolVLM2 500M; FAST uses the lighter SmolVLM 256M.
+          Only a GPU-verified model runs analysis — there is no silent CPU fallback. Both
+          modes use the SmolVLM2 500M model.
         </p>
         <div className="flex gap-2" role="radiogroup" aria-label="Download network">
           {(["wifi-only", "wifi-or-cellular"] as const).map((opt) => (
             <button
               key={opt}
-              onClick={() => setWifiOnly(opt === "wifi-only")}
+              onClick={() => {
+                const next = opt === "wifi-only";
+                setWifiOnly(next);
+                saveWifiOnly(next);
+              }}
               role="radio"
               aria-checked={wifiOnly === (opt === "wifi-only")}
               className={`min-h-[48px] flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -486,29 +509,21 @@ export function OfflineAi() {
             </button>
           ))}
         </div>
-        <p className="text-xs text-on-surface-variant">Wi-Fi only is the default; cellular needs explicit opt-in.</p>
+        <p className="text-xs text-on-surface-variant">Wi-Fi only is the default; cellular needs explicit opt-in. Your choice is kept.</p>
       </section>
 
       <section className="px-4 space-y-4" aria-labelledby="models-heading">
         <div className="flex items-center justify-between">
           <h2 id="models-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Models</h2>
-          <button
-            onClick={handleInstallBoth}
-            className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
-            disabled={modelStates.every((m) => ["READY_GPU", "GPU_UNAVAILABLE", "INSTALLED_UNVERIFIED"].includes(m.state))}
-          >
-            <Download size={14} aria-hidden />
-            Install both
-          </button>
         </div>
 
         <div className="space-y-3" role="list" aria-label="Available models">
-          {["smolvlm2-500m", "smolvlm-256m"].map((modelId) => {
-            const info = modelStates.find((m) => m.id === modelId) ?? { id: modelId as VlmModelId, state: "NOT_INSTALLED" as VlmState };
+          {EXPOSED_MODELS.map((modelId) => {
+            const info = modelStates.find((m) => m.id === modelId) ?? { id: modelId, state: "NOT_INSTALLED" as VlmState };
             return (
               <ModelRow
                 key={modelId}
-                modelId={modelId as VlmModelId}
+                modelId={modelId}
                 info={info}
                 capabilities={capabilities}
                 _mode={mode}
@@ -538,28 +553,28 @@ export function OfflineAi() {
               </div>
             )}
             {gpuSelfTestState === "done" && (
-              <div className={`flex items-center gap-3 p-4 rounded-lg ${gpuSelfTestResult === "GPU_AVAILABLE" ? "bg-green-50" : "bg-amber-50"}`}>
+              <div className={`flex items-center gap-3 p-4 rounded-lg border ${gpuSelfTestResult === "GPU_AVAILABLE" ? "bg-on-surface text-surface border-on-surface" : "border-outline-variant"}`}>
                 {gpuSelfTestResult === "GPU_AVAILABLE" ? (
-                  <CheckCircle size={24} className="text-green-600" aria-hidden />
+                  <CheckCircle size={24} aria-hidden />
                 ) : (
-                  <AlertTriangle size={24} className="text-amber-600" aria-hidden />
+                  <AlertTriangle size={24} aria-hidden />
                 )}
                 <div>
                   <p className="font-medium">{gpuSelfTestResult === "GPU_AVAILABLE" ? "GPU Available" : "GPU Unavailable"}</p>
                   <p className="text-sm text-on-surface-variant break-words">
                     {gpuSelfTestResult === "GPU_AVAILABLE"
-                      ? "The model ran fully on the GPU."
+                      ? "GPU-backed inference completed successfully."
                       : friendlyError(gpuSelfTestResult)}
                   </p>
                 </div>
               </div>
             )}
             {gpuSelfTestState === "error" && (
-              <div className="flex items-center gap-3 p-4 rounded-lg bg-red-50">
-                <XCircle size={24} className="text-red-600" aria-hidden />
+              <div className="flex items-center gap-3 p-4 rounded-lg border border-error">
+                <XCircle size={24} className="text-error" aria-hidden />
                 <div>
                   <p className="font-medium">Test Failed</p>
-                  <p className="text-sm text-on-surface-variant">{gpuSelfTestResult}</p>
+                  <p className="text-sm text-on-surface-variant">{friendlyError(gpuSelfTestResult)}</p>
                 </div>
               </div>
             )}
@@ -581,13 +596,11 @@ export function OfflineAi() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc">
           <div ref={confirmDownloadRef} tabIndex={-1} className="w-full max-w-md bg-surface rounded-xl p-6">
             <h3 id="confirm-title" className="text-lg font-semibold mb-4">Confirm Download</h3>
-            <p id="confirm-desc" className="text-sm text-on-surface-variant mb-4">
-              {confirmDownload.modelId === "both"
-                ? `This will download both models sequentially (${confirmDownload.sizes.map((s) => `${s} MB`).join(" + ")} = ${confirmDownload.sizes.reduce((a, b) => a + b, 0).toFixed(1)} MB total).`
-                : `This will download ${confirmDownload.sizes[0]} MB.`}
+            <p id="confirm-desc" className="text-sm text-on-surface-variant mb-4 break-words">
+              This will download {formatBytes(confirmDownload.requiredBytes.reduce((a, b) => a + b, 0))}.
             </p>
-            <p className="text-xs text-on-surface-variant mb-4">
-              Required free space: {confirmDownload.sizes.map((s) => (s * 1.2).toFixed(1)).join(" + ")} MB
+            <p className="text-xs text-on-surface-variant mb-4 break-words">
+              Required free space: {confirmDownload.requiredBytes.map((b) => formatBytes(b)).join(" + ")}
               {capabilities && ` (${formatBytes((capabilities.freeAppStorageMb ?? Number.MAX_SAFE_INTEGER) * 1024 * 1024)} available)`}
             </p>
             <div className="flex flex-wrap gap-3 justify-end">
