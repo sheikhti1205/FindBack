@@ -233,7 +233,7 @@ export function CreateReport() {
               type="button"
               aria-label="Remove photo"
               onClick={clearPhoto}
-              className="absolute right-2 top-2 rounded-full bg-surface/90 p-1.5 text-on-surface shadow"
+              className="absolute right-2 top-2 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-surface/90 text-on-surface shadow"
             >
               <X size={16} />
             </button>

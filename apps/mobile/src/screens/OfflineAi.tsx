@@ -442,7 +442,7 @@ export function OfflineAi() {
               onClick={() => handleModeChange(m)}
               role="radio"
               aria-checked={mode === m}
-              className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`min-h-[48px] flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 mode === m
                   ? "bg-on-surface text-surface"
                   : "bg-surface-container text-on-surface-variant hover:bg-surface-container/80"
