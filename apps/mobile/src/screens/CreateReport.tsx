@@ -345,7 +345,11 @@ export function CreateReport() {
 
       {/* Local VLM report assistant — only on Android with native camera */}
       {isNativeCameraAvailable() && pickedPhoto && toNativeImageUri(pickedPhoto) && (
-        <VlmSuggestions imageUri={toNativeImageUri(pickedPhoto)!} onApply={applyVlmSuggestion} />
+        <VlmSuggestions
+          imageUri={toNativeImageUri(pickedPhoto)!}
+          onApply={applyVlmSuggestion}
+          userContext={{ title, description }}
+        />
       )}
       {isNativeCameraAvailable() && pickedPhoto && !toNativeImageUri(pickedPhoto) && (
         <Button

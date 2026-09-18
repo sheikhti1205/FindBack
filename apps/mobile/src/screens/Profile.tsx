@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { useState } from "react";
 import { CheckCircle2, LogOut, ShieldQuestion, FileStack, Cpu } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
@@ -8,6 +9,7 @@ import { useTheme, type Theme } from "../theme";
 export function Profile() {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
+  const [loggingOut, setLoggingOut] = useState(false);
   if (!user) return null;
 
   const VerifyLink = ({ done, label }: { done: boolean; label: string }) => (
@@ -17,6 +19,10 @@ export function Profile() {
           <CheckCircle2 size={14} aria-hidden className="text-on-surface" />
           <span className="text-on-surface-variant">{label} verified</span>
         </>
+      ) : label === "Phone" ? (
+        // Phone verification is not implemented in this build; do not send
+        // the user to a dead end.
+        <span className="text-on-surface-variant">Phone verification unavailable in this build</span>
       ) : (
         <Link to="/verify" className="font-medium text-on-surface underline">
           Verify {label.toLowerCase()}
@@ -79,7 +85,15 @@ export function Profile() {
         />
       </section>
 
-      <Button variant="outline" onClick={logout}>
+      <Button
+        variant="outline"
+        loading={loggingOut}
+        onClick={() => {
+          if (loggingOut) return;
+          setLoggingOut(true);
+          void logout().finally(() => setLoggingOut(false));
+        }}
+      >
         <LogOut size={16} aria-hidden />
         Log out
       </Button>

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { BackButton } from "../components/BackButton";
 import { PostList } from "../components/PostList";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { useFeed } from "../hooks/useFeed";
@@ -30,11 +31,14 @@ export function MyPosts() {
 
   return (
     <div className="flex h-full flex-col gap-4 py-5">
-      <header className="px-4">
-        <h1 className="text-xl font-semibold tracking-tight">My reports</h1>
-        <p className="text-sm text-on-surface-variant">
-          {total} report{total === 1 ? "" : "s"} · manage the status of items you have reported.
-        </p>
+      <header className="flex items-center gap-2 px-4">
+        <BackButton fallbackTo="/profile" label="Back to profile" />
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">My reports</h1>
+          <p className="text-sm text-on-surface-variant">
+            {total} report{total === 1 ? "" : "s"} · manage the status of items you have reported.
+          </p>
+        </div>
       </header>
 
       <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading} className="flex-1">

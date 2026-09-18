@@ -6,7 +6,7 @@
  * (`supabase/functions/ai-help/capabilities.ts`) — bump CAPABILITIES_VERSION
  * in both files whenever shipped UI behavior changes.
  */
-export const CAPABILITIES_VERSION = "1.0.0";
+export const CAPABILITIES_VERSION = "1.1.0";
 
 /** Mirrors apps/mobile/package.json for Help context (no PII). */
 export const APP_VERSION = "0.1.0";
@@ -56,7 +56,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "The location field accepts a place name, decimal coordinates, a Google Maps link, or a geo: URI.",
     "Use-my-location is one-time only; the app never tracks location in the background.",
     "Default is an approximate area (~100 m); an exact pin is optional and shown publicly.",
-    "Any saved location can be opened in the Maps app via Open in Maps.",
+    "Locations shown in the app can be opened in the Maps app via Open in Maps.",
   ],
   youtube: "An optional YouTube link embeds on the post page with a fallback to open YouTube.",
   possibleMatches: [
@@ -64,13 +64,13 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Scores are similarity, not probability. No match is shown when nothing qualifies.",
   ],
   localVlm: [
-    "Offline AI lives under Profile. Two on-device models exist: a 256M model and a 500M model.",
+    "Offline AI lives under Profile. One downloadable on-device model: SmolVLM2 500M.",
     "The Photo AI assistant suggests a title, category, and description for the report photo.",
     "Photo AI runs fully on-device; the photo is never sent to any server for analysis.",
   ],
   modelModes: [
-    "AUTO picks the installed model; FAST prefers the smaller model; QUALITY prefers the larger model.",
-    "Only states shown in Offline AI are real: installed, downloading with true bytes, GPU-tested ready, or diagnostic-only.",
+    "AUTO and QUALITY both use the installed 500M model. FAST is not offered because no smaller report-generation runtime ships.",
+    "Only states shown in Offline AI are real: installed, downloading with true bytes, GPU-tested ready, or an error.",
   ],
   modelDownload: [
     "Model downloads show true MB/MB and percent, and support Pause and Resume without losing verified data.",
@@ -83,8 +83,8 @@ export const APP_CAPABILITIES: AppCapabilities = {
   ],
   privacy: [
     "Report photos stay on the device until you publish.",
-    "Help Assistant questions may be sent through a Supabase Edge Function to a configured cloud provider; photos and report contents are never attached automatically.",
-    "A built-in offline fallback answers common questions with no provider.",
+    "Help Assistant questions are answered by FindBack's server and need an internet connection; photos and report contents are never attached automatically.",
+    "Without a configured AI provider the server gives a built-in answer — still via the server, not offline.",
   ],
   emailVerification:
     "After registering, verify your email from the Verify screen with the real one-time code.",

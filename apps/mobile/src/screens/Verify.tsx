@@ -114,6 +114,7 @@ function VerifyRow({ channel }: { channel: Channel }) {
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
           inputMode="numeric"
+          autoComplete="one-time-code"
           placeholder="00000000"
           className="flex-1"
         />
@@ -199,6 +200,7 @@ function PendingEmailVerify({ email }: { email: string }) {
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
           inputMode="numeric"
+          autoComplete="one-time-code"
           placeholder="00000000"
         />
 
@@ -232,7 +234,7 @@ export function Verify() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Verify your contact details</h1>
         <p className="mt-1 text-sm text-on-surface-variant">
-          Confirm ownership of your email and phone, like a modern registration flow.
+          Confirm ownership of your email with the code we sent. Phone verification is unavailable in this build.
         </p>
       </header>
       <div className="flex flex-col gap-3">

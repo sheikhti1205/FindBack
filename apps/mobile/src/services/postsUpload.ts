@@ -59,7 +59,14 @@ export async function uploadImage(file: File): Promise<StoredUpload> {
     created_at: new Date().toISOString(),
   });
   if (stageError) {
-    await supabase.storage.from(IMAGES_BUCKET).remove([objectKey]);
+    const { error: rollbackError } = await supabase.storage.from(IMAGES_BUCKET).remove([objectKey]);
+    if (rollbackError) {
+      throw new ApiError(
+        `Could not stage the upload and could not remove the uploaded object (${rollbackError.message}). ` +
+          "It may need manual cleanup.",
+        500,
+      );
+    }
     throw new ApiError(stageError.message || "Could not stage the upload", 500);
   }
 
@@ -75,10 +82,17 @@ export async function uploadImage(file: File): Promise<StoredUpload> {
 
 export async function removeStagedUpload(stored: StoredUpload): Promise<void> {
   const supabase = getSupabase();
-  try {
-    await supabase.storage.from(IMAGES_BUCKET).remove([stored.objectKey]);
-  } catch {
-    /* best effort: the staging delete below still runs */
+  // Supabase reports operation failures in { error }, it does not always
+  // throw — ignoring it orphans the Storage object while the staging row
+  // disappears, so both results are checked.
+  const { error: removeError } = await supabase.storage
+    .from(IMAGES_BUCKET)
+    .remove([stored.objectKey]);
+  if (removeError) {
+    throw new ApiError(removeError.message || "Could not remove the uploaded photo", 502);
   }
-  await supabase.from("uploads").delete().eq("id", stored.id);
+  const { error: deleteError } = await supabase.from("uploads").delete().eq("id", stored.id);
+  if (deleteError) {
+    throw new ApiError(deleteError.message || "Could not remove the staged upload", 500);
+  }
 }

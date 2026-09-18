@@ -1,8 +1,10 @@
-import { Component } from "react";
-import type { ErrorInfo, ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router";
 
-interface Props {
+interface InnerProps {
   children: ReactNode;
+  resetKey: string;
+  onRetry: () => void;
 }
 
 interface State {
@@ -12,10 +14,12 @@ interface State {
 /**
  * Keeps a screen-level render error from turning into a blank, dead app.
  *
- * Without this, any thrown error unmounts the whole tree and the WebView shows
- * nothing, with no way back. Here the error is surfaced and recoverable.
+ * Recovery navigates to Home (a known-good route) instead of just clearing
+ * the flag: a deterministically crashing screen would otherwise throw again
+ * on the next render. The raw message is logged for diagnostics but never
+ * shown, so implementation details do not leak to users.
  */
-export class ErrorBoundary extends Component<Props, State> {
+class ErrorBoundaryInner extends Component<InnerProps, State> {
   state: State = { error: null };
 
   static getDerivedStateFromError(error: Error): State {
@@ -26,24 +30,40 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("FindBack screen error:", error, info.componentStack);
   }
 
+  componentDidUpdate(prevProps: InnerProps): void {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
   render(): ReactNode {
     if (this.state.error) {
       return (
         <div className="flex min-h-full flex-col items-center justify-center gap-3 p-6 text-center">
           <h1 className="text-lg font-semibold">Something went wrong</h1>
-          <p className="break-words text-sm text-on-surface-variant">
-            {this.state.error.message}
+          <p className="text-sm text-on-surface-variant">
+            This screen could not be shown. Your reports and drafts are safe.
           </p>
           <button
             type="button"
-            onClick={() => this.setState({ error: null })}
+            onClick={this.props.onRetry}
             className="min-h-[48px] rounded-lg bg-on-surface px-4 text-surface"
           >
-            Try again
+            Back to Home
           </button>
         </div>
       );
     }
     return this.props.children;
   }
+}
+
+export function ErrorBoundary({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  return (
+    <ErrorBoundaryInner resetKey={pathname} onRetry={() => navigate("/", { replace: true })}>
+      {children}
+    </ErrorBoundaryInner>
+  );
 }

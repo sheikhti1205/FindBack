@@ -3,6 +3,7 @@ import { Link, Navigate } from "react-router";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
+import { friendlyError } from "../utils/friendlyErrors";
 import { motion } from "framer-motion";
 
 export function SignIn() {
@@ -17,11 +18,19 @@ export function SignIn() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    if (!password) {
+      setError("Enter your password.");
+      return;
+    }
     setBusy(true);
     try {
       await login(email.trim(), password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed");
+      setError(friendlyError(err).message);
     } finally {
       setBusy(false);
     }
@@ -63,6 +72,7 @@ export function SignIn() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
           required
         />
         <Button type="submit" size="lg" loading={busy}>

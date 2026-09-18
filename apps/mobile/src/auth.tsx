@@ -27,6 +27,7 @@ import {
 import { getSupabase } from "./services/supabaseClient";
 import { connectRealtime, disconnectRealtime } from "./services/realtime";
 import { clearFeedCaches } from "./hooks/feedCache";
+import { clearPhotoStore } from "./services/photoStore";
 
 export type RegisterOutcome =
   | { status: "authenticated"; user: PublicUser }
@@ -49,7 +50,7 @@ interface AuthContextValue {
   verifyPendingEmail: (code: string) => Promise<PublicUser>;
   /** Resend the pending-signup confirmation code. */
   resendPendingEmail: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   setUser: (user: PublicUser) => void;
 }
@@ -174,19 +175,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendPendingEmailCode(pendingEmail);
   }, [pendingEmail]);
 
-  const logout = useCallback(() => {
-    void (async () => {
-      try {
-        await apiLogout();
-      } catch {
-        /* best effort: local state is cleared regardless */
-      }
-      clearAllAuth();
-      setPendingEmailState(null);
-      disconnectRealtime();
-      clearFeedCaches();
-      setUserState(null);
-    })();
+  const logout = useCallback(async () => {
+    try {
+      await apiLogout();
+    } catch {
+      /* best effort: local state is cleared regardless */
+    }
+    clearAllAuth();
+    setPendingEmailState(null);
+    disconnectRealtime();
+    clearFeedCaches();
+    clearPhotoStore();
+    setUserState(null);
   }, []);
 
   const value = useMemo(

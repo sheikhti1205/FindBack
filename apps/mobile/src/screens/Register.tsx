@@ -60,8 +60,31 @@ export function Register() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    const name = username.trim();
+    if (!name) {
+      setError("Enter a username.");
+      return;
+    }
+    // The live check must have actually answered before we let the account
+    // through; "loading" and a network-errored "idle" both mean unknown.
+    if (usernameState === "loading" || usernameState === "idle") {
+      setError("Still checking username availability — wait a moment and try again.");
+      return;
+    }
     if (usernameState === "taken" || usernameState === "invalid") {
       setError("Please choose another username");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    if (!phone.trim()) {
+      setError("Enter a mobile number.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
       return;
     }
     if (password !== confirm) {
@@ -159,6 +182,7 @@ export function Register() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           hint="At least 8 characters"
+          autoComplete="new-password"
           required
         />
         <TextField
@@ -166,6 +190,7 @@ export function Register() {
           type="password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
+          autoComplete="new-password"
           required
         />
         <Button type="submit" size="lg" loading={busy}>

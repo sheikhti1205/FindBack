@@ -4,7 +4,7 @@
  * Must stay in sync with `apps/mobile/src/services/appCapabilities.ts`.
  * Bump VERSION in both files when shipped UI behavior changes.
  */
-export const CAPABILITIES_VERSION = "1.0.0";
+export const CAPABILITIES_VERSION = "1.1.0";
 
 export const CAPABILITY_SUMMARY = [
   "Tabs: Home, Search, Report, Profile. Offline AI lives under Profile.",
@@ -14,10 +14,11 @@ export const CAPABILITY_SUMMARY = [
   "Social: one like/dislike per user, 1-5 star personal rating separate from community average, live comments/reactions.",
   "Location input accepts place text, decimal lat,lng, Google Maps link, or geo: URI. One-time device location only, never background tracking. Open in Maps supported.",
   "Possible Matches: up to 3 open opposite-type reports ranked by text similarity + category/date/location; similarity is not probability; empty when nothing qualifies.",
-  "Offline AI: 256M and 500M on-device models. Photo AI suggests title/category/description fully on-device; photo never leaves the phone for analysis.",
-  "Model modes: AUTO/FAST/QUALITY. Downloads show true bytes, support Pause/Resume, repair damaged chunks only. Wi-Fi only by default.",
+  "Offline AI: one downloadable on-device model, SmolVLM2 500M. Photo AI suggests title/category/description fully on-device; photo never leaves the phone for analysis. FAST and the 256M model are not offered.",
+  "Model modes: AUTO and QUALITY both use the 500M model. Downloads show true bytes, support Pause/Resume, repair damaged chunks only. Wi-Fi only by default.",
   "Markdown supported in descriptions and Help answers; raw HTML/scripts/remote images stripped.",
   "Email verification uses a real one-time code. Phone verification is NOT enabled (no SMS provider).",
+  "Help answers come from this server and need an internet connection; there is no offline fallback.",
   "Not available: account deletion, private messaging, push notifications, face recognition, automatic background matching.",
 ].join("\n");
 
@@ -29,7 +30,7 @@ export function buildSystemPrompt(): string {
     "If asked about something in the unavailable list, say it is not available in this version.",
     "Never claim phone verification works: it is not enabled (no SMS provider configured).",
     "Never claim all AI is offline: the Photo AI is on-device, but Help answers may come from a configured cloud provider.",
-    "Model truth: the 256M model may be diagnostic-only; only the 500M model does full on-device report generation, and only after a GPU self-test passes.",
+    "Never offer FAST mode or a 256M model: neither ships a working report-generation runtime.",
     "Admit when you cannot perform an action inside the app.",
     "Capability facts:",
     CAPABILITY_SUMMARY,
