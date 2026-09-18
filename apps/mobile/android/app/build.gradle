@@ -1,6 +1,36 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
+def appVersionName() {
+    def pkg = new groovy.json.JsonSlurper().parse(file('../../package.json'))
+    def version = pkg.version?.toString()
+    if (version == null || !(version ==~ /\d+\.\d+\.\d+.*/)) {
+        throw new GradleException("apps/mobile/package.json must carry a SemVer version, found: ${version}")
+    }
+    return version
+}
+
+def gitVersionCode() {
+    def override = System.getenv("VERSION_CODE_OVERRIDE")
+    if (override != null && override.trim().isInteger()) {
+        return override.trim().toInteger()
+    }
+    try {
+        def out = new ByteArrayOutputStream()
+        exec {
+            commandLine "git", "rev-list", "--count", "HEAD"
+            standardOutput = out
+            workingDir = rootProject.projectDir
+        }
+        return 100000 + out.toString().trim().toInteger()
+    } catch (Exception e) {
+        throw new GradleException(
+            "Cannot derive versionCode from git history (shallow clone?). " +
+            "Set VERSION_CODE_OVERRIDE or fetch full history. Cause: ${e.message}"
+        )
+    }
+}
+
 android {
     namespace = "com.findback.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -8,8 +38,14 @@ android {
         applicationId "com.findback.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Version sources (audit #29). Single source of truth is the SemVer
+        // "version" in apps/mobile/package.json: versionName is generated
+        // from it, never a duplicated literal. versionCode is deterministic
+        // (100000 + git commit count) so every commit yields a greater
+        // integer with no hand-bumping; VERSION_CODE_OVERRIDE covers
+        // shallow CI clones that cannot count history.
+        versionCode gitVersionCode()
+        versionName appVersionName()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

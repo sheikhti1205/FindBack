@@ -1,3 +1,5 @@
+import packageJson from "../../package.json";
+
 /**
  * FindBack app capability/knowledge source (versioned).
  *
@@ -8,8 +10,8 @@
  */
 export const CAPABILITIES_VERSION = "1.1.0";
 
-/** Mirrors apps/mobile/package.json for Help context (no PII). */
-export const APP_VERSION = "0.1.0";
+/** Generated from apps/mobile/package.json (the canonical SemVer source) — never a duplicated literal. */
+export const APP_VERSION: string = packageJson.version;
 
 export interface AppCapabilities {
   version: string;

@@ -178,7 +178,17 @@ class LocalVlmPlugin : Plugin() {
         for (manifest in MODEL_MANIFESTS) {
             val modelId = VlmModelId.fromWire(manifest.id) ?: continue
             val record = requireStore().loadRecord(modelId)
-            val state = record?.state ?: VlmState.NOT_INSTALLED
+            // GPU verdicts are environment-bound (audit #3): a persisted
+            // READY_GPU from a different app build / OS / ABI / revision /
+            // runtime downgrades to INSTALLED_UNVERIFIED instead of being
+            // trusted verbatim.
+            val state = validatedRestoredState(
+                record,
+                manifest,
+                appVersionName(),
+                Build.FINGERPRINT,
+                Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
+            )
             modelStates[modelId] = VlmModelInfo(modelId, state, record?.installedBytes)
         }
         initialized = true
