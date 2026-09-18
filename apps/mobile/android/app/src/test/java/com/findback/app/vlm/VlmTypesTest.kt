@@ -220,4 +220,28 @@ class VlmTypesTest {
         assertEquals("0.16.0", result.runtime)
         assertEquals(listOf("diag1", "diag2"), result.diagnostics)
     }
+
+    @Test fun analyzeResultSerializesDiagnosticsAsJsonArray() {
+        val result = AnalyzeResult(
+            text = "t",
+            modelId = VlmModelId.SMOLVLM2_500M,
+            backend = "gpu",
+            runtime = "0.16.0",
+            diagnostics = listOf("diag1", "diag2"),
+        )
+        // getJSONArray throws if diagnostics were serialized as a string.
+        val arr = result.toJSObject().getJSONArray("diagnostics")
+        assertEquals(2, arr.length())
+        assertEquals("diag1", arr.getString(0))
+    }
+
+    @Test fun embedTextsResultSerializesVectorsAsNestedJsonArray() {
+        val result = EmbedTextsResult(listOf(listOf(0.1f, 0.2f), listOf(0.3f, 0.4f)))
+        val outer = result.toJSObject().getJSONArray("vectors")
+        assertEquals(2, outer.length())
+        val inner = outer.getJSONArray(0)
+        assertEquals(2, inner.length())
+        assertEquals(0.1, inner.getDouble(0), 1e-6)
+        assertEquals(0.4, outer.getJSONArray(1).getDouble(1), 1e-6)
+    }
 }

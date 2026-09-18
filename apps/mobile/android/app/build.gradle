@@ -62,6 +62,9 @@ dependencies {
     implementation "androidx.work:work-runtime-ktx:2.10.1"
     testImplementation "org.jetbrains.kotlin:kotlin-test-junit:2.2.21"
     testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0"
+    // Real org.json so Capacitor JSObject/JSArray serialization is exercised on
+    // the JVM instead of the throwing mockable android.jar stubs.
+    testImplementation "org.json:json:20240303"
 }
 
 apply from: 'capacitor.build.gradle'

@@ -29,4 +29,33 @@ class LocalVlmPluginTest {
         // notifyListeners is protected in base class, not declared in subclass
         assertTrue(notifyMethods.isEmpty())
     }
+
+    @Test
+    fun gpuProbe_checksADelegateClassThatActuallyExists() {
+        // Regression: the probe used to look for com.google.ai.edge.litert.gpu.GpuDelegate,
+        // which litert-gpu does not ship, so gpuRuntimePresent was always false.
+        // initialize=false so a native static initializer cannot run on the JVM.
+        val clazz = Class.forName(
+            GpuProbe.GPU_DELEGATE_CLASS,
+            false,
+            GpuProbe::class.java.classLoader,
+        )
+        assertNotNull(clazz)
+        assertTrue(org.tensorflow.lite.Delegate::class.java.isAssignableFrom(clazz))
+    }
+
+    @Test
+    fun modelStatesToJSArray_serializesAsRealJsonArray() {
+        val arr = modelStatesToJSArray(
+            listOf(
+                VlmModelInfo(VlmModelId.SMOLVLM2_500M, VlmState.READY_GPU, 100L),
+                VlmModelInfo(VlmModelId.SMOLVLM_256M, VlmState.NOT_INSTALLED),
+            )
+        )
+        // getJSONObject/getString throw if the array was stringified.
+        assertEquals(2, arr.length())
+        assertEquals("smolvlm2-500m", arr.getJSONObject(0).getString("id"))
+        assertEquals("READY_GPU", arr.getJSONObject(0).getString("state"))
+        assertEquals("smolvlm-256m", arr.getJSONObject(1).getString("id"))
+    }
 }
