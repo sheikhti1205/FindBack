@@ -14,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * API 34+ User-Initiated Data Transfer job running the shared chunk engine.
@@ -26,8 +27,10 @@ import kotlinx.coroutines.launch
 class ModelDownloadJobService : JobService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var activeJob: Job? = null
-    private var downloader: ModelDownloader? = null
+    // Two models can have jobs scheduled; never let one overwrite the other.
+    // Keyed by the scheduler job id so stop/cancel always hits the right job.
+    private val activeJobs = ConcurrentHashMap<Int, Job>()
+    private val downloaders = ConcurrentHashMap<Int, ModelDownloader>()
 
     override fun onStartJob(params: JobParameters): Boolean {
         val modelWire = params.extras?.getString(ModelDownloadScheduler.EXTRA_MODEL_ID)
@@ -35,29 +38,31 @@ class ModelDownloadJobService : JobService() {
             jobFinished(params, false)
             return false
         }
+        val jobId = params.jobId
         val store = ModelStore.create(this)
         val engine = ModelDownloader(this, store)
-        downloader = engine
+        downloaders[jobId] = engine
         val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
         val totalBytes = manifest.files.sumOf { it.expectedBytes }
 
         if (TransferControls.isUserPaused(this, modelId)) {
             TransferEvents.emit(TransferEvent(modelId, VlmState.PAUSED, 0L, totalBytes))
             store.saveTransferRecord(manifest, VlmState.PAUSED)
+            downloaders.remove(jobId)
             jobFinished(params, false)
             return false
         }
 
         setNotification(
             params,
-            TRANSFER_NOTIFICATION_ID,
+            notificationIdFor(modelId),
             buildNotification(modelId, "Starting…", 0L, totalBytes),
             JOB_END_NOTIFICATION_POLICY_DETACH
         )
         TransferEvents.emit(TransferEvent(modelId, VlmState.QUEUED, 0L, totalBytes))
         store.saveTransferRecord(manifest, VlmState.QUEUED)
 
-        activeJob = scope.launch {
+        activeJobs[jobId] = scope.launch {
             val throttler = ProgressThrottler()
             try {
                 TransferEvents.emit(TransferEvent(modelId, VlmState.DOWNLOADING, 0L, totalBytes))
@@ -91,6 +96,8 @@ class ModelDownloadJobService : JobService() {
                 TransferEvents.emit(TransferEvent(modelId, state, error = e.message))
                 store.saveTransferRecord(manifest, state, e.message)
             } finally {
+                activeJobs.remove(jobId)
+                downloaders.remove(jobId)
                 jobFinished(params, false)
             }
         }
@@ -101,8 +108,10 @@ class ModelDownloadJobService : JobService() {
         // Job interruption (process pressure, constraint loss): stop gracefully,
         // preserve verified chunks via journal. Reschedule only when the user
         // did not pause (a user pause must stick).
-        downloader?.requestPause()
-        activeJob?.cancel()
+        val jobId = params.jobId
+        downloaders[jobId]?.requestPause()
+        activeJobs.remove(jobId)?.cancel()
+        downloaders.remove(jobId)
         val modelWire = params.extras?.getString(ModelDownloadScheduler.EXTRA_MODEL_ID)
         val modelId = modelWire?.let { VlmModelId.fromWire(it) }
         if (modelId != null) {
@@ -121,7 +130,7 @@ class ModelDownloadJobService : JobService() {
         val nm = getSystemService(NotificationManager::class.java) ?: return
         val percent = if (total > 0) (downloaded * 100 / total).toInt() else 0
         val text = "${downloaded / (1024 * 1024)} / ${total / (1024 * 1024)} MB · $percent%"
-        nm.notify(NOTIFICATION_TAG, TRANSFER_NOTIFICATION_ID, buildNotification(modelId, text, downloaded, total))
+        nm.notify(NOTIFICATION_TAG, notificationIdFor(modelId), buildNotification(modelId, text, downloaded, total))
     }
 
     private fun showTerminalNotification(modelId: VlmModelId, state: VlmState) {
@@ -136,7 +145,7 @@ class ModelDownloadJobService : JobService() {
         val manifest = MODEL_MANIFESTS.singleOrNull { it.id == modelId.wire }
         val total = manifest?.files?.sumOf { it.expectedBytes } ?: 0L
         // Terminal entries are dismissible, never ongoing.
-        nm.notify(NOTIFICATION_TAG, TRANSFER_NOTIFICATION_ID, buildNotification(modelId, text, total, total, ongoing = false))
+        nm.notify(NOTIFICATION_TAG, notificationIdFor(modelId), buildNotification(modelId, text, total, total, ongoing = false))
     }
 
     private fun buildNotification(
@@ -175,5 +184,9 @@ class ModelDownloadJobService : JobService() {
         const val CHANNEL_ID = "findback_model_download"
         const val NOTIFICATION_TAG = "findback-model"
         const val TRANSFER_NOTIFICATION_ID = 4201
+
+        /** Per-model notification id so two transfers never share one entry. */
+        fun notificationIdFor(modelId: VlmModelId): Int =
+            TRANSFER_NOTIFICATION_ID + modelId.ordinal
     }
 }

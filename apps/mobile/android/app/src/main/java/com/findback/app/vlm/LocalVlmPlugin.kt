@@ -146,26 +146,35 @@ class LocalVlmPlugin : Plugin() {
         val modeWire = requirePrefs().getString("mode", null)
         modeWire?.let { BackendMode.fromWire(it)?.let { currentMode = it } }
 
-        // Restore persisted model states. A persisted transient transfer
-        // state with no live job means the process died mid-transfer:
-        // reconcile to PAUSED (resume preserved via journal + verified
-        // chunks) instead of showing a stuck DOWNLOADING.
+        // Restore persisted model states. Transient transfer states are
+        // reconciled against the real platform schedulers (not an in-memory
+        // map, which is empty after process death) in a background pass
+        // below; the UI starts from the persisted state and is corrected if
+        // a live job is actually still owned by the system.
         for (manifest in MODEL_MANIFESTS) {
             val modelId = VlmModelId.fromWire(manifest.id) ?: continue
-            var record = requireStore().loadRecord(modelId)
-            var state = record?.state ?: VlmState.NOT_INSTALLED
-            val reconciled = TransferReconcile.reconcileState(
-                state,
-                hasLiveJob = activeDownloads.containsKey(modelId)
-            )
-            if (reconciled != state) {
-                requireStore().saveTransferRecord(manifest, reconciled)
-                record = requireStore().loadRecord(modelId)
-                state = reconciled
-            }
+            val record = requireStore().loadRecord(modelId)
+            val state = record?.state ?: VlmState.NOT_INSTALLED
             modelStates[modelId] = VlmModelInfo(modelId, state, record?.installedBytes)
         }
         initialized = true
+
+        scope.launch {
+            for (manifest in MODEL_MANIFESTS) {
+                val modelId = VlmModelId.fromWire(manifest.id) ?: continue
+                val live = try {
+                    ModelDownloadScheduler.hasLiveJob(getContext(), modelId)
+                } catch (_: Exception) {
+                    false
+                }
+                val current = modelStates[modelId]?.state ?: continue
+                val reconciled = TransferReconcile.reconcileState(current, live)
+                if (reconciled != current) {
+                    requireStore().saveTransferRecord(manifest, reconciled)
+                    updateModelState(modelId, reconciled)
+                }
+            }
+        }
 
         eventCollector?.cancel()
         eventCollector = scope.launch {
