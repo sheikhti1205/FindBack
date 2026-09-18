@@ -3,11 +3,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { bridge } = vi.hoisted(() => ({ bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() } }));
+const { bridge, photo } = vi.hoisted(() => ({
+  bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() },
+  photo: { isNativeCameraAvailable: vi.fn(() => true), takePhoto: vi.fn(), chooseFromGallery: vi.fn(), toNativeImageUri: vi.fn() },
+}));
 vi.mock("../services/vlmPlugin", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/vlmPlugin")>();
   return { ...actual, getVlmBridge: () => bridge };
 });
+vi.mock("../services/photo", () => photo);
 
 import { OfflineAi } from "./OfflineAi";
 
@@ -215,5 +219,41 @@ describe("OfflineAi", () => {
     fireEvent.click(await screen.findByRole("button", { name: /download smolvlm2 500m/i }));
     const confirm = screen.getByRole("button", { name: /^confirm download$/i });
     expect(confirm.parentElement?.className).toContain("flex-wrap");
+  });
+
+  it("offers GPU self-test only when the GPU delegate class is present (WP10)", async () => {
+    bridge.getCapabilities.mockResolvedValue({ ...capabilities, gpuDelegateClassPresent: false });
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const { unmount } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    await screen.findByText(/installed — gpu test required/i);
+    expect(screen.queryByRole("button", { name: /run gpu self-test \(camera\)/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /run gpu self-test \(gallery\)/i })).toBeNull();
+    unmount();
+
+    bridge.getCapabilities.mockResolvedValue({ ...capabilities, gpuDelegateClassPresent: true });
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    await screen.findByText(/installed — gpu test required/i);
+    expect(screen.getByRole("button", { name: /run gpu self-test \(camera\)/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /run gpu self-test \(gallery\)/i })).toBeTruthy();
+  });
+
+  it("hides GPU self-test when native photo capture is unavailable (WP10)", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(false);
+    try {
+      bridge.getCapabilities.mockResolvedValue({ ...capabilities, gpuDelegateClassPresent: true });
+      bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+      bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+      bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+      bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+      render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+      await screen.findByText(/installed — gpu test required/i);
+      expect(screen.queryByRole("button", { name: /run gpu self-test \(camera\)/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /run gpu self-test \(gallery\)/i })).toBeNull();
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(true);
+    }
   });
 });
