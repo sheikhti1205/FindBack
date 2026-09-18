@@ -16,6 +16,12 @@ import android.util.Log
  * `com.google.ai.edge.litert.gpu.GpuDelegate` class, so probing for that name always threw
  * `ClassNotFoundException` and the app reported "no GPU runtime" on every device — including
  * phones with a working GPU, which made the GPU self-test look like a hardware limitation.
+ *
+ * Audit #26: [gpuDelegateClassPresent] proves only that the delegate class
+ * ships in the APK. It is NOT proof that the LiteRT-LM 500M GPU runtime
+ * works on this device — only the real image-bearing 500M self-test may
+ * establish READY_GPU. The capability is named accordingly so no reader
+ * can mistake it for a runtime-availability verdict.
  */
 object GpuProbe {
     private const val TAG = "GpuProbe"
@@ -23,7 +29,11 @@ object GpuProbe {
     /** Class provided by `com.google.ai.edge.litert:litert-gpu` (verified in the AAR). */
     const val GPU_DELEGATE_CLASS = "org.tensorflow.lite.gpu.GpuDelegate"
 
-    fun runtimePresent(): Boolean = try {
+    /**
+     * Whether the litert-gpu delegate class ships in the APK. Class presence
+     * only — never a verdict on LiteRT-LM runtime availability (see above).
+     */
+    fun gpuDelegateClassPresent(): Boolean = try {
         Class.forName(GPU_DELEGATE_CLASS)
         true
     } catch (e: ClassNotFoundException) {
