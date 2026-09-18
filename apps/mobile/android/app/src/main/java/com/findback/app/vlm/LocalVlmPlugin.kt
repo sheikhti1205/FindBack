@@ -198,11 +198,10 @@ class LocalVlmPlugin : Plugin() {
         } else {
             DeviceCategory.PHYSICAL
         }
-        val gpuVendor: String? = null // Would need EGL to query
-        val gpuRenderer: String? = null // Would need EGL to query
+        val (gpuVendor, gpuRenderer) = GpuProbe.info()
         val memoryClassMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).memoryClass
         val freeAppStorageMb = getFreeAppStorageMb(context)
-        val gpuRuntimePresent = checkGpuRuntimePresent()
+        val gpuRuntimePresent = GpuProbe.runtimePresent()
         val runtimeVersion = "0.16.0" // LiteRT version
 
         val capabilities = VlmCapabilities(
@@ -244,15 +243,14 @@ class LocalVlmPlugin : Plugin() {
     @PluginMethod
     fun getModelStates(call: PluginCall) {
         if (!ensureInitialized(call)) return
-        // Reload from store to get latest state
-        val models = VlmModelId.values().map { modelId ->
+        // Build a real JS array; a Kotlin Array serializes as "[L...;@hash".
+        val infos = VlmModelId.values().map { modelId ->
             val record = requireStore().loadRecord(modelId)
             val state = record?.state ?: VlmState.NOT_INSTALLED
-            val info = VlmModelInfo(modelId, state, record?.installedBytes, record?.lastError?.message)
-            info.toJSObject()
-        }.toTypedArray()
+            VlmModelInfo(modelId, state, record?.installedBytes, record?.lastError?.message)
+        }
         val result = JSObject()
-        result.put("models", models)
+        result.put("models", modelStatesToJSArray(infos))
         call.resolve(result)
     }
 
@@ -894,20 +892,24 @@ class LocalVlmPlugin : Plugin() {
         val stat = android.os.StatFs(file.path)
         return (stat.availableBlocksLong * stat.blockSizeLong) / (1024 * 1024)
     }
-
-    private fun checkGpuRuntimePresent(): Boolean {
-        return try {
-            Class.forName("com.google.ai.edge.litert.gpu.GpuDelegate")
-            true
-        } catch (e: ClassNotFoundException) {
-            false
-        }
-    }
 }
 
 /**
  * Model state info for plugin events.
  */
+/**
+ * Wire array for getModelStates.
+ *
+ * Never pass a Kotlin `Array` to `JSObject.put`: Capacitor serializes it via
+ * toString (e.g. "[Lcom.getcapacitor.JSObject;@1a2b3c"), which reaches JS as a
+ * string and breaks array methods.
+ */
+internal fun modelStatesToJSArray(infos: List<VlmModelInfo>): JSArray {
+    val arr = JSArray()
+    infos.forEach { arr.put(it.toJSObject()) }
+    return arr
+}
+
 data class VlmModelInfo(
     val id: VlmModelId,
     val state: VlmState,

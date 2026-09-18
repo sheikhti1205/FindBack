@@ -1,5 +1,6 @@
 package com.findback.app.vlm
 
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 
 /**
@@ -231,7 +232,7 @@ data class AnalyzeResult(
         obj.put("modelId", modelId.wire)
         obj.put("backend", backend)
         obj.put("runtime", runtime)
-        obj.put("diagnostics", diagnostics.toTypedArray())
+        obj.put("diagnostics", JSArray(diagnostics))
         return obj
     }
 }
@@ -311,7 +312,9 @@ data class EmbedTextsResult(
 ) {
     fun toJSObject(): JSObject {
         val obj = JSObject()
-        obj.put("vectors", vectors.map { it.toTypedArray() }.toTypedArray())
+        val outer = JSArray()
+        vectors.forEach { outer.put(JSArray(it)) }
+        obj.put("vectors", outer)
         return obj
     }
 }
