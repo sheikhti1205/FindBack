@@ -56,6 +56,21 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
+/** Turns native error codes into plain language; raw enums must never reach users. */
+const ERROR_LABELS: Record<string, string> = {
+  GPU_UNAVAILABLE_ON_CURRENT_RUNTIME:
+    "This phone's GPU can't run this model, and the app won't fall back to the CPU.",
+  DOWNLOAD_FAILED: "The download failed. Resume to continue.",
+  HASH_MISMATCH: "The downloaded data didn't match the expected file.",
+  INSUFFICIENT_STORAGE: "Not enough free storage.",
+  RUNTIME_ERROR: "The model stopped with a runtime error.",
+};
+
+function friendlyError(code: string | undefined | null): string | null {
+  if (!code) return null;
+  return ERROR_LABELS[code] ?? code.replace(/_/g, " ").toLowerCase();
+}
+
 function ModelRow({
   modelId,
   info,
@@ -100,19 +115,17 @@ function ModelRow({
     <div className="border border-outline-variant rounded-xl p-4 bg-surface">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="font-medium text-base truncate">{spec.label}</h3>
-            <span className="text-xs text-on-surface-variant whitespace-nowrap">{spec.sizeMb} MB</span>
-            <span className="text-xs text-on-surface-variant whitespace-nowrap">rev {spec.revision}</span>
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <h3 className="font-medium text-base">{spec.label}</h3>
+            <span className="text-xs text-on-surface-variant whitespace-nowrap">{spec.sizeMb} MB download</span>
           </div>
-          <p className="text-xs text-on-surface-variant mt-1">Pinned revision: {spec.revision}</p>
 
-          <div className="mt-2 flex items-center gap-3 text-xs text-on-surface-variant">
-            <span className="flex items-center gap-1">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
+            <span className="flex items-center gap-1 whitespace-nowrap">
               <HardDrive size={12} aria-hidden />
-              Required: {requiredSpaceMb.toFixed(1)} MB free
+              Needs {requiredSpaceMb.toFixed(0)} MB free
             </span>
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1 whitespace-nowrap">
               {hasSpace ? (
                 <>
                   <CheckCircle size={12} className="text-green-500" aria-hidden />
@@ -136,7 +149,7 @@ function ModelRow({
             </dl>
           </details>
 
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <span
               className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
                 info.state === "READY_GPU"
@@ -154,9 +167,9 @@ function ModelRow({
                 ? `Downloading ${formatBytes(downloadProgress.downloadedBytes)} / ${formatBytes(downloadProgress.totalBytes)} (${Math.round(downloadProgress.progress * 100)}%)`
                 : stateLabel}
             </span>
-            {info.error && info.error !== stateLabel && (
-              <span className={`text-xs px-2 py-0.5 rounded-full ${info.state === "GPU_UNAVAILABLE" ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50"}`}>
-                {info.error}
+            {friendlyError(info.error) && (
+              <span className={`text-xs px-2 py-0.5 rounded-full break-words ${info.state === "GPU_UNAVAILABLE" ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50"}`}>
+                {friendlyError(info.error)}
               </span>
             )}
           </div>
@@ -424,7 +437,7 @@ export function OfflineAi() {
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4">
+    <div className="flex flex-col gap-4 p-4 overflow-x-hidden">
       <header className="flex items-center gap-2 px-4 pt-2">
         <BackButton fallbackTo="/profile" label="Back to profile" />
         <div>
@@ -453,8 +466,8 @@ export function OfflineAi() {
           ))}
         </div>
         <p className="text-xs text-on-surface-variant">
-          GPU-strict: only a GPU-proven model runs analysis. There is no silent CPU fallback.
-          AUTO prefers SmolVLM2 500M, FAST uses SmolVLM 256M diagnostics, QUALITY uses SmolVLM2 500M.
+          Only a GPU-verified model runs analysis — there is no silent CPU fallback. AUTO and
+          QUALITY use SmolVLM2 500M; FAST uses the lighter SmolVLM 256M.
         </p>
         <div className="flex gap-2" role="radiogroup" aria-label="Download network">
           {(["wifi-only", "wifi-or-cellular"] as const).map((opt) => (
@@ -533,7 +546,11 @@ export function OfflineAi() {
                 )}
                 <div>
                   <p className="font-medium">{gpuSelfTestResult === "GPU_AVAILABLE" ? "GPU Available" : "GPU Unavailable"}</p>
-                  <p className="text-sm text-on-surface-variant">{gpuSelfTestResult}</p>
+                  <p className="text-sm text-on-surface-variant break-words">
+                    {gpuSelfTestResult === "GPU_AVAILABLE"
+                      ? "The model ran fully on the GPU."
+                      : friendlyError(gpuSelfTestResult)}
+                  </p>
                 </div>
               </div>
             )}
@@ -573,7 +590,7 @@ export function OfflineAi() {
               Required free space: {confirmDownload.sizes.map((s) => (s * 1.2).toFixed(1)).join(" + ")} MB
               {capabilities && ` (${formatBytes((capabilities.freeAppStorageMb ?? Number.MAX_SAFE_INTEGER) * 1024 * 1024)} available)`}
             </p>
-            <div className="flex gap-3 justify-end">
+            <div className="flex flex-wrap gap-3 justify-end">
               <button
                 onClick={() => setConfirmDownload(null)}
                 className="min-h-[48px] px-4 py-2 border border-outline-variant rounded-lg hover:bg-surface-container"
@@ -583,7 +600,7 @@ export function OfflineAi() {
               <button
                 onClick={handleConfirmDownload}
                 autoFocus
-                className="min-h-[48px] px-4 py-2 bg-on-surface text-surface rounded-lg hover:opacity-90"
+                className="min-h-[48px] px-4 py-2 bg-on-surface text-surface rounded-lg hover:opacity-90 whitespace-nowrap"
               >
                 Confirm download
               </button>
