@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
-import { ExternalLink, Star, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { ExternalLink, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -11,6 +11,7 @@ import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { MapEmbed } from "../components/MapEmbed";
 import { EmptyState, Spinner } from "../components/PostCard";
 import { MarkdownView } from "../components/MarkdownView";
+import { RatingStars } from "../components/RatingStars";
 import { PossibleMatches } from "../components/PossibleMatches";
 import { announce } from "../components/LiveRegion";
 import { friendlyError } from "../utils/friendlyErrors";
@@ -268,25 +269,7 @@ export function PostDetail() {
           <p className="mt-2 text-sm font-medium" id="your-rating-label">
             Your rating{myRating != null ? `: ${myRating} out of 5` : ""}
           </p>
-          <div className="flex" role="radiogroup" aria-labelledby="your-rating-label">
-            {[1, 2, 3, 4, 5].map((star) => (
-              <button
-                key={star}
-                type="button"
-                role="radio"
-                aria-checked={myRating === star}
-                aria-label={`${star} star${star > 1 ? "s" : ""}`}
-                onClick={() => onRate(star)}
-                className="flex min-h-[48px] min-w-[48px] items-center justify-center text-on-surface-variant hover:opacity-80"
-              >
-                <Star
-                  size={26}
-                  aria-hidden
-                  className={(myRating ?? 0) >= star ? "fill-on-surface text-on-surface" : ""}
-                />
-              </button>
-            ))}
-          </div>
+          <RatingStars value={myRating} onRate={onRate} labelId="your-rating-label" />
         </section>
 
         {/* Owner status control */}
