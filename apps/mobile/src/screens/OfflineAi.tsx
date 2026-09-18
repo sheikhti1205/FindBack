@@ -5,7 +5,7 @@ import { getVlmBridge } from "../services/vlmPlugin";
 import { chooseFromGallery, takePhoto, toNativeImageUri } from "../services/photo";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
-import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent, GpuSelfTestResult } from "../services/vlmPlugin";
+import type { VlmModelId, VlmState, VlmCapabilities, VlmModelInfo, DownloadProgressEvent, GpuSelfTestResult } from "../services/vlmPlugin";
 
 const MODEL_SPECS: Record<VlmModelId, { label: string; sizeMb: number; revision: string; sourceRepo: string; runtime: string }> = {
   "smolvlm2-500m": {
@@ -84,9 +84,6 @@ function fallbackRequiredBytes(sizeMb: number): number {
   return bytes + Math.max(INSTALL_HEADROOM_BYTES, bytes * INSTALL_HEADROOM_FRACTION);
 }
 
-/** Only modes backed by a real full report-generation runtime are exposed. */
-const EXPOSED_MODES: BackendMode[] = ["AUTO", "QUALITY"];
-
 /** Only models that can actually generate a report are downloadable. */
 const EXPOSED_MODELS: VlmModelId[] = ["smolvlm2-500m"];
 
@@ -113,7 +110,6 @@ function ModelRow({
   modelId,
   info,
   capabilities,
-  _mode,
   onDownload,
   onDelete,
   onRunGpuSelfTest,
@@ -126,7 +122,6 @@ function ModelRow({
   modelId: VlmModelId;
   info: VlmModelInfo;
   capabilities: VlmCapabilities | null;
-  _mode: BackendMode;
   onDownload: (modelId: VlmModelId) => void;
   onDelete: (modelId: VlmModelId) => void;
   onRunGpuSelfTest: (modelId: VlmModelId, imageUri: string) => void;
@@ -336,7 +331,6 @@ function ModelRow({
 export function OfflineAi() {
   const bridge = getVlmBridge();
   const [capabilities, setCapabilities] = useState<VlmCapabilities | null>(null);
-  const [mode, setModeState] = useState<BackendMode>("AUTO");
   const [wifiOnly, setWifiOnly] = useState(loadWifiOnly);
   const [modelStates, setModelStates] = useState<VlmModelInfo[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressEvent | null>(null);
@@ -362,11 +356,6 @@ export function OfflineAi() {
   useEffect(() => {
     let mounted = true;
     bridge.getCapabilities().then((c) => mounted && setCapabilities(c));
-    bridge.getSettings().then((s) => {
-      if (!mounted) return;
-      // FAST has no working report-generation runtime; treat a stored FAST as AUTO.
-      setModeState(s.mode === "FAST" ? "AUTO" : s.mode);
-    });
     bridge.getModelStates().then((m) => mounted && setModelStates(m));
 
     const offProgress = bridge.onDownloadProgress((event) => {
@@ -453,11 +442,6 @@ export function OfflineAi() {
     }
   };
 
-  const handleModeChange = async (newMode: BackendMode) => {
-    await bridge.setMode(newMode);
-    setModeState(newMode);
-  };
-
   return (
     <div className="flex flex-col gap-4 p-4 overflow-x-hidden">
       <header className="flex items-center gap-2 px-4 pt-2">
@@ -468,28 +452,11 @@ export function OfflineAi() {
         </div>
       </header>
 
-      <section className="px-4 space-y-4" aria-labelledby="mode-heading">
-        <h2 id="mode-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Inference Mode</h2>
-        <div className="flex gap-2" role="radiogroup" aria-label="Inference mode">
-          {EXPOSED_MODES.map((m) => (
-            <button
-              key={m}
-              onClick={() => handleModeChange(m)}
-              role="radio"
-              aria-checked={mode === m}
-              className={`min-h-[48px] flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                mode === m
-                  ? "bg-on-surface text-surface"
-                  : "bg-surface-container text-on-surface-variant hover:bg-surface-container/80"
-              }`}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
+      <section className="px-4 space-y-4" aria-labelledby="network-heading">
+        <h2 id="network-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Downloads</h2>
         <p className="text-xs text-on-surface-variant">
-          Only a GPU-verified model runs analysis — there is no silent CPU fallback. Both
-          modes use the SmolVLM2 500M model.
+          Only a GPU-verified model runs analysis — there is no silent CPU fallback. The
+          SmolVLM2 500M model is the only downloadable model.
         </p>
         <div className="flex gap-2" role="radiogroup" aria-label="Download network">
           {(["wifi-only", "wifi-or-cellular"] as const).map((opt) => (
@@ -529,7 +496,6 @@ export function OfflineAi() {
                 modelId={modelId}
                 info={info}
                 capabilities={capabilities}
-                _mode={mode}
                 onDownload={handleDownload}
                 onDelete={handleDelete}
                 onRunGpuSelfTest={handleRunGpuSelfTest}

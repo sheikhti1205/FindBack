@@ -57,19 +57,26 @@ describe("OfflineAi", () => {
     expect(screen.queryByText(/256M/)).toBeNull();
     expect(screen.queryByRole("radio", { name: "FAST" })).toBeNull();
     expect(screen.queryByRole("button", { name: /install both/i })).toBeNull();
-    expect(screen.getByRole("radio", { name: "AUTO" })).toBeTruthy();
-    expect(screen.getByRole("radio", { name: "QUALITY" })).toBeTruthy();
+    expect(screen.queryByRole("radiogroup", { name: /inference mode/i })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "AUTO" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "QUALITY" })).toBeNull();
   });
 
-  it("maps a stored FAST mode to AUTO", async () => {
+  it("has no AUTO/QUALITY inference selector and never calls setMode", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "FAST" });
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    const auto = await screen.findByRole("radio", { name: "AUTO" });
-    expect(auto.getAttribute("aria-checked")).toBe("true");
+    await screen.findByRole("heading", { name: /SmolVLM2 500M/ });
+    expect(screen.queryByRole("radio", { name: "AUTO" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "QUALITY" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "FAST" })).toBeNull();
+    expect(bridge.setMode).not.toHaveBeenCalled();
+    // The network policy control stays available.
+    expect(screen.getByRole("radiogroup", { name: /download network/i })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "Wi-Fi only" })).toBeTruthy();
   });
 
   it("requires the native policy (model + headroom), not size x 1.2", async () => {
