@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Crosshair, ExternalLink, MapPin } from "lucide-react";
 import { Button } from "./Button";
 import { announce } from "./LiveRegion";
@@ -17,6 +17,12 @@ export interface LocationValue {
   longitude: number | null;
   /** Whether the stored coordinates are rounded to ~100 m or exact. */
   precision?: "APPROXIMATE" | "EXACT";
+  /**
+   * Unrounded coordinates kept alongside the published ones so the user can
+   * toggle approximate ↔ exact without losing the precise fix. Local draft only.
+   */
+  preciseLatitude?: number | null;
+  preciseLongitude?: number | null;
 }
 
 interface LocationPickerProps {
@@ -38,13 +44,40 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
   const [approx, setApprox] = useState(() => value.precision !== "EXACT");
   const [sourceText, setSourceText] = useState(value.label);
   // Keep the unrounded coordinates so "Use exact pin" can really restore them.
-  const [precise, setPrecise] = useState<{ lat: number; lng: number } | null>(() =>
-    value.latitude != null && value.longitude != null
+  const [precise, setPrecise] = useState<{ lat: number; lng: number } | null>(() => {
+    if (value.preciseLatitude != null && value.preciseLongitude != null) {
+      return { lat: value.preciseLatitude, lng: value.preciseLongitude };
+    }
+    return value.latitude != null && value.longitude != null
       ? { lat: value.latitude, lng: value.longitude }
-      : null,
-  );
+      : null;
+  });
   // Guards a short-link A resolving after the user replaced it with link B.
   const resolveSeq = useRef(0);
+  // The last value this picker emitted, so an external reset (discard draft)
+  // can be told apart from the echo of our own onChange.
+  const emittedRef = useRef(value);
+
+  useEffect(() => {
+    if (value === emittedRef.current) return;
+    emittedRef.current = value;
+    setSourceText(value.label);
+    setPrecise(
+      value.preciseLatitude != null && value.preciseLongitude != null
+        ? { lat: value.preciseLatitude, lng: value.preciseLongitude }
+        : value.latitude != null && value.longitude != null
+          ? { lat: value.latitude, lng: value.longitude }
+          : null,
+    );
+    setApprox(value.precision !== "EXACT");
+    setGeoError(null);
+    setParseError(null);
+  }, [value]);
+
+  function emit(next: LocationValue) {
+    emittedRef.current = next;
+    onChange(next);
+  }
 
   function setCoords(
     label: string,
@@ -55,18 +88,18 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
     if (lat == null || lng == null) {
       setPrecise(null);
       setApprox(true);
-      onChange({ label, latitude: lat, longitude: lng, precision: "APPROXIMATE" });
+      emit({ label, latitude: lat, longitude: lng, precision: "APPROXIMATE", preciseLatitude: null, preciseLongitude: null });
       return;
     }
     setPrecise({ lat, lng });
     if (precision === "EXACT") {
       setApprox(false);
-      onChange({ label, latitude: lat, longitude: lng, precision: "EXACT" });
+      emit({ label, latitude: lat, longitude: lng, precision: "EXACT", preciseLatitude: lat, preciseLongitude: lng });
       return;
     }
     const rounded = roundToApproximate(lat, lng);
     setApprox(true);
-    onChange({ label, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE" });
+    emit({ label, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE", preciseLatitude: lat, preciseLongitude: lng });
   }
 
   function useCurrentLocation() {
@@ -121,11 +154,13 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
     }
     setPrecise(null);
     setApprox(true);
-    onChange({
+    emit({
       label: parsed.label,
       latitude: parsed.latitude,
       longitude: parsed.longitude,
       precision: "APPROXIMATE",
+      preciseLatitude: null,
+      preciseLongitude: null,
     });
   }
 
@@ -135,13 +170,13 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
     if (lat == null || lng == null) return;
     const rounded = roundToApproximate(lat, lng);
     setPrecise({ lat, lng });
-    onChange({ ...value, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE" });
+    emit({ ...value, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE", preciseLatitude: lat, preciseLongitude: lng });
     setApprox(true);
   }
 
   function handleUseExact() {
     if (!precise) return;
-    onChange({ ...value, latitude: precise.lat, longitude: precise.lng, precision: "EXACT" });
+    emit({ ...value, latitude: precise.lat, longitude: precise.lng, precision: "EXACT", preciseLatitude: precise.lat, preciseLongitude: precise.lng });
     setApprox(false);
     announce("Exact pin enabled. It will be shown publicly.");
   }

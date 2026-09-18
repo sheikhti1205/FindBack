@@ -59,6 +59,33 @@ describe("CreateReport", () => {
     }
   });
 
+  it("resets the location picker UI when the draft is discarded (WP9)", async () => {
+    render(<CreateReport />);
+    const locationInput = screen.getByLabelText(/approximate location/i) as HTMLInputElement;
+    fireEvent.change(locationInput, { target: { value: "23.810332, 90.412518" } });
+    expect(locationInput.value).toBe("23.810332, 90.412518");
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
+      await waitFor(() => expect(locationInput.value).toBe(""));
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("keeps an exact pin (with its warning) across navigation (WP9)", async () => {
+    const { unmount } = render(<CreateReport />);
+    const locationInput = screen.getByLabelText(/approximate location/i);
+    fireEvent.change(locationInput, { target: { value: "23.810332, 90.412518" } });
+    fireEvent.click(await screen.findByRole("button", { name: /use exact pin/i }));
+    await screen.findByText(/exact pin and will be shown publicly/i);
+
+    unmount();
+    render(<CreateReport />);
+    expect(await screen.findByText(/exact pin and will be shown publicly/i)).toBeTruthy();
+  });
+
   it("clears the selected file and preview when the photo is removed", async () => {
     render(<CreateReport />);
     pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
