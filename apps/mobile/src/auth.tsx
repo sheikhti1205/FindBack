@@ -26,8 +26,7 @@ import {
 } from "./services/session";
 import { getSupabase } from "./services/supabaseClient";
 import { connectRealtime, disconnectRealtime } from "./services/realtime";
-import { clearFeedCaches } from "./hooks/feedCache";
-import { clearPhotoStore } from "./services/photoStore";
+import { clearUserScopedLocalState } from "./services/userScopedState";
 
 export type RegisterOutcome =
   | { status: "authenticated"; user: PublicUser }
@@ -91,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(session?.access_token ?? null);
         if (event === "SIGNED_OUT") {
           disconnectRealtime();
-          clearFeedCaches();
+          clearUserScopedLocalState();
           setUserState(null);
           setPendingEmailState(null);
           return;
@@ -119,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () =>
       onSignedOut(() => {
         disconnectRealtime();
-        clearFeedCaches();
+        clearUserScopedLocalState();
         setUserState(null);
         setPendingEmailState(null);
       }),
@@ -184,8 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearAllAuth();
     setPendingEmailState(null);
     disconnectRealtime();
-    clearFeedCaches();
-    clearPhotoStore();
+    clearUserScopedLocalState();
     setUserState(null);
   }, []);
 
