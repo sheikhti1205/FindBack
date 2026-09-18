@@ -290,16 +290,42 @@ enum class GpuSelfTestState(val wire: String) {
 }
 
 /**
+ * GPU self-test failure classification (audit #25). A failed self-test is
+ * never flattened into a bare GPU_UNAVAILABLE: the stage that failed travels
+ * with the result so the UI can explain it.
+ */
+enum class SelfTestFailure(val wire: String) {
+    INPUT_ERROR("INPUT_ERROR"),
+    MODEL_RUNTIME_ERROR("MODEL_RUNTIME_ERROR"),
+    GENERATION_ERROR("GENERATION_ERROR");
+
+    companion object {
+        fun fromWire(wire: String): SelfTestFailure? = values().firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * Structured self-test outcome from [VlmEngine500.runSelfTest].
+ */
+data class SelfTestOutcome(
+    val success: Boolean,
+    val failure: SelfTestFailure? = null,
+    val diagnostics: List<String> = emptyList()
+)
+
+/**
  * GPU self-test result.
  */
 data class GpuSelfTestResult(
     val state: GpuSelfTestState,
-    val error: String? = null
+    val error: String? = null,
+    val failure: SelfTestFailure? = null
 ) {
     fun toJSObject(): JSObject {
         val obj = JSObject()
         obj.put("state", state.wire)
         error?.let { obj.put("error", it) }
+        failure?.let { obj.put("failure", it.wire) }
         return obj
     }
 }

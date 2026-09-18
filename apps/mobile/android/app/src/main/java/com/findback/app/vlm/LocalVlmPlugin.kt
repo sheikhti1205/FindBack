@@ -600,23 +600,31 @@ class LocalVlmPlugin : Plugin() {
                             return@launch
                         }
                         try {
+                            // A cancelled test must leave the pre-test state
+                            // behind (audit #2): GPU_SELF_TESTING is transient
+                            // and is never persisted on the cancel path.
+                            val priorState = modelStates[modelId]?.state
+                                ?: VlmState.INSTALLED_UNVERIFIED
                             updateModelState(modelId, VlmState.GPU_SELF_TESTING)
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
 
                             val instruction = "Describe this image briefly."
                             activeInference.markNativeRunning(testToken, true)
-                            val (success, diagnostics) = try {
+                            val outcome = try {
                                 engineInstance.runSelfTest(imageUri, instruction)
                             } finally {
                                 activeInference.markNativeRunning(testToken, false)
                             }
+                            val diagnostics = outcome.diagnostics
 
                             if (activeInference.isCancelled(testToken)) {
+                                updateModelState(modelId, priorState)
+                                notifyListeners("inferenceState", InferenceStateEvent(modelId, priorState).toJSObject())
                                 call.reject("Self-test cancelled", "CANCELLED")
                                 return@launch
                             }
 
-                            if (success) {
+                            if (outcome.success) {
                                 persistModelState(modelId, manifest, VlmState.READY_GPU)
                                 updateModelState(modelId, VlmState.READY_GPU)
                                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
@@ -634,14 +642,19 @@ class LocalVlmPlugin : Plugin() {
                                 notifyListeners("inferenceState", InferenceStateEvent(modelId, finalState, error = diagnostics.joinToString("; ")).toJSObject())
                                 val result = GpuSelfTestResult(
                                     if (imageUri != null) GpuSelfTestState.GPU_UNAVAILABLE else GpuSelfTestState.GPU_UNSUPPORTED,
-                                    diagnostics.joinToString("; ")
+                                    diagnostics.joinToString("; "),
+                                    outcome.failure
                                 )
                                 call.resolve(result.toJSObject())
                             }
                         } catch (e: Exception) {
                             updateModelState(modelId, VlmState.RUNTIME_ERROR, error = e.message)
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = e.message).toJSObject())
-                            val result = GpuSelfTestResult(GpuSelfTestState.ERROR, e.message)
+                            val result = GpuSelfTestResult(
+                                GpuSelfTestState.ERROR,
+                                e.message,
+                                SelfTestFailure.MODEL_RUNTIME_ERROR
+                            )
                             call.resolve(result.toJSObject())
                         } finally {
                             activeInference.finishNative(testToken)

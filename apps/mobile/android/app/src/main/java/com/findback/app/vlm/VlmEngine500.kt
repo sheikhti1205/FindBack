@@ -101,38 +101,55 @@ class VlmEngine500(
      * If imageUri is provided, runs a real image-bearing generation.
      * If imageUri is null, only initializes the engine and returns diagnostics.
      *
+     * Failures are classified by stage (audit #25): engine init problems are
+     * MODEL_RUNTIME_ERROR, image preparation problems are INPUT_ERROR, and
+     * generation problems are GENERATION_ERROR.
+     *
      * @param imageUri Optional image URI for a real self-test.
      * @param instruction The instruction to use for self-test.
-     * @return Pair of (success: Boolean, diagnostics: List<String>)
+     * @return Structured outcome with success flag, failure class, diagnostics.
      */
     fun runSelfTest(
         imageUri: String?,
         instruction: String
-    ): Pair<Boolean, List<String>> {
+    ): SelfTestOutcome {
         val diagnostics = mutableListOf<String>()
 
         try {
             initialize()
-            diagnostics.add("Engine initialized with GPU backend")
+        } catch (e: Exception) {
+            diagnostics.add("Engine init failed: ${e.message}")
+            return SelfTestOutcome(false, SelfTestFailure.MODEL_RUNTIME_ERROR, diagnostics.toList())
+        }
+        diagnostics.add("Engine initialized with GPU backend")
 
-            if (imageUri != null) {
-                // Real image-bearing self-test
-                val prepared = ImagePreparer.prepare(context, imageUri)
-                try {
-                    val result = analyze(prepared, instruction, 64, 0.1f)
-                    diagnostics.add("Self-test generation completed: ${result.take(100)}")
-                    return Pair(EnginePolicy.selfTestPassed(result), diagnostics.toList())
-                } finally {
-                    ImagePreparer.cleanup(prepared)
-                }
+        if (imageUri == null) {
+            // GPU init diagnostics only - no image, no READY_GPU
+            diagnostics.add("GPU backend initialized without image test")
+            return SelfTestOutcome(false, null, diagnostics.toList())
+        }
+
+        // Real image-bearing self-test
+        val prepared = try {
+            ImagePreparer.prepare(context, imageUri)
+        } catch (e: Exception) {
+            diagnostics.add("Image preparation failed: ${e.message}")
+            return SelfTestOutcome(false, SelfTestFailure.INPUT_ERROR, diagnostics.toList())
+        }
+        try {
+            val result = analyze(prepared, instruction, 64, 0.1f)
+            diagnostics.add("Self-test generation completed: ${result.take(100)}")
+            return if (EnginePolicy.selfTestPassed(result)) {
+                SelfTestOutcome(true, null, diagnostics.toList())
             } else {
-                // GPU init diagnostics only - no image, no READY_GPU
-                diagnostics.add("GPU backend initialized without image test")
-                return Pair(false, diagnostics.toList())
+                diagnostics.add("Self-test generation produced no usable output")
+                SelfTestOutcome(false, SelfTestFailure.GENERATION_ERROR, diagnostics.toList())
             }
         } catch (e: Exception) {
-            diagnostics.add("Self-test failed: ${e.message}")
-            return Pair(false, diagnostics.toList())
+            diagnostics.add("Self-test generation failed: ${e.message}")
+            return SelfTestOutcome(false, SelfTestFailure.GENERATION_ERROR, diagnostics.toList())
+        } finally {
+            ImagePreparer.cleanup(prepared)
         }
     }
 

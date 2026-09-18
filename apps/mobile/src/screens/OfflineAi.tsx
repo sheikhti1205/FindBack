@@ -5,7 +5,7 @@ import { getVlmBridge } from "../services/vlmPlugin";
 import { chooseFromGallery, takePhoto, toNativeImageUri } from "../services/photo";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
-import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent } from "../services/vlmPlugin";
+import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent, GpuSelfTestResult } from "../services/vlmPlugin";
 
 const MODEL_SPECS: Record<VlmModelId, { label: string; sizeMb: number; revision: string; sourceRepo: string; runtime: string }> = {
   "smolvlm2-500m": {
@@ -65,6 +65,9 @@ const ERROR_LABELS: Record<string, string> = {
   HASH_MISMATCH: "The downloaded data didn't match the expected file.",
   INSUFFICIENT_STORAGE: "Not enough free storage.",
   RUNTIME_ERROR: "The model stopped with a runtime error.",
+  INPUT_ERROR: "The test image couldn't be read. Try a different photo.",
+  MODEL_RUNTIME_ERROR: "The model stopped with a runtime error.",
+  GENERATION_ERROR: "The model ran but produced no usable output.",
 };
 
 function friendlyError(code: string | undefined | null): string | null {
@@ -340,7 +343,7 @@ export function OfflineAi() {
   const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId; requiredBytes: number[] } | null>(null);
   const [gpuSelfTestModel, setGpuSelfTestModel] = useState<VlmModelId | null>(null);
   const [gpuSelfTestState, setGpuSelfTestState] = useState<"idle" | "running" | "done" | "error">("idle");
-  const [gpuSelfTestResult, setGpuSelfTestResult] = useState<string | null>(null);
+  const [gpuSelfTestResult, setGpuSelfTestResult] = useState<GpuSelfTestResult | null>(null);
 
   const gpuSelfTestRef = useRef<HTMLDivElement>(null);
   const confirmDownloadRef = useRef<HTMLDivElement>(null);
@@ -446,7 +449,7 @@ export function OfflineAi() {
       setGpuSelfTestResult(result);
     } catch (e) {
       setGpuSelfTestState("error");
-      setGpuSelfTestResult(e instanceof Error ? e.message : "Unknown error");
+      setGpuSelfTestResult({ state: "ERROR", error: e instanceof Error ? e.message : "Unknown error" });
     }
   };
 
@@ -553,18 +556,20 @@ export function OfflineAi() {
               </div>
             )}
             {gpuSelfTestState === "done" && (
-              <div className={`flex items-center gap-3 p-4 rounded-lg border ${gpuSelfTestResult === "GPU_AVAILABLE" ? "bg-on-surface text-surface border-on-surface" : "border-outline-variant"}`}>
-                {gpuSelfTestResult === "GPU_AVAILABLE" ? (
+              <div className={`flex items-center gap-3 p-4 rounded-lg border ${gpuSelfTestResult?.state === "GPU_AVAILABLE" ? "bg-on-surface text-surface border-on-surface" : "border-outline-variant"}`}>
+                {gpuSelfTestResult?.state === "GPU_AVAILABLE" ? (
                   <CheckCircle size={24} aria-hidden />
                 ) : (
                   <AlertTriangle size={24} aria-hidden />
                 )}
                 <div>
-                  <p className="font-medium">{gpuSelfTestResult === "GPU_AVAILABLE" ? "GPU Available" : "GPU Unavailable"}</p>
+                  <p className="font-medium">{gpuSelfTestResult?.state === "GPU_AVAILABLE" ? "GPU Available" : "GPU Unavailable"}</p>
                   <p className="text-sm text-on-surface-variant break-words">
-                    {gpuSelfTestResult === "GPU_AVAILABLE"
+                    {gpuSelfTestResult?.state === "GPU_AVAILABLE"
                       ? "GPU-backed inference completed successfully."
-                      : friendlyError(gpuSelfTestResult)}
+                      : (friendlyError(gpuSelfTestResult?.error) ??
+                        friendlyError(gpuSelfTestResult?.failure) ??
+                        friendlyError(gpuSelfTestResult?.state))}
                   </p>
                 </div>
               </div>
@@ -574,7 +579,7 @@ export function OfflineAi() {
                 <XCircle size={24} className="text-error" aria-hidden />
                 <div>
                   <p className="font-medium">Test Failed</p>
-                  <p className="text-sm text-on-surface-variant">{friendlyError(gpuSelfTestResult)}</p>
+                  <p className="text-sm text-on-surface-variant">{friendlyError(gpuSelfTestResult?.error)}</p>
                 </div>
               </div>
             )}
