@@ -80,6 +80,13 @@ describe("discoverObjectsLocally", () => {
     expect(out).toEqual([{ objectName: "keys", positionHint: "left" }]);
     expect(analyzeImageMock).toHaveBeenCalledTimes(2);
   });
+
+  it("sends the shared safety preamble on stage 1", async () => {
+    analyzeImageMock.mockResolvedValue(discoveryResult([{ objectName: "keys", positionHint: "left" }]));
+    await discoverObjectsLocally({ imageUri: "content://p", mode: "AUTO" });
+    const instruction = analyzeImageMock.mock.calls[0]![0].instruction as string;
+    expect(instruction).toContain("Do not infer ownership, identity, gender, ethnicity, religion, health");
+  });
 });
 
 describe("suggestForPrimaryLocally", () => {
@@ -115,6 +122,7 @@ describe("suggestForPrimaryLocally", () => {
     expect(instruction).toContain("black wallet");
     expect(instruction).toContain("keys");
     expect(instruction).toContain("zipper");
+    expect(instruction).toContain("Do not infer ownership, identity, gender, ethnicity, religion, health");
     expect(analyzeImageMock.mock.calls[0]![0].maxOutputTokens).toBe(256);
   });
 });
