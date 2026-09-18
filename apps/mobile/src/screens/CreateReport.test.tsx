@@ -2,8 +2,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { publishReportMock } = vi.hoisted(() => ({
+const { publishReportMock, photo } = vi.hoisted(() => ({
   publishReportMock: vi.fn(),
+  photo: {
+    isNativeCameraAvailable: vi.fn(() => false),
+    takePhoto: vi.fn(),
+    chooseFromGallery: vi.fn(),
+    photoToFile: vi.fn(),
+    toNativeImageUri: vi.fn(),
+  },
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -12,6 +19,7 @@ vi.mock("@capacitor/core", () => ({
 vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../services/posts", () => ({ publishReport: publishReportMock }));
+vi.mock("../services/photo", () => photo);
 
 import { CreateReport } from "./CreateReport";
 import { clearDraft } from "../services/reportDraft";
@@ -38,6 +46,19 @@ afterEach(() => {
 });
 
 describe("CreateReport", () => {
+  it("does not offer the generic file picker on native, so all capture paths reach the VLM (WP13)", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    try {
+      render(<CreateReport />);
+      const takePhotoBtn = await screen.findByRole("button", { name: /take photo/i });
+      expect(takePhotoBtn).toBeTruthy();
+      expect(screen.getByRole("button", { name: /choose from gallery/i })).toBeTruthy();
+      expect(document.querySelector('input[type="file"]')).toBeNull();
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+    }
+  });
+
   it("clears the selected file and preview when the photo is removed", async () => {
     render(<CreateReport />);
     pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));

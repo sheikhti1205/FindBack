@@ -338,16 +338,18 @@ export function CreateReport() {
                 </Button>
               </div>
             )}
-            <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-m3-sm border border-dashed border-outline px-4 text-center text-sm text-on-surface-variant hover:bg-surface-container">
-              <ImageUp size={22} aria-hidden />
-              {isNativeCameraAvailable() ? "Or tap to choose a file" : "Tap to choose an image"}
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                className="sr-only"
-                onChange={(e) => onPickImage(e.target.files?.[0])}
-              />
-            </label>
+            {!isNativeCameraAvailable() && (
+              <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-m3-sm border border-dashed border-outline px-4 text-center text-sm text-on-surface-variant hover:bg-surface-container">
+                <ImageUp size={22} aria-hidden />
+                Tap to choose an image
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="sr-only"
+                  onChange={(e) => onPickImage(e.target.files?.[0])}
+                />
+              </label>
+            )}
           </>
         )}
       </section>
