@@ -238,13 +238,31 @@ data class AnalyzeResult(
 }
 
 /**
+ * Inference phase. Phases are real stage transitions only: fabricated
+ * percentages (0.1 / 0.3 / 0.9 / 1.0) must never be emitted (audit #27).
+ * Contract with the UI: phase present means inference is active, phase
+ * absent means idle.
+ */
+enum class InferencePhase(val wire: String) {
+    PREPARING_IMAGE("PREPARING_IMAGE"),
+    LOADING_MODEL("LOADING_MODEL"),
+    RUNNING("RUNNING"),
+    POSTPROCESSING("POSTPROCESSING");
+
+    companion object {
+        fun fromWire(wire: String): InferencePhase? = values().firstOrNull { it.wire == wire }
+    }
+}
+
+/**
  * Inference state event.
  */
 data class InferenceStateEvent(
     val modelId: VlmModelId,
     val state: VlmState,
     val progress: Float? = null,
-    val error: String? = null
+    val error: String? = null,
+    val phase: InferencePhase? = null
 ) {
     fun toJSObject(): JSObject {
         val obj = JSObject()
@@ -252,6 +270,7 @@ data class InferenceStateEvent(
         obj.put("state", state.wire)
         progress?.let { obj.put("progress", it) }
         error?.let { obj.put("error", it) }
+        phase?.let { obj.put("phase", it.wire) }
         return obj
     }
 }
