@@ -14,8 +14,19 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
   const [attempt, setAttempt] = useState(0);
 
   // Rerun only when the match-relevant content changes, not on every
-  // realtime social update that replaces the post object.
-  const contentKey = `${post.id}|${post.type}|${post.title}|${post.description}`;
+  // realtime social update that replaces the post object. Ranking depends on
+  // category/date/location too, so they belong in the key.
+  const contentKey = [
+    post.id,
+    post.type,
+    post.title,
+    post.description,
+    post.category ?? "",
+    post.eventDate ?? "",
+    post.latitude ?? "",
+    post.longitude ?? "",
+    post.locationLabel ?? "",
+  ].join("|");
 
   useEffect(() => {
     let mounted = true;

@@ -9,6 +9,8 @@ interface FeedCacheEntry {
   filters: string;
   lastRefresh: number;
   newPostCount: number;
+  /** Set when a realtime INSERT arrived while this feed was not mounted. */
+  dirty: boolean;
 }
 
 /** Per-session in-memory cache keyed by filter string. */
@@ -43,13 +45,26 @@ export function clearFeedCaches(): void {
 export function saveFeedCache(
   filterKey: string,
   data: { items: PostItem[]; total: number; cursor: string | null; scrollTop: number },
+  options: { clearNewPostCount?: boolean } = {},
 ): void {
+  const existing = sessionCache.get(filterKey);
   sessionCache.set(filterKey, {
     ...data,
     filters: filterKey,
     lastRefresh: Date.now(),
-    newPostCount: 0,
+    // A save is fresh data, so the invalidation flag is cleared. The pending
+    // new-post pill is preserved unless the caller explicitly consumed it.
+    dirty: false,
+    newPostCount: options.clearNewPostCount ? 0 : (existing?.newPostCount ?? 0),
   });
+}
+
+/**
+ * Mark every cached feed dirty because a new post arrived while it was not
+ * mounted. The next load restores the visible items (no flash) and refetches.
+ */
+export function invalidateFeedCaches(): void {
+  for (const entry of sessionCache.values()) entry.dirty = true;
 }
 
 export function loadFeedCache(filterKey: string): FeedCacheEntry | null {

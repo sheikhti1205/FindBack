@@ -153,8 +153,11 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
   );
 
   useEffect(() => {
-    // When a session cache exists, restore it without a top flash/refetch.
-    if (cacheKey && loadFeedCache(cacheKey)) return;
+    // Restore a fresh session cache without a top flash/refetch. A dirty cache
+    // (a realtime INSERT arrived while this feed was unmounted) still restores
+    // the visible items instantly, then refreshes in the background.
+    const cached = cacheKey ? loadFeedCache(cacheKey) : null;
+    if (cached && !cached.dirty) return;
     void load(null, false);
   }, [cacheKey, filterKey, load]);
 
