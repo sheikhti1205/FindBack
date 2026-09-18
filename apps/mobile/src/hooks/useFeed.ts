@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FeedPage, PostItem } from "@findback/shared";
 import { fetchFeed, type FeedFilters } from "../services/posts";
+import { friendlyError } from "../utils/friendlyErrors";
 import { feedFilterKey, loadFeedCache, saveFeedCache } from "./feedCache";
 
 export interface FeedState {
@@ -61,12 +62,19 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     cursorRef.current = loadFeedCache(cacheKey)?.cursor ?? null;
   }
   const generationRef = useRef(0);
+  const restoredScrollRef = useRef<string | null>(null);
+  const latestRef = useRef({ items, total, cursor: cursorRef.current });
+  latestRef.current = { items, total, cursor: cursorRef.current };
 
   // Changing filter starts a new fetch: restore per-filter cache or reset.
   const prevCacheKeyRef = useRef(cacheKey);
   useEffect(() => {
     if (prevCacheKeyRef.current === cacheKey) return;
     prevCacheKeyRef.current = cacheKey;
+    // Invalidate any in-flight request for the previous filter so a late
+    // response cannot overwrite the newly selected (possibly cached) feed.
+    generationRef.current += 1;
+    restoredScrollRef.current = null;
     cursorRef.current = null;
     if (cacheKey) {
       const cached = loadFeedCache(cacheKey);
@@ -85,28 +93,33 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     setError(null);
   }, [cacheKey]);
 
-  // Restore scroll position once the cached items are rendered.
+  // Restore scroll position exactly once per cache key, once the cached items
+  // are actually rendered. Pagination must not re-run this or the user jumps.
   useEffect(() => {
-    if (!cacheKey || !scrollRef?.current) return;
+    if (!cacheKey || restoredScrollRef.current === cacheKey) return;
+    const el = scrollRef?.current;
+    if (!el) return;
     const cached = loadFeedCache(cacheKey);
-    if (cached && cached.scrollTop > 0) {
-      scrollRef.current.scrollTop = cached.scrollTop;
-    }
-  }, [cacheKey, items.length]);
+    // Wait until the rendered items are the cached array before restoring.
+    if (cached && cached.items.length > 0 && cached.items !== items) return;
+    restoredScrollRef.current = cacheKey;
+    if (cached && cached.scrollTop > 0) el.scrollTop = cached.scrollTop;
+  }, [cacheKey, items]);
 
-  // Save scroll position on unmount so Detail→Back restores it.
+  // Persist the feed for Detail→Back. The cleanup runs on unmount and whenever
+  // the cache key changes, so it always writes the latest state for that key.
   useEffect(() => {
     if (!cacheKey) return;
     return () => {
       const el = scrollRef?.current;
       saveFeedCache(cacheKey, {
-        items,
-        total,
-        cursor: cursorRef.current,
+        items: latestRef.current.items,
+        total: latestRef.current.total,
+        cursor: latestRef.current.cursor,
         scrollTop: el?.scrollTop ?? 0,
       });
     };
-  }, [cacheKey, items, total]);
+  }, [cacheKey]);
 
   const load = useCallback(
     async (cursor: string | null, append: boolean) => {
@@ -123,7 +136,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
         setItems((prev) => (append ? [...prev, ...page.items] : page.items));
       } catch (err) {
         if (gen !== generationRef.current) return;
-        setError(err instanceof Error ? err.message : "Could not load posts");
+        setError(friendlyError(err).message);
         if (!append) setItems([]);
       } finally {
         if (gen === generationRef.current) {

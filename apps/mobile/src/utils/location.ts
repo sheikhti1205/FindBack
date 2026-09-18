@@ -13,6 +13,9 @@
  * and rejection of redirects to arbitrary hosts.
  */
 
+import { Browser } from "@capacitor/browser";
+import { Capacitor } from "@capacitor/core";
+
 export interface ParsedLocation {
   /** User-readable label (place text, or the original input). */
   label: string;
@@ -313,29 +316,23 @@ export function universalMapsUrl(lat: number | null, lng: number | null, label: 
 }
 
 /**
- * Native map handoff: geo: URI on device, universal URL fallback.
- * Uses Capacitor Browser/App when present, else window.open.
+ * External map handoff.
+ *
+ * On Android we open the universal Maps URL through the Browser plugin, which
+ * starts a real external ACTION_VIEW (the installed Maps app claims it via App
+ * Links). Falling back to a new WebView window keeps the web build working.
  */
 export async function openInMapsNative(lat: number | null, lng: number | null, label: string): Promise<void> {
-  const geo = lat != null && lng != null ? geoUri(lat, lng) : null;
   const universal = universalMapsUrl(lat, lng, label);
-  try {
-    const cap = window as unknown as { Capacitor?: { Plugins?: Record<string, unknown> } };
-    const plugins = cap.Capacitor?.Plugins as
-      | { Browser?: { open?: (opts: { url: string }) => Promise<unknown> }; App?: { openUrl?: (opts: { url: string }) => Promise<unknown> } }
-      | undefined;
-    if (geo && plugins?.App?.openUrl) {
-      await plugins.App.openUrl({ url: geo });
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await Browser.open({ url: universal });
       return;
+    } catch {
+      /* fall through to the browser handoff */
     }
-    if (plugins?.Browser?.open) {
-      await plugins.Browser.open({ url: universal });
-      return;
-    }
-  } catch {
-    /* fall through to window.open */
   }
-  window.open(geo ?? universal, "_blank", "noopener,noreferrer");
+  window.open(universal, "_blank", "noopener,noreferrer");
 }
 
 /** Helper text for the Find-in-Maps flow. */

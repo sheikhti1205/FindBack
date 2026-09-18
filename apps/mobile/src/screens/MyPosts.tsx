@@ -11,11 +11,13 @@ export function MyPosts() {
   const { user } = useAuth();
   const { tapCount } = useTabTap();
   const scrollRef = useRef<PullToRefreshHandle>(null);
-  const myCacheKey = user?.id ? `${MY_CACHE_BASE}:${user.id}` : MY_CACHE_BASE;
 
+  // The feed filter carries userId, so the resolved cache key is already
+  // user-scoped: `my:reports:<filterKey>`. Passing the base (not a
+  // pre-scoped key) keeps it identical to the hook's own key.
   const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
     { userId: user?.id },
-    { cacheKey: myCacheKey, scrollRef },
+    { cacheKey: MY_CACHE_BASE, scrollRef },
   );
 
   // Active Profile tab tap does not reach here (My Reports is a sub-screen),

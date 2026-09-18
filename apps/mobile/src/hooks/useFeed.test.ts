@@ -76,7 +76,7 @@ describe("useFeed", () => {
     });
 
     expect(result.current.items.map((i) => i.id)).toEqual(["a"]);
-    expect(result.current.error).toBe("network down");
+    expect(result.current.error).toContain("Network problem");
   });
 
   it("refresh replaces items and resets the cursor", async () => {
@@ -151,5 +151,59 @@ describe("useFeed", () => {
     expect(second.current.loading).toBe(false);
     expect(second.current.hasMore).toBe(true);
     expect(fetchFeedMock).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stale response overwrite a restored cached filter", async () => {
+    // Pre-cache filter B.
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "b-cached" }], null, 1));
+    const seeded = renderHook(() => useFeed({ q: "B" }, { cacheKey: "test:race" }));
+    await waitFor(() => expect(seeded.result.current.items).toHaveLength(1));
+    seeded.unmount();
+
+    // Filter A request is in flight.
+    let resolveA: (p: unknown) => void;
+    const inflightA = new Promise((r) => {
+      resolveA = r;
+    });
+    fetchFeedMock.mockReset();
+    fetchFeedMock.mockImplementationOnce(() => inflightA);
+
+    const { result, rerender } = renderHook(
+      ({ q }) => useFeed({ q }, { cacheKey: "test:race" }),
+      { initialProps: { q: "A" } },
+    );
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+
+    // Switch to B while A is still in flight — B is served from cache.
+    rerender({ q: "B" });
+    expect(result.current.items.map((i) => i.id)).toEqual(["b-cached"]);
+
+    // The late A response must be discarded.
+    await act(async () => {
+      resolveA!(page([{ id: "a-stale" }], null, 1));
+      await inflightA;
+    });
+    expect(result.current.items.map((i) => i.id)).toEqual(["b-cached"]);
+  });
+
+  it("does not re-run scroll restoration when paginating", async () => {
+    const scrollEl = { scrollTop: 0 };
+    const scrollRef = { current: scrollEl };
+    fetchFeedMock
+      .mockResolvedValueOnce(page([{ id: "a" }], "cur-1", 2))
+      .mockResolvedValueOnce(page([{ id: "b" }], null, 2));
+
+    const { result } = renderHook(() =>
+      useFeed({}, { cacheKey: "test:scroll", scrollRef }),
+    );
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+
+    scrollEl.scrollTop = 500;
+    await act(async () => {
+      await result.current.loadMore();
+    });
+
+    expect(result.current.items).toHaveLength(2);
+    expect(scrollEl.scrollTop).toBe(500);
   });
 });

@@ -228,15 +228,19 @@ describe("maps helpers", () => {
     );
   });
 
-  it("opens in Maps via geo URI when coords exist", () => {
+  it("opens in Maps via the universal URL when coords exist (web)", () => {
     const open = vi.fn();
     vi.stubGlobal("open", open);
     openInMaps(23.8, 90.4, "");
-    expect(open).toHaveBeenCalledWith("geo:23.8,90.4?q=23.8,90.4", "_blank", "noopener,noreferrer");
+    expect(open).toHaveBeenCalledWith(
+      "https://www.google.com/maps/search/?api=1&query=23.8,90.4",
+      "_blank",
+      "noopener,noreferrer",
+    );
     vi.unstubAllGlobals();
   });
 
-  it("opens in Maps via search URL when only a label exists", () => {
+  it("opens in Maps via search URL when only a label exists (web)", () => {
     const open = vi.fn();
     vi.stubGlobal("open", open);
     openInMaps(null, null, "Chittagong");

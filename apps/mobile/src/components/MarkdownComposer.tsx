@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { Bold, Code, Italic, Link2, List, ListOrdered, Quote } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
 
@@ -9,6 +9,12 @@ interface MarkdownComposerProps {
   placeholder?: string;
   required?: boolean;
   inputId?: string;
+  error?: string;
+}
+
+interface EditResult {
+  text: string;
+  selection: [number, number];
 }
 
 /** Wrap/annotate the current selection (or insert at cursor) inside a textarea. */
@@ -18,14 +24,18 @@ function applyWrap(
   before: string,
   after: string,
   placeholder: string,
-): string {
+): EditResult {
   const start = el.selectionStart ?? value.length;
   const end = el.selectionEnd ?? value.length;
   const selected = value.slice(start, end) || placeholder;
-  return value.slice(0, start) + before + selected + after + value.slice(end);
+  const text = value.slice(0, start) + before + selected + after + value.slice(end);
+  return {
+    text,
+    selection: [start + before.length, start + before.length + selected.length],
+  };
 }
 
-function applyLinePrefix(el: HTMLTextAreaElement, value: string, prefix: string): string {
+function applyLinePrefix(el: HTMLTextAreaElement, value: string, prefix: string): EditResult {
   const start = el.selectionStart ?? value.length;
   const end = el.selectionEnd ?? value.length;
   const selected = value.slice(start, end) || "item";
@@ -33,7 +43,8 @@ function applyLinePrefix(el: HTMLTextAreaElement, value: string, prefix: string)
     .split("\n")
     .map((line) => `${prefix}${line}`)
     .join("\n");
-  return value.slice(0, start) + prefixed + value.slice(end);
+  const text = value.slice(0, start) + prefixed + value.slice(end);
+  return { text, selection: [start, start + prefixed.length] };
 }
 
 /**
@@ -47,14 +58,33 @@ export function MarkdownComposer({
   placeholder,
   required,
   inputId,
+  error,
 }: MarkdownComposerProps) {
   const [tab, setTab] = useState<"write" | "preview">("write");
   const [area, setArea] = useState<HTMLTextAreaElement | null>(null);
+  const baseId = useId();
+  const writeTabId = `${baseId}-write-tab`;
+  const previewTabId = `${baseId}-preview-tab`;
+  const writePanelId = `${baseId}-write-panel`;
+  const previewPanelId = `${baseId}-preview-panel`;
+  const errorId = `${baseId}-error`;
 
-  function edit(fn: (el: HTMLTextAreaElement) => string) {
-    if (!area) return;
-    onChange(fn(area));
+  // Restore the caret/selection after a toolbar edit rewrites the controlled
+  // value; otherwise React moves the cursor to the end.
+  const pendingSelection = useRef<[number, number] | null>(null);
+  useLayoutEffect(() => {
+    if (!area || !pendingSelection.current) return;
+    const [start, end] = pendingSelection.current;
+    pendingSelection.current = null;
     area.focus();
+    area.setSelectionRange(start, end);
+  }, [value, area]);
+
+  function edit(fn: (el: HTMLTextAreaElement) => EditResult) {
+    if (!area) return;
+    const { text, selection } = fn(area);
+    pendingSelection.current = selection;
+    onChange(text);
   }
 
   const tools = [
@@ -73,26 +103,50 @@ export function MarkdownComposer({
         <span className="text-sm font-medium text-on-surface" id={inputId ? `${inputId}-label` : undefined}>
           {label}
         </span>
-        <div role="tablist" aria-label={`${label} editing mode`} className="flex rounded-full border border-outline-variant p-0.5">
-          {(["write", "preview"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
-              className={`min-h-[48px] rounded-full px-4 text-xs font-medium ${
-                tab === t ? "bg-on-surface text-surface" : "text-on-surface-variant"
-              }`}
-            >
-              {t === "write" ? "Write" : "Preview"}
-            </button>
-          ))}
+        <div
+          role="tablist"
+          aria-label={`${label} editing mode`}
+          className="flex rounded-full border border-outline-variant p-0.5"
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+              e.preventDefault();
+              setTab((t) => (t === "write" ? "preview" : "write"));
+            }
+          }}
+        >
+          <button
+            type="button"
+            role="tab"
+            id={writeTabId}
+            aria-selected={tab === "write"}
+            aria-controls={writePanelId}
+            tabIndex={tab === "write" ? 0 : -1}
+            onClick={() => setTab("write")}
+            className={`min-h-[48px] rounded-full px-4 text-xs font-medium ${
+              tab === "write" ? "bg-on-surface text-surface" : "text-on-surface-variant"
+            }`}
+          >
+            Write
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id={previewTabId}
+            aria-selected={tab === "preview"}
+            aria-controls={previewPanelId}
+            tabIndex={tab === "preview" ? 0 : -1}
+            onClick={() => setTab("preview")}
+            className={`min-h-[48px] rounded-full px-4 text-xs font-medium ${
+              tab === "preview" ? "bg-on-surface text-surface" : "text-on-surface-variant"
+            }`}
+          >
+            Preview
+          </button>
         </div>
       </div>
 
       {tab === "write" ? (
-        <>
+        <div role="tabpanel" id={writePanelId} aria-labelledby={writeTabId} className="flex flex-col gap-2">
           <div role="toolbar" aria-label={`${label} formatting`} className="flex flex-wrap gap-1">
             {tools.map(({ label: toolLabel, icon: Icon, run }) => (
               <button
@@ -116,14 +170,25 @@ export function MarkdownComposer({
             placeholder={placeholder}
             required={required}
             aria-label={label}
-            className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            className={`w-full rounded-m3-sm border bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:outline-none ${
+              error ? "border-error" : "border-outline-variant focus:border-on-surface"
+            }`}
           />
-          <p className="text-xs text-on-surface-variant">Markdown supported</p>
-        </>
+          {error ? (
+            <p id={errorId} className="text-xs text-error" role="alert">
+              {error}
+            </p>
+          ) : (
+            <p className="text-xs text-on-surface-variant">Markdown supported</p>
+          )}
+        </div>
       ) : (
         <div
           role="tabpanel"
-          aria-label={`${label} preview`}
+          id={previewPanelId}
+          aria-labelledby={previewTabId}
           className="min-h-[120px] rounded-m3-sm border border-outline-variant bg-surface-container-low px-3.5 py-3"
         >
           {value.trim() ? <MarkdownView text={value} /> : <p className="text-sm text-on-surface-variant">Nothing to preview yet.</p>}

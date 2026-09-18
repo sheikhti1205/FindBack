@@ -14,6 +14,8 @@ vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "teste
 vi.mock("../services/posts", () => ({ publishReport: publishReportMock }));
 
 import { CreateReport } from "./CreateReport";
+import { clearDraft } from "../services/reportDraft";
+import { clearPhotoStore } from "../services/photoStore";
 
 function pickFile(file: File) {
   const input = document.querySelector('input[type="file"]');
@@ -23,12 +25,16 @@ function pickFile(file: File) {
 
 beforeEach(() => {
   publishReportMock.mockReset();
+  clearDraft();
+  clearPhotoStore();
   (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => "blob:preview");
   (URL as unknown as Record<string, unknown>).revokeObjectURL = vi.fn();
 });
 
 afterEach(() => {
   cleanup();
+  clearDraft();
+  clearPhotoStore();
 });
 
 describe("CreateReport", () => {
@@ -83,5 +89,29 @@ describe("CreateReport", () => {
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Keys" } });
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ category: "Keys" }), null));
+  });
+
+  it("keeps the photo uploadable across navigation (draft restore)", async () => {
+    publishReportMock.mockResolvedValue("p1");
+    const { unmount } = render(<CreateReport />);
+    fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
+    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
+    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    const file = new File(["abc"], "p.jpg", { type: "image/jpeg" });
+    pickFile(file);
+    await screen.findByRole("button", { name: /remove photo/i });
+
+    // Simulate leaving to Offline AI and coming back.
+    unmount();
+    render(<CreateReport />);
+    expect(screen.getByRole("img", { name: /attachment preview/i })).toBeTruthy();
+
+    fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
+    await waitFor(() =>
+      expect(publishReportMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Lost phone" }),
+        expect.any(File),
+      ),
+    );
   });
 });
