@@ -274,4 +274,27 @@ describe("useFeed", () => {
       nowSpy.mockRestore();
     }
   });
+
+  it("removes a deleted post in place without refetching (WP9)", async () => {
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }, { id: "c" }], null, 3));
+    const { result } = renderHook(() => useFeed({}));
+    await waitFor(() => expect(result.current.items).toHaveLength(3));
+
+    fetchFeedMock.mockClear();
+    act(() => result.current.removeItem("b"));
+
+    expect(result.current.items.map((i) => i.id)).toEqual(["a", "c"]);
+    expect(result.current.total).toBe(2);
+    expect(fetchFeedMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores removeItem for a post that is not loaded (WP9)", async () => {
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }], null, 1));
+    const { result } = renderHook(() => useFeed({}));
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+
+    act(() => result.current.removeItem("zzz"));
+    expect(result.current.items.map((i) => i.id)).toEqual(["a"]);
+    expect(result.current.total).toBe(1);
+  });
 });

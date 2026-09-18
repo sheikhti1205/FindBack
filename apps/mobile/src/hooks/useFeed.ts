@@ -13,6 +13,8 @@ export interface FeedState {
   hasMore: boolean;
   refresh: () => Promise<void>;
   loadMore: () => Promise<void>;
+  /** Reconcile a deleted post in place — never refetch or reorder the list. */
+  removeItem: (id: string) => void;
 }
 
 interface UseFeedOptions {
@@ -165,6 +167,15 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     if (cursorRef.current) await load(cursorRef.current, true);
   }, [load]);
 
+  // A realtime delete must not yank or reorder a scrolled reader: drop the row
+  // where it sits and keep every other item in place. If the post is not
+  // loaded, this is a no-op.
+  const removeItem = useCallback((id: string) => {
+    if (!latestRef.current.items.some((item) => item.id === id)) return;
+    setItems((prev) => prev.filter((item) => item.id !== id));
+    setTotal((t) => Math.max(0, t - 1));
+  }, []);
+
   return {
     items,
     total,
@@ -174,5 +185,6 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     hasMore: Boolean(cursorRef.current),
     refresh,
     loadMore,
+    removeItem,
   };
 }
