@@ -57,6 +57,9 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       get scrollTop() {
         return scrollRef.current?.scrollTop ?? 0;
       },
+      set scrollTop(value: number) {
+        if (scrollRef.current) scrollRef.current.scrollTop = value;
+      },
     }));
 
     const handleTouchStart = useCallback(
