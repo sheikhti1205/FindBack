@@ -131,7 +131,9 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
         const page: FeedPage = await fetchFeed(filters, cursor ?? undefined);
         // Discard if filters/generation changed while we were fetching
         if (gen !== generationRef.current) return;
-        setTotal(page.total);
+        // Keep the initial full filtered total stable: keyset follow-up
+        // pages carry a page-relative count, so appends must never overwrite it.
+        if (!append) setTotal(page.total);
         cursorRef.current = page.nextCursor;
         setItems((prev) => (append ? [...prev, ...page.items] : page.items));
       } catch (err) {
