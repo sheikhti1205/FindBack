@@ -33,7 +33,7 @@ class LocalVlmPluginTest {
     @Test
     fun gpuProbe_checksADelegateClassThatActuallyExists() {
         // Regression: the probe used to look for com.google.ai.edge.litert.gpu.GpuDelegate,
-        // which litert-gpu does not ship, so gpuRuntimePresent was always false.
+        // which litert-gpu does not ship, so gpuDelegateClassPresent was always false.
         // initialize=false so a native static initializer cannot run on the JVM.
         val clazz = Class.forName(
             GpuProbe.GPU_DELEGATE_CLASS,

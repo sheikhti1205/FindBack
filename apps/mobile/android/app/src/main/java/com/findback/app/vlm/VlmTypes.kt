@@ -172,7 +172,11 @@ data class VlmCapabilities(
     val gpuRenderer: String?,
     val memoryClassMb: Int,
     val freeAppStorageMb: Long,
-    val gpuRuntimePresent: Boolean,
+    /**
+     * Whether the litert-gpu delegate class ships in the APK. Class
+     * presence only — never LiteRT-LM runtime availability (audit #26).
+     */
+    val gpuDelegateClassPresent: Boolean,
     val runtimeVersion: String?
 ) {
     fun toJSObject(): JSObject {
@@ -186,7 +190,7 @@ data class VlmCapabilities(
         obj.put("gpuRenderer", gpuRenderer)
         obj.put("memoryClassMb", memoryClassMb)
         obj.put("freeAppStorageMb", freeAppStorageMb)
-        obj.put("gpuRuntimePresent", gpuRuntimePresent)
+        obj.put("gpuDelegateClassPresent", gpuDelegateClassPresent)
         obj.put("runtimeVersion", runtimeVersion)
         return obj
     }

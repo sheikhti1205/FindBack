@@ -65,7 +65,8 @@ export interface VlmCapabilities {
   gpuRenderer: string | null;
   memoryClassMb: number;
   freeAppStorageMb: number;
-  gpuRuntimePresent: boolean;
+  /** Whether the litert-gpu delegate class ships in the APK (class presence only, never runtime availability). */
+  gpuDelegateClassPresent: boolean;
   runtimeVersion: string | null;
 }
 
@@ -291,7 +292,7 @@ export interface VlmBridge {
 /** Web adapter that refuses local AI operations. */
 class WebVlmBridge implements VlmBridge {
   platform = "web" as const;
-  gpuRuntimePresent = false;
+  gpuDelegateClassPresent = false;
   runtimeVersion = null;
 
   private refuse(_method: string): never {
@@ -309,7 +310,7 @@ class WebVlmBridge implements VlmBridge {
       gpuRenderer: null,
       memoryClassMb: 0,
       freeAppStorageMb: 0,
-      gpuRuntimePresent: false,
+      gpuDelegateClassPresent: false,
       runtimeVersion: null,
     };
   }

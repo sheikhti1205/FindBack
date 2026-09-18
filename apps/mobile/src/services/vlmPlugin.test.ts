@@ -35,7 +35,7 @@ describe("vlmPlugin native payload unwrapping", () => {
         gpuRenderer: "Adreno 730",
         memoryClassMb: 256,
         freeAppStorageMb: 1024,
-        gpuRuntimePresent: true,
+        gpuDelegateClassPresent: true,
         runtimeVersion: "0.16.0",
       },
     });

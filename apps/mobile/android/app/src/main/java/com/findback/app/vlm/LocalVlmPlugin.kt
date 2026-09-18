@@ -234,7 +234,7 @@ class LocalVlmPlugin : Plugin() {
         val (gpuVendor, gpuRenderer) = GpuProbe.info()
         val memoryClassMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).memoryClass
         val freeAppStorageMb = getFreeAppStorageMb(context)
-        val gpuRuntimePresent = GpuProbe.runtimePresent()
+        val gpuDelegateClassPresent = GpuProbe.gpuDelegateClassPresent()
         val runtimeVersion = "0.16.0" // LiteRT version
 
         val capabilities = VlmCapabilities(
@@ -247,7 +247,7 @@ class LocalVlmPlugin : Plugin() {
             gpuRenderer = gpuRenderer,
             memoryClassMb = memoryClassMb,
             freeAppStorageMb = freeAppStorageMb,
-            gpuRuntimePresent = gpuRuntimePresent,
+            gpuDelegateClassPresent = gpuDelegateClassPresent,
             runtimeVersion = runtimeVersion
         )
         val result = JSObject()

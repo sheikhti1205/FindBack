@@ -170,7 +170,7 @@ class VlmTypesTest {
             gpuRenderer = "Adreno 730",
             memoryClassMb = 256,
             freeAppStorageMb = 1024L,
-            gpuRuntimePresent = true,
+            gpuDelegateClassPresent = true,
             runtimeVersion = "0.16.0"
         )
         assertEquals("arm64-v8a", caps.abi)
@@ -182,7 +182,7 @@ class VlmTypesTest {
         assertEquals("Adreno 730", caps.gpuRenderer)
         assertEquals(256, caps.memoryClassMb)
         assertEquals(1024L, caps.freeAppStorageMb)
-        assertTrue(caps.gpuRuntimePresent)
+        assertTrue(caps.gpuDelegateClassPresent)
         assertEquals("0.16.0", caps.runtimeVersion)
     }
 

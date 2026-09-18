@@ -21,7 +21,7 @@ const capabilities = {
   gpuRenderer: "Mali-G610 MC6",
   memoryClassMb: 256,
   freeAppStorageMb: 1024,
-  gpuRuntimePresent: true,
+  gpuDelegateClassPresent: true,
   runtimeVersion: "0.16.0",
 };
 
