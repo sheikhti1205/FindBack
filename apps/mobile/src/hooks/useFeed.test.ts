@@ -229,4 +229,49 @@ describe("useFeed", () => {
     expect(result.current.items).toHaveLength(2);
     expect(scrollEl.scrollTop).toBe(500);
   });
+
+  it("restores cached items + scrollTop on back-nav without refetching (WP8)", async () => {
+    const firstScroll = { scrollTop: 0 };
+    const firstRef = { current: firstScroll };
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], "cur-1", 2));
+    const { unmount } = renderHook(() => useFeed({}, { cacheKey: "test:backnav", scrollRef: firstRef }));
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+
+    // User scrolled, then opened a post (unmount saves scrollTop).
+    firstScroll.scrollTop = 350;
+    unmount();
+
+    fetchFeedMock.mockClear();
+    const secondScroll = { scrollTop: 0 };
+    const { result: second } = renderHook(() =>
+      useFeed({}, { cacheKey: "test:backnav", scrollRef: { current: secondScroll } }),
+    );
+    expect(second.current.items.map((i) => i.id)).toEqual(["a", "b"]);
+    expect(second.current.loading).toBe(false);
+    expect(second.current.hasMore).toBe(true);
+    await waitFor(() => expect(secondScroll.scrollTop).toBe(350));
+    expect(fetchFeedMock).not.toHaveBeenCalled();
+  });
+
+  it("refetches when the session cache is stale (WP8)", async () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(1_000_000);
+      const scrollRef = { current: { scrollTop: 0 } };
+      fetchFeedMock.mockResolvedValueOnce(page([{ id: "old" }], null, 1));
+      const { unmount } = renderHook(() => useFeed({}, { cacheKey: "test:stale", scrollRef }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+      unmount();
+
+      // 6 minutes later the cache is stale and must refetch.
+      nowSpy.mockReturnValue(1_000_000 + 6 * 60 * 1000);
+      fetchFeedMock.mockClear();
+      fetchFeedMock.mockResolvedValueOnce(page([{ id: "new" }], null, 1));
+      const { result } = renderHook(() => useFeed({}, { cacheKey: "test:stale", scrollRef }));
+      await waitFor(() => expect(result.current.items.map((i) => i.id)).toEqual(["new"]));
+      expect(fetchFeedMock).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
