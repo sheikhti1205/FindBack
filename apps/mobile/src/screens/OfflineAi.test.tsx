@@ -240,6 +240,19 @@ describe("OfflineAi", () => {
     expect(screen.getByRole("button", { name: /run gpu self-test \(gallery\)/i })).toBeTruthy();
   });
 
+  it("surfaces a friendly error when a model action rejects (WP10a)", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "CORRUPT" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.repairModel.mockRejectedValue(new Error("Repair failed: disk busy"));
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /repair smolvlm2/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Repair failed: disk busy");
+  });
+
   it("hides GPU self-test when native photo capture is unavailable (WP10)", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(false);
     try {

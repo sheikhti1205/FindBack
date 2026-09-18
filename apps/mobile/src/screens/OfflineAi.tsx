@@ -75,6 +75,13 @@ function friendlyError(code: string | undefined | null): string | null {
   return ERROR_LABELS[code] ?? code.replace(/_/g, " ").toLowerCase();
 }
 
+/** Plain-language message for a rejected bridge action; raw errors stay readable. */
+function actionErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message) return ERROR_LABELS[err.message] ?? err.message;
+  if (typeof err === "string" && err) return ERROR_LABELS[err] ?? err;
+  return "Something went wrong. Please try again.";
+}
+
 const INSTALL_HEADROOM_BYTES = 256 * 1024 * 1024;
 const INSTALL_HEADROOM_FRACTION = 0.25;
 
@@ -342,6 +349,7 @@ export function OfflineAi() {
   const [gpuSelfTestModel, setGpuSelfTestModel] = useState<VlmModelId | null>(null);
   const [gpuSelfTestState, setGpuSelfTestState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [gpuSelfTestResult, setGpuSelfTestResult] = useState<GpuSelfTestResult | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const gpuSelfTestRef = useRef<HTMLDivElement>(null);
   const confirmDownloadRef = useRef<HTMLDivElement>(null);
@@ -408,27 +416,39 @@ export function OfflineAi() {
     })();
   };
 
+  // Every bridge action can reject (process death, storage, native failure).
+  // Catch it so the UI never dies with an unhandled rejection and the user
+  // gets a readable reason.
+  const runAction = async (fn: () => Promise<unknown>) => {
+    setActionError(null);
+    try {
+      await fn();
+    } catch (err) {
+      setActionError(actionErrorMessage(err));
+    }
+  };
+
   const handleDelete = async (modelId: VlmModelId) => {
     if (!window.confirm(`Delete ${MODEL_SPECS[modelId].label}? This stops inference, unloads the engine, and removes only this model. The other model is unaffected.`)) {
       return;
     }
-    await bridge.deleteModel(modelId);
+    await runAction(() => bridge.deleteModel(modelId));
   };
 
   const handleCancelDownload = async (modelId: VlmModelId) => {
-    await bridge.cancelDownload(modelId);
+    await runAction(() => bridge.cancelDownload(modelId));
   };
 
   const handlePauseDownload = async (modelId: VlmModelId) => {
-    await bridge.pauseDownload(modelId);
+    await runAction(() => bridge.pauseDownload(modelId));
   };
 
   const handleResumeDownload = async (modelId: VlmModelId) => {
-    await bridge.resumeDownload(modelId);
+    await runAction(() => bridge.resumeDownload(modelId));
   };
 
   const handleRepair = async (modelId: VlmModelId) => {
-    await bridge.repairModel(modelId);
+    await runAction(() => bridge.repairModel(modelId));
   };
 
   const handleRunGpuSelfTest = async (modelId: VlmModelId, imageUri: string) => {
@@ -490,6 +510,22 @@ export function OfflineAi() {
         <div className="flex items-center justify-between">
           <h2 id="models-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Models</h2>
         </div>
+
+        {actionError && (
+          <div
+            role="alert"
+            className="flex items-start justify-between gap-2 rounded-lg border border-error px-3 py-2"
+          >
+            <span className="text-sm text-error break-words">{actionError}</span>
+            <button
+              type="button"
+              onClick={() => setActionError(null)}
+              className="min-h-[48px] shrink-0 px-2 text-xs text-error underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <div className="space-y-3" role="list" aria-label="Available models">
           {EXPOSED_MODELS.map((modelId) => {
