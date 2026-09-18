@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
 import { BackButton } from "../components/BackButton";
 import { getVlmBridge, isInstalledState } from "../services/vlmPlugin";
 import { chooseFromGallery, takePhoto, toNativeImageUri } from "../services/photo";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 import type { VlmModelId, VlmState, BackendMode, VlmCapabilities, VlmModelInfo, DownloadProgressEvent } from "../services/vlmPlugin";
 
 const MODEL_SPECS: Record<VlmModelId, { label: string; sizeMb: number; revision: string; sourceRepo: string; runtime: string }> = {
@@ -291,6 +292,12 @@ export function OfflineAi() {
   const [gpuSelfTestState, setGpuSelfTestState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [gpuSelfTestResult, setGpuSelfTestResult] = useState<string | null>(null);
 
+  const gpuSelfTestRef = useRef<HTMLDivElement>(null);
+  const confirmDownloadRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(gpuSelfTestRef, () => { setGpuSelfTestModel(null); setGpuSelfTestState("idle"); setGpuSelfTestResult(null); });
+  useFocusTrap(confirmDownloadRef, () => setConfirmDownload(null));
+
   useEffect(() => {
     let mounted = true;
     bridge.getCapabilities().then((c) => mounted && setCapabilities(c));
@@ -507,10 +514,10 @@ export function OfflineAi() {
       </section>
 
       {gpuSelfTestModel && gpuSelfTestState !== "idle" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="gpu-test-title">
-          <div className="w-full max-w-md bg-surface rounded-xl p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="gpu-test-title" aria-describedby="gpu-test-desc">
+          <div ref={gpuSelfTestRef} tabIndex={-1} className="w-full max-w-md bg-surface rounded-xl p-6">
             <h3 id="gpu-test-title" className="text-lg font-semibold mb-4">GPU Self-Test</h3>
-            <p className="text-sm text-on-surface-variant mb-4">Testing {MODEL_SPECS[gpuSelfTestModel].label} on GPU…</p>
+            <p id="gpu-test-desc" className="text-sm text-on-surface-variant mb-4">Testing {MODEL_SPECS[gpuSelfTestModel].label} on GPU…</p>
             {gpuSelfTestState === "running" && (
               <div className="flex items-center justify-center gap-3">
                 <Loader2 size={24} className="animate-spin text-on-surface" aria-hidden />
@@ -554,10 +561,10 @@ export function OfflineAi() {
       )}
 
       {confirmDownload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-          <div className="w-full max-w-md bg-surface rounded-xl p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc">
+          <div ref={confirmDownloadRef} tabIndex={-1} className="w-full max-w-md bg-surface rounded-xl p-6">
             <h3 id="confirm-title" className="text-lg font-semibold mb-4">Confirm Download</h3>
-            <p className="text-sm text-on-surface-variant mb-4">
+            <p id="confirm-desc" className="text-sm text-on-surface-variant mb-4">
               {confirmDownload.modelId === "both"
                 ? `This will download both models sequentially (${confirmDownload.sizes.map((s) => `${s} MB`).join(" + ")} = ${confirmDownload.sizes.reduce((a, b) => a + b, 0).toFixed(1)} MB total).`
                 : `This will download ${confirmDownload.sizes[0]} MB.`}

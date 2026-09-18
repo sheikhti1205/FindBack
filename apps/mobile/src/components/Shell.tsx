@@ -19,7 +19,7 @@ export function Shell() {
 
   return (
     <TabTapProvider>
-      <div className="mx-auto flex min-h-full max-w-md flex-col bg-surface text-on-surface">
+      <div className="mx-auto flex min-h-full max-w-md flex-col bg-surface text-on-surface pt-[env(safe-area-inset-top)]">
         <main className="flex-1 pb-20">
           <Outlet />
         </main>

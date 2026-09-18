@@ -18,7 +18,7 @@ export function NewPostsPill({ count, hasUpdates, onTap }: NewPostsPillProps) {
       <button
         type="button"
         onClick={onTap}
-        className="rounded-full bg-on-surface px-4 py-2 text-sm font-medium text-surface shadow-lg"
+        className="min-h-[48px] rounded-full bg-on-surface px-4 py-2 text-sm font-medium text-surface shadow-lg"
         aria-label={`${label} — tap to refresh`}
       >
         {label}
