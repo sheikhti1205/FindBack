@@ -2,6 +2,7 @@ import { NavLink, Outlet, useLocation } from "react-router";
 import { Home, PlusCircle, Search, UserRound } from "lucide-react";
 import { TabTapProvider, useTabTap } from "./TabTap";
 import { LiveRegion } from "./LiveRegion";
+import { requestHistorySuppression } from "./backNavigation";
 
 const NAV = [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -49,7 +50,12 @@ function BottomNav() {
               // Active-tab tap: signal the screen to refresh/scroll-top.
               const isActive =
                 end ? pathname === to : pathname.startsWith(to);
-              if (isActive) notifyTabTap();
+              if (isActive) {
+                notifyTabTap();
+                // Re-tapping Home treats it as the true root: the next back
+                // press should arm exit instead of walking history.
+                if (to === "/") requestHistorySuppression("/");
+              }
             }}
             className={({ isActive }) =>
               `flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-[11px] ${
