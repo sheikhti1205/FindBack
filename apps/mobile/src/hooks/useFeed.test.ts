@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useFeed } from "./useFeed";
-import { buildFeedCacheKey, clearFeedCaches, feedFilterKey } from "./feedCache";
+import { buildFeedCacheKey, clearFeedCaches, feedFilterKey, invalidateFeedCaches } from "./feedCache";
 
 const { fetchFeedMock } = vi.hoisted(() => ({ fetchFeedMock: vi.fn() }));
 
@@ -273,6 +273,24 @@ describe("useFeed", () => {
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it("refreshes a dirty session cache in the background (WP7 #8)", async () => {
+    const scrollEl = { scrollTop: 0 };
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }], null, 1));
+    const { unmount } = renderHook(() => useFeed({}, { cacheKey: "test:dirty", scrollRef: { current: scrollEl } }));
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    unmount();
+
+    invalidateFeedCaches();
+    fetchFeedMock.mockClear();
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], null, 2));
+    const { result } = renderHook(() => useFeed({}, { cacheKey: "test:dirty", scrollRef: { current: scrollEl } }));
+
+    // Cached item is visible immediately, then a background refetch reconciles.
+    expect(result.current.items.map((i) => i.id)).toEqual(["a"]);
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.items.map((i) => i.id)).toEqual(["a", "b"]));
   });
 
   it("removes a deleted post in place without refetching (WP9)", async () => {

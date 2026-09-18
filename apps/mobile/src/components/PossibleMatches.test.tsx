@@ -29,6 +29,21 @@ describe("PossibleMatches", () => {
     expect(screen.queryByText(/probability/i)).toBeNull();
   });
 
+  it("reruns matching when category/date/location change, not just title/description (WP7 #39)", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+    const { rerender } = render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    await waitFor(() => expect(findMock).toHaveBeenCalledTimes(1));
+
+    rerender(<MemoryRouter><PossibleMatches post={{ ...(post as Record<string, unknown>), category: "Clothing" } as never} /></MemoryRouter>);
+    await waitFor(() => expect(findMock).toHaveBeenCalledTimes(2));
+
+    rerender(<MemoryRouter><PossibleMatches post={{ ...(post as Record<string, unknown>), category: "Clothing", eventDate: "2026-09-11" } as never} /></MemoryRouter>);
+    await waitFor(() => expect(findMock).toHaveBeenCalledTimes(3));
+
+    rerender(<MemoryRouter><PossibleMatches post={{ ...(post as Record<string, unknown>), category: "Clothing", eventDate: "2026-09-11", latitude: 23.81, longitude: 90.41, locationLabel: "Library" } as never} /></MemoryRouter>);
+    await waitFor(() => expect(findMock).toHaveBeenCalledTimes(4));
+  });
+
   it("shows an informative empty state when the embedder is unavailable", async () => {
     findMock.mockResolvedValue({ available: false, candidatesConsidered: 0, matches: [], unavailableReason: "embed" });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);

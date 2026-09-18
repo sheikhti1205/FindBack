@@ -1,5 +1,6 @@
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./supabaseClient";
+import { invalidateFeedCaches } from "../hooks/feedCache";
 
 export type RealtimeEvent =
   | "feed:changed"
@@ -64,9 +65,17 @@ export function connectRealtime(): void {
   if (!c || feedChannel) return;
   void ready.then(() => {
     if (client !== c || feedChannel) return;
-    feedChannel = bind(c.channel("feed", { config: { private: true } }), [
-      ["post:changed", "feed:changed"],
-    ]);
+    // The feed channel carries every post/comment/reaction change. Only a real
+    // INSERT is a new post, so only that invalidates cached feeds (even while
+    // Home is unmounted) before the app-level event is dispatched.
+    const channel = c.channel("feed", { config: { private: true } });
+    channel.on("broadcast", { event: "post:changed" }, (message) => {
+      const payload = (message?.payload ?? {}) as Record<string, unknown>;
+      if (String(payload.op ?? "").toUpperCase() === "INSERT") invalidateFeedCaches();
+      dispatch("feed:changed", payload);
+    });
+    channel.subscribe();
+    feedChannel = channel;
   });
 }
 
