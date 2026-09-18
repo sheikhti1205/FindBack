@@ -186,6 +186,29 @@ describe("useFeed", () => {
     expect(result.current.items.map((i) => i.id)).toEqual(["b-cached"]);
   });
 
+  it("preserves the initial full total across keyset appends (WP7)", async () => {
+    fetchFeedMock
+      .mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], "cur-1", 25))
+      .mockResolvedValueOnce(page([{ id: "c" }, { id: "d" }], "cur-2", 20))
+      .mockResolvedValueOnce(page([{ id: "e" }, { id: "f" }], null, 15));
+
+    const { result } = renderHook(() => useFeed({}));
+    await waitFor(() => expect(result.current.items).toHaveLength(2));
+    expect(result.current.total).toBe(25);
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    expect(result.current.items.map((i) => i.id)).toEqual(["a", "b", "c", "d"]);
+    expect(result.current.total).toBe(25);
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    expect(result.current.items.map((i) => i.id)).toEqual(["a", "b", "c", "d", "e", "f"]);
+    expect(result.current.total).toBe(25);
+  });
+
   it("does not re-run scroll restoration when paginating", async () => {
     const scrollEl = { scrollTop: 0 };
     const scrollRef = { current: scrollEl };
