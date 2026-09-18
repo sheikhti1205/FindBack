@@ -19,6 +19,7 @@ import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, toN
 import { dropStashedPhoto, getStashedPhoto, stashPhotoFile } from "../services/photoStore";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
+import { roundToApproximate } from "../utils/location";
 
 const inputCls =
   "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
@@ -167,6 +168,14 @@ export function CreateReport() {
     if (errs.title || errs.description || errs.category || errs.eventDate || !category) return;
     submitting.current = true;
     setBusy(true);
+    // Exact pins are a local convenience only: never send precise coordinates
+    // to the server. Round to ~100 m whenever the picker is in EXACT mode.
+    const coords =
+      location.precision === "EXACT" &&
+      location.latitude != null &&
+      location.longitude != null
+        ? roundToApproximate(location.latitude, location.longitude)
+        : { lat: location.latitude, lng: location.longitude };
     try {
       const postId = await publishReport(
         {
@@ -176,8 +185,8 @@ export function CreateReport() {
           category,
           eventDate,
           locationLabel: location.label.trim() || undefined,
-          latitude: location.latitude,
-          longitude: location.longitude,
+          latitude: coords.lat,
+          longitude: coords.lng,
           youtubeUrl: youtubeUrl.trim() || undefined,
         },
         selectedFile,

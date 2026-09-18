@@ -91,6 +91,21 @@ describe("CreateReport", () => {
     await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ category: "Keys" }), null));
   });
 
+  it("keeps exact pins local and publishes rounded coordinates (WP9a)", async () => {
+    publishReportMock.mockResolvedValue("p1");
+    render(<CreateReport />);
+    fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost keys" } });
+    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "keys on a blue lanyard" } });
+    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Keys" } });
+    fireEvent.change(screen.getByPlaceholderText(/place, decimal coords/i), { target: { value: "23.810332, 90.412518" } });
+    fireEvent.click(await screen.findByRole("button", { name: /use exact pin/i }));
+    fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
+    await waitFor(() => expect(publishReportMock).toHaveBeenCalled());
+    const sent = publishReportMock.mock.calls[0]![0] as { latitude: number; longitude: number };
+    expect(sent.latitude).toBe(23.81);
+    expect(sent.longitude).toBe(90.413);
+  });
+
   it("keeps the photo uploadable across navigation (draft restore)", async () => {
     publishReportMock.mockResolvedValue("p1");
     const { unmount } = render(<CreateReport />);
