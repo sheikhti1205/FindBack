@@ -45,9 +45,12 @@ class ModelDownloadWorker(
                 manifest = manifest,
                 onProgress = { downloaded, total ->
                     // Throttled: chunk callbacks are far more frequent than
-                    // useful foreground updates.
+                    // useful updates. Both the app event bus and the system
+                    // foreground notification move together so they never
+                    // disagree ("Starting…" while the screen shows 40%).
                     if (throttler.shouldEmit(downloaded, System.currentTimeMillis())) {
                         TransferEvents.emit(TransferEvent(modelId, VlmState.DOWNLOADING, downloaded, total))
+                        updateForegroundNotification(modelId, downloaded, total)
                     }
                 },
                 onState = { transferState ->
@@ -58,15 +61,14 @@ class ModelDownloadWorker(
             TransferEvents.emit(TransferEvent(modelId, finalState))
             store.saveTransferRecord(manifest, finalState)
             showTerminalNotification(modelId, finalState, totalBytes)
-            if (finalState == VlmState.INSTALLED_UNVERIFIED ||
-                finalState == VlmState.PAUSED ||
-                finalState == VlmState.PAUSED_ERROR ||
-                finalState == VlmState.INSUFFICIENT_STORAGE ||
-                finalState == VlmState.MANIFEST_MISMATCH
-            ) {
-                Result.success()
-            } else {
+            // The state machine owns the outcome. WorkManager retry is only
+            // for a transfer that is somehow still in progress; every settled
+            // state (installed, paused, failed, corrupt) stops here and waits
+            // for the user, otherwise a retry loop fights the pause UI.
+            if (finalState in TransferReconcile.TRANSIENT_STATES) {
                 Result.retry()
+            } else {
+                Result.success()
             }
         } catch (e: CancellationException) {
             // System stop / explicit cancel: not a failure. Verified chunks
@@ -76,10 +78,19 @@ class ModelDownloadWorker(
             showTerminalNotification(modelId, VlmState.PAUSED, totalBytes)
             Result.success()
         } catch (e: Exception) {
+            // The engine already exhausted its own retry budget before
+            // throwing, so this is PAUSED_ERROR awaiting user Resume — not an
+            // automatic WorkManager retry that would fight the pause.
             TransferEvents.emit(TransferEvent(modelId, VlmState.PAUSED_ERROR, error = e.message))
             store.saveTransferRecord(manifest, VlmState.PAUSED_ERROR, e.message)
-            Result.retry()
+            Result.success()
         }
+    }
+
+    /** Refresh the ongoing foreground notification with true bytes/percent. */
+    private fun updateForegroundNotification(modelId: VlmModelId, downloaded: Long, total: Long) {
+        val nm = applicationContext.getSystemService(NotificationManager::class.java) ?: return
+        nm.notify(NOTIFICATION_ID, makeForegroundInfo(modelId, "", downloaded, total).notification)
     }
 
     private fun makeForegroundInfo(

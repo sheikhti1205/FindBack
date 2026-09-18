@@ -62,6 +62,29 @@ object ModelDownloadScheduler {
         WorkManager.getInstance(context).cancelUniqueWork(workNameFor(modelId))
     }
 
+    /**
+     * Whether the platform still owns a live transfer for [modelId].
+     * Inspects the real JobScheduler pending jobs and the real WorkManager
+     * unique work — never an in-memory map, which is empty after process
+     * death. Runs on IO because the WorkManager query blocks.
+     */
+    suspend fun hasLiveJob(context: Context, modelId: VlmModelId): Boolean =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (Build.VERSION.SDK_INT >= 34) {
+                val scheduler = context.getSystemService(JobScheduler::class.java)
+                if (scheduler != null && scheduler.allPendingJobs.any { it.id == jobIdFor(modelId) }) {
+                    return@withContext true
+                }
+            }
+            try {
+                val infos = WorkManager.getInstance(context)
+                    .getWorkInfosForUniqueWork(workNameFor(modelId)).get()
+                infos.any { !it.state.isFinished }
+            } catch (_: Exception) {
+                false
+            }
+        }
+
     // ---- UIDT (API 34+) ----
 
     private fun scheduleUidt(context: Context, modelId: VlmModelId, policy: NetworkPolicy): Boolean {
