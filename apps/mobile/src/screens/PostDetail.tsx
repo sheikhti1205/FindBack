@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
-import { Star, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { ExternalLink, Star, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -14,6 +14,7 @@ import { MarkdownView } from "../components/MarkdownView";
 import { PossibleMatches } from "../components/PossibleMatches";
 import { announce } from "../components/LiveRegion";
 import { friendlyError } from "../utils/friendlyErrors";
+import { openInMaps } from "../utils/location";
 import { formatEventDate, formatTimestamp } from "../utils/dates";
 import {
   addComment,
@@ -213,7 +214,21 @@ export function PostDetail() {
           </div>
           <div className="col-span-2">
             <dt className="text-xs text-on-surface-variant">Location</dt>
-            <dd className="font-medium">{post.locationLabel ?? "Not specified"}</dd>
+            <dd className="font-medium">
+              {post.locationLabel ?? (post.latitude != null ? "Pinned location" : "Not specified")}
+            </dd>
+            {(post.latitude != null || post.locationLabel) && (
+              <dd className="mt-1">
+                <Button
+                  type="button"
+                  variant="text"
+                  size="md"
+                  onClick={() => void openInMaps(post.latitude, post.longitude, post.locationLabel ?? "")}
+                >
+                  <ExternalLink size={14} aria-hidden /> Open in Maps
+                </Button>
+              </dd>
+            )}
           </div>
         </dl>
 

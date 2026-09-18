@@ -26,19 +26,25 @@ export function SearchScreen() {
     return () => clearTimeout(t);
   }, [query]);
 
-  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed({
-    type: type === "ALL" ? "" : type,
-    category: category || undefined,
-    status: status || undefined,
-    sort,
-    q: appliedQuery || undefined,
-  });
+  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
+    {
+      type: type === "ALL" ? "" : type,
+      category: category || undefined,
+      status: status || undefined,
+      sort,
+      q: appliedQuery || undefined,
+    },
+    { cacheKey: "search:feed", scrollRef },
+  );
 
   // Active Search tab tap: rerun current filters + scroll top, preserve filters.
   useEffect(() => {
     if (tapCount === 0) return;
     void refresh();
-    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    scrollRef.current?.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
   }, [tapCount]);
 
   return (
@@ -104,6 +110,7 @@ export function SearchScreen() {
           error={error}
           hasMore={hasMore}
           onLoadMore={loadMore}
+          onRetry={refresh}
           emptyTitle="No matches"
           emptySubtitle="Try different filters or a broader search."
         />

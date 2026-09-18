@@ -4,14 +4,16 @@ import { stripMarkdown } from "../utils/stripMarkdown";
 import type { PostItem, PostType } from "@findback/shared";
 import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
 
-/** Maximum number of candidate posts to fetch per page (client-side cap). */
-const PAGE_LIMIT = 10;
+/** Maximum number of candidate posts to consider (the SQL layer caps at 20). */
+const PAGE_LIMIT = 20;
 
 /** Result of a possible matches query. */
 export interface PossibleMatchesResult {
   matches: PossibleMatch[];
   candidatesConsidered: number;
   available: boolean;
+  /** Why matching is unavailable: candidates fetch vs on-device embedding. */
+  unavailableReason?: "candidates" | "embed";
 }
 
 /** Converts a PostItem to a MatchCandidate (safe card projection). */
@@ -54,7 +56,7 @@ export async function findPossibleMatches(
   try {
     candidates = await fetchCandidates(oppositeType);
   } catch {
-    return { matches: [], candidatesConsidered: 0, available: false };
+    return { matches: [], candidatesConsidered: 0, available: false, unavailableReason: "candidates" };
   }
 
   // Build embedding inputs: target first, then candidates (even if empty, to detect embed failure)
@@ -71,7 +73,7 @@ export async function findPossibleMatches(
   try {
     vectors = await embed([targetInput, ...candidateInputs]);
   } catch {
-    return { matches: [], candidatesConsidered: 0, available: false };
+    return { matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" };
   }
 
   if (candidates.length === 0) {

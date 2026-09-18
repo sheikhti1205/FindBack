@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router";
 import { ArrowLeft } from "lucide-react";
+import { historyDepth } from "./backNavigation";
 
 interface BackButtonProps {
   /** Fallback destination when there is no history to go back to. */
@@ -9,14 +10,15 @@ interface BackButtonProps {
 }
 
 /**
- * History-aware back: navigates back when history exists, otherwise falls
- * back to a safe destination. Visible arrow button for secondary screens.
+ * History-aware back: navigates back when the app stack has an entry,
+ * otherwise falls back to a safe destination. Uses the same router index
+ * as the hardware back handler so both buttons agree.
  */
 export function BackButton({ fallbackTo, label }: BackButtonProps) {
   const navigate = useNavigate();
 
   function goBack() {
-    if (window.history.length > 1) {
+    if (historyDepth() > 0) {
       navigate(-1);
     } else {
       navigate(fallbackTo, { replace: true });

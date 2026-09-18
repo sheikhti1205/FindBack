@@ -11,9 +11,16 @@ interface PossibleMatchesProps {
 export function PossibleMatches({ post }: PossibleMatchesProps) {
   const [result, setResult] = useState<PossibleMatchesResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
+
+  // Rerun only when the match-relevant content changes, not on every
+  // realtime social update that replaces the post object.
+  const contentKey = `${post.id}|${post.type}|${post.title}|${post.description}`;
 
   useEffect(() => {
     let mounted = true;
+    setLoading(true);
+    setResult(null);
     async function load() {
       try {
         const data = await findPossibleMatches(post);
@@ -30,7 +37,8 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
     return () => {
       mounted = false;
     };
-  }, [post]);
+    // Intentionally keyed on content, not the whole post object.
+  }, [contentKey, attempt]);
 
   if (loading) {
     return <Spinner label="Finding possible matches…" />;
@@ -41,11 +49,21 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
   }
 
   if (!result.available) {
+    const subtitle =
+      result.unavailableReason === "embed"
+        ? "Matching needs the on-device model, which is not available in this build."
+        : "Could not load reports to compare. Check your connection and try again.";
     return (
-      <EmptyState
-        title="Possible matches unavailable"
-        subtitle="Possible matches need the on-device model, which is not available in this build."
-      />
+      <div className="flex flex-col items-center gap-3">
+        <EmptyState title="Possible matches unavailable" subtitle={subtitle} />
+        <button
+          type="button"
+          onClick={() => setAttempt((a) => a + 1)}
+          className="min-h-[48px] rounded-m3-sm border border-outline-variant px-4 text-sm font-medium"
+        >
+          Try again
+        </button>
+      </div>
     );
   }
 

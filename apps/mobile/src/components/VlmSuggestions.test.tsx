@@ -16,10 +16,19 @@ vi.mock("../services/vlmDiscovery", () => ({
   suggestForPrimaryLocally: suggestMock,
 }));
 vi.mock("../services/vlmPlugin", () => ({
-  getVlmBridge: () => ({ onInferenceState: vi.fn().mockResolvedValue(() => Promise.resolve()) }),
+  getVlmBridge: () => ({ onInferenceState: vi.fn().mockResolvedValue(() => Promise.resolve()), cancelInference: vi.fn().mockResolvedValue(undefined) }),
 }));
 
+import { MemoryRouter } from "react-router";
 import { VlmSuggestions } from "./VlmSuggestions";
+
+function renderSuggestions(props: { imageUri: string; onApply: (p: object) => void }) {
+  return render(
+    <MemoryRouter>
+      <VlmSuggestions imageUri={props.imageUri} onApply={props.onApply as never} />
+    </MemoryRouter>,
+  );
+}
 
 afterEach(cleanup);
 
@@ -43,7 +52,7 @@ describe("VlmSuggestions multi-object flow", () => {
     ]);
     suggestMock.mockResolvedValue(analysis);
     const onApply = vi.fn();
-    render(<VlmSuggestions imageUri="content://photo" onApply={onApply} />);
+    renderSuggestions({ imageUri: "content://photo", onApply: onApply });
 
     fireEvent.click(screen.getByRole("button", { name: /analyze photo/i }));
     await screen.findByText("black umbrella");
@@ -76,7 +85,7 @@ describe("VlmSuggestions multi-object flow", () => {
   it("falls back to manual entry when nothing is discovered", async () => {
     discoverMock.mockResolvedValue([]);
     analyzeMock.mockResolvedValue(analysis);
-    render(<VlmSuggestions imageUri="content://photo" onApply={vi.fn()} />);
+    renderSuggestions({ imageUri: "content://photo", onApply: vi.fn() });
     fireEvent.click(screen.getByRole("button", { name: /analyze photo/i }));
     await screen.findByText(/fill the details manually/i);
     expect(analyzeMock).not.toHaveBeenCalled();
@@ -86,17 +95,21 @@ describe("VlmSuggestions multi-object flow", () => {
     discoverMock.mockRejectedValue(
       Object.assign(new Error("UNSTRUCTURED_OUTPUT"), { name: "VlmUnstructuredOutputError" }),
     );
-    render(<VlmSuggestions imageUri="content://photo" onApply={vi.fn()} />);
+    renderSuggestions({ imageUri: "content://photo", onApply: vi.fn() });
     fireEvent.click(screen.getByRole("button", { name: /analyze photo/i }));
     await waitFor(() => expect(screen.getByText(/could not read the photo/i)).toBeTruthy());
   });
 
   it("invalidates unapplied AI state when the photo changes", async () => {
     discoverMock.mockResolvedValue([{ objectName: "keys", positionHint: "left" }]);
-    const { rerender } = render(<VlmSuggestions imageUri="content://a" onApply={vi.fn()} />);
+    const { rerender } = renderSuggestions({ imageUri: "content://a", onApply: vi.fn() });
     fireEvent.click(screen.getByRole("button", { name: /analyze photo/i }));
     await screen.findByText("keys");
-    rerender(<VlmSuggestions imageUri="content://b" onApply={vi.fn()} />);
+    rerender(
+      <MemoryRouter>
+        <VlmSuggestions imageUri="content://b" onApply={vi.fn()} />
+      </MemoryRouter>,
+    );
     expect(screen.queryByText("keys")).toBeNull();
     expect(screen.getByRole("button", { name: /analyze photo/i })).toBeTruthy();
   });

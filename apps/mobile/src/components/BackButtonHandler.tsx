@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
-import { consumeBackIntercept, consumeHistorySuppression } from "./backNavigation";
+import { consumeBackIntercept, consumeHistorySuppression, historyDepth } from "./backNavigation";
 
 export interface BackContext {
   /** React Router history has an entry before the current one. */
@@ -38,11 +38,6 @@ export function resolveBackAction(ctx: BackContext): BackAction {
 
 const EXIT_ARM_MS = 2000;
 
-function historyIndex(): number {
-  const state = window.history.state as { idx?: number } | null;
-  return typeof state?.idx === "number" ? state.idx : 0;
-}
-
 /**
  * Routes the Android hardware/gesture back button through React Router.
  *
@@ -75,7 +70,7 @@ export function BackButtonHandler() {
       if (consumeBackIntercept()) return;
 
       const action = resolveBackAction({
-        canGoBack: historyIndex() > 0,
+        canGoBack: historyDepth() > 0,
         pathname: pathRef.current,
         armed: armedRef.current,
         suppressHistory: consumeHistorySuppression(pathRef.current),

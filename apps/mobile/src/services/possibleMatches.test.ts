@@ -22,6 +22,6 @@ describe("findPossibleMatches", () => {
 
   it("reports unavailability instead of throwing when the embedder is missing", async () => {
     const result = await findPossibleMatches(target, { fetchCandidates: vi.fn().mockResolvedValue([]), embed: vi.fn().mockRejectedValue(new Error("MODEL_UNAVAILABLE")) });
-    expect(result).toEqual({ matches: [], candidatesConsidered: 0, available: false });
+    expect(result).toEqual({ matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" });
   });
 });

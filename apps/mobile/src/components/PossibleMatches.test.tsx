@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -30,8 +30,18 @@ describe("PossibleMatches", () => {
   });
 
   it("shows an informative empty state when the embedder is unavailable", async () => {
-    findMock.mockResolvedValue({ available: false, candidatesConsidered: 0, matches: [] });
+    findMock.mockResolvedValue({ available: false, candidatesConsidered: 0, matches: [], unavailableReason: "embed" });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
-    await waitFor(() => expect(screen.getByText(/possible matches need the on-device model/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/needs the on-device model/i)).toBeTruthy());
+  });
+
+  it("offers a retry when candidate loading fails", async () => {
+    findMock.mockResolvedValue({ available: false, candidatesConsidered: 0, matches: [], unavailableReason: "candidates" });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText(/check your connection/i)).toBeTruthy());
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => expect(screen.getByText(/no possible matches/i)).toBeTruthy());
+    expect(findMock).toHaveBeenCalledTimes(2);
   });
 });

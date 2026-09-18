@@ -51,3 +51,13 @@ export function consumeBackIntercept(): boolean {
 export function resetBackInterceptors(): void {
   interceptors.length = 0;
 }
+
+/**
+ * React Router's position in this tab's history. `window.history.length`
+ * counts the whole WebView session, not the app stack, so it is the wrong
+ * signal for an in-app back button.
+ */
+export function historyDepth(): number {
+  const state = window.history.state as { idx?: number } | null;
+  return typeof state?.idx === "number" ? state.idx : 0;
+}

@@ -16,6 +16,8 @@ import type { VlmAnalysis } from "../services/vlmParser";
 interface VlmSuggestionsProps {
   imageUri: string;
   onApply: (patch: Partial<VlmAnalysis>) => void;
+  /** Report text already written; sent as context so suggestions fit the draft. */
+  userContext?: { title: string; description: string };
 }
 
 const FIELD_LABELS: Record<"suggestedTitle" | "suggestedCategory" | "suggestedDescription", string> = {
@@ -48,13 +50,8 @@ function hasValue(value: VlmAnalysis[keyof VlmAnalysis]): boolean {
 
 type Phase = "idle" | "discovering" | "review" | "generating" | "done";
 
-export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
-  let navigate: (to: string) => void = () => {};
-  try {
-    navigate = useNavigate();
-  } catch {
-    navigate = () => {};
-  }
+export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestionsProps) {
+  const navigate = useNavigate();
   const [phase, setPhase] = useState<Phase>("idle");
   const [selections, setSelections] = useState<ObjectSelection[]>([]);
   const [instruction, setInstruction] = useState("");
@@ -65,9 +62,13 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
   /** Per-photo generation: stale responses after an image change are ignored. */
   const generation = useRef(0);
 
-  // Changing the photo invalidates all unapplied AI state.
+  // Changing the photo invalidates all unapplied AI state and stops the
+  // native work for the old photo instead of letting it run to completion.
   useEffect(() => {
     generation.current++;
+    void getVlmBridge()
+      .cancelInference()
+      .catch(() => undefined);
     setPhase("idle");
     setSelections([]);
     setInstruction("");
@@ -165,7 +166,10 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
         include: selections.filter((s) => s.role === "INCLUDE").map((s) => s.objectName),
         ignore: selections.filter((s) => s.role === "IGNORE").map((s) => s.objectName),
         userInstruction: instruction,
-        userContext: { title: "", description: "" },
+        userContext: {
+          title: userContext?.title ?? "",
+          description: userContext?.description ?? "",
+        },
       });
       if (generation.current !== gen) return;
       setAnalysis(result);
@@ -187,6 +191,16 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
     onApply({ [field]: value } as Partial<VlmAnalysis>);
   }
 
+  function handleCancel() {
+    generation.current++;
+    void getVlmBridge()
+      .cancelInference()
+      .catch(() => undefined);
+    setBusy(false);
+    setError(null);
+    setPhase(selections.length > 0 ? "review" : "idle");
+  }
+
   if (!imageUri) {
     return null;
   }
@@ -198,17 +212,24 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
       <p className="text-sm font-medium">Analyze with local AI</p>
 
       {(phase === "idle" || phase === "discovering") && (
-        <Button
-          type="button"
-          variant="outline"
-          size="md"
-          loading={busy}
-          disabled={disabled}
-          onClick={handleDiscover}
-        >
-          <Sparkles size={16} aria-hidden />
-          Analyze photo
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="md"
+            loading={busy}
+            disabled={disabled}
+            onClick={handleDiscover}
+          >
+            <Sparkles size={16} aria-hidden />
+            Analyze photo
+          </Button>
+          {phase === "discovering" && (
+            <Button type="button" variant="text" size="md" onClick={handleCancel}>
+              Cancel
+            </Button>
+          )}
+        </div>
       )}
 
       {error && (
@@ -266,17 +287,24 @@ export function VlmSuggestions({ imageUri, onApply }: VlmSuggestionsProps) {
               className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
             />
           </label>
-          <Button
-            type="button"
-            variant="outline"
-            size="md"
-            loading={phase === "generating"}
-            disabled={busy || primaryCount !== 1}
-            onClick={handleGenerate}
-          >
-            <Sparkles size={16} aria-hidden />
-            Generate suggestions
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="md"
+              loading={phase === "generating"}
+              disabled={busy || primaryCount !== 1}
+              onClick={handleGenerate}
+            >
+              <Sparkles size={16} aria-hidden />
+              Generate suggestions
+            </Button>
+            {phase === "generating" && (
+              <Button type="button" variant="text" size="md" onClick={handleCancel}>
+                Cancel
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
