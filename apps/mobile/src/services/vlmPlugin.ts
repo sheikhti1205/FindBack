@@ -176,10 +176,17 @@ export interface EmbedTextsResult {
   vectors: number[][];
 }
 
+/** GPU self-test failure classification (mirrors native SelfTestFailure). */
+export type GpuSelfTestFailure =
+  | "INPUT_ERROR"
+  | "MODEL_RUNTIME_ERROR"
+  | "GENERATION_ERROR";
+
 /** GPU self-test result. */
 export interface GpuSelfTestResult {
   state: GpuSelfTestState;
   error?: string;
+  failure?: GpuSelfTestFailure;
 }
 
 /** Model error. */
@@ -245,7 +252,7 @@ interface NativeVlmBridge {
   cancelDownload(options: { modelId: VlmModelId; removePartial?: boolean }): Promise<void>;
   deleteModel(options: { modelId: VlmModelId }): Promise<void>;
   embedTexts(options: { texts: string[] }): Promise<{ vectors: number[][] }>;
-  runGpuSelfTest(options: { modelId: VlmModelId; imageUri?: string }): Promise<{ state: GpuSelfTestState }>;
+  runGpuSelfTest(options: { modelId: VlmModelId; imageUri?: string }): Promise<GpuSelfTestResult>;
   analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
@@ -271,7 +278,7 @@ export interface VlmBridge {
   cancelDownload(modelId: VlmModelId, removePartial?: boolean): Promise<void>;
   deleteModel(modelId: VlmModelId): Promise<void>;
   embedTexts(texts: string[]): Promise<number[][]>;
-  runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestState>;
+  runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestResult>;
   analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
@@ -351,7 +358,7 @@ class WebVlmBridge implements VlmBridge {
     this.refuse("embedTexts");
   }
 
-  async runGpuSelfTest(_modelId: VlmModelId, _imageUri?: string): Promise<GpuSelfTestState> {
+  async runGpuSelfTest(_modelId: VlmModelId, _imageUri?: string): Promise<GpuSelfTestResult> {
     this.refuse("runGpuSelfTest");
   }
 
@@ -461,10 +468,10 @@ class AndroidVlmBridge implements VlmBridge {
     return result.vectors;
   }
 
-  async runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestState> {
+  async runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestResult> {
     if (imageUri?.startsWith("blob:")) throw new Error("blob: URIs cannot be sent to native");
     const result = await this.native.runGpuSelfTest({ modelId, imageUri });
-    return result.state;
+    return result;
   }
 
   async analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult> {
