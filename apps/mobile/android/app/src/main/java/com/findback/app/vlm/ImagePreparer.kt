@@ -128,37 +128,45 @@ object ImagePreparer {
     }
 
     private fun rotateAndSaveToTemp(context: Context, sourcePath: String, exifOrientation: Int): String {
-        val degrees = ImageOrientation.degreesFor(exifOrientation)
-        val bitmap = BitmapFactory.decodeFile(sourcePath)
-        if (bitmap == null) {
+        // Bounds first so a 50 MP camera photo never inflates to full size.
+        // Downsample to cap the longer side before applying EXIF.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(sourcePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw IllegalArgumentException("Failed to decode image file: $sourcePath")
         }
-        val rotatedBitmap = if (degrees != 0) {
-            val matrix = Matrix()
-            matrix.postRotate(degrees.toFloat())
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        } else {
+        var sampleSize = 1
+        val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
+        while (maxSide / sampleSize > MAX_PREPARE_DIMENSION) sampleSize *= 2
+        val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        val bitmap = BitmapFactory.decodeFile(sourcePath, decodeOptions)
+            ?: throw IllegalArgumentException("Failed to decode image file: $sourcePath")
+        val matrix = ImageOrientation.matrixFor(exifOrientation)
+        val transformed = if (matrix.isIdentity) {
             bitmap
+        } else {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
         }
         val tempFile = File.createTempFile("vlm-input", ".jpg", context.cacheDir)
         FileOutputStream(tempFile).use { output ->
-            rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)
+            transformed.compress(Bitmap.CompressFormat.JPEG, 92, output)
         }
-        if (rotatedBitmap != bitmap) {
-            rotatedBitmap.recycle()
+        if (transformed !== bitmap) {
+            transformed.recycle()
         }
         bitmap.recycle()
         return tempFile.absolutePath
     }
+
+    /** Longest side of a prepared image; bounds memory before decode. */
+    const val MAX_PREPARE_DIMENSION = 1024
 }
 
 /**
- * EXIF orientation to degrees mapping.
+ * EXIF orientation handling.
  * EXIF orientation values:
- * 1 = Normal (0°)
- * 3 = Rotate 180°
- * 6 = Rotate 90° CW
- * 8 = Rotate 270° CW (or 90° CCW)
+ * 1 = Normal, 2 = flip horizontal, 3 = rotate 180, 4 = flip vertical,
+ * 5 = transpose, 6 = rotate 90 CW, 7 = transverse, 8 = rotate 270 CW.
  */
 object ImageOrientation {
     fun degreesFor(exifOrientation: Int): Int {
@@ -168,5 +176,27 @@ object ImageOrientation {
             ExifInterface.ORIENTATION_ROTATE_270 -> 270 // 8
             else -> 0
         }
+    }
+
+    /** Full orientation correction (rotations and mirrors/transposes). */
+    fun matrixFor(exifOrientation: Int): Matrix {
+        val matrix = Matrix()
+        when (exifOrientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.postRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.postRotate(270f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            else -> { /* identity */ }
+        }
+        return matrix
     }
 }

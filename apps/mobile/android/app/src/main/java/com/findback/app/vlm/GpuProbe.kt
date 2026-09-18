@@ -33,62 +33,80 @@ object GpuProbe {
     /**
      * `(vendor, renderer)` read from a throwaway 1x1 EGL pbuffer, or `(null, null)` when EGL is
      * unavailable. Defensive by design: a failure here degrades to "unknown", never a crash.
+     *
+     * All EGL handles are nullable locals: in plain JVM unit tests the
+     * android.jar EGL constants are null, so even the field initialization must
+     * happen inside the guarded region rather than as non-null declarations.
      */
     fun info(): Pair<String?, String?> {
-        var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
-        var context: EGLContext = EGL14.EGL_NO_CONTEXT
-        var surface: EGLSurface = EGL14.EGL_NO_SURFACE
+        var display: EGLDisplay? = null
+        var context: EGLContext? = null
+        var surface: EGLSurface? = null
         return try {
             display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-            val version = IntArray(2)
-            if (display == EGL14.EGL_NO_DISPLAY || !EGL14.eglInitialize(display, version, 0, version, 1)) {
+            if (display == null || display == EGL14.EGL_NO_DISPLAY) {
                 Pair(null, null)
             } else {
-                val configs = arrayOfNulls<EGLConfig>(1)
-                val numConfigs = IntArray(1)
-                val configAttribs = intArrayOf(
-                    EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-                    EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
-                    EGL14.EGL_NONE,
-                )
-                if (!EGL14.eglChooseConfig(display, configAttribs, 0, configs, 0, 1, numConfigs, 0) ||
-                    numConfigs[0] == 0
-                ) {
+                val version = IntArray(2)
+                if (!EGL14.eglInitialize(display, version, 0, version, 1)) {
                     Pair(null, null)
                 } else {
-                    val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
-                    context = EGL14.eglCreateContext(display, configs[0], EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
-                    val surfaceAttribs = intArrayOf(
-                        EGL14.EGL_WIDTH, 1,
-                        EGL14.EGL_HEIGHT, 1,
+                    val configs = arrayOfNulls<EGLConfig>(1)
+                    val numConfigs = IntArray(1)
+                    val configAttribs = intArrayOf(
+                        EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+                        EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
                         EGL14.EGL_NONE,
                     )
-                    surface = EGL14.eglCreatePbufferSurface(display, configs[0], surfaceAttribs, 0)
-                    if (context == EGL14.EGL_NO_CONTEXT ||
-                        surface == EGL14.EGL_NO_SURFACE ||
-                        !EGL14.eglMakeCurrent(display, surface, surface, context)
-                    ) {
+                    val config = if (
+                        EGL14.eglChooseConfig(display, configAttribs, 0, configs, 0, 1, numConfigs, 0) &&
+                        numConfigs[0] > 0 && configs[0] != null
+                    ) configs[0]!! else null
+                    if (config == null) {
                         Pair(null, null)
                     } else {
-                        Pair(GLES20.glGetString(GLES20.GL_VENDOR), GLES20.glGetString(GLES20.GL_RENDERER))
+                        val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
+                        context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
+                        val surfaceAttribs = intArrayOf(
+                            EGL14.EGL_WIDTH, 1,
+                            EGL14.EGL_HEIGHT, 1,
+                            EGL14.EGL_NONE,
+                        )
+                        surface = EGL14.eglCreatePbufferSurface(display, config, surfaceAttribs, 0)
+                        if (context == null || context == EGL14.EGL_NO_CONTEXT ||
+                            surface == null || surface == EGL14.EGL_NO_SURFACE ||
+                            !EGL14.eglMakeCurrent(display, surface, surface, context)
+                        ) {
+                            Pair(null, null)
+                        } else {
+                            Pair(GLES20.glGetString(GLES20.GL_VENDOR), GLES20.glGetString(GLES20.GL_RENDERER))
+                        }
                     }
                 }
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "GPU info query failed: ${e.message}")
+            // Logging itself is guarded: android.util.Log is a throwing stub
+            // in plain JVM unit tests, and a probe must never throw.
+            try {
+                Log.w(TAG, "GPU info query failed: ${e.message}")
+            } catch (_: Throwable) {
+            }
             Pair(null, null)
         } finally {
             try {
-                if (display != EGL14.EGL_NO_DISPLAY) {
+                val d = display
+                if (d != null && d != EGL14.EGL_NO_DISPLAY) {
                     EGL14.eglMakeCurrent(
-                        display,
+                        d,
                         EGL14.EGL_NO_SURFACE,
                         EGL14.EGL_NO_SURFACE,
                         EGL14.EGL_NO_CONTEXT,
                     )
-                    if (surface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, surface)
-                    if (context != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(display, context)
-                    EGL14.eglTerminate(display)
+                    val s = surface
+                    if (s != null && s != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(d, s)
+                    val c = context
+                    if (c != null && c != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(d, c)
+                    EGL14.eglTerminate(d)
                 }
             } catch (_: Throwable) {
             }

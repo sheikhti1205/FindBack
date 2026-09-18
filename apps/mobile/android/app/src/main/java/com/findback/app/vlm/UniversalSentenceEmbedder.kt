@@ -15,18 +15,20 @@ class UniversalSentenceEmbedder private constructor(
 ) {
 
     companion object {
+        // Keyed by application context only. Never hold an Activity context in
+        // a process-wide cache or it outlives the Activity lifecycle.
         private val instances = ConcurrentHashMap<Context, UniversalSentenceEmbedder>()
 
         /**
-         * Gets or creates a UniversalSentenceEmbedder instance for the given context.
-         * The embedder is cached per context to avoid reloading the model.
+         * Gets or creates a UniversalSentenceEmbedder instance.
+         * Always normalizes to the application context.
          *
          * @param context Android context
          * @return UniversalSentenceEmbedder instance, or null if the model asset is missing
          */
-        @Suppress("UNUSED_PARAMETER")
         fun getInstance(context: Context): UniversalSentenceEmbedder? {
-            return instances.getOrPut(context) {
+            val appContext = context.applicationContext
+            return instances.getOrPut(appContext) {
                 try {
                     val options = TextEmbedder.TextEmbedderOptions.builder()
                         .setBaseOptions(
@@ -37,8 +39,8 @@ class UniversalSentenceEmbedder private constructor(
                         .setL2Normalize(true)
                         .setQuantize(false)
                         .build()
-                    val embedder = TextEmbedder.createFromOptions(context, options)
-                    UniversalSentenceEmbedder(context, embedder)
+                    val embedder = TextEmbedder.createFromOptions(appContext, options)
+                    UniversalSentenceEmbedder(appContext, embedder)
                 } catch (e: Exception) {
                     // Model asset not found or other initialization error
                     null

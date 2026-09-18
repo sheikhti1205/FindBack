@@ -21,3 +21,33 @@ export function consumeHistorySuppression(currentPath: string): boolean {
 export function resetHistorySuppression(): void {
   suppressionPath = null;
 }
+
+type BackInterceptor = () => boolean;
+
+/** Topmost UI (modals/dialogs) that must consume back before navigation. */
+const interceptors: BackInterceptor[] = [];
+
+/**
+ * Register a back interceptor. It returns true when it handled the press
+ * (e.g. dismissed an open dialog). The most recently registered wins.
+ */
+export function registerBackInterceptor(handler: BackInterceptor): () => void {
+  interceptors.push(handler);
+  return () => {
+    const index = interceptors.indexOf(handler);
+    if (index >= 0) interceptors.splice(index, 1);
+  };
+}
+
+/** Give the topmost interceptor a chance to consume the press. */
+export function consumeBackIntercept(): boolean {
+  for (let i = interceptors.length - 1; i >= 0; i--) {
+    if (interceptors[i]!()) return true;
+  }
+  return false;
+}
+
+/** Test helper. */
+export function resetBackInterceptors(): void {
+  interceptors.length = 0;
+}

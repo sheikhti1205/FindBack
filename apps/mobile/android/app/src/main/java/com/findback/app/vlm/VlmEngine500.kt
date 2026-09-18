@@ -66,8 +66,11 @@ class VlmEngine500(
         }
 
         val engineInstance = engine!!
+        // The full instruction arrives once, in the user message alongside the
+        // image. The system slot carries only the short role so prompt tokens
+        // are not duplicated in context.
         val conversation = engineInstance.createConversation(ConversationConfig(
-            systemInstruction = Contents.of(instruction),
+            systemInstruction = Contents.of("You are a local visual assistant for a lost-and-found report."),
             samplerConfig = SamplerConfig(
                 topK = 40,
                 topP = 0.95,

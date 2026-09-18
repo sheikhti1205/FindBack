@@ -244,10 +244,25 @@ class LocalVlmPlugin : Plugin() {
     fun getModelStates(call: PluginCall) {
         if (!ensureInitialized(call)) return
         // Build a real JS array; a Kotlin Array serializes as "[L...;@hash".
+        // Prefer the live in-memory state (updated by transfers/self-tests)
+        // over the persisted record so a just-passed test is visible now, not
+        // only after the next restart. requiredBytes is the authoritative
+        // native install requirement the UI gates Download on.
         val infos = VlmModelId.values().map { modelId ->
+            val live = modelStates[modelId]
             val record = requireStore().loadRecord(modelId)
-            val state = record?.state ?: VlmState.NOT_INSTALLED
-            VlmModelInfo(modelId, state, record?.installedBytes, record?.lastError?.message)
+            val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
+            val requiredBytes = ModelInstallPolicy.requiredFreeBytes(
+                manifest.files.sumOf { it.expectedBytes }
+            )
+            val state = live?.state ?: record?.state ?: VlmState.NOT_INSTALLED
+            VlmModelInfo(
+                modelId,
+                state,
+                record?.installedBytes ?: live?.sizeBytes,
+                live?.error ?: record?.lastError?.message,
+                requiredBytes
+            )
         }
         val result = JSObject()
         result.put("models", modelStatesToJSArray(infos))
@@ -523,8 +538,22 @@ class LocalVlmPlugin : Plugin() {
         val modelIdWire = call.getString("modelId") ?: return
         val imageUri = call.getString("imageUri") // Optional image for real self-test
         VlmModelId.fromWire(modelIdWire)?.let { modelId ->
+            // A self-test is native inference too: it must serialize with
+            // analyze() through the same mutex, or a test, a deletion and an
+            // analysis can race each other.
+            if (!inferenceMutex.tryAcquire()) {
+                call.reject("Inference already in progress")
+                return
+            }
+            val testToken = activeInference.begin()
+            if (testToken == null) {
+                inferenceMutex.release()
+                call.reject("Inference already in progress")
+                return
+            }
             when (modelId) {
                 VlmModelId.SMOLVLM2_500M -> {
+                    val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
                     // Ensure engine is initialized (handles case where model was downloaded but engine not yet created)
                     var engine = engine500
                     if (engine == null) {
@@ -532,6 +561,8 @@ class LocalVlmPlugin : Plugin() {
                         engine500 = engine
                     }
                     val engineInstance = engine ?: run {
+                        activeInference.finishNative(testToken)
+                        inferenceMutex.release()
                         val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model not installed")
                         call.resolve(result.toJSObject())
                         return
@@ -543,9 +574,20 @@ class LocalVlmPlugin : Plugin() {
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
 
                             val instruction = "Describe this image briefly."
-                            val (success, diagnostics) = engine.runSelfTest(imageUri, instruction)
+                            activeInference.markNativeRunning(testToken, true)
+                            val (success, diagnostics) = try {
+                                engineInstance.runSelfTest(imageUri, instruction)
+                            } finally {
+                                activeInference.markNativeRunning(testToken, false)
+                            }
+
+                            if (activeInference.isCancelled(testToken)) {
+                                call.reject("Self-test cancelled", "CANCELLED")
+                                return@launch
+                            }
 
                             if (success) {
+                                persistModelState(modelId, manifest, VlmState.READY_GPU)
                                 updateModelState(modelId, VlmState.READY_GPU)
                                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                                 val result = GpuSelfTestResult(GpuSelfTestState.GPU_AVAILABLE)
@@ -557,6 +599,7 @@ class LocalVlmPlugin : Plugin() {
                                 } else {
                                     VlmState.INSTALLED_UNVERIFIED
                                 }
+                                persistModelState(modelId, manifest, finalState)
                                 updateModelState(modelId, finalState, error = diagnostics.joinToString("; "))
                                 notifyListeners("inferenceState", InferenceStateEvent(modelId, finalState, error = diagnostics.joinToString("; ")).toJSObject())
                                 val result = GpuSelfTestResult(
@@ -570,6 +613,9 @@ class LocalVlmPlugin : Plugin() {
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = e.message).toJSObject())
                             val result = GpuSelfTestResult(GpuSelfTestState.ERROR, e.message)
                             call.resolve(result.toJSObject())
+                        } finally {
+                            activeInference.finishNative(testToken)
+                            inferenceMutex.release()
                         }
                     }
                 }
@@ -582,9 +628,12 @@ class LocalVlmPlugin : Plugin() {
                     val tokenizerFile = requireStore().finalFile(manifest, tokenizerSpec)
 
                     if (!tfliteFile.exists() || !tokenizerFile.exists()) {
+                        persistModelState(modelId, manifest, VlmState.GPU_UNAVAILABLE)
                         val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model files not found")
                         updateModelState(modelId, VlmState.GPU_UNAVAILABLE, error = "Model files not found")
                         notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_UNAVAILABLE, error = "Model files not found").toJSObject())
+                        activeInference.finishNative(testToken)
+                        inferenceMutex.release()
                         call.resolve(result.toJSObject())
                         return
                     }
@@ -595,8 +644,19 @@ class LocalVlmPlugin : Plugin() {
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
 
                             val probe = Tflite256Probe(getContext(), requireStore(), ImagePreparer)
-                            val (outcome, errorCode) = probe.runProbe()
+                            activeInference.markNativeRunning(testToken, true)
+                            val (outcome, errorCode) = try {
+                                probe.runProbe()
+                            } finally {
+                                activeInference.markNativeRunning(testToken, false)
+                            }
 
+                            if (activeInference.isCancelled(testToken)) {
+                                call.reject("Self-test cancelled", "CANCELLED")
+                                return@launch
+                            }
+
+                            persistModelState(modelId, manifest, outcome)
                             updateModelState(modelId, outcome, error = errorCode?.wire)
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, outcome, error = errorCode?.wire).toJSObject())
 
@@ -611,6 +671,9 @@ class LocalVlmPlugin : Plugin() {
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = e.message).toJSObject())
                             val result = GpuSelfTestResult(GpuSelfTestState.ERROR, e.message)
                             call.resolve(result.toJSObject())
+                        } finally {
+                            activeInference.finishNative(testToken)
+                            inferenceMutex.release()
                         }
                     }
                 }
@@ -710,8 +773,10 @@ class LocalVlmPlugin : Plugin() {
                     activeInference.markNativeRunning(token, false)
                 }
 
-                // A cancelled inference never resolves JS: drop the stale result.
+                // A cancelled inference must settle the JS Promise: reject it so
+                // the UI never waits forever on a call that will produce nothing.
                 if (activeInference.isCancelled(token)) {
+                    call.reject("Inference cancelled", "CANCELLED")
                     return@launch
                 }
 
@@ -732,7 +797,11 @@ class LocalVlmPlugin : Plugin() {
                 call.resolve(result.toJSObject())
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 1.0f).toJSObject())
             } catch (e: CancellationException) {
-                // Cancelled coroutine: never resolve the stale call.
+                // The job itself was cancelled: settle the call, then propagate.
+                try {
+                    call.reject("Inference cancelled", "CANCELLED")
+                } catch (_: Exception) {
+                }
                 throw e
             } catch (e: Exception) {
                 if (!activeInference.isCancelled(token)) {
@@ -838,6 +907,7 @@ class LocalVlmPlugin : Plugin() {
         }
         val totalInstalledBytes = files.sumOf { it.installedBytes }
         val aggregateSha256 = files.joinToString("") { it.installedSha256 }
+        val (gpuVendor, gpuRenderer) = GpuProbe.info()
         val record = ModelStateRecord(
             modelId = modelId,
             state = state,
@@ -845,17 +915,32 @@ class LocalVlmPlugin : Plugin() {
             installedBytes = totalInstalledBytes,
             installTimestamp = System.currentTimeMillis(),
             runtimeVersion = manifest.runtime,
-            appVersion = "1.0",
+            appVersion = appVersionName(),
             fingerprint = Build.FINGERPRINT,
             abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
-            gpuVendor = null,
-            gpuRenderer = null,
+            gpuVendor = gpuVendor,
+            gpuRenderer = gpuRenderer,
             revision = manifest.revision,
             sha256 = aggregateSha256,
-            lastGpuSelfTest = if (state == VlmState.READY_GPU) System.currentTimeMillis() else null,
+            lastGpuSelfTest = if (state == VlmState.READY_GPU || state == VlmState.GPU_UNAVAILABLE) System.currentTimeMillis() else null,
             lastError = null
         )
         requireStore().saveRecord(record)
+    }
+
+    private fun appVersionName(): String {
+        return try {
+            val context = getContext()
+            val info = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            info.versionName ?: "unknown"
+        } catch (e: Exception) {
+            "unknown"
+        }
     }
 
     /**
@@ -914,7 +999,8 @@ data class VlmModelInfo(
     val id: VlmModelId,
     val state: VlmState,
     val sizeBytes: Long? = null,
-    val error: String? = null
+    val error: String? = null,
+    val requiredBytes: Long? = null
 ) {
     fun toJSObject(): JSObject {
         val obj = JSObject()
@@ -922,6 +1008,7 @@ data class VlmModelInfo(
         obj.put("state", state.wire)
         sizeBytes?.let { obj.put("sizeBytes", it) }
         error?.let { obj.put("error", it) }
+        requiredBytes?.let { obj.put("requiredBytes", it) }
         return obj
     }
 }

@@ -85,6 +85,7 @@ export function Help() {
   );
   const [showNewResponse, setShowNewResponse] = useState(false);
   const generation = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -124,6 +125,9 @@ export function Help() {
     const question = text.trim();
     if (!question || busy) return;
     const gen = ++generation.current;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
     setInput("");
     setShowNewResponse(false);
     const history: AiHelpMessage[] = [...messages, { role: "user" as const, text: question }]
@@ -135,11 +139,13 @@ export function Help() {
       const res = await askAiHelp(question, {
         history,
         context: { route: pathname, appVersion: APP_VERSION, online },
+        signal: controller.signal,
       });
       if (generation.current !== gen) return; // cancelled or superseded
       setMessages((prev) => [...prev, { role: "assistant", text: res.text, source: res.source }]);
     } catch (e) {
       if (generation.current !== gen) return;
+      if (e instanceof Error && e.name === "AbortError") return;
       setMessages((prev) => [
         ...prev,
         {
@@ -155,11 +161,15 @@ export function Help() {
   }
 
   function cancel() {
+    controllerRef.current?.abort();
+    controllerRef.current = null;
     generation.current++;
     setBusy(false);
   }
 
   function clearChat() {
+    controllerRef.current?.abort();
+    controllerRef.current = null;
     generation.current++;
     setBusy(false);
     setInput("");
@@ -198,7 +208,7 @@ export function Help() {
         <div className="flex-1">
           <h1 className="text-base font-semibold leading-tight">Help Assistant</h1>
           <p className="text-xs text-on-surface-variant">
-            App-specific answers · cloud or offline fallback
+            App-specific answers · answered by our server
           </p>
         </div>
         <button
@@ -224,7 +234,7 @@ export function Help() {
               >
                 {m.role === "assistant" && (
                   <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-on-surface-variant">
-                    {m.source === "llm" ? "Cloud AI" : "Offline app help"}
+                    {m.source === "llm" ? "Cloud AI" : "Built-in answer"}
                   </p>
                 )}
                 {m.role === "assistant" ? (
@@ -303,8 +313,9 @@ export function Help() {
       )}
 
       <p className="px-4 pb-1 text-[11px] text-on-surface-variant">
-        Your question may be sent to a cloud provider via FindBack&apos;s server; photos are never
-        attached automatically. A built-in offline fallback works without a provider.
+        Your question is answered by FindBack&apos;s server and needs an internet connection;
+        photos are never attached automatically. Without a configured AI provider you get a
+        built-in answer — still via the server, not offline.
       </p>
 
       <form onSubmit={onSubmit} className="flex items-center gap-2 border-t border-outline-variant p-3">
@@ -313,6 +324,7 @@ export function Help() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about reporting, recovering, searching…"
           aria-label="Ask the Help Assistant"
+          maxLength={500}
           className="w-full rounded-full border border-outline-variant bg-surface px-4 py-2.5 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
         />
         <button
