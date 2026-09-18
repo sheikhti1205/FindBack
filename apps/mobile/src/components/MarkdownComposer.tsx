@@ -81,7 +81,7 @@ export function MarkdownComposer({
               role="tab"
               aria-selected={tab === t}
               onClick={() => setTab(t)}
-              className={`min-h-[40px] rounded-full px-4 text-xs font-medium ${
+              className={`min-h-[48px] rounded-full px-4 text-xs font-medium ${
                 tab === t ? "bg-on-surface text-surface" : "text-on-surface-variant"
               }`}
             >
