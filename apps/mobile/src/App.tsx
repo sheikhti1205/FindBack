@@ -4,6 +4,8 @@ import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
 import { GuestOnly, RequireAuth } from "./components/Guards";
 import { Shell } from "./components/Shell";
+import { BackButtonHandler } from "./components/BackButtonHandler";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Splash } from "./screens/Splash";
 import { SignIn } from "./screens/SignIn";
 import { Register } from "./screens/Register";
@@ -23,6 +25,8 @@ export function App() {
     <ThemeProvider>
       <AuthProvider>
         <HashRouter>
+          <BackButtonHandler />
+          <ErrorBoundary>
           <Routes>
             <Route path="/splash" element={<Splash />} />
             <Route
@@ -60,6 +64,7 @@ export function App() {
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />
           </Routes>
+          </ErrorBoundary>
         </HashRouter>
       </AuthProvider>
     </ThemeProvider>
