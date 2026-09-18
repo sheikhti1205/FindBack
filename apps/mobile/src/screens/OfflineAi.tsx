@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
 import { BackButton } from "../components/BackButton";
 import { getVlmBridge } from "../services/vlmPlugin";
-import { chooseFromGallery, takePhoto, toNativeImageUri } from "../services/photo";
+import { chooseFromGallery, isNativeCameraAvailable, takePhoto, toNativeImageUri } from "../services/photo";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
 import type { VlmModelId, VlmState, VlmCapabilities, VlmModelInfo, DownloadProgressEvent, GpuSelfTestResult } from "../services/vlmPlugin";
@@ -138,6 +138,10 @@ function ModelRow({
   const needsRepair = info.state === "CORRUPT" || info.state === "REPAIR_NEEDED" || info.state === "MANIFEST_MISMATCH";
   const isInstalled = ["READY_GPU", "GPU_UNAVAILABLE", "INSTALLED_UNVERIFIED"].includes(info.state);
   const canRunSelfTest = info.state === "READY_GPU" || info.state === "GPU_UNAVAILABLE" || info.state === "INSTALLED_UNVERIFIED";
+  // A GPU self-test can only succeed when the runtime ships the GPU delegate
+  // and the device can actually capture a photo — never offer a doomed action.
+  const canOfferSelfTest =
+    canRunSelfTest && (capabilities?.gpuDelegateClassPresent ?? false) && isNativeCameraAvailable();
   const showProgress = (info.state === "DOWNLOADING") && downloadProgress?.modelId === modelId;
 
   // The native requiredBytes is authoritative; the fallback mirrors the native
@@ -287,7 +291,7 @@ function ModelRow({
             </button>
           ) : (
             <>
-              {canRunSelfTest && (
+              {canOfferSelfTest && (
                 <div className="flex flex-col gap-2">
                   <button
                     onClick={async () => {
