@@ -43,46 +43,35 @@ object ImagePreparer {
 
     /**
      * Prepares an image from a URI for VLM inference.
-     * Handles `file://` and `content://` URIs.
-     * For `content://` URIs, copies to a temporary file in cache dir and applies EXIF orientation.
-     * For `file://` URIs, applies EXIF orientation in place if needed (returns temporary copy if rotated).
+     * Handles `file://`, `content://`, and bare paths.
+     *
+     * Every input is normalized through the bounds-first decode (longest
+     * side capped at [MAX_PREPARE_DIMENSION]) into a fresh temp file with
+     * EXIF orientation applied — including normal-orientation photos, so a
+     * 50 MP camera image never reaches the model at full size (audit #28).
+     * The result is always temporary: callers must [cleanup] after use.
+     *
+     * @throws IllegalArgumentException when the image cannot be opened or decoded.
      */
     fun prepare(context: Context, uri: String): PreparedImage {
-        return when {
-            uri.startsWith("file://") -> {
-                val path = absolutePathFor(uri)
-                val exifOrientation = readExifOrientation(path)
-                if (exifOrientation == 1 || exifOrientation == 0) {
-                    // No rotation needed
-                    PreparedImage(path, temporary = false)
-                } else {
-                    // Rotate and save to temp file
-                    val rotatedPath = rotateAndSaveToTemp(context, path, exifOrientation)
-                    PreparedImage(rotatedPath, temporary = true)
+        var stagedTemp: File? = null
+        try {
+            val sourcePath = when {
+                uri.startsWith("file://") -> absolutePathFor(uri)
+                uri.startsWith("content://") -> {
+                    copyContentUriToTemp(context, uri).also { stagedTemp = it }.absolutePath
                 }
+                else -> uri
             }
-            uri.startsWith("content://") -> {
-                val tempFile = copyContentUriToTemp(context, uri)
-                val exifOrientation = readExifOrientation(tempFile.absolutePath)
-                if (exifOrientation == 1 || exifOrientation == 0) {
-                    PreparedImage(tempFile.absolutePath, temporary = true)
-                } else {
-                    val rotatedPath = rotateAndSaveToTemp(context, tempFile.absolutePath, exifOrientation)
-                    // Delete the original temp file since we created a rotated one
-                    tempFile.delete()
-                    PreparedImage(rotatedPath, temporary = true)
-                }
-            }
-            else -> {
-                // Bare path - treat as file path
-                val exifOrientation = readExifOrientation(uri)
-                if (exifOrientation == 1 || exifOrientation == 0) {
-                    PreparedImage(uri, temporary = false)
-                } else {
-                    val rotatedPath = rotateAndSaveToTemp(context, uri, exifOrientation)
-                    PreparedImage(rotatedPath, temporary = true)
-                }
-            }
+            val exifOrientation = readExifOrientation(sourcePath)
+            val normalizedPath = normalizeToTemp(context, sourcePath, exifOrientation)
+            return PreparedImage(normalizedPath, temporary = true)
+        } finally {
+            // The staged content:// copy is an intermediate: the normalized
+            // output is a separate temp file, so always drop the intermediate.
+            // normalizeToTemp throws before returning a path on decode
+            // failure, leaving no output to clean — only the staged copy.
+            stagedTemp?.let { cleanupTemporary(it) }
         }
     }
 
@@ -119,7 +108,18 @@ object ImagePreparer {
         val contentResolver: ContentResolver = context.contentResolver
         val uri = Uri.parse(uriString)
         val tempFile = File.createTempFile("vlm-input", ".jpg", context.cacheDir)
-        contentResolver.openInputStream(uri)?.use { input ->
+        val stream: InputStream? = try {
+            contentResolver.openInputStream(uri)
+        } catch (e: Exception) {
+            null
+        }
+        if (stream == null) {
+            // Never leave an empty staged file behind, and never let a null
+            // stream surface later as a misleading decode error.
+            tempFile.delete()
+            throw IllegalArgumentException("Cannot open image URI: $uriString")
+        }
+        stream.use { input ->
             tempFile.outputStream().use { output ->
                 input.copyTo(output)
             }
@@ -127,7 +127,17 @@ object ImagePreparer {
         return tempFile
     }
 
-    private fun rotateAndSaveToTemp(context: Context, sourcePath: String, exifOrientation: Int): String {
+    /**
+     * Minimal power-of-two downsample so the longest side decodes within
+     * [maxDimension]. Pure math, unit-tested.
+     */
+    internal fun sampleSizeFor(maxSide: Int, maxDimension: Int): Int {
+        var sampleSize = 1
+        while (maxSide / sampleSize > maxDimension) sampleSize *= 2
+        return sampleSize
+    }
+
+    private fun normalizeToTemp(context: Context, sourcePath: String, exifOrientation: Int): String {
         // Bounds first so a 50 MP camera photo never inflates to full size.
         // Downsample to cap the longer side before applying EXIF.
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -135,9 +145,7 @@ object ImagePreparer {
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw IllegalArgumentException("Failed to decode image file: $sourcePath")
         }
-        var sampleSize = 1
-        val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
-        while (maxSide / sampleSize > MAX_PREPARE_DIMENSION) sampleSize *= 2
+        val sampleSize = sampleSizeFor(maxOf(bounds.outWidth, bounds.outHeight), MAX_PREPARE_DIMENSION)
         val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
         val bitmap = BitmapFactory.decodeFile(sourcePath, decodeOptions)
             ?: throw IllegalArgumentException("Failed to decode image file: $sourcePath")
