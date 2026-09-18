@@ -60,6 +60,7 @@ class LocalVlmPlugin : Plugin() {
 
     // Engine instances (initialized on demand, re-initialized after model changes)
     private var engine500: VlmEngine500? = null
+    private val engineLock = Any()
 
     private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
     private fun requireDownloader(): ModelDownloader = downloader ?: throw IllegalStateException("Plugin not initialized")
@@ -76,16 +77,39 @@ class LocalVlmPlugin : Plugin() {
         return true
     }
 
+    /**
+     * Returns the resident 500M engine, creating and genuinely initializing
+     * it when absent. Initialization failures close the failed construction
+     * and yield null, so a half-built engine is never stored or handed to
+     * analyze() (audit #1: analyze() threw "Engine not initialized" after
+     * restart / warm-lease expiry). Creation races keep the resident and
+     * close the spare. Heavy GPU init must run off the caller thread: all
+     * call sites invoke this from a background coroutine or collector.
+     */
     private fun initializeEngine500(): VlmEngine500? {
+        engine500?.let { return it }
         val context = getContext()
-        val manifest = MODEL_MANIFESTS.find { it.id == VlmModelId.SMOLVLM2_500M.wire }
-        val modelFile = manifest?.files?.firstOrNull()?.let { spec ->
+        val manifest = MODEL_MANIFESTS.find { it.id == VlmModelId.SMOLVLM2_500M.wire } ?: return null
+        val modelFile = manifest.files.firstOrNull()?.let { spec ->
             requireStore().finalFile(manifest, spec)
-        }
-        return modelFile?.let { file ->
-            if (file.exists()) {
-                VlmEngine500(context, file.absolutePath, context.cacheDir)
-            } else null
+        }?.takeIf { it.exists() } ?: return null
+        val fresh = acquireInitializedEngine(
+            create = { VlmEngine500(context, modelFile.absolutePath, context.cacheDir) },
+            initialize = { it.initialize() },
+            close = { it.release() }
+        ) ?: return null
+        synchronized(engineLock) {
+            val existing = engine500
+            return if (existing != null) {
+                try {
+                    fresh.release()
+                } catch (_: Exception) {
+                }
+                existing
+            } else {
+                engine500 = fresh
+                fresh
+            }
         }
     }
 
@@ -563,21 +587,18 @@ class LocalVlmPlugin : Plugin() {
             when (modelId) {
                 VlmModelId.SMOLVLM2_500M -> {
                     val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
-                    // Ensure engine is initialized (handles case where model was downloaded but engine not yet created)
-                    var engine = engine500
-                    if (engine == null) {
-                        engine = initializeEngine500()
-                        engine500 = engine
-                    }
-                    val engineInstance = engine ?: run {
-                        activeInference.finishNative(testToken)
-                        inferenceMutex.release()
-                        val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model not installed")
-                        call.resolve(result.toJSObject())
-                        return
-                    }
 
                     scope.launch {
+                        // Heavy GPU init runs here on IO, never on the
+                        // plugin-method thread. Null means missing model
+                        // file or failed engine init: settle and bail.
+                        val engineInstance = initializeEngine500() ?: run {
+                            activeInference.finishNative(testToken)
+                            inferenceMutex.release()
+                            val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model not installed")
+                            call.resolve(result.toJSObject())
+                            return@launch
+                        }
                         try {
                             updateModelState(modelId, VlmState.GPU_SELF_TESTING)
                             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.GPU_SELF_TESTING).toJSObject())
@@ -721,17 +742,6 @@ class LocalVlmPlugin : Plugin() {
             }
         }
 
-        // Ensure engine is initialized (handles case where model was downloaded but engine not yet created)
-        var engine = engine500
-        if (engine == null) {
-            engine = initializeEngine500()
-            engine500 = engine
-        }
-        val engineInstance = engine ?: run {
-            call.reject("Model not installed or not ready")
-            return
-        }
-
         // Check if model is ready
         val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
         if (currentState != VlmState.READY_GPU) {
@@ -766,6 +776,14 @@ class LocalVlmPlugin : Plugin() {
         scope.launch {
             var prepared: ImagePreparer.PreparedImage? = null
             try {
+                // Heavy GPU init runs here on IO, after the READY check and
+                // lease reclaim above. Null means the model file vanished or
+                // engine init failed: reject instead of throwing "Engine not
+                // initialized" out of analyze().
+                val engineInstance = initializeEngine500() ?: run {
+                    call.reject("Model not installed or not ready")
+                    return@launch
+                }
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.1f).toJSObject())
 
                 // Prepare image (temp file tracked for guaranteed cleanup).
@@ -858,9 +876,11 @@ class LocalVlmPlugin : Plugin() {
             releaseEngine500()
         }
 
-        // Cancel coroutine scope
+        // Cancel the event collector and downloads, but never cancel the root
+        // scope itself: a cancelled scope silently drops every later launch,
+        // hanging subsequent calls forever. Resource release is below.
         eventCollector?.cancel()
-        scope.cancel()
+        eventCollector = null
 
         call.resolve()
     }
