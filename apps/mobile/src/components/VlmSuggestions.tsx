@@ -83,7 +83,9 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
     getVlmBridge()
       .onInferenceState((event: InferenceStateEvent) => {
         const runningStates: VlmState[] = ["DOWNLOADING", "VERIFYING_HASH", "GPU_SELF_TESTING"];
-        setInferenceRunning(runningStates.includes(event.state));
+        // Phase present means inference is active (native emits real phases,
+        // never fake progress); phase absent on a terminal event means idle.
+        setInferenceRunning(runningStates.includes(event.state) || event.phase !== undefined);
       })
       .then((remove) => {
         removeListener = remove;

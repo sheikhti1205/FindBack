@@ -2,10 +2,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { analyzeMock, discoverMock, suggestMock } = vi.hoisted(() => ({
+const { analyzeMock, discoverMock, suggestMock, inferenceListener } = vi.hoisted(() => ({
   analyzeMock: vi.fn(),
   discoverMock: vi.fn(),
   suggestMock: vi.fn(),
+  inferenceListener: { current: null as null | ((e: { state: string; phase?: string }) => void) },
 }));
 vi.mock("../services/vlm", () => ({
   analyzeImageLocally: analyzeMock,
@@ -16,7 +17,13 @@ vi.mock("../services/vlmDiscovery", () => ({
   suggestForPrimaryLocally: suggestMock,
 }));
 vi.mock("../services/vlmPlugin", () => ({
-  getVlmBridge: () => ({ onInferenceState: vi.fn().mockResolvedValue(() => Promise.resolve()), cancelInference: vi.fn().mockResolvedValue(undefined) }),
+  getVlmBridge: () => ({
+    onInferenceState: vi.fn().mockImplementation((fn: (e: { state: string; phase?: string }) => void) => {
+      inferenceListener.current = fn;
+      return Promise.resolve(() => Promise.resolve());
+    }),
+    cancelInference: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 import { MemoryRouter } from "react-router";
@@ -112,5 +119,20 @@ describe("VlmSuggestions multi-object flow", () => {
     );
     expect(screen.queryByText("keys")).toBeNull();
     expect(screen.getByRole("button", { name: /analyze photo/i })).toBeTruthy();
+  });
+
+  it("treats a phase-bearing inference event as active and the terminal event as idle", async () => {
+    renderSuggestions({ imageUri: "content://photo", onApply: vi.fn() });
+    const analyzeButton = screen.getByRole("button", { name: /analyze photo/i }) as HTMLButtonElement;
+    expect(analyzeButton.disabled).toBe(false);
+    await waitFor(() => expect(inferenceListener.current).not.toBeNull());
+
+    // Normal inference in progress: native emits phases, not fake progress.
+    inferenceListener.current!({ state: "READY_GPU", phase: "RUNNING" });
+    await waitFor(() => expect((screen.getByRole("button", { name: /analyze photo/i }) as HTMLButtonElement).disabled).toBe(true));
+
+    // Terminal event carries no phase: back to idle.
+    inferenceListener.current!({ state: "READY_GPU" });
+    await waitFor(() => expect((screen.getByRole("button", { name: /analyze photo/i }) as HTMLButtonElement).disabled).toBe(false));
   });
 });

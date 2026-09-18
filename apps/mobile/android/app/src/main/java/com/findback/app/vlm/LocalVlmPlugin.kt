@@ -793,19 +793,20 @@ class LocalVlmPlugin : Plugin() {
                 // lease reclaim above. Null means the model file vanished or
                 // engine init failed: reject instead of throwing "Engine not
                 // initialized" out of analyze().
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, phase = InferencePhase.LOADING_MODEL).toJSObject())
                 val engineInstance = initializeEngine500() ?: run {
                     call.reject("Model not installed or not ready")
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                     return@launch
                 }
-                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.1f).toJSObject())
 
                 // Prepare image (temp file tracked for guaranteed cleanup).
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, phase = InferencePhase.PREPARING_IMAGE).toJSObject())
                 prepared = ImagePreparer.prepare(getContext(), imageUri)
-
-                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.3f).toJSObject())
 
                 // Run inference with the native-running flag held so
                 // delete/release paths defer instead of closing underneath.
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, phase = InferencePhase.RUNNING).toJSObject())
                 activeInference.markNativeRunning(token, true)
                 val resultText = try {
                     engineInstance.analyze(prepared, instruction, maxOutputTokens, temperature)
@@ -815,7 +816,9 @@ class LocalVlmPlugin : Plugin() {
 
                 // A cancelled inference must settle the JS Promise: reject it so
                 // the UI never waits forever on a call that will produce nothing.
+                // The terminal phaseless event returns listeners to idle.
                 if (activeInference.isCancelled(token)) {
+                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                     call.reject("Inference cancelled", "CANCELLED")
                     return@launch
                 }
@@ -824,7 +827,7 @@ class LocalVlmPlugin : Plugin() {
                 warmLease.refresh()
                 scheduleLeaseExpiry()
 
-                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 0.9f).toJSObject())
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, phase = InferencePhase.POSTPROCESSING).toJSObject())
 
                 // Return result
                 val result = AnalyzeResult(
@@ -835,7 +838,7 @@ class LocalVlmPlugin : Plugin() {
                     diagnostics = emptyList()
                 )
                 call.resolve(result.toJSObject())
-                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, progress = 1.0f).toJSObject())
+                notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
             } catch (e: CancellationException) {
                 // The job itself was cancelled: settle the call, then propagate.
                 try {
