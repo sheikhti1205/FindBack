@@ -161,4 +161,54 @@ describe("OfflineAi", () => {
     fireEvent.click(await screen.findByRole("button", { name: /pause smolvlm2/i }));
     await waitFor(() => expect(bridge.pauseDownload).toHaveBeenCalledWith("smolvlm2-500m"));
   });
+
+  it("keeps revision hashes out of the visible row so they cannot overflow into the buttons", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const { container } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    await screen.findAllByText(/technical details/i);
+    const hash = "dad030b6e56756201d670cfb4d042736a2ce3a5c";
+    // Still available, but only inside the collapsed disclosure.
+    expect(container.textContent).toContain(hash);
+    const leaked = Array.from(container.querySelectorAll("*")).filter((el) => {
+      if (el.closest("details")) return false;
+      return Array.from(el.childNodes).some(
+        (n) => n.nodeType === Node.TEXT_NODE && n.textContent?.includes(hash),
+      );
+    });
+    expect(leaked).toEqual([]);
+    // And where it does appear it is allowed to break, never forced to one line.
+    const hashNode = Array.from(container.querySelectorAll("*")).find((el) =>
+      el.textContent?.includes(hash) && el.className?.includes("break-all"),
+    );
+    expect(hashNode).toBeTruthy();
+  });
+
+  it("translates native error codes into plain language instead of raw enum strings", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([
+      { id: "smolvlm-256m", state: "GPU_UNAVAILABLE", error: "GPU_UNAVAILABLE_ON_CURRENT_RUNTIME" },
+    ]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    expect(await screen.findByText(/won't fall back to the CPU/i)).toBeTruthy();
+    expect(screen.queryByText("GPU_UNAVAILABLE_ON_CURRENT_RUNTIME")).toBeNull();
+  });
+
+  it("wraps the confirm dialog actions so a long label cannot push the dialog off-screen", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /download smolvlm2 500m/i }));
+    const confirm = screen.getByRole("button", { name: /^confirm download$/i });
+    expect(confirm.parentElement?.className).toContain("flex-wrap");
+  });
 });
