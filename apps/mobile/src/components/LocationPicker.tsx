@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Crosshair, ExternalLink, MapPin } from "lucide-react";
 import { Button } from "./Button";
 import { announce } from "./LiveRegion";
@@ -15,6 +15,8 @@ export interface LocationValue {
   label: string;
   latitude: number | null;
   longitude: number | null;
+  /** Whether the stored coordinates are rounded to ~100 m or exact. */
+  precision?: "APPROXIMATE" | "EXACT";
 }
 
 interface LocationPickerProps {
@@ -32,18 +34,39 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
   const [geoError, setGeoError] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
-  const [approx, setApprox] = useState(true);
+  // Legacy drafts carry no precision; they were always rounded.
+  const [approx, setApprox] = useState(() => value.precision !== "EXACT");
   const [sourceText, setSourceText] = useState(value.label);
+  // Keep the unrounded coordinates so "Use exact pin" can really restore them.
+  const [precise, setPrecise] = useState<{ lat: number; lng: number } | null>(() =>
+    value.latitude != null && value.longitude != null
+      ? { lat: value.latitude, lng: value.longitude }
+      : null,
+  );
+  // Guards a short-link A resolving after the user replaced it with link B.
+  const resolveSeq = useRef(0);
 
-  function applyCoords(label: string, lat: number | null, lng: number | null, exact: boolean) {
-    if (lat != null && lng != null && !exact) {
-      const rounded = roundToApproximate(lat, lng);
-      onChange({ label, latitude: rounded.lat, longitude: rounded.lng });
+  function setCoords(
+    label: string,
+    lat: number | null,
+    lng: number | null,
+    precision: "APPROXIMATE" | "EXACT",
+  ) {
+    if (lat == null || lng == null) {
+      setPrecise(null);
       setApprox(true);
-    } else {
-      onChange({ label, latitude: lat, longitude: lng });
-      setApprox(!exact && lat != null);
+      onChange({ label, latitude: lat, longitude: lng, precision: "APPROXIMATE" });
+      return;
     }
+    setPrecise({ lat, lng });
+    if (precision === "EXACT") {
+      setApprox(false);
+      onChange({ label, latitude: lat, longitude: lng, precision: "EXACT" });
+      return;
+    }
+    const rounded = roundToApproximate(lat, lng);
+    setApprox(true);
+    onChange({ label, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE" });
   }
 
   function useCurrentLocation() {
@@ -57,7 +80,7 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
       (pos) => {
         const lat = Number(pos.coords.latitude.toFixed(6));
         const lng = Number(pos.coords.longitude.toFixed(6));
-        applyCoords(value.label || "Pinned location", lat, lng, false);
+        setCoords(value.label || "Pinned location", lat, lng, "APPROXIMATE");
         announce("Approximate location imported (~100 m).");
         setLocating(false);
       },
@@ -74,40 +97,53 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
     const parsed = parseLocationInput(raw);
     setParseError(parsed.error);
     if (parsed.needsResolve) {
+      const seq = ++resolveSeq.current;
       setResolving(true);
       void resolveShortLink(raw)
         .then((finalUrl) => {
+          if (seq !== resolveSeq.current) return;
           const resolved = parseLocationInput(finalUrl);
-          applyCoords(resolved.label, resolved.latitude, resolved.longitude, false);
+          setCoords(resolved.label, resolved.latitude, resolved.longitude, "APPROXIMATE");
           setParseError(resolved.error);
         })
         .catch((err: unknown) => {
+          if (seq !== resolveSeq.current) return;
           setParseError(err instanceof Error ? err.message : "Could not resolve the map link.");
         })
-        .finally(() => setResolving(false));
+        .finally(() => {
+          if (seq === resolveSeq.current) setResolving(false);
+        });
       return;
     }
     if (parsed.latitude != null && parsed.longitude != null) {
-      applyCoords(parsed.label, parsed.latitude, parsed.longitude, false);
+      setCoords(parsed.label, parsed.latitude, parsed.longitude, "APPROXIMATE");
       return;
     }
+    setPrecise(null);
     setApprox(true);
     onChange({
       label: parsed.label,
       latitude: parsed.latitude,
       longitude: parsed.longitude,
+      precision: "APPROXIMATE",
     });
   }
 
   function handleApproximate() {
-    if (value.latitude == null || value.longitude == null) return;
-    const rounded = roundToApproximate(value.latitude, value.longitude);
-    onChange({ ...value, latitude: rounded.lat, longitude: rounded.lng });
+    const lat = precise?.lat ?? value.latitude;
+    const lng = precise?.lng ?? value.longitude;
+    if (lat == null || lng == null) return;
+    const rounded = roundToApproximate(lat, lng);
+    setPrecise({ lat, lng });
+    onChange({ ...value, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE" });
     setApprox(true);
   }
 
   function handleUseExact() {
+    if (!precise) return;
+    onChange({ ...value, latitude: precise.lat, longitude: precise.lng, precision: "EXACT" });
     setApprox(false);
+    announce("Exact pin enabled. It will be shown publicly.");
   }
 
   const hasCoords = value.latitude != null && value.longitude != null;
@@ -146,7 +182,8 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
           type="button"
           variant="outline"
           size="md"
-          onClick={() => void openInMaps(null, null, sourceText || "FindBack")}
+          disabled={!sourceText.trim() && !hasCoords}
+          onClick={() => void openInMaps(value.latitude, value.longitude, sourceText.trim() || value.label)}
         >
           <ExternalLink size={16} aria-hidden />
           Find location in Maps
@@ -166,8 +203,8 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
       </div>
 
       {hasCoords && !approx && (
-        <div className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-amber-300 bg-amber-50 px-3 py-2">
-          <p className="text-xs text-amber-800">
+        <div className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-error px-3 py-2">
+          <p className="text-xs text-error">
             Warning: this is an exact pin and will be shown publicly. Prefer the approximate area.
           </p>
           <Button type="button" variant="outline" size="md" onClick={handleApproximate}>

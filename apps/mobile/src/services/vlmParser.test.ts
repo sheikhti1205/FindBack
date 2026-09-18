@@ -45,10 +45,37 @@ describe("parseVlmOutput", () => {
     expect(parsed.suggestedDescription).not.toMatch(/\n/);
   });
 
-  it("never invents missing values", () => {
-    const parsed = parseVlmOutput('{"objectName":null}', CATEGORIES)!;
-    expect(parsed.suggestedTitle).toBeNull();
+  it("rejects structurally incomplete JSON (missing canonical keys)", () => {
+    expect(parseVlmOutput('{"objectName":null}', CATEGORIES)).toBeNull();
+    expect(parseVlmOutput("{}", CATEGORIES)).toBeNull();
+    const missingArray = JSON.parse(valid) as Record<string, unknown>;
+    delete missingArray.colors;
+    expect(parseVlmOutput(JSON.stringify(missingArray), CATEGORIES)).toBeNull();
+  });
+
+  it("accepts a complete object whose values are legitimately null/empty", () => {
+    const full = JSON.stringify({
+      objectName: null,
+      suggestedCategory: null,
+      colors: [],
+      visibleBrand: null,
+      visibleText: [],
+      identifyingFeatures: [],
+      suggestedTitle: null,
+      suggestedDescription: null,
+      uncertainFields: [],
+    });
+    const parsed = parseVlmOutput(full, CATEGORIES)!;
+    expect(parsed.objectName).toBeNull();
+    expect(parsed.suggestedCategory).toBeNull();
     expect(parsed.colors).toEqual([]);
+  });
+
+  it("rejects wrong-typed fields instead of silently nulling them", () => {
+    const bad = JSON.stringify({ ...JSON.parse(valid), objectName: 42 });
+    expect(parseVlmOutput(bad, CATEGORIES)).toBeNull();
+    const badArray = JSON.stringify({ ...JSON.parse(valid), colors: "black" });
+    expect(parseVlmOutput(badArray, CATEGORIES)).toBeNull();
   });
 
   it("redacts email/phone/card/IDs/OTP/QR on all Stage-2 text fields", () => {

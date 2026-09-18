@@ -15,7 +15,8 @@ import { announce } from "../components/LiveRegion";
 import { publishReport } from "../services/posts";
 import { clearDraft, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
-import { copyFileToNativeTemp, isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, toNativeImageUri, type PickedPhoto } from "../services/photo";
+import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, toNativeImageUri, type PickedPhoto } from "../services/photo";
+import { dropStashedPhoto, getStashedPhoto, stashPhotoFile } from "../services/photoStore";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
 
@@ -39,7 +40,11 @@ export function CreateReport() {
     },
   );
   const [youtubeUrl, setYoutubeUrl] = useState(initialDraft?.youtubeUrl ?? "");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [photoId, setPhotoId] = useState<string | null>(initialDraft?.photoId ?? null);
+  // A restored File keeps the draft publishable after a trip to another screen.
+  const [selectedFile, setSelectedFile] = useState<File | null>(() =>
+    getStashedPhoto(initialDraft?.photoId),
+  );
   const [pickedPhoto, setPickedPhoto] = useState<PickedPhoto | null>(() => {
     const uri = initialDraft?.photoNativeUri;
     if (!uri || uri.startsWith("blob:")) return null;
@@ -47,12 +52,40 @@ export function CreateReport() {
     return { nativeUri: uri, webPath: web && !web.startsWith("blob:") ? web : uri, format: initialDraft?.photoFormat ?? "jpg" };
   });
   const [previewUrl, setPreviewUrl] = useState<string | null>(() => {
+    // A stashed File only has a blob URL, so rebuild one for the preview.
+    const stashed = getStashedPhoto(initialDraft?.photoId);
+    if (stashed && typeof URL !== "undefined" && URL.createObjectURL) {
+      return URL.createObjectURL(stashed);
+    }
     const web = initialDraft?.photoWebPath;
     return web && !web.startsWith("blob:") ? web : null;
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    title?: string;
+    description?: string;
+    category?: string;
+    eventDate?: string;
+  }>({});
   const submitting = useRef(false);
+
+  // Restore the uploadable File for a draft whose photo came from the native
+  // camera/gallery, where only a native URI survives in the draft.
+  const initialPhotoRef = useRef(pickedPhoto);
+  useEffect(() => {
+    const photo = initialPhotoRef.current;
+    if (!photo || selectedFile) return;
+    let cancelled = false;
+    void photoToFile(photo)
+      .then((file) => {
+        if (!cancelled) setSelectedFile(file);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Preserve the draft across in-app navigation (Help, map helper, model setup).
   useEffect(() => {
@@ -64,16 +97,17 @@ export function CreateReport() {
       eventDate,
       location,
       youtubeUrl,
+      photoId,
       photoNativeUri: pickedPhoto?.nativeUri ?? null,
       photoWebPath: pickedPhoto?.webPath ?? previewUrl,
       photoFormat: pickedPhoto?.format ?? null,
     });
-  }, [type, title, description, category, eventDate, location, youtubeUrl, pickedPhoto, previewUrl]);
+  }, [type, title, description, category, eventDate, location, youtubeUrl, photoId, pickedPhoto, previewUrl]);
 
   function discardDraft() {
     const current = { type, title, description, category, eventDate, location, youtubeUrl };
     if (!draftIsMeaningful(current) && !pickedPhoto && !selectedFile) return;
-    if (!window.confirm("Discard this report draft? Your photo selection stays until you leave.")) return;
+    if (!window.confirm("Discard this report and clear the selected photo?")) return;
     clearDraft();
     setType("LOST");
     setTitle("");
@@ -89,22 +123,24 @@ export function CreateReport() {
   function onPickImage(file: File | undefined, photo?: PickedPhoto) {
     if (!file) return;
     if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+    dropStashedPhoto(photoId);
+    const id = stashPhotoFile(file);
+    setPhotoId(id);
     setSelectedFile(file);
     if (photo?.nativeUri && !photo.nativeUri.startsWith("blob:")) {
       setPickedPhoto(photo);
       setPreviewUrl(photo.webPath);
     } else {
+      setPickedPhoto(null);
       setPreviewUrl(URL.createObjectURL(file));
-      if (photo) setPickedPhoto(photo);
-      void copyFileToNativeTemp(file).then((copied) => {
-        if (copied) setPickedPhoto(copied);
-      });
     }
     setError(null);
   }
 
   function clearPhoto() {
     if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+    dropStashedPhoto(photoId);
+    setPhotoId(null);
     setPreviewUrl(null);
     setSelectedFile(null);
     setPickedPhoto(null);
@@ -120,14 +156,15 @@ export function CreateReport() {
     e.preventDefault();
     if (submitting.current) return;
     setError(null);
-    if (!title.trim() || !description.trim() || !category) {
-      setError("Title, description and category are required.");
-      return;
-    }
-    if (isFutureDate(eventDate)) {
-      setError("The date can't be in the future.");
-      return;
-    }
+    const errs = {
+      title: title.trim() ? undefined : "Enter a short title.",
+      description: description.trim() ? undefined : "Describe the item so it can be recognised.",
+      category: category ? undefined : "Choose a category.",
+      eventDate: isFutureDate(eventDate) ? "The date can't be in the future." : undefined,
+    };
+    setFieldErrors(errs);
+    // `!category` also narrows the type for publishReport below.
+    if (errs.title || errs.description || errs.category || errs.eventDate || !category) return;
     submitting.current = true;
     setBusy(true);
     try {
@@ -147,6 +184,8 @@ export function CreateReport() {
       );
       clearDraft();
       if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+      dropStashedPhoto(photoId);
+      setPhotoId(null);
       setPreviewUrl(null);
       setSelectedFile(null);
       setPickedPhoto(null);
@@ -188,19 +227,35 @@ export function CreateReport() {
       <TextField
         label={type === "LOST" ? "What did you lose?" : "What did you find?"}
         value={title}
-        onChange={(e) => setTitle(e.target.value)}
+        onChange={(e) => {
+          setTitle(e.target.value);
+          if (fieldErrors.title) setFieldErrors((f) => ({ ...f, title: undefined }));
+        }}
         placeholder="e.g. Scientific calculator near the Science Faculty"
+        error={fieldErrors.title}
         required
       />
 
       <MarkdownComposer
         label="Description"
         value={description}
-        onChange={setDescription}
+        onChange={(v) => {
+          setDescription(v);
+          if (fieldErrors.description) setFieldErrors((f) => ({ ...f, description: undefined }));
+        }}
         placeholder="Colour, brand, markings, when and where it happened…"
+        error={fieldErrors.description}
+        required
       />
 
-      <CategoryField value={category} onChange={setCategory} />
+      <CategoryField
+        value={category}
+        onChange={(c) => {
+          setCategory(c);
+          if (fieldErrors.category) setFieldErrors((f) => ({ ...f, category: undefined }));
+        }}
+        error={fieldErrors.category}
+      />
 
       <label className="block">
         <span className="mb-1 block text-sm font-medium">
@@ -306,6 +361,7 @@ export function CreateReport() {
               eventDate,
               location,
               youtubeUrl,
+              photoId,
               photoNativeUri: pickedPhoto?.nativeUri ?? null,
               photoWebPath: pickedPhoto?.webPath ?? previewUrl,
               photoFormat: pickedPhoto?.format ?? null,

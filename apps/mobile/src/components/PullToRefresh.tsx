@@ -51,7 +51,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
     useImperativeHandle(ref, () => ({
-      scrollToTop: (behavior: ScrollBehavior = "smooth") => {
+      scrollToTop: (behavior: ScrollBehavior = reducedMotion ? "auto" : "smooth") => {
         scrollRef.current?.scrollTo({ top: 0, behavior });
       },
       get scrollTop() {
@@ -136,7 +136,9 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
           <div
             className="flex items-center justify-center overflow-hidden transition-[height]"
             style={{
-              height: reducedMotion ? 0 : pullDistance,
+              // Reduced motion removes the animated expansion, not the
+              // indicator itself: the user must still see pull/release/refresh.
+              height: pullDistance,
               transitionDuration: reducedMotion ? "0ms" : "200ms",
             }}
             aria-live="polite"
@@ -153,8 +155,8 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
               }
             >
               <svg
-                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-                style={{ transform: `rotate(${progress * 360}deg)` }}
+                className={`h-4 w-4 ${refreshing && !reducedMotion ? "animate-spin" : ""}`}
+                style={reducedMotion ? undefined : { transform: `rotate(${progress * 360}deg)` }}
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"

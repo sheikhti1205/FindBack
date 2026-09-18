@@ -21,6 +21,33 @@ describe("buildVlmInstruction", () => {
     expect(instruction).toContain("lost keys");
     expect(instruction).toContain("Return only one JSON object");
   });
+
+  it("keeps the sensitive-inference and no-guessing restrictions", () => {
+    expect(VLM_SYSTEM_INSTRUCTION).toContain(
+      "Do not infer ownership, identity, gender, ethnicity, religion, health, or other sensitive attributes.",
+    );
+    expect(VLM_SYSTEM_INSTRUCTION).toContain(
+      "Do not guess brand, text, color, material, or identifying feature if it is not reasonably visible.",
+    );
+    expect(VLM_SYSTEM_INSTRUCTION).toContain("Use null or uncertainFields when unsure.");
+  });
+
+  it("supplies the field schema as part of the instruction", () => {
+    const instruction = buildVlmInstruction(CATEGORIES, { title: "", description: "" });
+    for (const field of [
+      "objectName",
+      "suggestedCategory",
+      "colors",
+      "visibleBrand",
+      "visibleText",
+      "identifyingFeatures",
+      "suggestedTitle",
+      "suggestedDescription",
+      "uncertainFields",
+    ]) {
+      expect(instruction).toContain(field);
+    }
+  });
 });
 
 describe("analyzeImageLocally", () => {

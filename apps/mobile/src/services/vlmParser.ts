@@ -143,6 +143,27 @@ function stripCodeFence(text: string): string {
   return trimmed;
 }
 
+/** Every canonical key must be present; a missing key is invalid output. */
+const REQUIRED_KEYS = [
+  "objectName",
+  "suggestedCategory",
+  "colors",
+  "visibleBrand",
+  "visibleText",
+  "identifyingFeatures",
+  "suggestedTitle",
+  "suggestedDescription",
+  "uncertainFields",
+] as const;
+
+function isStringOrNull(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
 export function parseVlmOutput(raw: string, allowedCategories: readonly Category[]): VlmAnalysis | null {
   const trimmed = String(raw).trim();
   const withoutFence = stripCodeFence(trimmed);
@@ -165,8 +186,23 @@ export function parseVlmOutput(raw: string, allowedCategories: readonly Category
 
   const obj = parsed as Record<string, unknown>;
 
+  // Missing key != key present with a null value. Reject incomplete output so
+  // it goes through the correction retry instead of becoming a "valid" result.
+  for (const key of REQUIRED_KEYS) {
+    if (!(key in obj)) return null;
+  }
+
+  if (!isStringOrNull(obj.objectName)) return null;
+  if (!isStringOrNull(obj.visibleBrand)) return null;
+  if (!isStringOrNull(obj.suggestedTitle)) return null;
+  if (!isStringOrNull(obj.suggestedDescription)) return null;
+  if (!isStringArray(obj.colors)) return null;
+  if (!isStringArray(obj.visibleText)) return null;
+  if (!isStringArray(obj.identifyingFeatures)) return null;
+  if (!isStringArray(obj.uncertainFields)) return null;
+
   const suggestedCategory = obj.suggestedCategory;
-  if (suggestedCategory !== undefined && suggestedCategory !== null) {
+  if (suggestedCategory !== null) {
     if (typeof suggestedCategory !== "string" || !allowedCategories.includes(suggestedCategory as Category)) {
       return null;
     }

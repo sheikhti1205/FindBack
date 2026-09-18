@@ -35,7 +35,9 @@ export function PostList({
     if (!el) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting && hasMore && !loadingMore) {
+        // Do not auto-paginate while an append error is showing: the user must
+        // press Retry, otherwise the visible button races a background retry.
+        if (entries[0]?.isIntersecting && hasMore && !loadingMore && !error) {
           void onLoadMore();
         }
       },
@@ -43,7 +45,7 @@ export function PostList({
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasMore, loadingMore, onLoadMore]);
+  }, [hasMore, loadingMore, onLoadMore, error]);
 
   if (loading && items.length === 0) return <Spinner label="Loading posts…" />;
 

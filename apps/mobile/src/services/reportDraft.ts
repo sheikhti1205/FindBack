@@ -10,6 +10,8 @@ export interface ReportDraft {
   eventDate: string;
   location: LocationValue;
   youtubeUrl: string;
+  /** In-session key for the picked File (see services/photoStore). */
+  photoId?: string | null;
   photoNativeUri?: string | null;
   photoWebPath?: string | null;
   photoFormat?: string | null;

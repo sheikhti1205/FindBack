@@ -38,7 +38,7 @@ export function Home() {
 
   const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
     feedFilters,
-    { cacheKey: scopedCacheKey, scrollRef },
+    { cacheKey: HOME_CACHE_KEY, scrollRef },
   );
 
   // Active Home tab tap: refresh + scroll top.
@@ -55,8 +55,17 @@ export function Home() {
   useEffect(() => {
     const off = onRealtime("feed:changed", (payload) => {
       const p = (payload ?? {}) as Record<string, unknown>;
-      const op = typeof p.op === "string" ? p.op.toUpperCase() : typeof p.type === "string" ? p.type.toUpperCase() : null;
-      const isInsert = op == null || op === "INSERT" || p.isNew === true;
+      const change =
+        typeof p.change === "string"
+          ? p.change.toUpperCase()
+          : typeof p.op === "string"
+            ? p.op.toUpperCase()
+            : typeof p.type === "string"
+              ? p.type.toUpperCase()
+              : null;
+      // Only a genuine INSERT is a new post. Comment/reaction/rating triggers
+      // broadcast feed:changed with no op and must show "updates", not posts.
+      const isInsert = change === "INSERT" || p.isNew === true;
       const scrolled = (scrollRef.current?.scrollTop ?? 0) > 40;
       if (scrolled) {
         if (isInsert) {

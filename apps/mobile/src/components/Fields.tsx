@@ -4,20 +4,24 @@ interface FieldShellProps {
   label: string;
   hint?: string;
   error?: string;
+  errorId?: string;
+  hintId?: string;
   children: ReactNode;
 }
 
-function FieldShell({ label, hint, error, children }: FieldShellProps) {
+function FieldShell({ label, hint, error, errorId, hintId, children }: FieldShellProps) {
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-on-surface">{label}</span>
       {children}
       {error ? (
-        <span className="mt-1 block text-xs text-error" role="alert">
+        <span id={errorId} className="mt-1 block text-xs text-error" role="alert">
           {error}
         </span>
       ) : hint ? (
-        <span className="mt-1 block text-xs text-on-surface-variant">{hint}</span>
+        <span id={hintId} className="mt-1 block text-xs text-on-surface-variant">
+          {hint}
+        </span>
       ) : null}
     </label>
   );
@@ -34,10 +38,14 @@ interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
 
 export function TextField({ label, error, hint, className = "", ...rest }: TextFieldProps) {
   const id = useId();
+  const errorId = `${id}-error`;
+  const hintId = `${id}-hint`;
   return (
-    <FieldShell label={label} error={error} hint={hint}>
+    <FieldShell label={label} error={error} hint={hint} errorId={errorId} hintId={hintId}>
       <input
         id={id}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : hint ? hintId : undefined}
         className={`${baseField} ${error ? "border-error" : ""} ${className}`}
         {...rest}
       />
@@ -61,10 +69,13 @@ export function SelectField({
   ...rest
 }: SelectFieldProps) {
   const id = useId();
+  const errorId = `${id}-error`;
   return (
-    <FieldShell label={label} error={error}>
+    <FieldShell label={label} error={error} errorId={errorId}>
       <select
         id={id}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         className={`${baseField} appearance-none ${error ? "border-error" : ""} ${className}`}
         {...rest}
       >
