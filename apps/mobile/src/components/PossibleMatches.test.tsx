@@ -56,7 +56,22 @@ describe("PossibleMatches", () => {
     await waitFor(() => expect(screen.getByText(/check your connection/i)).toBeTruthy());
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
-    await waitFor(() => expect(screen.getByText(/no possible matches/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/no reports to compare/i)).toBeTruthy());
     expect(findMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows EMPTY, not _ERROR copy, when zero candidates were compared (WP8 #5)", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText(/no reports to compare/i)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
+  });
+
+  it("shows how many recent reports were compared (WP8 #5)", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 4, matches: [
+      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    expect(await screen.findByText(/compared 4 recent reports/i)).toBeTruthy();
   });
 });

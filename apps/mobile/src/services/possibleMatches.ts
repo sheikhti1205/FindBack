@@ -1,11 +1,11 @@
-import { fetchFeed } from "./posts";
+import { MATCH_CANDIDATE_LIMIT, fetchMatchCandidates } from "./posts";
 import { embeddingInput, embedTexts } from "./embeddings";
 import { stripMarkdown } from "../utils/stripMarkdown";
 import type { PostItem, PostType } from "@findback/shared";
 import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
 
-/** Maximum number of candidate posts to consider (the SQL layer caps at 20). */
-const PAGE_LIMIT = 20;
+/** Maximum number of candidate posts to consider: min(OPEN opposite-type, 20). */
+const PAGE_LIMIT = MATCH_CANDIDATE_LIMIT;
 
 /** Result of a possible matches query. */
 export interface PossibleMatchesResult {
@@ -30,11 +30,10 @@ function toMatchCandidate(post: PostItem): MatchCandidate {
   };
 }
 
-/** Default candidate fetcher: compares against the most recent relevant open reports of the opposite type. */
+/** Default candidate fetcher: the most recent relevant open reports of the opposite type. */
 async function defaultFetchCandidates(oppositeType: PostType): Promise<MatchCandidate[]> {
-  const page = await fetchFeed({ type: oppositeType, status: "OPEN" });
-  // The SQL layer caps the result set at 20; we take up to PAGE_LIMIT (10) client-side.
-  return page.items.slice(0, PAGE_LIMIT).map(toMatchCandidate);
+  const items = await fetchMatchCandidates(oppositeType);
+  return items.slice(0, PAGE_LIMIT).map(toMatchCandidate);
 }
 
 /** Finds possible matches for a target post by comparing against the most recent relevant open reports.
@@ -58,6 +57,8 @@ export async function findPossibleMatches(
   } catch {
     return { matches: [], candidatesConsidered: 0, available: false, unavailableReason: "candidates" };
   }
+  // Enforce the spec pool cap even for injected fetchers.
+  candidates = candidates.slice(0, PAGE_LIMIT);
 
   // Build embedding inputs: target first, then candidates (even if empty, to detect embed failure)
   // Plain-text embedding inputs: never embed Markdown syntax clutter.
