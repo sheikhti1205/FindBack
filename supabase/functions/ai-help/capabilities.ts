@@ -4,7 +4,7 @@
  * Must stay in sync with `apps/mobile/src/services/appCapabilities.ts`.
  * Bump VERSION in both files when shipped UI behavior changes.
  */
-export const CAPABILITIES_VERSION = "1.1.0";
+export const CAPABILITIES_VERSION = "1.2.0";
 
 export const CAPABILITY_SUMMARY = [
   "Tabs: Home, Search, Report, Profile. Offline AI lives under Profile.",
@@ -15,7 +15,7 @@ export const CAPABILITY_SUMMARY = [
   "Location input accepts place text, decimal lat,lng, Google Maps link, or geo: URI. One-time device location only, never background tracking. Open in Maps supported.",
   "Possible Matches: up to 3 open opposite-type reports ranked by text similarity + category/date/location; similarity is not probability; empty when nothing qualifies.",
   "Offline AI: one downloadable on-device model, SmolVLM2 500M. Photo AI suggests title/category/description fully on-device; photo never leaves the phone for analysis. FAST and the 256M model are not offered.",
-  "Model modes: AUTO and QUALITY both use the 500M model. Downloads show true bytes, support Pause/Resume, repair damaged chunks only. Wi-Fi only by default.",
+  "Model inference: no mode selector exists (no AUTO/QUALITY/FAST). The installed 500M model always runs on the GPU with no CPU fallback. Downloads show true bytes, support Pause/Resume, repair damaged chunks only. Wi-Fi only by default.",
   "Markdown supported in descriptions and Help answers; raw HTML/scripts/remote images stripped.",
   "Email verification uses a real one-time code. Phone verification is NOT enabled (no SMS provider).",
   "Help answers come from this server and need an internet connection; there is no offline fallback.",
