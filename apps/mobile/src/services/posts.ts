@@ -37,6 +37,9 @@ export interface FeedFilters {
 const PAGE_LIMIT = 10;
 const CLIENT_FEED_RPC = "findback_query_posts_client";
 
+/** On-device matching pool: min(OPEN opposite-type, 20) per spec (WP8 #5). */
+export const MATCH_CANDIDATE_LIMIT = 20;
+
 interface PostCursor {
   createdAt: string;
   id: string;
@@ -366,6 +369,19 @@ export async function fetchMyPosts(): Promise<FeedPage> {
   });
   if (res.error) throw new ApiError(res.error.message, 400);
   return toFeedPage((res.data ?? []) as ClientPostRow[], true);
+}
+
+/**
+ * Candidate pool for on-device possible-matches: the most recent OPEN
+ * opposite-type reports, capped at MATCH_CANDIDATE_LIMIT (WP8 #5).
+ */
+export async function fetchMatchCandidates(oppositeType: PostType): Promise<PostItem[]> {
+  const { data, error } = await getSupabase().rpc(
+    CLIENT_FEED_RPC,
+    feedArgs({ type: oppositeType, status: "OPEN" }, MATCH_CANDIDATE_LIMIT, null),
+  );
+  if (error) throw new ApiError(error.message, 400);
+  return ((data ?? []) as ClientPostRow[]).slice(0, MATCH_CANDIDATE_LIMIT).map(mapClientPost);
 }
 
 export async function publishReport(input: CreatePostInput, photo: File | null): Promise<string> {

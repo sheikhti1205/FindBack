@@ -79,6 +79,16 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
   }
 
   if (result.matches.length === 0) {
+    // EMPTY (nothing to compare) vs no-matches-after-compare need different
+    // copy: the first is about coverage, the second about similarity.
+    if (result.candidatesConsidered === 0) {
+      return (
+        <EmptyState
+          title="No reports to compare"
+          subtitle="There are no open reports of the opposite type yet. Check back later as new reports are added."
+        />
+      );
+    }
     return (
       <EmptyState
         title="No possible matches"
@@ -92,6 +102,9 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
       <h2 id="possible-matches-heading" className="mb-3 text-base font-semibold">
         Possible matches
       </h2>
+      <p className="mb-3 text-xs text-on-surface-variant">
+        Compared {result.candidatesConsidered} recent report{result.candidatesConsidered === 1 ? "" : "s"}.
+      </p>
       <ul className="flex flex-col gap-2" role="list">
         {result.matches.slice(0, 3).map((match) => (
           <li key={match.post.id} className="flex flex-col gap-1">

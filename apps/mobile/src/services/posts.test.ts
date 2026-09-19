@@ -5,6 +5,7 @@ import {
   deleteComment,
   fetchComments,
   fetchFeed,
+  fetchMatchCandidates,
   fetchMyPosts,
   fetchPost,
   fetchSocialState,
@@ -172,6 +173,28 @@ describe("fetchFeed", () => {
   it("reports an empty feed without a cursor", async () => {
     clientMock.rpc.mockResolvedValue({ data: [], error: null });
     expect(await fetchFeed({})).toEqual({ items: [], nextCursor: null, total: 0 });
+  });
+});
+
+describe("fetchMatchCandidates (WP8 #5)", () => {
+  it("requests the spec pool min(OPEN opposite-type, 20)", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({ id: "c1", type: "FOUND" })], error: null });
+
+    const items = await fetchMatchCandidates("FOUND");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith(
+      "findback_query_posts_client",
+      expect.objectContaining({ p_type: "FOUND", p_status: "OPEN", p_limit: 20 }),
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toBe("c1");
+  });
+
+  it("caps an over-long server response at 20", async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => row({ id: `c${i}` }));
+    clientMock.rpc.mockResolvedValue({ data: rows, error: null });
+
+    expect(await fetchMatchCandidates("FOUND")).toHaveLength(20);
   });
 });
 
