@@ -15,6 +15,16 @@ def gitVersionCode() {
     if (override != null && override.trim().isInteger()) {
         return override.trim().toInteger()
     }
+    // A shallow checkout (e.g. Actions depth=1) does NOT fail rev-list — it
+    // silently returns ~1. Refuse to mint a wrong versionCode from it.
+    def repoGitDir = new File(rootProject.projectDir, "../../.git").getCanonicalFile()
+    if (new File(repoGitDir, "shallow").exists()) {
+        throw new GradleException(
+            "Shallow git checkout detected (.git/shallow exists): " +
+            "rev-list --count would be wrong. Fetch full history " +
+            "(fetch-depth: 0) or set VERSION_CODE_OVERRIDE."
+        )
+    }
     try {
         def out = new ByteArrayOutputStream()
         exec {
@@ -72,6 +82,14 @@ tasks.register("fetchUseModel", Exec) {
     onlyIf { !outputs.files.singleFile.exists() }
 }
 tasks.named("preBuild").configure { dependsOn("fetchUseModel") }
+
+// CI assertion aid: logs the versionName/versionCode the APK will carry.
+tasks.register("printVersionInfo") {
+    doLast {
+        println("versionName=${appVersionName()}")
+        println("versionCode=${gitVersionCode()}")
+    }
+}
 
 repositories {
     mavenCentral()

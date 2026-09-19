@@ -4,8 +4,17 @@ import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { bridge, photo } = vi.hoisted(() => ({
-  bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() },
-  photo: { isNativeCameraAvailable: vi.fn(() => true), takePhoto: vi.fn(), chooseFromGallery: vi.fn(), toNativeImageUri: vi.fn() },
+  bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), cancelInference: vi.fn().mockResolvedValue(undefined), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() },
+  photo: {
+    isNativeCameraAvailable: vi.fn(() => true),
+    takePhoto: vi.fn(),
+    chooseFromGallery: vi.fn(),
+    toNativeImageUri: vi.fn(),
+    isCancellation: (err: unknown) => {
+      const code = (err as { code?: string } | null)?.code;
+      return code === "TakePhotoCancelled" || code === "ChooseMediaCancelled";
+    },
+  },
 }));
 vi.mock("../services/vlmPlugin", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/vlmPlugin")>();
@@ -221,19 +230,14 @@ describe("OfflineAi", () => {
     expect(confirm.parentElement?.className).toContain("flex-wrap");
   });
 
-  it("offers GPU self-test only when the GPU delegate class is present (WP10)", async () => {
+  it("offers the 500M self-test without gating on the delegate class (W5 #26)", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.toNativeImageUri.mockReturnValue("content://self-test");
     bridge.getCapabilities.mockResolvedValue({ ...capabilities, gpuDelegateClassPresent: false });
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
-    const { unmount } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    await screen.findByText(/installed — gpu test required/i);
-    expect(screen.queryByRole("button", { name: /run gpu self-test \(camera\)/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /run gpu self-test \(gallery\)/i })).toBeNull();
-    unmount();
-
-    bridge.getCapabilities.mockResolvedValue({ ...capabilities, gpuDelegateClassPresent: true });
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     await screen.findByText(/installed — gpu test required/i);
     expect(screen.getByRole("button", { name: /run gpu self-test \(camera\)/i })).toBeTruthy();
@@ -270,16 +274,16 @@ describe("OfflineAi", () => {
     }
   });
 
-  it("still renders the row with unknown storage when capabilities fail (WP10 #20)", async () => {
+  it("disables Download with unknown storage when capabilities fail (W5 #21)", async () => {
     bridge.getCapabilities.mockRejectedValue(new Error("process dead"));
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: /SmolVLM2 500M/ })).toBeTruthy();
-    expect(await screen.findByText(/storage unknown/i)).toBeTruthy();
-    // Download stays offered; the confirm dialog + native enforcement guard it.
-    expect(screen.getByRole("button", { name: /download smolvlm2 500m/i })).toBeTruthy();
+    expect(await screen.findByText(/checking storage/i)).toBeTruthy();
+    const download = screen.getByRole("button", { name: /download smolvlm2 500m/i });
+    expect((download as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("still renders NOT_INSTALLED rows when model states fail (WP10 #20)", async () => {
@@ -290,5 +294,132 @@ describe("OfflineAi", () => {
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: /SmolVLM2 500M/ })).toBeTruthy();
     expect(await screen.findByText(/not installed/i)).toBeTruthy();
+  });
+
+  it("cancels inference before closing a running self-test (W5 #2)", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockResolvedValue({ nativeUri: "content://photo", webPath: "content://photo", format: "jpg" });
+    photo.toNativeImageUri.mockReturnValue("content://photo");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.cancelInference.mockClear();
+    bridge.cancelInference.mockResolvedValue(undefined);
+    bridge.runGpuSelfTest.mockReturnValue(new Promise(() => {}));
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    expect(await screen.findByText(/running gpu self-test/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    await waitFor(() => expect(bridge.cancelInference).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/running gpu self-test/i)).toBeNull();
+  });
+
+  it("titles a bad photo without claiming GPU unavailable (W5 #25)", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockResolvedValue({ nativeUri: "content://photo", webPath: "content://photo", format: "jpg" });
+    photo.toNativeImageUri.mockReturnValue("content://photo");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.runGpuSelfTest.mockResolvedValue({ state: "GPU_UNAVAILABLE", error: "decode failed", failure: "INPUT_ERROR" });
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    expect(await screen.findByText(/photo couldn't be read/i)).toBeTruthy();
+    expect(screen.queryByText(/^gpu unavailable$/i)).toBeNull();
+  });
+
+  it("titles runtime failures and missing models distinctly (W5 #25)", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockResolvedValue({ nativeUri: "content://photo", webPath: "content://photo", format: "jpg" });
+    photo.toNativeImageUri.mockReturnValue("content://photo");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.runGpuSelfTest.mockResolvedValue({ state: "ERROR", error: "boom", failure: "MODEL_RUNTIME_ERROR" });
+    const { unmount } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    expect(await screen.findByText(/model runtime failed/i)).toBeTruthy();
+    unmount();
+
+    bridge.runGpuSelfTest.mockResolvedValue({ state: "MODEL_MISSING", error: "Model not installed" });
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    expect(await screen.findByText(/gpu test unavailable/i)).toBeTruthy();
+    expect(screen.queryByText(/model runtime failed/i)).toBeNull();
+  });
+
+  it("keeps every active transfer off the Download button (W5 #20)", async () => {
+    const active = ["QUEUED", "WAITING_FOR_NETWORK", "WAITING_FOR_WIFI", "DOWNLOADING", "PAUSING", "VERIFYING_CHUNK", "VERIFYING_HASH", "VERIFYING_FILE", "REPAIRING"];
+    for (const state of active) {
+      bridge.getCapabilities.mockResolvedValue(capabilities);
+      bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state }]);
+      bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+      bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+      const { unmount } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+      await screen.findByRole("heading", { name: /SmolVLM2 500M/ });
+      expect(screen.queryByRole("button", { name: /download smolvlm2 500m/i })).toBeNull();
+      expect(screen.getByRole("button", { name: /cancel smolvlm2/i })).toBeTruthy();
+      unmount();
+    }
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "GPU_SELF_TESTING" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    await screen.findByRole("heading", { name: /SmolVLM2 500M/ });
+    expect(screen.queryByRole("button", { name: /download smolvlm2 500m/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /pause smolvlm2/i })).toBeNull();
+  });
+
+  it("confirms with both download size and required free storage (W5 #22)", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED", sizeBytes: 360822960, requiredBytes: 700 * 1024 * 1024 }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.downloadModel.mockResolvedValue(undefined);
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /download smolvlm2 500m/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toMatch(/download size/i);
+    expect(dialog.textContent).toMatch(/required free space/i);
+    expect(dialog.textContent).toMatch(/700 mb/i);
+    expect(dialog.textContent).not.toMatch(/this will download 700/i);
+  });
+
+  it("surfaces scheduling rejection on confirm via the alert (W5 #23)", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.downloadModel.mockRejectedValue(new Error("Scheduling failed: busy"));
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /download smolvlm2 500m/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^confirm download$/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Scheduling failed: busy");
+  });
+
+  it("keeps photo cancellation quiet but shows real capture failures (W5 #23)", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.toNativeImageUri.mockReturnValue("content://photo");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    photo.takePhoto.mockRejectedValueOnce(new Error("User cancelled"));
+    const { unmount } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    await waitFor(() => expect(photo.takePhoto).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).toBeNull();
+    unmount();
+
+    photo.takePhoto.mockRejectedValueOnce(new Error("Camera failed: disk busy"));
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Camera failed: disk busy");
   });
 });

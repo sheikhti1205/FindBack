@@ -35,6 +35,7 @@ const { clientMock, channels } = vi.hoisted(() => {
 });
 
 vi.mock("./supabaseClient", () => ({ getSupabase: () => clientMock }));
+vi.mock("../hooks/feedCache", () => ({ invalidateFeedCaches: vi.fn() }));
 
 async function load() {
   vi.resetModules();
@@ -59,6 +60,7 @@ beforeEach(() => {
   clientMock.realtime.setAuth.mockClear();
   clientMock.auth.getSession.mockReset();
   clientMock.auth.getSession.mockResolvedValue({ data: { session: { access_token: "tok-123" } } });
+  vi.clearAllMocks();
 });
 
 describe("connectRealtime", () => {
@@ -82,6 +84,57 @@ describe("connectRealtime", () => {
     emit(find("feed"), "post:changed", { postId: "p1" });
 
     expect(seen).toEqual([{ postId: "p1" }]);
+  });
+
+  it("invalidates feed caches on INSERT, UPDATE, and DELETE (WP7 #8)", async () => {
+    const { invalidateFeedCaches } = await import("../hooks/feedCache");
+    const mod = await load();
+    mod.connectRealtime();
+    await flush();
+
+    const feed = find("feed");
+
+    // INSERT
+    emit(feed, "post:changed", { change: "INSERT", postId: "p1" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(1);
+
+    // UPDATE
+    emit(feed, "post:changed", { change: "UPDATE", postId: "p2" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(2);
+
+    // DELETE
+    emit(feed, "post:changed", { change: "DELETE", postId: "p3" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(3);
+
+    // COMMENT_CHANGE should NOT invalidate
+    emit(feed, "post:changed", { change: "COMMENT_CHANGE", postId: "p4" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(3);
+
+    // REACTION_CHANGE should NOT invalidate
+    emit(feed, "post:changed", { change: "REACTION_CHANGE", postId: "p5" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(3);
+
+    // RATING_CHANGE should NOT invalidate
+    emit(feed, "post:changed", { change: "RATING_CHANGE", postId: "p6" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(3);
+  });
+
+  it("falls back to op field when change is absent (backward compat)", async () => {
+    const { invalidateFeedCaches } = await import("../hooks/feedCache");
+    const mod = await load();
+    mod.connectRealtime();
+    await flush();
+
+    const feed = find("feed");
+
+    emit(feed, "post:changed", { op: "INSERT", postId: "p1" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(1);
+
+    emit(feed, "post:changed", { op: "UPDATE", postId: "p2" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(2);
+
+    emit(feed, "post:changed", { op: "DELETE", postId: "p3" });
+    expect(invalidateFeedCaches).toHaveBeenCalledTimes(3);
   });
 
   it("does not create a second feed channel when called again", async () => {

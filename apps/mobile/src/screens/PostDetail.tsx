@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { ExternalLink, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus } from "@findback/shared";
@@ -44,6 +44,13 @@ export function PostDetail() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Sequence tokens for latest-request-wins mutation sequencing
+  const reactionSeq = useRef(0);
+  const ratingSeq = useRef(0);
+  const statusSeq = useRef(0);
+  // Track in-flight mutations to disable owner controls
+  const [mutationActive, setMutationActive] = useState<"reaction" | "rating" | "status" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -112,28 +119,52 @@ export function PostDetail() {
 
   async function toggleReaction(type: "LIKE" | "DISLIKE") {
     const next = myReaction === type ? null : type;
+    // Optimistic update
     setMyReaction(next);
+    // Increment sequence token - only the latest request's response will be applied
+    const seq = ++reactionSeq.current;
+    setMutationActive("reaction");
     try {
       const res = await reactToPost(current.id, next);
-      setPost((prev) =>
-        prev ? { ...prev, likeCount: res.likeCount, dislikeCount: res.dislikeCount } : prev,
-      );
+      // Only apply if this is still the latest request
+      if (reactionSeq.current === seq) {
+        setPost((prev) =>
+          prev ? { ...prev, likeCount: res.likeCount, dislikeCount: res.dislikeCount } : prev,
+        );
+      }
     } catch (e) {
-      setMyReaction(myReaction);
-      setError(friendlyError(e).message);
+      // Only rollback if this is still the latest request
+      if (reactionSeq.current === seq) {
+        setMyReaction(myReaction);
+        setError(friendlyError(e).message);
+      }
+    } finally {
+      if (mutationActive === "reaction") setMutationActive(null);
     }
   }
 
   async function onRate(score: number) {
+    // Optimistic update
     setMyRating(score);
+    // Increment sequence token - only the latest request's response will be applied
+    const seq = ++ratingSeq.current;
+    setMutationActive("rating");
     try {
       const res = await ratePost(current.id, score);
-      setPost((prev) =>
-        prev ? { ...prev, ratingAvg: res.ratingAvg, ratingCount: res.ratingCount } : prev,
-      );
+      // Only apply if this is still the latest request
+      if (ratingSeq.current === seq) {
+        setPost((prev) =>
+          prev ? { ...prev, ratingAvg: res.ratingAvg, ratingCount: res.ratingCount } : prev,
+        );
+      }
     } catch (e) {
-      setMyRating(myRating);
-      setError(friendlyError(e).message);
+      // Only rollback if this is still the latest request
+      if (ratingSeq.current === seq) {
+        setMyRating(myRating);
+        setError(friendlyError(e).message);
+      }
+    } finally {
+      if (mutationActive === "rating") setMutationActive(null);
     }
   }
 
@@ -141,6 +172,8 @@ export function PostDetail() {
     e.preventDefault();
     const body = commentText.trim();
     if (!body) return;
+    // Defensive client-side limit (backend is authoritative).
+    if (body.length > 1000) return;
     setBusy(true);
     try {
       const comment = await addComment(current.id, body);
@@ -163,16 +196,30 @@ export function PostDetail() {
   }
 
   async function onChangeStatus(status: PostStatus) {
+    // Increment sequence token - only the latest request's response will be applied
+    const seq = ++statusSeq.current;
+    setMutationActive("status");
     try {
       const updated = await updatePostStatus(current.id, status);
-      setPost(updated);
-      announce(`Status updated to ${statusLabel(updated.status)}.`);
+      // Only apply if this is still the latest request
+      if (statusSeq.current === seq) {
+        setPost(updated);
+        announce(`Status updated to ${statusLabel(updated.status)}.`);
+      }
     } catch (err) {
-      setError(friendlyError(err).message);
+      // Only show error if this is still the latest request
+      if (statusSeq.current === seq) {
+        setError(friendlyError(err).message);
+      }
+    } finally {
+      if (mutationActive === "status") setMutationActive(null);
     }
   }
 
   const image = post.attachments.find((a) => a.mimeType.startsWith("image/"));
+
+  // Owner status control is disabled while any mutation is active
+  const ownerControlsDisabled = mutationActive !== null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -281,6 +328,7 @@ export function PostDetail() {
               value={post.status}
               onChange={onChangeStatus}
               options={POST_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))}
+              disabled={ownerControlsDisabled}
             />
           </section>
         )}
@@ -298,6 +346,7 @@ export function PostDetail() {
             onChange={(e) => setCommentText(e.target.value)}
             placeholder="Write a helpful comment…"
             aria-label="Comment"
+            maxLength={1000}
             className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
           />
           <Button type="submit" loading={busy} disabled={!commentText.trim()}>

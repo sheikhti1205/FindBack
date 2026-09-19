@@ -10,6 +10,7 @@ interface MarkdownComposerProps {
   required?: boolean;
   inputId?: string;
   error?: string;
+  maxLength?: number;
 }
 
 interface EditResult {
@@ -59,6 +60,7 @@ export function MarkdownComposer({
   required,
   inputId,
   error,
+  maxLength,
 }: MarkdownComposerProps) {
   const [tab, setTab] = useState<"write" | "preview">("write");
   const [area, setArea] = useState<HTMLTextAreaElement | null>(null);
@@ -172,6 +174,7 @@ export function MarkdownComposer({
             aria-label={label}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
+            maxLength={maxLength}
             className={`w-full rounded-m3-sm border bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:outline-none ${
               error ? "border-error" : "border-outline-variant focus:border-on-surface"
             }`}

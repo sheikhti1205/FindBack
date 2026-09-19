@@ -27,6 +27,28 @@ const inputCls =
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+/** Client-side validation mirrors server (W6 #17). */
+const TITLE_MIN = 3;
+const TITLE_MAX = 120;
+const DESCRIPTION_MIN = 10;
+const DESCRIPTION_MAX = 3000;
+const LOCATION_LABEL_MAX = 200;
+
+/** Check if a date string is a valid calendar date in YYYY-MM-DD format. */
+function isValidCalendarDate(isoDate: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return false;
+  const parts = isoDate.split("-");
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
 export function CreateReport() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -71,6 +93,7 @@ export function CreateReport() {
     description?: string;
     category?: string;
     eventDate?: string;
+    locationLabel?: string;
     youtubeUrl?: string;
   }>({});
   const submitting = useRef(false);
@@ -108,6 +131,18 @@ export function CreateReport() {
       photoFormat: pickedPhoto?.format ?? null,
     });
   }, [type, title, description, category, eventDate, location, youtubeUrl, photoId, pickedPhoto, previewUrl]);
+
+  // Blob lifecycle (W6 #16): revoke preview URL on unmount but KEEP stashed File.
+  // Remount will recreate the object URL from the stashed File.
+  const previewUrlRef = useRef(previewUrl);
+  previewUrlRef.current = previewUrl;
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current && previewUrlRef.current.startsWith("blob:")) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
 
   function discardDraft() {
     const current = { type, title, description, category, eventDate, location, youtubeUrl };
@@ -184,16 +219,36 @@ export function CreateReport() {
     e.preventDefault();
     if (submitting.current) return;
     setError(null);
+    const trimmedTitle = title.trim();
+    const trimmedDescription = description.trim();
     const trimmedYoutube = youtubeUrl.trim();
+    const trimmedLocationLabel = location.label.trim();
     const errs = {
-      title: title.trim() ? undefined : "Enter a short title.",
-      description: description.trim() ? undefined : "Describe the item so it can be recognised.",
+      title: !trimmedTitle
+        ? "Enter a short title."
+        : trimmedTitle.length < TITLE_MIN
+          ? `Title must be at least ${TITLE_MIN} characters.`
+          : trimmedTitle.length > TITLE_MAX
+            ? `Title must be at most ${TITLE_MAX} characters.`
+            : undefined,
+      description: !trimmedDescription
+        ? "Describe the item so it can be recognised."
+        : trimmedDescription.length < DESCRIPTION_MIN
+          ? `Description must be at least ${DESCRIPTION_MIN} characters.`
+          : trimmedDescription.length > DESCRIPTION_MAX
+            ? `Description must be at most ${DESCRIPTION_MAX} characters.`
+            : undefined,
       category: category ? undefined : "Choose a category.",
       eventDate: !eventDate
         ? "Choose a date."
-        : isFutureDate(eventDate)
-          ? "The date can't be in the future."
-          : undefined,
+        : !isValidCalendarDate(eventDate)
+          ? "Choose a valid date."
+          : isFutureDate(eventDate)
+            ? "The date can't be in the future."
+            : undefined,
+      locationLabel: trimmedLocationLabel.length > LOCATION_LABEL_MAX
+        ? "Location label is too long."
+        : undefined,
       youtubeUrl:
         trimmedYoutube && !extractYouTubeId(trimmedYoutube)
           ? "That doesn't look like a YouTube link."
@@ -201,21 +256,21 @@ export function CreateReport() {
     };
     setFieldErrors(errs);
     // `!category` also narrows the type for publishReport below.
-    if (errs.title || errs.description || errs.category || errs.eventDate || errs.youtubeUrl || !category) return;
+    if (errs.title || errs.description || errs.category || errs.eventDate || errs.locationLabel || errs.youtubeUrl || !category) return;
     submitting.current = true;
     setBusy(true);
     try {
       const postId = await publishReport(
         {
           type,
-          title: title.trim(),
-          description: description.trim(),
+          title: trimmedTitle,
+          description: trimmedDescription,
           category,
           eventDate,
-          locationLabel: location.label.trim() || undefined,
+          locationLabel: trimmedLocationLabel || undefined,
           latitude: location.latitude,
           longitude: location.longitude,
-          youtubeUrl: youtubeUrl.trim() || undefined,
+          youtubeUrl: trimmedYoutube || undefined,
         },
         selectedFile,
       );
@@ -271,6 +326,7 @@ export function CreateReport() {
         placeholder="e.g. Scientific calculator near the Science Faculty"
         error={fieldErrors.title}
         required
+        maxLength={TITLE_MAX}
       />
 
       <MarkdownComposer
@@ -283,6 +339,7 @@ export function CreateReport() {
         placeholder="Colour, brand, markings, when and where it happened…"
         error={fieldErrors.description}
         required
+        maxLength={DESCRIPTION_MAX}
       />
 
       <CategoryField
@@ -320,7 +377,10 @@ export function CreateReport() {
         )}
       </label>
 
-      <LocationPicker value={location} onChange={setLocation} />
+      <LocationPicker value={location} onChange={setLocation} maxLength={LOCATION_LABEL_MAX} />
+      {fieldErrors.locationLabel && (
+        <span className="mt-1 block text-xs text-error">{fieldErrors.locationLabel}</span>
+      )}
 
       {/* Photo (optional) */}
       <section className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-3">

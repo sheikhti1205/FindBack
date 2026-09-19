@@ -5,7 +5,7 @@ import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import { checkUsername } from "../services/auth";
-import { USERNAME_CHECK_DEBOUNCE_MS } from "@findback/shared";
+import { USERNAME_CHECK_DEBOUNCE_MS, normalizePhone } from "@findback/shared";
 
 type UsernameState = "idle" | "loading" | "available" | "taken" | "invalid";
 
@@ -27,16 +27,16 @@ export function Register() {
   // Live, debounced username availability against the FindBack database.
   useEffect(() => {
     const raw = username.trim();
+    const seq = ++checkSeq.current;
     if (raw.length === 0) {
-      setUsernameState("idle");
+      if (checkSeq.current === seq) setUsernameState("idle");
       return;
     }
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(raw)) {
-      setUsernameState("invalid");
+      if (checkSeq.current === seq) setUsernameState("invalid");
       return;
     }
-    setUsernameState("loading");
-    const seq = ++checkSeq.current;
+    if (checkSeq.current === seq) setUsernameState("loading");
     const timer = setTimeout(() => {
       checkUsername(raw)
         .then((res) => {
@@ -65,6 +65,11 @@ export function Register() {
       setError("Enter a username.");
       return;
     }
+    // Submit-time syntax validation (independent of live check)
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(name)) {
+      setError("Username must be 3–20 letters, numbers or underscores.");
+      return;
+    }
     // The live check must have actually answered before we let the account
     // through; "loading" and a network-errored "idle" both mean unknown.
     if (usernameState === "loading" || usernameState === "idle") {
@@ -79,8 +84,9 @@ export function Register() {
       setError("Enter a valid email address.");
       return;
     }
-    if (!phone.trim()) {
-      setError("Enter a mobile number.");
+    const phoneNorm = normalizePhone(phone);
+    if (!phoneNorm) {
+      setError("Enter a valid Bangladesh mobile number (e.g., 01812345678).");
       return;
     }
     if (password.length < 8) {
@@ -93,7 +99,7 @@ export function Register() {
     }
     setBusy(true);
     try {
-      await register({ username: username.trim(), email: email.trim(), phone: phone.trim(), password });
+      await register({ username: name, email: email.trim(), phone: phoneNorm, password });
       navigate("/verify", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
@@ -107,7 +113,7 @@ export function Register() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="mx-auto flex min-h-full max-w-md flex-col justify-center gap-5 bg-surface px-5 py-10 text-on-surface"
+      className="mx-auto flex min-h-full max-w-md flex-col justify-center gap-5 bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Create your account</h1>
@@ -184,6 +190,7 @@ export function Register() {
           hint="At least 8 characters"
           autoComplete="new-password"
           required
+          data-testid="password-field"
         />
         <TextField
           label="Confirm password"
