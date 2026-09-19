@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fetchFeedMock, handlers, onRealtimeMock } = vi.hoisted(() => {
@@ -32,6 +33,20 @@ function emit(event: string, payload: unknown) {
   for (const handler of handlers.get(event) ?? []) handler(payload);
 }
 
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="location">{`${loc.pathname}${loc.search}`}</div>;
+}
+
+function renderHome(entry = "/") {
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Home />
+      <LocationProbe />
+    </MemoryRouter>,
+  );
+}
+
 describe("Home realtime (WP9)", () => {
   beforeEach(() => {
     fetchFeedMock.mockReset();
@@ -51,7 +66,7 @@ describe("Home realtime (WP9)", () => {
   });
 
   it("reconciles a deleted post in place without refetching", async () => {
-    render(<Home />);
+    renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
     fetchFeedMock.mockClear();
 
@@ -64,7 +79,7 @@ describe("Home realtime (WP9)", () => {
   });
 
   it("ignores a provable non-member insert under a type filter (WP7 #10)", async () => {
-    render(<Home />);
+    renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("radio", { name: "Lost" }));
@@ -89,7 +104,7 @@ describe("Home realtime (WP9)", () => {
   });
 
   it("refreshes for a matching insert under a type filter (WP7 #10)", async () => {
-    render(<Home />);
+    renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("radio", { name: "Lost" }));
@@ -112,7 +127,7 @@ describe("Home realtime (WP9)", () => {
   });
 
   it("shows Updates, not a count, when a search query makes membership unprovable (WP7 #10)", async () => {
-    const { container } = render(<Home />);
+    const { container } = renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
     fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
@@ -138,5 +153,35 @@ describe("Home realtime (WP9)", () => {
 
     expect(await screen.findByText(/^updates$/i)).toBeTruthy();
     expect(screen.queryByText(/new post/i)).toBeNull();
+  });
+
+  it("restores the type filter from the URL on mount (WP7 #7)", async () => {
+    renderHome("/?type=LOST");
+    await waitFor(() =>
+      expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ type: "LOST" }), undefined),
+    );
+    expect(screen.getByRole("radio", { name: "Lost" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("restores the search query from the URL on mount (WP7 #7)", async () => {
+    renderHome("/?q=wallet");
+    expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("wallet");
+    await waitFor(() =>
+      expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ q: "wallet" }), undefined),
+    );
+  });
+
+  it("writes filter edits back to the URL (WP7 #7)", async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("radio", { name: "Lost" }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/?type=LOST"));
+
+    fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
+    await waitFor(
+      () => expect(screen.getByTestId("location").textContent).toBe("/?type=LOST&q=wallet"),
+      { timeout: 3000 },
+    );
   });
 });
