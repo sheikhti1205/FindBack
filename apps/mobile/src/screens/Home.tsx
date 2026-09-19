@@ -6,6 +6,7 @@ import { PostList } from "../components/PostList";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { NewPostsPill } from "../components/NewPostsPill";
 import { useFeed } from "../hooks/useFeed";
+import { useUrlParam } from "../hooks/useUrlParam";
 import { onRealtime } from "../services/realtime";
 import { useAuth } from "../auth";
 import { useTabTap } from "../components/TabTap";
@@ -18,9 +19,14 @@ const HOME_CACHE_KEY = "home:feed";
 export function Home() {
   const { user } = useAuth();
   const { tapCount } = useTabTap();
-  const [type, setType] = useState<TypeFilter>("ALL");
-  const [query, setQuery] = useState("");
-  const [appliedQuery, setAppliedQuery] = useState("");
+  // Type + search survive in the URL so back-nav, deep-links, and copied
+  // links restore the feed the reader was looking at (WP7 #7).
+  const [typeParam, setTypeParam] = useUrlParam("type");
+  const type: TypeFilter = typeParam === "LOST" || typeParam === "FOUND" ? typeParam : "ALL";
+  const setType = (next: TypeFilter) => setTypeParam(next === "ALL" ? "" : next);
+  const [qParam, setQParam] = useUrlParam("q");
+  const [query, setQuery] = useState(qParam);
+  const [appliedQuery, setAppliedQuery] = useState(qParam.trim());
   const feedFilters: { type: "" | PostType; q: string | undefined } = {
     type: type === "ALL" ? "" : type,
     q: appliedQuery || undefined,
@@ -35,6 +41,11 @@ export function Home() {
     const t = setTimeout(() => setAppliedQuery(query.trim()), 400);
     return () => clearTimeout(t);
   }, [query]);
+
+  // Publish the applied query to the URL once it settles.
+  useEffect(() => {
+    setQParam(appliedQuery);
+  }, [appliedQuery, setQParam]);
 
   const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore, removeItem } = useFeed(
     feedFilters,

@@ -1,23 +1,38 @@
 import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
-import type { Category, PostStatus, PostType } from "@findback/shared";
+import { CATEGORIES, POST_STATUSES, type Category, type PostStatus, type PostType } from "@findback/shared";
 import { Segmented, STATUS_OPTIONS } from "../components/Segmented";
 import { SelectField } from "../components/Fields";
 import { PostList } from "../components/PostList";
 import { CategoryField } from "../components/CategoryField";
 import { useFeed } from "../hooks/useFeed";
+import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 
 type TypeFilter = PostType | "ALL";
 
 export function SearchScreen() {
   const { tapCount } = useTabTap();
-  const [type, setType] = useState<TypeFilter>("ALL");
-  const [category, setCategory] = useState<Category | "">("");
-  const [status, setStatus] = useState<PostStatus | "">("");
-  const [sort, setSort] = useState<"newest" | "oldest">("newest");
-  const [query, setQuery] = useState("");
-  const [appliedQuery, setAppliedQuery] = useState("");
+  // Every filter survives in the URL so back-nav, deep-links, and copied
+  // links restore the exact search the reader was looking at (WP7 #7).
+  const [typeParam, setTypeParam] = useUrlParam("type");
+  const type: TypeFilter = typeParam === "LOST" || typeParam === "FOUND" ? typeParam : "ALL";
+  const setType = (next: TypeFilter) => setTypeParam(next === "ALL" ? "" : next);
+  const [categoryParam, setCategory] = useUrlParam("category");
+  // Unknown deep-linked values degrade to empty rather than hitting the API.
+  const category = (CATEGORIES as readonly string[]).includes(categoryParam)
+    ? (categoryParam as Category)
+    : "";
+  const [statusParam, setStatus] = useUrlParam("status");
+  const status = (POST_STATUSES as readonly string[]).includes(statusParam)
+    ? (statusParam as PostStatus)
+    : "";
+  const [sortParam, setSortParam] = useUrlParam("sort");
+  const sort: "newest" | "oldest" = sortParam === "oldest" ? "oldest" : "newest";
+  const setSort = (next: "newest" | "oldest") => setSortParam(next === "newest" ? "" : next);
+  const [qParam, setQParam] = useUrlParam("q");
+  const [query, setQuery] = useState(qParam);
+  const [appliedQuery, setAppliedQuery] = useState(qParam.trim());
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Debounce search input ~400ms — do not network-fetch every keystroke.
@@ -25,6 +40,11 @@ export function SearchScreen() {
     const t = setTimeout(() => setAppliedQuery(query.trim()), 400);
     return () => clearTimeout(t);
   }, [query]);
+
+  // Publish the applied query to the URL once it settles.
+  useEffect(() => {
+    setQParam(appliedQuery);
+  }, [appliedQuery, setQParam]);
 
   const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
     {
