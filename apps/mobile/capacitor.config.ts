@@ -8,6 +8,9 @@ const config: CapacitorConfig = {
     // Web assets live inside the APK; the app talks only to hosted Supabase (HTTPS).
     androidScheme: "https",
   },
+  plugins: {
+    ShortLinkResolver: {},
+  },
 };
 
 export default config;

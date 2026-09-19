@@ -6,6 +6,7 @@ interface SegmentedProps<T extends string> {
   onChange: (value: T) => void;
   options: { value: T; label: string }[];
   ariaLabel?: string;
+  disabled?: boolean;
 }
 
 export function Segmented<T extends string>({
@@ -13,6 +14,7 @@ export function Segmented<T extends string>({
   onChange,
   options,
   ariaLabel,
+  disabled = false,
 }: SegmentedProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -26,8 +28,10 @@ export function Segmented<T extends string>({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
+      aria-disabled={disabled}
       className="grid auto-cols-fr grid-flow-col rounded-m3-sm bg-surface-container p-1"
       onKeyDown={(e) => {
+        if (disabled) return;
         const active = document.activeElement;
         const index = refs.current.findIndex((el) => el === active);
         if (index < 0) return;
@@ -51,11 +55,14 @@ export function Segmented<T extends string>({
             type="button"
             role="radio"
             aria-checked={selected}
+            aria-disabled={disabled}
             // Roving focus: one tab stop for the group; arrows move within it.
-            tabIndex={selected ? 0 : -1}
-            onClick={() => onChange(o.value)}
+            tabIndex={disabled ? -1 : selected ? 0 : -1}
+            onClick={() => !disabled && onChange(o.value)}
             className={`min-h-[48px] rounded-m3-xs px-3 text-sm font-medium transition-colors ${
-              selected
+              disabled
+                ? "opacity-50 cursor-not-allowed"
+                : selected
                 ? "bg-surface text-on-surface shadow-sm"
                 : "text-on-surface-variant hover:bg-surface-container-high"
             }`}

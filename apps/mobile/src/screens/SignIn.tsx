@@ -41,7 +41,7 @@ export function SignIn() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="mx-auto flex min-h-full max-w-md flex-col justify-center gap-6 bg-surface px-5 py-10 text-on-surface"
+      className="mx-auto flex min-h-full max-w-md flex-col justify-center gap-6 bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">FindBack</h1>

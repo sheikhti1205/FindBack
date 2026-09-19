@@ -40,7 +40,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
+      # Full history: versionCode derives from `git rev-list --count HEAD`;
+      # a depth-1 checkout would silently yield count=1 (see build.gradle guard).
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -58,6 +62,8 @@ jobs:
         run: npm run cap:sync -w @findback/mobile
       - name: Android JVM tests + debug APK
         run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
+      - name: Log versionName/versionCode
+        run: cd apps/mobile/android && ./gradlew :app:printVersionInfo
       - name: Strict APK scan (DEX/assets secrets, forbidden weights, JNI, 16 KiB)
         run: npm run scan:apk -- --strict
 

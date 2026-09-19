@@ -44,12 +44,19 @@ export type VlmErrorCode =
   | "INSUFFICIENT_STORAGE"
   | "RUNTIME_ERROR";
 
-/** GPU self-test state. */
+/** GPU self-test state. Legacy states plus the canonical self-test bridge
+ * taxonomy (MODEL_MISSING | RUNTIME_ERROR | INPUT_ERROR | GENERATION_ERROR |
+ * CANCELLED | GPU_AVAILABLE). Unknown strings fall back to the legacy display. */
 export type GpuSelfTestState =
   | "GPU_AVAILABLE"
   | "GPU_UNAVAILABLE"
   | "GPU_UNSUPPORTED"
-  | "ERROR";
+  | "ERROR"
+  | "MODEL_MISSING"
+  | "RUNTIME_ERROR"
+  | "INPUT_ERROR"
+  | "GENERATION_ERROR"
+  | "CANCELLED";
 
 /** Device category. */
 export type DeviceCategory = "physical" | "emulator" | "web";
@@ -148,6 +155,78 @@ export function isInstalledState(state: VlmState): boolean {
   return INSTALLED_STATES.includes(state);
 }
 
+/**
+ * Canonical transfer states: every active download/verify/repair step that is
+ * non-downloadable. GPU_SELF_TESTING is inference, never a download state, so
+ * it is deliberately excluded here (it stays in IN_PROGRESS_STATES only for
+ * transfer sequencing).
+ */
+export const TRANSFER_ACTIVE_STATES: VlmState[] = [
+  "QUEUED",
+  "WAITING_FOR_NETWORK",
+  "WAITING_FOR_WIFI",
+  "DOWNLOADING",
+  "PAUSING",
+  "VERIFYING_CHUNK",
+  "VERIFYING_HASH",
+  "VERIFYING_FILE",
+  "REPAIRING",
+];
+
+export function isTransferActive(state: VlmState): boolean {
+  return TRANSFER_ACTIVE_STATES.includes(state);
+}
+
+/** Explicit per-state action availability; every VlmState is covered. */
+export interface ModelActionAvailability {
+  canPause: boolean;
+  canResume: boolean;
+  canCancel: boolean;
+  canRepair: boolean;
+  canDownload: boolean;
+  canDelete: boolean;
+  canSelfTest: boolean;
+  isTransferActive: boolean;
+}
+
+/**
+ * One canonical helper shared by UI. Active transfer states never fall
+ * through to Download; GPU_SELF_TESTING exposes no download actions.
+ */
+export function getModelAction(state: VlmState): ModelActionAvailability {
+  switch (state) {
+    case "QUEUED":
+    case "DOWNLOADING":
+      return { canPause: true, canResume: false, canCancel: true, canRepair: false, canDownload: false, canDelete: false, canSelfTest: false, isTransferActive: true };
+    case "WAITING_FOR_NETWORK":
+    case "WAITING_FOR_WIFI":
+    case "PAUSING":
+    case "VERIFYING_CHUNK":
+    case "VERIFYING_HASH":
+    case "VERIFYING_FILE":
+    case "REPAIRING":
+      return { canPause: false, canResume: false, canCancel: true, canRepair: false, canDownload: false, canDelete: false, canSelfTest: false, isTransferActive: true };
+    case "PAUSED":
+    case "PAUSED_ERROR":
+    case "INSUFFICIENT_STORAGE":
+    case "DOWNLOAD_FAILED":
+      return { canPause: false, canResume: true, canCancel: true, canRepair: false, canDownload: false, canDelete: false, canSelfTest: false, isTransferActive: false };
+    case "CORRUPT":
+    case "REPAIR_NEEDED":
+    case "MANIFEST_MISMATCH":
+      return { canPause: false, canResume: false, canCancel: false, canRepair: true, canDownload: false, canDelete: false, canSelfTest: false, isTransferActive: false };
+    case "NOT_INSTALLED":
+      return { canPause: false, canResume: false, canCancel: false, canRepair: false, canDownload: true, canDelete: false, canSelfTest: false, isTransferActive: false };
+    case "INSTALLED_UNVERIFIED":
+    case "READY_GPU":
+    case "GPU_UNAVAILABLE":
+    case "RUNTIME_ERROR":
+      return { canPause: false, canResume: false, canCancel: false, canRepair: false, canDownload: false, canDelete: true, canSelfTest: true, isTransferActive: false };
+    case "GPU_SELF_TESTING":
+      return { canPause: false, canResume: false, canCancel: false, canRepair: false, canDownload: false, canDelete: false, canSelfTest: false, isTransferActive: false };
+  }
+}
+
 /** Options for awaiting a model's settled state. */
 export interface WaitForSettledOptions {
   timeoutMs?: number;
@@ -177,11 +256,16 @@ export interface EmbedTextsResult {
   vectors: number[][];
 }
 
-/** GPU self-test failure classification (mirrors native SelfTestFailure). */
+/** GPU self-test failure classification (mirrors native SelfTestFailure).
+ * RUNTIME_ERROR and MODEL_MISSING/CANCELLED are accepted for the canonical
+ * bridge taxonomy; legacy MODEL_RUNTIME_ERROR keeps working. */
 export type GpuSelfTestFailure =
   | "INPUT_ERROR"
   | "MODEL_RUNTIME_ERROR"
-  | "GENERATION_ERROR";
+  | "RUNTIME_ERROR"
+  | "GENERATION_ERROR"
+  | "MODEL_MISSING"
+  | "CANCELLED";
 
 /** GPU self-test result. */
 export interface GpuSelfTestResult {

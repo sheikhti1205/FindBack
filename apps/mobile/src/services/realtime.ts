@@ -63,20 +63,24 @@ function ensureClient(): SupabaseClient | null {
 export function connectRealtime(): void {
   const c = ensureClient();
   if (!c || feedChannel) return;
-  void ready.then(() => {
-    if (client !== c || feedChannel) return;
-    // The feed channel carries every post/comment/reaction change. Only a real
-    // INSERT is a new post, so only that invalidates cached feeds (even while
-    // Home is unmounted) before the app-level event is dispatched.
-    const channel = c.channel("feed", { config: { private: true } });
-    channel.on("broadcast", { event: "post:changed" }, (message) => {
-      const payload = (message?.payload ?? {}) as Record<string, unknown>;
-      if (String(payload.op ?? "").toUpperCase() === "INSERT") invalidateFeedCaches();
-      dispatch("feed:changed", payload);
+void ready.then(() => {
+      if (client !== c || feedChannel) return;
+      // The feed channel carries every post/comment/reaction change. A real
+      // INSERT is a new post (increments the pill). UPDATE/DELETE mark feeds
+      // dirty so back-nav from Detail never restores stale/deleted cards.
+      // COMMENT_CHANGE/REACTION_CHANGE/RATING_CHANGE are generic updates only.
+      const channel = c.channel("feed", { config: { private: true } });
+      channel.on("broadcast", { event: "post:changed" }, (message) => {
+        const payload = (message?.payload ?? {}) as Record<string, unknown>;
+        const change = String(payload.change ?? payload.op ?? "").toUpperCase();
+        if (change === "INSERT" || change === "UPDATE" || change === "DELETE") {
+          invalidateFeedCaches();
+        }
+        dispatch("feed:changed", payload);
+      });
+      channel.subscribe();
+      feedChannel = channel;
     });
-    channel.subscribe();
-    feedChannel = channel;
-  });
 }
 
 /** Tear down every channel (logout/unmount). The listener registry is kept. */

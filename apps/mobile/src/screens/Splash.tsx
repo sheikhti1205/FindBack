@@ -7,7 +7,7 @@ export function Splash() {
   const { user, booting } = useAuth();
   if (booting) {
     return (
-      <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-surface text-on-surface">
+      <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-surface text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
         <motion.div
           initial={{ opacity: 0, scale: 0.96 }}
           animate={{ opacity: 1, scale: 1 }}

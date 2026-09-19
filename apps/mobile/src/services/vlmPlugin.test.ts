@@ -13,7 +13,7 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: () => native,
 }));
 
-import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState } from "./vlmPlugin";
+import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState, isTransferActive, getModelAction } from "./vlmPlugin";
 
 beforeEach(() => {
   state.native = true;
@@ -126,5 +126,17 @@ describe("vlmPlugin native payload unwrapping", () => {
     await expect(
       getVlmBridge().waitForSettled("smolvlm2-500m", { intervalMs: 1, timeoutMs: 5 }),
     ).rejects.toThrow(/Timed out/i);
+  });
+
+  it("marks every transfer step active and GPU_SELF_TESTING as non-download (W5 #20)", () => {
+    for (const s of ["QUEUED", "WAITING_FOR_NETWORK", "WAITING_FOR_WIFI", "DOWNLOADING", "PAUSING", "VERIFYING_CHUNK", "VERIFYING_HASH", "VERIFYING_FILE", "REPAIRING"] as const) {
+      expect(isTransferActive(s)).toBe(true);
+      expect(getModelAction(s).canDownload).toBe(false);
+      expect(getModelAction(s).isTransferActive).toBe(true);
+    }
+    expect(isTransferActive("GPU_SELF_TESTING")).toBe(false);
+    expect(getModelAction("GPU_SELF_TESTING").canDownload).toBe(false);
+    expect(getModelAction("NOT_INSTALLED").canDownload).toBe(true);
+    expect(getModelAction("READY_GPU").canSelfTest).toBe(true);
   });
 });

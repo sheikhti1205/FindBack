@@ -11,7 +11,13 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
-      // Console noise is banned in app code (WP10 #22); report via utils/log.
+    },
+  },
+  {
+    // Console noise is banned in mobile app source (WP10 #22); report via utils/log.
+    // CLI/build/scan/reporting scripts intentionally write to stdout — leave them alone.
+    files: ["apps/mobile/src/**/*.{ts,tsx}"],
+    rules: {
       "no-console": "error",
     },
   },

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
 import { BackButton } from "../components/BackButton";
-import { getVlmBridge } from "../services/vlmPlugin";
-import { chooseFromGallery, isNativeCameraAvailable, takePhoto, toNativeImageUri } from "../services/photo";
+import { getModelAction, getVlmBridge } from "../services/vlmPlugin";
+import { chooseFromGallery, isCancellation, isNativeCameraAvailable, takePhoto, toNativeImageUri } from "../services/photo";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
 import type { VlmModelId, VlmState, VlmCapabilities, VlmModelInfo, DownloadProgressEvent, GpuSelfTestResult } from "../services/vlmPlugin";
@@ -65,8 +65,9 @@ const ERROR_LABELS: Record<string, string> = {
   HASH_MISMATCH: "The downloaded data didn't match the expected file.",
   INSUFFICIENT_STORAGE: "Not enough free storage.",
   RUNTIME_ERROR: "The model stopped with a runtime error.",
-  INPUT_ERROR: "The test image couldn't be read. Try a different photo.",
   MODEL_RUNTIME_ERROR: "The model stopped with a runtime error.",
+  MODEL_MISSING: "Model files are missing. Download the model again.",
+  INPUT_ERROR: "The test image couldn't be read. Try a different photo.",
   GENERATION_ERROR: "The model ran but produced no usable output.",
 };
 
@@ -79,7 +80,51 @@ function friendlyError(code: string | undefined | null): string | null {
 function actionErrorMessage(err: unknown): string {
   if (err instanceof Error && err.message) return ERROR_LABELS[err.message] ?? err.message;
   if (typeof err === "string" && err) return ERROR_LABELS[err] ?? err;
+  const code = (err as { code?: string } | null)?.code;
+  if (typeof code === "string" && code) return ERROR_LABELS[code] ?? code;
   return "Something went wrong. Please try again.";
+}
+
+/** True when a bridge rejection is just a cancellation (quiet, never an error). */
+function isSelfTestCancellation(err: unknown): boolean {
+  if (isCancellation(err)) return true;
+  const code = (err as { code?: string } | null)?.code;
+  if (typeof code === "string" && code === "CANCELLED") return true;
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return message === "CANCELLED" || /cancelled/i.test(message);
+}
+
+/** Honest self-test taxonomy: bad photos, missing models and runtime
+ * failures each get their own title; legacy strings fall back gracefully. */
+function getSelfTestPresentation(result: GpuSelfTestResult | null): { title: string; message: string | null } {
+  if (!result) return { title: "GPU test unavailable", message: null };
+  if (result.state === "GPU_AVAILABLE") {
+    return { title: "GPU Available", message: "GPU-backed inference completed successfully." };
+  }
+  const failure = result.failure ?? null;
+  const state = result.state;
+  const error = result.error ?? "";
+  const mentionsMissing = /not installed|files not found/i.test(error);
+  if (failure === "INPUT_ERROR" || state === "INPUT_ERROR") {
+    return { title: "Photo couldn't be read", message: friendlyError("INPUT_ERROR") };
+  }
+  if (failure === "MODEL_MISSING" || state === "MODEL_MISSING" || mentionsMissing) {
+    return { title: "GPU test unavailable", message: friendlyError("MODEL_MISSING") };
+  }
+  if (
+    failure === "MODEL_RUNTIME_ERROR" ||
+    failure === "RUNTIME_ERROR" ||
+    failure === "GENERATION_ERROR" ||
+    state === "RUNTIME_ERROR" ||
+    state === "GENERATION_ERROR" ||
+    state === "ERROR"
+  ) {
+    return { title: "Model runtime failed", message: friendlyError(error) ?? friendlyError(failure) ?? friendlyError("RUNTIME_ERROR") };
+  }
+  return {
+    title: "GPU test unavailable",
+    message: friendlyError(error) ?? friendlyError(failure) ?? friendlyError(state),
+  };
 }
 
 const INSTALL_HEADROOM_BYTES = 256 * 1024 * 1024;
@@ -119,7 +164,7 @@ function ModelRow({
   capabilities,
   onDownload,
   onDelete,
-  onRunGpuSelfTest,
+  onPickSelfTest,
   onCancelDownload,
   onPauseDownload,
   onResumeDownload,
@@ -131,7 +176,7 @@ function ModelRow({
   capabilities: VlmCapabilities | null;
   onDownload: (modelId: VlmModelId) => void;
   onDelete: (modelId: VlmModelId) => void;
-  onRunGpuSelfTest: (modelId: VlmModelId, imageUri: string) => void;
+  onPickSelfTest: (modelId: VlmModelId, source: "camera" | "gallery") => void;
   onCancelDownload: (modelId: VlmModelId) => void;
   onPauseDownload: (modelId: VlmModelId) => void;
   onResumeDownload: (modelId: VlmModelId) => void;
@@ -140,25 +185,23 @@ function ModelRow({
 }) {
   const spec = MODEL_SPECS[modelId];
   const stateLabel = STATE_LABELS[info.state] ?? info.state;
-  const isDownloading = info.state === "DOWNLOADING" || info.state === "QUEUED" || info.state === "VERIFYING_CHUNK";
-  const isPaused = info.state === "PAUSED" || info.state === "PAUSED_ERROR" || info.state === "INSUFFICIENT_STORAGE" || info.state === "DOWNLOAD_FAILED";
-  const needsRepair = info.state === "CORRUPT" || info.state === "REPAIR_NEEDED" || info.state === "MANIFEST_MISMATCH";
-  const isInstalled = ["READY_GPU", "GPU_UNAVAILABLE", "INSTALLED_UNVERIFIED"].includes(info.state);
-  const canRunSelfTest = info.state === "READY_GPU" || info.state === "GPU_UNAVAILABLE" || info.state === "INSTALLED_UNVERIFIED";
-  // A GPU self-test can only succeed when the runtime ships the GPU delegate
-  // and the device can actually capture a photo — never offer a doomed action.
-  const canOfferSelfTest =
-    canRunSelfTest && (capabilities?.gpuDelegateClassPresent ?? false) && isNativeCameraAvailable();
+  const action = getModelAction(info.state);
+  // gpuDelegateClassPresent is diagnostic only: readiness comes only from the
+  // real image-bearing GPU self-test, never from class presence.
+  const canOfferSelfTest = action.canSelfTest && isNativeCameraAvailable();
   const showProgress = (info.state === "DOWNLOADING") && downloadProgress?.modelId === modelId;
 
   // The native requiredBytes is authoritative; the fallback mirrors the native
   // policy (model + max(256 MiB, 25%)) so the button never lies.
   const requiredBytes = info.requiredBytes ?? fallbackRequiredBytes(spec.sizeMb);
-  // Capabilities can fail independently (process death). Unknown storage must
-  // not blank the row or fake a huge "available" number; Download stays
-  // offered and the confirm dialog + native enforcement remain the guard.
-  const freeBytes = capabilities ? capabilities.freeAppStorageMb * 1024 * 1024 : null;
-  const hasSpace = freeBytes === null || freeBytes >= requiredBytes;
+  // Unknown storage is never treated as sufficient: Download stays disabled
+  // until native reports free space.
+  const freeBytes =
+    capabilities != null && Number.isFinite(capabilities.freeAppStorageMb)
+      ? capabilities.freeAppStorageMb * 1024 * 1024
+      : null;
+  const isStorageUnknown = freeBytes === null;
+  const hasSpace = !isStorageUnknown && (freeBytes as number) >= requiredBytes;
 
   return (
     <div className="border border-outline-variant rounded-xl p-4 bg-surface">
@@ -175,17 +218,17 @@ function ModelRow({
               Needs {formatBytes(requiredBytes)} free
             </span>
             <span className="flex items-center gap-1 whitespace-nowrap">
-              {freeBytes === null ? (
-                <>Storage unknown</>
+              {isStorageUnknown ? (
+                <>Checking storage…</>
               ) : hasSpace ? (
                 <>
                   <CheckCircle size={12} className="text-on-surface" aria-hidden />
-                  {formatBytes(freeBytes)} available
+                  {formatBytes(freeBytes as number)} available
                 </>
               ) : (
                 <>
                   <AlertTriangle size={12} className="text-error" aria-hidden />
-                  Only {formatBytes(freeBytes)} available
+                  Only {formatBytes(freeBytes as number)} available
                 </>
               )}
             </span>
@@ -197,6 +240,7 @@ function ModelRow({
               <div><dt className="inline font-medium">Source: </dt><dd className="inline break-all">{spec.sourceRepo}</dd></div>
               <div><dt className="inline font-medium">Revision: </dt><dd className="inline break-all">{spec.revision}</dd></div>
               <div><dt className="inline font-medium">Runtime: </dt><dd className="inline break-all">{spec.runtime}</dd></div>
+              <div><dt className="inline font-medium">GPU delegate class: </dt><dd className="inline">{capabilities ? (capabilities.gpuDelegateClassPresent ? "present" : "missing") : "unknown"} (diagnostic only)</dd></div>
             </dl>
           </details>
 
@@ -231,7 +275,7 @@ function ModelRow({
             </div>
           )}
 
-          {needsRepair && (
+          {action.canRepair && (
             <p className="mt-2 text-xs text-error">
               Integrity check found damaged data. Repair re-downloads only the damaged parts — verified chunks will be kept.
             </p>
@@ -249,24 +293,28 @@ function ModelRow({
         </div>
 
         <div className="flex flex-col items-end gap-2 shrink-0">
-          {isDownloading ? (
+          {action.isTransferActive ? (
             <>
-              <button
-                onClick={() => onPauseDownload(modelId)}
-                className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
-                aria-label={`Pause ${spec.label}`}
-              >
-                Pause
-              </button>
-              <button
-                onClick={() => onCancelDownload(modelId)}
-                className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
-                aria-label={`Cancel ${spec.label}`}
-              >
-                Cancel
-              </button>
+              {action.canPause && (
+                <button
+                  onClick={() => onPauseDownload(modelId)}
+                  className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                  aria-label={`Pause ${spec.label}`}
+                >
+                  Pause
+                </button>
+              )}
+              {action.canCancel && (
+                <button
+                  onClick={() => onCancelDownload(modelId)}
+                  className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                  aria-label={`Cancel ${spec.label}`}
+                >
+                  Cancel
+                </button>
+              )}
             </>
-          ) : isPaused ? (
+          ) : action.canResume && action.canCancel ? (
             <>
               <button
                 onClick={() => onResumeDownload(modelId)}
@@ -283,7 +331,7 @@ function ModelRow({
                 Cancel
               </button>
             </>
-          ) : needsRepair ? (
+          ) : action.canRepair ? (
             <button
               onClick={() => onRepair(modelId)}
               className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
@@ -291,7 +339,7 @@ function ModelRow({
             >
               Repair
             </button>
-          ) : !isInstalled ? (
+          ) : action.canDownload ? (
             <button
               onClick={() => onDownload(modelId)}
               className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
@@ -301,27 +349,19 @@ function ModelRow({
               <Download size={14} aria-hidden />
               Download
             </button>
-          ) : (
+          ) : action.canSelfTest && action.canDelete ? (
             <>
               {canOfferSelfTest && (
                 <div className="flex flex-col gap-2">
                   <button
-                    onClick={async () => {
-                      const picked = await takePhoto();
-                      const uri = toNativeImageUri(picked);
-                      if (uri) onRunGpuSelfTest(modelId, uri);
-                    }}
+                    onClick={() => onPickSelfTest(modelId, "camera")}
                     className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
                   >
                     <Cpu size={14} aria-hidden />
                     Run GPU self-test (camera)
                   </button>
                   <button
-                    onClick={async () => {
-                      const picked = await chooseFromGallery();
-                      const uri = toNativeImageUri(picked);
-                      if (uri) onRunGpuSelfTest(modelId, uri);
-                    }}
+                    onClick={() => onPickSelfTest(modelId, "gallery")}
                     className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
                   >
                     <Cpu size={14} aria-hidden />
@@ -337,6 +377,8 @@ function ModelRow({
               Delete
             </button>
             </>
+          ) : (
+            <span className="text-xs text-on-surface-variant">Self-test running…</span>
           )}
         </div>
       </div>
@@ -350,7 +392,7 @@ export function OfflineAi() {
   const [wifiOnly, setWifiOnly] = useState(loadWifiOnly);
   const [modelStates, setModelStates] = useState<VlmModelInfo[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressEvent | null>(null);
-  const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId; requiredBytes: number[] } | null>(null);
+  const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId; downloadBytes: number; requiredBytes: number } | null>(null);
   const [gpuSelfTestModel, setGpuSelfTestModel] = useState<VlmModelId | null>(null);
   const [gpuSelfTestState, setGpuSelfTestState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [gpuSelfTestResult, setGpuSelfTestResult] = useState<GpuSelfTestResult | null>(null);
@@ -366,14 +408,24 @@ export function OfflineAi() {
     return () => {
       mountedRef.current = false;
     };
-  }, []);  useFocusTrap(gpuSelfTestRef, () => { setGpuSelfTestModel(null); setGpuSelfTestState("idle"); setGpuSelfTestResult(null); });
+  }, []);
+
+  // Closing while the self-test is RUNNING must stop native inference first.
+  const closeGpuSelfTest = () => {
+    if (gpuSelfTestState === "running") {
+      void bridge.cancelInference().catch(() => undefined);
+    }
+    setGpuSelfTestModel(null);
+    setGpuSelfTestState("idle");
+    setGpuSelfTestResult(null);
+  };
+
+  useFocusTrap(gpuSelfTestRef, () => { closeGpuSelfTest(); });
   useFocusTrap(confirmDownloadRef, () => setConfirmDownload(null));
 
   // Hardware Back dismisses an open dialog before navigating away.
   useModalBack(gpuSelfTestModel !== null && gpuSelfTestState !== "idle", () => {
-    setGpuSelfTestModel(null);
-    setGpuSelfTestState("idle");
-    setGpuSelfTestResult(null);
+    closeGpuSelfTest();
   });
   useModalBack(confirmDownload !== null, () => setConfirmDownload(null));
 
@@ -416,8 +468,9 @@ export function OfflineAi() {
 
   const handleDownload = (modelId: VlmModelId) => {
     const info = modelStates.find((m) => m.id === modelId);
+    const downloadBytes = info?.sizeBytes ?? Math.round(MODEL_SPECS[modelId].sizeMb * 1024 * 1024);
     const required = info?.requiredBytes ?? fallbackRequiredBytes(MODEL_SPECS[modelId].sizeMb);
-    setConfirmDownload({ modelId, requiredBytes: [required] });
+    setConfirmDownload({ modelId, downloadBytes, requiredBytes: required });
   };
 
   const handleConfirmDownload = () => {
@@ -432,8 +485,8 @@ export function OfflineAi() {
       try {
         if (opts) await bridge.downloadModel(target, opts);
         else await bridge.downloadModel(target);
-      } catch {
-        // Scheduling failures surface through model state events.
+      } catch (err) {
+        if (mountedRef.current) setActionError(actionErrorMessage(err));
       }
     })();
   };
@@ -481,11 +534,54 @@ export function OfflineAi() {
     setGpuSelfTestResult(null);
     try {
       const result = await bridge.runGpuSelfTest(modelId, imageUri);
+      if (!mountedRef.current) return;
+      if (result?.state === "CANCELLED") {
+        setGpuSelfTestModel(null);
+        setGpuSelfTestState("idle");
+        setGpuSelfTestResult(null);
+        return;
+      }
       setGpuSelfTestState("done");
       setGpuSelfTestResult(result);
     } catch (e) {
+      if (!mountedRef.current) return;
+      if (isSelfTestCancellation(e)) {
+        setGpuSelfTestModel(null);
+        setGpuSelfTestState("idle");
+        setGpuSelfTestResult(null);
+        return;
+      }
+      const message = e instanceof Error ? e.message : typeof e === "string" ? e : "Unknown error";
+      if (message === "MODEL_MISSING" || /not installed|files not found/i.test(message)) {
+        setGpuSelfTestState("done");
+        setGpuSelfTestResult({ state: "MODEL_MISSING", error: message });
+        return;
+      }
+      if (message === "INPUT_ERROR") {
+        setGpuSelfTestState("done");
+        setGpuSelfTestResult({ state: "INPUT_ERROR", error: message, failure: "INPUT_ERROR" });
+        return;
+      }
+      if (message === "RUNTIME_ERROR" || message === "GENERATION_ERROR") {
+        setGpuSelfTestState("done");
+        setGpuSelfTestResult({ state: message, error: message, failure: message });
+        return;
+      }
       setGpuSelfTestState("error");
-      setGpuSelfTestResult({ state: "ERROR", error: e instanceof Error ? e.message : "Unknown error" });
+      setGpuSelfTestResult({ state: "ERROR", error: message });
+    }
+  };
+
+  // Camera/gallery picks get their own capture-error handling: user
+  // cancellation stays quiet, real failures surface via the alert.
+  const handlePickSelfTest = async (modelId: VlmModelId, source: "camera" | "gallery") => {
+    try {
+      const picked = source === "camera" ? await takePhoto() : await chooseFromGallery();
+      const uri = toNativeImageUri(picked);
+      if (uri) await handleRunGpuSelfTest(modelId, uri);
+    } catch (err) {
+      if (isCancellation(err) || isSelfTestCancellation(err)) return;
+      if (mountedRef.current) setActionError(actionErrorMessage(err));
     }
   };
 
@@ -561,7 +657,7 @@ export function OfflineAi() {
                 capabilities={capabilities}
                 onDownload={handleDownload}
                 onDelete={handleDelete}
-                onRunGpuSelfTest={handleRunGpuSelfTest}
+                onPickSelfTest={handlePickSelfTest}
                 onCancelDownload={handleCancelDownload}
                 onPauseDownload={handlePauseDownload}
                 onResumeDownload={handleResumeDownload}
@@ -592,13 +688,9 @@ export function OfflineAi() {
                   <AlertTriangle size={24} aria-hidden />
                 )}
                 <div>
-                  <p className="font-medium">{gpuSelfTestResult?.state === "GPU_AVAILABLE" ? "GPU Available" : "GPU Unavailable"}</p>
+                  <p className="font-medium">{getSelfTestPresentation(gpuSelfTestResult).title}</p>
                   <p className="text-sm text-on-surface-variant break-words">
-                    {gpuSelfTestResult?.state === "GPU_AVAILABLE"
-                      ? "GPU-backed inference completed successfully."
-                      : (friendlyError(gpuSelfTestResult?.error) ??
-                        friendlyError(gpuSelfTestResult?.failure) ??
-                        friendlyError(gpuSelfTestResult?.state))}
+                    {getSelfTestPresentation(gpuSelfTestResult).message}
                   </p>
                 </div>
               </div>
@@ -607,16 +699,14 @@ export function OfflineAi() {
               <div className="flex items-center gap-3 p-4 rounded-lg border border-error">
                 <XCircle size={24} className="text-error" aria-hidden />
                 <div>
-                  <p className="font-medium">Test Failed</p>
-                  <p className="text-sm text-on-surface-variant">{friendlyError(gpuSelfTestResult?.error)}</p>
+                  <p className="font-medium">{getSelfTestPresentation(gpuSelfTestResult).title}</p>
+                  <p className="text-sm text-on-surface-variant">{getSelfTestPresentation(gpuSelfTestResult).message}</p>
                 </div>
               </div>
             )}
             <button
               onClick={() => {
-                setGpuSelfTestModel(null);
-                setGpuSelfTestState("idle");
-                setGpuSelfTestResult(null);
+                closeGpuSelfTest();
               }}
               className="mt-4 min-h-[48px] w-full px-4 py-2 bg-on-surface text-surface rounded-lg"
             >
@@ -631,10 +721,10 @@ export function OfflineAi() {
           <div ref={confirmDownloadRef} tabIndex={-1} className="w-full max-w-md bg-surface rounded-xl p-6">
             <h3 id="confirm-title" className="text-lg font-semibold mb-4">Confirm Download</h3>
             <p id="confirm-desc" className="text-sm text-on-surface-variant mb-4 break-words">
-              This will download {formatBytes(confirmDownload.requiredBytes.reduce((a, b) => a + b, 0))}.
+              Download size: {formatBytes(confirmDownload.downloadBytes)}.
             </p>
             <p className="text-xs text-on-surface-variant mb-4 break-words">
-              Required free space: {confirmDownload.requiredBytes.map((b) => formatBytes(b)).join(" + ")}
+              Required free space: {formatBytes(confirmDownload.requiredBytes)}
               {capabilities && ` (${formatBytes((capabilities.freeAppStorageMb ?? Number.MAX_SAFE_INTEGER) * 1024 * 1024)} available)`}
             </p>
             <div className="flex flex-wrap gap-3 justify-end">

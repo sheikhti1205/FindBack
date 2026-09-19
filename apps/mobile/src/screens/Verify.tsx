@@ -178,7 +178,7 @@ function PendingEmailVerify({ email }: { email: string }) {
   }
 
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col gap-5 bg-surface px-5 py-10 text-on-surface">
+    <div className="mx-auto flex min-h-full max-w-md flex-col gap-5 bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Confirm your email</h1>
         <p className="mt-1 text-sm text-on-surface-variant">
@@ -230,7 +230,7 @@ export function Verify() {
   if (!user && pendingEmail) return <PendingEmailVerify email={pendingEmail} />;
 
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col gap-5 bg-surface px-5 py-10 text-on-surface">
+    <div className="mx-auto flex min-h-full max-w-md flex-col gap-5 bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Verify your contact details</h1>
         <p className="mt-1 text-sm text-on-surface-variant">

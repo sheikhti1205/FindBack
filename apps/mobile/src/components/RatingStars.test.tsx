@@ -6,7 +6,7 @@ import { RatingStars } from "./RatingStars";
 afterEach(cleanup);
 
 describe("RatingStars", () => {
-  it("exposes one tab stop and arrow-key navigation (WP12)", () => {
+  it("moves focus on arrows without rating (WP12/#35)", () => {
     const onRate = vi.fn();
     render(<><span id="lbl">Your rating</span><RatingStars value={null} onRate={onRate} labelId="lbl" /></>);
     const radios = screen.getAllByRole("radio");
@@ -17,8 +17,11 @@ describe("RatingStars", () => {
 
     radios[0]!.focus();
     fireEvent.keyDown(radios[0]!, { key: "ArrowRight" });
-    expect(onRate).toHaveBeenCalledWith(2);
     expect(document.activeElement).toBe(radios[1]);
+    fireEvent.keyDown(radios[1]!, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(radios[0]);
+    // Focus-only navigation: zero rating mutations.
+    expect(onRate).not.toHaveBeenCalled();
   });
 
   it("keeps the selected star as the tab stop and announces checked state", () => {
@@ -30,16 +33,17 @@ describe("RatingStars", () => {
     expect(radios.filter((r) => r.getAttribute("tabindex") === "0")).toHaveLength(1);
   });
 
-  it("supports Home and End keys", () => {
+  it("moves focus on Home and End without rating", () => {
     const onRate = vi.fn();
     render(<RatingStars value={3} onRate={onRate} ariaLabel="Rating" />);
     const radios = screen.getAllByRole("radio");
     radios[2]!.focus();
     fireEvent.keyDown(radios[2]!, { key: "End" });
-    expect(onRate).toHaveBeenLastCalledWith(5);
+    expect(document.activeElement).toBe(radios[4]);
     radios[4]!.focus();
     fireEvent.keyDown(radios[4]!, { key: "Home" });
-    expect(onRate).toHaveBeenLastCalledWith(1);
+    expect(document.activeElement).toBe(radios[0]);
+    expect(onRate).not.toHaveBeenCalled();
   });
 
   it("rates on click", () => {

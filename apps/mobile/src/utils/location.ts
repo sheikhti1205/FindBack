@@ -13,8 +13,16 @@
  * and rejection of redirects to arbitrary hosts.
  */
 
-import { Browser } from "@capacitor/browser";
-import { Capacitor } from "@capacitor/core";
+import { AppLauncher } from "@capacitor/app-launcher";
+import { Capacitor, registerPlugin } from "@capacitor/core";
+
+interface ShortLinkResolverPlugin {
+  resolve(options: { url: string }): Promise<{ url: string }>;
+}
+
+const ShortLinkResolver = Capacitor.isNativePlatform()
+  ? registerPlugin<ShortLinkResolverPlugin>("ShortLinkResolver")
+  : undefined;
 
 export interface ParsedLocation {
   /** User-readable label (place text, or the original input). */
@@ -54,7 +62,7 @@ const DECIMAL_PAIR =
 export function validateDecimalPair(
   lat: number,
   lng: number,
-): { ok: true } | { ok: false; error: string } {
+): { ok: true; error?: never } | { ok: false; error: string } {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return { ok: false, error: "Coordinates must be numbers." };
   }
@@ -166,6 +174,17 @@ export async function resolveShortLink(
     throw new Error("Only Google Maps short links can be resolved.");
   }
 
+  // Use native resolver on Android
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android" && ShortLinkResolver) {
+    try {
+      const result = await ShortLinkResolver.resolve({ url: current });
+      return result.url;
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : "Could not resolve the map link.");
+    }
+  }
+
+  // Web fallback: fetch-based resolution
   for (let hop = 0; hop < 5; hop++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -269,7 +288,8 @@ export function parseLocationInput(input: string): ParsedLocation {
     const lng = Number(pair[2]);
     const check = validateDecimalPair(lat, lng);
     if (!check.ok) {
-      return { label: trimmed, latitude: null, longitude: null, fromUrl: false, needsResolve: false, error: check.error };
+      const err = check.error;
+      return { label: trimmed, latitude: null, longitude: null, fromUrl: false, needsResolve: false, error: err };
     }
     return {
       label: "Pinned location",
@@ -318,7 +338,7 @@ export function universalMapsUrl(lat: number | null, lng: number | null, label: 
 /**
  * External map handoff.
  *
- * On Android we open the universal Maps URL through the Browser plugin, which
+ * On Android we open the universal Maps URL through AppLauncher, which
  * starts a real external ACTION_VIEW (the installed Maps app claims it via App
  * Links). Falling back to a new WebView window keeps the web build working.
  */
@@ -326,7 +346,7 @@ export async function openInMapsNative(lat: number | null, lng: number | null, l
   const universal = universalMapsUrl(lat, lng, label);
   if (Capacitor.isNativePlatform()) {
     try {
-      await Browser.open({ url: universal });
+      await AppLauncher.openUrl({ url: universal });
       return;
     } catch {
       /* fall through to the browser handoff */

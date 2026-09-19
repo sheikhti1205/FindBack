@@ -24,10 +24,11 @@ export function RatingStars({ value, onRate, labelId, ariaLabel }: RatingStarsPr
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeIndex = value != null ? value - 1 : 0;
 
-  function moveFocus(from: number, delta: 1 | -1) {
-    const next = (from + delta + STARS.length) % STARS.length;
+  // Focus-only navigation: arrows/Home/End move the single tab stop without
+  // rating. Activation (click / Enter / Space on the focused star) rates.
+  function moveFocus(to: number) {
+    const next = (to + STARS.length) % STARS.length;
     refs.current[next]?.focus();
-    onRate(STARS[next]!);
   }
 
   return (
@@ -41,18 +42,16 @@ export function RatingStars({ value, onRate, labelId, ariaLabel }: RatingStarsPr
         if (index < 0) return;
         if (e.key === "ArrowRight" || e.key === "ArrowDown") {
           e.preventDefault();
-          moveFocus(index, 1);
+          moveFocus(index + 1);
         } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
           e.preventDefault();
-          moveFocus(index, -1);
+          moveFocus(index - 1);
         } else if (e.key === "Home") {
           e.preventDefault();
-          refs.current[0]?.focus();
-          onRate(1);
+          moveFocus(0);
         } else if (e.key === "End") {
           e.preventDefault();
-          refs.current[STARS.length - 1]?.focus();
-          onRate(5);
+          moveFocus(STARS.length - 1);
         }
       }}
     >

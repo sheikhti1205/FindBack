@@ -28,6 +28,7 @@ export interface LocationValue {
 interface LocationPickerProps {
   value: LocationValue;
   onChange: (value: LocationValue) => void;
+  maxLength?: number;
 }
 
 /**
@@ -35,7 +36,7 @@ interface LocationPickerProps {
  * optional + graceful fallback) plus a free-text place label, decimal
  * coordinates, or a Google Maps link. No tracking.
  */
-export function LocationPicker({ value, onChange }: LocationPickerProps) {
+export function LocationPicker({ value, onChange, maxLength }: LocationPickerProps) {
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -195,6 +196,7 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
             onChange={(e) => handleInput(e.target.value)}
             placeholder="Place, decimal coords, or a Google Maps link"
             className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+            maxLength={maxLength}
           />
         </div>
         {value.label && value.label !== sourceText && (
