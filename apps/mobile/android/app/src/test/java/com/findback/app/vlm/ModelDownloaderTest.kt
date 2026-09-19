@@ -1,21 +1,23 @@
 package com.findback.app.vlm
 
+import kotlin.math.min
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ModelDownloaderTest {
 
     @Test
-    fun calculateBackoff_exponentialBackoff() {
-        // Test the backoff calculation logic directly (extracted from ModelDownloader)
-        assertEquals(1000L, calculateBackoff(1))  // 1s
-        assertEquals(2000L, calculateBackoff(2))  // 2s
-        assertEquals(4000L, calculateBackoff(3))  // 4s
-    }
-
-    // Copied from ModelDownloader for testing
-    private fun calculateBackoff(attempt: Int): Long {
-        val BASE_BACKOFF_MS = 1000L
-        return BASE_BACKOFF_MS * (1L shl (attempt - 1)) // Exponential backoff: 1s, 2s, 4s
+    fun retrySequenceMatchesSpecWithSeededJitter() {
+        // Exercises the real policy (not a copied formula): exponential base
+        // preserved, seeded jitter deterministic and bounded.
+        val jitter = TransferRetryPolicy.seededJitter(7L)
+        val delays = (1..5).map { TransferRetryPolicy.backoffMs(it, jitter = jitter) }
+        delays.forEachIndexed { i, d ->
+            val base = min(1_000L shl i, 30_000L)
+            assertTrue(d in base..<base + 250L, "attempt ${i + 1} out of range: $d")
+        }
+        val again = TransferRetryPolicy.seededJitter(7L)
+        assertEquals(delays, (1..5).map { TransferRetryPolicy.backoffMs(it, jitter = again) })
     }
 }
