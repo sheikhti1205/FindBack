@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { ImageUp, X } from "lucide-react";
-import type { Category, PostType } from "@findback/shared";
+import { extractYouTubeId, type Category, type PostType } from "@findback/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
@@ -22,6 +22,10 @@ import { todayInputValue, isFutureDate } from "../utils/dates";
 
 const inputCls =
   "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
+
+/** Server bucket policy mirrored client-side so doomed uploads fail fast. */
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 export function CreateReport() {
   const { user } = useAuth();
@@ -67,6 +71,7 @@ export function CreateReport() {
     description?: string;
     category?: string;
     eventDate?: string;
+    youtubeUrl?: string;
   }>({});
   const submitting = useRef(false);
 
@@ -122,6 +127,16 @@ export function CreateReport() {
 
   function onPickImage(file: File | undefined, photo?: PickedPhoto) {
     if (!file) return;
+    // The accept attribute is advisory; reject doomed uploads with a clear
+    // reason instead of failing at publish time.
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      setError("That file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setError("That photo is too large. Choose an image under 8 MB.");
+      return;
+    }
     if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     dropStashedPhoto(photoId);
     const id = stashPhotoFile(file);
@@ -146,6 +161,19 @@ export function CreateReport() {
     setPickedPhoto(null);
   }
 
+  // Native capture/conversion rejects on real failures (cancellation returns
+  // null). Never leave the button dead with an unhandled rejection.
+  async function capturePhoto(pick: () => Promise<PickedPhoto | null>) {
+    try {
+      const picked = await pick();
+      if (!picked) return;
+      const file = await photoToFile(picked);
+      onPickImage(file, picked);
+    } catch (err) {
+      setError(friendlyError(err).message);
+    }
+  }
+
   function applyVlmSuggestion(patch: Partial<VlmAnalysis>) {
     if (patch.suggestedTitle !== undefined) setTitle(patch.suggestedTitle ?? "");
     if (patch.suggestedDescription !== undefined) setDescription(patch.suggestedDescription ?? "");
@@ -156,15 +184,24 @@ export function CreateReport() {
     e.preventDefault();
     if (submitting.current) return;
     setError(null);
+    const trimmedYoutube = youtubeUrl.trim();
     const errs = {
       title: title.trim() ? undefined : "Enter a short title.",
       description: description.trim() ? undefined : "Describe the item so it can be recognised.",
       category: category ? undefined : "Choose a category.",
-      eventDate: isFutureDate(eventDate) ? "The date can't be in the future." : undefined,
+      eventDate: !eventDate
+        ? "Choose a date."
+        : isFutureDate(eventDate)
+          ? "The date can't be in the future."
+          : undefined,
+      youtubeUrl:
+        trimmedYoutube && !extractYouTubeId(trimmedYoutube)
+          ? "That doesn't look like a YouTube link."
+          : undefined,
     };
     setFieldErrors(errs);
     // `!category` also narrows the type for publishReport below.
-    if (errs.title || errs.description || errs.category || errs.eventDate || !category) return;
+    if (errs.title || errs.description || errs.category || errs.eventDate || errs.youtubeUrl || !category) return;
     submitting.current = true;
     setBusy(true);
     try {
@@ -265,14 +302,21 @@ export function CreateReport() {
           type="date"
           value={eventDate}
           max={todayInputValue()}
-          onChange={(e) => setEventDate(e.target.value)}
+          onChange={(e) => {
+            setEventDate(e.target.value);
+            if (fieldErrors.eventDate) setFieldErrors((f) => ({ ...f, eventDate: undefined }));
+          }}
           className={inputCls}
           required
         />
-        {isFutureDate(eventDate) && (
-          <span className="mt-1 block text-xs text-error">
-            The date can't be in the future.
-          </span>
+        {fieldErrors.eventDate ? (
+          <span className="mt-1 block text-xs text-error">{fieldErrors.eventDate}</span>
+        ) : (
+          isFutureDate(eventDate) && (
+            <span className="mt-1 block text-xs text-error">
+              The date can't be in the future.
+            </span>
+          )
         )}
       </label>
 
@@ -301,13 +345,7 @@ export function CreateReport() {
                   type="button"
                   variant="outline"
                   size="md"
-                  onClick={async () => {
-                    const picked = await takePhoto();
-                    if (picked) {
-                      const file = await photoToFile(picked);
-                      onPickImage(file, picked);
-                    }
-                  }}
+                  onClick={() => void capturePhoto(takePhoto)}
                 >
                   <ImageUp size={18} aria-hidden />
                   Take photo
@@ -316,13 +354,7 @@ export function CreateReport() {
                   type="button"
                   variant="outline"
                   size="md"
-                  onClick={async () => {
-                    const picked = await chooseFromGallery();
-                    if (picked) {
-                      const file = await photoToFile(picked);
-                      onPickImage(file, picked);
-                    }
-                  }}
+                  onClick={() => void capturePhoto(chooseFromGallery)}
                 >
                   <ImageUp size={18} aria-hidden />
                   Choose from gallery
@@ -385,12 +417,22 @@ export function CreateReport() {
         <input
           type="url"
           value={youtubeUrl}
-          onChange={(e) => setYoutubeUrl(e.target.value)}
+          onChange={(e) => {
+            setYoutubeUrl(e.target.value);
+            if (fieldErrors.youtubeUrl) setFieldErrors((f) => ({ ...f, youtubeUrl: undefined }));
+          }}
           placeholder="https://www.youtube.com/watch?v=…"
           className={inputCls}
         />
       </label>
-      {youtubeUrl.trim() && <YouTubeEmbed url={youtubeUrl.trim()} />}
+      {youtubeUrl.trim() && !extractYouTubeId(youtubeUrl.trim()) && (
+        <p className="text-xs text-error">
+          {fieldErrors.youtubeUrl ?? "That doesn't look like a YouTube link. It won't be attached."}
+        </p>
+      )}
+      {youtubeUrl.trim() && extractYouTubeId(youtubeUrl.trim()) && (
+        <YouTubeEmbed url={youtubeUrl.trim()} />
+      )}
 
       <Button type="submit" size="lg" loading={busy}>
         Publish {type === "LOST" ? "lost" : "found"} report
