@@ -45,4 +45,21 @@ class TransferRetryPolicyTest {
         assertTrue(TransferRetryPolicy.budgetExhausted(attempt = 6, maxAttempts = 5))
         assertFalse(TransferRetryPolicy.budgetExhausted(attempt = 5, maxAttempts = 5))
     }
+
+    @Test fun seededJitterIsDeterministic() {
+        val a = TransferRetryPolicy.seededJitter(7L)
+        val b = TransferRetryPolicy.seededJitter(7L)
+        assertEquals(
+            (1..5).map { TransferRetryPolicy.backoffMs(it, jitter = a) },
+            (1..5).map { TransferRetryPolicy.backoffMs(it, jitter = b) }
+        )
+    }
+
+    @Test fun seededJitterStaysInBounds() {
+        val jitter = TransferRetryPolicy.seededJitter(7L)
+        repeat(20) {
+            val j = jitter()
+            assertTrue(j in 0L..<250L, "jitter out of bounds: $j")
+        }
+    }
 }

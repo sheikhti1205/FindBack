@@ -55,6 +55,16 @@ object TransferRetryPolicy {
     }
 
     /**
+     * Deterministic jitter source (audit #38): the same seed yields the same
+     * sequence, so retry timing is reproducible in tests. Production passes
+     * the default unseeded Random via [backoffMs].
+     */
+    fun seededJitter(seed: Long): () -> Long {
+        val rng = Random(seed)
+        return { rng.nextLong(0L, 250L) }
+    }
+
+    /**
      * Whether the retry budget is exhausted (-> PAUSED_ERROR, keep partials).
      */
     fun budgetExhausted(attempt: Int, maxAttempts: Int = MAX_ATTEMPTS): Boolean {

@@ -36,7 +36,13 @@ import java.net.UnknownHostException
  */
 class ModelDownloader(
     private val context: Context,
-    private val store: ModelStore
+    private val store: ModelStore,
+    /**
+     * Jitter source for retry backoff (audit #38). Production uses unseeded
+     * randomness; tests pass `TransferRetryPolicy.seededJitter(seed)` for
+     * deterministic timing.
+     */
+    private val jitter: () -> Long = { kotlin.random.Random.nextLong(0L, 250L) }
 ) {
 
     companion object {
@@ -219,11 +225,11 @@ class ModelDownloader(
                 chunkTmp.delete()
                 attempt++
                 if (TransferRetryPolicy.budgetExhausted(attempt)) return VlmState.PAUSED_ERROR
-                delay(TransferRetryPolicy.backoffMs(attempt))
+                delay(TransferRetryPolicy.backoffMs(attempt, jitter = jitter))
             } catch (e: HttpRetryable) {
                 attempt++
                 if (TransferRetryPolicy.budgetExhausted(attempt)) return VlmState.PAUSED_ERROR
-                delay(TransferRetryPolicy.backoffMs(attempt, retryAfterMs = e.retryAfterMs))
+                delay(TransferRetryPolicy.backoffMs(attempt, retryAfterMs = e.retryAfterMs, jitter = jitter))
             } catch (e: PauseRequested) {
                 throw e
             } catch (e: CancelRequested) {
@@ -234,7 +240,7 @@ class ModelDownloader(
                 if (isNoSpace(e)) throw InsufficientStorage()
                 attempt++
                 if (TransferRetryPolicy.budgetExhausted(attempt)) return VlmState.PAUSED_ERROR
-                delay(TransferRetryPolicy.backoffMs(attempt))
+                delay(TransferRetryPolicy.backoffMs(attempt, jitter = jitter))
             }
         }
 
@@ -280,12 +286,12 @@ class ModelDownloader(
                     } catch (e: HttpRetryable) {
                         chunkAttempt++
                         if (TransferRetryPolicy.budgetExhausted(chunkAttempt)) return VlmState.PAUSED_ERROR
-                        delay(TransferRetryPolicy.backoffMs(chunkAttempt, retryAfterMs = e.retryAfterMs))
+                        delay(TransferRetryPolicy.backoffMs(chunkAttempt, retryAfterMs = e.retryAfterMs, jitter = jitter))
                     } catch (e: ChunkHashMismatch) {
                         chunkTmp.delete()
                         chunkAttempt++
                         if (TransferRetryPolicy.budgetExhausted(chunkAttempt)) return VlmState.PAUSED_ERROR
-                        delay(TransferRetryPolicy.backoffMs(chunkAttempt))
+                        delay(TransferRetryPolicy.backoffMs(chunkAttempt, jitter = jitter))
                     }
                 }
             }
@@ -434,7 +440,7 @@ class ModelDownloader(
                     if (TransferRetryPolicy.budgetExhausted(attempt, maxAttempts = 3)) {
                         return VlmState.PAUSED_ERROR
                     }
-                    delay(TransferRetryPolicy.backoffMs(attempt, retryAfterMs = retryAfter))
+                    delay(TransferRetryPolicy.backoffMs(attempt, retryAfterMs = retryAfter, jitter = jitter))
                     continue
                 }
 
@@ -535,14 +541,14 @@ class ModelDownloader(
                 if (TransferRetryPolicy.budgetExhausted(attempt, maxAttempts = 3)) {
                     return VlmState.PAUSED_ERROR
                 }
-                delay(TransferRetryPolicy.backoffMs(attempt))
+                delay(TransferRetryPolicy.backoffMs(attempt, jitter = jitter))
                 partBytes = if (partFile.exists()) partFile.length() else 0L
             } catch (e: UnknownHostException) {
                 attempt++
                 if (TransferRetryPolicy.budgetExhausted(attempt, maxAttempts = 3)) {
                     return VlmState.PAUSED_ERROR
                 }
-                delay(TransferRetryPolicy.backoffMs(attempt))
+                delay(TransferRetryPolicy.backoffMs(attempt, jitter = jitter))
                 partBytes = if (partFile.exists()) partFile.length() else 0L
             } catch (e: IOException) {
                 if (isNoSpace(e)) throw InsufficientStorage()
@@ -550,7 +556,7 @@ class ModelDownloader(
                 if (TransferRetryPolicy.budgetExhausted(attempt, maxAttempts = 3)) {
                     return VlmState.PAUSED_ERROR
                 }
-                delay(TransferRetryPolicy.backoffMs(attempt))
+                delay(TransferRetryPolicy.backoffMs(attempt, jitter = jitter))
                 partBytes = if (partFile.exists()) partFile.length() else 0L
             }
         }
