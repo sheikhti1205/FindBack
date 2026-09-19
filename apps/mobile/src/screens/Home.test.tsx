@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fetchFeedMock, handlers, onRealtimeMock } = vi.hoisted(() => {
@@ -61,5 +61,82 @@ describe("Home realtime (WP9)", () => {
     expect(screen.getByText("a")).toBeTruthy();
     expect(screen.getByText("c")).toBeTruthy();
     expect(fetchFeedMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a provable non-member insert under a type filter (WP7 #10)", async () => {
+    render(<Home />);
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("radio", { name: "Lost" }));
+    await waitFor(() =>
+      expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ type: "LOST" }), undefined),
+    );
+    fetchFeedMock.mockClear();
+
+    act(() =>
+      emit("feed:changed", {
+        change: "INSERT",
+        op: "INSERT",
+        postId: "x",
+        postType: "FOUND",
+        title: "Found keys",
+      }),
+    );
+
+    expect(fetchFeedMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/new post/i)).toBeNull();
+    expect(screen.queryByText(/^updates$/i)).toBeNull();
+  });
+
+  it("refreshes for a matching insert under a type filter (WP7 #10)", async () => {
+    render(<Home />);
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("radio", { name: "Lost" }));
+    await waitFor(() =>
+      expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ type: "LOST" }), undefined),
+    );
+    fetchFeedMock.mockClear();
+
+    act(() =>
+      emit("feed:changed", {
+        change: "INSERT",
+        op: "INSERT",
+        postId: "y",
+        postType: "LOST",
+        title: "Lost wallet",
+      }),
+    );
+
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows Updates, not a count, when a search query makes membership unprovable (WP7 #10)", async () => {
+    const { container } = render(<Home />);
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
+    await waitFor(
+      () => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ q: "wallet" }), undefined),
+      { timeout: 3000 },
+    );
+
+    // Scroll the reader down, then receive an insert.
+    const scroller = container.querySelector(".overflow-y-auto");
+    expect(scroller).toBeTruthy();
+    (scroller as HTMLElement).scrollTop = 100;
+
+    act(() =>
+      emit("feed:changed", {
+        change: "INSERT",
+        op: "INSERT",
+        postId: "z",
+        postType: "LOST",
+        title: "Lost wallet",
+      }),
+    );
+
+    expect(await screen.findByText(/^updates$/i)).toBeTruthy();
+    expect(screen.queryByText(/new post/i)).toBeNull();
   });
 });

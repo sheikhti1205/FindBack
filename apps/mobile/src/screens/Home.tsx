@@ -64,11 +64,27 @@ export function Home() {
               ? p.type.toUpperCase()
               : null;
       // Only a genuine INSERT is a new post. Comment/reaction/rating triggers
-      // broadcast feed:changed with no op and must show "updates", not posts.
+      // broadcast feed:changed with a non-INSERT change kind.
       const isInsert = change === "INSERT" || p.isNew === true;
       const scrolled = (scrollRef.current?.scrollTop ?? 0) > 40;
+      if (!isInsert) {
+        if (!scrolled) void refresh();
+        else setHasUpdates(true);
+        return;
+      }
+
+      // Prove filter membership from the broadcast metadata. A provable
+      // non-member (e.g. FOUND while filtered to LOST) is ignored — it can
+      // never appear in this view, so it must not raise a pill. When an active
+      // search query makes membership unprovable, show generic Updates.
+      const postType = typeof p.postType === "string" ? p.postType.toUpperCase() : null;
+      const typeOk = type === "ALL" || postType === type;
+      const canProveNonMember = postType !== null && !typeOk;
+      if (canProveNonMember) return;
+
+      const matchesFilter = typeOk && !appliedQuery;
       if (scrolled) {
-        if (isInsert) {
+        if (matchesFilter) {
           incrementNewPostCount(scopedCacheKey, 1);
           setNewPostCount(getNewPostCount(scopedCacheKey));
         } else {
@@ -79,7 +95,7 @@ export function Home() {
       }
     });
     return off;
-  }, [refresh, scopedCacheKey]);
+  }, [refresh, scopedCacheKey, type, appliedQuery]);
 
   // A post was deleted: reconcile it in place. Never refetch here — a full
   // refresh would rerender/reorder the list underneath a scrolled reader.
