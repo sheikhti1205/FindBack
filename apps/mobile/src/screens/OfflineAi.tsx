@@ -154,8 +154,11 @@ function ModelRow({
   // The native requiredBytes is authoritative; the fallback mirrors the native
   // policy (model + max(256 MiB, 25%)) so the button never lies.
   const requiredBytes = info.requiredBytes ?? fallbackRequiredBytes(spec.sizeMb);
-  const freeBytes = capabilities ? capabilities.freeAppStorageMb * 1024 * 1024 : Number.MAX_SAFE_INTEGER;
-  const hasSpace = freeBytes >= requiredBytes;
+  // Capabilities can fail independently (process death). Unknown storage must
+  // not blank the row or fake a huge "available" number; Download stays
+  // offered and the confirm dialog + native enforcement remain the guard.
+  const freeBytes = capabilities ? capabilities.freeAppStorageMb * 1024 * 1024 : null;
+  const hasSpace = freeBytes === null || freeBytes >= requiredBytes;
 
   return (
     <div className="border border-outline-variant rounded-xl p-4 bg-surface">
@@ -172,7 +175,9 @@ function ModelRow({
               Needs {formatBytes(requiredBytes)} free
             </span>
             <span className="flex items-center gap-1 whitespace-nowrap">
-              {hasSpace ? (
+              {freeBytes === null ? (
+                <>Storage unknown</>
+              ) : hasSpace ? (
                 <>
                   <CheckCircle size={12} className="text-on-surface" aria-hidden />
                   {formatBytes(freeBytes)} available
@@ -354,7 +359,14 @@ export function OfflineAi() {
   const gpuSelfTestRef = useRef<HTMLDivElement>(null);
   const confirmDownloadRef = useRef<HTMLDivElement>(null);
 
-  useFocusTrap(gpuSelfTestRef, () => { setGpuSelfTestModel(null); setGpuSelfTestState("idle"); setGpuSelfTestResult(null); });
+    // Guards async action errors against setState-after-unmount (WP10 #21).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);  useFocusTrap(gpuSelfTestRef, () => { setGpuSelfTestModel(null); setGpuSelfTestState("idle"); setGpuSelfTestResult(null); });
   useFocusTrap(confirmDownloadRef, () => setConfirmDownload(null));
 
   // Hardware Back dismisses an open dialog before navigating away.
@@ -367,13 +379,23 @@ export function OfflineAi() {
 
   useEffect(() => {
     let mounted = true;
-    bridge.getCapabilities().then((c) => mounted && setCapabilities(c));
-    bridge.getModelStates().then((m) => mounted && setModelStates(m));
+    // Capabilities and model states fail independently (process death, storage).
+    // allSettled: one rejection must neither blank the row nor wipe the other.
+    void (async () => {
+      const [caps, states] = await Promise.allSettled([
+        bridge.getCapabilities(),
+        bridge.getModelStates(),
+      ]);
+      if (!mounted) return;
+      if (caps.status === "fulfilled") setCapabilities(caps.value);
+      if (states.status === "fulfilled") setModelStates(states.value);
+    })();
 
     const offProgress = bridge.onDownloadProgress((event) => {
-      setDownloadProgress(event);
+      if (mounted) setDownloadProgress(event);
     });
     const offState = bridge.onModelStateChange((info) => {
+      if (!mounted) return;
       setModelStates((prev) => {
         const idx = prev.findIndex((m) => m.id === info.id);
         if (idx >= 0) {
@@ -390,7 +412,7 @@ export function OfflineAi() {
       offProgress.then((f) => f());
       offState.then((f) => f());
     };
-  }, []);
+  }, [bridge]);
 
   const handleDownload = (modelId: VlmModelId) => {
     const info = modelStates.find((m) => m.id === modelId);
@@ -420,11 +442,12 @@ export function OfflineAi() {
   // Catch it so the UI never dies with an unhandled rejection and the user
   // gets a readable reason.
   const runAction = async (fn: () => Promise<unknown>) => {
+    if (!mountedRef.current) return;
     setActionError(null);
     try {
       await fn();
     } catch (err) {
-      setActionError(actionErrorMessage(err));
+      if (mountedRef.current) setActionError(actionErrorMessage(err));
     }
   };
 

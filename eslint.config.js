@@ -11,6 +11,8 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+      // Console noise is banned in app code (WP10 #22); report via utils/log.
+      "no-console": "error",
     },
   },
   {

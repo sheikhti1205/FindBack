@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { logError } from "../utils/log";
 
 interface InnerProps {
   children: ReactNode;
@@ -27,7 +28,7 @@ class ErrorBoundaryInner extends Component<InnerProps, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error("FindBack screen error:", error, info.componentStack);
+    logError("FindBack screen error:", error, info.componentStack);
   }
 
   componentDidUpdate(prevProps: InnerProps): void {

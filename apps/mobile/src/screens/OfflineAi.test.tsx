@@ -269,4 +269,26 @@ describe("OfflineAi", () => {
       photo.isNativeCameraAvailable.mockReturnValue(true);
     }
   });
+
+  it("still renders the row with unknown storage when capabilities fail (WP10 #20)", async () => {
+    bridge.getCapabilities.mockRejectedValue(new Error("process dead"));
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: /SmolVLM2 500M/ })).toBeTruthy();
+    expect(await screen.findByText(/storage unknown/i)).toBeTruthy();
+    // Download stays offered; the confirm dialog + native enforcement guard it.
+    expect(screen.getByRole("button", { name: /download smolvlm2 500m/i })).toBeTruthy();
+  });
+
+  it("still renders NOT_INSTALLED rows when model states fail (WP10 #20)", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockRejectedValue(new Error("process dead"));
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: /SmolVLM2 500M/ })).toBeTruthy();
+    expect(await screen.findByText(/not installed/i)).toBeTruthy();
+  });
 });
