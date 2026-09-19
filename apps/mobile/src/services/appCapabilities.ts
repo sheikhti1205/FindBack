@@ -8,7 +8,7 @@ import packageJson from "../../package.json";
  * (`supabase/functions/ai-help/capabilities.ts`) — bump CAPABILITIES_VERSION
  * in both files whenever shipped UI behavior changes.
  */
-export const CAPABILITIES_VERSION = "1.1.0";
+export const CAPABILITIES_VERSION = "1.2.0";
 
 /** Generated from apps/mobile/package.json (the canonical SemVer source) — never a duplicated literal. */
 export const APP_VERSION: string = packageJson.version;
@@ -71,7 +71,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Photo AI runs fully on-device; the photo is never sent to any server for analysis.",
   ],
   modelModes: [
-    "AUTO and QUALITY both use the installed 500M model. FAST is not offered because no smaller report-generation runtime ships.",
+    "There is no inference-mode selector: the installed 500M model always runs on the GPU, with no CPU fallback.",
     "Only states shown in Offline AI are real: installed, downloading with true bytes, GPU-tested ready, or an error.",
   ],
   modelDownload: [

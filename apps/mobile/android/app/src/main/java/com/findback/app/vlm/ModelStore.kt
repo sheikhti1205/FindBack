@@ -10,8 +10,12 @@ import java.io.FileReader
 /**
  * Persistent model store for VLM models.
  * Manages model directories, partial downloads, and state persistence.
+ *
+ * @param appVersion the current app versionName, used for fresh transfer
+ * records so environment-bound GPU verdicts can detect build changes.
+ * Resolved from the package in [create]; "unknown" only when unresolvable.
  */
-class ModelStore(val root: File) {
+class ModelStore(val root: File, private val appVersion: String = "unknown") {
 
     private val gson: Gson = GsonBuilder().create()
 
@@ -21,7 +25,24 @@ class ModelStore(val root: File) {
     companion object {
         fun create(context: Context): ModelStore {
             val rootDir = File(context.filesDir, "findback-models")
-            return ModelStore(rootDir)
+            return ModelStore(rootDir, appVersionName(context))
+        }
+
+        private fun appVersionName(context: Context): String {
+            return try {
+                val info = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    context.packageManager.getPackageInfo(
+                        context.packageName,
+                        android.content.pm.PackageManager.PackageInfoFlags.of(0)
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    context.packageManager.getPackageInfo(context.packageName, 0)
+                }
+                info.versionName ?: "unknown"
+            } catch (e: Exception) {
+                "unknown"
+            }
         }
     }
 
@@ -147,7 +168,7 @@ class ModelStore(val root: File) {
                 installedBytes = files.sumOf { it.installedBytes },
                 installTimestamp = previous?.installTimestamp ?: System.currentTimeMillis(),
                 runtimeVersion = manifest.runtime,
-                appVersion = previous?.appVersion ?: "1.0",
+                appVersion = previous?.appVersion ?: appVersion,
                 fingerprint = previous?.fingerprint ?: (android.os.Build.FINGERPRINT ?: "unknown"),
                 abi = previous?.abi ?: (android.os.Build.SUPPORTED_ABIS?.firstOrNull() ?: "unknown"),
                 gpuVendor = previous?.gpuVendor,
