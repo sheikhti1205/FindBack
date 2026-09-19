@@ -28,17 +28,45 @@ class TransferReconcileTest {
         )
     }
 
+    @Test fun orphanedWaitingWithoutLiveJobBecomesPaused() {
+        // A persisted WAITING with no scheduler-owned work is a dead end: no
+        // connectivity observer exists to wake it, so offer Resume via PAUSED.
+        assertEquals(
+            VlmState.PAUSED,
+            TransferReconcile.reconcileState(VlmState.WAITING_FOR_NETWORK, hasLiveJob = false)
+        )
+        assertEquals(
+            VlmState.PAUSED,
+            TransferReconcile.reconcileState(VlmState.WAITING_FOR_WIFI, hasLiveJob = false)
+        )
+    }
+
+    @Test fun waitingWithLiveJobIsKept() {
+        assertEquals(
+            VlmState.WAITING_FOR_NETWORK,
+            TransferReconcile.reconcileState(VlmState.WAITING_FOR_NETWORK, hasLiveJob = true)
+        )
+        assertEquals(
+            VlmState.WAITING_FOR_WIFI,
+            TransferReconcile.reconcileState(VlmState.WAITING_FOR_WIFI, hasLiveJob = true)
+        )
+    }
+
     @Test fun terminalAndUserStatesPassThrough() {
         val passthrough = listOf(
             VlmState.NOT_INSTALLED,
             VlmState.PAUSED,
             VlmState.PAUSED_ERROR,
-            VlmState.INSTALLED_UNVERIFIED,
-            VlmState.READY_GPU,
+            VlmState.REPAIR_NEEDED,
             VlmState.MANIFEST_MISMATCH,
+            VlmState.INSTALLED_UNVERIFIED,
+            VlmState.GPU_SELF_TESTING,
+            VlmState.READY_GPU,
+            VlmState.GPU_UNAVAILABLE,
             VlmState.CORRUPT,
             VlmState.INSUFFICIENT_STORAGE,
-            VlmState.DOWNLOAD_FAILED
+            VlmState.DOWNLOAD_FAILED,
+            VlmState.RUNTIME_ERROR
         )
         for (state in passthrough) {
             assertEquals(state, TransferReconcile.reconcileState(state, hasLiveJob = false))
