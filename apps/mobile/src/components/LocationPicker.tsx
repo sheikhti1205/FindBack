@@ -232,7 +232,11 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
         {hasCoords && (
           <span className="flex items-center gap-1 text-xs text-on-surface-variant">
             <MapPin size={13} aria-hidden />
-            {value.latitude!.toFixed(4)}, {value.longitude!.toFixed(4)}
+            {/* The readout must not imply more precision than the mode holds:
+                approximate pins show the 3 decimals they were rounded to. */}
+            {approx
+              ? `${value.latitude!.toFixed(3)}, ${value.longitude!.toFixed(3)}`
+              : `${value.latitude}, ${value.longitude}`}
           </span>
         )}
       </div>
