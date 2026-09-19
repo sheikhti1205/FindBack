@@ -56,6 +56,14 @@ describe("MarkdownView", () => {
     const scrollers = container.querySelectorAll(".overflow-x-auto");
     expect(scrollers.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("breaks long unbroken words so prose never overflows (WP15 #37)", () => {
+    const word = `a${"very".repeat(40)}longword`;
+    const { container } = render(<MarkdownView text={word} />);
+    expect(container.textContent).toContain(word);
+    const wrapper = container.firstElementChild;
+    expect(wrapper?.className).toContain("break-words");
+  });
 });
 
 describe("stripMarkdown", () => {

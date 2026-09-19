@@ -36,7 +36,7 @@ const headingMap = { h1: "h3", h2: "h4", h3: "h4" } as const;
 
 export const MarkdownView = memo(function MarkdownView({ text }: { text: string }) {
   return (
-    <div className="fb-markdown text-sm leading-relaxed">
+    <div className="fb-markdown break-words text-sm leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}

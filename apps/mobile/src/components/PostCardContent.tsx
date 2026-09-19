@@ -52,8 +52,8 @@ export function PostCardContent({ post }: { post: PostItem }) {
         />
       )}
 
-      <h3 className="text-base font-semibold leading-snug">{post.title}</h3>
-      <p className="line-clamp-2 text-sm text-on-surface-variant">{excerpt}</p>
+      <h3 className="break-words text-base font-semibold leading-snug">{post.title}</h3>
+      <p className="line-clamp-2 break-words text-sm text-on-surface-variant">{excerpt}</p>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-on-surface-variant">
         <span className="max-w-full truncate font-medium text-on-surface">

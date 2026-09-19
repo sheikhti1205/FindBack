@@ -194,7 +194,7 @@ export function PostDetail() {
         )}
 
         <div>
-          <h1 className="text-2xl font-semibold leading-tight tracking-tight">{post.title}</h1>
+          <h1 className="break-words text-2xl font-semibold leading-tight tracking-tight">{post.title}</h1>
           <p className="mt-1 text-sm text-on-surface-variant">
             @{post.author.username} · {post.category}
           </p>
@@ -215,7 +215,7 @@ export function PostDetail() {
           </div>
           <div className="col-span-2">
             <dt className="text-xs text-on-surface-variant">Location</dt>
-            <dd className="font-medium">
+            <dd className="break-words font-medium">
               {post.locationLabel ?? (post.latitude != null ? "Pinned location" : "Not specified")}
             </dd>
             {(post.latitude != null || post.locationLabel) && (
@@ -314,8 +314,8 @@ export function PostDetail() {
             return (
               <li key={c.id} className="rounded-m3-md border border-outline-variant p-3">
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-sm font-semibold">@{c.author.username}</span>
-                  <span className="text-[11px] text-on-surface-variant">
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
+                  <span className="shrink-0 text-[11px] text-on-surface-variant">
                     {formatTimestamp(c.createdAt)}
                   </span>
                 </div>
