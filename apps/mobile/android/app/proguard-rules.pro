@@ -1,21 +1,27 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# FindBack — release keep rules (audit WP12 #31).
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Release currently ships with minifyEnabled false, so these rules are dormant
+# insurance: if shrinking is ever enabled, the Capacitor bridge entry points,
+# the Gson-persisted records, and the manifest-referenced service must survive.
+# Verified by assembling assembleRelease with minifyEnabled=true and confirming
+# the @PluginMethod entry points are present in the DEX.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Capacitor invokes @PluginMethod methods via reflection. The plugin class is
+# registered by Class reference (kept automatically) but its methods are not.
+-keep public class com.findback.app.vlm.LocalVlmPlugin {
+  @com.getcapacitor.PluginMethod <methods>;
+}
+-keep @interface com.getcapacitor.PluginMethod
+-keep @interface com.getcapacitor.Plugin
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Gson persists these records via reflection; renaming a field corrupts state.
+-keep class com.findback.app.vlm.ModelStateRecord { *; }
+-keepclassmembers class com.findback.app.vlm.ModelStateRecord { *; }
+-keep class com.findback.app.vlm.InstalledFileRecord { *; }
+-keepclassmembers class com.findback.app.vlm.InstalledFileRecord { *; }
+-keepclassmembers enum com.findback.app.vlm.VlmModelId { *; }
+-keepclassmembers enum com.findback.app.vlm.VlmState { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Manifest-referenced scheduler entry point (R8 keeps these automatically, but
+# pin it so a manifest refactor cannot silently drop the service).
+-keep public class com.findback.app.vlm.ModelDownloadJobService { *; }
