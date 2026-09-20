@@ -78,6 +78,7 @@ export interface VlmCapabilities {
   /** Installed APK identity, used to prove screenshots/tests came from the expected build. */
   appVersion?: string | null;
   buildGitSha?: string | null;
+  versionCode?: number | null;
 }
 
 /** Model state info. */
@@ -94,6 +95,8 @@ export interface VlmModelInfo {
 export interface VlmSettings {
   mode: BackendMode;
   wifiOnly?: boolean;
+  /** Explicit 500M CPU compatibility permission. Provisional default true. */
+  allowCpuFallback?: boolean;
 }
 
 /** Typed inference phases only — never fake 10/30/90% progress. */
@@ -330,8 +333,9 @@ export interface ModelStateRecord {
 /** Native plugin interface (wrapped payloads). */
 interface NativeVlmBridge {
   getCapabilities(): Promise<{ capabilities: VlmCapabilities }>;
-  getSettings(): Promise<{ mode: BackendMode }>;
+  getSettings(): Promise<{ mode: BackendMode; allowCpuFallback?: boolean }>;
   setMode(options: { mode: BackendMode }): Promise<void>;
+  setCpuFallback(options: { allowed: boolean }): Promise<void>;
   getModelStates(): Promise<{ models: VlmModelInfo[] }>;
   downloadModel(options: { modelId: VlmModelId; allowCellular?: boolean }): Promise<void>;
   pauseDownload(options: { modelId: VlmModelId }): Promise<void>;
@@ -357,6 +361,13 @@ export interface VlmBridge {
   getCapabilities(): Promise<VlmCapabilities>;
   getSettings(): Promise<VlmSettings>;
   setMode(mode: BackendMode): Promise<void>;
+  setCpuFallback(allowed: boolean): Promise<void>;
+  /**
+   * Notice from the most recent successful analyzeImage, or null. Set to the
+   * CPU compatibility message when native ran on the CPU backend so the UI
+   * can show it explicitly — fallback is never silent.
+   */
+  getLastBackendNotice(): string | null;
   getModelStates(): Promise<VlmModelInfo[]>;
   downloadModel(modelId: VlmModelId, options?: DownloadOptions): Promise<void>;
   waitForSettled(modelId: VlmModelId, options?: WaitForSettledOptions): Promise<VlmModelInfo>;
@@ -403,11 +414,19 @@ class WebVlmBridge implements VlmBridge {
   }
 
   async getSettings(): Promise<VlmSettings> {
-    return { mode: "AUTO" };
+    return { mode: "AUTO", allowCpuFallback: true };
   }
 
   async setMode(_mode: BackendMode): Promise<void> {
     this.refuse("setMode");
+  }
+
+  async setCpuFallback(_allowed: boolean): Promise<void> {
+    this.refuse("setCpuFallback");
+  }
+
+  getLastBackendNotice(): string | null {
+    return null;
   }
 
   async getModelStates(): Promise<VlmModelInfo[]> {
@@ -483,6 +502,7 @@ class WebVlmBridge implements VlmBridge {
 class AndroidVlmBridge implements VlmBridge {
   platform = "android" as const;
   private native: NativeVlmBridge;
+  private lastBackendNotice: string | null = null;
 
   constructor(native: NativeVlmBridge) {
     this.native = native;
@@ -495,11 +515,19 @@ class AndroidVlmBridge implements VlmBridge {
 
   async getSettings(): Promise<VlmSettings> {
     const result = await this.native.getSettings();
-    return { mode: result.mode };
+    return { mode: result.mode, allowCpuFallback: result.allowCpuFallback ?? true };
   }
 
   async setMode(mode: BackendMode): Promise<void> {
     await this.native.setMode({ mode });
+  }
+
+  async setCpuFallback(allowed: boolean): Promise<void> {
+    await this.native.setCpuFallback({ allowed });
+  }
+
+  getLastBackendNotice(): string | null {
+    return this.lastBackendNotice;
   }
 
   async getModelStates(): Promise<VlmModelInfo[]> {
@@ -564,7 +592,14 @@ class AndroidVlmBridge implements VlmBridge {
 
   async analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult> {
     // Never send modelId to native; native picks based on mode
-    return this.native.analyzeImage(options);
+    const result = await this.native.analyzeImage(options);
+    // Record an explicit compatibility notice when native ran on CPU so the
+    // UI can display it. Cleared on every call: a GPU run leaves no notice.
+    const cpuDiagnostic = (result.diagnostics ?? []).find((d) => /cpu compatibility mode/i.test(d)) ?? null;
+    this.lastBackendNotice = result.backend === "cpu"
+      ? (cpuDiagnostic ?? "GPU unavailable. Using CPU compatibility mode.")
+      : null;
+    return result;
   }
 
   async cancelInference(): Promise<void> {
