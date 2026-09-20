@@ -326,25 +326,53 @@ describe("fetchMe", () => {
 
 describe("checkUsername", () => {
   it("reports an unused username as available and returns it lowercased", async () => {
-    limitMock.mockResolvedValue({ data: [], error: null });
+    clientMock.rpc.mockResolvedValue({ data: true, error: null });
     const res = await checkUsername("  New_User  ");
     expect(res).toEqual({ available: true, normalized: "new_user" });
-    expect(clientMock.from).toHaveBeenCalledWith("users");
+    expect(clientMock.rpc).toHaveBeenCalledWith("is_username_available", {
+      p_username: "new_user",
+    });
+    expect(clientMock.from).not.toHaveBeenCalled();
   });
 
   it("reports an existing username as unavailable", async () => {
-    limitMock.mockResolvedValue({ data: [{ username: "taken" }], error: null });
+    clientMock.rpc.mockResolvedValue({ data: false, error: null });
     const res = await checkUsername("Taken");
     expect(res).toEqual({ available: false, normalized: "taken" });
   });
 
+  it("treats a null RPC result as unavailable (fail closed)", async () => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: null });
+    const res = await checkUsername("taken");
+    expect(res).toEqual({ available: false, normalized: "taken" });
+  });
+
+  it("falls back to the direct lookup only when the RPC is not deployed", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { code: "PGRST202", message: "Could not find the function is_username_available" },
+    });
+    limitMock.mockResolvedValue({ data: [{ username: "taken" }], error: null });
+    const res = await checkUsername("Taken");
+    expect(res).toEqual({ available: false, normalized: "taken" });
+    expect(clientMock.from).toHaveBeenCalledWith("users");
+  });
+
   it("queries case-insensitively with the lowercased value", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { code: "PGRST202", message: "missing is_username_available" },
+    });
     limitMock.mockResolvedValue({ data: [], error: null });
     await checkUsername("TaWsIf");
     expect(ilikeMock).toHaveBeenCalledWith("username", "tawsif");
   });
 
   it("escapes underscore so it is matched literally, not as a wildcard", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { code: "PGRST202", message: "missing is_username_available" },
+    });
     limitMock.mockResolvedValue({ data: [], error: null });
     await checkUsername("a_b");
     expect(ilikeMock).toHaveBeenCalledWith("username", "a\\_b");
@@ -353,17 +381,18 @@ describe("checkUsername", () => {
   it("rejects an invalid username without querying Supabase", async () => {
     await expect(checkUsername("ab")).rejects.toThrow("Invalid username");
     await expect(checkUsername("has space")).rejects.toThrow("Invalid username");
+    expect(clientMock.rpc).not.toHaveBeenCalled();
     expect(clientMock.from).not.toHaveBeenCalled();
     expect(ilikeMock).not.toHaveBeenCalled();
   });
 
   it("maps a Supabase error to ApiError", async () => {
-    limitMock.mockResolvedValue({ data: null, error: { message: "boom" } });
+    clientMock.rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
     await expect(checkUsername("valid_user")).rejects.toThrow("boom");
   });
 
   it("never calls the Node API", async () => {
-    limitMock.mockResolvedValue({ data: [], error: null });
+    clientMock.rpc.mockResolvedValue({ data: true, error: null });
     await checkUsername("valid_user");
     expect(fetchMock).not.toHaveBeenCalled();
   });
