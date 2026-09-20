@@ -41,6 +41,13 @@ class LocalVlmPlugin : Plugin() {
     private val activeDownloads = ConcurrentHashMap<VlmModelId, Job>()
     private var currentMode: BackendMode = BackendMode.AUTO
     private var eventCollector: Job? = null
+    /**
+     * Explicit CPU compatibility permission for 500M analysis. Provisional
+     * default ON; the beta device pass decides whether ON stays. CPU is
+     * attempted only when GPU engine initialization fails — never for bad
+     * input, cancelled work, or generation errors.
+     */
+    private var allowCpuFallback: Boolean = true
 
     // Single-resident warm engine lease (~60s idle TTL): the engine stays
     // loaded while the active report AI flow continues; each inference
@@ -61,6 +68,7 @@ class LocalVlmPlugin : Plugin() {
 
     // Engine instances (initialized on demand, re-initialized after model changes)
     private var engine500: VlmEngine500? = null
+    private var engine500IsCpu: Boolean = false
     private val engineLock = Any()
 
     private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
@@ -79,6 +87,21 @@ class LocalVlmPlugin : Plugin() {
     }
 
     /**
+     * True when the 500M model file is present on disk. Used to distinguish a
+     * vanished model (reject, no CPU attempt) from a GPU initialization
+     * failure (explicit CPU compatibility when allowed).
+     */
+    private fun modelFileExists500(): Boolean {
+        val manifest = MODEL_MANIFESTS.find { it.id == VlmModelId.SMOLVLM2_500M.wire } ?: return false
+        val spec = manifest.files.firstOrNull() ?: return false
+        return try {
+            requireStore().finalFile(manifest, spec).exists()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * Returns the resident 500M engine, creating and genuinely initializing
      * it when absent. Initialization failures close the failed construction
      * and yield null, so a half-built engine is never stored or handed to
@@ -86,16 +109,30 @@ class LocalVlmPlugin : Plugin() {
      * restart / warm-lease expiry). Creation races keep the resident and
      * close the spare. Heavy GPU init must run off the caller thread: all
      * call sites invoke this from a background coroutine or collector.
+     *
+     * @param useCpu request the explicit CPU compatibility engine instead of
+     * GPU. A resident engine built for the other backend is released first so
+     * GPU and CPU engines are never resident together.
      */
-    private fun initializeEngine500(): VlmEngine500? {
-        engine500?.let { return it }
+    private fun initializeEngine500(useCpu: Boolean = false): VlmEngine500? {
+        synchronized(engineLock) {
+            engine500?.let { resident ->
+                if (engine500IsCpu == useCpu) return resident
+                try {
+                    resident.release()
+                } catch (_: Exception) {
+                }
+                engine500 = null
+            }
+        }
         val context = getContext()
         val manifest = MODEL_MANIFESTS.find { it.id == VlmModelId.SMOLVLM2_500M.wire } ?: return null
         val modelFile = manifest.files.firstOrNull()?.let { spec ->
             requireStore().finalFile(manifest, spec)
         }?.takeIf { it.exists() } ?: return null
+        val backend = if (useCpu) VlmEngineBackend.CPU else VlmEngineBackend.GPU
         val fresh = acquireInitializedEngine(
-            create = { VlmEngine500(context, modelFile.absolutePath, context.cacheDir) },
+            create = { VlmEngine500(context, modelFile.absolutePath, context.cacheDir, backend) },
             initialize = { it.initialize() },
             close = { it.release() }
         ) ?: return null
@@ -109,6 +146,7 @@ class LocalVlmPlugin : Plugin() {
                 existing
             } else {
                 engine500 = fresh
+                engine500IsCpu = useCpu
                 fresh
             }
         }
@@ -117,6 +155,7 @@ class LocalVlmPlugin : Plugin() {
     private fun releaseEngine500() {
         engine500?.release()
         engine500 = null
+        engine500IsCpu = false
     }
 
     /**
@@ -170,6 +209,9 @@ class LocalVlmPlugin : Plugin() {
         // Restore persisted mode.
         val modeWire = requirePrefs().getString("mode", null)
         modeWire?.let { BackendMode.fromWire(it)?.let { currentMode = it } }
+        // Restore explicit CPU compatibility permission (default ON until the
+        // beta device pass measures CPU latency/memory and locks the default).
+        allowCpuFallback = requirePrefs().getBoolean("cpu_fallback_allowed", true)
 
         // Restore persisted model states. Transient transfer states are
         // reconciled against the real platform schedulers (not an in-memory
@@ -261,7 +303,8 @@ class LocalVlmPlugin : Plugin() {
             gpuDelegateClassPresent = gpuDelegateClassPresent,
             runtimeVersion = runtimeVersion,
             appVersion = appVersionName(),
-            buildGitSha = buildGitSha()
+            buildGitSha = buildGitSha(),
+            versionCode = appVersionCode()
         )
         val result = JSObject()
         result.put("capabilities", capabilities.toJSObject())
@@ -271,8 +314,25 @@ class LocalVlmPlugin : Plugin() {
     @PluginMethod
     fun getSettings(call: PluginCall) {
         if (!ensureInitialized(call)) return
-        val settings = VlmSettings(currentMode)
+        val settings = VlmSettings(currentMode, allowCpuFallback)
         call.resolve(settings.toJSObject())
+    }
+
+    @PluginMethod
+    fun setCpuFallback(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        // getBoolean returns false when absent; require the explicit key so a
+        // malformed call cannot silently flip the default.
+        if (!call.data.has("allowed")) {
+            call.reject("Missing allowed")
+            return
+        }
+        allowCpuFallback = call.getBoolean("allowed", true) == true
+        requirePrefs().edit().putBoolean("cpu_fallback_allowed", allowCpuFallback).apply()
+        // A resident engine built for the other path is stale: drop it so the
+        // next analysis initializes the newly permitted backend.
+        if (!allowCpuFallback && engine500IsCpu) releaseEngine500()
+        call.resolve()
     }
 
     @PluginMethod
@@ -777,7 +837,8 @@ class LocalVlmPlugin : Plugin() {
 
         // Single-resident warm lease: Stage 1 -> Stage 2 stays warm, each
         // inference refreshes the ~60s TTL, model switch releases the old
-        // engine. No silent CPU fallback anywhere on this path.
+        // engine. CPU compatibility is explicit, never silent: it engages only
+        // when GPU engine initialization fails and the user allows it.
         reclaimExpiredLease()
         warmLease.acquire(modelId) { warmLease.releaseNow(); releaseEngine500() }
         scheduleLeaseExpiry()
@@ -802,15 +863,32 @@ class LocalVlmPlugin : Plugin() {
         scope.launch {
             var prepared: ImagePreparer.PreparedImage? = null
             try {
-                // Heavy GPU init runs here on IO, after the READY check and
-                // lease reclaim above. Null means the model file vanished or
-                // engine init failed: reject instead of throwing "Engine not
-                // initialized" out of analyze().
+                // Heavy engine init runs here on IO, after the READY check and
+                // lease reclaim above. Null means either the model file
+                // vanished (reject, no fallback) or GPU init failed (explicit
+                // CPU compatibility when allowed). Failures after a successful
+                // init — bad input, cancellation, generation errors — fail
+                // closed and never trigger a CPU retry.
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, phase = InferencePhase.LOADING_MODEL).toJSObject())
-                val engineInstance = initializeEngine500() ?: run {
-                    call.reject("Model not installed or not ready")
-                    notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
-                    return@launch
+                var engineInstance = initializeEngine500(useCpu = false)
+                var usedCpuFallback = false
+                if (engineInstance == null) {
+                    if (!modelFileExists500()) {
+                        call.reject("Model not installed or not ready")
+                        notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
+                        return@launch
+                    }
+                    if (!allowCpuFallback) {
+                        call.reject("GPU backend unavailable and CPU compatibility mode is off")
+                        notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
+                        return@launch
+                    }
+                    engineInstance = initializeEngine500(useCpu = true) ?: run {
+                        call.reject("Inference failed: CPU compatibility engine could not start")
+                        notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
+                        return@launch
+                    }
+                    usedCpuFallback = true
                 }
 
                 // Prepare image (temp file tracked for guaranteed cleanup).
@@ -846,9 +924,13 @@ class LocalVlmPlugin : Plugin() {
                 val result = AnalyzeResult(
                     text = resultText,
                     modelId = modelId,
-                    backend = EnginePolicy.backendName(),
+                    backend = engineInstance.backendName,
                     runtime = "0.16.0",
-                    diagnostics = emptyList()
+                    diagnostics = if (usedCpuFallback) {
+                        listOf("CPU compatibility mode: GPU backend unavailable on this runtime.")
+                    } else {
+                        emptyList()
+                    }
                 )
                 call.resolve(result.toJSObject())
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
@@ -1006,6 +1088,18 @@ class LocalVlmPlugin : Plugin() {
             getContext().getString(R.string.findback_build_git_sha).ifBlank { "unknown" }
         } catch (e: Exception) {
             "unknown"
+        }
+    }
+
+    private fun appVersionCode(): Int {
+        return try {
+            val context = getContext()
+            @Suppress("DEPRECATION")
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            @Suppress("DEPRECATION")
+            info.versionCode
+        } catch (e: Exception) {
+            0
         }
     }
 

@@ -12,17 +12,23 @@ import com.google.ai.edge.litertlm.Content
 import java.io.File
 
 /**
- * VLM Engine for SmolVLM2 500M model using LiteRT-LM with GPU backend.
- * Uses GPU for both backend and visionBackend. Creates a fresh conversation per image.
+ * VLM Engine for SmolVLM2 500M model using LiteRT-LM.
+ * GPU backend is preferred; CPU is the explicit compatibility path used only
+ * when GPU initialization fails and the user allows CPU fallback. Creates a
+ * fresh conversation per image.
  */
 class VlmEngine500(
     private val context: Context,
     private val modelPath: String,
-    private val cacheDir: File
+    private val cacheDir: File,
+    val engineBackend: VlmEngineBackend = VlmEngineBackend.GPU
 ) {
 
     private var engine: Engine? = null
     private var initialized = false
+
+    /** Backend name used for telemetry and result reporting. */
+    val backendName: String get() = engineBackend.wire
 
     /**
      * Initializes the engine. Must be called before analyze().
@@ -30,10 +36,11 @@ class VlmEngine500(
     fun initialize() {
         if (initialized) return
 
+        val backend = if (engineBackend == VlmEngineBackend.CPU) Backend.CPU() else Backend.GPU()
         val config = EngineConfig(
             modelPath = modelPath,
-            backend = Backend.GPU(),
-            visionBackend = Backend.GPU(),
+            backend = backend,
+            visionBackend = backend,
             audioBackend = null,
             maxNumTokens = 2048,
             maxNumImages = 1,
@@ -121,7 +128,7 @@ class VlmEngine500(
             diagnostics.add("Engine init failed: ${e.message}")
             return SelfTestOutcome(false, SelfTestFailure.MODEL_RUNTIME_ERROR, diagnostics.toList())
         }
-        diagnostics.add("Engine initialized with GPU backend")
+        diagnostics.add("Engine initialized with ${backendName} backend")
 
         if (imageUri == null) {
             // GPU init diagnostics only - no image, no READY_GPU

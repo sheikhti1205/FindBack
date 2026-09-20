@@ -59,6 +59,8 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inferenceRunning, setInferenceRunning] = useState(false);
+  /** Explicit CPU compatibility notice from the last successful analysis. */
+  const [cpuNotice, setCpuNotice] = useState<string | null>(null);
   /** Per-photo generation: stale responses after an image change are ignored. */
   const generation = useRef(0);
 
@@ -74,6 +76,7 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
     setInstruction("");
     setAnalysis(null);
     setError(null);
+    setCpuNotice(null);
     setBusy(false);
   }, [imageUri]);
 
@@ -101,6 +104,22 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
 
   const disabled = !imageUri || busy || inferenceRunning;
 
+  /**
+   * Reads the bridge's explicit CPU compatibility notice, if any. Missing on
+   * older mocks/web — treated as no notice. Canonical UI copy is fixed here
+   * so users always see the same sentence, never a raw backend diagnostic.
+   */
+  function readCpuNotice(): string | null {
+    try {
+      const bridge = getVlmBridge() as unknown as { getLastBackendNotice?: () => string | null };
+      const notice = typeof bridge.getLastBackendNotice === "function" ? bridge.getLastBackendNotice() : null;
+      if (notice && /cpu compatibility mode/i.test(notice)) return "GPU unavailable. Using CPU compatibility mode.";
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   function fail(err: unknown) {
     const isUnstructured = err instanceof VlmUnstructuredOutputError || (err instanceof Error && err.name === "VlmUnstructuredOutputError");
     const isGpuUnavailable = err instanceof Error && (err.message.includes("GPU_UNAVAILABLE") || err.message.includes("MODEL_UNAVAILABLE"));
@@ -118,11 +137,13 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
     const gen = ++generation.current;
     setBusy(true);
     setError(null);
+    setCpuNotice(null);
     setAnalysis(null);
     setPhase("discovering");
     try {
       const objects = await discoverObjectsLocally({ imageUri, mode: "AUTO" });
       if (generation.current !== gen) return;
+      setCpuNotice(readCpuNotice());
       if (objects.length === 0) {
         setSelections([]);
         setError("No clear object found — please fill the details manually.");
@@ -159,6 +180,7 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
     const gen = ++generation.current;
     setBusy(true);
     setError(null);
+    setCpuNotice(null);
     setPhase("generating");
     try {
       const result = await suggestForPrimaryLocally({
@@ -175,6 +197,7 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
       });
       if (generation.current !== gen) return;
       setAnalysis(result);
+      setCpuNotice(readCpuNotice());
       setPhase("done");
     } catch (err) {
       if (generation.current !== gen) return;
@@ -212,6 +235,12 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
   return (
     <section className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-3" aria-label="Local AI analysis">
       <p className="text-sm font-medium">Analyze with local AI</p>
+
+      {cpuNotice && (
+        <p role="status" className="rounded-m3-sm border border-outline-variant px-3 py-2 text-sm">
+          {cpuNotice}
+        </p>
+      )}
 
       {(phase === "idle" || phase === "discovering") && (
         <div className="flex flex-wrap gap-2">

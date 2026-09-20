@@ -179,7 +179,9 @@ data class VlmCapabilities(
     val gpuDelegateClassPresent: Boolean,
     val runtimeVersion: String?,
     val appVersion: String?,
-    val buildGitSha: String?
+    val buildGitSha: String?,
+    /** APK versionCode from the package manager; 0 when unreadable. */
+    val versionCode: Int = 0
 ) {
     fun toJSObject(): JSObject {
         val obj = JSObject()
@@ -196,6 +198,7 @@ data class VlmCapabilities(
         obj.put("runtimeVersion", runtimeVersion)
         obj.put("appVersion", appVersion)
         obj.put("buildGitSha", buildGitSha)
+        obj.put("versionCode", versionCode)
         return obj
     }
 }
@@ -204,13 +207,25 @@ data class VlmCapabilities(
  * Settings.
  */
 data class VlmSettings(
-    val mode: BackendMode
+    val mode: BackendMode,
+    val allowCpuFallback: Boolean = true
 ) {
     fun toJSObject(): JSObject {
         val obj = JSObject()
         obj.put("mode", mode.wire)
+        obj.put("allowCpuFallback", allowCpuFallback)
         return obj
     }
+}
+
+/**
+ * Engine execution backend for the 500M model. GPU is preferred; CPU is the
+ * explicit compatibility path used only when GPU initialization fails and the
+ * user allows it. Verification (self-test) always uses GPU.
+ */
+enum class VlmEngineBackend(val wire: String) {
+    GPU("gpu"),
+    CPU("cpu")
 }
 
 /**

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const native = vi.hoisted(() => ({
-  getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(),
+  getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), setCpuFallback: vi.fn(), getModelStates: vi.fn(),
   downloadModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), embedTexts: vi.fn(), runGpuSelfTest: vi.fn(),
   analyzeImage: vi.fn(), cancelInference: vi.fn(), release: vi.fn(), addListener: vi.fn(),
 }));
@@ -42,9 +42,34 @@ describe("vlmPlugin native payload unwrapping", () => {
     await expect(getVlmBridge().getCapabilities()).resolves.toMatchObject({ freeAppStorageMb: 1024 });
   });
 
-  it("unwraps getSettings {mode}", async () => {
+  it("unwraps getSettings {mode} with CPU fallback defaulting on", async () => {
     native.getSettings.mockResolvedValue({ mode: "QUALITY" });
-    await expect(getVlmBridge().getSettings()).resolves.toEqual({ mode: "QUALITY" });
+    await expect(getVlmBridge().getSettings()).resolves.toEqual({ mode: "QUALITY", allowCpuFallback: true });
+  });
+
+  it("passes through an explicit CPU fallback opt-out", async () => {
+    native.getSettings.mockResolvedValue({ mode: "AUTO", allowCpuFallback: false });
+    await expect(getVlmBridge().getSettings()).resolves.toEqual({ mode: "AUTO", allowCpuFallback: false });
+  });
+
+  it("sends setCpuFallback with the explicit choice", async () => {
+    native.setCpuFallback.mockResolvedValue(undefined);
+    await getVlmBridge().setCpuFallback(false);
+    expect(native.setCpuFallback).toHaveBeenCalledWith({ allowed: false });
+  });
+
+  it("records no backend notice after a GPU run", async () => {
+    native.analyzeImage.mockResolvedValue({ text: "{}", modelId: "smolvlm2-500m", backend: "gpu", runtime: "0.16.0", diagnostics: [] });
+    const bridge = getVlmBridge();
+    await bridge.analyzeImage({ mode: "AUTO", imageUri: "content://x", instruction: "i", maxOutputTokens: 224, temperature: 0.1 });
+    expect(bridge.getLastBackendNotice()).toBeNull();
+  });
+
+  it("records an explicit notice after a CPU compatibility run", async () => {
+    native.analyzeImage.mockResolvedValue({ text: "{}", modelId: "smolvlm2-500m", backend: "cpu", runtime: "0.16.0", diagnostics: ["CPU compatibility mode: GPU backend unavailable on this runtime."] });
+    const bridge = getVlmBridge();
+    await bridge.analyzeImage({ mode: "AUTO", imageUri: "content://x", instruction: "i", maxOutputTokens: 224, temperature: 0.1 });
+    expect(bridge.getLastBackendNotice()).toMatch(/cpu compatibility mode/i);
   });
 
   it("unwraps getModelStates {models}", async () => {

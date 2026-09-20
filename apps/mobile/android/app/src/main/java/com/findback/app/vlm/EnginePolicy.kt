@@ -1,13 +1,14 @@
 package com.findback.app.vlm
 
 /**
- * Engine policy for the 500M GPU backend.
- * Hardcodes GPU as the only backend; no CPU fallback path.
+ * Engine policy for 500M verification. GPU is the only verification backend:
+ * the self-test never runs on CPU. (Analysis may use the explicit CPU
+ * compatibility path; each engine reports its own backend name.)
  */
 object EnginePolicy {
     /**
-     * Returns the backend name used for telemetry and result reporting.
-     * Always "gpu" for the 500M engine.
+     * Returns the backend name used for GPU verification telemetry.
+     * Always "gpu": verification never falls back to CPU.
      */
     fun backendName(): String = "gpu"
 

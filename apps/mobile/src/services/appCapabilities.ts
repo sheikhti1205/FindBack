@@ -8,10 +8,17 @@ import packageJson from "../../package.json";
  * (`supabase/functions/ai-help/capabilities.ts`) — bump CAPABILITIES_VERSION
  * in both files whenever shipped UI behavior changes.
  */
-export const CAPABILITIES_VERSION = "1.2.0";
+export const CAPABILITIES_VERSION = "1.3.0";
 
 /** Generated from apps/mobile/package.json (the canonical SemVer source) — never a duplicated literal. */
 export const APP_VERSION: string = packageJson.version;
+
+/**
+ * Expected backend/schema capability of this build (static build metadata).
+ * Matches the newest data-contract migration prefix the app was built
+ * against; shown in Profile → About for release diagnosis.
+ */
+export const BACKEND_SCHEMA_VERSION = "20260919";
 
 export interface AppCapabilities {
   version: string;
@@ -71,7 +78,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Photo AI runs fully on-device; the photo is never sent to any server for analysis.",
   ],
   modelModes: [
-    "There is no inference-mode selector: the installed 500M model always runs on the GPU, with no CPU fallback.",
+    "There is no inference-mode selector: the installed 500M model prefers GPU. If GPU initialization fails and Allow CPU compatibility mode is on, analysis runs on CPU with an explicit on-screen notice — never silently.",
     "Only states shown in Offline AI are real: installed, downloading with true bytes, GPU-tested ready, or an error.",
   ],
   modelDownload: [

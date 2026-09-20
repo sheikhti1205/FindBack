@@ -2,10 +2,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { analyzeMock, discoverMock, suggestMock, inferenceListener } = vi.hoisted(() => ({
+const { analyzeMock, discoverMock, suggestMock, inferenceListener, noticeMock } = vi.hoisted(() => ({
   analyzeMock: vi.fn(),
   discoverMock: vi.fn(),
   suggestMock: vi.fn(),
+  noticeMock: vi.fn((): string | null => null),
   inferenceListener: { current: null as null | ((e: { state: string; phase?: string }) => void) },
 }));
 vi.mock("../services/vlm", () => ({
@@ -23,6 +24,7 @@ vi.mock("../services/vlmPlugin", () => ({
       return Promise.resolve(() => Promise.resolve());
     }),
     cancelInference: vi.fn().mockResolvedValue(undefined),
+    getLastBackendNotice: (...args: unknown[]) => (noticeMock as (...a: unknown[]) => string | null)(...args),
   }),
 }));
 
@@ -119,6 +121,27 @@ describe("VlmSuggestions multi-object flow", () => {
     );
     expect(screen.queryByText("keys")).toBeNull();
     expect(screen.getByRole("button", { name: /analyze photo/i })).toBeTruthy();
+  });
+
+  it("shows an explicit notice when analysis ran in CPU compatibility mode", async () => {
+    noticeMock.mockReturnValue("CPU compatibility mode: GPU backend unavailable on this runtime.");
+    try {
+      discoverMock.mockResolvedValue([{ objectName: "keys", positionHint: "left" }]);
+      renderSuggestions({ imageUri: "content://photo", onApply: vi.fn() });
+      fireEvent.click(screen.getByRole("button", { name: /analyze photo/i }));
+      expect((await screen.findByRole("status")).textContent).toContain("GPU unavailable. Using CPU compatibility mode.");
+    } finally {
+      noticeMock.mockReturnValue(null);
+    }
+  });
+
+  it("shows no compatibility notice after a normal GPU run", async () => {
+    noticeMock.mockReturnValue(null);
+    discoverMock.mockResolvedValue([{ objectName: "keys", positionHint: "left" }]);
+    renderSuggestions({ imageUri: "content://photo", onApply: vi.fn() });
+    fireEvent.click(screen.getByRole("button", { name: /analyze photo/i }));
+    await screen.findByText("keys");
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("treats a phase-bearing inference event as active and the terminal event as idle", async () => {

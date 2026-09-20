@@ -2,6 +2,7 @@ package com.findback.app.vlm
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -196,6 +197,17 @@ class VlmTypesTest {
     @Test fun vlmSettingsHoldsMode() {
         val settings = VlmSettings(BackendMode.FAST)
         assertEquals(BackendMode.FAST, settings.mode)
+        // Explicit CPU compatibility permission defaults on until the beta
+        // device pass measures CPU inference and locks the default.
+        assertTrue(settings.allowCpuFallback)
+        assertTrue(settings.toJSObject().getBoolean("allowCpuFallback"))
+        val optedOut = VlmSettings(BackendMode.AUTO, allowCpuFallback = false)
+        assertFalse(optedOut.toJSObject().getBoolean("allowCpuFallback"))
+    }
+
+    @Test fun engineBackendWires() {
+        assertEquals("gpu", VlmEngineBackend.GPU.wire)
+        assertEquals("cpu", VlmEngineBackend.CPU.wire)
     }
 
     @Test fun analyzeRequestHoldsAllFields() {
