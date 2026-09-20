@@ -1,11 +1,19 @@
 # Phase 9 — Release Hardening and Human/Agent Handoff
 
+> Status update (2026-09-20, `v0.1.0-beta.1` RC): the production backend is
+> Supabase (chosen — item 1 closed); GitHub Actions builds debug (`ci.yml`)
+> AND signed release artifacts (`release.yml` → APK + AAB + SHA256SUMS);
+> the release keystore exists (`CN=FindBack`, item 7 key part closed, app ID
+> `com.findback.app` fixed). Remaining human gates: items 4–6, 8–9, plus live
+> backend migration push and the `v0.1.0-beta.1` publish authorization.
+
 This phase starts after the Phase 8 checkpoint. The codebase already has all 24 teacher requirements represented, a passing web/API CI run, and a locally built debug APK. Phase 9 turns that implementation checkpoint into a reliable teacher-demo/release candidate.
 
 ## What the agent can complete autonomously
 
 - Keep lint, typecheck, API tests, mobile tests, and web build green.
-- Build the Android debug APK **locally** with `npm run apk` (GitHub Actions does not build the app).
+- Build the Android debug APK **locally** with `npm run apk`; signed beta
+  APK/AAB are built by GitHub Actions (`release.yml`), never locally for release.
 - Audit the Android manifest, SDK targets, Capacitor configuration, runtime permissions, network-security assumptions, and package metadata.
 - Add or improve automated tests for the required feature paths.
 - Harden local/demo provider abstractions without choosing a production provider.
@@ -15,14 +23,14 @@ This phase starts after the Phase 8 checkpoint. The codebase already has all 24 
 
 ## Human decisions / actions that should remain gated
 
-1. **Backend/cloud provider** — choose Supabase, Firebase, or another production backend.
+1. **Backend/cloud provider** — ✅ Supabase (hosted project; mobile talks only to it).
 2. **Email/phone verification provider** — requires external accounts, credentials, quotas, and possibly billing.
-3. **Cloud object storage** — requires a provider account/project and bucket/security-policy decisions.
+3. **Cloud object storage** — ✅ Supabase Storage (`findback-images`, owner-scoped `<uid>/` uploads).
 4. **LLM provider** — optional because the deterministic fallback already demonstrates the UI flow; a real provider requires an API key and cost/privacy decision.
 5. **Google Maps production setup** — if a production Maps API key or billing-backed API is required, the owner must configure it. The current embedded-map path remains usable for the minimum course requirement.
 6. **Crystal Reports `.rpt` file** — must be created/tested in SAP Crystal Reports on a compatible Windows machine with the required tooling.
-7. **Final Android application ID and signing key** — the owner must choose the final package identity and securely create/store the release keystore.
-8. **Physical-device acceptance test** — install the APK on at least one real Android phone and perform the teacher demo end-to-end.
+7. **Final Android application ID and signing key** — ✅ `com.findback.app`, release keystore `CN=FindBack` created and wired to `release.yml` secrets.
+8. **Physical-device acceptance test** — install the exact signed APK on the MT6895 phone and run the beta matrix before publish.
 9. **Production deployment URL** — choose hosting and configure DNS/HTTPS/environment variables if internet-hosted demonstration is desired.
 
 ## Release candidate acceptance checklist
