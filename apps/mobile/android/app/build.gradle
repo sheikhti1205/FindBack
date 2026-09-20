@@ -82,8 +82,25 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        // Release signing for the beta pipeline. The workflow decodes
+        // ANDROID_KEYSTORE_BASE64 to ANDROID_KEYSTORE_PATH before invoking
+        // Gradle. Referenced only when ANDROID_KEYSTORE_PASSWORD is set.
+        findbackRelease {
+            storeFile file(System.getenv("ANDROID_KEYSTORE_PATH") ?: "${projectDir}/release.keystore")
+            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("ANDROID_KEY_ALIAS")
+            keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+        }
+    }
     buildTypes {
         release {
+            // Signed only when the release pipeline provides credentials
+            // (ANDROID_KEYSTORE_PASSWORD et al). Local release builds stay
+            // unsigned instead of failing on missing secrets.
+            if (System.getenv("ANDROID_KEYSTORE_PASSWORD")) {
+                signingConfig signingConfigs.findbackRelease
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

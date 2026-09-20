@@ -1,0 +1,90 @@
+# FindBack — signed beta release build (APK + AAB + checksums).
+#
+# Triggers: manual dispatch or a version tag (v*). Produces the exact signed
+# artifacts the device matrix must test. This workflow NEVER creates the
+# GitHub Release itself — publishing v0.1.0-beta.1 as a pre-release is a
+# separate, explicitly authorized step after the matrix passes.
+#
+# Required repo configuration (all already wired except where noted):
+#   Variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY
+#   Secrets:   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+#              ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#   Environment `release` (protection rules configured in repo settings).
+
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  signed-beta:
+    name: Signed APK + AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: release
+    env:
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - name: Build shared package
+        run: npm run build -w @findback/shared
+      - name: Fetch pinned USE asset
+        run: node scripts/fetch-use-model.mjs
+      - name: Build mobile web dist (Capacitor webDir)
+        run: npm run build -w @findback/mobile
+        env:
+          CI: true
+      - name: Capacitor sync
+        run: npm run cap:sync -w @findback/mobile
+      - name: Restore release keystore
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_PATH"
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/findback-release.jks
+      - name: Signed assembleRelease + bundleRelease
+        run: cd apps/mobile/android && ./gradlew :app:assembleRelease :app:bundleRelease
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/findback-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Remove keystore material
+        if: always()
+        run: rm -f "${{ runner.temp }}/findback-release.jks"
+      - name: Strict APK scan (signed release APK)
+        run: npm run scan:apk -- --strict apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+      - name: Checksums + artifact names
+        run: |
+          cd apps/mobile/android/app/build/outputs
+          TAG="${GITHUB_REF_NAME:-local}"
+          cp apk/release/app-release.apk "FindBack-${TAG}.apk"
+          cp bundle/release/app-release.aab "FindBack-${TAG}.aab"
+          sha256sum "FindBack-${TAG}.apk" "FindBack-${TAG}.aab" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: findback-signed-${{ github.ref_name }}
+          path: |
+            apps/mobile/android/app/build/outputs/FindBack-*.apk
+            apps/mobile/android/app/build/outputs/FindBack-*.aab
+            apps/mobile/android/app/build/outputs/SHA256SUMS.txt
+          retention-days: 90
