@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { bridge, photo } = vi.hoisted(() => ({
-  bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), cancelInference: vi.fn().mockResolvedValue(undefined), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() },
+  bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), setCpuFallback: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), cancelInference: vi.fn().mockResolvedValue(undefined), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() },
   photo: {
     isNativeCameraAvailable: vi.fn(() => true),
     takePhoto: vi.fn(),
@@ -56,7 +56,7 @@ describe("OfflineAi", () => {
     await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm2-500m"));
   });
 
-  it("does not expose the 256M model or the FAST mode (no report runtime)", async () => {
+  it("shows the 256M model as experimental with no download or verify action", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
     bridge.getModelStates.mockResolvedValue([
@@ -67,12 +67,39 @@ describe("OfflineAi", () => {
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     await screen.findByRole("heading", { name: /SmolVLM2 500M/ });
-    expect(screen.queryByText(/256M/)).toBeNull();
+    expect(await screen.findByRole("heading", { name: /SmolVLM 256M/ })).toBeTruthy();
+    expect(screen.getByText(/not available for report generation in this beta/i)).toBeTruthy();
+    expect(screen.getByText(/current graph incompatible/i)).toBeTruthy();
+    // Fresh user: no download CTA and no storage management for the candidate.
+    expect(screen.queryByRole("button", { name: /download smolvlm 256m/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /delete on-device data/i })).toBeNull();
     expect(screen.queryByRole("radio", { name: "FAST" })).toBeNull();
     expect(screen.queryByRole("button", { name: /install both/i })).toBeNull();
     expect(screen.queryByRole("radiogroup", { name: /inference mode/i })).toBeNull();
     expect(screen.queryByRole("radio", { name: "AUTO" })).toBeNull();
     expect(screen.queryByRole("radio", { name: "QUALITY" })).toBeNull();
+  });
+
+  it("manages already-installed 256M storage without offering download", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([
+      { id: "smolvlm2-500m", state: "NOT_INSTALLED" },
+      { id: "smolvlm-256m", state: "INSTALLED_UNVERIFIED", sizeBytes: 288229208 },
+    ]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+      expect(await screen.findByText(/on-device data: 274\.9 mb/i)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /download smolvlm 256m/i })).toBeNull();
+      bridge.deleteModel.mockResolvedValue(undefined);
+      fireEvent.click(screen.getByRole("button", { name: /delete on-device data/i }));
+      await waitFor(() => expect(bridge.deleteModel).toHaveBeenCalledWith("smolvlm-256m"));
+    } finally {
+      confirmSpy.mockRestore();
+    }
   });
 
   it("has no AUTO/QUALITY inference selector and never calls setMode", async () => {
@@ -92,7 +119,22 @@ describe("OfflineAi", () => {
     expect(screen.getByRole("radio", { name: "Wi-Fi only" })).toBeTruthy();
   });
 
-  it("requires the native policy (model + headroom), not size x 1.2", async () => {
+  it("offers the CPU compatibility switch and persists the choice", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO", allowCpuFallback: false });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const toggle = await screen.findByRole("switch", { name: /allow cpu compatibility mode/i });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    bridge.setCpuFallback.mockResolvedValue(undefined);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(bridge.setCpuFallback).toHaveBeenCalledWith(true));
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("defaults CPU compatibility to on when native omits the setting", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
@@ -103,6 +145,8 @@ describe("OfflineAi", () => {
     expect(await screen.findByText(/needs 616\.8 mb free/i)).toBeTruthy();
     // Native requiredBytes wins when reported.
     expect(screen.queryByText(/433|432/)).toBeNull();
+    // Omitted CPU setting defaults to on.
+    expect(screen.getByRole("switch", { name: /allow cpu compatibility mode/i }).getAttribute("aria-checked")).toBe("true");
   });
 
   it("uses native requiredBytes when the plugin reports it", async () => {
@@ -214,7 +258,7 @@ describe("OfflineAi", () => {
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    expect(await screen.findByText(/won't fall back to the CPU/i)).toBeTruthy();
+    expect(await screen.findByText(/may still run on cpu with an explicit on-screen notice/i)).toBeTruthy();
     expect(screen.queryByText("GPU_UNAVAILABLE_ON_CURRENT_RUNTIME")).toBeNull();
   });
 
