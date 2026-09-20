@@ -32,6 +32,16 @@ function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+/**
+ * True when a Supabase error means "this RPC does not exist on the backend"
+ * (PostgREST PGRST202 / HTTP 404). Only this narrow case may use the legacy
+ * direct-lookup fallback in checkUsername.
+ */
+function isMissingFunctionError(error: { code?: string; status?: number; message?: string }): boolean {
+  if (error.code === "PGRST202" || error.status === 404) return true;
+  return (error.message ?? "").includes("is_username_available");
+}
+
 interface AuthErrorLike {
   message?: string;
   code?: string | undefined;
@@ -249,14 +259,26 @@ export async function checkUsername(
   const normalized = username.trim().toLowerCase();
   if (!USERNAME_PATTERN.test(normalized)) throw new ApiError("Invalid username", 400);
 
-  const { data, error } = await getSupabase()
+  // Primary: boolean availability RPC (post 20260920000000). It returns only
+  // {available}, so anon callers can neither read rows nor harvest usernames.
+  const { data, error } = await getSupabase().rpc("is_username_available", {
+    p_username: normalized,
+  });
+  if (!error) return { available: data === true, normalized };
+
+  // Fallback for backends where the RPC is not deployed yet: direct
+  // username-only lookup. Removed automatically once the RPC exists — any
+  // other error (permissions, network) still throws instead of falling back.
+  if (!isMissingFunctionError(error)) throw new ApiError(error.message, 400);
+
+  const { data: rows, error: lookupError } = await getSupabase()
     .from("users")
     .select("username")
     .ilike("username", escapeLikePattern(normalized))
     .limit(1);
-  if (error) throw new ApiError(error.message, 400);
+  if (lookupError) throw new ApiError(lookupError.message, 400);
 
-  return { available: !data || data.length === 0, normalized };
+  return { available: !rows || rows.length === 0, normalized };
 }
 
 export interface AiHelpMessage {
