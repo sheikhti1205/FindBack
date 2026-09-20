@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useState } from "react";
-import { CheckCircle2, LogOut, ShieldQuestion, FileStack, Cpu } from "lucide-react";
+import { CheckCircle2, LogOut, ShieldQuestion, FileStack, Cpu, Info } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { Segmented } from "../components/Segmented";
@@ -68,6 +68,13 @@ export function Profile() {
         >
           <Cpu size={18} aria-hidden />
           Offline AI settings
+        </Link>
+        <Link
+          to="/about"
+          className="flex min-h-[48px] items-center gap-3 rounded-m3-md border border-outline-variant px-4 text-sm font-medium hover:bg-surface-container"
+        >
+          <Info size={18} aria-hidden />
+          About
         </Link>
       </nav>
 
