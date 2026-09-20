@@ -177,7 +177,9 @@ data class VlmCapabilities(
      * presence only — never LiteRT-LM runtime availability (audit #26).
      */
     val gpuDelegateClassPresent: Boolean,
-    val runtimeVersion: String?
+    val runtimeVersion: String?,
+    val appVersion: String?,
+    val buildGitSha: String?
 ) {
     fun toJSObject(): JSObject {
         val obj = JSObject()
@@ -192,6 +194,8 @@ data class VlmCapabilities(
         obj.put("freeAppStorageMb", freeAppStorageMb)
         obj.put("gpuDelegateClassPresent", gpuDelegateClassPresent)
         obj.put("runtimeVersion", runtimeVersion)
+        obj.put("appVersion", appVersion)
+        obj.put("buildGitSha", buildGitSha)
         return obj
     }
 }

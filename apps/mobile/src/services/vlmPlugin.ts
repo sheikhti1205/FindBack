@@ -75,6 +75,9 @@ export interface VlmCapabilities {
   /** Whether the litert-gpu delegate class ships in the APK (class presence only, never runtime availability). */
   gpuDelegateClassPresent: boolean;
   runtimeVersion: string | null;
+  /** Installed APK identity, used to prove screenshots/tests came from the expected build. */
+  appVersion?: string | null;
+  buildGitSha?: string | null;
 }
 
 /** Model state info. */

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import com.findback.app.R
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -258,7 +259,9 @@ class LocalVlmPlugin : Plugin() {
             memoryClassMb = memoryClassMb,
             freeAppStorageMb = freeAppStorageMb,
             gpuDelegateClassPresent = gpuDelegateClassPresent,
-            runtimeVersion = runtimeVersion
+            runtimeVersion = runtimeVersion,
+            appVersion = appVersionName(),
+            buildGitSha = buildGitSha()
         )
         val result = JSObject()
         result.put("capabilities", capabilities.toJSObject())
@@ -993,6 +996,14 @@ class LocalVlmPlugin : Plugin() {
                 context.packageManager.getPackageInfo(context.packageName, 0)
             }
             info.versionName ?: "unknown"
+        } catch (e: Exception) {
+            "unknown"
+        }
+    }
+
+    private fun buildGitSha(): String {
+        return try {
+            getContext().getString(R.string.findback_build_git_sha).ifBlank { "unknown" }
         } catch (e: Exception) {
             "unknown"
         }

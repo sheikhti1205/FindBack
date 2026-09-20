@@ -41,6 +41,24 @@ def gitVersionCode() {
     }
 }
 
+def gitCommitSha() {
+    def override = System.getenv("GIT_SHA_OVERRIDE")
+    if (override != null && !override.trim().isEmpty()) {
+        return override.trim()
+    }
+    try {
+        def out = new ByteArrayOutputStream()
+        exec {
+            commandLine "git", "rev-parse", "--short=12", "HEAD"
+            standardOutput = out
+            workingDir = rootProject.projectDir
+        }
+        return out.toString().trim()
+    } catch (Exception e) {
+        return "unknown"
+    }
+}
+
 android {
     namespace = "com.findback.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -56,6 +74,7 @@ android {
         // shallow CI clones that cannot count history.
         versionCode gitVersionCode()
         versionName appVersionName()
+        resValue "string", "findback_build_git_sha", gitCommitSha()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -88,6 +107,7 @@ tasks.register("printVersionInfo") {
     doLast {
         println("versionName=${appVersionName()}")
         println("versionCode=${gitVersionCode()}")
+        println("buildGitSha=${gitCommitSha()}")
     }
 }
 
