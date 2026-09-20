@@ -1,0 +1,56 @@
+# FindBack — manual backend deploy (migrations + ai-help Edge Function).
+#
+# Kept separate from both CI and the app release pipeline on purpose: backend
+# mutations are explicit, one at a time, with live verification after each.
+# Manual dispatch only — never on push, never on a tag.
+#
+# Required secrets: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF (or the
+# SUPABASE_PROJECT_REF variable), SUPABASE_DB_PASSWORD.
+# After every run, verify live:
+#   anon GET /rest/v1/users?select=*  -> 401
+#   anon POST /rest/v1/rpc/is_username_available -> true/false boolean only
+
+name: Backend deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_migrations:
+        description: "Push pending supabase/migrations (db push)"
+        type: boolean
+        default: true
+      deploy_ai_help:
+        description: "Deploy the ai-help Edge Function"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Migrations + ai-help
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: backend
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Push pending migrations
+        if: inputs.push_migrations
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          supabase db push
+      - name: Deploy ai-help
+        if: inputs.deploy_ai_help
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          supabase functions deploy ai-help
