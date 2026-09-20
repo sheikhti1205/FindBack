@@ -8,9 +8,10 @@
 # passes.
 #
 # Required repo configuration:
-#   Variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY
-#   Secrets:   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
-#              ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#   Variables: VITE_SUPABASE_URL
+#   Secrets:   VITE_SUPABASE_PUBLISHABLE_KEY (secret — not a Variable — so its
+#              value is masked in logs), ANDROID_KEYSTORE_BASE64,
+#              ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
 #   Environment `release` (protection rules configured in repo settings).
 
 name: Release
@@ -89,7 +90,7 @@ jobs:
     environment: release
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -142,10 +143,16 @@ jobs:
         run: rm -f "${{ runner.temp }}/findback-release.jks"
       - name: Verify APK signature (V2, CN=FindBack)
         run: |
-          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | head -1)
-          "$APKSIGNER" verify --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk > /tmp/apksig.txt
-          grep -q 'Verified using v2 scheme.*true' /tmp/apksig.txt
-          grep -q 'certificate DN: CN=FindBack' /tmp/apksig.txt
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          [ -n "$SDK" ] || { echo "no Android SDK (ANDROID_HOME/ANDROID_SDK_ROOT empty)"; exit 1; }
+          APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -name apksigner -type f | sort | tail -1)
+          [ -n "$APKSIGNER" ] || { echo "apksigner not found under $SDK/build-tools"; exit 1; }
+          echo "using $APKSIGNER"
+          # apksigner exit code is the real check; digest lines are redacted, only DN is echoed.
+          "$APKSIGNER" verify --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+            | sed -E 's/(digest:).*/\1 <redacted>/' | tee /tmp/apksig.txt
+          grep -q 'Verified using v2 scheme.*true' /tmp/apksig.txt || { echo "V2 signature missing"; exit 1; }
+          grep -q 'certificate DN: CN=FindBack' /tmp/apksig.txt || { echo "signer is not CN=FindBack"; exit 1; }
           echo "signature verified: V2, CN=FindBack"
       - name: Strict APK scan (signed release APK)
         run: npm run scan:apk -- --strict apps/mobile/android/app/build/outputs/apk/release/app-release.apk
