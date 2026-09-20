@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
 import { BackButton } from "../components/BackButton";
-import { getModelAction, getVlmBridge } from "../services/vlmPlugin";
+import { getModelAction, getVlmBridge, isInstalledState } from "../services/vlmPlugin";
 import { chooseFromGallery, isCancellation, isNativeCameraAvailable, takePhoto, toNativeImageUri } from "../services/photo";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
@@ -65,7 +65,7 @@ function shortBuildSha(sha: string | null | undefined): string | null {
 /** Turns native error codes into plain language; raw enums must never reach users. */
 const ERROR_LABELS: Record<string, string> = {
   GPU_UNAVAILABLE_ON_CURRENT_RUNTIME:
-    "This phone's GPU can't run this model, and the app won't fall back to the CPU.",
+    "This phone's GPU can't run this model. If CPU compatibility mode is allowed, analysis may still run on CPU with an explicit on-screen notice.",
   DOWNLOAD_FAILED: "The download failed. Resume to continue.",
   HASH_MISMATCH: "The downloaded data didn't match the expected file.",
   INSUFFICIENT_STORAGE: "Not enough free storage.",
@@ -143,6 +143,61 @@ function fallbackRequiredBytes(sizeMb: number): number {
 
 /** Only models that can actually generate a report are downloadable. */
 const EXPOSED_MODELS: VlmModelId[] = ["smolvlm2-500m"];
+
+/**
+ * Experimental candidates: visible and registered, but with no proven
+ * complete generation path in this beta — hence no download/verify actions.
+ * Storage management appears only when files already exist on-device.
+ */
+const EXPERIMENTAL_MODELS: VlmModelId[] = ["smolvlm-256m"];
+
+function ExperimentalModelCard({
+  modelId,
+  info,
+  onDelete,
+}: {
+  modelId: VlmModelId;
+  info: VlmModelInfo;
+  onDelete: (modelId: VlmModelId) => void;
+}) {
+  const spec = MODEL_SPECS[modelId];
+  const installed = isInstalledState(info.state);
+  return (
+    <div role="listitem" aria-label={`${spec.label} (experimental)`} className="w-full min-w-0 overflow-x-hidden border border-outline-variant rounded-xl p-4 bg-surface">
+      <div className="flex min-w-0 flex-col gap-2">
+        <div className="min-w-0">
+          <h3 className="min-w-0 break-words font-medium text-base">{spec.label}</h3>
+          <p className="min-w-0 break-words text-xs text-on-surface-variant">Fast-model candidate</p>
+        </div>
+        <p className="min-w-0 break-words text-sm">Current status: Not available for report generation in this beta.</p>
+        <p className="min-w-0 break-words text-sm text-on-surface-variant">NPU test on this device: current graph incompatible.</p>
+        <details className="min-w-0 break-words text-xs text-on-surface-variant">
+          <summary className="cursor-pointer">Technical details</summary>
+          <dl className="mt-1 min-w-0 space-y-0.5 break-words">
+            <div className="min-w-0"><dt className="inline font-medium">Source: </dt><dd className="inline min-w-0 break-all">{spec.sourceRepo}</dd></div>
+            <div className="min-w-0"><dt className="inline font-medium">Revision: </dt><dd className="inline min-w-0 break-all">{spec.revision}</dd></div>
+            <div className="min-w-0"><dt className="inline font-medium">Runtime: </dt><dd className="inline min-w-0 break-all">{spec.runtime}</dd></div>
+            <div className="min-w-0"><dt className="inline font-medium">NPU probe: </dt><dd className="inline min-w-0 break-words">FAIL — unsupported RSQRT/REDUCE_SUM ops; KV-cache allocation failure during Neuron compilation.</dd></div>
+          </dl>
+        </details>
+        {installed ? (
+          <div className="flex min-w-0 flex-col gap-2">
+            {typeof info.sizeBytes === "number" && (
+              <p className="min-w-0 break-words text-xs text-on-surface-variant">On-device data: {formatBytes(info.sizeBytes)}</p>
+            )}
+            <button
+              onClick={() => onDelete(modelId)}
+              className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-error text-error rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+            >
+              <Trash2 size={14} aria-hidden className="shrink-0" />
+              <span className="min-w-0 break-words">Delete on-device data</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 const WIFI_PREF_KEY = "findback:offline-ai:wifi-only";
 
@@ -418,6 +473,7 @@ export function OfflineAi() {
   const bridge = getVlmBridge();
   const [capabilities, setCapabilities] = useState<VlmCapabilities | null>(null);
   const [wifiOnly, setWifiOnly] = useState(loadWifiOnly);
+  const [allowCpuFallback, setAllowCpuFallback] = useState(true);
   const [modelStates, setModelStates] = useState<VlmModelInfo[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressEvent | null>(null);
   const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId; downloadBytes: number; requiredBytes: number } | null>(null);
@@ -464,13 +520,15 @@ export function OfflineAi() {
     // Capabilities and model states fail independently (process death, storage).
     // allSettled: one rejection must neither blank the row nor wipe the other.
     void (async () => {
-      const [caps, states] = await Promise.allSettled([
+      const [caps, states, settings] = await Promise.allSettled([
         bridge.getCapabilities(),
         bridge.getModelStates(),
+        bridge.getSettings(),
       ]);
       if (!mounted) return;
       if (caps.status === "fulfilled") setCapabilities(caps.value);
       if (states.status === "fulfilled") setModelStates(states.value);
+      if (settings.status === "fulfilled") setAllowCpuFallback(settings.value.allowCpuFallback ?? true);
     })();
 
     const offProgress = bridge.onDownloadProgress((event) => {
@@ -531,6 +589,19 @@ export function OfflineAi() {
       await fn();
     } catch (err) {
       if (mountedRef.current) setActionError(actionErrorMessage(err));
+    }
+  };
+
+  const handleToggleCpuFallback = async () => {
+    const next = !allowCpuFallback;
+    setAllowCpuFallback(next);
+    try {
+      await bridge.setCpuFallback(next);
+    } catch (err) {
+      if (mountedRef.current) {
+        setAllowCpuFallback(!next);
+        setActionError(actionErrorMessage(err));
+      }
     }
   };
 
@@ -638,7 +709,9 @@ export function OfflineAi() {
       <section className="px-4 space-y-4" aria-labelledby="network-heading">
         <h2 id="network-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Downloads</h2>
         <p className="text-xs text-on-surface-variant">
-          Only a GPU-verified model runs analysis — there is no silent CPU fallback. The
+          Only a GPU-verified model runs analysis. GPU is preferred; if GPU
+          initialization fails and CPU compatibility mode is allowed, analysis
+          runs on CPU with an explicit on-screen notice — never silently. The
           SmolVLM2 500M model is the only downloadable model.
         </p>
         <div className="flex gap-2" role="radiogroup" aria-label="Download network">
@@ -663,6 +736,30 @@ export function OfflineAi() {
           ))}
         </div>
         <p className="text-xs text-on-surface-variant">Wi-Fi only is the default; cellular needs explicit opt-in. Your choice is kept.</p>
+      </section>
+
+      <section className="px-4 space-y-2" aria-labelledby="inference-heading">
+        <h2 id="inference-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Inference</h2>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={allowCpuFallback}
+          aria-label="Allow CPU compatibility mode"
+          onClick={() => void handleToggleCpuFallback()}
+          className="flex min-h-[48px] w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-outline-variant px-3 py-2 text-left"
+        >
+          <span className="min-w-0">
+            <span className="block min-w-0 break-words text-sm font-medium">Allow CPU compatibility mode</span>
+            <span className="block min-w-0 break-words text-xs text-on-surface-variant">
+              {allowCpuFallback
+                ? "On: if the GPU can't start, analysis may run on CPU with an explicit notice."
+                : "Off: if the GPU can't start, analysis is unavailable and manual reporting remains."}
+            </span>
+          </span>
+          <span aria-hidden className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${allowCpuFallback ? "bg-on-surface text-surface" : "border border-outline-variant text-on-surface-variant"}`}>
+            {allowCpuFallback ? "On" : "Off"}
+          </span>
+        </button>
       </section>
 
       <section className="px-4 space-y-4" aria-labelledby="models-heading">
@@ -708,6 +805,26 @@ export function OfflineAi() {
                 onResumeDownload={handleResumeDownload}
                 onRepair={handleRepair}
                 downloadProgress={downloadProgress}
+              />
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="px-4 space-y-4" aria-labelledby="experimental-heading">
+        <div className="min-w-0">
+          <h2 id="experimental-heading" className="break-words text-sm font-medium text-on-surface-variant uppercase tracking-wide">Experimental models</h2>
+          <p className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">Candidates under evaluation — not report backends in this beta.</p>
+        </div>
+        <div className="space-y-3" role="list" aria-label="Experimental models">
+          {EXPERIMENTAL_MODELS.map((modelId) => {
+            const info = modelStates.find((m) => m.id === modelId) ?? { id: modelId, state: "NOT_INSTALLED" as VlmState };
+            return (
+              <ExperimentalModelCard
+                key={modelId}
+                modelId={modelId}
+                info={info}
+                onDelete={handleDelete}
               />
             );
           })}
