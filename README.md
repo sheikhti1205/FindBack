@@ -21,8 +21,8 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 | Database | Supabase PostgreSQL (Data API) in production; SQLite `node:sqlite` for tests/local |
 | Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
 | Storage | Supabase Storage (public `findback-images` bucket) — the app normalizes images on-device and uploads directly under its own `<uid>/` folder (owner-scoped RLS); local uploads dir for tests/local |
-| AI | Supabase Edge Function `ai-help` (authenticated) → OpenAI-compatible HTTP provider when secrets are set, deterministic fallback otherwise; **on-device: local sentence embeddings (cosine top-3, no vector DB) + LiteRT-LM/SmolVLM2 VLM on GPU delegate (no CPU fallback)** |
-| ML | No bundled image classifier (legacy MobileNet was retired); **on-device text embeddings (Universal Sentence Encoder, cosine top-3) + SmolVLM2 VLM via LiteRT GPU delegate, no CPU fallback** |
+| AI | Supabase Edge Function `ai-help` (authenticated) → OpenAI-compatible HTTP provider when secrets are set, deterministic fallback otherwise; **on-device: local sentence embeddings (cosine top-3, no vector DB) + LiteRT-LM/SmolVLM2 VLM (GPU preferred, explicit user-controlled CPU compatibility mode)** |
+| ML | No bundled image classifier (legacy MobileNet was retired); **on-device text embeddings (Universal Sentence Encoder, cosine top-3) + SmolVLM2 VLM via LiteRT (GPU preferred, explicit CPU compatibility mode)** |
 | CI | GitHub Actions |
 
 ## Repo layout
@@ -70,8 +70,9 @@ profile only — never email or phone.
 **On-device AI (no network):** the create-report screen runs local sentence
 embeddings (Universal Sentence Encoder via TF.js/WASM) for "Possible Matches"
 (top-3 cosine similarity, never a probability, no vector DB, no server AI) and
-a local VLM (LiteRT-LM / SmolVLM2 on the GPU delegate, **no CPU fallback by
-policy**) for "Generate report". The Help Assistant (Edge Function `ai-help`)
+a local VLM (LiteRT-LM / SmolVLM2, GPU preferred with an explicit,
+user-controlled CPU compatibility mode as a clearly labeled fallback) for
+"Generate report". The Help Assistant (Edge Function `ai-help`)
 remains available as a secondary fallback. Runtime GPU proof and 256M readiness
 are **BLOCKED on the ARM64 phone pass** and must not be claimed from a host
 `x86_64` build.

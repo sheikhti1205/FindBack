@@ -1,11 +1,13 @@
 # FindBack — signed beta release build (APK + AAB + checksums).
 #
-# Triggers: manual dispatch or a version tag (v*). Produces the exact signed
-# artifacts the device matrix must test. This workflow NEVER creates the
-# GitHub Release itself — publishing v0.1.0-beta.1 as a pre-release is a
-# separate, explicitly authorized step after the matrix passes.
+# Triggers: manual dispatch or a version tag (v*). The `gate` job reruns the
+# full CI gate on the exact release commit; the `signed-beta` job then
+# produces the exact signed artifacts the device matrix must test. This
+# workflow NEVER creates the GitHub Release itself — publishing v0.1.0-beta.1
+# as a pre-release is a separate, explicitly authorized step after the matrix
+# passes.
 #
-# Required repo configuration (all already wired except where noted):
+# Required repo configuration:
 #   Variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY
 #   Secrets:   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
 #              ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
@@ -22,10 +24,68 @@ permissions:
   contents: read
 
 jobs:
+  gate:
+    name: Full release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - name: Build shared package (types for api/mobile)
+        run: npm run build -w @findback/shared
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Secret scan
+        run: npm run scan:secrets
+      - name: API tests
+        run: npm test -w @findback/api
+      - name: Mobile tests
+        run: npm test -w @findback/mobile
+      - name: Fetch pinned USE asset
+        run: node scripts/fetch-use-model.mjs
+      - name: Build mobile web dist (Capacitor webDir)
+        run: npm run build -w @findback/mobile
+        env:
+          CI: true
+      - name: Capacitor sync
+        run: npm run cap:sync -w @findback/mobile
+      - name: Android JVM tests + debug APK
+        run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
+      - name: Docker build & health check
+        run: |
+          docker build -t findback:release-gate .
+          docker run -d --name findback-gate -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:release-gate
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/health >/dev/null; then
+              echo "container healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "container did not become healthy"
+          docker logs findback-gate || true
+          exit 1
+      - name: Container logs
+        if: always()
+        run: docker logs findback-gate 2>/dev/null || true
+
   signed-beta:
     name: Signed APK + AAB
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: gate
     environment: release
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
@@ -43,6 +103,8 @@ jobs:
           distribution: temurin
           java-version: "21"
       - run: npm ci
+      - name: Strict release config preflight
+        run: node scripts/check-release-config.mjs
       - name: Build shared package
         run: npm run build -w @findback/shared
       - name: Fetch pinned USE asset
@@ -51,6 +113,15 @@ jobs:
         run: npm run build -w @findback/mobile
         env:
           CI: true
+      - name: Assert baked client config (no placeholders, no secrets)
+        run: |
+          JS=$(ls apps/mobile/dist/assets/index-*.js | head -1)
+          # The publishable key must appear baked into the bundle…
+          grep -c 'sb_publishable_' "$JS" | grep -qE '^[1-9]' || { echo "publishable key missing from bundle"; exit 1; }
+          # …and the "-" placeholder from run 35531815290 must never recur.
+          if grep -q 'supabase\.co[^"]*","-"' "$JS"; then echo "placeholder key baked into bundle"; exit 1; fi
+          # Only counts/shapes are echoed — never key material.
+          echo "bundle config assertion passed ($(basename "$JS"))"
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Restore release keystore
@@ -69,6 +140,13 @@ jobs:
       - name: Remove keystore material
         if: always()
         run: rm -f "${{ runner.temp }}/findback-release.jks"
+      - name: Verify APK signature (V2, CN=FindBack)
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | head -1)
+          "$APKSIGNER" verify --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk > /tmp/apksig.txt
+          grep -q 'Verified using v2 scheme.*true' /tmp/apksig.txt
+          grep -q 'certificate DN: CN=FindBack' /tmp/apksig.txt
+          echo "signature verified: V2, CN=FindBack"
       - name: Strict APK scan (signed release APK)
         run: npm run scan:apk -- --strict apps/mobile/android/app/build/outputs/apk/release/app-release.apk
       - name: Checksums + artifact names
