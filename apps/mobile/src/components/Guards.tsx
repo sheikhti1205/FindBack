@@ -4,15 +4,17 @@ import { useAuth } from "../auth";
 import { Splash } from "../screens/Splash";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, booting } = useAuth();
-  if (booting) return <Splash />;
+  const { user, booting, bootError } = useAuth();
+  // An unreachable backend keeps the boot screen with Retry instead of
+  // dropping an unverified signed-out user at /signin.
+  if (booting || (bootError && !user)) return <Splash />;
   if (!user) return <Navigate to="/signin" replace />;
   return <>{children}</>;
 }
 
 export function GuestOnly({ children }: { children: ReactNode }) {
-  const { user, booting } = useAuth();
-  if (booting) return <Splash />;
+  const { user, booting, bootError } = useAuth();
+  if (booting || (bootError && !user)) return <Splash />;
   if (user) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
