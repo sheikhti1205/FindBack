@@ -280,6 +280,19 @@ describe("session lifecycle", () => {
     expect(u.id).toBe("u1");
     expect(getToken()).toBe("tok");
   });
+
+  it("restoreSession raises a timeout instead of hanging when the endpoint stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      clientMock.auth.getSession.mockReturnValue(new Promise(() => undefined));
+      const pending = restoreSession();
+      const assertion = expect(pending).rejects.toThrow("Session restore timed out");
+      await vi.advanceTimersByTimeAsync(12_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("fetchMe", () => {

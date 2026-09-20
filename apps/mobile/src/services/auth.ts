@@ -1,6 +1,8 @@
 import type { User } from "@supabase/supabase-js";
 import { getSupabase } from "./supabaseClient";
 import { ApiError, setToken } from "./session";
+import { BootTimeoutError, withTimeout } from "./timeout";
+import { recordBootEvent } from "./bootDiagnostics";
 import type { PublicUser } from "@findback/shared";
 
 /** Supabase signup with Confirm-email ON: account created, no session yet. */
@@ -13,6 +15,14 @@ export interface RegisterResult {
 const DUPLICATE_ACCOUNT_MESSAGE = "An account with these details already exists.";
 const RATE_LIMIT_MESSAGE = "Too many attempts. Please wait a moment and try again.";
 const INVALID_CODE_MESSAGE = "Invalid or expired verification code";
+
+/** Boot restore budget: local session read + validation. Never indefinite. */
+const SESSION_RESTORE_TIMEOUT_MS = 12_000;
+/** Boot profile budget after a session is confirmed. */
+const PROFILE_LOAD_TIMEOUT_MS = 15_000;
+
+/** Re-exported so boot UI can distinguish "unreachable" from "signed out". */
+export { BootTimeoutError };
 
 /** Same syntax/length the registration trigger enforces (^[A-Za-z0-9_]{3,20}$). */
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
@@ -184,10 +194,26 @@ export async function fetchMe(): Promise<PublicUser> {
 }
 
 export async function restoreSession(): Promise<PublicUser> {
-  const { data } = await getSupabase().auth.getSession();
+  // Bounded boot restore (Termux finding: endpoints can hang and freeze
+  // startup). A timeout throws BootTimeoutError and must NOT clear or destroy
+  // the stored session — the UI offers Retry instead of signing out.
+  recordBootEvent("session-restore-start");
+  const { data } = await withTimeout(
+    () => getSupabase().auth.getSession(),
+    SESSION_RESTORE_TIMEOUT_MS,
+    "Session restore timed out",
+  );
   if (!data.session) throw new ApiError("Session expired", 401);
   setToken(data.session.access_token);
-  return fetchMe();
+  recordBootEvent("session-restore-ok");
+  try {
+    const user = await withTimeout(fetchMe, PROFILE_LOAD_TIMEOUT_MS, "Profile load timed out");
+    recordBootEvent("profile-load-ok");
+    return user;
+  } catch (err) {
+    recordBootEvent("profile-load-failed", err instanceof Error ? err.name : "unknown");
+    throw err;
+  }
 }
 
 export async function logout(): Promise<void> {

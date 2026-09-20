@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { PublicUser } from "@findback/shared";
 import {
+  BootTimeoutError,
   fetchMe,
   login as apiLogin,
   logout as apiLogout,
@@ -36,6 +37,10 @@ interface AuthContextValue {
   user: PublicUser | null;
   /** True while we try to hydrate a stored session on boot. */
   booting: boolean;
+  /** Non-null when boot could not reach the backend (session kept, Retry offered). */
+  bootError: string | null;
+  /** Re-run the boot restore after a boot error. */
+  retryBoot: () => void;
   /** Email awaiting pending-signup verification (Supabase Confirm-email ON). */
   pendingEmail: string | null;
   login: (email: string, password: string) => Promise<PublicUser>;
@@ -60,16 +65,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<PublicUser | null>(null);
   const [pendingEmail, setPendingEmailState] = useState<string | null>(() => getPendingEmail());
   const [booting, setBooting] = useState(true);
+  const [bootError, setBootError] = useState<string | null>(null);
 
-  // Boot: restore a stored Supabase session.
-  useEffect(() => {
+  const runBoot = useCallback(() => {
     let cancelled = false;
-    (async () => {
+    setBooting(true);
+    setBootError(null);
+    void (async () => {
       try {
         const restored = await restoreSession();
         if (!cancelled) setUserState(restored);
-      } catch {
-        if (!cancelled) {
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof BootTimeoutError) {
+          // Backend unreachable: keep the stored session and user data, offer
+          // Retry. Never assume signed-out and never destroy the session here.
+          setBootError("unreachable");
+        } else {
           clearAllAuth();
           setPendingEmailState(null);
         }
@@ -81,6 +93,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // Boot: restore a stored Supabase session.
+  useEffect(() => runBoot(), [runBoot]);
 
   // Keep the token cache and user state in sync with Supabase Auth.
   useEffect(() => {
@@ -191,6 +206,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       booting,
+      bootError,
+      retryBoot: runBoot,
       pendingEmail,
       login,
       register,
@@ -203,6 +220,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [
       user,
       booting,
+      bootError,
+      runBoot,
       pendingEmail,
       login,
       register,
