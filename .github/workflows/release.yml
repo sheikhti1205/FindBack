@@ -149,7 +149,8 @@ jobs:
           [ -n "$APKSIGNER" ] || { echo "apksigner not found under $SDK/build-tools"; exit 1; }
           echo "using $APKSIGNER"
           # apksigner exit code is the real check; digest lines are redacted, only DN is echoed.
-          "$APKSIGNER" verify --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+          # NOTE: the "Verified using … scheme" lines require --verbose.
+          "$APKSIGNER" verify --verbose --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
             | sed -E 's/(digest:).*/\1 <redacted>/' | tee /tmp/apksig.txt
           grep -q 'Verified using v2 scheme.*true' /tmp/apksig.txt || { echo "V2 signature missing"; exit 1; }
           grep -q 'certificate DN: CN=FindBack' /tmp/apksig.txt || { echo "signer is not CN=FindBack"; exit 1; }
