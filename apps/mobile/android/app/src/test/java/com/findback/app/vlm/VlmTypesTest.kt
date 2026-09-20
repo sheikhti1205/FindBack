@@ -171,7 +171,9 @@ class VlmTypesTest {
             memoryClassMb = 256,
             freeAppStorageMb = 1024L,
             gpuDelegateClassPresent = true,
-            runtimeVersion = "0.16.0"
+            runtimeVersion = "0.16.0",
+            appVersion = "0.1.0",
+            buildGitSha = "3524a8f2c488"
         )
         assertEquals("arm64-v8a", caps.abi)
         assertEquals("14", caps.androidVersion)
@@ -184,6 +186,11 @@ class VlmTypesTest {
         assertEquals(1024L, caps.freeAppStorageMb)
         assertTrue(caps.gpuDelegateClassPresent)
         assertEquals("0.16.0", caps.runtimeVersion)
+        assertEquals("0.1.0", caps.appVersion)
+        assertEquals("3524a8f2c488", caps.buildGitSha)
+        val obj = caps.toJSObject()
+        assertEquals("0.1.0", obj.getString("appVersion"))
+        assertEquals("3524a8f2c488", obj.getString("buildGitSha"))
     }
 
     @Test fun vlmSettingsHoldsMode() {

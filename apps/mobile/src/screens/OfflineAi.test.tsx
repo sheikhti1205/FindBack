@@ -230,8 +230,29 @@ describe("OfflineAi", () => {
     expect(confirm.parentElement?.className).toContain("flex-wrap");
   });
 
-  it("offers the 500M self-test without gating on the delegate class (W5 #26)", async () => {
+  it("offers one accelerator verification action with a source picker", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockResolvedValue({ nativeUri: "content://self-test", webPath: "content://self-test", format: "jpg" });
+    photo.toNativeImageUri.mockReturnValue("content://self-test");
+    bridge.getCapabilities.mockResolvedValue({ ...capabilities, gpuDelegateClassPresent: false });
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.runGpuSelfTest.mockResolvedValue({ state: "GPU_AVAILABLE" });
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    await screen.findByText(/installed — gpu test required/i);
+    expect(screen.queryByRole("button", { name: /run gpu self-test/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /verify .* accelerator/i }));
+    expect(screen.getByRole("group", { name: /verification source/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /use camera/i }));
+    await waitFor(() => expect(photo.takePhoto).toHaveBeenCalled());
+    await waitFor(() => expect(bridge.runGpuSelfTest).toHaveBeenCalledWith("smolvlm2-500m", "content://self-test"));
+  });
+
+  it("offers accelerator verification without gating on the delegate class", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockClear();
     photo.toNativeImageUri.mockReturnValue("content://self-test");
     bridge.getCapabilities.mockResolvedValue({ ...capabilities, gpuDelegateClassPresent: false });
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
@@ -240,8 +261,11 @@ describe("OfflineAi", () => {
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     await screen.findByText(/installed — gpu test required/i);
-    expect(screen.getByRole("button", { name: /run gpu self-test \(camera\)/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /run gpu self-test \(gallery\)/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /verify .* accelerator/i }));
+    expect(screen.getByRole("group", { name: /verification source/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(screen.queryByRole("group", { name: /verification source/i })).toBeNull();
+    expect(photo.takePhoto).not.toHaveBeenCalled();
   });
 
   it("surfaces a friendly error when a model action rejects (WP10a)", async () => {
@@ -267,8 +291,8 @@ describe("OfflineAi", () => {
       bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
       render(<MemoryRouter><OfflineAi /></MemoryRouter>);
       await screen.findByText(/installed — gpu test required/i);
-      expect(screen.queryByRole("button", { name: /run gpu self-test \(camera\)/i })).toBeNull();
-      expect(screen.queryByRole("button", { name: /run gpu self-test \(gallery\)/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /verify .* accelerator/i })).toBeNull();
+      expect(screen.queryByRole("group", { name: /verification source/i })).toBeNull();
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(true);
     }
@@ -308,11 +332,13 @@ describe("OfflineAi", () => {
     bridge.cancelInference.mockResolvedValue(undefined);
     bridge.runGpuSelfTest.mockReturnValue(new Promise(() => {}));
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
-    expect(await screen.findByText(/running gpu self-test/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /verify .* accelerator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use camera/i }));
+    expect(await screen.findByText(/verifying accelerator/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^close$/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^cancel test$/i }));
     await waitFor(() => expect(bridge.cancelInference).toHaveBeenCalledTimes(1));
-    expect(screen.queryByText(/running gpu self-test/i)).toBeNull();
+    expect(screen.queryByText(/verifying accelerator/i)).toBeNull();
   });
 
   it("titles a bad photo without claiming GPU unavailable (W5 #25)", async () => {
@@ -325,7 +351,8 @@ describe("OfflineAi", () => {
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     bridge.runGpuSelfTest.mockResolvedValue({ state: "GPU_UNAVAILABLE", error: "decode failed", failure: "INPUT_ERROR" });
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /verify .* accelerator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use camera/i }));
     expect(await screen.findByText(/photo couldn't be read/i)).toBeTruthy();
     expect(screen.queryByText(/^gpu unavailable$/i)).toBeNull();
   });
@@ -340,13 +367,15 @@ describe("OfflineAi", () => {
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     bridge.runGpuSelfTest.mockResolvedValue({ state: "ERROR", error: "boom", failure: "MODEL_RUNTIME_ERROR" });
     const { unmount } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /verify .* accelerator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use camera/i }));
     expect(await screen.findByText(/model runtime failed/i)).toBeTruthy();
     unmount();
 
     bridge.runGpuSelfTest.mockResolvedValue({ state: "MODEL_MISSING", error: "Model not installed" });
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /verify .* accelerator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use camera/i }));
     expect(await screen.findByText(/gpu test unavailable/i)).toBeTruthy();
     expect(screen.queryByText(/model runtime failed/i)).toBeNull();
   });
@@ -411,15 +440,88 @@ describe("OfflineAi", () => {
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     photo.takePhoto.mockRejectedValueOnce(new Error("User cancelled"));
     const { unmount } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /verify .* accelerator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use camera/i }));
     await waitFor(() => expect(photo.takePhoto).toHaveBeenCalled());
     expect(screen.queryByRole("alert")).toBeNull();
     unmount();
 
     photo.takePhoto.mockRejectedValueOnce(new Error("Camera failed: disk busy"));
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /run gpu self-test \(camera\)/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /verify .* accelerator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use camera/i }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Camera failed: disk busy");
+  });
+
+  it("verifies from gallery through the same accelerator action", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.chooseFromGallery.mockResolvedValue({ nativeUri: "content://gallery", webPath: "content://gallery", format: "jpg" });
+    photo.toNativeImageUri.mockReturnValue("content://gallery");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.runGpuSelfTest.mockResolvedValue({ state: "GPU_AVAILABLE" });
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /verify .* accelerator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /choose from gallery/i }));
+    await waitFor(() => expect(photo.chooseFromGallery).toHaveBeenCalled());
+    await waitFor(() => expect(bridge.runGpuSelfTest).toHaveBeenCalledWith("smolvlm2-500m", "content://gallery"));
+    expect(await screen.findByText(/gpu available/i)).toBeTruthy();
+  });
+
+  it("shows Close only after verification finishes", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockResolvedValue({ nativeUri: "content://photo", webPath: "content://photo", format: "jpg" });
+    photo.toNativeImageUri.mockReturnValue("content://photo");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.runGpuSelfTest.mockResolvedValue({ state: "GPU_AVAILABLE" });
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /verify .* accelerator/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use camera/i }));
+    expect(await screen.findByText(/gpu available/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^cancel test$/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("shows the installed app version and build SHA for acceptance evidence", async () => {
+    bridge.getCapabilities.mockResolvedValue({ ...capabilities, appVersion: "0.1.0", buildGitSha: "3524a8f2c48855000f1029ea9f6e6a610e93796b" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const build = await screen.findByTestId("build-info");
+    expect(build.textContent).toContain("App 0.1.0");
+    expect(build.textContent).toContain("Build 3524a8f2c488");
+    expect(build.getAttribute("title")).toBe("3524a8f2c48855000f1029ea9f6e6a610e93796b");
+  });
+
+  it("stacks model actions and constrains dialogs for narrow viewports", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const { container } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const card = await screen.findByRole("listitem", { name: /smolvlm2 500m/i });
+    expect(card.className).toContain("min-w-0");
+    expect(card.className).toContain("overflow-x-hidden");
+    const stack = card.firstElementChild as HTMLElement | null;
+    expect(stack?.className).toContain("flex-col");
+    expect(stack?.className).toContain("min-w-0");
+    const download = screen.getByRole("button", { name: /download smolvlm2 500m/i });
+    expect(download.className).toContain("w-full");
+    expect(download.className).toContain("whitespace-normal");
+    fireEvent.click(download);
+    const dialog = await screen.findByRole("dialog");
+    const panel = dialog.querySelector("div");
+    expect(panel?.className).toContain("calc(100vw-2rem)");
+    expect(panel?.className).toContain("overflow-y-auto");
+    expect(container.querySelectorAll('[class*="yellow"], [class*="amber"]').length).toBe(0);
   });
 });

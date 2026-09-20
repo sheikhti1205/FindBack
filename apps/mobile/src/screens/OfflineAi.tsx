@@ -57,6 +57,11 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
+function shortBuildSha(sha: string | null | undefined): string | null {
+  if (!sha || sha === "unknown") return null;
+  return sha.length > 12 ? sha.slice(0, 12) : sha;
+}
+
 /** Turns native error codes into plain language; raw enums must never reach users. */
 const ERROR_LABELS: Record<string, string> = {
   GPU_UNAVAILABLE_ON_CURRENT_RUNTIME:
@@ -190,6 +195,7 @@ function ModelRow({
   // real image-bearing GPU self-test, never from class presence.
   const canOfferSelfTest = action.canSelfTest && isNativeCameraAvailable();
   const showProgress = (info.state === "DOWNLOADING") && downloadProgress?.modelId === modelId;
+  const [showSourcePicker, setShowSourcePicker] = useState(false);
 
   // The native requiredBytes is authoritative; the fallback mirrors the native
   // policy (model + max(256 MiB, 25%)) so the button never lies.
@@ -204,49 +210,49 @@ function ModelRow({
   const hasSpace = !isStorageUnknown && (freeBytes as number) >= requiredBytes;
 
   return (
-    <div className="border border-outline-variant rounded-xl p-4 bg-surface">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <h3 className="font-medium text-base">{spec.label}</h3>
-            <span className="text-xs text-on-surface-variant whitespace-nowrap">{spec.sizeMb} MB download</span>
+    <div role="listitem" aria-label={spec.label} className="w-full min-w-0 overflow-x-hidden border border-outline-variant rounded-xl p-4 bg-surface">
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+            <h3 className="min-w-0 break-words font-medium text-base">{spec.label}</h3>
+            <span className="min-w-0 break-words text-xs text-on-surface-variant">{spec.sizeMb} MB download</span>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
-            <span className="flex items-center gap-1 whitespace-nowrap">
-              <HardDrive size={12} aria-hidden />
-              Needs {formatBytes(requiredBytes)} free
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
+            <span className="flex min-w-0 items-center gap-1 break-words">
+              <HardDrive size={12} aria-hidden className="shrink-0" />
+              <span className="min-w-0 break-words">Needs {formatBytes(requiredBytes)} free</span>
             </span>
-            <span className="flex items-center gap-1 whitespace-nowrap">
+            <span className="flex min-w-0 items-center gap-1 break-words">
               {isStorageUnknown ? (
-                <>Checking storage…</>
+                <span className="min-w-0 break-words">Checking storage…</span>
               ) : hasSpace ? (
                 <>
-                  <CheckCircle size={12} className="text-on-surface" aria-hidden />
-                  {formatBytes(freeBytes as number)} available
+                  <CheckCircle size={12} className="shrink-0 text-on-surface" aria-hidden />
+                  <span className="min-w-0 break-words">{formatBytes(freeBytes as number)} available</span>
                 </>
               ) : (
                 <>
-                  <AlertTriangle size={12} className="text-error" aria-hidden />
-                  Only {formatBytes(freeBytes as number)} available
+                  <AlertTriangle size={12} className="shrink-0 text-error" aria-hidden />
+                  <span className="min-w-0 break-words">Only {formatBytes(freeBytes as number)} available</span>
                 </>
               )}
             </span>
           </div>
 
-          <details className="mt-2 text-xs text-on-surface-variant">
+          <details className="mt-2 min-w-0 break-words text-xs text-on-surface-variant">
             <summary className="cursor-pointer">Technical details</summary>
-            <dl className="mt-1 space-y-0.5">
-              <div><dt className="inline font-medium">Source: </dt><dd className="inline break-all">{spec.sourceRepo}</dd></div>
-              <div><dt className="inline font-medium">Revision: </dt><dd className="inline break-all">{spec.revision}</dd></div>
-              <div><dt className="inline font-medium">Runtime: </dt><dd className="inline break-all">{spec.runtime}</dd></div>
-              <div><dt className="inline font-medium">GPU delegate class: </dt><dd className="inline">{capabilities ? (capabilities.gpuDelegateClassPresent ? "present" : "missing") : "unknown"} (diagnostic only)</dd></div>
+            <dl className="mt-1 min-w-0 space-y-0.5 break-words">
+              <div className="min-w-0"><dt className="inline font-medium">Source: </dt><dd className="inline min-w-0 break-all">{spec.sourceRepo}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">Revision: </dt><dd className="inline min-w-0 break-all">{spec.revision}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">Runtime: </dt><dd className="inline min-w-0 break-all">{spec.runtime}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">GPU delegate class: </dt><dd className="inline min-w-0 break-words">{capabilities ? (capabilities.gpuDelegateClassPresent ? "present" : "missing") : "unknown"} (diagnostic only)</dd></div>
             </dl>
           </details>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
             <span
-              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs border ${
+              className={`inline-flex max-w-full items-center whitespace-normal break-words px-2 py-0.5 rounded-full text-left text-xs border ${
                 info.state === "READY_GPU"
                   ? "bg-on-surface text-surface border-on-surface"
                   : info.state === "GPU_UNAVAILABLE" || info.state === "INSTALLED_UNVERIFIED"
@@ -263,7 +269,7 @@ function ModelRow({
                 : stateLabel}
             </span>
             {friendlyError(info.error) && (
-              <span className={`text-xs px-2 py-0.5 rounded-full border break-words ${info.state === "GPU_UNAVAILABLE" ? "border-outline-variant text-on-surface-variant" : "border-error text-error"}`}>
+              <span className={`max-w-full whitespace-normal break-words text-left text-xs px-2 py-0.5 rounded-full border ${info.state === "GPU_UNAVAILABLE" ? "border-outline-variant text-on-surface-variant" : "border-error text-error"}`}>
                 {friendlyError(info.error)}
               </span>
             )}
@@ -292,13 +298,13 @@ function ModelRow({
           )}
         </div>
 
-        <div className="flex flex-col items-end gap-2 shrink-0">
+        <div className="flex w-full min-w-0 flex-col gap-2">
           {action.isTransferActive ? (
             <>
               {action.canPause && (
                 <button
                   onClick={() => onPauseDownload(modelId)}
-                  className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                  className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                   aria-label={`Pause ${spec.label}`}
                 >
                   Pause
@@ -307,7 +313,7 @@ function ModelRow({
               {action.canCancel && (
                 <button
                   onClick={() => onCancelDownload(modelId)}
-                  className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                  className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                   aria-label={`Cancel ${spec.label}`}
                 >
                   Cancel
@@ -318,14 +324,14 @@ function ModelRow({
             <>
               <button
                 onClick={() => onResumeDownload(modelId)}
-                className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
+                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
                 aria-label={`Resume ${spec.label}`}
               >
                 Resume
               </button>
               <button
                 onClick={() => onCancelDownload(modelId)}
-                className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                 aria-label={`Cancel ${spec.label}`}
               >
                 Cancel
@@ -334,7 +340,7 @@ function ModelRow({
           ) : action.canRepair ? (
             <button
               onClick={() => onRepair(modelId)}
-              className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
+              className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
               aria-label={`Repair ${spec.label}`}
             >
               Repair
@@ -342,43 +348,65 @@ function ModelRow({
           ) : action.canDownload ? (
             <button
               onClick={() => onDownload(modelId)}
-              className="min-h-[48px] px-3 py-1.5 text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
+              className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
               disabled={!hasSpace}
               aria-label={`Download ${spec.label}`}
             >
-              <Download size={14} aria-hidden />
-              Download
+              <Download size={14} aria-hidden className="shrink-0" />
+              <span className="min-w-0 break-words">Download</span>
             </button>
           ) : action.canSelfTest && action.canDelete ? (
             <>
               {canOfferSelfTest && (
-                <div className="flex flex-col gap-2">
+                <div className="flex w-full min-w-0 flex-col gap-2">
                   <button
-                    onClick={() => onPickSelfTest(modelId, "camera")}
-                    className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+                    onClick={() => setShowSourcePicker(true)}
+                    className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+                    aria-label={`Verify ${spec.label} accelerator`}
                   >
-                    <Cpu size={14} aria-hidden />
-                    Run GPU self-test (camera)
+                    <Cpu size={14} aria-hidden className="shrink-0" />
+                    <span className="min-w-0 break-words">Verify accelerator</span>
                   </button>
-                  <button
-                    onClick={() => onPickSelfTest(modelId, "gallery")}
-                    className="min-h-[48px] px-3 py-1.5 text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
-                  >
-                    <Cpu size={14} aria-hidden />
-                    Run GPU self-test (gallery)
-                  </button>
+                  {showSourcePicker && (
+                    <div role="group" aria-label={`Verification source for ${spec.label}`} className="flex w-full min-w-0 flex-col gap-2 rounded-lg border border-outline-variant p-2">
+                      <button
+                        onClick={() => {
+                          setShowSourcePicker(false);
+                          onPickSelfTest(modelId, "camera");
+                        }}
+                        className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                      >
+                        Use camera
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowSourcePicker(false);
+                          onPickSelfTest(modelId, "gallery");
+                        }}
+                        className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                      >
+                        Choose from gallery
+                      </button>
+                      <button
+                        onClick={() => setShowSourcePicker(false)}
+                        className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
-            <button
-              onClick={() => onDelete(modelId)}
-              className="min-h-[48px] px-3 py-1.5 text-sm border border-error text-error rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
-            >
-              <Trash2 size={14} aria-hidden />
-              Delete
-            </button>
+              <button
+                onClick={() => onDelete(modelId)}
+                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-error text-error rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+              >
+                <Trash2 size={14} aria-hidden className="shrink-0" />
+                <span className="min-w-0 break-words">Delete</span>
+              </button>
             </>
           ) : (
-            <span className="text-xs text-on-surface-variant">Self-test running…</span>
+            <span className="min-w-0 break-words text-xs text-on-surface-variant">Verification running…</span>
           )}
         </div>
       </div>
@@ -394,6 +422,7 @@ export function OfflineAi() {
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressEvent | null>(null);
   const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId; downloadBytes: number; requiredBytes: number } | null>(null);
   const [gpuSelfTestModel, setGpuSelfTestModel] = useState<VlmModelId | null>(null);
+  const [gpuSelfTestSource, setGpuSelfTestSource] = useState<"camera" | "gallery" | null>(null);
   const [gpuSelfTestState, setGpuSelfTestState] = useState<"idle" | "running" | "done" | "error">("idle");
   const [gpuSelfTestResult, setGpuSelfTestResult] = useState<GpuSelfTestResult | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -410,12 +439,13 @@ export function OfflineAi() {
     };
   }, []);
 
-  // Closing while the self-test is RUNNING must stop native inference first.
+  // Closing while verification is RUNNING must stop native inference first.
   const closeGpuSelfTest = () => {
     if (gpuSelfTestState === "running") {
       void bridge.cancelInference().catch(() => undefined);
     }
     setGpuSelfTestModel(null);
+    setGpuSelfTestSource(null);
     setGpuSelfTestState("idle");
     setGpuSelfTestResult(null);
   };
@@ -537,6 +567,7 @@ export function OfflineAi() {
       if (!mountedRef.current) return;
       if (result?.state === "CANCELLED") {
         setGpuSelfTestModel(null);
+        setGpuSelfTestSource(null);
         setGpuSelfTestState("idle");
         setGpuSelfTestResult(null);
         return;
@@ -547,6 +578,7 @@ export function OfflineAi() {
       if (!mountedRef.current) return;
       if (isSelfTestCancellation(e)) {
         setGpuSelfTestModel(null);
+        setGpuSelfTestSource(null);
         setGpuSelfTestState("idle");
         setGpuSelfTestResult(null);
         return;
@@ -575,6 +607,7 @@ export function OfflineAi() {
   // Camera/gallery picks get their own capture-error handling: user
   // cancellation stays quiet, real failures surface via the alert.
   const handlePickSelfTest = async (modelId: VlmModelId, source: "camera" | "gallery") => {
+    setGpuSelfTestSource(source);
     try {
       const picked = source === "camera" ? await takePhoto() : await chooseFromGallery();
       const uri = toNativeImageUri(picked);
@@ -585,13 +618,20 @@ export function OfflineAi() {
     }
   };
 
+  const buildDetails = capabilities
+    ? [
+        capabilities.appVersion ? `App ${capabilities.appVersion}` : null,
+        shortBuildSha(capabilities.buildGitSha) ? `Build ${shortBuildSha(capabilities.buildGitSha)}` : null,
+      ].filter((part): part is string => Boolean(part))
+    : [];
+
   return (
     <div className="flex flex-col gap-4 p-4 overflow-x-hidden">
-      <header className="flex items-center gap-2 px-4 pt-2">
+      <header className="flex min-w-0 items-center gap-2 px-4 pt-2">
         <BackButton fallbackTo="/profile" label="Back to profile" />
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Offline AI</h1>
-          <p className="text-xs text-on-surface-variant">Manage local models, inference mode, and GPU self-test.</p>
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-semibold tracking-tight">Offline AI</h1>
+          <p className="break-words text-xs text-on-surface-variant">Manage local models and accelerator verification.</p>
         </div>
       </header>
 
@@ -626,20 +666,25 @@ export function OfflineAi() {
       </section>
 
       <section className="px-4 space-y-4" aria-labelledby="models-heading">
-        <div className="flex items-center justify-between">
-          <h2 id="models-heading" className="text-sm font-medium text-on-surface-variant uppercase tracking-wide">Models</h2>
+        <div className="min-w-0">
+          <h2 id="models-heading" className="break-words text-sm font-medium text-on-surface-variant uppercase tracking-wide">Models</h2>
+          {capabilities && (
+            <p data-testid="build-info" title={capabilities.buildGitSha ?? undefined} className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">
+              {buildDetails.length > 0 ? buildDetails.join(" • ") : "Build details unavailable."}
+            </p>
+          )}
         </div>
 
         {actionError && (
           <div
             role="alert"
-            className="flex items-start justify-between gap-2 rounded-lg border border-error px-3 py-2"
+            className="flex min-w-0 flex-col gap-2 rounded-lg border border-error px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
           >
-            <span className="text-sm text-error break-words">{actionError}</span>
+            <span className="min-w-0 break-words text-sm text-error">{actionError}</span>
             <button
               type="button"
               onClick={() => setActionError(null)}
-              className="min-h-[48px] shrink-0 px-2 text-xs text-error underline"
+              className="min-h-[48px] w-full px-2 text-xs text-error underline sm:w-auto sm:shrink-0"
             >
               Dismiss
             </button>
@@ -670,56 +715,67 @@ export function OfflineAi() {
       </section>
 
       {gpuSelfTestModel && gpuSelfTestState !== "idle" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="gpu-test-title" aria-describedby="gpu-test-desc">
-          <div ref={gpuSelfTestRef} tabIndex={-1} className="w-full max-w-md bg-surface rounded-xl p-6">
-            <h3 id="gpu-test-title" className="text-lg font-semibold mb-4">GPU Self-Test</h3>
-            <p id="gpu-test-desc" className="text-sm text-on-surface-variant mb-4">Testing {MODEL_SPECS[gpuSelfTestModel].label} on GPU…</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="gpu-test-title" aria-describedby="gpu-test-desc">
+          <div ref={gpuSelfTestRef} tabIndex={-1} className="w-[min(28rem,calc(100vw-2rem))] min-w-0 max-h-[calc(100dvh-2rem)] overflow-y-auto bg-surface rounded-xl p-4 sm:p-6">
+            <h3 id="gpu-test-title" className="mb-2 min-w-0 break-words text-lg font-semibold">Accelerator verification</h3>
+            <p id="gpu-test-desc" className="mb-4 min-w-0 break-words text-sm text-on-surface-variant">Checking {MODEL_SPECS[gpuSelfTestModel].label}{gpuSelfTestSource ? ` with a ${gpuSelfTestSource === "camera" ? "camera photo" : "gallery photo"}` : ""}…</p>
             {gpuSelfTestState === "running" && (
-              <div className="flex items-center justify-center gap-3">
-                <Loader2 size={24} className="animate-spin text-on-surface" aria-hidden />
-                <span>Running GPU self-test…</span>
+              <div role="status" className="flex min-w-0 items-center justify-center gap-3">
+                <Loader2 size={24} className="shrink-0 animate-spin text-on-surface" aria-hidden />
+                <span className="min-w-0 break-words">Verifying accelerator…</span>
               </div>
             )}
             {gpuSelfTestState === "done" && (
-              <div className={`flex items-center gap-3 p-4 rounded-lg border ${gpuSelfTestResult?.state === "GPU_AVAILABLE" ? "bg-on-surface text-surface border-on-surface" : "border-outline-variant"}`}>
+              <div className={`flex min-w-0 items-start gap-3 p-4 rounded-lg border ${gpuSelfTestResult?.state === "GPU_AVAILABLE" ? "bg-on-surface text-surface border-on-surface" : "border-outline-variant"}`}>
                 {gpuSelfTestResult?.state === "GPU_AVAILABLE" ? (
-                  <CheckCircle size={24} aria-hidden />
+                  <CheckCircle size={24} aria-hidden className="shrink-0" />
                 ) : (
-                  <AlertTriangle size={24} aria-hidden />
+                  <AlertTriangle size={24} aria-hidden className="shrink-0" />
                 )}
-                <div>
-                  <p className="font-medium">{getSelfTestPresentation(gpuSelfTestResult).title}</p>
-                  <p className="text-sm text-on-surface-variant break-words">
+                <div className="min-w-0">
+                  <p className="break-words font-medium">{getSelfTestPresentation(gpuSelfTestResult).title}</p>
+                  <p className="break-words text-sm text-on-surface-variant">
                     {getSelfTestPresentation(gpuSelfTestResult).message}
                   </p>
                 </div>
               </div>
             )}
             {gpuSelfTestState === "error" && (
-              <div className="flex items-center gap-3 p-4 rounded-lg border border-error">
-                <XCircle size={24} className="text-error" aria-hidden />
-                <div>
-                  <p className="font-medium">{getSelfTestPresentation(gpuSelfTestResult).title}</p>
-                  <p className="text-sm text-on-surface-variant">{getSelfTestPresentation(gpuSelfTestResult).message}</p>
+              <div className="flex min-w-0 items-start gap-3 p-4 rounded-lg border border-error">
+                <XCircle size={24} className="shrink-0 text-error" aria-hidden />
+                <div className="min-w-0">
+                  <p className="break-words font-medium">{getSelfTestPresentation(gpuSelfTestResult).title}</p>
+                  <p className="break-words text-sm text-on-surface-variant">{getSelfTestPresentation(gpuSelfTestResult).message}</p>
                 </div>
               </div>
             )}
-            <button
-              onClick={() => {
-                closeGpuSelfTest();
-              }}
-              className="mt-4 min-h-[48px] w-full px-4 py-2 bg-on-surface text-surface rounded-lg"
-            >
-              Close
-            </button>
+            {gpuSelfTestState === "running" ? (
+              <button
+                onClick={() => {
+                  closeGpuSelfTest();
+                }}
+                className="mt-4 min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-4 py-2 text-center bg-on-surface text-surface rounded-lg"
+              >
+                Cancel test
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  closeGpuSelfTest();
+                }}
+                className="mt-4 min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-4 py-2 text-center bg-on-surface text-surface rounded-lg"
+              >
+                Close
+              </button>
+            )}
           </div>
         </div>
       )}
 
       {confirmDownload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc">
-          <div ref={confirmDownloadRef} tabIndex={-1} className="w-full max-w-md bg-surface rounded-xl p-6">
-            <h3 id="confirm-title" className="text-lg font-semibold mb-4">Confirm Download</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc">
+          <div ref={confirmDownloadRef} tabIndex={-1} className="w-[min(28rem,calc(100vw-2rem))] min-w-0 max-h-[calc(100dvh-2rem)] overflow-y-auto bg-surface rounded-xl p-4 sm:p-6">
+            <h3 id="confirm-title" className="mb-4 min-w-0 break-words text-lg font-semibold">Confirm Download</h3>
             <p id="confirm-desc" className="text-sm text-on-surface-variant mb-4 break-words">
               Download size: {formatBytes(confirmDownload.downloadBytes)}.
             </p>
@@ -727,17 +783,17 @@ export function OfflineAi() {
               Required free space: {formatBytes(confirmDownload.requiredBytes)}
               {capabilities && ` (${formatBytes((capabilities.freeAppStorageMb ?? Number.MAX_SAFE_INTEGER) * 1024 * 1024)} available)`}
             </p>
-            <div className="flex flex-wrap gap-3 justify-end">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 onClick={() => setConfirmDownload(null)}
-                className="min-h-[48px] px-4 py-2 border border-outline-variant rounded-lg hover:bg-surface-container"
+                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-4 py-2 text-center border border-outline-variant rounded-lg hover:bg-surface-container sm:w-auto"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmDownload}
                 autoFocus
-                className="min-h-[48px] px-4 py-2 bg-on-surface text-surface rounded-lg hover:opacity-90 whitespace-nowrap"
+                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-4 py-2 text-center bg-on-surface text-surface rounded-lg hover:opacity-90 sm:w-auto"
               >
                 Confirm download
               </button>
