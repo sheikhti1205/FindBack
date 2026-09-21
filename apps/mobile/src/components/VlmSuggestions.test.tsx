@@ -14,8 +14,8 @@ vi.mock("../services/vlm", () => ({
   VlmUnstructuredOutputError: class extends Error {},
 }));
 vi.mock("../services/vlmDiscovery", () => ({
-  discoverObjectsLocally: discoverMock,
-  suggestForPrimaryLocally: suggestMock,
+  discoverObjectsLocally: (...args: unknown[]) => discoverMock(...args),
+  suggestForPrimaryLocally: (...args: unknown[]) => suggestMock(...args),
 }));
 vi.mock("../services/vlmPlugin", () => ({
   getVlmBridge: () => ({
@@ -83,6 +83,7 @@ describe("VlmSuggestions multi-object flow", () => {
     await screen.findAllByText(/black umbrella/i);
     expect(suggestMock).toHaveBeenCalledWith(
       expect.objectContaining({ primary: "keys", include: [], ignore: ["black umbrella"] }),
+      expect.any(String),
     );
     expect(onApply).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /use title/i }));

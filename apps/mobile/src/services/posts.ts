@@ -384,13 +384,13 @@ export async function fetchMatchCandidates(oppositeType: PostType): Promise<Post
   return ((data ?? []) as ClientPostRow[]).slice(0, MATCH_CANDIDATE_LIMIT).map(mapClientPost);
 }
 
-export async function publishReport(input: CreatePostInput, photo: File | null): Promise<string> {
-  if (!photo) return createPost(input);
-  const stored = await uploadImage(photo);
+export async function publishReport(input: CreatePostInput, photo: File | null, traceId?: string): Promise<string> {
+  if (!photo) return createPost(input, traceId);
+  const stored = await uploadImage(photo, traceId);
   try {
-    return await createPost({ ...input, attachmentKey: stored.id });
+    return await createPost({ ...input, attachmentKey: stored.id }, traceId);
   } catch (err) {
-    await removeStagedUpload(stored);
+    await removeStagedUpload(stored, traceId);
     throw err;
   }
 }

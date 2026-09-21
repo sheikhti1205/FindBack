@@ -19,7 +19,7 @@ vi.mock("@capacitor/core", () => ({
 }));
 vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
-vi.mock("../services/posts", () => ({ publishReport: publishReportMock }));
+vi.mock("../services/posts", () => ({ publishReport: (...args: unknown[]) => publishReportMock(...args) }));
 vi.mock("../services/photo", () => photo);
 
 import { CreateReport } from "./CreateReport";
@@ -115,7 +115,7 @@ describe("CreateReport", () => {
     const file = new File(["abc"], "p.jpg", { type: "image/jpeg" });
     pickFile(file);
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
-    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Lost phone" }), file));
+    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Lost phone" }), file, expect.any(String)));
   });
 
   it("keeps the selected photo when publish fails", async () => {
@@ -137,10 +137,11 @@ describe("CreateReport", () => {
     fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "house keys on a blue lanyard" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Keys" } });
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
-    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ category: "Keys" }), null));
+    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ category: "Keys" }), null, expect.any(String)));
   });
 
-  it("keeps the photo uploadable across navigation (draft restore)", async () => {    publishReportMock.mockResolvedValue("p1");
+  it("keeps the photo uploadable across navigation (draft restore)", async () => {
+    publishReportMock.mockResolvedValue("p1");
     const { unmount } = render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
     fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
@@ -159,6 +160,7 @@ describe("CreateReport", () => {
       expect(publishReportMock).toHaveBeenCalledWith(
         expect.objectContaining({ title: "Lost phone" }),
         expect.any(File),
+        expect.any(String),
       ),
     );
   });

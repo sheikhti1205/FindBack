@@ -3,6 +3,7 @@ import { parseVlmOutput, type VlmAnalysis } from "./vlmParser";
 import { VlmUnstructuredOutputError } from "./vlm";
 import { VLM_SAFETY_PREAMBLE } from "./vlmSafety";
 import { CATEGORIES, type Category } from "@findback/shared";
+import { diag, diagModelDigest } from "./diag";
 
 /** One discovered candidate object. No bounding boxes — positionHint only. */
 export interface DiscoveredObject {
@@ -104,7 +105,7 @@ interface StageOptions {
   mode: "AUTO" | "FAST" | "QUALITY";
 }
 
-function callBridge(imageUri: string, mode: StageOptions["mode"], instruction: string, maxOutputTokens: number) {
+function callBridge(imageUri: string, mode: "AUTO" | "FAST" | "QUALITY", instruction: string, maxOutputTokens: number) {
   const request: AnalyzeRequest = { mode, imageUri, instruction, maxOutputTokens, temperature: 0.1 };
   return getVlmBridge().analyzeImage(request);
 }
@@ -113,14 +114,31 @@ function callBridge(imageUri: string, mode: StageOptions["mode"], instruction: s
  * Stage 1: discover up to 6 candidate objects. Exactly one retry on
  * unparseable output, then VlmUnstructuredOutputError.
  */
-export async function discoverObjectsLocally(options: StageOptions): Promise<DiscoveredObject[]> {
+export async function discoverObjectsLocally(options: StageOptions, traceId?: string): Promise<DiscoveredObject[]> {
   return withInferenceMutex(async () => {
-    const attempts = [DISCOVERY_SYSTEM_INSTRUCTION, `${DISCOVERY_SYSTEM_INSTRUCTION}\n\nReturn only corrected JSON.`];
-    for (const instruction of attempts) {
+    const attempts: string[] = [DISCOVERY_SYSTEM_INSTRUCTION, `${DISCOVERY_SYSTEM_INSTRUCTION}\n\nReturn only corrected JSON.`];
+    for (let attempt = 0; attempt < attempts.length; attempt++) {
+      const instruction = attempts[attempt]!;
+      const start = Date.now();
       const result = await callBridge(options.imageUri, options.mode, instruction, DISCOVERY_TOKENS);
+      const ms = Date.now() - start;
+      diagModelDigest(
+        "vlm.stage1.result",
+        result.text,
+        { parseVerdict: "pending", attempt: attempt + 1, ms },
+        { modelId: result.modelId, backend: result.backend, runtime: result.runtime },
+        { traceId: traceId ?? undefined },
+      );
       const parsed = parseDiscoveryOutput(result.text);
-      if (parsed !== null) return parsed;
+      if (parsed !== null) {
+        diag("vlm.stage1.parsed", {
+          objectCount: parsed.length,
+          attempt: attempt + 1,
+        }, { traceId: traceId ?? undefined });
+        return parsed;
+      }
     }
+    diag("vlm.stage1.unparseable", { attempts: attempts.length }, { traceId: traceId ?? undefined });
     throw new VlmUnstructuredOutputError("UNSTRUCTURED_OUTPUT");
   });
 }
@@ -137,7 +155,7 @@ export interface PrimarySuggestionOptions extends StageOptions {
  * Stage 2: suggestions for the PRIMARY object, with INCLUDE objects as
  * associated context. IGNORE objects are never mentioned.
  */
-export async function suggestForPrimaryLocally(options: PrimarySuggestionOptions): Promise<VlmAnalysis> {
+export async function suggestForPrimaryLocally(options: PrimarySuggestionOptions, traceId?: string): Promise<VlmAnalysis> {
   return withInferenceMutex(async () => {
     const categoriesJson = JSON.stringify(CATEGORIES);
     const includeLine =
@@ -161,12 +179,31 @@ export async function suggestForPrimaryLocally(options: PrimarySuggestionOptions
       `Allowed categories (JSON array):\n${categoriesJson}\n\n` +
       `User-provided context (JSON object):\n${JSON.stringify(options.userContext)}\n\n` +
       `Return a single JSON object with fields: objectName, suggestedCategory (one of allowed), colors (up to 8), visibleBrand, visibleText (up to 20, redact identifiers as "[redacted]"), identifyingFeatures (up to 20), suggestedTitle, suggestedDescription (up to 600 chars), uncertainFields. Plain text only, no markdown. Only one JSON object, no commentary.`;
-    const attempts = [base, `${base}\n\nReturn only corrected JSON.`];
-    for (const instruction of attempts) {
+    const attempts: string[] = [base, `${base}\n\nReturn only corrected JSON.`];
+    for (let attempt = 0; attempt < attempts.length; attempt++) {
+      const instruction = attempts[attempt]!;
+      const start = Date.now();
       const result = await callBridge(options.imageUri, options.mode, instruction, REPORT_TOKENS);
+      const ms = Date.now() - start;
+      diagModelDigest(
+        "vlm.stage2.result",
+        result.text,
+        { parseVerdict: "pending", attempt: attempt + 1, ms },
+        { modelId: result.modelId, backend: result.backend, runtime: result.runtime },
+        { traceId: traceId ?? undefined },
+      );
       const parsed = parseVlmOutput(result.text, CATEGORIES);
-      if (parsed !== null) return parsed;
+      if (parsed !== null) {
+        diag("vlm.stage2.parsed", {
+          hasTitle: !!parsed.suggestedTitle,
+          hasDescription: !!parsed.suggestedDescription,
+          hasCategory: !!parsed.suggestedCategory,
+          attempt: attempt + 1,
+        }, { traceId: traceId ?? undefined });
+        return parsed;
+      }
     }
+    diag("vlm.stage2.unparseable", { attempts: attempts.length }, { traceId: traceId ?? undefined });
     throw new VlmUnstructuredOutputError("UNSTRUCTURED_OUTPUT");
   });
 }
