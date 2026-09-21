@@ -12,6 +12,7 @@ import {
 } from "../services/vlmDiscovery";
 import { getVlmBridge, type InferenceStateEvent, type VlmState } from "../services/vlmPlugin";
 import type { VlmAnalysis } from "../services/vlmParser";
+import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
 
 interface VlmSuggestionsProps {
   imageUri: string;
@@ -63,6 +64,7 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
   const [cpuNotice, setCpuNotice] = useState<string | null>(null);
   /** Per-photo generation: stale responses after an image change are ignored. */
   const generation = useRef(0);
+  const traceIdRef = useRef<string | null>(null);
 
   // Changing the photo invalidates all unapplied AI state and stops the
   // native work for the old photo instead of letting it run to completion.
@@ -135,15 +137,22 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
   async function handleDiscover() {
     if (disabled) return;
     const gen = ++generation.current;
+    traceIdRef.current = startActionTrace();
+    clearAmbientTrace();
     setBusy(true);
     setError(null);
     setCpuNotice(null);
     setAnalysis(null);
     setPhase("discovering");
+    const discoverStart = Date.now();
     try {
-      const objects = await discoverObjectsLocally({ imageUri, mode: "AUTO" });
+      const objects = await discoverObjectsLocally({ imageUri, mode: "AUTO" }, traceIdRef.current ?? undefined);
       if (generation.current !== gen) return;
       setCpuNotice(readCpuNotice());
+      diag("vlm.discover.success", {
+        objectCount: objects.length,
+        ms: Date.now() - discoverStart,
+      }, { traceId: traceIdRef.current ?? undefined });
       if (objects.length === 0) {
         setSelections([]);
         setError("No clear object found — please fill the details manually.");
@@ -156,6 +165,10 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
       }
     } catch (err) {
       if (generation.current !== gen) return;
+      diag("vlm.discover.error", {
+        message: err instanceof Error ? err.message : "unknown",
+        ms: Date.now() - discoverStart,
+      }, { traceId: traceIdRef.current ?? undefined });
       fail(err);
       setPhase("idle");
     } finally {
@@ -178,10 +191,13 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
     if (!primary || busy) return;
     if (selections.filter((s) => s.role === "PRIMARY").length !== 1) return;
     const gen = ++generation.current;
+    traceIdRef.current = startActionTrace();
+    clearAmbientTrace();
     setBusy(true);
     setError(null);
     setCpuNotice(null);
     setPhase("generating");
+    const generateStart = Date.now();
     try {
       const result = await suggestForPrimaryLocally({
         imageUri,
@@ -194,13 +210,26 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
           title: userContext?.title ?? "",
           description: userContext?.description ?? "",
         },
-      });
+      }, traceIdRef.current ?? undefined);
       if (generation.current !== gen) return;
       setAnalysis(result);
       setCpuNotice(readCpuNotice());
+      diag("vlm.generate.success", {
+        primary: primary.objectName,
+        includeCount: selections.filter((s) => s.role === "INCLUDE").length,
+        ignoreCount: selections.filter((s) => s.role === "IGNORE").length,
+        hasTitle: !!result.suggestedTitle,
+        hasDescription: !!result.suggestedDescription,
+        hasCategory: !!result.suggestedCategory,
+        ms: Date.now() - generateStart,
+      }, { traceId: traceIdRef.current ?? undefined });
       setPhase("done");
     } catch (err) {
       if (generation.current !== gen) return;
+      diag("vlm.generate.error", {
+        message: err instanceof Error ? err.message : "unknown",
+        ms: Date.now() - generateStart,
+      }, { traceId: traceIdRef.current ?? undefined });
       fail(err);
       setPhase("review");
     } finally {
