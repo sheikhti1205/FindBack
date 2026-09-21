@@ -1,4 +1,5 @@
 import type { Category } from "@findback/shared";
+import { diag } from "./diag";
 
 /** Result of parsing structured VLM output. */
 export interface VlmAnalysis {
@@ -170,6 +171,7 @@ export function parseVlmOutput(raw: string, allowedCategories: readonly Category
   const jsonText = extractFirstJsonObject(withoutFence);
 
   if (!jsonText) {
+    diag("vlm.parser.no_json", { inputLength: raw.length }, {});
     return null;
   }
 
@@ -177,10 +179,12 @@ export function parseVlmOutput(raw: string, allowedCategories: readonly Category
   try {
     parsed = JSON.parse(jsonText);
   } catch {
+    diag("vlm.parser.json_parse_error", { inputLength: raw.length, jsonLength: jsonText.length }, {});
     return null;
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    diag("vlm.parser.not_object", { inputLength: raw.length }, {});
     return null;
   }
 
@@ -189,26 +193,54 @@ export function parseVlmOutput(raw: string, allowedCategories: readonly Category
   // Missing key != key present with a null value. Reject incomplete output so
   // it goes through the correction retry instead of becoming a "valid" result.
   for (const key of REQUIRED_KEYS) {
-    if (!(key in obj)) return null;
-  }
-
-  if (!isStringOrNull(obj.objectName)) return null;
-  if (!isStringOrNull(obj.visibleBrand)) return null;
-  if (!isStringOrNull(obj.suggestedTitle)) return null;
-  if (!isStringOrNull(obj.suggestedDescription)) return null;
-  if (!isStringArray(obj.colors)) return null;
-  if (!isStringArray(obj.visibleText)) return null;
-  if (!isStringArray(obj.identifyingFeatures)) return null;
-  if (!isStringArray(obj.uncertainFields)) return null;
-
-  const suggestedCategory = obj.suggestedCategory;
-  if (suggestedCategory !== null) {
-    if (typeof suggestedCategory !== "string" || !allowedCategories.includes(suggestedCategory as Category)) {
+    if (!(key in obj)) {
+      diag("vlm.parser.missing_key", { key, inputLength: raw.length }, {});
       return null;
     }
   }
 
-  return {
+  if (!isStringOrNull(obj.objectName)) {
+    diag("vlm.parser.invalid_objectName", { inputLength: raw.length }, {});
+    return null;
+  }
+  if (!isStringOrNull(obj.visibleBrand)) {
+    diag("vlm.parser.invalid_visibleBrand", { inputLength: raw.length }, {});
+    return null;
+  }
+  if (!isStringOrNull(obj.suggestedTitle)) {
+    diag("vlm.parser.invalid_suggestedTitle", { inputLength: raw.length }, {});
+    return null;
+  }
+  if (!isStringOrNull(obj.suggestedDescription)) {
+    diag("vlm.parser.invalid_suggestedDescription", { inputLength: raw.length }, {});
+    return null;
+  }
+  if (!isStringArray(obj.colors)) {
+    diag("vlm.parser.invalid_colors", { inputLength: raw.length }, {});
+    return null;
+  }
+  if (!isStringArray(obj.visibleText)) {
+    diag("vlm.parser.invalid_visibleText", { inputLength: raw.length }, {});
+    return null;
+  }
+  if (!isStringArray(obj.identifyingFeatures)) {
+    diag("vlm.parser.invalid_identifyingFeatures", { inputLength: raw.length }, {});
+    return null;
+  }
+  if (!isStringArray(obj.uncertainFields)) {
+    diag("vlm.parser.invalid_uncertainFields", { inputLength: raw.length }, {});
+    return null;
+  }
+
+  const suggestedCategory = obj.suggestedCategory;
+  if (suggestedCategory !== null) {
+    if (typeof suggestedCategory !== "string" || !allowedCategories.includes(suggestedCategory as Category)) {
+      diag("vlm.parser.invalid_category", { category: String(suggestedCategory), inputLength: raw.length }, {});
+      return null;
+    }
+  }
+
+  const result = {
     objectName: sanitizeString(obj.objectName, MAX_OBJECT_NAME),
     suggestedCategory: (suggestedCategory as Category) ?? null,
     colors: sanitizeArray(obj.colors, MAX_COLORS, MAX_ARRAY_ITEM),
@@ -219,4 +251,13 @@ export function parseVlmOutput(raw: string, allowedCategories: readonly Category
     suggestedDescription: sanitizeString(obj.suggestedDescription, MAX_SUGGESTED_DESCRIPTION),
     uncertainFields: sanitizeArray(obj.uncertainFields, MAX_UNCERTAIN_FIELDS, MAX_ARRAY_ITEM),
   };
+  diag("vlm.parser.success", {
+    hasTitle: !!result.suggestedTitle,
+    hasDescription: !!result.suggestedDescription,
+    hasCategory: !!result.suggestedCategory,
+    colorCount: result.colors.length,
+    visibleTextCount: result.visibleText.length,
+    featureCount: result.identifyingFeatures.length,
+  }, {});
+  return result;
 }

@@ -1,6 +1,7 @@
 import type { Category, PostType } from "@findback/shared";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
+import { diag } from "./diag";
 
 export interface CreatePostInput {
   type: PostType;
@@ -15,7 +16,8 @@ export interface CreatePostInput {
   attachmentKey?: string;
 }
 
-export async function createPost(input: CreatePostInput): Promise<string> {
+export async function createPost(input: CreatePostInput, traceId?: string): Promise<string> {
+  const start = Date.now();
   const { data, error } = await getSupabase().rpc("findback_create_post_client", {
     p_type: input.type,
     p_title: input.title,
@@ -28,6 +30,20 @@ export async function createPost(input: CreatePostInput): Promise<string> {
     p_youtube_url: input.youtubeUrl ?? null,
     p_attachment_key: input.attachmentKey ?? null,
   });
-  if (error) throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
+  const ms = Date.now() - start;
+  if (error) {
+    diag("posts.create.rpc.error", {
+      rpc: "findback_create_post_client",
+      code: error.code,
+      message: error.message,
+      ms,
+    }, { traceId });
+    throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
+  }
+  diag("posts.create.rpc.success", {
+    rpc: "findback_create_post_client",
+    ms,
+    hasAttachmentKey: !!input.attachmentKey,
+  }, { traceId });
   return String(data);
 }
