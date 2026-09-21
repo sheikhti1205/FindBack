@@ -6,8 +6,8 @@ const { uploadImageMock, removeStagedUploadMock, createPostMock } = vi.hoisted((
   createPostMock: vi.fn(),
 }));
 
-vi.mock("./postsUpload", () => ({ uploadImage: uploadImageMock, removeStagedUpload: removeStagedUploadMock }));
-vi.mock("./postsCreate", () => ({ createPost: createPostMock }));
+vi.mock("./postsUpload", () => ({ uploadImage: (...args: unknown[]) => uploadImageMock(...args), removeStagedUpload: (...args: unknown[]) => removeStagedUploadMock(...args) }));
+vi.mock("./postsCreate", () => ({ createPost: (...args: unknown[]) => createPostMock(...args) }));
 
 import { publishReport } from "./posts";
 
@@ -37,9 +37,9 @@ describe("publishReport", () => {
     uploadImageMock.mockResolvedValue(stored);
     createPostMock.mockResolvedValue("p1");
 
-    await expect(publishReport(input, new File(["x"], "p.jpg", { type: "image/jpeg" }))).resolves.toBe("p1");
+    await expect(publishReport(input, new File(["x"], "p.jpg", { type: "image/jpeg" }), "test-trace-id")).resolves.toBe("p1");
 
-    expect(createPostMock).toHaveBeenCalledWith(expect.objectContaining({ attachmentKey: "u1" }));
+    expect(createPostMock).toHaveBeenCalledWith(expect.objectContaining({ attachmentKey: "u1" }), "test-trace-id");
     expect(removeStagedUploadMock).not.toHaveBeenCalled();
   });
 
@@ -48,8 +48,8 @@ describe("publishReport", () => {
     uploadImageMock.mockResolvedValue(stored);
     createPostMock.mockRejectedValue(new Error("create failed"));
 
-    await expect(publishReport(input, new File(["x"], "p.jpg", { type: "image/jpeg" }))).rejects.toThrow("create failed");
-    expect(removeStagedUploadMock).toHaveBeenCalledWith(stored);
+    await expect(publishReport(input, new File(["x"], "p.jpg", { type: "image/jpeg" }), "test-trace-id")).rejects.toThrow("create failed");
+    expect(removeStagedUploadMock).toHaveBeenCalledWith(stored, "test-trace-id");
   });
 
   it("does not call create when staging itself fails", async () => {

@@ -19,6 +19,7 @@ import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, toN
 import { dropStashedPhoto, getStashedPhoto, stashPhotoFile } from "../services/photoStore";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
+import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
 
 const inputCls =
   "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
@@ -97,6 +98,7 @@ export function CreateReport() {
     youtubeUrl?: string;
   }>({});
   const submitting = useRef(false);
+  const traceIdRef = useRef<string | null>(null);
 
   // Restore the uploadable File for a draft whose photo came from the native
   // camera/gallery, where only a native URI survives in the draft.
@@ -185,6 +187,13 @@ export function CreateReport() {
       setPreviewUrl(URL.createObjectURL(file));
     }
     setError(null);
+    // Diag: picker result
+    diag("report.picker.result", {
+      mime: file.type,
+      bytes: file.size,
+      source: photo?.nativeUri ? "native" : "web",
+      hasNativeUri: !!photo?.nativeUri,
+    }, { traceId: traceIdRef.current ?? undefined });
   }
 
   function clearPhoto() {
@@ -218,6 +227,9 @@ export function CreateReport() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting.current) return;
+    // Start a new trace for this publish action
+    traceIdRef.current = startActionTrace();
+    clearAmbientTrace();
     setError(null);
     const trimmedTitle = title.trim();
     const trimmedDescription = description.trim();
@@ -259,6 +271,15 @@ export function CreateReport() {
     if (errs.title || errs.description || errs.category || errs.eventDate || errs.locationLabel || errs.youtubeUrl || !category) return;
     submitting.current = true;
     setBusy(true);
+    // Diag: publish start
+    diag("report.publish.start", {
+      type,
+      hasPhoto: !!selectedFile,
+      photoBytes: selectedFile?.size ?? 0,
+      photoMime: selectedFile?.type ?? null,
+      hasLocation: location.latitude !== null && location.longitude !== null,
+      hasYoutube: !!trimmedYoutube,
+    }, { traceId: traceIdRef.current ?? undefined });
     try {
       const postId = await publishReport(
         {
@@ -273,7 +294,12 @@ export function CreateReport() {
           youtubeUrl: trimmedYoutube || undefined,
         },
         selectedFile,
+        traceIdRef.current ?? undefined,
       );
+      // Diag: publish success
+      diag("report.publish.success", {
+        postId,
+      }, { traceId: traceIdRef.current ?? undefined });
       clearDraft();
       if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
       dropStashedPhoto(photoId);
@@ -284,6 +310,11 @@ export function CreateReport() {
       announce("Report published.");
       navigate(`/posts/${postId}`, { replace: true });
     } catch (err) {
+      // Diag: publish error
+      diag("report.publish.error", {
+        message: friendlyError(err).message,
+        code: err instanceof Error ? (err as { code?: string }).code ?? "unknown" : "unknown",
+      }, { traceId: traceIdRef.current ?? undefined });
       setError(friendlyError(err).message);
     } finally {
       submitting.current = false;
