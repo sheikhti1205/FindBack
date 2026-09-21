@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://findback.example/specs/model-library/catalogue.schema.json",
+  "title": "FindBack Curated Model Library catalogue (v1, spec-only)",
+  "description": "Shipped/pinned catalogue metadata. The app MUST NOT depend on a mutable remote list (see releases-distribution.md). Unknown values use explicit sentinels, never invented numbers.",
+  "type": "object",
+  "required": ["catalogueVersion", "updatedAt", "pinnedModelsRelease", "entries"],
+  "properties": {
+    "catalogueVersion": { "const": "1" },
+    "updatedAt": { "type": "string", "format": "date" },
+    "pinnedModelsRelease": {
+      "type": "object",
+      "required": ["repo", "tag"],
+      "properties": {
+        "repo": { "type": "string", "description": "Curated release repo, e.g. FindBack-Models" },
+        "tag": { "type": "string", "description": "Immutable release tag this catalogue build is pinned to" }
+      },
+      "additionalProperties": false
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256OrUnknown": {
+      "description": "64 lowercase hex chars, or null when not established. VERIFIED entries MUST be non-null.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "bytesOrUnknown": {
+      "description": "Exact byte count, or null when not established. VERIFIED entries MUST be non-null.",
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "provenanceSource": {
+      "type": "object",
+      "required": ["kind", "ref", "note"],
+      "properties": {
+        "kind": {
+          "enum": ["VENDOR_MODEL_CARD", "VENDOR_DOCS", "PAPER", "REPO_EVIDENCE", "THIRD_PARTY_CONVERSION", "GITHUB_DOCS", "UNKNOWN"]
+        },
+        "ref": { "type": "string", "description": "URL, repo path, or citation" },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "id", "displayName", "category", "role", "runtime", "format",
+        "revision", "license", "downloadBytes", "installedBytes", "sha256",
+        "minFreeRamMb", "recommendedFreeRamMb", "ramRequirementSource",
+        "verificationStatus", "description", "supportedCapabilities",
+        "provenance"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "category": { "enum": ["vision", "text", "multimodal", "experimental-large"] },
+        "role": {
+          "type": "string",
+          "description": "Short functional role, e.g. report-from-photo, chat-text, catalog-reference"
+        },
+        "runtime": { "enum": ["litert-lm", "llama-cpp", "tbd"] },
+        "format": { "enum": ["litertlm", "gguf", "tflite", "tbd-litertlm"] },
+        "revision": {
+          "type": "string",
+          "description": "Pinned upstream commit/revision, or UNKNOWN_NOT_ESTABLISHED (never invent)."
+        },
+        "license": {
+          "type": "string",
+          "description": "License identifier as published by the rights holder (e.g. apache-2.0, lfm-open-1.0, gemma)."
+        },
+        "licenseUrl": { "type": "string" },
+        "downloadBytes": { "$ref": "#/$defs/bytesOrUnknown" },
+        "installedBytes": { "$ref": "#/$defs/bytesOrUnknown" },
+        "sha256": { "$ref": "#/$defs/sha256OrUnknown" },
+        "minFreeRamMb": { "type": "integer", "minimum": 0 },
+        "recommendedFreeRamMb": { "type": "integer", "minimum": 0 },
+        "ramRequirementSource": {
+          "enum": ["MEASURED", "VENDOR", "CONSERVATIVE_ESTIMATE"],
+          "description": "Provenance of the min-free-RAM figure (the install gate). MEASURED = on-device measurement with method on file; VENDOR = vendor/model-card/paper figure (stack may differ — see ramNotes); CONSERVATIVE_ESTIMATE = design estimate from the documented formula (see ram-ui.md)."
+        },
+        "ramNotes": { "type": "string" },
+        "verificationStatus": {
+          "enum": ["VERIFIED", "SUPPORTED_UNVERIFIED", "EXPERIMENTAL", "INCOMPATIBLE"]
+        },
+        "catalogOnly": {
+          "type": "boolean",
+          "description": "True = listed for reference; NOT distributed via FindBack-Models releases in v1."
+        },
+        "requiresAdvancedConfirm": {
+          "type": "boolean",
+          "description": "True = install/run below minimum free RAM (or any run for catalogOnly large entries) needs explicit advanced confirmation (gate DESIGNED in ram-ui.md, enforcement is a later task)."
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "supportedCapabilities": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "upstreamRepo": { "type": "string" },
+        "upstreamFile": { "type": ["string", "null"] },
+        "releaseAsset": {
+          "description": "Pinned asset name(s) in pinnedModelsRelease, or null when catalogOnly / not yet published.",
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
+        "provenance": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/provenanceSource" }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "verificationStatus": { "const": "VERIFIED" } } },
+          "then": {
+            "properties": {
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "downloadBytes": { "type": "integer", "minimum": 1 },
+              "installedBytes": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "catalogOnly": { "const": true } } },
+          "then": { "properties": { "requiresAdvancedConfirm": { "const": true } } }
+        }
+      ]
+    }
+  }
+}
