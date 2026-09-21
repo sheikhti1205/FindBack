@@ -66,12 +66,18 @@ class VlmEngine500(
         preparedImage: ImagePreparer.PreparedImage,
         instruction: String,
         maxOutputTokens: Int,
-        temperature: Float
+        temperature: Float,
+        traceId: String? = null
     ): String {
         if (!initialized) {
             throw IllegalStateException("Engine not initialized. Call initialize() first.")
         }
 
+        val diagCacheDir: File? = try {
+            context.cacheDir
+        } catch (_: Exception) {
+            null
+        }
         val engineInstance = engine!!
         // The full instruction arrives once, in the user message alongside the
         // image. The system slot carries only the short role so prompt tokens
@@ -87,6 +93,7 @@ class VlmEngine500(
             maxOutputToken = maxOutputTokens
         ))
 
+        val startMs = System.currentTimeMillis()
         try {
             val response = conversation.sendMessage(
                 Contents.of(
@@ -95,9 +102,33 @@ class VlmEngine500(
                 )
             )
 
-            return response.contents.contents
+            val text = response.contents.contents
                 .filterIsInstance<Content.Text>()
                 .joinToString("") { it.text }
+            Diag.event(
+                diagCacheDir,
+                "vlm.engine.generate.done",
+                traceId,
+                Diag.outputDigest(text) + mapOf(
+                    "backend" to backendName,
+                    "maxOutputTokens" to maxOutputTokens,
+                    "temperature" to temperature,
+                    "ms" to (System.currentTimeMillis() - startMs)
+                )
+            )
+            return text
+        } catch (e: Exception) {
+            Diag.event(
+                diagCacheDir,
+                "vlm.engine.generate.error",
+                traceId,
+                mapOf(
+                    "backend" to backendName,
+                    "ms" to (System.currentTimeMillis() - startMs),
+                    "error" to (e.message ?: "generate failed")
+                )
+            )
+            throw e
         } finally {
             conversation.close()
         }
