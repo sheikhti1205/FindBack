@@ -19,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
@@ -74,6 +75,18 @@ class LocalVlmPlugin : Plugin() {
     private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
     private fun requireDownloader(): ModelDownloader = downloader ?: throw IllegalStateException("Plugin not initialized")
     private fun requirePrefs(): SharedPreferences = prefs ?: throw IllegalStateException("Plugin not initialized")
+
+    /**
+     * Task 13: diag sink directory, nullable so a torn-down plugin degrades
+     * to untraced instead of throwing inside a diagnostics call.
+     */
+    private fun diagCacheDir(): File? {
+        return try {
+            getContext().cacheDir
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     /**
      * Rejects the call when load() has not completed yet.
@@ -818,11 +831,20 @@ class LocalVlmPlugin : Plugin() {
         }
         val maxOutputTokens = call.getInt("maxOutputTokens") ?: 224
         val temperature = call.getFloat("temperature") ?: 0.1f
+        // Task 13 trace: optional, propagated JS -> bridge -> native. Null
+        // means untraced; Diag hooks no-op unless verbose logging is on.
+        val traceId = call.getString("traceId")
 
         val selectedModel = VlmRouter.selectForAnalysis(mode, modelStates.mapValues { it.value.state })
         val modelId = when (selectedModel) {
             is AnalysisSelection.Ready -> selectedModel.modelId
             is AnalysisSelection.Unsupported -> {
+                Diag.event(
+                    diagCacheDir(),
+                    "vlm.analyze.error",
+                    traceId,
+                    mapOf("stage" to "router", "reason" to "unsupported")
+                )
                 call.reject(selectedModel.reason)
                 return
             }
@@ -831,6 +853,12 @@ class LocalVlmPlugin : Plugin() {
         // Check if model is ready
         val currentState = modelStates[modelId]?.state ?: VlmState.NOT_INSTALLED
         if (currentState != VlmState.READY_GPU) {
+            Diag.event(
+                diagCacheDir(),
+                "vlm.analyze.error",
+                traceId,
+                mapOf("stage" to "router", "reason" to "model-not-ready", "state" to currentState.wire)
+            )
             call.reject("Model not ready for inference. State: ${currentState.wire}")
             return
         }
@@ -845,6 +873,12 @@ class LocalVlmPlugin : Plugin() {
 
         // Try to acquire inference mutex
         if (!inferenceMutex.tryAcquire()) {
+            Diag.event(
+                diagCacheDir(),
+                "vlm.analyze.error",
+                traceId,
+                mapOf("stage" to "mutex", "reason" to "busy")
+            )
             call.reject("Inference already in progress")
             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = "Busy").toJSObject())
             return
@@ -854,6 +888,12 @@ class LocalVlmPlugin : Plugin() {
         // until the native analyze() returns (released in finally below).
         val token = activeInference.begin()
         if (token == null) {
+            Diag.event(
+                diagCacheDir(),
+                "vlm.analyze.error",
+                traceId,
+                mapOf("stage" to "mutex", "reason" to "busy")
+            )
             inferenceMutex.release()
             call.reject("Inference already in progress")
             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = "Busy").toJSObject())
@@ -862,6 +902,14 @@ class LocalVlmPlugin : Plugin() {
 
         scope.launch {
             var prepared: ImagePreparer.PreparedImage? = null
+            val analyzeStartMs = System.currentTimeMillis()
+            val diagDir = diagCacheDir()
+            Diag.event(
+                diagDir,
+                "vlm.analyze.start",
+                traceId,
+                mapOf("modelId" to modelId.wire, "maxOutputTokens" to maxOutputTokens)
+            )
             try {
                 // Heavy engine init runs here on IO, after the READY check and
                 // lease reclaim above. Null means either the model file
@@ -870,45 +918,109 @@ class LocalVlmPlugin : Plugin() {
                 // init — bad input, cancellation, generation errors — fail
                 // closed and never trigger a CPU retry.
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, phase = InferencePhase.LOADING_MODEL).toJSObject())
+                val loadingStartMs = System.currentTimeMillis()
                 var engineInstance = initializeEngine500(useCpu = false)
                 var usedCpuFallback = false
                 if (engineInstance == null) {
                     if (!modelFileExists500()) {
+                        Diag.event(
+                            diagDir,
+                            "vlm.analyze.error",
+                            traceId,
+                            mapOf("stage" to "loading_model", "reason" to "model-file-missing")
+                        )
                         call.reject("Model not installed or not ready")
                         notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                         return@launch
                     }
                     if (!allowCpuFallback) {
+                        Diag.event(
+                            diagDir,
+                            "vlm.analyze.error",
+                            traceId,
+                            mapOf("stage" to "loading_model", "reason" to "gpu-unavailable-cpu-off")
+                        )
                         call.reject("GPU backend unavailable and CPU compatibility mode is off")
                         notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                         return@launch
                     }
                     engineInstance = initializeEngine500(useCpu = true) ?: run {
+                        Diag.event(
+                            diagDir,
+                            "vlm.analyze.error",
+                            traceId,
+                            mapOf("stage" to "loading_model", "reason" to "cpu-engine-start-failed")
+                        )
                         call.reject("Inference failed: CPU compatibility engine could not start")
                         notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                         return@launch
                     }
                     usedCpuFallback = true
                 }
+                Diag.event(
+                    diagDir,
+                    "vlm.analyze.phase",
+                    traceId,
+                    mapOf(
+                        "phase" to "loading_model",
+                        "modelId" to modelId.wire,
+                        "backend" to engineInstance.backendName,
+                        "usedCpuFallback" to usedCpuFallback,
+                        "ms" to (System.currentTimeMillis() - loadingStartMs)
+                    )
+                )
 
                 // Prepare image (temp file tracked for guaranteed cleanup).
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, phase = InferencePhase.PREPARING_IMAGE).toJSObject())
-                prepared = ImagePreparer.prepare(getContext(), imageUri)
+                val prepareStartMs = System.currentTimeMillis()
+                prepared = ImagePreparer.prepare(getContext(), imageUri, traceId)
+                Diag.event(
+                    diagDir,
+                    "vlm.analyze.phase",
+                    traceId,
+                    mapOf(
+                        "phase" to "preparing_image",
+                        "modelId" to modelId.wire,
+                        "ms" to (System.currentTimeMillis() - prepareStartMs)
+                    )
+                )
 
                 // Run inference with the native-running flag held so
                 // delete/release paths defer instead of closing underneath.
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU, phase = InferencePhase.RUNNING).toJSObject())
                 activeInference.markNativeRunning(token, true)
+                val runningStartMs = System.currentTimeMillis()
                 val resultText = try {
-                    engineInstance.analyze(prepared, instruction, maxOutputTokens, temperature)
+                    engineInstance.analyze(prepared, instruction, maxOutputTokens, temperature, traceId)
                 } finally {
                     activeInference.markNativeRunning(token, false)
                 }
+                val outputDigest = Diag.outputDigest(resultText)
+                Diag.event(
+                    diagDir,
+                    "vlm.analyze.phase",
+                    traceId,
+                    outputDigest + mapOf(
+                        "phase" to "running",
+                        "modelId" to modelId.wire,
+                        "backend" to engineInstance.backendName,
+                        "ms" to (System.currentTimeMillis() - runningStartMs)
+                    )
+                )
 
                 // A cancelled inference must settle the JS Promise: reject it so
                 // the UI never waits forever on a call that will produce nothing.
                 // The terminal phaseless event returns listeners to idle.
                 if (activeInference.isCancelled(token)) {
+                    Diag.event(
+                        diagDir,
+                        "vlm.analyze.cancelled",
+                        traceId,
+                        mapOf(
+                            "modelId" to modelId.wire,
+                            "ms" to (System.currentTimeMillis() - analyzeStartMs)
+                        )
+                    )
                     notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                     call.reject("Inference cancelled", "CANCELLED")
                     return@launch
@@ -933,9 +1045,29 @@ class LocalVlmPlugin : Plugin() {
                     }
                 )
                 call.resolve(result.toJSObject())
+                Diag.event(
+                    diagDir,
+                    "vlm.analyze.done",
+                    traceId,
+                    outputDigest + mapOf(
+                        "modelId" to modelId.wire,
+                        "backend" to engineInstance.backendName,
+                        "usedCpuFallback" to usedCpuFallback,
+                        "ms" to (System.currentTimeMillis() - analyzeStartMs)
+                    )
+                )
                 notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
             } catch (e: CancellationException) {
                 // The job itself was cancelled: settle the call, then propagate.
+                Diag.event(
+                    diagDir,
+                    "vlm.analyze.cancelled",
+                    traceId,
+                    mapOf(
+                        "modelId" to modelId.wire,
+                        "ms" to (System.currentTimeMillis() - analyzeStartMs)
+                    )
+                )
                 try {
                     call.reject("Inference cancelled", "CANCELLED")
                 } catch (_: Exception) {
@@ -944,6 +1076,17 @@ class LocalVlmPlugin : Plugin() {
             } catch (e: Exception) {
                 if (!activeInference.isCancelled(token)) {
                     val errorMsg = e.message ?: "Inference failed"
+                    Diag.event(
+                        diagDir,
+                        "vlm.analyze.error",
+                        traceId,
+                        mapOf(
+                            "stage" to "inference",
+                            "modelId" to modelId.wire,
+                            "ms" to (System.currentTimeMillis() - analyzeStartMs),
+                            "error" to errorMsg
+                        )
+                    )
                     call.reject("Inference failed: $errorMsg")
                     notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = errorMsg).toJSObject())
                 }
