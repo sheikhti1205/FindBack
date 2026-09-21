@@ -53,7 +53,18 @@ object ImagePreparer {
      *
      * @throws IllegalArgumentException when the image cannot be opened or decoded.
      */
-    fun prepare(context: Context, uri: String): PreparedImage {
+    fun prepare(context: Context, uri: String, traceId: String? = null): PreparedImage {
+        val startMs = System.currentTimeMillis()
+        val diagCacheDir: File? = try {
+            context.cacheDir
+        } catch (_: Exception) {
+            null
+        }
+        val uriScheme = when {
+            uri.startsWith("file://") -> "file"
+            uri.startsWith("content://") -> "content"
+            else -> "bare"
+        }
         var stagedTemp: File? = null
         try {
             val sourcePath = when {
@@ -64,8 +75,33 @@ object ImagePreparer {
                 else -> uri
             }
             val exifOrientation = readExifOrientation(sourcePath)
-            val normalizedPath = normalizeToTemp(context, sourcePath, exifOrientation)
-            return PreparedImage(normalizedPath, temporary = true)
+            val normalized = normalizeToTemp(context, sourcePath, exifOrientation)
+            Diag.event(
+                diagCacheDir,
+                "vlm.image.prepare.done",
+                traceId,
+                mapOf(
+                    "uriScheme" to uriScheme,
+                    "sourceWidth" to normalized.sourceWidth,
+                    "sourceHeight" to normalized.sourceHeight,
+                    "sampleSize" to normalized.sampleSize,
+                    "outputBytes" to File(normalized.absolutePath).length(),
+                    "ms" to (System.currentTimeMillis() - startMs)
+                )
+            )
+            return PreparedImage(normalized.absolutePath, temporary = true)
+        } catch (e: Exception) {
+            Diag.event(
+                diagCacheDir,
+                "vlm.image.prepare.error",
+                traceId,
+                mapOf(
+                    "uriScheme" to uriScheme,
+                    "ms" to (System.currentTimeMillis() - startMs),
+                    "error" to (e.message ?: "prepare failed")
+                )
+            )
+            throw e
         } finally {
             // The staged content:// copy is an intermediate: the normalized
             // output is a separate temp file, so always drop the intermediate.
@@ -137,7 +173,14 @@ object ImagePreparer {
         return sampleSize
     }
 
-    private fun normalizeToTemp(context: Context, sourcePath: String, exifOrientation: Int): String {
+    private data class NormalizedImage(
+        val absolutePath: String,
+        val sourceWidth: Int,
+        val sourceHeight: Int,
+        val sampleSize: Int
+    )
+
+    private fun normalizeToTemp(context: Context, sourcePath: String, exifOrientation: Int): NormalizedImage {
         // Bounds first so a 50 MP camera photo never inflates to full size.
         // Downsample to cap the longer side before applying EXIF.
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -163,7 +206,7 @@ object ImagePreparer {
             transformed.recycle()
         }
         bitmap.recycle()
-        return tempFile.absolutePath
+        return NormalizedImage(tempFile.absolutePath, bounds.outWidth, bounds.outHeight, sampleSize)
     }
 
     /** Longest side of a prepared image; bounds memory before decode. */
