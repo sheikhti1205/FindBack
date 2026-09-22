@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { bridge, photo } = vi.hoisted(() => ({
-  bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), setCpuFallback: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), cancelInference: vi.fn().mockResolvedValue(undefined), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() },
+  bridge: { getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), setCpuFallback: vi.fn(), getModelStates: vi.fn(), downloadModel: vi.fn(), waitForSettled: vi.fn(), pauseDownload: vi.fn(), resumeDownload: vi.fn(), repairModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), runGpuSelfTest: vi.fn(), cancelInference: vi.fn().mockResolvedValue(undefined), release: vi.fn().mockResolvedValue(undefined), onDownloadProgress: vi.fn(), onModelStateChange: vi.fn() },
   photo: {
     isNativeCameraAvailable: vi.fn(() => true),
     takePhoto: vi.fn(),
@@ -48,7 +48,7 @@ describe("OfflineAi", () => {
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    expect(await screen.findByText(/360\.8 MB/)).toBeTruthy();
+    expect(await screen.findByText(/344\.1 MB download/)).toBeTruthy();
     bridge.downloadModel.mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole("button", { name: /download smolvlm2 500m/i }));
     expect(bridge.downloadModel).not.toHaveBeenCalled();
@@ -141,8 +141,8 @@ describe("OfflineAi", () => {
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
-    // 360.8 MB + max(256 MiB, 25%) = 616.8 MB.
-    expect(await screen.findByText(/needs 616\.8 mb free/i)).toBeTruthy();
+    // 360822960 B + max(256 MiB, 25%) = 629258416 B = 600.1 MB.
+    expect(await screen.findByText(/needs 600\.1 mb free/i)).toBeTruthy();
     // Native requiredBytes wins when reported.
     expect(screen.queryByText(/433|432/)).toBeNull();
     // Omitted CPU setting defaults to on.
@@ -349,7 +349,7 @@ describe("OfflineAi", () => {
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     render(<MemoryRouter><OfflineAi /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: /SmolVLM2 500M/ })).toBeTruthy();
-    expect(await screen.findByText(/checking storage/i)).toBeTruthy();
+    expect((await screen.findAllByText(/checking storage/i)).length).toBeGreaterThan(0);
     const download = screen.getByRole("button", { name: /download smolvlm2 500m/i });
     expect((download as HTMLButtonElement).disabled).toBe(true);
   });
@@ -545,8 +545,7 @@ describe("OfflineAi", () => {
     expect(build.getAttribute("title")).toBe("3524a8f2c48855000f1029ea9f6e6a610e93796b");
   });
 
-  it("stacks model actions and constrains dialogs for narrow viewports", async () => {
-    photo.isNativeCameraAvailable.mockReturnValue(true);
+  it("stacks model actions and constrains dialogs for narrow viewports", async () => {    photo.isNativeCameraAvailable.mockReturnValue(true);
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
@@ -567,5 +566,167 @@ describe("OfflineAi", () => {
     expect(panel?.className).toContain("calc(100vw-2rem)");
     expect(panel?.className).toContain("overflow-y-auto");
     expect(container.querySelectorAll('[class*="yellow"], [class*="amber"]').length).toBe(0);
+  });
+
+  it("drives cards from the shipped catalogue with role, runtime, verification, and RAM figures", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
+    const scoped = within(card);
+    expect(scoped.getByText("report-from-photo")).toBeTruthy();
+    expect(scoped.getAllByText("litert-lm").length).toBeGreaterThan(0);
+    expect(scoped.getByText("Verified")).toBeTruthy();
+    expect(scoped.getByText("Minimum free RAM ~1.5 GB")).toBeTruthy();
+    expect(scoped.getByText("Recommended ~2.5 GB")).toBeTruthy();
+    expect(scoped.getByText("Your device now: unknown")).toBeTruthy();
+    expect(scoped.getByText("Conservative estimate")).toBeTruthy();
+    // Verified entries carry no device caveat.
+    expect(scoped.queryByText(/not verified on this device/i)).toBeNull();
+  });
+
+  it("warns verbatim on untested entries and never offers them for download without a runtime", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const qwen = await screen.findByRole("listitem", { name: "Qwen3 0.6B (LiteRT, dynamic int4)" });
+    expect(within(qwen).getByText("Not verified on this device. May fail on devices with limited free memory.")).toBeTruthy();
+    expect(within(qwen).queryByRole("button", { name: /download/i })).toBeNull();
+    const vl = await screen.findByRole("listitem", { name: /LFM2\.5-VL 450M/ });
+    expect(within(vl).queryByRole("button", { name: /download/i })).toBeNull();
+    const gemma = await screen.findByRole("listitem", { name: /Gemma 3n/ });
+    expect(within(gemma).queryByRole("button", { name: /download/i })).toBeNull();
+    expect(within(gemma).queryByRole("button", { name: /import/i })).toBeNull();
+    expect(within(gemma).queryByRole("button", { name: /export/i })).toBeNull();
+  });
+
+  it("gates a below-minimum download behind explicit acknowledgement", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.downloadModel.mockClear();
+    bridge.downloadModel.mockResolvedValue(undefined);
+    render(<MemoryRouter><OfflineAi availableFreeRamMb={512} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /download smolvlm2 500m/i }));
+    expect(await screen.findByTestId("model-advanced-confirm-gate")).toBeTruthy();
+    const confirm = screen.getByTestId("model-gate-confirm") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(bridge.downloadModel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("model-gate-acknowledge"));
+    await waitFor(() => expect((screen.getByTestId("model-gate-confirm") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId("model-gate-confirm"));
+    await waitFor(() => expect(bridge.downloadModel).toHaveBeenCalledWith("smolvlm2-500m"));
+  });
+
+  it("switches the resident model cancel → release → verify in order", async () => {
+    window.localStorage.removeItem("findback:offline-ai:active-model");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    bridge.cancelInference.mockClear();
+    bridge.release.mockClear();
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /set smolvlm2 500m.*as active model/i }));
+    await waitFor(() => expect(screen.getByText("Active for analysis")).toBeTruthy());
+    expect(bridge.cancelInference).toHaveBeenCalledTimes(1);
+    expect(bridge.release).toHaveBeenCalledTimes(1);
+    const cancelOrder = (bridge.cancelInference as unknown as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0];
+    const releaseOrder = (bridge.release as unknown as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0];
+    expect(cancelOrder).toBeLessThan(releaseOrder as number);
+    expect(window.localStorage.getItem("findback:offline-ai:active-model")).toBe("smolvlm2-500m-litert-int4");
+    // Active entries offer no second switch: no repeat cancel/release cycle.
+    expect(screen.queryByRole("button", { name: /set smolvlm2 500m.*as active model/i })).toBeNull();
+    expect(bridge.cancelInference).toHaveBeenCalledTimes(1);
+    expect(bridge.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks activation below minimum without confirmation, with the gate reason", async () => {
+    window.localStorage.removeItem("findback:offline-ai:active-model");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi availableFreeRamMb={100} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /set smolvlm2 500m.*as active model/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/advanced confirmation required/i);
+    expect(screen.queryByText("Active for analysis")).toBeNull();
+  });
+
+  it("refuses an import file that misses the shipped pin, and unpinned entries outright", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const { container } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
+    fireEvent.click(within(card).getByRole("button", { name: /import smolvlm2 500m/i }));
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["not-the-model"], "model.fbmodel")] } });
+    expect(await within(card).findByText(/does not match the shipped catalogue pin/i)).toBeTruthy();
+
+    const unpinned = await screen.findByRole("listitem", { name: "Qwen3 0.6B (LiteRT, mixed int4)" });
+    fireEvent.click(within(unpinned).getByRole("button", { name: /import qwen3 0.6b/i }));
+    fireEvent.change(input, { target: { files: [new File(["x"], "model.fbmodel")] } });
+    expect(await within(unpinned).findByText(/no shipped hash pin/i)).toBeTruthy();
+  });
+
+  it("exports through the injected writer seam, and explains when no writer exists", async () => {
+    const encoder = new TextEncoder();
+    const written = new Map<string, Uint8Array[]>();
+    const readerFor = () => ({
+      files: [
+        { path: "weights/model.litertlm", size: 4 },
+        { path: "tokenizer/vocab.json", size: 2 },
+      ],
+      openRead: (path: string) => {
+        const bytes = path.startsWith("weights/") ? new Uint8Array([1, 2, 3, 4]) : encoder.encode("{}");
+        return (async function* () {
+          yield bytes;
+        })();
+      },
+    });
+    const makePackageWriter = () => ({
+      writeFile: async (_file: { path: string; method: "STORE" | "DEFLATE" }, chunks: AsyncIterable<Uint8Array>) => {
+        const parts: Uint8Array[] = [];
+        for await (const chunk of chunks) parts.push(chunk);
+        written.set(_file.path, parts);
+      },
+    });
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi exportReaderFor={readerFor} makePackageWriter={makePackageWriter} /></MemoryRouter>);
+    const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
+    fireEvent.click(within(card).getByRole("button", { name: /export smolvlm2 500m/i }));
+    expect(await within(card).findByText(/packaged 3 files for smolvlm2-500m-litert-int4/i)).toBeTruthy();
+    expect(written.has("manifest.json")).toBe(true);
+    expect(written.has("checksums.json")).toBe(true);
+  });
+
+  it("explains that export packaging runs in the platform installer when no writer is injected", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
+    fireEvent.click(within(card).getByRole("button", { name: /export smolvlm2 500m/i }));
+    expect(await within(card).findByText(/platform installer/i)).toBeTruthy();
   });
 });
