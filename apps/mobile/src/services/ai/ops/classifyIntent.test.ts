@@ -72,4 +72,26 @@ describe("classify-intent op", () => {
       expect(result.error.diagnostic).toBe("R1_UNSUPPORTED_ACTION:teleport_item_home");
     }
   });
+
+  it("wires context with no free-text R6 surface (works with and without explicit context)", async () => {
+    const plain = await classifyIntent(
+      stubGenerate('{"intent":"SEARCH"}'),
+      "Search for any red backpack reported in the last week.",
+      mustProfile("smolvlm2-500m-text"),
+    );
+    expect(plain).toEqual({
+      ok: true,
+      value: { intent: "SEARCH", action: { action: "OPEN_SEARCH" } },
+    });
+    const supplied = await classifyIntent(
+      stubGenerate('{"intent":"SEARCH"}'),
+      "Search for any red backpack reported in the last week.",
+      mustProfile("smolvlm2-500m-text"),
+      { context: { userContext: "custom context about a backpack search" } },
+    );
+    expect(supplied).toEqual({
+      ok: true,
+      value: { intent: "SEARCH", action: { action: "OPEN_SEARCH" } },
+    });
+  });
 });

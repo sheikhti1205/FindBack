@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractSearchFilters } from "./extractSearchFilters";
+import { SEARCH_SLOTS_INSTRUCTION, extractSearchFilters } from "./extractSearchFilters";
 import { mustProfile, stubGenerate } from "./testSupport";
 
 describe("extract-search-filters op", () => {
@@ -37,5 +37,27 @@ describe("extract-search-filters op", () => {
     );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.fields.status).toBe("open");
+  });
+
+  it("rejects userContext echo with no explicit context (R6 wired)", async () => {
+    const userMessage = "searching for a red backpack reported near the north gate last week";
+    const result = await extractSearchFilters(
+      stubGenerate(JSON.stringify({ query: userMessage })),
+      userMessage,
+      mustProfile("qwen3-0.6b-dynamic-int4"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
+  });
+
+  it("rejects instruction verbatim in free text with no explicit context (BV08-stock shape)", async () => {
+    const instructionRun = SEARCH_SLOTS_INSTRUCTION.slice(0, 66);
+    const result = await extractSearchFilters(
+      stubGenerate(JSON.stringify({ query: instructionRun })),
+      "Search for any red backpack reported in the last week.",
+      mustProfile("qwen3-0.6b-dynamic-int4"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
   });
 });

@@ -36,11 +36,15 @@ export async function extractSearchFilters(
     maxOutputTokens: profile.maxOutputTokensText,
     temperature: profile.defaultTemperature,
   });
+  const context = {
+    instruction: SEARCH_SLOTS_INSTRUCTION,
+    userContext: options?.context?.userContext ?? userMessage,
+  };
   const parsed = normalizeJsonOp(
     rawText,
     profile,
-    (value, context) => validateSearchFilters(value, context),
-    options,
+    (value, innerContext) => validateSearchFilters(value, innerContext),
+    { ...options, context },
   );
   if (!parsed.ok) return parsed;
   const hasFilter =

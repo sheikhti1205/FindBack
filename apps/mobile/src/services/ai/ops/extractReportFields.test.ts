@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractReportFields } from "./extractReportFields";
+import { REPORT_SLOTS_INSTRUCTION, extractReportFields } from "./extractReportFields";
 import { mustProfile, stubGenerate } from "./testSupport";
 
 describe("extract-report-fields op", () => {
@@ -52,5 +52,26 @@ describe("extract-report-fields op", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.errorClass).toBe("INVALID_OUTPUT");
+  });
+
+  it("rejects userContext echo with no explicit context (R6 wired)", async () => {
+    const userMessage = "found near the central market fountain by the north gate entrance";
+    const result = await extractReportFields(
+      stubGenerate(`{"title":"Umbrella","description":"${userMessage}"}`),
+      userMessage,
+      mustProfile("qwen3-0.6b-dynamic-int4"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
+  });
+
+  it("rejects instruction verbatim in free text with no explicit context (BV08-stock shape)", async () => {
+    const result = await extractReportFields(
+      stubGenerate(JSON.stringify({ title: "Umbrella", description: REPORT_SLOTS_INSTRUCTION })),
+      "I lost my black umbrella yesterday near the central market.",
+      mustProfile("qwen3-0.6b-dynamic-int4"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
   });
 });

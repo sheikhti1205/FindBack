@@ -30,7 +30,11 @@ export async function answerHelp(
     maxOutputTokens: profile.maxOutputTokensText,
     temperature: profile.defaultTemperature,
   });
-  const parsed = normalizeProse(rawText, profile, options);
+  const context = {
+    instruction: HELP_INSTRUCTION,
+    userContext: options?.context?.userContext ?? userMessage,
+  };
+  const parsed = normalizeProse(rawText, profile, { ...options, context });
   if (!parsed.ok) return parsed;
   return { ok: true, value: { answerText: parsed.value, action: { action: "NONE" } } };
 }

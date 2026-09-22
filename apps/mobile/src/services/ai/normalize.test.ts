@@ -178,6 +178,38 @@ describe("R5 field-stuffing fails even when JSON parses", () => {
     if (!rejected.ok) expect(rejected.error.diagnostic).toContain("R5_FIELD_STUFFING");
   });
 
+  it("rejects 3-field cross-field duplication (BV03/BV04-stock shape)", () => {
+    const duped = validatePhotoAnalysis({
+      ...VALID_PHOTO,
+      colors: ["brown"],
+      visibleText: ["brown"],
+      identifyingFeatures: ["brown"],
+    });
+    expect(duped.ok).toBe(false);
+    if (!duped.ok) expect(duped.error.diagnostic).toContain("R5_FIELD_STUFFING");
+  });
+
+  it("rejects BV11-stock shape (8 items / 4 distinct + cross-field broken bag)", () => {
+    const bv11 = validatePhotoAnalysis({
+      ...VALID_PHOTO,
+      objectName: "broken bag",
+      suggestedTitle: "broken bag",
+      colors: ["black", "gray", "white", "red", "blue", "yellow", "orange", "purple"],
+      identifyingFeatures: [
+        "strap",
+        "strap",
+        "buckle",
+        "buckle",
+        "zipper",
+        "zipper",
+        "pocket",
+        "pocket",
+      ],
+    });
+    expect(bv11.ok).toBe(false);
+    if (!bv11.ok) expect(bv11.error.diagnostic).toContain("R5_FIELD_STUFFING");
+  });
+
   it("accepts the valid photo object and sparse nulls", () => {
     const sparse = validatePhotoAnalysis({
       ...VALID_PHOTO,

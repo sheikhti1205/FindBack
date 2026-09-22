@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeImage } from "./analyzeImage";
+import { PHOTO_INSTRUCTION, analyzeImage } from "./analyzeImage";
 import { FakeAiProvider, REFUSAL_TEXT } from "../testing/FakeAiProvider";
 import { fakePhotoGenerate, mustProfile, stubGenerate } from "./testSupport";
 
@@ -77,5 +77,49 @@ describe("analyze-image op", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.diagnostic).toContain("R5_FIELD_STUFFING");
     expect(generate.calls).toBe(2);
+  });
+
+  it("rejects userContext echo with no explicit context (R6 wired)", async () => {
+    const userContext = "found near the central market fountain by the north gate entrance";
+    const echoed = JSON.stringify({
+      objectName: "umbrella",
+      suggestedCategory: "accessories",
+      colors: ["black"],
+      visibleBrand: null,
+      visibleText: [],
+      identifyingFeatures: ["curved wooden handle"],
+      suggestedTitle: "Umbrella found",
+      suggestedDescription: `A photo. ${userContext} and more words here.`,
+      uncertainFields: [],
+    });
+    const result = await analyzeImage(
+      stubGenerate(echoed),
+      { imageUri: "x.jpg", userContext },
+      mustProfile(VISION),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
+  });
+
+  it("rejects instruction verbatim in visibleText with no explicit context (BV08-stock shape)", async () => {
+    const instructionRun = PHOTO_INSTRUCTION.slice(0, 66);
+    const bv08 = JSON.stringify({
+      objectName: "eyeglasses",
+      suggestedCategory: "accessories",
+      colors: ["black"],
+      visibleBrand: null,
+      visibleText: [instructionRun],
+      identifyingFeatures: ["thin metal frames"],
+      suggestedTitle: "Eyeglasses found",
+      suggestedDescription: "A pair of eyeglasses.",
+      uncertainFields: [],
+    });
+    const result = await analyzeImage(
+      stubGenerate(bv08),
+      { imageUri: "x.jpg" },
+      mustProfile(VISION),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
   });
 });
