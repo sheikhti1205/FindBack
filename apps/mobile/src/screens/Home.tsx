@@ -20,7 +20,7 @@ export function Home() {
   const { user } = useAuth();
   const { tapCount } = useTabTap();
   // Type + search survive in the URL so back-nav, deep-links, and copied
-  // links restore the feed the reader was looking at (WP7 #7).
+  // links restore the feed the reader was looking at.
   const [typeParam, setTypeParam] = useUrlParam("type");
   const type: TypeFilter = typeParam === "LOST" || typeParam === "FOUND" ? typeParam : "ALL";
   const setType = (next: TypeFilter) => setTypeParam(next === "ALL" ? "" : next);

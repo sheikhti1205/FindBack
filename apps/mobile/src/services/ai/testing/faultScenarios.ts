@@ -1,11 +1,11 @@
 import type { AiErrorClass, FaultMode } from "./FakeAiProvider";
 
-/** Assistant surface a scenario exercises. No UI is built here (Task 24). */
+/** Assistant surface a scenario exercises. No UI is built here. */
 export type AssistantSurface = "help" | "report" | "photo" | "search" | "runtime";
 
 /**
  * Deterministic fault scenario: an ordered mode sequence plus the expected
- * coordinator error class and the UI affordance Task 24 must provide
+ * application error class and the UI affordance the assistant UI must provide
  * (described, not implemented).
  */
 export interface FaultScenario {
@@ -21,7 +21,7 @@ export interface FaultScenario {
 }
 
 /**
- * Scenario matrix covering the thirteen Task 23 map-freeze cases.
+ * Scenario matrix covering the thirteen simulator mode-mapping cases.
  * `expectedError: null` means the sequence ends in recovery/success.
  */
 export const SCENARIO_MATRIX: readonly FaultScenario[] = [
@@ -32,7 +32,7 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     modes: ["LOOP_SENTENCE", "GOOD"],
     expectedError: "LOOP_DETECTED",
     expectedUi: "Loop notice with Stop + Regenerate affordance; second attempt answers cleanly.",
-    notes: "Also runnable with LOOP_PARAGRAPH. Loop classification belongs to the coordinator, not the fake.",
+    notes: "Also runnable with LOOP_PARAGRAPH. Loop classification belongs to the normalization layer, not the fake.",
   },
   {
     id: "help-timeout-switch-model",
@@ -41,7 +41,7 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     modes: ["TIMEOUT", "GOOD"],
     expectedError: "TIMEOUT",
     expectedUi: "Timeout notice offering model switch / retry; retry on the other model succeeds.",
-    notes: "FROZEN: TIMEOUT. GenerationGuard owns the deadline; production timeout budget is TBD (Task-20/29 measurements + ModelProfile).",
+    notes: "Stable: TIMEOUT. GenerationGuard owns the deadline; production timeout budget is TBD (evaluation measurements + ModelProfile).",
   },
   {
     id: "report-malformed-extraction",
@@ -50,7 +50,7 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     modes: ["INVALID_JSON", "TRUNCATED_JSON", "EMPTY"],
     expectedError: "INVALID_OUTPUT",
     expectedUi: "Extraction-failed state asking the user to rephrase; draft is preserved.",
-    notes: "FROZEN: EMPTY, INVALID_JSON, and TRUNCATED_JSON map to INVALID_OUTPUT.",
+    notes: "Stable: EMPTY, INVALID_JSON, and TRUNCATED_JSON map to INVALID_OUTPUT.",
   },
   {
     id: "report-unknown-action-rejected",
@@ -59,7 +59,7 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     modes: ["UNKNOWN_ACTION", "WRONG_ACTION"],
     expectedError: "UNSUPPORTED_ACTION",
     expectedUi: "Unsupported-action rejection naming the rejected action; no side effects applied.",
-    notes: "FROZEN: both map to UNSUPPORTED_ACTION; diagnostics preserve which mode occurred (WRONG_ACTION vs UNKNOWN_ACTION).",
+    notes: "Stable: both map to UNSUPPORTED_ACTION; diagnostics preserve which mode occurred (WRONG_ACTION vs UNKNOWN_ACTION).",
   },
   {
     id: "photo-valid",
@@ -68,7 +68,7 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     modes: ["GOOD"],
     expectedError: null,
     expectedUi: "Structured suggestions shown (title, description, category, colors).",
-    notes: "FROZEN: tolerantly extract ONE recoverable JSON object, then strictly validate (schema + enum/action allowlist); multiple conflicting objects or invalid schema → INVALID_OUTPUT.",
+    notes: "Stable: tolerantly extract ONE recoverable JSON object, then strictly validate (schema + enum/action allowlist); multiple conflicting objects or invalid schema → INVALID_OUTPUT.",
   },
   {
     id: "photo-invalid",
@@ -86,7 +86,7 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     modes: ["PROSE_PLUS_JSON", "GOOD"],
     expectedError: null,
     expectedUi: "Disambiguation prompt listing candidate places; selection continues the search.",
-    notes: "FROZEN: ambiguous location is not an error — successful ASK_USER state, no coordinates chosen. Exact field shape TBD (Task 21).",
+    notes: "Stable: ambiguous location is not an error — successful ASK_USER state, no coordinates chosen. Exact field shape TBD (contract follow-up).",
     expectedAssistantState: "ASK_USER",
   },
   {
@@ -96,7 +96,7 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     modes: ["OOM", "LOW_MEMORY"],
     expectedError: "LOW_MEMORY",
     expectedUi: "Low-memory notice suggesting the smaller model or freeing memory.",
-    notes: "FROZEN: OOM (runtime failure) and LOW_MEMORY (preflight) stay distinct simulator causes, both normalizing to LOW_MEMORY; diagnostics preserve OOM_RUNTIME vs PRECHECK_INSUFFICIENT_MEMORY.",
+    notes: "Stable: OOM (runtime failure) and LOW_MEMORY (preflight) stay distinct simulator causes, both normalizing to LOW_MEMORY; diagnostics preserve OOM_RUNTIME vs PRECHECK_INSUFFICIENT_MEMORY.",
   },
   {
     id: "user-cancel",
@@ -123,7 +123,7 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     modes: ["MODEL_CORRUPT"],
     expectedError: "MODEL_CORRUPT",
     expectedUi: "Model-corrupt notice with reinstall action; generation is blocked until reinstall.",
-    notes: "FROZEN: deterministic MODEL_CORRUPT simulator mode exercising the taxonomy's MODEL_CORRUPT class.",
+    notes: "Stable: deterministic MODEL_CORRUPT simulator mode exercising the taxonomy's MODEL_CORRUPT class.",
   },
   {
     id: "model-deleted-while-sheet-open",

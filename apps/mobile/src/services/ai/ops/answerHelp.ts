@@ -1,5 +1,5 @@
 /**
- * Narrow op: answer-help (Task 21).
+ * Narrow op: answer-help.
  *
  * Prose path: no JSON required. Output is thought-stripped (R2, Qwen
  * profile only), refusal/empty-checked (R4), bounded, and echo-checked

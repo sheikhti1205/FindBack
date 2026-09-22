@@ -5,7 +5,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("logError (WP10 #22)", () => {
+describe("logError", () => {
   it("forwards to console.error", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     logError("boom", { code: 1 });

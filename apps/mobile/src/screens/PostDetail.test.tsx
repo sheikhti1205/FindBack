@@ -81,7 +81,7 @@ function renderDetail() {
   );
 }
 
-describe("PostDetail overflow (WP15 #37)", () => {
+describe("PostDetail overflow", () => {
   beforeEach(() => {
     postsMock.fetchPost.mockResolvedValue(basePost);
     postsMock.fetchComments.mockResolvedValue([longComment]);
@@ -110,7 +110,7 @@ describe("PostDetail overflow (WP15 #37)", () => {
   });
 });
 
-describe("PostDetail comments (WP15 #36)", () => {
+describe("PostDetail comments", () => {
   beforeEach(() => {
     postsMock.fetchPost.mockResolvedValue(basePost);
     postsMock.fetchComments.mockResolvedValue([]);
@@ -173,7 +173,7 @@ describe("PostDetail comments (WP15 #36)", () => {
   });
 });
 
-describe("PostDetail mutation sequencing (WP15 #34)", () => {
+describe("PostDetail mutation sequencing", () => {
   let resolveReact: (value: { postId: string; likeCount: number; dislikeCount: number; myReaction: "LIKE" | "DISLIKE" | null }) => void;
   let resolveRate: (value: { postId: string; score: number; ratingAvg: number | null; ratingCount: number }) => void;
 

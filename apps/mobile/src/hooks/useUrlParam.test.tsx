@@ -35,7 +35,7 @@ function renderHarness(entry: string) {
 
 afterEach(cleanup);
 
-describe("useUrlParam (WP7 #7)", () => {
+describe("useUrlParam", () => {
   it("starts empty with a clean URL", () => {
     renderHarness("/");
     expect(screen.getByTestId("value").textContent).toBe("");

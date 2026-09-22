@@ -1,5 +1,5 @@
 /**
- * Narrow op: analyze-image (Task 21).
+ * Narrow op: analyze-image.
  *
  * Structured vision path: the model emits ONE 9-field photo object under
  * the canonical VLM instruction. Strict schema validation + R5/R6 guards

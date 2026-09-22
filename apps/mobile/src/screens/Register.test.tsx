@@ -49,7 +49,7 @@ function createCheckUsernamePromise() {
   return { promise, resolve: resolve! };
 }
 
-describe("Register username race condition (WP15 #34)", () => {
+describe("Register username race condition", () => {
   beforeEach(() => {
     authMock.checkUsername.mockReset();
     authMock.register.mockReset();
@@ -177,7 +177,7 @@ describe("Register username race condition (WP15 #34)", () => {
   });
 });
 
-describe("Register Bangladesh phone validation (WP15 #35)", () => {
+describe("Register Bangladesh phone validation", () => {
   beforeEach(() => {
     authMock.checkUsername.mockReset();
     authMock.register.mockReset();

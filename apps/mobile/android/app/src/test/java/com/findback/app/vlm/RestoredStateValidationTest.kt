@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /**
- * WP3 (audit #3): a persisted READY_GPU / GPU_UNAVAILABLE is a verdict about
+ * A persisted READY_GPU / GPU_UNAVAILABLE is a verdict about
  * a specific environment. When the app version, OS fingerprint, ABI, model
  * revision, or runtime changes, the verdict must downgrade to
  * INSTALLED_UNVERIFIED (files present, GPU unverified) instead of being

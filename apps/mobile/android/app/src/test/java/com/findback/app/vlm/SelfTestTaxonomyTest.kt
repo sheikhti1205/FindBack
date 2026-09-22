@@ -7,7 +7,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * WP2 (audit #25): self-test failures are classified, not flattened into a
+ * Self-test failures are classified, not flattened into a
  * bare GPU_UNAVAILABLE + diagnostics string. The classification travels in
  * the full GpuSelfTestResult to the UI.
  */

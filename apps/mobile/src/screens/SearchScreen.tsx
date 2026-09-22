@@ -14,7 +14,7 @@ type TypeFilter = PostType | "ALL";
 export function SearchScreen() {
   const { tapCount } = useTabTap();
   // Every filter survives in the URL so back-nav, deep-links, and copied
-  // links restore the exact search the reader was looking at (WP7 #7).
+  // links restore the exact search the reader was looking at.
   const [typeParam, setTypeParam] = useUrlParam("type");
   const type: TypeFilter = typeParam === "LOST" || typeParam === "FOUND" ? typeParam : "ALL";
   const setType = (next: TypeFilter) => setTypeParam(next === "ALL" ? "" : next);

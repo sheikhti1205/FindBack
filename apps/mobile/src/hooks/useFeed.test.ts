@@ -187,7 +187,7 @@ describe("useFeed", () => {
     expect(result.current.items.map((i) => i.id)).toEqual(["b-cached"]);
   });
 
-  it("preserves the initial full total across keyset appends (WP7)", async () => {
+  it("preserves the initial full total across keyset appends", async () => {
     fetchFeedMock
       .mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], "cur-1", 25))
       .mockResolvedValueOnce(page([{ id: "c" }, { id: "d" }], "cur-2", 20))
@@ -231,7 +231,7 @@ describe("useFeed", () => {
     expect(scrollEl.scrollTop).toBe(500);
   });
 
-  it("restores cached items + scrollTop on back-nav without refetching (WP8)", async () => {
+  it("restores cached items + scrollTop on back-nav without refetching", async () => {
     const firstScroll = { scrollTop: 0 };
     const firstRef = { current: firstScroll };
     fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], "cur-1", 2));
@@ -279,7 +279,7 @@ describe("useFeed", () => {
     expect(fetchFeedMock).toHaveBeenCalledTimes(2);
   });
 
-  it("refetches when the session cache is stale (WP8)", async () => {
+  it("refetches when the session cache is stale", async () => {
     const nowSpy = vi.spyOn(Date, "now");
     try {
       nowSpy.mockReturnValue(1_000_000);
@@ -301,7 +301,7 @@ describe("useFeed", () => {
     }
   });
 
-  it("refreshes a dirty session cache in the background (WP7 #8)", async () => {
+  it("refreshes a dirty session cache in the background", async () => {
     const scrollEl = { scrollTop: 0 };
     fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }], null, 1));
     const { unmount } = renderHook(() => useFeed({}, { cacheKey: "test:dirty", scrollRef: { current: scrollEl } }));
@@ -319,7 +319,7 @@ describe("useFeed", () => {
     await waitFor(() => expect(result.current.items.map((i) => i.id)).toEqual(["a", "b"]));
   });
 
-  it("removes a deleted post in place without refetching (WP9)", async () => {
+  it("removes a deleted post in place without refetching", async () => {
     fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }, { id: "c" }], null, 3));
     const { result } = renderHook(() => useFeed({}));
     await waitFor(() => expect(result.current.items).toHaveLength(3));
@@ -332,7 +332,7 @@ describe("useFeed", () => {
     expect(fetchFeedMock).not.toHaveBeenCalled();
   });
 
-  it("ignores removeItem for a post that is not loaded (WP9)", async () => {
+  it("ignores removeItem for a post that is not loaded", async () => {
     fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }], null, 1));
     const { result } = renderHook(() => useFeed({}));
     await waitFor(() => expect(result.current.items).toHaveLength(1));

@@ -1,5 +1,5 @@
 /**
- * Central reporting hook (WP10 #22). All console noise is banned by lint;
+ * Central reporting hook. All console noise is banned by lint;
  * anything worth recording goes through here so it can later fan out to a
  * crash reporter without touching call sites.
  */

@@ -1,4 +1,4 @@
-# Phase 9 — Release Hardening and Human/Agent Handoff
+# Phase 9 — Release Hardening and Handover
 
 > Status update (2026-09-20, `v0.1.0-beta.1` RC): the production backend is
 > Supabase (chosen — item 1 closed); GitHub Actions builds debug (`ci.yml`)
@@ -9,7 +9,7 @@
 
 This phase starts after the Phase 8 checkpoint. The codebase already has all 24 teacher requirements represented, a passing web/API CI run, and a locally built debug APK. Phase 9 turns that implementation checkpoint into a reliable teacher-demo/release candidate.
 
-## What the agent can complete autonomously
+## Ungated engineering work
 
 - Keep lint, typecheck, API tests, mobile tests, and web build green.
 - Build the Android debug APK **locally** with `npm run apk`; signed beta
@@ -71,8 +71,8 @@ This phase starts after the Phase 8 checkpoint. The codebase already has all 24 
 
 ## Recommended division of labour
 
-**Agent:** code, tests, CI, build scripts, provider interfaces, documentation, release checks, bug fixes.
+**Maintainer (ungated):** code, tests, CI, build scripts, provider interfaces, documentation, release checks, bug fixes.
 
-**Human:** provider/account creation, API keys/secrets, billing decisions, release signing, Crystal Reports GUI work, Play Console/production deployment decisions, and physical-device UX acceptance.
+**Owner (gated):** provider/account creation, API keys/secrets, billing decisions, release signing, Crystal Reports GUI work, Play Console/production deployment decisions, and physical-device UX acceptance.
 
 Do not merge provider-specific production wiring merely to remove a `DEFERRED` label. A reversible demo adapter is preferable until the owner explicitly chooses the provider.

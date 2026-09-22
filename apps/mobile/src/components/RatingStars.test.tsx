@@ -6,7 +6,7 @@ import { RatingStars } from "./RatingStars";
 afterEach(cleanup);
 
 describe("RatingStars", () => {
-  it("moves focus on arrows without rating (WP12/#35)", () => {
+  it("moves focus on arrows without rating", () => {
     const onRate = vi.fn();
     render(<><span id="lbl">Your rating</span><RatingStars value={null} onRate={onRate} labelId="lbl" /></>);
     const radios = screen.getAllByRole("radio");

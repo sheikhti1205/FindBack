@@ -1,5 +1,5 @@
 /**
- * Test-only adapters for Task-21 op tests (not production code).
+ * Test-only adapters for op tests (not production code).
  */
 import { profileFor, type ModelProfile } from "../modelProfiles";
 import { FakeAiProvider } from "../testing/FakeAiProvider";

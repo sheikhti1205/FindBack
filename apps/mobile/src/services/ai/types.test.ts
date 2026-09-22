@@ -72,7 +72,7 @@ describe("AI common contract vocabularies", () => {
     expect(isAssistantAction({ action: "NOPE" })).toBe(false);
   });
 
-  it("builds errors with frozen classes and diagnostics", () => {
+  it("builds errors with stable classes and diagnostics", () => {
     expect(makeAiError("INVALID_OUTPUT", "R1_NO_JSON_OBJECT")).toEqual({
       errorClass: "INVALID_OUTPUT",
       diagnostic: "R1_NO_JSON_OBJECT",

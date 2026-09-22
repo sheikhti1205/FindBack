@@ -486,7 +486,7 @@ export function OfflineAi() {
   const gpuSelfTestRef = useRef<HTMLDivElement>(null);
   const confirmDownloadRef = useRef<HTMLDivElement>(null);
 
-    // Guards async action errors against setState-after-unmount (WP10 #21).
+    // Guards async action errors against setState-after-unmount.
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;

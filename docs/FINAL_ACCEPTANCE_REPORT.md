@@ -5,13 +5,13 @@ Status vocabulary: `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER
 
 ## Repository / release
 
-1. **Starting HEAD** (this autonomous continuation): `3334905`.
+1. **Starting HEAD** (this continuation): `3334905`.
 2. **Final HEAD**: the commit that adds this report (`git log -1 --oneline`); the
    last code/doc commit before it is `f9bb0e7`.
 3. **origin/main equality**: `main == origin/main` (verified with
    `git rev-parse HEAD origin/main`).
 4. **Final git status**: clean except untracked Playwright snapshot artifacts under
-   `.playwright-mcp/` (intentionally left uncommitted).
+   `.playwright-mcp/` (left uncommitted; the directory is git-ignored and not tracked).
 5. **Commits by block**
    - 10H Storage: `e9a959b` (db), `23da899` (mobile), `cc61ca8` (docs)
    - 10I REST/GraphQL: `a3e2fac` (db + docs)

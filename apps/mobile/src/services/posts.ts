@@ -37,7 +37,7 @@ export interface FeedFilters {
 const PAGE_LIMIT = 10;
 const CLIENT_FEED_RPC = "findback_query_posts_client";
 
-/** On-device matching pool: min(OPEN opposite-type, 20) per spec (WP8 #5). */
+/** On-device matching pool: min(OPEN opposite-type, 20) per spec. */
 export const MATCH_CANDIDATE_LIMIT = 20;
 
 interface PostCursor {
@@ -373,7 +373,7 @@ export async function fetchMyPosts(): Promise<FeedPage> {
 
 /**
  * Candidate pool for on-device possible-matches: the most recent OPEN
- * opposite-type reports, capped at MATCH_CANDIDATE_LIMIT (WP8 #5).
+ * opposite-type reports, capped at MATCH_CANDIDATE_LIMIT.
  */
 export async function fetchMatchCandidates(oppositeType: PostType): Promise<PostItem[]> {
   const { data, error } = await getSupabase().rpc(

@@ -1,10 +1,10 @@
 /**
- * Narrow op: classify-intent (Task 21).
+ * Narrow op: classify-intent.
  *
  * The model emits ONE small JSON object carrying an intent enum. A missing
  * action defaults deterministically in code (intentDefaultAction); a
  * model-supplied action is allowlist-checked (unknown actions surface as
- * UNSUPPORTED_ACTION per the frozen mapping) and never applied here.
+ * UNSUPPORTED_ACTION per the stable mapping) and never applied here.
  * Evidence: T07 "I lost something." needs UNKNOWN → ASK_USER clarification.
  */
 import type { ModelProfile } from "../modelProfiles";

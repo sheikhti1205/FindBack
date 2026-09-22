@@ -26,7 +26,7 @@ function renderSearch(entry = "/search") {
   );
 }
 
-describe("SearchScreen URL filters (WP7 #7)", () => {
+describe("SearchScreen URL filters", () => {
   beforeEach(() => {
     fetchFeedMock.mockReset();
     clearFeedCaches();

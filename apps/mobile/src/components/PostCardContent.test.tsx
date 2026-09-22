@@ -34,7 +34,7 @@ function post(overrides: Partial<PostItem> = {}): PostItem {
   } as PostItem;
 }
 
-describe("PostCardContent overflow (WP15 #37)", () => {
+describe("PostCardContent overflow", () => {
   it("breaks long unbroken titles and excerpts instead of overflowing", () => {
     const { container } = render(<PostCardContent post={post({ title: LONG, description: LONG })} />);
     expect(screen.getByText(LONG, { selector: "h3" }).className).toContain("break-words");

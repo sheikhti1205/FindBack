@@ -1,6 +1,6 @@
 # Deferred decisions — FindBack
 
-Maintained by the implementation agent. Never let a deferred choice block the build:
+This log is maintained as implementation proceeds. Never let a deferred choice block the build:
 use an interface/abstraction + working local/demo adapter now, isolate production
 provider wiring, and document the exact files to change later.
 

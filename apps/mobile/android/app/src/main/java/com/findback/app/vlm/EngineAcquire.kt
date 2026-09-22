@@ -1,7 +1,7 @@
 package com.findback.app.vlm
 
 /**
- * WP1 (audit #1): engine acquisition policy.
+ * Engine acquisition policy.
  *
  * Returns a genuinely initialized engine, or null when initialization
  * fails. A failed construction is always closed so a half-built engine

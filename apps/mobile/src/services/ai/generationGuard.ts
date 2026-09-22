@@ -1,9 +1,9 @@
 /**
- * GenerationGuard (Task 22): loop/R3 detection, output classification,
+ * GenerationGuard: loop/R3 detection, output classification,
  * generation deadlines, single-retry policy, and per-session model health.
  *
- * Evidence grounding:
- * - Task-29 desktop runs: deterministic repetition loops (phone.fixb
+ * Evidence grounding (external lab records, not tracked in this tree):
+ * - Desktop lab evaluation runs: deterministic repetition loops (phone.fixb
  *   14683 B `coffee cup lid` enumeration, book.fixb 12874 B `<main object>`
  *   repetition, both byte-identical on repeat), loop wall times 88-102 s vs
  *   typical 6-11 s/photo, peak litert RSS ~1.79 GB.
@@ -14,7 +14,7 @@
  *   paragraph_loop = same block 2+ times.
  *
  * The guard owns the generation deadline, but the production timeout budget
- * is an explicit TBD (Task-20/29 measurements + ModelProfile): `deadlineMs`
+ * is an explicit TBD (evaluation measurements + ModelProfile): `deadlineMs`
  * has NO default and must be supplied by the caller. SLOW is latency only,
  * never an error.
  */
@@ -24,8 +24,8 @@ import { FakeAiError, REFUSAL_TEXT, diagnosticCodeForMode, extractSingleJsonObje
 import type { FaultMode } from "./testing/FakeAiProvider";
 
 /**
- * TODO(21A): rewire to services/ai/types.ts when Task 21 lands.
- * Minimal local seam for the action allowlist the coordinator contract will
+ * TODO: rewire to services/ai/types.ts (contract module now available).
+ * Minimal local seam for the action allowlist the application contract will
  * own. Absent a policy the guard fails closed: any `action` field the
  * caller cannot vouch for is UNSUPPORTED_ACTION with no side effects.
  */
@@ -119,7 +119,7 @@ export function detectParagraphRepetition(text: string): boolean {
 /**
  * Repeated word n-gram (default 6-gram, 4+ occurrences). Catches
  * sub-sentence loops the sentence splitter misses, e.g. `;`-separated
- * Task-29 enumeration streams (`coffee cup lid` x~40, `<main object>` x~800).
+ * evaluation enumeration streams (`coffee cup lid` x~40, `<main object>` x~800).
  */
 export function detectRepeatedNgrams(text: string, n = 6, minOccurrences = 4): boolean {
   const words = tokenizeWords(text);
@@ -163,12 +163,12 @@ export function detectArrayRunaway(value: unknown): boolean {
   return topFrequency(keys) >= Math.max(5, Math.ceil(value.length / 2));
 }
 
-/** Share of a raw enumeration stream dominated by one value before it counts as runaway (Task-29 streams sit near one half). */
+/** Share of a raw enumeration stream dominated by one value before it counts as runaway (evaluation streams sit near one half). */
 const ENUMERATION_RUNAWAY_SHARE = 0.4;
 
 /**
  * R3 runaway cap for raw enumeration streams (`;`/`,`/`|`/newline
- * separated, e.g. Task-29 OBJECT tag-soup): 10+ items with one value
+ * separated, e.g. evaluation OBJECT tag-soup): 10+ items with one value
  * covering >= max(5, half). Zero-runs (>= 8 bare `0` tokens) also match.
  */
 export function detectRawEnumerationRunaway(text: string): boolean {
@@ -261,9 +261,9 @@ export function isRefusal(text: string): boolean {
 export interface ClassifyOptions {
   /** True for photo/structured requests expecting one JSON object. */
   expectStructured: boolean;
-  /** Strict schema/enum check on the extracted object (Task-21 shape TBD). */
+   /** Strict schema/enum check on the extracted object (contract shape TBD). */
   validate?: (value: unknown) => boolean;
-  /** Action allowlist seam; absent fails closed (TODO(21A) above). */
+   /** Action allowlist seam; absent fails closed (TODO above). */
   actionPolicy?: GuardActionPolicy;
 }
 
@@ -274,7 +274,7 @@ export interface TextVerdict {
 }
 
 /**
- * Composition contract (Task 24 / coordinator): the guard judges post-R2
+ * Composition contract (assistant UI / application): the guard judges post-R2
  * text. R2 strips Qwen `[thought]...[/thought]` envelopes before any other
  * rule, and the contract's loopCheck seam runs on stripped text — so loop
  * verdicts are only valid on stripped text. This mirrors that strip
@@ -422,15 +422,15 @@ export interface GuardedCallOptions extends ClassifyOptions {
   imageUri?: string;
   instruction?: string;
   /**
-   * Generation policy. Defaults restore the Task-20/29 evidence envelope
-   * (all 129 rows ran at temperature 0.0 under 256/512-token caps); callers
+   * Generation policy. Defaults restore the evaluation evidence envelope
+   * (all 129 lab evaluation rows ran at temperature 0.0 under 256/512-token caps); callers
    * may override per call. Always forwarded to the provider.
    */
   maxOutputTokens?: number;
   temperature?: number;
   /**
    * Guard-owned generation deadline. No default: the production budget is
-   * TBD (Task-20/29 measurements + ModelProfile) — callers pass it
+   * TBD (evaluation measurements + ModelProfile) — callers pass it
    * explicitly. Omitted means no guard timeout.
    */
   deadlineMs?: number;
@@ -443,7 +443,7 @@ export interface GuardedSuccess extends GuardResult {
   retried: boolean;
 }
 
-/** Default generation policy: the Task-20/29 evidence envelope. */
+/** Default generation policy: the evaluation evidence envelope. */
 export const GUARD_DEFAULT_TEMPERATURE = 0.0;
 export const GUARD_DEFAULT_MAX_OUTPUT_TOKENS_TEXT = 256;
 export const GUARD_DEFAULT_MAX_OUTPUT_TOKENS_PHOTO = 512;

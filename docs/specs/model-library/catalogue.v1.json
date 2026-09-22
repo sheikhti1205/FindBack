@@ -26,7 +26,7 @@
    "verificationStatus": "VERIFIED",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "Tiny vision-language model (SigLIP encoder + SmolLM2-360M decoder, int4 weights / int8 embedder, KV context 2048) for on-device report-from-photo. Verified by exact byte count + whole-file SHA-256 before chunking; lab baseline evaluated. Text/Help use NOT recommended: Task-20 text arm shows invented features on 18/31 rows with loops on 17/31 (median length 2699 chars, max 9936). Vision structured path unreliable without guards: 0/12 valid JSON (11 unterminated loops + 1 schema regurgitation) — needs server-side repair / loop and echo guards before structured photo-qual use.",
+   "description": "Tiny vision-language model (SigLIP encoder + SmolLM2-360M decoder, int4 weights / int8 embedder, KV context 2048) for on-device report-from-photo. Verified by exact byte count + whole-file SHA-256 before chunking; lab baseline evaluated. Text/Help use NOT recommended: evaluation text arm shows invented features on 18/31 rows with loops on 17/31 (median length 2699 chars, max 9936). Vision structured path unreliable without guards: 0/12 valid JSON (11 unterminated loops + 1 schema regurgitation) — needs server-side repair / loop and echo guards before structured photo-qual use.",
    "supportedCapabilities": [
     "report-from-photo",
     "caption",
@@ -55,7 +55,7 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox Worker-B Task-20 FINAL09 (2026-09-21T17:40Z)",
+     "ref": "evaluation record 2026-09-21T17:40Z (coded-corpus final)",
      "note": "Text arm: invented_feature 18/31, loops 17/31 — not recommended for Help/text; vision arm: valid JSON 0/12 — structured path unreliable without guards"
     }
    ]
@@ -76,11 +76,11 @@
    "minFreeRamMb": 1280,
    "recommendedFreeRamMb": 2560,
    "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
-   "ramNotes": "Formula (ram-ui.md s4, text <=1.2B): installed 344671744 B = 328 MiB -> min 328+700=1028, ceil_to_256 = 1280; rec 328+2048=2376, ceil_to_256 = 2560. Vendor publishes NO mobile RAM figure; KV floor observed in lab: fails at --max-num-tokens 256, runs at 1024 (coordinator 2026-09-21T15:00Z). Full 40-char rev + 64-char SHA-256 from frozen Task-20 provenance (tested artifact, not HF main head). Status stays SUPPORTED_UNVERIFIED until app contract + Android run proven. Running below minimum needs explicit advanced confirmation (gate designed, enforcement later).",
+   "ramNotes": "Formula (ram-ui.md s4, text <=1.2B): installed 344671744 B = 328 MiB -> min 328+700=1028, ceil_to_256 = 1280; rec 328+2048=2376, ceil_to_256 = 2560. Vendor publishes NO mobile RAM figure; KV floor observed in lab: fails at --max-num-tokens 256, runs at 1024 (lab record 2026-09-21T15:00Z). Full 40-char rev + 64-char SHA-256 from stable evaluation-corpus provenance (tested artifact, not HF main head). Status stays SUPPORTED_UNVERIFIED until app contract + Android run proven. Running below minimum needs explicit advanced confirmation (gate designed, enforcement later).",
    "verificationStatus": "SUPPORTED_UNVERIFIED",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "First text target post-normalization (Task-20 one-quant rule): Qwen3 0.6B dynamic-int4 LiteRT artifact, rev a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76, 344671744 B verified on disk. Emits [thought]...[/thought] reasoning traces into output (thought-envelope: 30/31 lab rows, 2 thought-only with no answer) — strip the envelope before parsing/scoring (normalization R2, owner review pending). Shape-valid JSON on 4/5 probes with invented content — instruction-following beats truthfulness.",
+   "description": "First text target post-normalization (one-quant selection rule): Qwen3 0.6B dynamic-int4 LiteRT artifact, rev a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76, 344671744 B verified on disk. Emits [thought]...[/thought] reasoning traces into output (thought-envelope: 30/31 lab rows, 2 thought-only with no answer) — strip the envelope before parsing/scoring (normalization R2, owner review pending). Shape-valid JSON on 4/5 probes with invented content — instruction-following beats truthfulness.",
    "supportedCapabilities": [
     "text-generation"
    ],
@@ -95,28 +95,28 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox Worker-B Task-20 msg 01 (2026-09-21T15:40Z)",
-     "note": "One-quant rule: dynamic INT4 only (rev a3c5d805, 344671744 B, matches registry 03e7da1e); mixed-INT4 + INT8 rejected for Task-20 comparability"
+     "ref": "evaluation record 2026-09-21T15:40Z (quantization selection)",
+     "note": "One-quant rule: dynamic INT4 only (rev a3c5d805, 344671744 B, matches registry 03e7da1e); mixed-INT4 + INT8 rejected for evaluation comparability"
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox Worker-B Task-20 FINAL09 (2026-09-21T17:40Z)",
-     "note": "On-disk re-verified 344,671,744 B MATCH frozen pin; thought-leak 30/31, invented 8/31, loops 6/31; KV floor 1024 honored (all 31 green)"
+     "ref": "evaluation record 2026-09-21T17:40Z (coded-corpus final)",
+     "note": "On-disk re-verified 344,671,744 B MATCH stable pin; thought-leak 30/31, invented 8/31, loops 6/31; KV floor 1024 honored (all 31 green)"
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox coordinator 2026-09-21T15:00Z/15:20Z",
-     "note": "Upstream HF revision unpinned at Task-0 time; KV floor (fails 256, runs 1024); evaluator thought-text false-positive caveat"
+     "ref": "lab record 2026-09-21T15:00Z/15:20Z",
+     "note": "Upstream HF revision unpinned at catalogue-entry time; KV floor (fails 256, runs 1024); evaluator thought-text false-positive caveat"
     },
     {
      "kind": "UNKNOWN",
      "ref": "unknown / not established",
-     "note": "Full 64-char SHA-256 of the curated .fbmodel not established (only truncated local 03e7da1e...45285); curated .fbmodel not yet packaged"
+     "note": "Full 64-char SHA-256 of the curated .fbmodel not established (only the pinned-artifact prefix 03e7da1e…5d2856); curated .fbmodel not yet packaged"
     },
     {
-     "kind": "FROZEN_TASK20_PROVENANCE",
+     "kind": "REPO_EVIDENCE",
      "ref": "ai-behavior-v2/model-profiles.json (rev) + results/task20-text-coded.jsonl modelSha256 + runs/20260921/run_text.py (sha)",
-     "note": "Full tested rev a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76; tested file SHA-256 03e7da1e...45285 (64-char). Filled 2026-09-21 per coordinator ruling; never re-resolved from HF main."
+     "note": "Full tested rev a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76; tested file SHA-256 03e7da1e…5d2856 (64-char, matches the pinned sha256 above). Recorded 2026-09-21; never re-resolved from HF main."
     }
    ]
   },
@@ -140,7 +140,7 @@
    "verificationStatus": "SUPPORTED_UNVERIFIED",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "Qwen3 0.6B mixed-int4 lab variant (deprioritized by the Task-20 one-quant rule — dynamic-int4 is the first text target; kept for record, not removed). Unpinned revision; bytes/sha not established.",
+   "description": "Qwen3 0.6B mixed-int4 lab variant (deprioritized by the one-quant selection rule — dynamic-int4 is the first text target; kept for record, not removed). Unpinned revision; bytes/sha not established.",
    "supportedCapabilities": [
     "text-generation"
    ],
@@ -155,8 +155,8 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox Worker-B Task-20 msg 01 (2026-09-21T15:40Z)",
-     "note": "Mixed-INT4 rejected for Task-20 comparability under the one-quant rule (Task 0 covers it); upstream rev UNPINNED"
+     "ref": "evaluation record 2026-09-21T15:40Z (quantization selection)",
+     "note": "Mixed-INT4 rejected for evaluation comparability under the one-quant rule (see the dynamic-int4 entry); upstream rev UNPINNED"
     },
     {
      "kind": "UNKNOWN",
@@ -185,7 +185,7 @@
    "verificationStatus": "SUPPORTED_UNVERIFIED",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "Qwen3 0.6B int8 lab variant (deprioritized by the Task-20 one-quant rule — dynamic-int4 is the first text target; kept for record, not removed). Unpinned revision; bytes/sha not established.",
+   "description": "Qwen3 0.6B int8 lab variant (deprioritized by the one-quant selection rule — dynamic-int4 is the first text target; kept for record, not removed). Unpinned revision; bytes/sha not established.",
    "supportedCapabilities": [
     "text-generation"
    ],
@@ -200,8 +200,8 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox Worker-B Task-20 msg 01 (2026-09-21T15:40Z)",
-     "note": "INT8 rejected for Task-20 comparability under the one-quant rule (Task 0 covers it); upstream rev UNPINNED"
+     "ref": "evaluation record 2026-09-21T15:40Z (quantization selection)",
+     "note": "INT8 rejected for evaluation comparability under the one-quant rule (see the dynamic-int4 entry); upstream rev UNPINNED"
     },
     {
      "kind": "UNKNOWN",
@@ -230,7 +230,7 @@
    "verificationStatus": "EXPERIMENTAL",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "Liquid AI flagship on-device text model (hybrid conv+attention, 32K context), int4 LiteRT conversion with GPU path. EXPERIMENTAL: Task-20 lab profile (GGUF Q4_0 arm) shows silence on 10/31 rows (incl. all JSON probes and the refusal probe with NO refusal text) and invented content on 11/21 non-empty rows, complying where Qwen refuses — NOT for structured actions. Lab smoke passed on a DIFFERENT artifact (GGUF Q4_K_M via llama.cpp) — the .litertlm file itself is unverified. License is LFM Open License v1.0, not Apache; no shipment inference.",
+   "description": "Liquid AI flagship on-device text model (hybrid conv+attention, 32K context), int4 LiteRT conversion with GPU path. EXPERIMENTAL: lab evaluation profile (GGUF Q4_0 arm) shows silence on 10/31 rows (incl. all JSON probes and the refusal probe with NO refusal text) and invented content on 11/21 non-empty rows, complying where Qwen refuses — NOT for structured actions. Lab smoke passed on a DIFFERENT artifact (GGUF Q4_K_M via llama.cpp) — the .litertlm file itself is unverified. License is LFM Open License v1.0, not Apache; no shipment inference.",
    "supportedCapabilities": [
     "text-generation"
    ],
@@ -255,12 +255,12 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox 2026-09-21T15:20Z",
+     "ref": "evaluation record 2026-09-21T15:20Z (lab smoke)",
      "note": "Lab smoke PASS refers to GGUF Q4_K_M 697 MB via llama-cpp — different artifact"
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox Worker-B Task-20 FINAL09 (2026-09-21T17:40Z)",
+     "ref": "evaluation record 2026-09-21T17:40Z (coded-corpus final)",
      "note": "LFM2.5-1.2B-Q4_0 text arm: silence 10/31, invented 11/21 non-empty, tersest (median 265 chars) but least safe — basis for EXPERIMENTAL, not for structured actions"
     },
     {
@@ -312,13 +312,13 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox Worker-F Task-29 interim+final (2026-09-21T22:15Z/22:35Z)",
+     "ref": "evaluation record 2026-09-21T22:15Z/22:35Z (device-lab runs)",
      "note": "Eval download under LFM Open License v1.0 from litert-community/LFM2.5-VL-450M rev be196f4f: stock int4 406820224 B SHA 45a02241...5db4797 MATCHES manifest pin; fixB 406817104 B local SHA 6854cd96...61cb9bf with NO upstream pin — fixB eval-only, never a catalogue artifact; stock DISQUALIFIED as silently spatially wrong, fixB QUALIFIED_FOR_ANDROID_SPIKE only"
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox Worker-B Task-20 FINAL09 (2026-09-21T17:40Z)",
-     "note": "Reused F files independently: stock 406,820,224 B 45a02241...5db4797 MATCH manifest pin; fixB 406,817,104 B 6854cd96...61cb9bf RECORDED, no pin exists, eval-only; VL-fixB only arm with majority-valid + uncertainty signaling"
+     "ref": "evaluation record 2026-09-21T17:40Z (coded-corpus final)",
+     "note": "Reused evaluation files independently: stock 406,820,224 B 45a02241...5db4797 MATCH manifest pin; fixB 406,817,104 B 6854cd96...61cb9bf RECORDED, no pin exists, eval-only; VL-fixB only arm with majority-valid + uncertainty signaling"
     },
     {
      "kind": "UNKNOWN",
@@ -343,7 +343,7 @@
    "minFreeRamMb": 4096,
    "recommendedFreeRamMb": 6144,
    "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
-   "ramNotes": "NOT VERIFIED — do not present as installable. Class-based floor only: vendor publishes NO phone free-RAM requirement. Raw params 5B+ (effective ~1.91B via MatFormer/PLE offload); HF lists the int4 .litertlm at ~3.66 GB (reviewer registry note corrects an older ~2 GB figure to ~3.39 GB — neither is a pinned byte count). Any future packaging MUST re-derive RAM from measured artifacts and keep the not-verified/min-free-RAM warning.",
+   "ramNotes": "NOT VERIFIED — do not present as installable. Class-based floor only: vendor publishes NO phone free-RAM requirement. Raw params 5B+ (effective ~1.91B via MatFormer/PLE offload); HF lists the int4 .litertlm at ~3.66 GB (registry notes correct an older ~2 GB figure to ~3.39 GB — neither is a pinned byte count). Any future packaging MUST re-derive RAM from measured artifacts and keep the not-verified/min-free-RAM warning.",
    "verificationStatus": "EXPERIMENTAL",
    "catalogOnly": true,
    "requiresAdvancedConfirm": true,
@@ -367,7 +367,7 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "coordination mailbox 2026-09-21T16:20Z (MODEL-LAB-REVIEWER)",
+     "ref": "evaluation record 2026-09-21T16:20Z (model-lab review)",
      "note": "Registry notes correct old ~2 GB figure to ~3.39 GB and forbid citing 2 GB"
     },
     {

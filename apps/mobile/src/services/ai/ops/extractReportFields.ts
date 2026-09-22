@@ -1,5 +1,5 @@
 /**
- * Narrow op: extract-report-fields (Task 21).
+ * Narrow op: extract-report-fields.
  *
  * The model emits ONE small slot object (title, description, category,
  * dateText, locationNote). Missing or ambiguous location is a successful

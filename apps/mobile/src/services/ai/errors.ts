@@ -1,16 +1,16 @@
 /**
- * Guard error taxonomy (Task 22).
+ * Guard error taxonomy.
  *
- * The error-class taxonomy is owned by Task 21 (`services/ai/types.ts`,
- * parallel worker, not built yet). This module does NOT define a competing
- * taxonomy: it reuses `AiErrorClass` from the frozen Task-23 simulator
+ * The error-class taxonomy is defined in `services/ai/types.ts`.
+ * This module does NOT define a competing
+ * taxonomy: it reuses `AiErrorClass` from the stable simulator
  * mapping and only attaches guard diagnostics + user-facing recovery copy.
  */
 import type { AiErrorClass } from "./testing/FakeAiProvider";
 import { diagnosticCodeForMode } from "./testing/FakeAiProvider";
 import type { FaultMode } from "./testing/FakeAiProvider";
 
-/** All frozen guard error classes, re-exported for guard callers. */
+/** All stable guard error classes, re-exported for guard callers. */
 export type { AiErrorClass };
 
 /** User-facing recovery actions the UI may offer for a guard failure. */
@@ -29,7 +29,7 @@ export interface RecoveryPlan {
 }
 
 /**
- * Exact user-facing recovery copy (frozen wording fragments preserved
+ * Exact user-facing recovery copy (stable wording fragments preserved
  * verbatim: loop "This model got stuck generating a response.",
  * low-memory "There isn't enough free memory...",
  * invalid "couldn't produce a usable answer",
@@ -96,7 +96,7 @@ export function isRetryableClass(errorClass: AiErrorClass): boolean {
   );
 }
 
-/** Guard failure carrying the frozen class plus session-scoped diagnostics. */
+/** Guard failure carrying the stable class plus session-scoped diagnostics. */
 export class GuardError extends Error {
   readonly errorClass: AiErrorClass;
   /** Simulator/root cause preserved verbatim (e.g. OOM_RUNTIME vs PRECHECK_INSUFFICIENT_MEMORY). */
@@ -126,7 +126,7 @@ export class GuardError extends Error {
   }
 }
 
-/** Normalize a simulator fault mode to its frozen public error class. */
+/** Normalize a simulator fault mode to its stable public error class. */
 export function errorClassForMode(mode: FaultMode): AiErrorClass | null {
   switch (mode) {
     case "GOOD":

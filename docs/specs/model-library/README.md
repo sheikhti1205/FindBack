@@ -1,6 +1,6 @@
-# Curated Model Library — spec index (Tasks 26-27, SPECIFICATION ONLY)
+# Curated Model Library — spec index (SPECIFICATION ONLY)
 
-No production downloader/runtime integration in this task. No new
+No production downloader/runtime integration is specified here. No new
 dependencies. No modifications to existing code, schemas, or migrations.
 
 ## Files
@@ -12,10 +12,10 @@ dependencies. No modifications to existing code, schemas, or migrations.
 | `ram-ui.md` | RAM UI design: Min ~X / Rec ~Y / device Z + source chip; below-minimum advanced-confirmation gate (designed, enforcement later); estimate formula + promotion rule. |
 | `releases-distribution.md` | GitHub limits with doc citations; chunking verdict (unnecessary except Gemma-class); `FindBack-Models` layout; shipped-pin hard rule. |
 | `fbmodel-package.md` | `.fbmodel` layout (manifest + weights + tokenizer + projector-if-required + checksums); no-executables hard invariant; STORE-vs-DEFLATE bench + policy. |
-| `threat-surface.md` | Zip-slip / decompression bombs / checksum bypass / executable injection / rollback — surface only, for the later DeepSeek review. |
+| `threat-surface.md` | Zip-slip / decompression bombs / checksum bypass / executable injection / rollback — surface only, for the later security review. |
 | `../../apps/mobile/src/services/models/catalogueTypes.ts` | TypeScript mirror of the schema (types + sentinels only, no logic). |
 
-## v1 review checklist (before any later task consumes this spec)
+## v1 review checklist (before any implementation consumes this spec)
 
 - [ ] `catalogue.v1.json` validates against `catalogue.schema.json`.
 - [ ] Every entry: `recommendedFreeRamMb >= minFreeRamMb`.

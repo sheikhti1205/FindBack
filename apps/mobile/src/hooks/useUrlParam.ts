@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 
 /**
- * useState persisted to a URL search param (WP7 #7).
+ * useState persisted to a URL search param.
  *
  * The param is the shareable source of truth: back-nav from a detail page,
  * deep-links, and copied links all restore the filter on mount. Edits replace

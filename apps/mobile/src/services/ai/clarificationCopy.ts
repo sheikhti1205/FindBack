@@ -1,7 +1,7 @@
 /**
- * Central clarification copy for FindBack on-device assistance (Task 21 follow-up).
+ * Central clarification copy for FindBack on-device assistance.
  *
- * Coordinator ruling: CENTRALIZE with contextual override. Defaults live here
+ * Design decision: CENTRALIZE with contextual override. Defaults live here
  * keyed by ClarificationField; ops provide {field, context, options} and the
  * copy layer produces wording. An op may supply an evidence-backed
  * questionOverride (e.g. "Which Central Park do you mean?" beats the generic

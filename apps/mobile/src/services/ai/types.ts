@@ -1,19 +1,20 @@
 /**
- * AI common contract for FindBack on-device assistance (Task 21).
+ * AI common contract for FindBack on-device assistance.
  *
- * Evidence: ai-behavior-v2 task20-text-coded.jsonl (93 rows, 31 per text
- * model) and task20-vision-coded.jsonl (36 rows, 12 per vision model).
- * The frozen error taxonomy (AiErrorClass + mode mapping) is owned by
+ * Evidence: external coded evaluation corpus (93 text rows, 31 per text
+ * model; 36 vision rows, 12 per vision model — corpus files are lab records,
+ * not tracked in this tree).
+ * The stable error taxonomy (AiErrorClass + mode mapping) is owned by
  * services/ai/testing/FakeAiProvider.ts — imported here, never redefined.
- * R3 loop detection belongs to Task 22 (seam in normalize.ts). The
- * production timeout budget is an explicit TBD fed by Task-20/29
+ * R3 loop detection belongs to the guard (seam in normalize.ts). The
+ * production timeout budget is an explicit TBD fed by evaluation
  * measurements + ModelProfile — no timeout number lives in this contract.
  */
 import type { AiErrorClass } from "./testing/FakeAiProvider";
 
 export type { AiErrorClass };
 
-/** Frozen intent vocabulary for the narrow classify-intent op. */
+/** Stable intent vocabulary for the narrow classify-intent op. */
 export const INTENTS = [
   "REPORT_LOST",
   "REPORT_FOUND",
@@ -25,7 +26,7 @@ export const INTENTS = [
 export type Intent = (typeof INTENTS)[number];
 
 /**
- * Frozen action allowlist. Anything outside this list is discarded by the
+ * Stable action allowlist. Anything outside this list is discarded by the
  * validators in normalize.ts (UNSUPPORTED_ACTION, never applied).
  */
 export const ACTIONS = [
@@ -134,7 +135,7 @@ export interface ClassifiedIntent {
   readonly action: AssistantAction;
 }
 
-/** Normalized error: frozen class + machine-readable diagnostic. */
+/** Normalized error: stable class + machine-readable diagnostic. */
 export interface AiError {
   readonly errorClass: AiErrorClass;
   readonly diagnostic: string;

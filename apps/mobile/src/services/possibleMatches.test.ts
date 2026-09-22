@@ -25,7 +25,7 @@ describe("findPossibleMatches", () => {
     expect(result).toEqual({ matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" });
   });
 
-  it("caps the candidate pool at 20, the spec min(OPEN opposite-type, 20) (WP8 #5)", async () => {
+  it("caps the candidate pool at 20, the spec min(OPEN opposite-type, 20)", async () => {
     const make = (id: string) => ({ id, type: "FOUND", status: "OPEN", title: "umbrella", description: "handle", category: "Clothing", eventDate: null, locationLabel: null, locationLat: null, locationLng: null });
     const candidates = Array.from({ length: 25 }, (_, i) => make(`c${i}`));
     const vectors = Array.from({ length: 26 }, () => [1, 0]);

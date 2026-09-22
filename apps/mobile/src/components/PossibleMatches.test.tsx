@@ -29,7 +29,7 @@ describe("PossibleMatches", () => {
     expect(screen.queryByText(/probability/i)).toBeNull();
   });
 
-  it("reruns matching when category/date/location change, not just title/description (WP7 #39)", async () => {
+  it("reruns matching when category/date/location change, not just title/description", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
     const { rerender } = render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
     await waitFor(() => expect(findMock).toHaveBeenCalledTimes(1));
@@ -60,14 +60,14 @@ describe("PossibleMatches", () => {
     expect(findMock).toHaveBeenCalledTimes(2);
   });
 
-  it("shows EMPTY, not _ERROR copy, when zero candidates were compared (WP8 #5)", async () => {
+  it("shows EMPTY, not _ERROR copy, when zero candidates were compared", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText(/no reports to compare/i)).toBeTruthy());
     expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
   });
 
-  it("shows how many recent reports were compared (WP8 #5)", async () => {
+  it("shows how many recent reports were compared", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 4, matches: [
       { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
     ] });

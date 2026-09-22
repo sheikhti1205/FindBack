@@ -1,14 +1,14 @@
 /**
- * Fake AI provider for deterministic fault-injection scaffolding (Task 23).
+ * Fake AI provider for deterministic fault-injection scaffolding.
  *
- * Coded against the planned coordinator contract (Tasks 21/22 are NOT built
- * yet): text generation plus structured photo analysis, with the FROZEN
- * mode→error-class mapping below (Task 23 map-freeze). GenerationGuard owns
+ * Coded against the planned application contract: text generation plus
+ * structured photo analysis, with the stable
+ * mode→error-class mapping below. GenerationGuard owns
  * the generation deadline; the production timeout budget is an explicit TBD
- * fed by Task-20/29 measurements + ModelProfile. Ambiguous location resolves
- * to ASK_USER (Task-21 field shape TBD).
+ * fed by evaluation measurements + ModelProfile. Ambiguous location resolves
+ * to ASK_USER (contract field shape TBD).
  *
- * No integration into assistant UI here (Task 24). No dependencies.
+ * No integration into assistant UI here. No dependencies.
  */
 
 /** All fault modes the fake can reproduce. */
@@ -55,7 +55,7 @@ export const FAULT_MODES: readonly FaultMode[] = [
   "CANCELLED",
 ];
 
-/** Planned coordinator error classes (Task 21/22 concept). */
+/** Planned application error classes. */
 export type AiErrorClass =
   | "LOOP_DETECTED"
   | "TIMEOUT"
@@ -69,13 +69,13 @@ export type AiErrorClass =
   | "CANCELLED";
 
 /**
- * FROZEN mode→error-class mapping (Task 23 map-freeze). `null` means the
+ * Stable mode→error-class mapping. `null` means the
  * fake itself succeeds (no error thrown); classification then belongs to the
- * caller/coordinator.
+ * calling layer.
  */
 export const PROPOSED_MODE_ERROR_MAP: Record<FaultMode, AiErrorClass | null> = {
-  // FROZEN: success. SLOW is latency only, never an error; GenerationGuard
-  // owns the deadline. Production timeout budget is TBD (Task-20/29
+  // Stable: success. SLOW is latency only, never an error; GenerationGuard
+  // owns the deadline. Production timeout budget is TBD (evaluation
   // measurements + ModelProfile); slowDelayMs/timeoutMs below are
   // harness-only knobs, not production budgets.
   GOOD: null,
@@ -85,17 +85,17 @@ export const PROPOSED_MODE_ERROR_MAP: Record<FaultMode, AiErrorClass | null> = {
   LOOP_PARAGRAPH: "LOOP_DETECTED",
   EMPTY: "INVALID_OUTPUT",
   INVALID_JSON: "INVALID_OUTPUT",
-  // FROZEN: tolerantly extract ONE recoverable JSON object, then STRICTLY
+  // Stable: tolerantly extract ONE recoverable JSON object, then STRICTLY
   // validate (schema + enum/action allowlist). Multiple conflicting objects
   // or invalid schema → INVALID_OUTPUT.
   FENCED_JSON: null,
   PROSE_PLUS_JSON: null,
   TRUNCATED_JSON: "INVALID_OUTPUT",
-  // FROZEN: UNSUPPORTED_ACTION; diagnostics preserve which mode occurred
+  // Stable: UNSUPPORTED_ACTION; diagnostics preserve which mode occurred
   // (WRONG_ACTION vs UNKNOWN_ACTION). See diagnosticCodeForMode().
   WRONG_ACTION: "UNSUPPORTED_ACTION",
   UNKNOWN_ACTION: "UNSUPPORTED_ACTION",
-  // FROZEN: UNSUPPORTED_REQUEST with a refusal reason (well-formed refusal,
+  // Stable: UNSUPPORTED_REQUEST with a refusal reason (well-formed refusal,
   // not malformed output).
   REFUSAL: "UNSUPPORTED_REQUEST",
   OOM: "LOW_MEMORY",
@@ -121,7 +121,7 @@ export class FakeAiError extends Error {
 }
 
 /**
- * FROZEN diagnostic code preserving the distinct simulator cause. OOM is a
+ * Stable diagnostic code preserving the distinct simulator cause. OOM is a
  * runtime failure and LOW_MEMORY is a preflight signal; both normalize to
  * the public LOW_MEMORY error class. WRONG/UNKNOWN preserve which mode
  * occurred; REFUSAL carries a refusal reason.
@@ -143,9 +143,9 @@ export function diagnosticCodeForMode(mode: FaultMode): string {
 export const REFUSAL_TEXT = "I can't help with that request.";
 
 /**
- * FROZEN: ambiguous location is not an error — a successful assistant state
+ * Stable: ambiguous location is not an error — a successful assistant state
  * requiring clarification. No coordinates are chosen. Exact field shape is
- * TBD (Task 21); do not invent fields here.
+ * TBD (contract follow-up); do not invent fields here.
  */
 export const AMBIGUOUS_LOCATION_STATE = "ASK_USER" as const;
 export type AssistantResultState = "ok" | typeof AMBIGUOUS_LOCATION_STATE;
@@ -158,7 +158,7 @@ export interface ExtractedJson {
 
 /**
  * Tolerantly extract brace-balanced JSON object candidates (code fences
- * stripped). Coordinator rule: count === 1 → strictly validate the object
+ * stripped). Normalizer rule: count === 1 → strictly validate the object
  * (schema + enum/action allowlist); count !== 1 (none or multiple
  * conflicting) → INVALID_OUTPUT.
  */
@@ -273,7 +273,7 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * Deterministic fake AI provider. Output-shape modes (LOOP_*, EMPTY,
  * *_JSON, WRONG/UNKNOWN_ACTION, REFUSAL) resolve with canned text so the
- * coordinator/parser under test performs the classification; transport and
+ * normalizer/parser under test performs the classification; transport and
  * runtime modes (TIMEOUT, OOM, RUNTIME_CRASH, MODEL_MISSING, MODEL_CORRUPT,
  * LOW_MEMORY, CANCELLED) reject with FakeAiError. Any AbortSignal abort rejects with
  * CANCELLED regardless of mode.

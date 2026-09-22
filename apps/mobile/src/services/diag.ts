@@ -1,15 +1,14 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
 /**
- * Structured diagnostic tracing for broken flows (Task 13).
+ * Structured diagnostic tracing for broken flows.
  *
  * `diag(event, fields)` records one redacted event to an in-memory ring
  * (cap 2000, convenience only) and forwards it to the NATIVE JSONL sink,
  * which is authoritative: if the WebView/process dies during the exact
  * failure under investigation, the ring is the first thing lost.
  *
- * NATIVE BRIDGE CONTRACT (DIAG-NATIVE implements the Kotlin side;
- * coordinator arbitrates the final name):
+ * NATIVE BRIDGE CONTRACT (the Kotlin side is implemented against these names):
  * - Capacitor plugin name: `FindBackDiag`
  * - Method: `logEvent(options: { json: string }) => Promise<void>`
  * - `json` is one serialized {@link DiagEvent} (already redacted here).
