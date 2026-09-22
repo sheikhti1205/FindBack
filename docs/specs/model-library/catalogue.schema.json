@@ -105,6 +105,10 @@
         "downloadBytes": { "$ref": "#/$defs/bytesOrUnknown" },
         "installedBytes": { "$ref": "#/$defs/bytesOrUnknown" },
         "sha256": { "$ref": "#/$defs/sha256OrUnknown" },
+        "installedSha256": {
+          "$ref": "#/$defs/sha256OrUnknown",
+          "description": "Installed-weights artifact hash; distinct from the distribution-package sha256, which packaging may change by design."
+        },
         "minFreeRamMb": { "type": "integer", "minimum": 0 },
         "recommendedFreeRamMb": { "type": "integer", "minimum": 0 },
         "ramRequirementSource": {

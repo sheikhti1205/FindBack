@@ -29,9 +29,11 @@ function qwenEntry(
     format: "litertlm",
     revision: "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
     license: "apache-2.0",
-    downloadBytes: 344671744,
+    downloadBytes: 344672713,
     installedBytes: 344671744,
     sha256:
+      "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+    installedSha256:
       "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
     minFreeRamMb: 1280,
     recommendedFreeRamMb: 2560,
@@ -76,16 +78,24 @@ describe("qualified pin", () => {
     });
   });
 
-  it("rejects drifted revision, bytes, and hash", () => {
+  it("rejects drifted revision, installed bytes, and installed hash", () => {
     expect(
       verifyQwenCataloguePin(qwenEntry({ revision: "deadbeef" })),
     ).toMatchObject({ ok: false });
-    expect(verifyQwenCataloguePin(qwenEntry({ downloadBytes: 1 }))).toMatchObject({
+    expect(verifyQwenCataloguePin(qwenEntry({ installedBytes: 1 }))).toMatchObject({
       ok: false,
     });
-    expect(verifyQwenCataloguePin(qwenEntry({ sha256: "00" }))).toMatchObject({
+    expect(verifyQwenCataloguePin(qwenEntry({ installedSha256: "00" }))).toMatchObject({
       ok: false,
     });
+  });
+
+  it("ignores distribution-package rotation without re-qualification", () => {
+    expect(
+      verifyQwenCataloguePin(
+        qwenEntry({ downloadBytes: 344672714, sha256: "ff" }),
+      ),
+    ).toEqual({ ok: true });
   });
 
   it("refuses entries outside the qualified pin", () => {
