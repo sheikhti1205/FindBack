@@ -2,6 +2,7 @@ package com.findback.app.vlm
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -614,6 +615,78 @@ class LocalVlmPlugin : Plugin() {
             updateModelState(modelId, VlmState.NOT_INSTALLED)
             call.resolve()
         } ?: call.reject("Invalid modelId: $modelIdWire")
+    }
+
+    /**
+     * Streaming package import from a SAF content URI: the document stream
+     * is staged with an incremental whole-package hash, ZIP entries are
+     * validated and extracted to a temp sandbox, and on full success the
+     * sandbox is atomically promoted. Any rejection leaves nothing
+     * installed. The expected pin comes from the in-app shipped catalogue
+     * via the caller — never from inside the package under test.
+     */
+    @PluginMethod
+    fun importPackageFromUri(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val entryId = call.getString("entryId") ?: return call.reject("Missing entryId")
+        val sourceUri = call.getString("sourceUri") ?: return call.reject("Missing sourceUri")
+        val expectedSha256 = call.getString("expectedSha256") ?: return call.reject("Missing expectedSha256")
+        scope.launch {
+            try {
+                val uri = Uri.parse(sourceUri)
+                val result = getContext().contentResolver.openInputStream(uri)?.use { input ->
+                    val workDir = File(getContext().filesDir, "package-host")
+                    val installRoot = File(getContext().filesDir, "findback-packages")
+                    PackageHost.importPackage(input, entryId, expectedSha256, workDir, installRoot, getFreeBytes())
+                } ?: throw IllegalStateException("The document could not be opened.")
+                if (result.ok) {
+                    val response = JSObject()
+                    response.put("ok", true)
+                    response.put("manifest", result.manifest?.toJSObject())
+                    call.resolve(response)
+                } else {
+                    call.reject(result.reason ?: "Package rejected", result.code)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                call.reject("Import failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Streaming package export of the installed files for [entryId] to a
+     * SAF destination URI. Only data-only packages can be produced; writer
+     * failures resolve as rejections with nothing claimed as packaged.
+     */
+    @PluginMethod
+    fun exportPackageToUri(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val entryId = call.getString("entryId") ?: return call.reject("Missing entryId")
+        val destUri = call.getString("destUri") ?: return call.reject("Missing destUri")
+        scope.launch {
+            try {
+                val uri = Uri.parse(destUri)
+                val installDir = File(File(getContext().filesDir, "findback-packages"), entryId)
+                val result = getContext().contentResolver.openOutputStream(uri)?.use { output ->
+                    PackageHost.exportPackage(entryId, installDir, output)
+                } ?: throw IllegalStateException("The destination could not be opened.")
+                if (result.ok) {
+                    val response = JSObject()
+                    response.put("ok", true)
+                    response.put("manifest", result.manifest?.toJSObject())
+                    response.put("checksumsJson", result.checksumsJson)
+                    call.resolve(response)
+                } else {
+                    call.reject(result.reason ?: "Export refused", result.code)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                call.reject("Export failed: ${e.message}")
+            }
+        }
     }
 
     @PluginMethod
@@ -1296,6 +1369,35 @@ internal fun modelStatesToJSArray(infos: List<VlmModelInfo>): JSArray {
     val arr = JSArray()
     infos.forEach { arr.put(it.toJSObject()) }
     return arr
+}
+
+/**
+ * Serializes an observed package manifest for the `NativePackageHost`
+ * seam. Every field is observed by the platform installer (import: from
+ * the package manifest; export: from the streamed files, with empty
+ * upstream metadata the installer does not carry).
+ */
+internal fun PackageHost.Manifest.toJSObject(): JSObject {
+    val obj = JSObject()
+    obj.put("packageVersion", packageVersion)
+    obj.put("entryId", entryId)
+    val upstream = JSObject()
+    upstream.put("repo", upstreamRepo)
+    upstream.put("rev", upstreamRev)
+    upstream.put("file", upstreamFile)
+    obj.put("upstream", upstream)
+    obj.put("createdAt", createdAt)
+    val files = JSArray()
+    for (file in this.files) {
+        val fileObj = JSObject()
+        fileObj.put("path", file.path)
+        fileObj.put("bytes", file.bytes)
+        fileObj.put("sha256", file.sha256)
+        fileObj.put("method", file.method)
+        files.put(fileObj)
+    }
+    obj.put("files", files)
+    return obj
 }
 
 data class VlmModelInfo(
