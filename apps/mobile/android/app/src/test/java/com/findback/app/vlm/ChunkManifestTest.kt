@@ -2,6 +2,7 @@ package com.findback.app.vlm
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ChunkManifestTest {
@@ -144,13 +145,22 @@ class ChunkManifestTest {
     }
 
     @Test fun manifest256M_downloadUsesUpstreamFilename() {
-        // Upstream file carries the typo `smalvlm`; the corrected-spelling
-        // URL 404s ("Entry not found", verified 2026-09-18). The downloader
-        // must use remotePath so the device never requests a missing file.
+        // Upstream file carries the typo `smalvlm`; remotePath stays as
+        // provenance-only metadata. Production downloads never build
+        // Hugging Face resolve URLs; distributable manifests use the pinned
+        // GitHub Release asset, and legacy manifests without a distribution
+        // pin have no download path.
         val manifest = MODEL_MANIFESTS.single { it.id == "smolvlm-256m" }
         val tflite = manifest.files.single { it.path.endsWith(".tflite") }
         assertEquals("smalvlm-256m-instruct_q8_ekv2048_single_image.tflite", tflite.remotePath)
-        val url = "https://huggingface.co/${manifest.sourceRepo}/resolve/${manifest.revision}/${tflite.remotePath}"
-        assertTrue(url.endsWith("/smalvlm-256m-instruct_q8_ekv2048_single_image.tflite"))
+        assertEquals(null, manifest.distribution)
+        val fiveHundred = MODEL_MANIFESTS.single { it.id == "smolvlm2-500m" }
+        val dist = fiveHundred.distribution
+        assertNotNull(dist)
+        val url = distributionUrlFor(dist)
+        assertTrue(url.startsWith("https://github.com/sheikhti1205/FindBack-Models/releases/download/"))
+        assertTrue(url.endsWith("/smolvlm2-500m-litert-int4.fbmodel"))
+        assertTrue(!url.contains("huggingface.co"))
+        assertTrue(!url.contains("latest") && !url.contains("/main"))
     }
 }

@@ -614,7 +614,7 @@ function CatalogueModelCard({
           ) : bridgeId != null ? (
             <span className="min-w-0 break-words text-xs text-on-surface-variant">Verification running…</span>
           ) : null}
-          {entry.catalogOnly !== true && (
+          {entry.catalogOnly !== true && bridgeId != null && (
             <div className="flex w-full min-w-0 flex-col gap-2">
               <button
                 onClick={() => onImport(entry)}

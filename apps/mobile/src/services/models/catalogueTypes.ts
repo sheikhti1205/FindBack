@@ -46,7 +46,7 @@ export interface ModelCatalogueEntry {
   role: string;
   runtime: ModelRuntime;
   format: ModelFormat;
-  /** Pinned upstream revision, or UNKNOWN_NOT_ESTABLISHED. */
+  /** Pinned upstream revision, or UNKNOWN_NOT_ESTABLISHED. Provenance only; never used to build a download URL. */
   revision: string;
   /** License id as published by the rights holder (apache-2.0, lfm-open-1.0, gemma, …). */
   license: string;
@@ -71,7 +71,30 @@ export interface ModelCatalogueEntry {
   upstreamFile?: string | null;
   /** Pinned asset name(s) in the pinned release, or null. */
   releaseAsset?: string[] | null;
+  /** Pinned .fbmodel release asset, or null when not distributed. */
+  distribution?: ModelDistribution | null;
   provenance: ProvenanceSource[];
+}
+
+export interface DistributionPart {
+  asset: string;
+  bytes: number;
+  sha256: string;
+}
+
+/**
+ * Pinned GitHub Release asset for one `.fbmodel` package. The runtime
+ * builds the download URL from repo/tag/asset only; it never polls the
+ * API and never uses latest/main. Upstream repo/revision/file stay as
+ * provenance only. `parts` is null for v1 single-asset entries.
+ */
+export interface ModelDistribution {
+  repo: string;
+  tag: string;
+  asset: string;
+  bytes: number;
+  sha256: string;
+  parts?: DistributionPart[] | null;
 }
 
 export interface PinnedModelsRelease {

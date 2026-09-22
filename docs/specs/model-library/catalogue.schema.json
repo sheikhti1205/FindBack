@@ -47,6 +47,33 @@
       },
       "additionalProperties": false
     },
+    "distribution": {
+      "description": "Pinned GitHub Release asset for the .fbmodel package, or null when not distributed. The runtime builds the download URL from repo/tag/asset only; it never polls the API and never uses latest/main.",
+      "type": ["object", "null"],
+      "required": ["repo", "tag", "asset", "bytes", "sha256"],
+      "properties": {
+        "repo": { "type": "string", "description": "Curated release repo with owner, e.g. sheikhti1205/FindBack-Models" },
+        "tag": { "type": "string", "description": "Immutable release tag" },
+        "asset": { "type": "string", "description": "Pinned .fbmodel filename in the release" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "parts": {
+          "description": "Chunk parts when a single asset would exceed the per-asset limit, else null. v1 small entries use null.",
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["asset", "bytes", "sha256"],
+            "properties": {
+              "asset": { "type": "string" },
+              "bytes": { "type": "integer", "minimum": 1 },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "entry": {
       "type": "object",
       "required": [
@@ -104,6 +131,10 @@
           "description": "Pinned asset name(s) in pinnedModelsRelease, or null when catalogOnly / not yet published.",
           "type": ["array", "null"],
           "items": { "type": "string" }
+        },
+        "distribution": {
+          "description": "Pinned .fbmodel release asset for this entry, or null when not distributed. Upstream repo/revision/file stay as provenance only.",
+          "$ref": "#/$defs/distribution"
         },
         "provenance": {
           "type": "array",

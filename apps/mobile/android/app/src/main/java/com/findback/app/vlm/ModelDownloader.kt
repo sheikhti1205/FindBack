@@ -74,6 +74,12 @@ class ModelDownloader(
     /**
      * Downloads all files for a model manifest with progress reporting.
      * Returns the final VlmState after download and verification.
+     *
+     * Existing on-device weights that already verify are kept without any
+     * network fetch. Otherwise the pinned GitHub Release package is
+     * downloaded and verified against the distribution pin, then its
+     * interior weights are extracted to the pinned spec paths. Upstream
+     * repo/revision/file are provenance-only and never build URLs.
      */
     suspend fun download(
         manifest: ModelManifest,
@@ -81,22 +87,34 @@ class ModelDownloader(
         onState: (VlmState) -> Unit = {}
     ): VlmState {
         resetControl()
-        // Check storage before starting (full bytes + one chunk temp + headroom;
-        // no 2x requirement since install is an atomic rename).
-        val totalExpectedBytes = manifest.files.sumOf { it.expectedBytes }
-        val freeBytes = getFreeBytes()
-        if (!ModelInstallPolicy.canInstall(freeBytes, totalExpectedBytes)) {
+        var allWeightsPresent = true
+        for (spec in manifest.files) {
+            val finalFile = store.finalFile(manifest, spec)
+            if (!(finalFile.exists() && finalFile.length() == spec.expectedBytes &&
+                Sha256.ofFile(finalFile) == spec.sha256)
+            ) {
+                allWeightsPresent = false
+                break
+            }
+        }
+        if (allWeightsPresent) return VlmState.INSTALLED_UNVERIFIED
+
+        val distribution = manifest.distribution ?: return VlmState.DOWNLOAD_FAILED
+        val totalNeeded = distribution.bytes + manifest.files.sumOf { it.expectedBytes }
+        if (!ModelInstallPolicy.canInstall(getFreeBytes(), totalNeeded)) {
             return VlmState.INSUFFICIENT_STORAGE
         }
 
-        for (spec in manifest.files) {
-            val result = downloadFile(manifest, spec, onProgress, onState)
-            if (result != VlmState.INSTALLED_UNVERIFIED) {
-                return result
-            }
+        val packageSpec = ModelFileSpec(
+            path = distribution.asset,
+            expectedBytes = distribution.bytes,
+            sha256 = distribution.sha256
+        )
+        val packageResult = downloadFile(manifest, packageSpec, onProgress, onState)
+        if (packageResult != VlmState.INSTALLED_UNVERIFIED) {
+            return packageResult
         }
-
-        return VlmState.INSTALLED_UNVERIFIED
+        return extractPackageToSpecs(manifest, distribution, onState)
     }
 
     private suspend fun downloadFile(
@@ -605,10 +623,94 @@ class ModelDownloader(
         if (pauseRequested) throw PauseRequested()
     }
 
-    // NOTE: URL uses spec.remotePath (exact upstream filename), never the
-    // local spec.path spelling. See assets/chunks/PROVENANCE.md.
+    /**
+     * Pinned release-asset URL from the distribution record only. Upstream
+     * repo/revision/remotePath are provenance-only and never build URLs.
+     * No latest/main, no API polling, no Hugging Face resolve URLs.
+     */
     private fun buildDownloadUrl(manifest: ModelManifest, spec: ModelFileSpec): String {
-        return "https://huggingface.co/${manifest.sourceRepo}/resolve/${manifest.revision}/${spec.remotePath}"
+        val distribution = manifest.distribution
+            ?: throw DownloadException("No distribution pin for ${manifest.id}")
+        return distributionUrlFor(distribution)
+    }
+
+    /**
+     * Extracts interior weights from a verified `.fbmodel` package to the
+     * pinned spec paths. The package file itself was already verified
+     * against the distribution pin; each interior file is verified against
+     * its spec pin before promotion. Rejects unsafe interior paths.
+     */
+    private fun extractPackageToSpecs(
+        manifest: ModelManifest,
+        distribution: ModelDistribution,
+        onState: (VlmState) -> Unit
+    ): VlmState {
+        val packageSpec = ModelFileSpec(
+            path = distribution.asset,
+            expectedBytes = distribution.bytes,
+            sha256 = distribution.sha256
+        )
+        val packageFinal = store.finalFile(manifest, packageSpec)
+        if (!packageFinal.exists() || packageFinal.length() != distribution.bytes ||
+            Sha256.ofFile(packageFinal) != distribution.sha256
+        ) {
+            return VlmState.DOWNLOAD_FAILED
+        }
+        try {
+            onState(VlmState.VERIFYING_FILE)
+            val zip = java.util.zip.ZipFile(packageFinal)
+            try {
+                for (spec in manifest.files) {
+                    checkControl()
+                    val interiorPath = "weights/${spec.path}"
+                    if (!isSafeInteriorPath(interiorPath)) return VlmState.CORRUPT
+                    val entry = zip.getEntry(interiorPath) ?: return VlmState.CORRUPT
+                    if (entry.isDirectory) return VlmState.CORRUPT
+                    val partFile = store.partFile(manifest, spec)
+                    partFile.parentFile?.mkdirs()
+                    zip.getInputStream(entry).use { input ->
+                        java.io.FileOutputStream(partFile).use { output ->
+                            val buffer = ByteArray(BUFFER_SIZE)
+                            var n = input.read(buffer)
+                            while (n != -1) {
+                                checkControl()
+                                output.write(buffer, 0, n)
+                                n = input.read(buffer)
+                            }
+                            output.fd.sync()
+                        }
+                    }
+                    if (partFile.length() != spec.expectedBytes ||
+                        Sha256.ofFile(partFile) != spec.sha256
+                    ) {
+                        return VlmState.CORRUPT
+                    }
+                    if (!store.promotePartToFinal(manifest, spec)) {
+                        return VlmState.CORRUPT
+                    }
+                }
+            } finally {
+                try { zip.close() } catch (_: Exception) { }
+            }
+        } catch (e: PauseRequested) {
+            return VlmState.PAUSED
+        } catch (e: CancelRequested) {
+            return if (e.removePartial) VlmState.NOT_INSTALLED else VlmState.PAUSED
+        } catch (_: Exception) {
+            return VlmState.CORRUPT
+        }
+        return VlmState.INSTALLED_UNVERIFIED
+    }
+
+    private fun isSafeInteriorPath(path: String): Boolean {
+        if (path.isEmpty()) return false
+        if (path.startsWith("/") || path.startsWith("\\")) return false
+        if (Regex("^[A-Za-z]:").containsMatchIn(path)) return false
+        if (path.contains("\\")) return false
+        val segments = path.split("/")
+        if (segments.any { it == ".." }) return false
+        if (segments.any { it.isEmpty() }) return false
+        return true
     }
 
     private fun openConnection(urlString: String, partBytes: Long): HttpURLConnection {
