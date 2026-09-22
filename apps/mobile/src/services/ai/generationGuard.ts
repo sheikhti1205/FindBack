@@ -197,6 +197,31 @@ export function detectSingleKeyRunaway(text: string): boolean {
   return keys.length >= 15 && new Set(keys).size <= 2;
 }
 
+/**
+ * R3 character-level runaway cap for whitespace-free mega-token loops
+ * (T24-SmolVLM2 `'0'x~98` in 2034 chars / 9 tokens; BV10-vision 2501 chars /
+ * 6 tokens): a single unsplittable token evades every word/sentence
+ * detector. Flags 32+ identical non-space chars in a row, or a
+ * char-vs-token anomaly (256+ chars averaging 64+ chars per token).
+ */
+export function detectCharacterRunaway(text: string, minRun = 32, minChars = 256, minCharsPerToken = 64): boolean {
+  let run = 1;
+  for (let i = 1; i < text.length; i++) {
+    const ch = text[i];
+    if (ch !== undefined && ch === text[i - 1]) {
+      run += 1;
+      if (run >= minRun && !/\s/.test(ch)) return true;
+    } else {
+      run = 1;
+    }
+  }
+  if (text.length >= minChars) {
+    const tokens = text.split(/\s+/).filter((token) => token.length > 0);
+    if (tokens.length > 0 && text.length / tokens.length >= minCharsPerToken) return true;
+  }
+  return false;
+}
+
 export interface LoopFinding {
   loop: boolean;
   reasons: string[];
@@ -212,6 +237,7 @@ export function detectLoop(text: string, options?: { truncatedAtLimit?: boolean 
   if (detectArrayRunaway(tryParseJson(text))) reasons.push("ARRAY_RUNAWAY");
   if (detectRawEnumerationRunaway(text)) reasons.push("ENUMERATION_RUNAWAY");
   if (detectSingleKeyRunaway(text)) reasons.push("SINGLE_KEY_RUNAWAY");
+  if (detectCharacterRunaway(text)) reasons.push("CHARACTER_RUNAWAY");
   if (reasons.length > 0 && options?.truncatedAtLimit === true) {
     reasons.push("OUTPUT_LIMIT_REACHED_WHILE_LOOPING");
   }
@@ -248,21 +274,44 @@ export interface TextVerdict {
 }
 
 /**
+ * Composition contract (Task 24 / coordinator): the guard judges post-R2
+ * text. R2 strips Qwen `[thought]...[/thought]` envelopes before any other
+ * rule, and the contract's loopCheck seam runs on stripped text — so loop
+ * verdicts are only valid on stripped text. This mirrors that strip
+ * defensively (idempotent for pre-stripped input): callers SHOULD pass
+ * post-R2 text and MUST NOT depend on thought content for verdicts.
+ */
+export function stripGuardThoughtEnvelopes(text: string): string {
+  const openMarker = "[thought]";
+  const closeMarker = "[/thought]";
+  let stripped = text;
+  for (;;) {
+    const open = stripped.indexOf(openMarker);
+    if (open < 0) break;
+    const close = stripped.indexOf(closeMarker, open + openMarker.length);
+    stripped = close < 0 ? stripped.slice(0, open) : stripped.slice(0, open) + stripped.slice(close + closeMarker.length);
+  }
+  return stripped.split(closeMarker).join("").trim();
+}
+
+/**
  * Classify completed output text. Throwing modes (TIMEOUT/OOM/crash/...)
  * never reach here; they are mapped from the provider rejection instead.
+ * Judges post-R2 text (thought envelopes stripped first).
  */
 export function classifyTextOutput(text: string, options: ClassifyOptions): TextVerdict {
-  if (text.trim().length === 0) {
+  const judged = stripGuardThoughtEnvelopes(text);
+  if (judged.trim().length === 0) {
     return { ok: false, errorClass: "INVALID_OUTPUT", diagnosticCode: "EMPTY_OUTPUT" };
   }
-  if (isRefusal(text)) {
+  if (isRefusal(judged)) {
     return { ok: false, errorClass: "UNSUPPORTED_REQUEST", diagnosticCode: "REFUSAL_POLICY" };
   }
-  const loop = detectLoop(text);
+  const loop = detectLoop(judged);
   if (loop.loop) {
     return { ok: false, errorClass: "LOOP_DETECTED", diagnosticCode: loop.reasons[0] as string };
   }
-  const extracted = extractSingleJsonObject(text);
+  const extracted = extractSingleJsonObject(judged);
   if (extracted.count > 1) {
     return { ok: false, errorClass: "INVALID_OUTPUT", diagnosticCode: "MULTIPLE_JSON_OBJECTS" };
   }
@@ -286,7 +335,7 @@ export function classifyTextOutput(text: string, options: ClassifyOptions): Text
     }
     return { ok: true, errorClass: null, diagnosticCode: "OK" };
   }
-  if (options.expectStructured || /[{}[\]]/.test(text)) {
+  if (options.expectStructured || /[{}[\]]/.test(judged)) {
     return { ok: false, errorClass: "INVALID_OUTPUT", diagnosticCode: "MALFORMED_STRUCTURED_OUTPUT" };
   }
   return { ok: true, errorClass: null, diagnosticCode: "OK" };
@@ -373,6 +422,13 @@ export interface GuardedCallOptions extends ClassifyOptions {
   imageUri?: string;
   instruction?: string;
   /**
+   * Generation policy. Defaults restore the Task-20/29 evidence envelope
+   * (all 129 rows ran at temperature 0.0 under 256/512-token caps); callers
+   * may override per call. Always forwarded to the provider.
+   */
+  maxOutputTokens?: number;
+  temperature?: number;
+  /**
    * Guard-owned generation deadline. No default: the production budget is
    * TBD (Task-20/29 measurements + ModelProfile) — callers pass it
    * explicitly. Omitted means no guard timeout.
@@ -387,7 +443,12 @@ export interface GuardedSuccess extends GuardResult {
   retried: boolean;
 }
 
-function withDeadline<T>(task: Promise<T>, ms: number): Promise<T> {
+/** Default generation policy: the Task-20/29 evidence envelope. */
+export const GUARD_DEFAULT_TEMPERATURE = 0.0;
+export const GUARD_DEFAULT_MAX_OUTPUT_TOKENS_TEXT = 256;
+export const GUARD_DEFAULT_MAX_OUTPUT_TOKENS_PHOTO = 512;
+
+function withDeadline<T>(task: Promise<T>, ms: number, onDeadline: () => void): Promise<T> {
   void task.then(
     () => undefined,
     () => undefined,
@@ -395,7 +456,11 @@ function withDeadline<T>(task: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      // Reject first so the verdict is deterministically TIMEOUT: the abort
+      // below makes abort-aware providers reject (CANCELLED-shaped), which
+      // must not win the race — it is our own interrupt, not user intent.
       reject(new GuardError({ errorClass: "TIMEOUT", diagnosticCode: "GUARD_DEADLINE_EXCEEDED" }));
+      onDeadline();
     }, ms);
   });
   return Promise.race([task, timeout]).finally(() => {
@@ -407,16 +472,22 @@ async function runOnce(options: GuardedCallOptions, signal: AbortSignal | undefi
   if (signal !== undefined && signal.aborted) {
     throw new GuardError({ errorClass: "CANCELLED", diagnosticCode: "ABORT_BEFORE_START", attempts: 1 });
   }
+  // The guard owns the deadline: a linked controller lets the deadline path
+  // interrupt the runaway instead of leaving it live while a retry starts.
+  const guard = createGuardController(signal);
+  const maxOutputTokens =
+    options.maxOutputTokens ?? (options.kind === "photo" ? GUARD_DEFAULT_MAX_OUTPUT_TOKENS_PHOTO : GUARD_DEFAULT_MAX_OUTPUT_TOKENS_TEXT);
+  const temperature = options.temperature ?? GUARD_DEFAULT_TEMPERATURE;
   let raw: GuardResult;
   try {
     const task =
       options.kind === "text"
-        ? options.provider.generateText({ prompt: options.prompt ?? "" }, signal)
+        ? options.provider.generateText({ prompt: options.prompt ?? "", maxOutputTokens, temperature }, guard.signal)
         : options.provider.analyzePhoto(
-            { imageUri: options.imageUri ?? "", instruction: options.instruction ?? "" },
-            signal,
+            { imageUri: options.imageUri ?? "", instruction: options.instruction ?? "", maxOutputTokens, temperature },
+            guard.signal,
           );
-    raw = options.deadlineMs === undefined ? await task : await withDeadline(task, options.deadlineMs);
+    raw = options.deadlineMs === undefined ? await task : await withDeadline(task, options.deadlineMs, () => guard.interrupt());
   } catch (error) {
     throw guardErrorFromRejection(error, { attempts: 1 });
   }
@@ -445,7 +516,10 @@ export async function guardedGenerate(options: GuardedCallOptions): Promise<Guar
     return await runOnce(options, options.signal);
   } catch (error) {
     const first = guardErrorFromRejection(error);
-    if (!first.retryable || (options.signal !== undefined && options.signal.aborted)) throw first;
+    // A guard-deadline TIMEOUT already spent the caller's budget (and aborted
+    // the runaway): no immediate second CPU-bound run. Provider-thrown
+    // TIMEOUTs stay retryable via isRetryableClass.
+    if (!first.retryable || first.diagnosticCode === "GUARD_DEADLINE_EXCEEDED" || (options.signal !== undefined && options.signal.aborted)) throw first;
     try {
       const retry = await runOnce(options, options.signal);
       return { ...retry, attempts: 2, retried: true };

@@ -4,6 +4,7 @@ import {
   classifyTextOutput,
   createGuardController,
   detectArrayRunaway,
+  detectCharacterRunaway,
   detectLoop,
   detectLowNovelty,
   detectParagraphRepetition,
@@ -12,6 +13,7 @@ import {
   detectSentenceRepetition,
   detectSingleKeyRunaway,
   guardedGenerate,
+  stripGuardThoughtEnvelopes,
 } from "./generationGuard";
 import type { GuardProvider, GuardResult } from "./generationGuard";
 import { GuardError } from "./errors";
@@ -404,5 +406,123 @@ describe("R3 interrupt", () => {
     expect(guard.signal.aborted).toBe(true);
     const preAborted = createGuardController(new AbortController().signal);
     expect(preAborted.signal.aborted).toBe(false);
+  });
+
+  it("deadline interrupts the runaway and never starts an overlapping retry", async () => {
+    let calls = 0;
+    let seenSignal: AbortSignal | undefined;
+    const hanging: GuardProvider = {
+      generateText: (_request, signal): Promise<GuardResult> => {
+        calls += 1;
+        seenSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("aborted mid-generation")), { once: true });
+        });
+      },
+      analyzePhoto: (_request, signal): Promise<GuardResult> => {
+        calls += 1;
+        seenSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("aborted mid-generation")), { once: true });
+        });
+      },
+    };
+    await expect(
+      guardedGenerate({ provider: hanging, kind: "text", prompt: "hi", expectStructured: false, deadlineMs: 10 }),
+    ).rejects.toMatchObject({ errorClass: "TIMEOUT", diagnosticCode: "GUARD_DEADLINE_EXCEEDED", attempts: 1 });
+    expect(calls).toBe(1);
+    expect(seenSignal?.aborted).toBe(true);
+  });
+});
+
+describe("generation policy propagation (M1)", () => {
+  it("forwards caller caps to the provider", async () => {
+    const provider = new FakeAiProvider({ mode: "GOOD" });
+    await guardedGenerate({
+      provider,
+      kind: "text",
+      prompt: "hi",
+      expectStructured: false,
+      maxOutputTokens: 300,
+      temperature: 0.2,
+    });
+    expect(provider.textRequests).toHaveLength(1);
+    expect(provider.textRequests[0]).toMatchObject({ prompt: "hi", maxOutputTokens: 300, temperature: 0.2 });
+  });
+
+  it("restores the evidence envelope by default (256 text / 512 photo at 0.0)", async () => {
+    const provider = new FakeAiProvider({ mode: "GOOD" });
+    await guardedGenerate({ provider, kind: "text", prompt: "hi", expectStructured: false });
+    expect(provider.textRequests[0]).toMatchObject({ maxOutputTokens: 256, temperature: 0 });
+    await guardedGenerate({
+      provider,
+      kind: "photo",
+      imageUri: "x",
+      instruction: "describe",
+      expectStructured: true,
+      validate: PHOTO_VALIDATE,
+    });
+    expect(provider.photoRequests[0]).toMatchObject({ maxOutputTokens: 512, temperature: 0 });
+  });
+});
+
+describe("character-level runaway detector (M5)", () => {
+  it("flags the T24 shape: a ~98-zero mega-token run word detectors miss", () => {
+    const prefix = Array.from({ length: 280 }, (_, i) => `note${i}`).join(" ");
+    const text = `${prefix} ${"0".repeat(98)}`;
+    expect(detectSentenceRepetition(text)).toBe(false);
+    expect(detectRepeatedNgrams(text)).toBe(false);
+    expect(detectRawEnumerationRunaway(text)).toBe(false);
+    expect(detectCharacterRunaway(text)).toBe(true);
+    const loop = detectLoop(text);
+    expect(loop.loop).toBe(true);
+    expect(loop.reasons).toContain("CHARACTER_RUNAWAY");
+    expect(classifyTextOutput("0".repeat(98), { expectStructured: false })).toMatchObject({
+      ok: false,
+      errorClass: "LOOP_DETECTED",
+      diagnosticCode: "CHARACTER_RUNAWAY",
+    });
+  });
+
+  it("flags the BV10 shape: 2501 chars in a couple of mega-tokens", () => {
+    const text = `${"A".repeat(1250)} ${"B".repeat(1250)}`;
+    expect(text.length).toBe(2501);
+    expect(detectCharacterRunaway(text)).toBe(true);
+    expect(detectLoop(text).reasons).toContain("CHARACTER_RUNAWAY");
+  });
+
+  it("does not flag normal prose or structured photo output", () => {
+    expect(detectCharacterRunaway("Open the Report tab, choose Lost, fill the form, then Publish.")).toBe(false);
+    expect(
+      detectCharacterRunaway(
+        JSON.stringify({ objectName: "black umbrella", colors: ["black"], identifyingFeatures: ["curved wooden handle"] }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("thought seam (post-R2 verdicts)", () => {
+  it("T03 shape: sentence-loop thought plus clean answer is not LOOP", () => {
+    const raw = `[thought]${"Tap Report, then Lost. ".repeat(12).trim()}[/thought]Open the Report tab, choose Lost, then Publish.`;
+    expect(detectLoop(raw).loop).toBe(true);
+    expect(stripGuardThoughtEnvelopes(raw)).toBe("Open the Report tab, choose Lost, then Publish.");
+    expect(classifyTextOutput(raw, { expectStructured: false })).toMatchObject({ ok: true, errorClass: null });
+  });
+
+  it("T18 shape: looping thought plus honest-unavailable answer is not LOOP", () => {
+    const raw = `[thought]${"The item might be lost. ".repeat(12).trim()}[/thought]I do not have enough information to identify this item from the photo.`;
+    expect(classifyTextOutput(raw, { expectStructured: false })).toMatchObject({ ok: true, errorClass: null });
+  });
+
+  it("T25 shape: paragraph-loop thought plus clean prose is not LOOP", () => {
+    const thought =
+      "To report a lost item, open the Report tab and choose Lost. Fill in the title, description, category, date and map location. Publish when ready. ";
+    const raw = `[thought]${thought.repeat(4).trim()}[/thought]Here is how to file a lost-item report from the Report tab.`;
+    expect(classifyTextOutput(raw, { expectStructured: false })).toMatchObject({ ok: true, errorClass: null });
+  });
+
+  it("thought-only output stays INVALID_OUTPUT and never surfaces reasoning", () => {
+    const raw = `[thought]${"Tap Report, then Lost. ".repeat(12).trim()}[/thought]`;
+    expect(classifyTextOutput(raw, { expectStructured: false })).toMatchObject({ ok: false, errorClass: "INVALID_OUTPUT" });
   });
 });
