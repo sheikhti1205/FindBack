@@ -35,10 +35,9 @@ import {
   LEGACY_BRIDGE_MODELS,
   SHIPPED_CATALOGUE_ENTRIES,
 } from "../services/models/shippedCatalogue";
-import { IncrementalSha256 } from "../services/models/streamingHash";
 import type { ModelCatalogueEntry } from "../services/models/catalogueTypes";
-import type { InstalledFileReader, PackageWriter } from "../services/models/modelTransfers";
-import { exportPackageStream } from "../services/models/modelTransfers";
+import type { InstalledFileReader, NativePackageHost, PackageWriter } from "../services/models/modelTransfers";
+import { exportPackageStream, hashWebFile } from "../services/models/modelTransfers";
 
 /**
  * Injectable seams for the library UI. The download/pause/resume/delete
@@ -46,12 +45,19 @@ import { exportPackageStream } from "../services/models/modelTransfers";
  * journal on-device); import/export run through the streaming transfer
  * layer. `availableFreeRamMb` has no native source yet, so it defaults to
  * null ("unknown", never gating on its own); export needs a platform
- * archive writer, so it stays disabled until one is injected.
+ * archive writer, so it stays disabled until one is injected. The Android
+ * production import/export path runs through `nativePackageHost` (SAF
+ * content URI → native streaming validation/extraction/install); the web
+ * fallback only stream-hashes the picked file against the shipped pin and
+ * never buffers it.
  */
 export interface OfflineAiSeams {
   availableFreeRamMb?: AvailableFreeRamMb;
   exportReaderFor?: (entryId: string) => InstalledFileReader | null;
   makePackageWriter?: () => PackageWriter;
+  nativePackageHost?: NativePackageHost | null;
+  importSourceUriForFile?: (file: File) => string | null;
+  exportDestUriForEntry?: (entryId: string) => string | null;
 }
 
 const STATE_LABELS: Record<VlmState, string> = {
@@ -882,11 +888,14 @@ export function OfflineAi(seams?: OfflineAiSeams) {
   };
 
   /**
-   * Import entry point: streams a picked `.fbmodel` through an incremental
-   * hash and verifies it against the shipped catalogue pin (release-sidecar
-   * semantics). Full interior validation + sandboxed extraction run in the
-   * platform installer via `importPackageStream` — the web UI has no ZIP
-   * framing, so it verifies without claiming an install.
+   * Import entry point. The Android production path resolves the picked
+   * file to a SAF content URI and hands it to the platform installer
+   * (`NativePackageHost`: native stream → incremental package hash →
+   * archive entry validation → streaming extraction → per-entry hash →
+   * temp sandbox → atomic install). The web fallback stream-hashes the
+   * picked file against the shipped catalogue pin without buffering it;
+   * full interior validation + extraction still run in the platform
+   * installer, so the web UI verifies without claiming an install.
    */
   const handleImportFile = async (entry: ModelCatalogueEntry, file: File) => {
     if (entry.sha256 == null) {
@@ -897,14 +906,22 @@ export function OfflineAi(seams?: OfflineAiSeams) {
       return;
     }
     try {
-      const buffer = await file.arrayBuffer();
-      const hasher = new IncrementalSha256();
-      const bytes = new Uint8Array(buffer);
-      const chunkSize = 64 * 1024;
-      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-        hasher.update(bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+      const sourceUri = seams?.importSourceUriForFile?.(file) ?? null;
+      if (seams?.nativePackageHost != null && sourceUri != null) {
+        const installed = await seams.nativePackageHost.importPackageFromUri({
+          entryId: entry.id,
+          sourceUri,
+          expectedSha256: entry.sha256,
+        });
+        setImportMessages((prev) => ({
+          ...prev,
+          [entry.id]: installed.ok
+            ? "Package verified against the shipped catalogue pin and installed by the platform installer."
+            : `Package rejected: ${installed.reason} Nothing installed.`,
+        }));
+        return;
       }
-      const digest = hasher.digestHex();
+      const digest = await hashWebFile(file);
       setImportMessages((prev) => ({
         ...prev,
         [entry.id]:
@@ -926,6 +943,20 @@ export function OfflineAi(seams?: OfflineAiSeams) {
   };
 
   const handleExport = async (entry: ModelCatalogueEntry) => {
+    const destUri = seams?.exportDestUriForEntry?.(entry.id) ?? null;
+    if (seams?.nativePackageHost != null && destUri != null) {
+      const native = await seams.nativePackageHost.exportPackageToUri({
+        entryId: entry.id,
+        destUri,
+      });
+      setExportMessages((prev) => ({
+        ...prev,
+        [entry.id]: native.ok
+          ? `Packaged ${native.manifest.files.length} files for ${native.manifest.entryId}.`
+          : `Export refused: ${native.reason}`,
+      }));
+      return;
+    }
     const reader = seams?.exportReaderFor?.(entry.id) ?? null;
     const writer = seams?.makePackageWriter?.() ?? null;
     if (reader == null || writer == null) {

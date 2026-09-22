@@ -86,7 +86,9 @@ export type TransferErrorCode =
   | "DENIED_FILE"
   | "PACKAGE_TOO_LARGE"
   | "MISSING_WEIGHTS"
-  | "NO_FILES";
+  | "NO_FILES"
+  | "INSUFFICIENT_STORAGE"
+  | "CORRUPT_ARCHIVE";
 
 export interface TransferFailure {
   readonly ok: false;
@@ -103,6 +105,72 @@ export interface TransferFailure {
  */
 export function sha256BytesHex(input: Uint8Array): string {
   return sha256HexOfBytes(input);
+}
+
+/**
+ * Incremental SHA-256 over a chunk stream without buffering the whole
+ * input. The web import entry point feeds `File.stream()` chunks here so
+ * no multi-GB JS buffer is ever assembled; the memory store stays reserved
+ * for tests and small fixtures.
+ */
+export async function hashByteStream(
+  chunks: AsyncIterable<Uint8Array>,
+  control?: TransferControl,
+): Promise<string> {
+  const hasher = new IncrementalSha256();
+  for await (const chunk of chunks) {
+    throwIfCancelled(control);
+    hasher.update(chunk);
+  }
+  throwIfCancelled(control);
+  return hasher.digestHex();
+}
+
+/**
+ * Streaming SHA-256 over a picked web file via `File.stream()`, chunk by
+ * chunk — the production web import path. Never assembles the whole file;
+ * the Android production path uses `NativePackageHost` instead.
+ */
+export async function hashWebFile(
+  file: { stream(): ReadableStream<Uint8Array> },
+  control?: TransferControl,
+): Promise<string> {
+  const reader = file.stream().getReader();
+  const hasher = new IncrementalSha256();
+  try {
+    for (;;) {
+      throwIfCancelled(control);
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value != null) hasher.update(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  throwIfCancelled(control);
+  return hasher.digestHex();
+}
+
+/**
+ * Native package host contract (Android: SAF content URI → native stream
+ * → incremental package hash → archive entry validation → streaming
+ * extraction → per-entry incremental hash → temp sandbox → atomic
+ * install; export reverses installed files through a streaming writer to
+ * a SAF output URI). Declared here; implemented in the platform layer —
+ * no ZIP framing runs in the web UI.
+ */
+export interface NativePackageHost {
+  importPackageFromUri(args: {
+    entryId: string;
+    sourceUri: string;
+    expectedSha256: string;
+    control?: TransferControl;
+  }): Promise<ImportResult>;
+  exportPackageToUri(args: {
+    entryId: string;
+    destUri: string;
+    control?: TransferControl;
+  }): Promise<ExportStreamResult>;
 }
 
 /**
@@ -364,6 +432,14 @@ export interface ImportStreamOptions {
    * pin — never against values from inside the package under test.
    */
   rawPackageSha256?: string;
+  /** Cooperative cancellation; partial validation state is discarded. */
+  control?: TransferControl;
+  /** Passively observed free bytes, or null when unknown (never gating alone). */
+  freeBytes?: number | null;
+  /** Bytes the install needs when known (declared total, else null). */
+  requiredBytes?: number | null;
+  /** Test-only override for the expanded-size cap (small-fixture bombs). */
+  maxExpandedBytes?: number | null;
 }
 
 function fail(code: TransferErrorCode, reason: string): TransferFailure {
@@ -455,10 +531,32 @@ export async function importPackageStream(
   if (manifestEntry.isSymlink === true) {
     return fail("UNSAFE_PATH", "Symlink entry rejected: manifest.json.");
   }
-  const manifestRaw = await readBounded(
-    archive.openEntry(FBMODEL_MANIFEST_NAME),
-    MAX_MANIFEST_BYTES,
-  );
+  try {
+    throwIfCancelled(options?.control);
+  } catch {
+    return fail(
+      "CANCELLED",
+      "Import cancelled before validation. Nothing installed.",
+    );
+  }
+  let manifestRaw: Uint8Array | null;
+  try {
+    manifestRaw = await readBounded(
+      archive.openEntry(FBMODEL_MANIFEST_NAME),
+      MAX_MANIFEST_BYTES,
+    );
+  } catch (error) {
+    if (error instanceof TransferCancelledError) {
+      return fail(
+        "CANCELLED",
+        "Import cancelled. Nothing installed.",
+      );
+    }
+    return fail(
+      "CORRUPT_ARCHIVE",
+      "Package container is unreadable: the manifest entry cannot be opened.",
+    );
+  }
   if (manifestRaw == null) {
     return fail(
       "MANIFEST_INVALID",
@@ -521,11 +619,23 @@ export async function importPackageStream(
     }
   }
 
+  const cap = options?.maxExpandedBytes ?? MAX_PACKAGE_EXPANDED_BYTES;
   const declaredTotal = manifest.files.reduce((sum, file) => sum + file.bytes, 0);
-  if (declaredTotal > MAX_PACKAGE_EXPANDED_BYTES) {
+  if (declaredTotal > cap) {
     return fail(
       "PACKAGE_TOO_LARGE",
-      `Declared package size ${declaredTotal} bytes exceeds the ${MAX_PACKAGE_EXPANDED_BYTES}-byte cap.`,
+      `Declared package size ${declaredTotal} bytes exceeds the ${cap}-byte cap.`,
+    );
+  }
+  const requiredBytes = options?.requiredBytes ?? declaredTotal;
+  if (
+    options?.freeBytes != null &&
+    requiredBytes != null &&
+    requiredBytes > options.freeBytes
+  ) {
+    return fail(
+      "INSUFFICIENT_STORAGE",
+      `Not enough free storage: the install needs ${requiredBytes} bytes but only ${options.freeBytes} are free. Nothing installed.`,
     );
   }
 
@@ -535,37 +645,49 @@ export async function importPackageStream(
     const head: number[] = [];
     let headChecked = false;
     let actualBytes = 0;
-    for await (const chunk of archive.openEntry(file.path)) {
-      actualBytes += chunk.length;
-      if (actualBytes > file.bytes) {
-        return fail(
-          "SIZE_MISMATCH",
-          `Declared-vs-actual size mismatch for ${file.path}: exceeds manifest-declared ${file.bytes} bytes.`,
-        );
-      }
-      expandedTotal += chunk.length;
-      if (expandedTotal > MAX_PACKAGE_EXPANDED_BYTES) {
-        return fail(
-          "PACKAGE_TOO_LARGE",
-          `Expanded package size exceeds the ${MAX_PACKAGE_EXPANDED_BYTES}-byte cap.`,
-        );
-      }
-      hasher.update(chunk);
-      if (!headChecked) {
-        for (const byte of chunk) {
-          if (head.length < 4) head.push(byte);
-          else break;
+    try {
+      throwIfCancelled(options?.control);
+      for await (const chunk of archive.openEntry(file.path)) {
+        throwIfCancelled(options?.control);
+        actualBytes += chunk.length;
+        if (actualBytes > file.bytes) {
+          return fail(
+            "SIZE_MISMATCH",
+            `Declared-vs-actual size mismatch for ${file.path}: exceeds manifest-declared ${file.bytes} bytes.`,
+          );
         }
-        if (head.length === 4) {
-          headChecked = true;
-          if (hasDeniedMagic(new Uint8Array(head))) {
-            return fail(
-              "DENIED_FILE",
-              `Executable content rejected: ${file.path}.`,
-            );
+        expandedTotal += chunk.length;
+        if (expandedTotal > cap) {
+          return fail(
+            "PACKAGE_TOO_LARGE",
+            `Expanded package size exceeds the ${cap}-byte cap.`,
+          );
+        }
+        hasher.update(chunk);
+        if (!headChecked) {
+          for (const byte of chunk) {
+            if (head.length < 4) head.push(byte);
+            else break;
+          }
+          if (head.length === 4) {
+            headChecked = true;
+            if (hasDeniedMagic(new Uint8Array(head))) {
+              return fail(
+                "DENIED_FILE",
+                `Executable content rejected: ${file.path}.`,
+              );
+            }
           }
         }
       }
+    } catch (error) {
+      if (error instanceof TransferCancelledError) {
+        return fail("CANCELLED", "Import cancelled. Nothing installed.");
+      }
+      return fail(
+        "CORRUPT_ARCHIVE",
+        `Package container is unreadable: interior entry ${file.path} cannot be streamed (truncated or corrupted container). Nothing installed.`,
+      );
     }
     if (actualBytes !== file.bytes) {
       return fail(
@@ -641,6 +763,18 @@ function compressionMethodFor(path: string): FbmodelCompressionMethod {
   return "DEFLATE";
 }
 
+export interface ExportStreamOptions {
+  createdAt?: string;
+  /** Cooperative cancellation; a partially written file is discarded. */
+  control?: TransferControl;
+  /** Passively observed free bytes, or null when unknown (never gating alone). */
+  freeBytes?: number | null;
+  /** Bytes the package needs when known (declared total, else null). */
+  requiredBytes?: number | null;
+  /** Test-only override for the expanded-size cap (small-fixture bombs). */
+  maxExpandedBytes?: number | null;
+}
+
 /**
  * Packages installed files into a shareable offline `.fbmodel` interior for
  * a catalogue entry, streaming every file through the archive writer.
@@ -653,7 +787,7 @@ export async function exportPackageStream(
   entry: ModelCatalogueEntry,
   reader: InstalledFileReader,
   writer: PackageWriter,
-  options?: { createdAt?: string },
+  options?: ExportStreamOptions,
 ): Promise<ExportStreamResult> {
   if (entry.catalogOnly === true) {
     return fail(
@@ -680,9 +814,23 @@ export async function exportPackageStream(
     }
   }
 
+  const exportCap = options?.maxExpandedBytes ?? MAX_PACKAGE_EXPANDED_BYTES;
+  const exportRequired = options?.requiredBytes ?? reader.files.reduce((sum, file) => sum + file.size, 0);
+  if (
+    options?.freeBytes != null &&
+    exportRequired != null &&
+    exportRequired > options.freeBytes
+  ) {
+    return fail(
+      "INSUFFICIENT_STORAGE",
+      `Not enough free storage: packaging needs ${exportRequired} bytes but only ${options.freeBytes} are free. Nothing written.`,
+    );
+  }
+
   const manifestFiles: FbmodelManifestFile[] = [];
   let expandedTotal = 0;
-  for (const file of reader.files) {    const method = compressionMethodFor(file.path);
+  for (const file of reader.files) {
+    const method = compressionMethodFor(file.path);
     const hasher = new IncrementalSha256();
     const head: number[] = [];
     let headChecked = false;
@@ -690,6 +838,7 @@ export async function exportPackageStream(
     let denied = false;
     async function* tapped(): AsyncGenerator<Uint8Array> {
       for await (const chunk of reader.openRead(file.path)) {
+        throwIfCancelled(options?.control);
         observedBytes += chunk.length;
         hasher.update(chunk);
         if (!headChecked) {
@@ -705,7 +854,19 @@ export async function exportPackageStream(
         yield chunk;
       }
     }
-    await writer.writeFile({ path: file.path, method }, tapped());
+    try {
+      throwIfCancelled(options?.control);
+      await writer.writeFile({ path: file.path, method }, tapped());
+    } catch (error) {
+      await writer.discardFile?.(file.path);
+      if (error instanceof TransferCancelledError) {
+        return fail("CANCELLED", "Export cancelled. Partial output discarded.");
+      }
+      return fail(
+        "CORRUPT_ARCHIVE",
+        `Export interrupted for ${file.path}: the package writer failed. Partial output discarded.`,
+      );
+    }
     if (denied || (!headChecked && hasDeniedMagic(new Uint8Array(head)))) {
       await writer.discardFile?.(file.path);
       return fail("DENIED_FILE", `Executable content rejected: ${file.path}.`);
@@ -718,11 +879,11 @@ export async function exportPackageStream(
       );
     }
     expandedTotal += observedBytes;
-    if (expandedTotal > MAX_PACKAGE_EXPANDED_BYTES) {
+    if (expandedTotal > exportCap) {
       await writer.discardFile?.(file.path);
       return fail(
         "PACKAGE_TOO_LARGE",
-        `Expanded package size exceeds the ${MAX_PACKAGE_EXPANDED_BYTES}-byte cap.`,
+        `Expanded package size exceeds the ${exportCap}-byte cap.`,
       );
     }
     manifestFiles.push({
@@ -769,13 +930,24 @@ export async function exportPackageStream(
   async function* single(chunk: Uint8Array): AsyncGenerator<Uint8Array> {
     yield chunk;
   }
-  await writer.writeFile(
-    { path: FBMODEL_CHECKSUMS_NAME, method: "DEFLATE" },
-    single(checksumsBytes),
-  );
-  await writer.writeFile(
-    { path: FBMODEL_MANIFEST_NAME, method: "DEFLATE" },
-    single(encoder.encode(JSON.stringify(manifest, null, 2))),
-  );
+  try {
+    await writer.writeFile(
+      { path: FBMODEL_CHECKSUMS_NAME, method: "DEFLATE" },
+      single(checksumsBytes),
+    );
+    await writer.writeFile(
+      { path: FBMODEL_MANIFEST_NAME, method: "DEFLATE" },
+      single(encoder.encode(JSON.stringify(manifest, null, 2))),
+    );
+  } catch (error) {
+    await writer.discardFile?.(FBMODEL_MANIFEST_NAME);
+    if (error instanceof TransferCancelledError) {
+      return fail("CANCELLED", "Export cancelled. Partial output discarded.");
+    }
+    return fail(
+      "CORRUPT_ARCHIVE",
+      "Export interrupted while writing the package envelope. Partial output discarded.",
+    );
+  }
   return { ok: true, manifest, checksumsJson };
 }

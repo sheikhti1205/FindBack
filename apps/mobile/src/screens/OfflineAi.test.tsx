@@ -694,12 +694,27 @@ describe("OfflineAi", () => {
     const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
     fireEvent.click(within(card).getByRole("button", { name: /import smolvlm2 500m/i }));
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(input, { target: { files: [new File(["not-the-model"], "model.fbmodel")] } });
+    const streamText = (text: string) => {
+      const bytes = new TextEncoder().encode(text);
+      const file = new File([text], "model.fbmodel");
+      Object.defineProperty(file, "stream", {
+        configurable: true,
+        value: () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytes);
+              controller.close();
+            },
+          }),
+      });
+      return file;
+    };
+    fireEvent.change(input, { target: { files: [streamText("not-the-model")] } });
     expect(await within(card).findByText(/does not match the shipped catalogue pin/i)).toBeTruthy();
 
     const unpinned = await screen.findByRole("listitem", { name: "Qwen3 0.6B (LiteRT, mixed int4)" });
     fireEvent.click(within(unpinned).getByRole("button", { name: /import qwen3 0.6b/i }));
-    fireEvent.change(input, { target: { files: [new File(["x"], "model.fbmodel")] } });
+    fireEvent.change(input, { target: { files: [streamText("x")] } });
     expect(await within(unpinned).findByText(/no shipped hash pin/i)).toBeTruthy();
   });
 
@@ -748,5 +763,108 @@ describe("OfflineAi", () => {
     const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
     fireEvent.click(within(card).getByRole("button", { name: /export smolvlm2 500m/i }));
     expect(await within(card).findByText(/platform installer/i)).toBeTruthy();
+  });
+
+  it("streams the picked import file without buffering it whole", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const { container } = render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
+    fireEvent.click(within(card).getByRole("button", { name: /import smolvlm2 500m/i }));
+    const file = new File(["not-the-model"], "model.fbmodel");
+    const buffered = vi.spyOn(file, "arrayBuffer");
+    Object.defineProperty(file, "stream", {
+      configurable: true,
+      value: () => {
+        const bytes = new TextEncoder().encode("not-the-model");
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        });
+      },
+    });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(await within(card).findByText(/does not match the shipped catalogue pin/i)).toBeTruthy();
+    expect(buffered).not.toHaveBeenCalled();
+  });
+
+  it("imports through the native package host when a document uri is available", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const importPackageFromUri = vi.fn().mockResolvedValue({
+      ok: true,
+      manifest: {
+        packageVersion: "1",
+        entryId: "smolvlm2-500m-litert-int4",
+        upstream: { repo: "r", rev: "v", file: "f" },
+        createdAt: "2026-09-22T00:00:00.000Z",
+        files: [],
+      },
+    });
+    const { container } = render(
+      <MemoryRouter>
+        <OfflineAi
+          nativePackageHost={{ importPackageFromUri, exportPackageToUri: vi.fn() }}
+          importSourceUriForFile={() => "content://media/model.fbmodel"}
+        />
+      </MemoryRouter>,
+    );
+    const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
+    fireEvent.click(within(card).getByRole("button", { name: /import smolvlm2 500m/i }));
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["x"], "model.fbmodel");
+    const buffered = vi.spyOn(file, "arrayBuffer");
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(importPackageFromUri).toHaveBeenCalled());
+    expect(importPackageFromUri).toHaveBeenCalledWith({
+      entryId: "smolvlm2-500m-litert-int4",
+      sourceUri: "content://media/model.fbmodel",
+      expectedSha256: expect.any(String),
+    });
+    expect(await within(card).findByText(/installed by the platform installer/i)).toBeTruthy();
+    expect(buffered).not.toHaveBeenCalled();
+  });
+
+  it("exports through the native package host when a destination uri is available", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    const exportPackageToUri = vi.fn().mockResolvedValue({
+      ok: true,
+      manifest: {
+        packageVersion: "1",
+        entryId: "smolvlm2-500m-litert-int4",
+        upstream: { repo: "r", rev: "v", file: "f" },
+        createdAt: "2026-09-22T00:00:00.000Z",
+        files: [{ path: "weights/model.litertlm", bytes: 4, sha256: "ab", method: "STORE" }],
+      },
+      checksumsJson: "{}",
+    });
+    render(
+      <MemoryRouter>
+        <OfflineAi
+          nativePackageHost={{ importPackageFromUri: vi.fn(), exportPackageToUri }}
+          exportDestUriForEntry={() => "content://media/export.fbmodel"}
+        />
+      </MemoryRouter>,
+    );
+    const card = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
+    fireEvent.click(within(card).getByRole("button", { name: /export smolvlm2 500m/i }));
+    await waitFor(() => expect(exportPackageToUri).toHaveBeenCalledWith({
+      entryId: "smolvlm2-500m-litert-int4",
+      destUri: "content://media/export.fbmodel",
+    }));
+    expect(await within(card).findByText(/packaged 1 files for smolvlm2-500m-litert-int4/i)).toBeTruthy();
   });
 });
