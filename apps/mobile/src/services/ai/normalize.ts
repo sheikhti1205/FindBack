@@ -1,8 +1,8 @@
 /**
- * Output normalization for FindBack on-device assistance (Task 21).
+ * Output normalization for FindBack on-device assistance.
  *
- * Coordinator-owned rules implemented here (Task 21 owns R1/R2/R4/R5/R6):
- * R1 de-fence: reuse extractSingleJsonObject() from the frozen
+ * Application-owned rules implemented here (this module owns R1/R2/R4/R5/R6):
+ * R1 de-fence: reuse extractSingleJsonObject() from the stable
  *    FakeAiProvider, accept ONE object only, then STRICT validation (schema +
  *    enum/action allowlist). Multiple/conflicting objects or bad schema
  *    become INVALID_OUTPUT. Never "accept anything".
@@ -16,7 +16,7 @@
  * R6 prompt/context-echo: values reproducing the system prompt, schema
  *    instructions, or userContext are rejected as observations.
  *
- * R3 loop detection belongs to Task 22: this pipeline exposes an optional
+ * R3 loop detection belongs to the guard: this pipeline exposes an optional
  * loopCheck seam and performs no detection of its own.
  */
 import {
@@ -67,7 +67,7 @@ export interface NormalizeContext {
   readonly userContext?: string;
 }
 
-/** Task-22 seam: returns an error when the text is a loop, else null. */
+/** Guard seam: returns an error when the text is a loop, else null. */
 export type LoopCheck = (text: string) => AiError | null;
 
 export interface NormalizeOptions {
@@ -328,7 +328,7 @@ function strictKeys(
 /**
  * R1-strict validator for classify-intent payloads.
  *
- * Frozen mapping honored: an action outside the allowlist is
+ * Stable mapping honored: an action outside the allowlist is
  * UNSUPPORTED_ACTION naming the rejected action (WRONG_ACTION /
  * UNKNOWN_ACTION modes), even when no intent is present. The "args" key is
  * tolerated but never applied — no side effects flow from model output.

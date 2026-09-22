@@ -47,7 +47,7 @@ function renderHome(entry = "/") {
   );
 }
 
-describe("Home realtime (WP9)", () => {
+describe("Home realtime", () => {
   beforeEach(() => {
     fetchFeedMock.mockReset();
     onRealtimeMock.mockClear();
@@ -78,7 +78,7 @@ describe("Home realtime (WP9)", () => {
     expect(fetchFeedMock).not.toHaveBeenCalled();
   });
 
-  it("ignores a provable non-member insert under a type filter (WP7 #10)", async () => {
+  it("ignores a provable non-member insert under a type filter", async () => {
     renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
@@ -103,7 +103,7 @@ describe("Home realtime (WP9)", () => {
     expect(screen.queryByText(/^updates$/i)).toBeNull();
   });
 
-  it("refreshes for a matching insert under a type filter (WP7 #10)", async () => {
+  it("refreshes for a matching insert under a type filter", async () => {
     renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
@@ -126,7 +126,7 @@ describe("Home realtime (WP9)", () => {
     await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
   });
 
-  it("shows Updates, not a count, when a search query makes membership unprovable (WP7 #10)", async () => {
+  it("shows Updates, not a count, when a search query makes membership unprovable", async () => {
     const { container } = renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
@@ -155,7 +155,7 @@ describe("Home realtime (WP9)", () => {
     expect(screen.queryByText(/new post/i)).toBeNull();
   });
 
-  it("restores the type filter from the URL on mount (WP7 #7)", async () => {
+  it("restores the type filter from the URL on mount", async () => {
     renderHome("/?type=LOST");
     await waitFor(() =>
       expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ type: "LOST" }), undefined),
@@ -163,7 +163,7 @@ describe("Home realtime (WP9)", () => {
     expect(screen.getByRole("radio", { name: "Lost" }).getAttribute("aria-checked")).toBe("true");
   });
 
-  it("restores the search query from the URL on mount (WP7 #7)", async () => {
+  it("restores the search query from the URL on mount", async () => {
     renderHome("/?q=wallet");
     expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("wallet");
     await waitFor(() =>
@@ -171,7 +171,7 @@ describe("Home realtime (WP9)", () => {
     );
   });
 
-  it("writes filter edits back to the URL (WP7 #7)", async () => {
+  it("writes filter edits back to the URL", async () => {
     renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 

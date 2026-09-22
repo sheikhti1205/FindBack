@@ -1,4 +1,4 @@
-# GitHub Releases distribution design (Tasks 26-27, SPEC ONLY)
+# GitHub Releases distribution design (SPEC ONLY)
 
 ## 1. Current GitHub limits (verified 2026-09-21, cite before relying)
 
@@ -22,12 +22,12 @@ LFM2.5-1.2B int8 `.fbmodel` (~1.25 GB cited by the converter card), under 2 GiB.
 SmolVLM2-500M (~361 MB) and the Qwen 0.6B class fit with wide margin.
 
 **Yes — only for large catalog entries IF ever distributed:** the Gemma-3n-E2B
-int4 `.litertlm` is listed at ~3.66 GB (preview repo file listing; reviewer
-registry note corrects an older ~2 GB figure to ~3.39 GB). Any file >2 GiB
+ int4 `.litertlm` is listed at ~3.66 GB (preview repo file listing; the
+ registry note corrects an older ~2 GB figure to ~3.39 GB). Any file >2 GiB
 MUST be split (e.g. `.fbmodel.part01/.part02`, each <2 GiB) with the part list
 + per-part SHA-256 inside the release `checksums.txt` and the in-package
-manifest. Gemma stays `catalogOnly` in v1 — chunking design is recorded here
-so a future task does not re-research it.
+ manifest. Gemma stays `catalogOnly` in v1 — chunking design is recorded here
+ so future implementation work does not re-research it.
 
 Alternative considered: Git LFS for weights. Rejected for v1 — release assets
 already give unlimited total size + bandwidth without LFS quotas/client
@@ -60,5 +60,5 @@ requirements; LFS adds a second rate-limit bucket and client complexity.
   (60 req/hr unauthenticated quota makes runtime API dependence fragile).
 - Catalogue updates ship **with app updates** (new JSON + new pin). Download
   URLs are the pinned `browser_download_url`s — no token needed, CDN-redirected.
-- Resume via HTTP Range (later downloader task); per-asset SHA-256 verified
+- Resume via HTTP Range (future downloader work); per-asset SHA-256 verified
   post-download against the SHIPPED pin, never against a freshly fetched value.

@@ -8,7 +8,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Task 13 Step 1: redaction is load-bearing. Same semantics as the JS
+ * Redaction is load-bearing. Same semantics as the JS
  * pipeline (vlmParser.ts / vlmDiscovery.ts SENSITIVE_PATTERNS + token/secret
  * key denylist): secrets and PII-shaped values never survive, and model
  * outputs travel as length/hash/verdict only — never raw text.

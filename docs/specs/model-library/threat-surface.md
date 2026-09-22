@@ -1,8 +1,8 @@
-# Import/export threat surface (Tasks 26-27 — SURFACE ONLY for later DeepSeek review)
+# Import/export threat surface (surface analysis only, for later security review)
 
-No implementation in this task. Each item states the attack, the precondition,
-and the design constraint the later importer/exporter task MUST satisfy.
-Open questions are flagged for the DeepSeek review pass.
+No implementation is specified here. Each item states the attack, the precondition,
+and the design constraint the later importer/exporter implementation MUST satisfy.
+Open questions are flagged for the security review pass.
 
 ## 1. Zip-slip (path traversal on import)
 
@@ -47,12 +47,12 @@ Open questions are flagged for the DeepSeek review pass.
   artifact has since been withdrawn (bad weights, license change).
 - Constraint: catalogue carries monotonic `catalogueVersion` + pinned tag;
   importer MUST refuse artifacts older than the shipped pin unless the same
-  advanced-confirmation gate (ram-ui.md §3) records an explicit override.
-  Withdrawal mechanism (block-list delivery) is an OPEN QUESTION for the
-  DeepSeek review: options are (a) app-update-only revocation, (b) signed
+   advanced-confirmation gate (ram-ui.md §3) records an explicit override.
+   Withdrawal mechanism (block-list delivery) is an OPEN QUESTION for the
+   security review: options are (a) app-update-only revocation, (b) signed
   revocation file — recommend (a) for v1, no remote trust root.
 
-## 6. Explicitly out of scope for the DeepSeek pass
+## 6. Explicitly out of scope for the security review pass
 
 Downloader networking (TLS pinning, resume attacks), on-device sandboxing of
 inference itself, and license-compliance enforcement (LFM $10M threshold,

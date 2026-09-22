@@ -13,7 +13,7 @@ const data = { items: [], total: 0, cursor: null, scrollTop: 0 };
 describe("feedCache", () => {
   beforeEach(() => clearFeedCaches());
 
-  it("preserves the pending new-post count across a cache save (WP7 #9)", () => {
+  it("preserves the pending new-post count across a cache save", () => {
     saveFeedCache("k", data);
     incrementNewPostCount("k", 3);
     expect(getNewPostCount("k")).toBe(3);
@@ -23,19 +23,19 @@ describe("feedCache", () => {
     expect(getNewPostCount("k")).toBe(3);
   });
 
-  it("clears the pending count only when explicitly asked (WP7 #9)", () => {
+  it("clears the pending count only when explicitly asked", () => {
     saveFeedCache("k", data);
     incrementNewPostCount("k", 2);
     saveFeedCache("k", data, { clearNewPostCount: true });
     expect(getNewPostCount("k")).toBe(0);
   });
 
-  it("loads a valid cache as not dirty (WP7 #8)", () => {
+  it("loads a valid cache as not dirty", () => {
     saveFeedCache("k", data);
     expect(loadFeedCache("k")?.dirty).toBe(false);
   });
 
-  it("marks every cached feed dirty on a realtime invalidation (WP7 #8)", () => {
+  it("marks every cached feed dirty on a realtime invalidation", () => {
     saveFeedCache("k1", data);
     saveFeedCache("k2", data);
     invalidateFeedCaches();

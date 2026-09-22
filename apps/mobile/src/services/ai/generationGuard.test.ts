@@ -56,7 +56,7 @@ describe("sentence/paragraph repetition detectors", () => {
 });
 
 describe("n-gram, novelty, and R3 enumeration caps", () => {
-  it("flags Task-29-style enumeration streams via n-grams", () => {
+  it("flags evaluation-style enumeration streams via n-grams", () => {
     const enumeration = `OBJECT: laptop; keyboard; ${"coffee cup; coffee cup lid; ".repeat(40)}`;
     expect(detectRepeatedNgrams(enumeration)).toBe(true);
     expect(detectRawEnumerationRunaway(enumeration)).toBe(true);
@@ -100,7 +100,7 @@ describe("n-gram, novelty, and R3 enumeration caps", () => {
 });
 
 describe("output classification", () => {
-  it("maps empty/refusal/action/multiples to their frozen classes", () => {
+  it("maps empty/refusal/action/multiples to their stable classes", () => {
     expect(classifyTextOutput("   ", { expectStructured: false }).errorClass).toBe("INVALID_OUTPUT");
     expect(classifyTextOutput(REFUSAL_TEXT, { expectStructured: false })).toMatchObject({
       ok: false,
@@ -128,7 +128,7 @@ describe("output classification", () => {
 });
 
 describe("guardedGenerate over all 19 FakeAiProvider modes", () => {
-  it("maps every mode to its frozen class (null = success)", async () => {
+  it("maps every mode to its stable class (null = success)", async () => {
     const expected: Record<FaultMode, AiErrorClass | null> = {
       GOOD: null,
       SLOW: null,

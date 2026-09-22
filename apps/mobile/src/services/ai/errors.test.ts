@@ -8,7 +8,7 @@ import {
 } from "./errors";
 import { FAULT_MODES, PROPOSED_MODE_ERROR_MAP } from "./testing/FakeAiProvider";
 
-describe("recovery copy (frozen wording)", () => {
+describe("recovery copy (stable wording)", () => {
   it("loop copy uses the exact stuck-generating string with Retry/Switch/Manual", () => {
     expect(RECOVERY_COPY.LOOP_DETECTED.message).toContain("This model got stuck generating a response.");
     expect(RECOVERY_COPY.LOOP_DETECTED.actions).toEqual(["Retry", "Use another model", "Continue manually"]);
@@ -52,7 +52,7 @@ describe("retry policy", () => {
   });
 });
 
-describe("frozen mode mapping alignment", () => {
+describe("stable mode mapping alignment", () => {
   it("matches PROPOSED_MODE_ERROR_MAP for all 19 modes", () => {
     expect(FAULT_MODES).toHaveLength(19);
     for (const mode of FAULT_MODES) {

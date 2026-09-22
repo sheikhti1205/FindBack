@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 describe("CreateReport", () => {
-  it("does not offer the generic file picker on native, so all capture paths reach the VLM (WP13)", async () => {
+  it("does not offer the generic file picker on native, so all capture paths reach the VLM", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
     try {
       render(<CreateReport />);
@@ -60,7 +60,7 @@ describe("CreateReport", () => {
     }
   });
 
-  it("resets the location picker UI when the draft is discarded (WP9)", async () => {
+  it("resets the location picker UI when the draft is discarded", async () => {
     render(<CreateReport />);
     const locationInput = screen.getByLabelText(/approximate location/i) as HTMLInputElement;
     fireEvent.change(locationInput, { target: { value: "23.810332, 90.412518" } });
@@ -75,7 +75,7 @@ describe("CreateReport", () => {
     }
   });
 
-  it("keeps an exact pin (with its warning) across navigation (WP9)", async () => {
+  it("keeps an exact pin (with its warning) across navigation", async () => {
     const { unmount } = render(<CreateReport />);
     const locationInput = screen.getByLabelText(/approximate location/i);
     fireEvent.change(locationInput, { target: { value: "23.810332, 90.412518" } });
@@ -165,7 +165,7 @@ describe("CreateReport", () => {
     );
   });
 
-  it("surfaces a friendly error when native capture fails (WP13 #17)", async () => {
+  it("surfaces a friendly error when native capture fails", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
     photo.takePhoto.mockRejectedValue(new Error("camera busy"));
     try {
@@ -179,7 +179,7 @@ describe("CreateReport", () => {
     }
   });
 
-  it("requires a date before publishing (WP13 #18)", async () => {
+  it("requires a date before publishing", async () => {
     publishReportMock.mockResolvedValue("p1");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
@@ -192,7 +192,7 @@ describe("CreateReport", () => {
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
-  it("rejects non-image files before upload (WP13 #19)", async () => {
+  it("rejects non-image files before upload", async () => {
     render(<CreateReport />);
     pickFile(new File(["abc"], "notes.txt", { type: "text/plain" }));
     const alert = await screen.findByRole("alert");
@@ -201,7 +201,7 @@ describe("CreateReport", () => {
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
-  it("rejects oversized images before upload (WP13 #19)", async () => {
+  it("rejects oversized images before upload", async () => {
     render(<CreateReport />);
     const big = new File([new Uint8Array(9 * 1024 * 1024)], "big.jpg", { type: "image/jpeg" });
     pickFile(big);
@@ -210,7 +210,7 @@ describe("CreateReport", () => {
     expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull();
   });
 
-  it("warns when the link is not a YouTube URL (WP13 #36)", async () => {
+  it("warns when the link is not a YouTube URL", async () => {
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/youtube link/i), { target: { value: "https://example.com/video" } });
     expect(await screen.findByText(/doesn't look like a youtube link/i)).toBeTruthy();

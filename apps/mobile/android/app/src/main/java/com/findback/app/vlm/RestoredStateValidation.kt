@@ -1,7 +1,7 @@
 package com.findback.app.vlm
 
 /**
- * WP3 (audit #3): environment-bound validation of persisted GPU verdicts.
+ * Environment-bound validation of persisted GPU verdicts.
  *
  * A persisted READY_GPU / GPU_UNAVAILABLE is a verdict about the exact
  * environment it was measured in (app build, OS fingerprint, ABI, model

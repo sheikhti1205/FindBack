@@ -86,7 +86,7 @@ describe("connectRealtime", () => {
     expect(seen).toEqual([{ postId: "p1" }]);
   });
 
-  it("invalidates feed caches on INSERT, UPDATE, and DELETE (WP7 #8)", async () => {
+  it("invalidates feed caches on INSERT, UPDATE, and DELETE", async () => {
     const { invalidateFeedCaches } = await import("../hooks/feedCache");
     const mod = await load();
     mod.connectRealtime();

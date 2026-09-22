@@ -258,7 +258,7 @@ describe("R6 prompt/context-echo rejection", () => {
   });
 });
 
-describe("intent payloads honor the frozen action mapping", () => {
+describe("intent payloads honor the stable action mapping", () => {
   it("maps WRONG_ACTION and UNKNOWN_ACTION shapes to UNSUPPORTED_ACTION", () => {
     const wrong = validateIntentPayload({ action: "delete_someone_elses_post", args: { postId: "abc" } });
     expect(wrong.ok).toBe(false);
@@ -289,7 +289,7 @@ describe("intent payloads honor the frozen action mapping", () => {
   });
 });
 
-describe("R3 loop seam belongs to Task 22", () => {
+describe("R3 loop seam belongs to the guard", () => {
   const loopHook = (text: string) => ({
     errorClass: "LOOP_DETECTED" as const,
     diagnostic: "TASK22_LOOP",

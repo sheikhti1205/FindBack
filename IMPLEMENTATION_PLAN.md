@@ -2,7 +2,7 @@
 
 FindBack is a minimal Android **Lost & Found reporting and recovery app** built to
 satisfy 24 mandatory teacher requirements for the Mobile App Development Lab
-(University of Chittagong). This plan follows the DEEPSEEK_SUPER_PROMPT phases.
+ (University of Chittagong). This plan is organized into the phased delivery plan below.
 
 ## Decisions (provisional, reversible — tracked in DEFERRED_DECISIONS.md)
 - **Course-compliant stack**: React + TypeScript + Vite + Tailwind CSS + Framer
@@ -34,7 +34,7 @@ satisfy 24 mandatory teacher requirements for the Mobile App Development Lab
 - **P7 QA/APK** — tests (API 38, mobile 5), accessibility/loading/empty states,
   web build, `cap sync android`, Gradle `assembleDebug`, APK verified.
   DONE (commit 44fcc98; app-debug.apk built).
-- **P8 Archive** — delivery ZIP + handoff docs. DONE.
+- **P8 Archive** — delivery ZIP + release documentation. DONE.
 
 ## Traceability
 24 teacher requirements map 1:1 into `docs/REQUIREMENTS_MATRIX.md`. Statuses:

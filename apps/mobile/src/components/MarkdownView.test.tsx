@@ -57,7 +57,7 @@ describe("MarkdownView", () => {
     expect(scrollers.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("breaks long unbroken words so prose never overflows (WP15 #37)", () => {
+  it("breaks long unbroken words so prose never overflows", () => {
     const word = `a${"very".repeat(40)}longword`;
     const { container } = render(<MarkdownView text={word} />);
     expect(container.textContent).toContain(word);

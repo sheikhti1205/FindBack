@@ -12,7 +12,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Task 13 structured diagnostic sink (native side, authoritative storage).
+ * Structured diagnostic sink (native side, authoritative storage).
  *
  * Appends redacted JSONL to `cacheDir/diag/` (7-day rotation) with an
  * optional `Log.i("FindBackDiag")` logcat mirror. Redaction is load-bearing

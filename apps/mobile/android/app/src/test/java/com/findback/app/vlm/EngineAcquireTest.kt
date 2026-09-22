@@ -7,7 +7,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * WP1 (audit #1): acquiring the 500M engine must yield a genuinely
+ * Acquiring the 500M engine must yield a genuinely
  * initialized engine, or null with the failed construction closed.
  * A constructed-but-uninitialized engine made analyze() throw
  * "Engine not initialized" after restart / warm-lease expiry.

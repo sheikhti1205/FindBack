@@ -77,7 +77,7 @@ class LocalVlmPlugin : Plugin() {
     private fun requirePrefs(): SharedPreferences = prefs ?: throw IllegalStateException("Plugin not initialized")
 
     /**
-     * Task 13: diag sink directory, nullable so a torn-down plugin degrades
+     * Diag sink directory, nullable so a torn-down plugin degrades
      * to untraced instead of throwing inside a diagnostics call.
      */
     private fun diagCacheDir(): File? {
@@ -831,7 +831,7 @@ class LocalVlmPlugin : Plugin() {
         }
         val maxOutputTokens = call.getInt("maxOutputTokens") ?: 224
         val temperature = call.getFloat("temperature") ?: 0.1f
-        // Task 13 trace: optional, propagated JS -> bridge -> native. Null
+        // Diagnostic trace: optional, propagated JS -> bridge -> native. Null
         // means untraced; Diag hooks no-op unless verbose logging is on.
         val traceId = call.getString("traceId")
 

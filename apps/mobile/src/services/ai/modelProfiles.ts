@@ -1,22 +1,23 @@
 /**
- * Model profiles for FindBack on-device assistance (Task 21).
+ * Model profiles for FindBack on-device assistance.
  *
- * Descriptive role guidance from the Task-20 coded corpus (93 text rows, 36
- * vision rows). Every model in the authorized lab set is encoded — none is
- * deleted. Corpus counts below are exact per-model tallies from the coded
- * JSONL, quoted so a reviewer can re-tally.
+ * Descriptive role guidance from the coded evaluation corpus (93 text rows,
+ * 36 vision rows; corpus files are lab records, not tracked in this tree).
+ * Every model in the authorized lab set is encoded — none is
+ * deleted. Corpus counts below are the per-model tallies from the coded
+ * corpus, quoted so a reviewer can re-tally.
  *
  * Pins: SmolVLM2-500M rev dad030b6 (sha256 b808b328…); Qwen3-0.6B dynamic
  * INT4 rev a3c5d805 (sha256 03e7da1e…); LFM2.5-1.2B-Q4_0 rev 67672651
  * (corpus sha256 2ea80194…); LFM2.5-VL arms are litert-lm eval-only runs
  * (stock sha256 45a02241…, fixB sha256 6854cd96…) — note this differs from
- * the GGUF+mmproj Task-20 pin, recorded as a material finding in the report.
+ * the GGUF+mmproj evaluation pin, recorded as a material finding in the report.
  *
  * Not invented here: defaultTemperature 0.0 and the 256/512 token caps come
  * from the ai-behavior-v2 defaultSampler (greedy-equivalent). retryLimit 1
  * matches the one-retry-then-fail-closed shape in faultScenarios
  * (photo-invalid). stopSequences stay empty: no evidence-backed stop strings
- * exist yet; runaway control is maxOutputTokens + Task-22 loop detection.
+ * exist yet; runaway control is maxOutputTokens + guard loop detection.
  * No timeout number lives here (explicit TBD, GenerationGuard owns it).
  */
 import type { AiErrorClass } from "./testing/FakeAiProvider";
@@ -37,7 +38,7 @@ export interface ThoughtEnvelope {
 }
 
 export interface LoopPolicy {
-  /** R3 loop detection owner. Task 21 builds no detector, only this seam. */
+  /** R3 loop detection owner. This module builds no detector, only this seam. */
   readonly owner: "task-22";
   readonly errorClass: AiErrorClass;
 }
@@ -217,7 +218,7 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
       "Eval-only candidate (litert-lm, never catalogue): best vision arm at " +
       "6/12 valid, 1/12 loops, 1/12 invented (BV07 fenced-but-good red " +
       "umbrella). Still fails BV06 ('Laptop' x551 loop on passport photo): " +
-      "promotion needs Task-22 guards + privacy-case eval, not this task.",
+      "promotion needs guard loop protection + privacy-case evaluation.",
     defaultTemperature: 0.0,
     maxOutputTokensText: 256,
     maxOutputTokensVision: 512,

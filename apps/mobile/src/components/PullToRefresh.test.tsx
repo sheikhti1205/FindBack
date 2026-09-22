@@ -4,7 +4,7 @@ import { createRef } from "react";
 import { render } from "@testing-library/react";
 import { PullToRefresh, type PullToRefreshHandle } from "./PullToRefresh";
 
-describe("PullToRefresh scroll handle (WP8)", () => {
+describe("PullToRefresh scroll handle", () => {
   it("exposes a writable scrollTop for feed back-nav restore", () => {
     const ref = createRef<PullToRefreshHandle>();
     render(

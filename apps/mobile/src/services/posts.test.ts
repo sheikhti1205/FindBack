@@ -176,7 +176,7 @@ describe("fetchFeed", () => {
   });
 });
 
-describe("fetchMatchCandidates (WP8 #5)", () => {
+describe("fetchMatchCandidates", () => {
   it("requests the spec pool min(OPEN opposite-type, 20)", async () => {
     clientMock.rpc.mockResolvedValue({ data: [row({ id: "c1", type: "FOUND" })], error: null });
 

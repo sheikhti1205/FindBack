@@ -12,7 +12,7 @@ const edgeSource = readFileSync(
   "utf8",
 );
 
-describe("capability docs (WP18 #16)", () => {
+describe("capability docs", () => {
   it("stays in sync with the edge-function mirror", () => {
     const match = edgeSource.match(/CAPABILITIES_VERSION = "([^"]+)"/);
     expect(match?.[1]).toBe(CAPABILITIES_VERSION);

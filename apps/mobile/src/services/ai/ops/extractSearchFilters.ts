@@ -1,5 +1,5 @@
 /**
- * Narrow op: extract-search-filters (Task 21).
+ * Narrow op: extract-search-filters.
  *
  * The model emits ONE small slot object (query, category, status,
  * dateRangeText). Ambiguous or empty filters are a successful ASK_USER
