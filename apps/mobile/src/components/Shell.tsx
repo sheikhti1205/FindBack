@@ -18,9 +18,9 @@ import {
 import {
   getVlmBridge,
   isTextBridge,
-  textSeamsFromStatus,
   type NativeTextRuntimeStatus,
 } from "../services/vlmPlugin";
+import { shellTextSeamsFromBridgeStatus } from "../services/models/qwenLifecycle";
 
 const NAV: Array<{
   to: string;
@@ -148,7 +148,7 @@ export function Shell({ seams }: { seams?: ShellAssistantSeams } = {}) {
   }, [assistantOpen]);
   // Resolved fresh on every render while open, so a model activated in the
   // library is picked up without remounting the layout route.
-  const liveSeams = { ...textSeamsFromStatus(textStatus), ...(seams ?? {}) };
+  const liveSeams = { ...shellTextSeamsFromBridgeStatus(textStatus), ...(seams ?? {}) };
   const assistantRuntime = assistantOpen
     ? resolveShellAssistantRuntime(liveSeams)
     : undefined;

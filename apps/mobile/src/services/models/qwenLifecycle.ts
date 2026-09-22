@@ -31,7 +31,9 @@ import {
 } from "./textRuntime";
 import {
   distributionUrlForEntry,
+  hasUnpublishedDistribution,
   SHIPPED_CATALOGUE_ENTRIES,
+  UNPUBLISHED_DISTRIBUTION_MESSAGE,
 } from "./shippedCatalogue";
 import {
   downloadModelToStore,
@@ -133,7 +135,7 @@ export function activateQwenText(
   return activateTextModel(bridge, entry, options);
 }
 
-/** Pinned release-asset download URL for a Qwen entry, or null when unpinned. */
+/** Pinned release-asset download URL for a Qwen entry, or null when unpinned or unpublished. */
 export function qwenDownloadUrl(entry: ModelCatalogueEntry): string | null {
   if (entry.id !== QWEN_TEXT_ENTRY_ID) return null;
   return distributionUrlForEntry(entry);
@@ -164,6 +166,14 @@ export async function downloadQwenToStore(
 ): Promise<DownloadToStoreResult> {
   const url = qwenDownloadUrl(entry);
   if (url == null) {
+    if (hasUnpublishedDistribution(entry)) {
+      return {
+        ok: false,
+        code: "NOT_PUBLISHED",
+        reason: UNPUBLISHED_DISTRIBUTION_MESSAGE,
+        receivedBytes: 0,
+      };
+    }
     return {
       ok: false,
       code: "MISSING_PIN",
@@ -312,4 +322,18 @@ export function signalsFromBridgeStatus(
     textReady: status.textReady ?? false,
     residentModelId,
   };
+}
+
+/**
+ * Shell assistant seams from a native status read. Fail closed: a missing
+ * or unreadable status yields installed=false and ready=false, keeping the
+ * assistant on the grounded fallback. Single mapping seam shared with the
+ * lifecycle signals above.
+ */
+export function shellTextSeamsFromBridgeStatus(
+  status: QwenBridgeStatus | null | undefined,
+): { textInstalled: boolean; textReady: boolean } {
+  if (status == null) return { textInstalled: false, textReady: false };
+  const signals = signalsFromBridgeStatus(status);
+  return { textInstalled: signals.transferValidated, textReady: signals.textReady };
 }
