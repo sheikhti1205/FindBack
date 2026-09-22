@@ -90,6 +90,14 @@ export interface DistributionPart {
 }
 
 /**
+ * Shipped publication state of a release asset. UNPUBLISHED = the package
+ * is prepared but not published in this build: no network download may be
+ * offered and every URL-consumption path fails closed. Flipping an entry to
+ * PUBLISHED is an app-release change.
+ */
+export type DistributionState = 'UNPUBLISHED' | 'PUBLISHED';
+
+/**
  * Pinned GitHub Release asset for one `.fbmodel` package. The runtime
  * builds the download URL from repo/tag/asset only; it never polls the
  * API and never uses latest/main. Upstream repo/revision/file stay as
@@ -101,6 +109,7 @@ export interface ModelDistribution {
   asset: string;
   bytes: number;
   sha256: string;
+  state: DistributionState;
   parts?: DistributionPart[] | null;
 }
 

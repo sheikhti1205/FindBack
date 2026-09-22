@@ -94,6 +94,32 @@ class VlmTypesTest {
         )
     }
 
+    @Test fun distributionDefaultsToUnpublishedAndFailsClosed() {
+        val dist = ModelDistribution(
+            repo = "sheikhti1205/FindBack-Models",
+            tag = "models-2026-09-22-v1",
+            asset = "smolvlm2-500m-litert-int4.fbmodel",
+            bytes = 10L,
+            sha256 = "ab".repeat(32)
+        )
+        assertEquals(DistributionState.UNPUBLISHED, dist.state)
+        assertFalse(dist.isPublished())
+    }
+
+    @Test fun distributionIsPublishedOnlyWhenPublished() {
+        val unpublished = ModelDistribution(
+            repo = "r",
+            tag = "t",
+            asset = "a",
+            bytes = 1L,
+            sha256 = "ab".repeat(32),
+            state = DistributionState.UNPUBLISHED
+        )
+        val published = unpublished.copy(state = DistributionState.PUBLISHED)
+        assertFalse(unpublished.isPublished())
+        assertTrue(published.isPublished())
+    }
+
     @Test fun modelErrorHoldsCodeAndMessage() {
         val error = ModelError(VlmErrorCode.HASH_MISMATCH, "Hash mismatch")
         assertEquals(VlmErrorCode.HASH_MISMATCH, error.code)

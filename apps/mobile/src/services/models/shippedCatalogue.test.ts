@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   bridgeModelIdForEntry,
   distributionUrlForEntry,
+  hasUnpublishedDistribution,
+  isDistributionPublished,
   SHIPPED_CATALOGUE_ENTRIES,
   SHIPPED_CATALOGUE_VERSION,
 } from "./shippedCatalogue";
@@ -124,20 +126,57 @@ describe("shipped catalogue", () => {
     }
   });
 
-  it("builds pinned release-asset URLs without polling or mutable refs", () => {
+  it("ships both v1 distributions as UNPUBLISHED", () => {
     const fiveHundred = SHIPPED_CATALOGUE_ENTRIES.find(
       (entry) => entry.id === "smolvlm2-500m-litert-int4",
     );
+    const qwen = SHIPPED_CATALOGUE_ENTRIES.find(
+      (entry) => entry.id === "qwen3-0.6b-litert-dynamic-int4",
+    );
+    expect(fiveHundred?.distribution?.state).toBe("UNPUBLISHED");
+    expect(qwen?.distribution?.state).toBe("UNPUBLISHED");
+    for (const entry of SHIPPED_CATALOGUE_ENTRIES) {
+      if (entry.distribution != null) {
+        expect(entry.distribution.state, entry.id).toBe("UNPUBLISHED");
+        expect(isDistributionPublished(entry), entry.id).toBe(false);
+        expect(hasUnpublishedDistribution(entry), entry.id).toBe(true);
+      } else {
+        expect(isDistributionPublished(entry), entry.id).toBe(false);
+        expect(hasUnpublishedDistribution(entry), entry.id).toBe(false);
+      }
+    }
+  });
+
+  it("fails closed while UNPUBLISHED: no distribution URL is handed out", () => {
+    for (const entry of SHIPPED_CATALOGUE_ENTRIES) {
+      expect(distributionUrlForEntry(entry), entry.id).toBeNull();
+    }
+  });
+
+  it("builds pinned release-asset URLs once PUBLISHED, without polling or mutable refs", () => {
+    const published = SHIPPED_CATALOGUE_ENTRIES.map((entry) =>
+      entry.distribution == null
+        ? entry
+        : {
+            ...entry,
+            distribution: { ...entry.distribution, state: "PUBLISHED" as const },
+          },
+    );
+    const fiveHundred = published.find(
+      (entry) => entry.id === "smolvlm2-500m-litert-int4",
+    );
+    expect(fiveHundred && isDistributionPublished(fiveHundred)).toBe(true);
+    expect(fiveHundred && hasUnpublishedDistribution(fiveHundred)).toBe(false);
     expect(fiveHundred && distributionUrlForEntry(fiveHundred)).toBe(
       "https://github.com/sheikhti1205/FindBack-Models/releases/download/models-2026-09-22-v1/smolvlm2-500m-litert-int4.fbmodel",
     );
-    const qwen = SHIPPED_CATALOGUE_ENTRIES.find(
+    const qwen = published.find(
       (entry) => entry.id === "qwen3-0.6b-litert-dynamic-int4",
     );
     expect(qwen && distributionUrlForEntry(qwen)).toBe(
       "https://github.com/sheikhti1205/FindBack-Models/releases/download/models-2026-09-22-v1/qwen3-0.6b-litert-dynamic-int4.fbmodel",
     );
-    for (const entry of SHIPPED_CATALOGUE_ENTRIES) {
+    for (const entry of published) {
       const url = distributionUrlForEntry(entry);
       if (url != null) {
         expect(url).not.toContain("huggingface.co");
@@ -145,7 +184,7 @@ describe("shipped catalogue", () => {
         expect(url).not.toContain("/main");
       }
     }
-    const gemma = SHIPPED_CATALOGUE_ENTRIES.find(
+    const gemma = published.find(
       (entry) => entry.id === "gemma-3n-e2b-it-litert-int4",
     );
     expect(gemma && distributionUrlForEntry(gemma)).toBeNull();

@@ -106,6 +106,67 @@ describe("availabilityForEntry", () => {
     ).toBe("ACTIVE");
   });
 
+  it("reports UNPUBLISHED instead of DOWNLOADABLE while the distribution is not published", () => {
+    const unpublished = entry({
+      distribution: {
+        repo: "sheikhti1205/FindBack-Models",
+        tag: "models-2026-09-22-v1",
+        asset: "test.fbmodel",
+        bytes: 64,
+        sha256: "ab".repeat(32),
+        state: "UNPUBLISHED",
+        parts: null,
+      },
+    });
+    expect(
+      availabilityForEntry(unpublished, {
+        bridgeId: "smolvlm2-500m",
+        installed: false,
+        isActive: false,
+      }),
+    ).toBe("UNPUBLISHED");
+    // Install state is untouched by the publication gate: installed and
+    // active entries keep their ladder status.
+    expect(
+      availabilityForEntry(unpublished, {
+        bridgeId: "smolvlm2-500m",
+        installed: true,
+        isActive: false,
+      }),
+    ).toBe("INSTALLED");
+    expect(
+      availabilityForEntry(unpublished, {
+        bridgeId: "smolvlm2-500m",
+        installed: true,
+        isActive: true,
+      }),
+    ).toBe("ACTIVE");
+    const published = entry({
+      distribution: { ...unpublished.distribution!, state: "PUBLISHED" },
+    });
+    expect(
+      availabilityForEntry(published, {
+        bridgeId: "smolvlm2-500m",
+        installed: false,
+        isActive: false,
+      }),
+    ).toBe("DOWNLOADABLE");
+  });
+
+  it("reports the shipped SmolVLM2 entry as UNPUBLISHED until the owner publishes", () => {
+    const smol = SHIPPED_CATALOGUE_ENTRIES.find(
+      (shipped) => shipped.id === "smolvlm2-500m-litert-int4",
+    );
+    expect(smol).toBeDefined();
+    expect(
+      availabilityForEntry(smol!, {
+        bridgeId: "smolvlm2-500m",
+        installed: false,
+        isActive: false,
+      }),
+    ).toBe("UNPUBLISHED");
+  });
+
   it("keeps the eval-only VL slot non-runnable and non-downloadable", () => {
     const vlSlot = SHIPPED_CATALOGUE_ENTRIES.find(
       (shipped) => shipped.id === "lfm2.5-vl-450m",
@@ -127,6 +188,7 @@ describe("availabilityForEntry", () => {
   it("labels every availability without implying executability", () => {
     expect(availabilityLabel("CATALOG_ONLY")).toBe("Catalog reference only");
     expect(availabilityLabel("DOWNLOADABLE")).toBe("Available to download");
+    expect(availabilityLabel("UNPUBLISHED")).toBe("Unpublished");
     expect(availabilityLabel("INSTALLED")).toBe("Installed");
     expect(availabilityLabel("RUNTIME_UNAVAILABLE")).toBe(
       "No executable runtime in this build",

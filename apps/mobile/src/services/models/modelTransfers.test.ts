@@ -74,6 +74,27 @@ function verifiedEntry(): ModelCatalogueEntry {
   });
 }
 
+function distributedEntry(
+  state: "UNPUBLISHED" | "PUBLISHED",
+): ModelCatalogueEntry {
+  const weights = weightsBytes();
+  const sha256 = sha256BytesHex(weights);
+  return entry({
+    downloadBytes: weights.length,
+    installedBytes: weights.length,
+    sha256,
+    distribution: {
+      repo: "sheikhti1205/FindBack-Models",
+      tag: "models-2026-09-22-v1",
+      asset: "test.fbmodel",
+      bytes: weights.length,
+      sha256,
+      state,
+      parts: null,
+    },
+  });
+}
+
 function fakeTransport(
   data: Uint8Array,
   options?: { failAfterBytes?: number; seenOffsets?: number[] },
@@ -306,6 +327,28 @@ describe("checkDownloadGate", () => {
       }),
     ).toEqual({ allowed: true });
   });
+
+  it("refuses an unpublished distribution before any transport is touched", () => {
+    const target = distributedEntry("UNPUBLISHED");
+    const gate = checkDownloadGate(target, {
+      availableFreeRamMb: 99999,
+      advancedConfirmed: true,
+    });
+    expect(gate.allowed).toBe(false);
+    if (!gate.allowed) {
+      expect(gate.code).toBe("NOT_PUBLISHED");
+      expect(gate.reason).toContain("not published in this build");
+    }
+  });
+
+  it("allows the same distribution once published", () => {
+    expect(
+      checkDownloadGate(distributedEntry("PUBLISHED"), {
+        availableFreeRamMb: 3000,
+        advancedConfirmed: false,
+      }),
+    ).toEqual({ allowed: true });
+  });
 });
 
 describe("downloadModelToStore", () => {
@@ -342,6 +385,47 @@ describe("downloadModelToStore", () => {
         seen[i - 1]!.receivedBytes,
       );
     }
+  });
+
+  it("refuses an unpublished download attempt without touching the transport", async () => {
+    const target = distributedEntry("UNPUBLISHED");
+    const store = new MemoryTransferStore();
+    const download = vi.fn(
+      async (): Promise<{ totalBytes: number }> => ({ totalBytes: 64 }),
+    );
+    const result = await downloadModelToStore(
+      target,
+      "https://example.invalid/model",
+      { download },
+      store,
+      { availableFreeRamMb: 99999, advancedConfirmed: true },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      code: "NOT_PUBLISHED",
+      receivedBytes: 0,
+    });
+    expect(download).not.toHaveBeenCalled();
+    expect(store.installedBytes(target.id)).toBeNull();
+    expect(store.tempBytes(target.id)).toBe(0);
+  });
+
+  it("downloads the same entry once its distribution is published", async () => {
+    const target = distributedEntry("PUBLISHED");
+    const data = weightsBytes();
+    const store = new MemoryTransferStore();
+    const result = await downloadModelToStore(
+      target,
+      "https://example.invalid/model",
+      fakeTransport(data),
+      store,
+      { availableFreeRamMb: 3000, advancedConfirmed: false },
+    );
+    expect(result).toEqual({
+      ok: true,
+      installedBytes: data.length,
+      totalBytes: data.length,
+    });
   });
 
   it("resumes after an interruption from the staged temp offset", async () => {

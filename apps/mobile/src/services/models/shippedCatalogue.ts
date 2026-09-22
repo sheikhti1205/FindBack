@@ -13,20 +13,38 @@
  *   other entry — including the LFM2.5-VL eval-only slot, whose fixB bytes
  *   are evaluation-only and never distributable — maps to null and is never
  *   offered as a download.
+ * - `distributionUrlForEntry`: pinned release-asset URL, or null when the
+ *   entry has no distribution pin or its distribution state is not
+ *   PUBLISHED (fail closed while UNPUBLISHED — no network probing).
  * - `LEGACY_BRIDGE_MODELS`: bridge model ids present on device that have no
  *   catalogue entry (storage management only, never downloadable). Rows for
  *   these ids render only when the bridge reports them.
  */
 
 import catalogueJson from "../../../../../docs/specs/model-library/catalogue.v1.json";
-import type { ModelCatalogueEntry, ModelDistribution } from "./catalogueTypes";
+import type {
+  DistributionState,
+  ModelCatalogueEntry,
+  ModelDistribution,
+} from "./catalogueTypes";
 import type { VlmModelId } from "../vlmPlugin";
 
 /** Catalogue version the UI was built against. */
 export const SHIPPED_CATALOGUE_VERSION = "1" as const;
 
+/**
+ * User-facing copy for entries whose distribution is prepared but not
+ * published in this build. Network download stays disabled for them.
+ */
+export const UNPUBLISHED_DISTRIBUTION_MESSAGE =
+  "Package prepared but not published in this build." as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isDistributionState(value: unknown): value is DistributionState {
+  return value === "UNPUBLISHED" || value === "PUBLISHED";
 }
 
 function isDistribution(value: unknown): value is ModelDistribution {
@@ -38,6 +56,7 @@ function isDistribution(value: unknown): value is ModelDistribution {
     typeof value["asset"] === "string" &&
     typeof value["bytes"] === "number" &&
     typeof value["sha256"] === "string" &&
+    isDistributionState(value["state"]) &&
     (value["parts"] === null ||
       value["parts"] === undefined ||
       Array.isArray(value["parts"]))
@@ -100,14 +119,38 @@ export function bridgeModelIdForEntry(entryId: string): VlmModelId | null {
 }
 
 /**
+ * True only when the entry carries a distribution record pinned to a
+ * PUBLISHED release asset. Entries without a distribution record (reference
+ * listings, eval-only slots) report false here — they are covered by the
+ * installability gate, not the publication gate.
+ */
+export function isDistributionPublished(entry: ModelCatalogueEntry): boolean {
+  return entry.distribution?.state === "PUBLISHED";
+}
+
+/**
+ * True when the entry carries a distribution record that is not published.
+ * The catalogue stays authoritative: callers fail closed on this signal and
+ * never probe the network to decide.
+ */
+export function hasUnpublishedDistribution(
+  entry: ModelCatalogueEntry,
+): boolean {
+  return entry.distribution != null && !isDistributionPublished(entry);
+}
+
+/**
  * Pinned release-asset download URL for a catalogue entry, or null when
- * the entry carries no distribution pin. Built from the shipped
- * repo/tag/asset only — never a mutable remote list, never latest/main,
- * never an API lookup.
+ * the entry carries no distribution pin OR its distribution is not
+ * published. Fail closed while UNPUBLISHED: the URL string is never handed
+ * out, so no consumer can start a network fetch from it — built from the
+ * shipped repo/tag/asset only, never a mutable remote list, never
+ * latest/main, never an API lookup.
  */
 export function distributionUrlForEntry(
   entry: ModelCatalogueEntry,
 ): string | null {
+  if (!isDistributionPublished(entry)) return null;
   const distribution = entry.distribution ?? null;
   if (distribution == null) return null;
   return `https://github.com/${distribution.repo}/releases/download/${distribution.tag}/${distribution.asset}`;

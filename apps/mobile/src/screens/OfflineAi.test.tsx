@@ -21,6 +21,24 @@ vi.mock("../services/vlmPlugin", async (importOriginal) => {
   return { ...actual, getVlmBridge: () => bridge };
 });
 vi.mock("../services/photo", () => photo);
+vi.mock("../services/models/shippedCatalogue", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../services/models/shippedCatalogue")>();
+  // The shipped catalogue is UNPUBLISHED, so this suite pins the PUBLISHED
+  // path to keep proving the download flow unchanged. The UNPUBLISHED gate
+  // is proven against the real catalogue in OfflineAi.unpubGate.test.tsx.
+  return {
+    ...actual,
+    SHIPPED_CATALOGUE_ENTRIES: actual.SHIPPED_CATALOGUE_ENTRIES.map((entry) =>
+      entry.distribution == null
+        ? entry
+        : {
+            ...entry,
+            distribution: { ...entry.distribution, state: "PUBLISHED" as const },
+          },
+    ),
+  };
+});
 
 import { OfflineAi } from "./OfflineAi";
 

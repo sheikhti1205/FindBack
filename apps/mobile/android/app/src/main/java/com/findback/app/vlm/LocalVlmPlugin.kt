@@ -489,6 +489,15 @@ class LocalVlmPlugin : Plugin() {
                 return
             }
 
+            // Publication gate: the catalogue stays authoritative — while the
+            // distribution is UNPUBLISHED no scheduler work is queued and no
+            // network fetch starts. Fail closed with the honest state.
+            if (!ModelDownloader.isDownloadPermitted(manifest.distribution)) {
+                updateModelState(modelId, VlmState.DOWNLOAD_FAILED, error = UNPUBLISHED_DISTRIBUTION_MESSAGE)
+                call.reject(UNPUBLISHED_DISTRIBUTION_MESSAGE)
+                return
+            }
+
             // Check storage upfront
             val totalExpectedBytes = manifest.files.sumOf { it.expectedBytes }
             val freeBytes = getFreeBytes()
