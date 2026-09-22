@@ -25,6 +25,10 @@ import {
 import { checkDownloadGate } from "../services/models/modelTransfers";
 import { activateModel } from "../services/models/modelActivation";
 import {
+  loadResidentEntryId,
+  saveResidentEntryId,
+} from "../services/models/roleSelection";
+import {
   availabilityForEntry,
   availabilityLabel,
   canOfferActivation,
@@ -181,22 +185,18 @@ function formatCatalogueBytes(bytes: number | null, kind: "download" | "installe
   return `${formatBytes(bytes)} ${kind}`;
 }
 
-const ACTIVE_MODEL_KEY = "findback:offline-ai:active-model";
-
+/**
+ * Resident generative-model record, shared with role selection
+ * (`roleSelection.RESIDENT_ENTRY_KEY`): the catalogue id persisted on
+ * verified activation, or null when idle. Single owner of the key value;
+ * the helpers are the only readers/writers.
+ */
 function loadActiveModel(): string | null {
-  try {
-    return localStorage.getItem(ACTIVE_MODEL_KEY);
-  } catch {
-    return null;
-  }
+  return loadResidentEntryId();
 }
 
 function saveActiveModel(id: string): void {
-  try {
-    localStorage.setItem(ACTIVE_MODEL_KEY, id);
-  } catch {
-    /* private mode / storage disabled */
-  }
+  saveResidentEntryId(id);
 }
 
 /**
