@@ -5,6 +5,8 @@ import {
   isInstallable,
   licenseLabel,
   listByCategory,
+  needsOnDeviceWarning,
+  NOT_VERIFIED_ON_DEVICE_WARNING,
   verificationLabel,
 } from "./modelCatalogue";
 import type { ModelCatalogueEntry } from "./catalogueTypes";
@@ -90,6 +92,29 @@ describe("catalogueWarnings", () => {
     expect(
       catalogueWarnings(entry()).some((w) => w.includes("unverified")),
     ).toBe(true);
+  });
+});
+
+describe("needsOnDeviceWarning", () => {
+  it("uses the exact untested-device warning text", () => {
+    expect(NOT_VERIFIED_ON_DEVICE_WARNING).toBe(
+      "Not verified on this device. May fail on devices with limited free memory.",
+    );
+  });
+
+  it("warns on unverified and experimental entries, not on verified ones", () => {
+    expect(needsOnDeviceWarning(entry())).toBe(true);
+    expect(
+      needsOnDeviceWarning(entry({ verificationStatus: "EXPERIMENTAL" })),
+    ).toBe(true);
+    expect(
+      needsOnDeviceWarning(
+        entry({ category: "experimental-large", verificationStatus: "VERIFIED" }),
+      ),
+    ).toBe(true);
+    expect(
+      needsOnDeviceWarning(entry({ verificationStatus: "VERIFIED" })),
+    ).toBe(false);
   });
 });
 

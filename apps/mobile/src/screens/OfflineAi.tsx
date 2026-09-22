@@ -1,28 +1,52 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive } from "lucide-react";
+import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive, Upload, PackageOpen } from "lucide-react";
 import { BackButton } from "../components/BackButton";
+import { ModelAdvancedConfirmGate } from "../components/ModelAdvancedConfirmGate";
 import { getModelAction, getVlmBridge, isInstalledState } from "../services/vlmPlugin";
 import { chooseFromGallery, isCancellation, isNativeCameraAvailable, takePhoto, toNativeImageUri } from "../services/photo";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
 import type { VlmModelId, VlmState, VlmCapabilities, VlmModelInfo, DownloadProgressEvent, GpuSelfTestResult } from "../services/vlmPlugin";
+import {
+  catalogueWarnings,
+  isInstallable,
+  listByCategory,
+  needsOnDeviceWarning,
+  NOT_VERIFIED_ON_DEVICE_WARNING,
+  verificationLabel,
+} from "../services/models/modelCatalogue";
+import {
+  describeRamFigures,
+  getRamBand,
+  ramBandNote,
+  ramSourceChip,
+  type AvailableFreeRamMb,
+} from "../services/models/ramPolicy";
+import { checkDownloadGate } from "../services/models/modelTransfers";
+import { planModelSwitch } from "../services/models/modelSession";
+import {
+  bridgeModelIdForEntry,
+  LEGACY_BRIDGE_MODELS,
+  SHIPPED_CATALOGUE_ENTRIES,
+} from "../services/models/shippedCatalogue";
+import { IncrementalSha256 } from "../services/models/streamingHash";
+import type { ModelCatalogueEntry } from "../services/models/catalogueTypes";
+import type { InstalledFileReader, PackageWriter } from "../services/models/modelTransfers";
+import { exportPackageStream } from "../services/models/modelTransfers";
 
-const MODEL_SPECS: Record<VlmModelId, { label: string; sizeMb: number; revision: string; sourceRepo: string; runtime: string }> = {
-  "smolvlm2-500m": {
-    label: "SmolVLM2 500M",
-    sizeMb: 360.8,
-    revision: "dad030b6e56756201d670cfb4d042736a2ce3a5c",
-    sourceRepo: "litert-community/SmolVLM2-500M",
-    runtime: "com.google.ai.edge.litertlm:litertlm-android:0.16.0",
-  },
-  "smolvlm-256m": {
-    label: "SmolVLM 256M",
-    sizeMb: 274.9,
-    revision: "dc16f6046d86c646bcc5dfe249c879d028f8b2f2",
-    sourceRepo: "litert-community/SmolVLM-256M-Instruct",
-    runtime: "com.google.ai.edge.litert:litert:1.4.2+litert-gpu:1.4.2",
-  },
-};
+/**
+ * Injectable seams for the library UI. The download/pause/resume/delete
+ * paths run through the native bridge (which streams Range → temp → hash →
+ * journal on-device); import/export run through the streaming transfer
+ * layer. `availableFreeRamMb` has no native source yet, so it defaults to
+ * null ("unknown", never gating on its own); export needs a platform
+ * archive writer, so it stays disabled until one is injected.
+ */
+export interface OfflineAiSeams {
+  availableFreeRamMb?: AvailableFreeRamMb;
+  exportReaderFor?: (entryId: string) => InstalledFileReader | null;
+  makePackageWriter?: () => PackageWriter;
+}
 
 const STATE_LABELS: Record<VlmState, string> = {
   NOT_INSTALLED: "Not installed",
@@ -136,57 +160,76 @@ const INSTALL_HEADROOM_BYTES = 256 * 1024 * 1024;
 const INSTALL_HEADROOM_FRACTION = 0.25;
 
 /** Mirrors the native install policy when native hasn't reported requiredBytes. */
-function fallbackRequiredBytes(sizeMb: number): number {
-  const bytes = sizeMb * 1024 * 1024;
-  return bytes + Math.max(INSTALL_HEADROOM_BYTES, bytes * INSTALL_HEADROOM_FRACTION);
+function fallbackRequiredBytes(sizeBytes: number): number {
+  return sizeBytes + Math.max(INSTALL_HEADROOM_BYTES, sizeBytes * INSTALL_HEADROOM_FRACTION);
 }
 
-/** Only models that can actually generate a report are downloadable. */
-const EXPOSED_MODELS: VlmModelId[] = ["smolvlm2-500m"];
+function formatCatalogueBytes(bytes: number | null, kind: "download" | "installed"): string {
+  if (bytes == null) return `${kind === "download" ? "Download" : "Installed"} size not established`;
+  return `${formatBytes(bytes)} ${kind}`;
+}
+
+const ACTIVE_MODEL_KEY = "findback:offline-ai:active-model";
+
+function loadActiveModel(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_MODEL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveModel(id: string): void {
+  try {
+    localStorage.setItem(ACTIVE_MODEL_KEY, id);
+  } catch {
+    /* private mode / storage disabled */
+  }
+}
 
 /**
- * Experimental candidates: visible and registered, but with no proven
- * complete generation path in this beta — hence no download/verify actions.
- * Storage management appears only when files already exist on-device.
+ * Bridge-reported models with no catalogue entry: storage management only,
+ * never downloadable. A row renders only when the bridge reports that id.
  */
-const EXPERIMENTAL_MODELS: VlmModelId[] = ["smolvlm-256m"];
-
-function ExperimentalModelCard({
+function LegacyModelCard({
   modelId,
   info,
   onDelete,
 }: {
-  modelId: VlmModelId;
+  modelId: string;
   info: VlmModelInfo;
   onDelete: (modelId: VlmModelId) => void;
 }) {
-  const spec = MODEL_SPECS[modelId];
+  const legacy = LEGACY_BRIDGE_MODELS[modelId];
+  const label = legacy?.label ?? modelId;
   const installed = isInstalledState(info.state);
   return (
-    <div role="listitem" aria-label={`${spec.label} (experimental)`} className="w-full min-w-0 overflow-x-hidden border border-outline-variant rounded-xl p-4 bg-surface">
+    <div role="listitem" aria-label={`${label} (experimental)`} className="w-full min-w-0 overflow-x-hidden border border-outline-variant rounded-xl p-4 bg-surface">
       <div className="flex min-w-0 flex-col gap-2">
         <div className="min-w-0">
-          <h3 className="min-w-0 break-words font-medium text-base">{spec.label}</h3>
-          <p className="min-w-0 break-words text-xs text-on-surface-variant">Fast-model candidate</p>
+          <h3 className="min-w-0 break-words font-medium text-base">{label}</h3>
+          <p className="min-w-0 break-words text-xs text-on-surface-variant">{legacy?.kindNote ?? "Not listed in the v1 catalogue"}</p>
         </div>
         <p className="min-w-0 break-words text-sm">Current status: Not available for report generation in this beta.</p>
         <p className="min-w-0 break-words text-sm text-on-surface-variant">NPU test on this device: current graph incompatible.</p>
-        <details className="min-w-0 break-words text-xs text-on-surface-variant">
-          <summary className="cursor-pointer">Technical details</summary>
-          <dl className="mt-1 min-w-0 space-y-0.5 break-words">
-            <div className="min-w-0"><dt className="inline font-medium">Source: </dt><dd className="inline min-w-0 break-all">{spec.sourceRepo}</dd></div>
-            <div className="min-w-0"><dt className="inline font-medium">Revision: </dt><dd className="inline min-w-0 break-all">{spec.revision}</dd></div>
-            <div className="min-w-0"><dt className="inline font-medium">Runtime: </dt><dd className="inline min-w-0 break-all">{spec.runtime}</dd></div>
-            <div className="min-w-0"><dt className="inline font-medium">NPU probe: </dt><dd className="inline min-w-0 break-words">FAIL — unsupported RSQRT/REDUCE_SUM ops; KV-cache allocation failure during Neuron compilation.</dd></div>
-          </dl>
-        </details>
+        {legacy ? (
+          <details className="min-w-0 break-words text-xs text-on-surface-variant">
+            <summary className="cursor-pointer">Technical details</summary>
+            <dl className="mt-1 min-w-0 space-y-0.5 break-words">
+              <div className="min-w-0"><dt className="inline font-medium">Source: </dt><dd className="inline min-w-0 break-all">{legacy.sourceRepo}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">Revision: </dt><dd className="inline min-w-0 break-all">{legacy.revision}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">Runtime: </dt><dd className="inline min-w-0 break-all">{legacy.runtime}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">NPU probe: </dt><dd className="inline min-w-0 break-words">{legacy.probeNote}</dd></div>
+            </dl>
+          </details>
+        ) : null}
         {installed ? (
           <div className="flex min-w-0 flex-col gap-2">
             {typeof info.sizeBytes === "number" && (
               <p className="min-w-0 break-words text-xs text-on-surface-variant">On-device data: {formatBytes(info.sizeBytes)}</p>
             )}
             <button
-              onClick={() => onDelete(modelId)}
+              onClick={() => onDelete(info.id)}
               className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-error text-error rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
             >
               <Trash2 size={14} aria-hidden className="shrink-0" />
@@ -218,10 +261,15 @@ function saveWifiOnly(value: boolean): void {
   }
 }
 
-function ModelRow({
-  modelId,
+function CatalogueModelCard({
+  entry,
+  bridgeId,
   info,
   capabilities,
+  availableFreeRamMb,
+  isActive,
+  importMessage,
+  exportMessage,
   onDownload,
   onDelete,
   onPickSelfTest,
@@ -229,32 +277,51 @@ function ModelRow({
   onPauseDownload,
   onResumeDownload,
   onRepair,
+  onSetActive,
+  onImport,
+  onExport,
   downloadProgress,
 }: {
-  modelId: VlmModelId;
-  info: VlmModelInfo;
+  entry: ModelCatalogueEntry;
+  bridgeId: VlmModelId | null;
+  info: VlmModelInfo | null;
   capabilities: VlmCapabilities | null;
-  onDownload: (modelId: VlmModelId) => void;
-  onDelete: (modelId: VlmModelId) => void;
-  onPickSelfTest: (modelId: VlmModelId, source: "camera" | "gallery") => void;
-  onCancelDownload: (modelId: VlmModelId) => void;
-  onPauseDownload: (modelId: VlmModelId) => void;
-  onResumeDownload: (modelId: VlmModelId) => void;
-  onRepair: (modelId: VlmModelId) => void;
+  availableFreeRamMb: AvailableFreeRamMb;
+  isActive: boolean;
+  importMessage: string | null;
+  exportMessage: string | null;
+  onDownload: (entry: ModelCatalogueEntry, bridgeId: VlmModelId) => void;
+  onDelete: (entry: ModelCatalogueEntry, bridgeId: VlmModelId) => void;
+  onPickSelfTest: (bridgeId: VlmModelId, source: "camera" | "gallery") => void;
+  onCancelDownload: (bridgeId: VlmModelId) => void;
+  onPauseDownload: (bridgeId: VlmModelId) => void;
+  onResumeDownload: (bridgeId: VlmModelId) => void;
+  onRepair: (bridgeId: VlmModelId) => void;
+  onSetActive: (entry: ModelCatalogueEntry) => void;
+  onImport: (entry: ModelCatalogueEntry) => void;
+  onExport: (entry: ModelCatalogueEntry) => void;
   downloadProgress: DownloadProgressEvent | null;
 }) {
-  const spec = MODEL_SPECS[modelId];
-  const stateLabel = STATE_LABELS[info.state] ?? info.state;
-  const action = getModelAction(info.state);
+  const state = info?.state ?? "NOT_INSTALLED";
+  const stateLabel = STATE_LABELS[state] ?? state;
+  const action = getModelAction(state);
   // gpuDelegateClassPresent is diagnostic only: readiness comes only from the
   // real image-bearing GPU self-test, never from class presence.
-  const canOfferSelfTest = action.canSelfTest && isNativeCameraAvailable();
-  const showProgress = (info.state === "DOWNLOADING") && downloadProgress?.modelId === modelId;
+  const canOfferSelfTest = bridgeId != null && action.canSelfTest && isNativeCameraAvailable();
+  const showProgress = bridgeId != null && state === "DOWNLOADING" && downloadProgress?.modelId === bridgeId;
   const [showSourcePicker, setShowSourcePicker] = useState(false);
+
+  const figures = describeRamFigures(entry, availableFreeRamMb);
+  const band = getRamBand(entry, availableFreeRamMb);
+  const bandNote = ramBandNote(band);
+  const warnings = catalogueWarnings(entry);
+  const showDeviceWarning = needsOnDeviceWarning(entry);
+  const installable = isInstallable(entry);
 
   // The native requiredBytes is authoritative; the fallback mirrors the native
   // policy (model + max(256 MiB, 25%)) so the button never lies.
-  const requiredBytes = info.requiredBytes ?? fallbackRequiredBytes(spec.sizeMb);
+  const catalogueSize = entry.downloadBytes ?? entry.installedBytes ?? 0;
+  const requiredBytes = info?.requiredBytes ?? fallbackRequiredBytes(catalogueSize);
   // Unknown storage is never treated as sufficient: Download stays disabled
   // until native reports free space.
   const freeBytes =
@@ -263,15 +330,51 @@ function ModelRow({
       : null;
   const isStorageUnknown = freeBytes === null;
   const hasSpace = !isStorageUnknown && (freeBytes as number) >= requiredBytes;
+  const canDownloadHere = bridgeId != null && installable;
 
   return (
-    <div role="listitem" aria-label={spec.label} className="w-full min-w-0 overflow-x-hidden border border-outline-variant rounded-xl p-4 bg-surface">
+    <div role="listitem" aria-label={entry.displayName} className="w-full min-w-0 overflow-x-hidden border border-outline-variant rounded-xl p-4 bg-surface">
       <div className="flex min-w-0 flex-col gap-4">
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-            <h3 className="min-w-0 break-words font-medium text-base">{spec.label}</h3>
-            <span className="min-w-0 break-words text-xs text-on-surface-variant">{spec.sizeMb} MB download</span>
+            <h3 className="min-w-0 break-words font-medium text-base">{entry.displayName}</h3>
+            <span className="min-w-0 break-words text-xs text-on-surface-variant">{formatCatalogueBytes(entry.downloadBytes, "download")}</span>
           </div>
+          <p className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">
+            <span>{entry.role}</span>
+            {" · "}
+            <span>{entry.runtime}</span>
+            {" · "}
+            <span>{verificationLabel(entry.verificationStatus)}</span>
+          </p>
+          <p className="min-w-0 break-words text-xs text-on-surface-variant">{formatCatalogueBytes(entry.installedBytes, "installed")}</p>
+
+          <ul className="mt-2 space-y-0.5 text-xs text-on-surface-variant" aria-label="Memory requirements">
+            <li>{figures.minimumLabel}</li>
+            <li>{figures.recommendedLabel}</li>
+            <li>{figures.deviceNowLabel}</li>
+          </ul>
+          <p className="mt-1">
+            <span className="rounded-full bg-surface-container px-2 py-0.5 text-xs text-on-surface-variant">
+              {ramSourceChip(entry.ramRequirementSource)}
+            </span>
+          </p>
+          {bandNote ? (
+            <p role="status" className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">{bandNote}</p>
+          ) : null}
+          {warnings.map((warning) => (
+            <p key={warning} role="note" className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">
+              {warning}
+            </p>
+          ))}
+          {showDeviceWarning ? (
+            <p role="note" className="mt-1 min-w-0 break-words text-xs text-error">
+              {NOT_VERIFIED_ON_DEVICE_WARNING}
+            </p>
+          ) : null}
+          {isActive ? (
+            <p className="mt-1 min-w-0 break-words text-xs text-on-surface">Active for analysis</p>
+          ) : null}
 
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
             <span className="flex min-w-0 items-center gap-1 break-words">
@@ -298,37 +401,39 @@ function ModelRow({
           <details className="mt-2 min-w-0 break-words text-xs text-on-surface-variant">
             <summary className="cursor-pointer">Technical details</summary>
             <dl className="mt-1 min-w-0 space-y-0.5 break-words">
-              <div className="min-w-0"><dt className="inline font-medium">Source: </dt><dd className="inline min-w-0 break-all">{spec.sourceRepo}</dd></div>
-              <div className="min-w-0"><dt className="inline font-medium">Revision: </dt><dd className="inline min-w-0 break-all">{spec.revision}</dd></div>
-              <div className="min-w-0"><dt className="inline font-medium">Runtime: </dt><dd className="inline min-w-0 break-all">{spec.runtime}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">Source: </dt><dd className="inline min-w-0 break-all">{entry.upstreamRepo}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">Revision: </dt><dd className="inline min-w-0 break-all">{entry.revision}</dd></div>
+              <div className="min-w-0"><dt className="inline font-medium">Runtime: </dt><dd className="inline min-w-0 break-all">{entry.runtime}</dd></div>
               <div className="min-w-0"><dt className="inline font-medium">GPU delegate class: </dt><dd className="inline min-w-0 break-words">{capabilities ? (capabilities.gpuDelegateClassPresent ? "present" : "missing") : "unknown"} (diagnostic only)</dd></div>
             </dl>
           </details>
 
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
-            <span
-              className={`inline-flex max-w-full items-center whitespace-normal break-words px-2 py-0.5 rounded-full text-left text-xs border ${
-                info.state === "READY_GPU"
-                  ? "bg-on-surface text-surface border-on-surface"
-                  : info.state === "GPU_UNAVAILABLE" || info.state === "INSTALLED_UNVERIFIED"
-                  ? "border-outline-variant text-on-surface"
-                  : info.state === "DOWNLOADING" || info.state === "QUEUED" || info.state === "VERIFYING_HASH" || info.state === "VERIFYING_FILE" || info.state === "VERIFYING_CHUNK" || info.state === "GPU_SELF_TESTING" || info.state === "REPAIRING"
-                  ? "bg-surface-container text-on-surface border-outline-variant"
-                  : info.state === "DOWNLOAD_FAILED" || info.state === "CORRUPT" || info.state === "RUNTIME_ERROR" || info.state === "INSUFFICIENT_STORAGE" || info.state === "MANIFEST_MISMATCH" || info.state === "PAUSED_ERROR" || info.state === "REPAIR_NEEDED"
-                  ? "border-error text-error"
-                  : "bg-surface-container text-on-surface-variant border-outline-variant"
-              }`}
-            >
-              {info.state === "DOWNLOADING" && showProgress && downloadProgress
-                ? `Downloading ${formatBytes(downloadProgress.downloadedBytes)} / ${formatBytes(downloadProgress.totalBytes)} (${Math.round(downloadProgress.progress * 100)}%)`
-                : stateLabel}
-            </span>
-            {friendlyError(info.error) && (
-              <span className={`max-w-full whitespace-normal break-words text-left text-xs px-2 py-0.5 rounded-full border ${info.state === "GPU_UNAVAILABLE" ? "border-outline-variant text-on-surface-variant" : "border-error text-error"}`}>
-                {friendlyError(info.error)}
+          {bridgeId != null && (
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+              <span
+                className={`inline-flex max-w-full items-center whitespace-normal break-words px-2 py-0.5 rounded-full text-left text-xs border ${
+                  state === "READY_GPU"
+                    ? "bg-on-surface text-surface border-on-surface"
+                    : state === "GPU_UNAVAILABLE" || state === "INSTALLED_UNVERIFIED"
+                    ? "border-outline-variant text-on-surface"
+                    : state === "DOWNLOADING" || state === "QUEUED" || state === "VERIFYING_HASH" || state === "VERIFYING_FILE" || state === "VERIFYING_CHUNK" || state === "GPU_SELF_TESTING" || state === "REPAIRING"
+                    ? "bg-surface-container text-on-surface border-outline-variant"
+                    : state === "DOWNLOAD_FAILED" || state === "CORRUPT" || state === "RUNTIME_ERROR" || state === "INSUFFICIENT_STORAGE" || state === "MANIFEST_MISMATCH" || state === "PAUSED_ERROR" || state === "REPAIR_NEEDED"
+                    ? "border-error text-error"
+                    : "bg-surface-container text-on-surface-variant border-outline-variant"
+                }`}
+              >
+                {state === "DOWNLOADING" && showProgress && downloadProgress
+                  ? `Downloading ${formatBytes(downloadProgress.downloadedBytes)} / ${formatBytes(downloadProgress.totalBytes)} (${Math.round(downloadProgress.progress * 100)}%)`
+                  : stateLabel}
               </span>
-            )}
-          </div>
+              {friendlyError(info?.error) && (
+                <span className={`max-w-full whitespace-normal break-words text-left text-xs px-2 py-0.5 rounded-full border ${state === "GPU_UNAVAILABLE" ? "border-outline-variant text-on-surface-variant" : "border-error text-error"}`}>
+                  {friendlyError(info?.error)}
+                </span>
+              )}
+            </div>
+          )}
 
           {showProgress && downloadProgress && (
             <div className="mt-2 h-1.5 bg-surface-container rounded-full overflow-hidden" role="progressbar" aria-valuenow={Math.round(downloadProgress.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
@@ -336,98 +441,111 @@ function ModelRow({
             </div>
           )}
 
-          {action.canRepair && (
+          {bridgeId != null && action.canRepair && (
             <p className="mt-2 text-xs text-error">
               Integrity check found damaged data. Repair re-downloads only the damaged parts — verified chunks will be kept.
             </p>
           )}
 
-          {info.state === "DOWNLOAD_FAILED" && info.error && (
+          {bridgeId != null && state === "DOWNLOAD_FAILED" && info?.error && (
             <p className="mt-2 text-xs text-error">{friendlyError(info.error)}</p>
           )}
-          {info.state === "PAUSED_ERROR" && (
+          {bridgeId != null && state === "PAUSED_ERROR" && (
             <p className="mt-2 text-xs text-on-surface-variant">Paused after repeated network errors. Your verified progress is kept — resume to continue.</p>
           )}
-          {info.state === "MANIFEST_MISMATCH" && (
+          {bridgeId != null && state === "MANIFEST_MISMATCH" && (
             <p className="mt-2 text-xs text-error">The downloaded bytes do not match the pinned source manifest. Automatic retry is stopped; nothing was deleted.</p>
           )}
+          {!canDownloadHere && (
+            <p className="mt-2 min-w-0 break-words text-xs text-on-surface-variant">
+              {entry.catalogOnly === true
+                ? "Catalog reference only — not distributed in this build."
+                : "No on-device runtime is wired for this entry in this build, so it cannot download here."}
+            </p>
+          )}
+          {importMessage ? (
+            <p role="status" className="mt-2 min-w-0 break-words text-xs text-on-surface-variant">{importMessage}</p>
+          ) : null}
+          {exportMessage ? (
+            <p role="status" className="mt-2 min-w-0 break-words text-xs text-on-surface-variant">{exportMessage}</p>
+          ) : null}
         </div>
 
         <div className="flex w-full min-w-0 flex-col gap-2">
-          {action.isTransferActive ? (
+          {bridgeId != null && action.isTransferActive ? (
             <>
               {action.canPause && (
                 <button
-                  onClick={() => onPauseDownload(modelId)}
+                  onClick={() => onPauseDownload(bridgeId)}
                   className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
-                  aria-label={`Pause ${spec.label}`}
+                  aria-label={`Pause ${entry.displayName}`}
                 >
                   Pause
                 </button>
               )}
               {action.canCancel && (
                 <button
-                  onClick={() => onCancelDownload(modelId)}
+                  onClick={() => onCancelDownload(bridgeId)}
                   className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
-                  aria-label={`Cancel ${spec.label}`}
+                  aria-label={`Cancel ${entry.displayName}`}
                 >
                   Cancel
                 </button>
               )}
             </>
-          ) : action.canResume && action.canCancel ? (
+          ) : bridgeId != null && action.canResume && action.canCancel ? (
             <>
               <button
-                onClick={() => onResumeDownload(modelId)}
+                onClick={() => onResumeDownload(bridgeId)}
                 className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
-                aria-label={`Resume ${spec.label}`}
+                aria-label={`Resume ${entry.displayName}`}
               >
                 Resume
               </button>
               <button
-                onClick={() => onCancelDownload(modelId)}
+                onClick={() => onCancelDownload(bridgeId)}
                 className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
-                aria-label={`Cancel ${spec.label}`}
+                aria-label={`Cancel ${entry.displayName}`}
               >
                 Cancel
               </button>
             </>
-          ) : action.canRepair ? (
+          ) : bridgeId != null && action.canRepair ? (
             <button
-              onClick={() => onRepair(modelId)}
+              onClick={() => onRepair(bridgeId)}
               className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity"
-              aria-label={`Repair ${spec.label}`}
+              aria-label={`Repair ${entry.displayName}`}
             >
               Repair
             </button>
-          ) : action.canDownload ? (
+          ) : canDownloadHere && action.canDownload ? (
             <button
-              onClick={() => onDownload(modelId)}
+              onClick={() => onDownload(entry, bridgeId)}
               className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm bg-on-surface text-surface rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1"
               disabled={!hasSpace}
-              aria-label={`Download ${spec.label}`}
+              aria-label={`Download ${entry.displayName}`}
             >
               <Download size={14} aria-hidden className="shrink-0" />
               <span className="min-w-0 break-words">Download</span>
             </button>
-          ) : action.canSelfTest && action.canDelete ? (
+          ) : bridgeId != null && action.canSelfTest && action.canDelete ? (
             <>
               {canOfferSelfTest && (
                 <div className="flex w-full min-w-0 flex-col gap-2">
                   <button
                     onClick={() => setShowSourcePicker(true)}
                     className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
-                    aria-label={`Verify ${spec.label} accelerator`}
+                    aria-label={`Verify ${entry.displayName} accelerator`}
                   >
                     <Cpu size={14} aria-hidden className="shrink-0" />
                     <span className="min-w-0 break-words">Verify accelerator</span>
                   </button>
                   {showSourcePicker && (
-                    <div role="group" aria-label={`Verification source for ${spec.label}`} className="flex w-full min-w-0 flex-col gap-2 rounded-lg border border-outline-variant p-2">
+                    <div role="group" aria-label={`Verification source for ${entry.displayName}`} className="flex w-full min-w-0 flex-col gap-2 rounded-lg border border-outline-variant p-2">
                       <button
                         onClick={() => {
                           setShowSourcePicker(false);
-                          onPickSelfTest(modelId, "camera");
+                          onPickSelfTest(bridgeId, "camera");
                         }}
                         className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                       >
@@ -436,7 +554,7 @@ function ModelRow({
                       <button
                         onClick={() => {
                           setShowSourcePicker(false);
-                          onPickSelfTest(modelId, "gallery");
+                          onPickSelfTest(bridgeId, "gallery");
                         }}
                         className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
                       >
@@ -452,16 +570,45 @@ function ModelRow({
                   )}
                 </div>
               )}
+              {!isActive && (
+                <button
+                  onClick={() => onSetActive(entry)}
+                  className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
+                  aria-label={`Set ${entry.displayName} as active model`}
+                >
+                  Set as active model
+                </button>
+              )}
               <button
-                onClick={() => onDelete(modelId)}
+                onClick={() => onDelete(entry, bridgeId)}
                 className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-error text-error rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
               >
                 <Trash2 size={14} aria-hidden className="shrink-0" />
                 <span className="min-w-0 break-words">Delete</span>
               </button>
             </>
-          ) : (
+          ) : bridgeId != null ? (
             <span className="min-w-0 break-words text-xs text-on-surface-variant">Verification running…</span>
+          ) : null}
+          {entry.catalogOnly !== true && (
+            <div className="flex w-full min-w-0 flex-col gap-2">
+              <button
+                onClick={() => onImport(entry)}
+                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+                aria-label={`Import ${entry.displayName} package`}
+              >
+                <Upload size={14} aria-hidden className="shrink-0" />
+                <span className="min-w-0 break-words">Import</span>
+              </button>
+              <button
+                onClick={() => onExport(entry)}
+                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+                aria-label={`Export ${entry.displayName} package`}
+              >
+                <PackageOpen size={14} aria-hidden className="shrink-0" />
+                <span className="min-w-0 break-words">Export</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -469,14 +616,28 @@ function ModelRow({
   );
 }
 
-export function OfflineAi() {
+export function OfflineAi(seams?: OfflineAiSeams) {
   const bridge = getVlmBridge();
+  const availableFreeRamMb = seams?.availableFreeRamMb ?? null;
   const [capabilities, setCapabilities] = useState<VlmCapabilities | null>(null);
   const [wifiOnly, setWifiOnly] = useState(loadWifiOnly);
   const [allowCpuFallback, setAllowCpuFallback] = useState(true);
   const [modelStates, setModelStates] = useState<VlmModelInfo[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgressEvent | null>(null);
-  const [confirmDownload, setConfirmDownload] = useState<{ modelId: VlmModelId; downloadBytes: number; requiredBytes: number } | null>(null);
+  const [confirmDownload, setConfirmDownload] = useState<{
+    entry: ModelCatalogueEntry;
+    bridgeId: VlmModelId;
+    downloadBytes: number;
+    requiredBytes: number;
+    needsConfirm: boolean;
+    largeSecondConfirm: boolean;
+  } | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [secondConfirmed, setSecondConfirmed] = useState(false);
+  const [confirmedEntries, setConfirmedEntries] = useState<readonly string[]>([]);
+  const [activeModelId, setActiveModelId] = useState<string | null>(null);
+  const [importMessages, setImportMessages] = useState<Record<string, string>>({});
+  const [exportMessages, setExportMessages] = useState<Record<string, string>>({});
   const [gpuSelfTestModel, setGpuSelfTestModel] = useState<VlmModelId | null>(null);
   const [gpuSelfTestSource, setGpuSelfTestSource] = useState<"camera" | "gallery" | null>(null);
   const [gpuSelfTestState, setGpuSelfTestState] = useState<"idle" | "running" | "done" | "error">("idle");
@@ -485,6 +646,8 @@ export function OfflineAi() {
 
   const gpuSelfTestRef = useRef<HTMLDivElement>(null);
   const confirmDownloadRef = useRef<HTMLDivElement>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const pendingImportRef = useRef<ModelCatalogueEntry | null>(null);
 
     // Guards async action errors against setState-after-unmount.
   const mountedRef = useRef(true);
@@ -493,6 +656,10 @@ export function OfflineAi() {
     return () => {
       mountedRef.current = false;
     };
+  }, []);
+
+  useEffect(() => {
+    setActiveModelId(loadActiveModel());
   }, []);
 
   // Closing while verification is RUNNING must stop native inference first.
@@ -554,16 +721,29 @@ export function OfflineAi() {
     };
   }, [bridge]);
 
-  const handleDownload = (modelId: VlmModelId) => {
-    const info = modelStates.find((m) => m.id === modelId);
-    const downloadBytes = info?.sizeBytes ?? Math.round(MODEL_SPECS[modelId].sizeMb * 1024 * 1024);
-    const required = info?.requiredBytes ?? fallbackRequiredBytes(MODEL_SPECS[modelId].sizeMb);
-    setConfirmDownload({ modelId, downloadBytes, requiredBytes: required });
+  const handleDownload = (entry: ModelCatalogueEntry, bridgeId: VlmModelId) => {
+    const info = modelStates.find((m) => m.id === bridgeId);
+    const downloadBytes = info?.sizeBytes ?? entry.downloadBytes ?? 0;
+    const required = info?.requiredBytes ?? fallbackRequiredBytes(entry.installedBytes ?? entry.downloadBytes ?? 0);
+    const gate = checkDownloadGate(entry, { availableFreeRamMb, advancedConfirmed: false });
+    if (!gate.allowed && gate.code !== "NEEDS_ADVANCED_CONFIRM") {
+      setActionError(gate.reason);
+      return;
+    }
+    const needsConfirm = needsOnDeviceWarning(entry) || !gate.allowed;
+    setAcknowledged(false);
+    setSecondConfirmed(false);
+    setConfirmDownload({
+      entry,
+      bridgeId,
+      downloadBytes,
+      requiredBytes: required,
+      needsConfirm,
+      largeSecondConfirm: entry.catalogOnly === true || entry.category === "experimental-large",
+    });
   };
 
-  const handleConfirmDownload = () => {
-    if (!confirmDownload) return;
-    const target = confirmDownload.modelId;
+  const startBridgeDownload = (entry: ModelCatalogueEntry, bridgeId: VlmModelId) => {
     const allowCellular = !wifiOnly;
     // Close the dialog immediately after scheduling so progress and
     // pause/cancel UI stay visible; the transfer runs in the background.
@@ -571,12 +751,20 @@ export function OfflineAi() {
     void (async () => {
       const opts = allowCellular ? { allowCellular: true } : undefined;
       try {
-        if (opts) await bridge.downloadModel(target, opts);
-        else await bridge.downloadModel(target);
+        if (opts) await bridge.downloadModel(bridgeId, opts);
+        else await bridge.downloadModel(bridgeId);
+        if (mountedRef.current) {
+          setConfirmedEntries((prev) => (prev.includes(entry.id) ? prev : [...prev, entry.id]));
+        }
       } catch (err) {
         if (mountedRef.current) setActionError(actionErrorMessage(err));
       }
     })();
+  };
+
+  const handleConfirmDownload = () => {
+    if (!confirmDownload) return;
+    startBridgeDownload(confirmDownload.entry, confirmDownload.bridgeId);
   };
 
   // Every bridge action can reject (process death, storage, native failure).
@@ -605,27 +793,136 @@ export function OfflineAi() {
     }
   };
 
-  const handleDelete = async (modelId: VlmModelId) => {
-    if (!window.confirm(`Delete ${MODEL_SPECS[modelId].label}? This stops inference, unloads the engine, and removes only this model. The other model is unaffected.`)) {
+  const handleDelete = async (entry: ModelCatalogueEntry, bridgeId: VlmModelId) => {
+    if (!window.confirm(`Delete ${entry.displayName}? This stops inference, unloads the engine, and removes only this model. The other model is unaffected.`)) {
+      return;
+    }
+    await runAction(() => bridge.deleteModel(bridgeId));
+  };
+
+  const handleLegacyDelete = async (modelId: VlmModelId) => {
+    const label = LEGACY_BRIDGE_MODELS[modelId]?.label ?? modelId;
+    if (!window.confirm(`Delete ${label}? This stops inference, unloads the engine, and removes only this model. The other model is unaffected.`)) {
       return;
     }
     await runAction(() => bridge.deleteModel(modelId));
   };
 
-  const handleCancelDownload = async (modelId: VlmModelId) => {
-    await runAction(() => bridge.cancelDownload(modelId));
+  const handleCancelDownload = async (bridgeId: VlmModelId) => {
+    await runAction(() => bridge.cancelDownload(bridgeId));
   };
 
-  const handlePauseDownload = async (modelId: VlmModelId) => {
-    await runAction(() => bridge.pauseDownload(modelId));
+  const handlePauseDownload = async (bridgeId: VlmModelId) => {
+    await runAction(() => bridge.pauseDownload(bridgeId));
   };
 
-  const handleResumeDownload = async (modelId: VlmModelId) => {
-    await runAction(() => bridge.resumeDownload(modelId));
+  const handleResumeDownload = async (bridgeId: VlmModelId) => {
+    await runAction(() => bridge.resumeDownload(bridgeId));
   };
 
-  const handleRepair = async (modelId: VlmModelId) => {
-    await runAction(() => bridge.repairModel(modelId));
+  const handleRepair = async (bridgeId: VlmModelId) => {
+    await runAction(() => bridge.repairModel(bridgeId));
+  };
+
+  /** Single-resident switch: cancel inference → release → verify memory → mark active. */
+  const handleSetActive = async (entry: ModelCatalogueEntry) => {
+    if (!mountedRef.current) return;
+    setActionError(null);
+    const plan = planModelSwitch({
+      currentResidentId: activeModelId,
+      target: entry,
+      availableFreeRamMb,
+      advancedConfirmed: confirmedEntries.includes(entry.id),
+    });
+    if (plan.blocked) {
+      setActionError(plan.reason);
+      return;
+    }
+    if (plan.steps.length === 0) return;
+    try {
+      await bridge.cancelInference();
+      await bridge.release();
+      // Verify-memory: with no native free-RAM source the reading stays
+      // unknown and the switch proceeds; a known below-minimum reading
+      // aborts the activation (the engine is already released, honestly).
+      if (availableFreeRamMb != null && availableFreeRamMb < entry.minFreeRamMb) {
+        if (mountedRef.current) {
+          setActionError(
+            "Memory verification failed: available memory dropped below the entry minimum after release. Activation aborted.",
+          );
+        }
+        return;
+      }
+      if (mountedRef.current) {
+        setActiveModelId(entry.id);
+        saveActiveModel(entry.id);
+      }
+    } catch (err) {
+      if (mountedRef.current) setActionError(actionErrorMessage(err));
+    }
+  };
+
+  /**
+   * Import entry point: streams a picked `.fbmodel` through an incremental
+   * hash and verifies it against the shipped catalogue pin (release-sidecar
+   * semantics). Full interior validation + sandboxed extraction run in the
+   * platform installer via `importPackageStream` — the web UI has no ZIP
+   * framing, so it verifies without claiming an install.
+   */
+  const handleImportFile = async (entry: ModelCatalogueEntry, file: File) => {
+    if (entry.sha256 == null) {
+      setImportMessages((prev) => ({
+        ...prev,
+        [entry.id]: "No shipped hash pin for this entry: the package cannot be verified, so import is refused.",
+      }));
+      return;
+    }
+    try {
+      const buffer = await file.arrayBuffer();
+      const hasher = new IncrementalSha256();
+      const bytes = new Uint8Array(buffer);
+      const chunkSize = 64 * 1024;
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        hasher.update(bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+      }
+      const digest = hasher.digestHex();
+      setImportMessages((prev) => ({
+        ...prev,
+        [entry.id]:
+          digest === entry.sha256
+            ? "Package verified against the shipped catalogue pin. Extraction to the runtime runs in the platform installer."
+            : "Package does not match the shipped catalogue pin — discarded, nothing installed.",
+      }));
+    } catch {
+      setImportMessages((prev) => ({
+        ...prev,
+        [entry.id]: "The package file could not be read. Nothing installed.",
+      }));
+    }
+  };
+
+  const handleImport = (entry: ModelCatalogueEntry) => {
+    pendingImportRef.current = entry;
+    importFileRef.current?.click();
+  };
+
+  const handleExport = async (entry: ModelCatalogueEntry) => {
+    const reader = seams?.exportReaderFor?.(entry.id) ?? null;
+    const writer = seams?.makePackageWriter?.() ?? null;
+    if (reader == null || writer == null) {
+      setExportMessages((prev) => ({
+        ...prev,
+        [entry.id]: "Export packaging runs in the platform installer: no staged package files are available here.",
+      }));
+      return;
+    }
+    const result = await exportPackageStream(entry, reader, writer);
+    setExportMessages((prev) => ({
+      ...prev,
+      [entry.id]: result.ok
+        ? `Packaged ${result.manifest.files.length} files for ${result.manifest.entryId}.`
+        : `Export refused: ${result.reason}`,
+    }));
   };
 
   const handleRunGpuSelfTest = async (modelId: VlmModelId, imageUri: string) => {
@@ -696,6 +993,18 @@ export function OfflineAi() {
       ].filter((part): part is string => Boolean(part))
     : [];
 
+  const orderedEntries = listByCategory(SHIPPED_CATALOGUE_ENTRIES);
+  const mappedBridgeIds = new Set(
+    orderedEntries
+      .map((entry) => bridgeModelIdForEntry(entry.id))
+      .filter((id): id is VlmModelId => id != null),
+  );
+  const legacyStates = modelStates.filter((m) => !mappedBridgeIds.has(m.id));
+  const confirmGateBlocked =
+    confirmDownload != null &&
+    confirmDownload.needsConfirm &&
+    !(acknowledged && (!confirmDownload.largeSecondConfirm || secondConfirmed));
+
   return (
     <div className="flex flex-col gap-4 p-4 overflow-x-hidden">
       <header className="flex min-w-0 items-center gap-2 px-4 pt-2">
@@ -711,8 +1020,8 @@ export function OfflineAi() {
         <p className="text-xs text-on-surface-variant">
           Only a GPU-verified model runs analysis. GPU is preferred; if GPU
           initialization fails and CPU compatibility mode is allowed, analysis
-          runs on CPU with an explicit on-screen notice — never silently. The
-          SmolVLM2 500M model is the only downloadable model.
+          runs on CPU with an explicit on-screen notice — never silently. Only
+          entries with a wired on-device runtime can download here.
         </p>
         <div className="flex gap-2" role="radiogroup" aria-label="Download network">
           {(["wifi-only", "wifi-or-cellular"] as const).map((opt) => (
@@ -788,15 +1097,39 @@ export function OfflineAi() {
           </div>
         )}
 
+        <input
+          ref={importFileRef}
+          type="file"
+          accept=".fbmodel"
+          className="hidden"
+          aria-hidden
+          tabIndex={-1}
+          onChange={(event) => {
+            const pending = pendingImportRef.current;
+            const file = event.target.files?.[0] ?? null;
+            event.target.value = "";
+            pendingImportRef.current = null;
+            if (pending != null && file != null) void handleImportFile(pending, file);
+          }}
+        />
+
         <div className="space-y-3" role="list" aria-label="Available models">
-          {EXPOSED_MODELS.map((modelId) => {
-            const info = modelStates.find((m) => m.id === modelId) ?? { id: modelId, state: "NOT_INSTALLED" as VlmState };
+          {orderedEntries.map((entry) => {
+            const bridgeId = bridgeModelIdForEntry(entry.id);
+            const info =
+              (bridgeId != null ? modelStates.find((m) => m.id === bridgeId) : undefined) ??
+              null;
             return (
-              <ModelRow
-                key={modelId}
-                modelId={modelId}
+              <CatalogueModelCard
+                key={entry.id}
+                entry={entry}
+                bridgeId={bridgeId}
                 info={info}
                 capabilities={capabilities}
+                availableFreeRamMb={availableFreeRamMb}
+                isActive={activeModelId === entry.id}
+                importMessage={importMessages[entry.id] ?? null}
+                exportMessage={exportMessages[entry.id] ?? null}
                 onDownload={handleDownload}
                 onDelete={handleDelete}
                 onPickSelfTest={handlePickSelfTest}
@@ -804,6 +1137,9 @@ export function OfflineAi() {
                 onPauseDownload={handlePauseDownload}
                 onResumeDownload={handleResumeDownload}
                 onRepair={handleRepair}
+                onSetActive={(target) => void handleSetActive(target)}
+                onImport={handleImport}
+                onExport={(target) => void handleExport(target)}
                 downloadProgress={downloadProgress}
               />
             );
@@ -811,31 +1147,30 @@ export function OfflineAi() {
         </div>
       </section>
 
-      <section className="px-4 space-y-4" aria-labelledby="experimental-heading">
-        <div className="min-w-0">
-          <h2 id="experimental-heading" className="break-words text-sm font-medium text-on-surface-variant uppercase tracking-wide">Experimental models</h2>
-          <p className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">Candidates under evaluation — not report backends in this beta.</p>
-        </div>
-        <div className="space-y-3" role="list" aria-label="Experimental models">
-          {EXPERIMENTAL_MODELS.map((modelId) => {
-            const info = modelStates.find((m) => m.id === modelId) ?? { id: modelId, state: "NOT_INSTALLED" as VlmState };
-            return (
-              <ExperimentalModelCard
-                key={modelId}
-                modelId={modelId}
+      {legacyStates.length > 0 && (
+        <section className="px-4 space-y-4" aria-labelledby="legacy-heading">
+          <div className="min-w-0">
+            <h2 id="legacy-heading" className="break-words text-sm font-medium text-on-surface-variant uppercase tracking-wide">On-device models outside the catalogue</h2>
+            <p className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">Present from earlier installs — storage management only, never downloadable.</p>
+          </div>
+          <div className="space-y-3" role="list" aria-label="On-device models outside the catalogue">
+            {legacyStates.map((info) => (
+              <LegacyModelCard
+                key={info.id}
+                modelId={info.id}
                 info={info}
-                onDelete={handleDelete}
+                onDelete={handleLegacyDelete}
               />
-            );
-          })}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      )}
 
       {gpuSelfTestModel && gpuSelfTestState !== "idle" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="gpu-test-title" aria-describedby="gpu-test-desc">
           <div ref={gpuSelfTestRef} tabIndex={-1} className="w-[min(28rem,calc(100vw-2rem))] min-w-0 max-h-[calc(100dvh-2rem)] overflow-y-auto bg-surface rounded-xl p-4 sm:p-6">
             <h3 id="gpu-test-title" className="mb-2 min-w-0 break-words text-lg font-semibold">Accelerator verification</h3>
-            <p id="gpu-test-desc" className="mb-4 min-w-0 break-words text-sm text-on-surface-variant">Checking {MODEL_SPECS[gpuSelfTestModel].label}{gpuSelfTestSource ? ` with a ${gpuSelfTestSource === "camera" ? "camera photo" : "gallery photo"}` : ""}…</p>
+            <p id="gpu-test-desc" className="mb-4 min-w-0 break-words text-sm text-on-surface-variant">Checking {gpuSelfTestModel}{gpuSelfTestSource ? ` with a ${gpuSelfTestSource === "camera" ? "camera photo" : "gallery photo"}` : ""}…</p>
             {gpuSelfTestState === "running" && (
               <div role="status" className="flex min-w-0 items-center justify-center gap-3">
                 <Loader2 size={24} className="shrink-0 animate-spin text-on-surface" aria-hidden />
@@ -859,7 +1194,7 @@ export function OfflineAi() {
             )}
             {gpuSelfTestState === "error" && (
               <div className="flex min-w-0 items-start gap-3 p-4 rounded-lg border border-error">
-                <XCircle size={24} className="shrink-0 text-error" aria-hidden />
+                <XCircle size={24} aria-hidden className="shrink-0 text-error" />
                 <div className="min-w-0">
                   <p className="break-words font-medium">{getSelfTestPresentation(gpuSelfTestResult).title}</p>
                   <p className="break-words text-sm text-on-surface-variant">{getSelfTestPresentation(gpuSelfTestResult).message}</p>
@@ -900,21 +1235,38 @@ export function OfflineAi() {
               Required free space: {formatBytes(confirmDownload.requiredBytes)}
               {capabilities && ` (${formatBytes((capabilities.freeAppStorageMb ?? Number.MAX_SAFE_INTEGER) * 1024 * 1024)} available)`}
             </p>
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
-              <button
-                onClick={() => setConfirmDownload(null)}
-                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-4 py-2 text-center border border-outline-variant rounded-lg hover:bg-surface-container sm:w-auto"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmDownload}
-                autoFocus
-                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-4 py-2 text-center bg-on-surface text-surface rounded-lg hover:opacity-90 sm:w-auto"
-              >
-                Confirm download
-              </button>
-            </div>
+            {confirmDownload.needsConfirm ? (
+              <ModelAdvancedConfirmGate
+                entry={confirmDownload.entry}
+                availableFreeRamMb={availableFreeRamMb}
+                acknowledged={acknowledged}
+                onAcknowledgedChange={setAcknowledged}
+                secondConfirmed={secondConfirmed}
+                onSecondConfirmedChange={setSecondConfirmed}
+                requireSecondConfirm={confirmDownload.largeSecondConfirm}
+                onConfirm={handleConfirmDownload}
+                onCancel={() => setConfirmDownload(null)}
+              />
+            ) : (
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
+                <button
+                  onClick={() => setConfirmDownload(null)}
+                  className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-4 py-2 text-center border border-outline-variant rounded-lg hover:bg-surface-container sm:w-auto"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmDownload}
+                  autoFocus
+                  className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-4 py-2 text-center bg-on-surface text-surface rounded-lg hover:opacity-90 sm:w-auto"
+                >
+                  Confirm download
+                </button>
+              </div>
+            )}
+            {confirmGateBlocked && (
+              <p className="mt-2 text-xs text-on-surface-variant">Confirm remains disabled until the acknowledgement is recorded.</p>
+            )}
           </div>
         </div>
       )}

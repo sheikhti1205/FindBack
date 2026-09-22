@@ -88,6 +88,28 @@ export function catalogueWarnings(entry: ModelCatalogueEntry): string[] {
   return warnings;
 }
 
+/**
+ * Exact on-device warning for entries without on-device verification.
+ * Shown on large untested models (and any entry whose verification was not
+ * established on this device); proceeding requires explicit confirmation.
+ */
+export const NOT_VERIFIED_ON_DEVICE_WARNING =
+  "Not verified on this device. May fail on devices with limited free memory." as const;
+
+/**
+ * Whether the entry must carry the on-device warning: every entry whose
+ * verification status is anything other than VERIFIED (lab-pinned,
+ * experimental, or large reference entries). VERIFIED entries were measured
+ * against the shipped pin and need no device caveat.
+ */
+export function needsOnDeviceWarning(entry: ModelCatalogueEntry): boolean {
+  if (entry.category === "experimental-large") return true;
+  return (
+    entry.verificationStatus === "SUPPORTED_UNVERIFIED" ||
+    entry.verificationStatus === "EXPERIMENTAL"
+  );
+}
+
 /** Finds an entry by id, or null when absent. */
 export function getEntryById(
   entries: readonly ModelCatalogueEntry[],
