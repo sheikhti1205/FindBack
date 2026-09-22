@@ -28,6 +28,8 @@ export interface LocalTextRuntimeSignals {
   textRuntimePresent: boolean;
   /** Whether the Qwen model data is on device in an installed state. */
   installed: boolean;
+  /** Observed TEXT_READY proof (never persisted, never inferred from files). */
+  textReady: boolean;
   /** Bridge-bound explicit-modelId text generation. */
   generateText: (request: GenerateTextRequest) => Promise<GenerateTextResult>;
 }
@@ -35,8 +37,9 @@ export interface LocalTextRuntimeSignals {
 /**
  * Builds the assistant runtime for the active local text model. Fail
  * closed: any missing precondition (wrong entry, absent bridge, missing
- * install, missing/non-narrow profile) yields a generator-free runtime
- * and the grounded fallback path applies.
+ * install, missing TEXT_READY proof, missing/non-narrow profile) yields a
+ * generator-free runtime and the grounded fallback path applies. Installed
+ * without TEXT_READY never answers locally and is never labeled ready.
  */
 export function resolveLocalTextRuntime(
   signals: LocalTextRuntimeSignals,
@@ -46,6 +49,7 @@ export function resolveLocalTextRuntime(
     signals.activeEntryId !== QWEN_TEXT_ENTRY_ID ||
     !signals.textRuntimePresent ||
     !signals.installed ||
+    !signals.textReady ||
     profile === undefined ||
     !isNarrowTextProfile(profile)
   ) {

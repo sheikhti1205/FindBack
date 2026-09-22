@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { Shell, assistantSearchNavigationTarget, resolveShellAssistantRuntime, type ShellAssistantSeams } from "./Shell";
+import { Shell, assistantSearchNavigationTarget, resolveShellAssistantRuntime, readTextRuntimeStatus, type ShellAssistantSeams } from "./Shell";
 import { resetBackInterceptors } from "./backNavigation";
 import { QWEN_TEXT_BRIDGE_MODEL_ID, QWEN_TEXT_ENTRY_ID, type GenerateTextRequest, type GenerateTextResult } from "../services/models/textRuntime";
 import {
@@ -34,6 +34,7 @@ function localSeams(overrides: Partial<ShellAssistantSeams> = {}): ShellAssistan
     residentEntryId: QWEN_TEXT_ENTRY_ID,
     textRuntimePresent: true,
     textInstalled: true,
+    textReady: true,
     generateText: async (request: GenerateTextRequest): Promise<GenerateTextResult> => ({
       text: `echo:${request.prompt.slice(0, 8)}`,
       modelId: request.modelId,
@@ -102,10 +103,15 @@ describe("resolveShellAssistantRuntime", () => {
     ).toBeUndefined();
     expect(resolveShellAssistantRuntime(localSeams({ residentEntryId: null })).generate).toBeUndefined();
     expect(resolveShellAssistantRuntime(localSeams({ textRuntimePresent: false })).generate).toBeUndefined();
+    expect(resolveShellAssistantRuntime(localSeams({ textReady: false })).generate).toBeUndefined();
   });
 });
 
 describe("Shell assistant runtime hookup", () => {
+  it("reads no text status off-device and fails closed", async () => {
+    await expect(readTextRuntimeStatus()).resolves.toBeNull();
+  });
+
   it("states the built-in fallback truthfully when no text model is running", () => {
     renderShell("/");
     fireEvent.click(screen.getByTestId("assistant-entry"));
