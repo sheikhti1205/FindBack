@@ -589,12 +589,26 @@ object PackageHost {
         if (path.startsWith("weights/") || path.startsWith("projector/")) "STORE" else "DEFLATE"
 
     /**
+     * Package-schema v1 interior path for an installed relative path.
+     * Authoritative runtime files are stored flat (`ModelFileSpec.path`
+     * with no directory) while the package carries the runtime artifact
+     * under `weights/`; already-nested interiors (including
+     * `tokenizer/` and `projector/`) pass through unchanged.
+     */
+    private fun exportInteriorPath(relative: String): String =
+        if (!relative.contains('/') && relative.endsWith(".litertlm")) "weights/$relative" else relative
+
+    /**
      * Packages the installed files for [entryId] from [installDir] into a
      * shareable offline `.fbmodel` written to [dest], streaming every file
      * with bounded buffers. Applies the import-side validation up front so
      * only data-only packages can be produced; requires at least one
-     * `weights/` runtime artifact. Returns the manifest + checksums — the
-     * file bytes live with the destination, never in the result.
+     * `weights/` runtime artifact. Flat installed runtime files
+     * (`ModelFileSpec.path` with no directory) are mapped to
+     * `weights/<path>` on export only; the flat store layout is unchanged
+     * and already-nested interiors pass through. Returns the manifest +
+     * checksums — the file bytes live with the destination, never in the
+     * result.
      */
     fun exportPackage(
         entryId: String,
@@ -617,13 +631,14 @@ object PackageHost {
             .sortedBy { it.first }
             .toList()
         if (regularFiles.isEmpty()) return exportFail(Code.NO_FILES, "Nothing to package: no installed files supplied.")
-        if (regularFiles.none { it.first.startsWith("weights/") }) {
+        val exportEntries = regularFiles.map { (relative, file) -> exportInteriorPath(relative) to file }
+        if (exportEntries.none { it.first.startsWith("weights/") }) {
             return exportFail(Code.MISSING_WEIGHTS, "Package requires at least one weights/ runtime artifact.")
         }
-        for ((relative, _) in regularFiles) {
-            val unsafe = findUnsafePathReason(relative)
+        for ((interior, _) in exportEntries) {
+            val unsafe = findUnsafePathReason(interior)
             if (unsafe != null) return exportFail(Code.UNSAFE_PATH, "Unsafe installed path: $unsafe.")
-            if (isDeniedSuffix(relative)) return exportFail(Code.DENIED_FILE, "Executable content rejected: $relative.")
+            if (isDeniedSuffix(interior)) return exportFail(Code.DENIED_FILE, "Executable content rejected: $interior.")
         }
 
         data class Observed(val path: String, val bytes: Long, val sha256: String, val method: String)
@@ -632,14 +647,14 @@ object PackageHost {
         var expandedTotal = 0L
         try {
             ZipOutputStream(dest).use { zip ->
-                for ((relative, file) in regularFiles) {
-                    val method = compressionMethodFor(relative)
+                for ((interior, file) in exportEntries) {
+                    val method = compressionMethodFor(interior)
                     val declaredSize = file.length()
                     val fileDigest = MessageDigest.getInstance("SHA-256")
                     val head = ByteArray(4)
                     var headFilled = 0
                     var observedBytes = 0L
-                    val zipEntry = ZipEntry(relative)
+                    val zipEntry = ZipEntry(interior)
                     if (method == "STORE") {
                         // STORED entries need size + CRC up front: stream one
                         // pass for the CRC, then stream again for the bytes.
@@ -657,7 +672,7 @@ object PackageHost {
                         } catch (_: Exception) {
                             return exportFail(
                                 Code.CORRUPT_ARCHIVE,
-                                "Export interrupted for $relative: the installed file cannot be read. Partial output discarded."
+                                "Export interrupted for $interior: the installed file cannot be read. Partial output discarded."
                             )
                         }
                         zipEntry.method = ZipEntry.STORED
@@ -671,7 +686,7 @@ object PackageHost {
                     } catch (_: Exception) {
                         return exportFail(
                             Code.CORRUPT_ARCHIVE,
-                            "Export interrupted for $relative: the package writer failed. Partial output discarded."
+                            "Export interrupted for $interior: the package writer failed. Partial output discarded."
                         )
                     }
                     try {
@@ -693,7 +708,7 @@ object PackageHost {
                     } catch (_: Exception) {
                         return exportFail(
                             Code.CORRUPT_ARCHIVE,
-                            "Export interrupted for $relative: the package writer failed. Partial output discarded."
+                            "Export interrupted for $interior: the package writer failed. Partial output discarded."
                         )
                     }
                     try {
@@ -701,16 +716,16 @@ object PackageHost {
                     } catch (_: Exception) {
                         return exportFail(
                             Code.CORRUPT_ARCHIVE,
-                            "Export interrupted for $relative: the package writer failed. Partial output discarded."
+                            "Export interrupted for $interior: the package writer failed. Partial output discarded."
                         )
                     }
                     if (hasDeniedMagic(head, headFilled)) {
-                        return exportFail(Code.DENIED_FILE, "Executable content rejected: $relative.")
+                        return exportFail(Code.DENIED_FILE, "Executable content rejected: $interior.")
                     }
                     if (observedBytes != declaredSize) {
                         return exportFail(
                             Code.SIZE_MISMATCH,
-                            "Installed size changed during export for $relative: listed $declaredSize, read $observedBytes."
+                            "Installed size changed during export for $interior: listed $declaredSize, read $observedBytes."
                         )
                     }
                     expandedTotal += observedBytes
@@ -721,7 +736,7 @@ object PackageHost {
                         )
                     }
                     observed.add(
-                        Observed(relative, observedBytes, fileDigest.digest().joinToString("") { "%02x".format(it) }, method)
+                        Observed(interior, observedBytes, fileDigest.digest().joinToString("") { "%02x".format(it) }, method)
                     )
                 }
 
