@@ -1,0 +1,106 @@
+/**
+ * Runtime truthfulness for the model library.
+ *
+ * Catalogue membership, on-device installation, and executable runtime
+ * support are three separate facts, and the library UI must never conflate
+ * them: a listed entry is not necessarily downloadable, and a downloaded
+ * entry is not necessarily runnable. This module derives both facts from
+ * the shipped catalogue wiring without touching the native bridge:
+ *
+ * - `runtimeCapabilityForEntry`: whether this build has a wired executable
+ *   runtime path for the entry (today only the SmolVLM2 500M entry, via
+ *   `bridgeModelIdForEntry`). Shipped entries with no wired path are
+ *   RUNTIME_UNAVAILABLE; ids outside the shipped catalogue are UNKNOWN
+ *   (unverifiable from this layer, never assumed runnable).
+ * - `availabilityForEntry`: the single display status for a card —
+ *   CATALOG_ONLY, DOWNLOADABLE, INSTALLED, ACTIVE, or RUNTIME_UNAVAILABLE.
+ */
+
+import type { ModelCatalogueEntry } from "./catalogueTypes";
+import type { VlmModelId } from "../vlmPlugin";
+import {
+  bridgeModelIdForEntry,
+  SHIPPED_CATALOGUE_ENTRIES,
+} from "./shippedCatalogue";
+
+/** Whether this build can execute the entry. */
+export type RuntimeCapability =
+  | "RUNTIME_AVAILABLE"
+  | "RUNTIME_UNAVAILABLE"
+  | "UNKNOWN";
+
+/**
+ * Display status of a library entry. CATALOG_ONLY entries are reference
+ * listings and never distributed; RUNTIME_UNAVAILABLE entries are listed
+ * for reference but cannot run or be activated in this build.
+ */
+export type ModelAvailability =
+  | "CATALOG_ONLY"
+  | "DOWNLOADABLE"
+  | "INSTALLED"
+  | "RUNTIME_UNAVAILABLE"
+  | "ACTIVE";
+
+/** Plain-language message for entries with no executable runtime. */
+export const NO_RUNTIME_MESSAGE =
+  "No executable runtime for this entry in this build. Listed for reference — it cannot run or be activated here." as const;
+
+export interface AvailabilitySignals {
+  /** Wired native runtime model id, or null when no runtime path exists. */
+  bridgeId: VlmModelId | null;
+  /** Whether the entry's model data is on device in an installed state. */
+  installed: boolean;
+  /** Whether the entry is the persisted active model. */
+  isActive: boolean;
+}
+
+/**
+ * Runtime capability for a catalogue entry id. Only entries with a wired
+ * native runtime path report RUNTIME_AVAILABLE; every other shipped entry
+ * (Qwen text candidates, LFM eval slots, Gemma reference) reports
+ * RUNTIME_UNAVAILABLE, and unlisted ids report UNKNOWN.
+ */
+export function runtimeCapabilityForEntry(entryId: string): RuntimeCapability {
+  if (bridgeModelIdForEntry(entryId) != null) return "RUNTIME_AVAILABLE";
+  if (SHIPPED_CATALOGUE_ENTRIES.some((entry) => entry.id === entryId)) {
+    return "RUNTIME_UNAVAILABLE";
+  }
+  return "UNKNOWN";
+}
+
+/**
+ * Single display status for a library card. Catalogue reference comes
+ * first (never distributed), then runtime absence (never runnable), then
+ * the installed/active ladder for runtime-backed entries.
+ */
+export function availabilityForEntry(
+  entry: ModelCatalogueEntry,
+  signals: AvailabilitySignals,
+): ModelAvailability {
+  if (entry.catalogOnly === true) return "CATALOG_ONLY";
+  if (signals.bridgeId == null) return "RUNTIME_UNAVAILABLE";
+  if (signals.isActive) return "ACTIVE";
+  if (signals.installed) return "INSTALLED";
+  return "DOWNLOADABLE";
+}
+
+/** Display label for an availability status. */
+export function availabilityLabel(status: ModelAvailability): string {
+  switch (status) {
+    case "CATALOG_ONLY":
+      return "Catalog reference only";
+    case "DOWNLOADABLE":
+      return "Available to download";
+    case "INSTALLED":
+      return "Installed";
+    case "RUNTIME_UNAVAILABLE":
+      return "No executable runtime in this build";
+    case "ACTIVE":
+      return "Active";
+  }
+}
+
+/** Whether the library may offer activation for the capability. */
+export function canOfferActivation(capability: RuntimeCapability): boolean {
+  return capability === "RUNTIME_AVAILABLE";
+}

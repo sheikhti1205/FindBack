@@ -606,6 +606,26 @@ describe("OfflineAi", () => {
     expect(within(gemma).queryByRole("button", { name: /export/i })).toBeNull();
   });
 
+  it("states runtime absence plainly and offers no activation without a runtime", async () => {
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    const smol = await screen.findByRole("listitem", { name: "SmolVLM2 500M (LiteRT, int4)" });
+    expect(within(smol).getByText("Library status: Available to download")).toBeTruthy();
+    const qwen = await screen.findByRole("listitem", { name: "Qwen3 0.6B (LiteRT, dynamic int4)" });
+    expect(within(qwen).getByText("Library status: No executable runtime in this build")).toBeTruthy();
+    expect(within(qwen).queryByRole("button", { name: /set .* as active model/i })).toBeNull();
+    const vl = await screen.findByRole("listitem", { name: /LFM2\.5-VL 450M/ });
+    expect(within(vl).getByText("Library status: No executable runtime in this build")).toBeTruthy();
+    expect(within(vl).queryByRole("button", { name: /set .* as active model/i })).toBeNull();
+    const gemma = await screen.findByRole("listitem", { name: /Gemma 3n/ });
+    expect(within(gemma).getByText("Library status: Catalog reference only")).toBeTruthy();
+    expect(within(gemma).queryByRole("button", { name: /set .* as active model/i })).toBeNull();
+  });
+
   it("gates a below-minimum download behind explicit acknowledgement", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
