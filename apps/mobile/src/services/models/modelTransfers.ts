@@ -41,6 +41,10 @@ import {
   type FbmodelManifestFile,
 } from "./fbmodelSeam";
 import { isInstallable } from "./modelCatalogue";
+import {
+  hasUnpublishedDistribution,
+  UNPUBLISHED_DISTRIBUTION_MESSAGE,
+} from "./shippedCatalogue";
 import { needsAdvancedConfirm, type AvailableFreeRamMb } from "./ramPolicy";
 import { IncrementalSha256, sha256HexOfBytes } from "./streamingHash";
 import {
@@ -70,6 +74,7 @@ export const MAX_MANIFEST_BYTES = 256 * 1024;
 /** Machine-readable transfer failure codes (advisory data, never UI). */
 export type TransferErrorCode =
   | "NOT_INSTALLABLE"
+  | "NOT_PUBLISHED"
   | "NEEDS_ADVANCED_CONFIRM"
   | "MISSING_PIN"
   | "TRANSPORT_ERROR"
@@ -229,13 +234,22 @@ export interface DownloadGateInput {
 /**
  * Advisory download gate. Never fetches; never auto-downloads. Reference
  * listings, experimental eval-only slots, and entries without a shipped
- * hash pin are never downloadable; a triggered RAM-envelope gate blocks
- * unless `advancedConfirmed` was explicitly recorded.
+ * hash pin are never downloadable; entries whose distribution is prepared
+ * but not published refuse with NOT_PUBLISHED before any transport is
+ * touched; a triggered RAM-envelope gate blocks unless `advancedConfirmed`
+ * was explicitly recorded.
  */
 export function checkDownloadGate(
   entry: ModelCatalogueEntry,
   input: DownloadGateInput,
 ): DownloadGate {
+  if (hasUnpublishedDistribution(entry)) {
+    return {
+      allowed: false,
+      code: "NOT_PUBLISHED",
+      reason: `${UNPUBLISHED_DISTRIBUTION_MESSAGE} Network download is disabled.`,
+    };
+  }
   if (!isInstallable(entry)) {
     return {
       allowed: false,

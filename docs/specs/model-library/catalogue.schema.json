@@ -48,15 +48,19 @@
       "additionalProperties": false
     },
     "distribution": {
-      "description": "Pinned GitHub Release asset for the .fbmodel package, or null when not distributed. The runtime builds the download URL from repo/tag/asset only; it never polls the API and never uses latest/main.",
+      "description": "Pinned GitHub Release asset for the .fbmodel package, or null when not distributed. The runtime builds the download URL from repo/tag/asset only; it never polls the API and never uses latest/main. `state` is the shipped publication state: while UNPUBLISHED the app must not offer network download and every URL-consumption path fails closed; flipping to PUBLISHED is an app-release change.",
       "type": ["object", "null"],
-      "required": ["repo", "tag", "asset", "bytes", "sha256"],
+      "required": ["repo", "tag", "asset", "bytes", "sha256", "state"],
       "properties": {
         "repo": { "type": "string", "description": "Curated release repo with owner, e.g. sheikhti1205/FindBack-Models" },
         "tag": { "type": "string", "description": "Immutable release tag" },
         "asset": { "type": "string", "description": "Pinned .fbmodel filename in the release" },
         "bytes": { "type": "integer", "minimum": 1 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "state": {
+          "description": "Shipped publication state of the release asset. UNPUBLISHED = package prepared but not published: no network download may be offered.",
+          "enum": ["UNPUBLISHED", "PUBLISHED"]
+        },
         "parts": {
           "description": "Chunk parts when a single asset would exceed the per-asset limit, else null. v1 small entries use null.",
           "type": ["array", "null"],

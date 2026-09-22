@@ -50,6 +50,15 @@ class ModelDownloader(
         private const val CONNECT_TIMEOUT_MS = 15000
         private const val READ_TIMEOUT_MS = 30000
         private const val MAX_REPAIR_ROUNDS = 2
+
+        /**
+         * Catalogue publication gate: network download is permitted only
+         * for a PUBLISHED distribution record. Null (no release-asset path)
+         * and UNPUBLISHED both refuse — the catalogue stays authoritative,
+         * with no HEAD requests, API lookups, or existence probing.
+         */
+        fun isDownloadPermitted(distribution: ModelDistribution?): Boolean =
+            distribution?.isPublished() == true
     }
 
     @Volatile private var pauseRequested = false
@@ -99,7 +108,11 @@ class ModelDownloader(
         }
         if (allWeightsPresent) return VlmState.INSTALLED_UNVERIFIED
 
+        // Publication gate: already-verified on-device weights above never
+        // touch the network, but any fetch requires a PUBLISHED distribution
+        // record — fail closed before disk-space checks or byte counting.
         val distribution = manifest.distribution ?: return VlmState.DOWNLOAD_FAILED
+        if (!distribution.isPublished()) return VlmState.DOWNLOAD_FAILED
         val totalNeeded = distribution.bytes + manifest.files.sumOf { it.expectedBytes }
         if (!ModelInstallPolicy.canInstall(getFreeBytes(), totalNeeded)) {
             return VlmState.INSUFFICIENT_STORAGE
@@ -626,11 +639,17 @@ class ModelDownloader(
     /**
      * Pinned release-asset URL from the distribution record only. Upstream
      * repo/revision/remotePath are provenance-only and never build URLs.
-     * No latest/main, no API polling, no Hugging Face resolve URLs.
+     * No latest/main, no API polling, no Hugging Face resolve URLs. Refuses
+     * unpublished distributions so no URL string escapes the gate.
      */
     private fun buildDownloadUrl(manifest: ModelManifest, spec: ModelFileSpec): String {
         val distribution = manifest.distribution
             ?: throw DownloadException("No distribution pin for ${manifest.id}")
+        if (!distribution.isPublished()) {
+            throw DownloadException(
+                "${manifest.id}: $UNPUBLISHED_DISTRIBUTION_MESSAGE"
+            )
+        }
         return distributionUrlFor(distribution)
     }
 

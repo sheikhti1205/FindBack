@@ -36,8 +36,11 @@ import {
 } from "../services/models/runtimeCapability";
 import {
   bridgeModelIdForEntry,
+  hasUnpublishedDistribution,
+  isDistributionPublished,
   LEGACY_BRIDGE_MODELS,
   SHIPPED_CATALOGUE_ENTRIES,
+  UNPUBLISHED_DISTRIBUTION_MESSAGE,
 } from "../services/models/shippedCatalogue";
 import type { ModelCatalogueEntry } from "../services/models/catalogueTypes";
 import type { InstalledFileReader, NativePackageHost, PackageWriter } from "../services/models/modelTransfers";
@@ -351,7 +354,11 @@ function CatalogueModelCard({
       : null;
   const isStorageUnknown = freeBytes === null;
   const hasSpace = !isStorageUnknown && (freeBytes as number) >= requiredBytes;
-  const canDownloadHere = bridgeId != null && installable;
+  // Publication is a catalogue fact, never a network probe: while the entry's
+  // distribution is UNPUBLISHED no Download affordance may be offered.
+  const published = isDistributionPublished(entry);
+  const unpublishedDistribution = hasUnpublishedDistribution(entry);
+  const canDownloadHere = bridgeId != null && installable && published;
 
   return (
     <div role="listitem" aria-label={entry.displayName} className="w-full min-w-0 overflow-x-hidden border border-outline-variant rounded-xl p-4 bg-surface">
@@ -484,6 +491,8 @@ function CatalogueModelCard({
             <p className="mt-2 min-w-0 break-words text-xs text-on-surface-variant">
               {entry.catalogOnly === true
                 ? "Catalog reference only — not distributed in this build."
+                : bridgeId != null && installable && unpublishedDistribution
+                ? UNPUBLISHED_DISTRIBUTION_MESSAGE
                 : "No on-device runtime is wired for this entry in this build, so it cannot download here."}
             </p>
           )}
@@ -611,7 +620,7 @@ function CatalogueModelCard({
                 <span className="min-w-0 break-words">Delete</span>
               </button>
             </>
-          ) : bridgeId != null ? (
+          ) : bridgeId != null && !unpublishedDistribution ? (
             <span className="min-w-0 break-words text-xs text-on-surface-variant">Verification running…</span>
           ) : null}
           {entry.catalogOnly !== true && bridgeId != null && (

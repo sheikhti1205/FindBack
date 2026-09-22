@@ -13,13 +13,15 @@
  *   RUNTIME_UNAVAILABLE; ids outside the shipped catalogue are UNKNOWN
  *   (unverifiable from this layer, never assumed runnable).
  * - `availabilityForEntry`: the single display status for a card —
- *   CATALOG_ONLY, DOWNLOADABLE, INSTALLED, ACTIVE, or RUNTIME_UNAVAILABLE.
+ *   CATALOG_ONLY, DOWNLOADABLE, UNPUBLISHED, INSTALLED, ACTIVE, or
+ *   RUNTIME_UNAVAILABLE.
  */
 
 import type { ModelCatalogueEntry } from "./catalogueTypes";
 import type { VlmModelId } from "../vlmPlugin";
 import {
   bridgeModelIdForEntry,
+  hasUnpublishedDistribution,
   SHIPPED_CATALOGUE_ENTRIES,
 } from "./shippedCatalogue";
 
@@ -31,12 +33,15 @@ export type RuntimeCapability =
 
 /**
  * Display status of a library entry. CATALOG_ONLY entries are reference
- * listings and never distributed; RUNTIME_UNAVAILABLE entries are listed
- * for reference but cannot run or be activated in this build.
+ * listings and never distributed; UNPUBLISHED entries are prepared but not
+ * published in this build, so network download stays disabled;
+ * RUNTIME_UNAVAILABLE entries are listed for reference but cannot run or be
+ * activated in this build.
  */
 export type ModelAvailability =
   | "CATALOG_ONLY"
   | "DOWNLOADABLE"
+  | "UNPUBLISHED"
   | "INSTALLED"
   | "RUNTIME_UNAVAILABLE"
   | "ACTIVE";
@@ -71,7 +76,10 @@ export function runtimeCapabilityForEntry(entryId: string): RuntimeCapability {
 /**
  * Single display status for a library card. Catalogue reference comes
  * first (never distributed), then runtime absence (never runnable), then
- * the installed/active ladder for runtime-backed entries.
+ * the installed/active ladder for runtime-backed entries. A runtime-backed
+ * entry whose distribution is not published reports UNPUBLISHED instead of
+ * DOWNLOADABLE — installed/active entries keep their ladder status, since
+ * the publication gate covers network download only, never install state.
  */
 export function availabilityForEntry(
   entry: ModelCatalogueEntry,
@@ -81,6 +89,7 @@ export function availabilityForEntry(
   if (signals.bridgeId == null) return "RUNTIME_UNAVAILABLE";
   if (signals.isActive) return "ACTIVE";
   if (signals.installed) return "INSTALLED";
+  if (hasUnpublishedDistribution(entry)) return "UNPUBLISHED";
   return "DOWNLOADABLE";
 }
 
@@ -91,6 +100,8 @@ export function availabilityLabel(status: ModelAvailability): string {
       return "Catalog reference only";
     case "DOWNLOADABLE":
       return "Available to download";
+    case "UNPUBLISHED":
+      return "Unpublished";
     case "INSTALLED":
       return "Installed";
     case "RUNTIME_UNAVAILABLE":

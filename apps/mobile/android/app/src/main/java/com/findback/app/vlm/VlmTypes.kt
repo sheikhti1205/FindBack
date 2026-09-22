@@ -94,6 +94,17 @@ data class ModelFileSpec(
 )
 
 /**
+ * Shipped publication state of a release asset. UNPUBLISHED means the
+ * package is prepared but not published in this build: no network download
+ * may be offered and every URL-consumption path fails closed. Flipping an
+ * entry to PUBLISHED is an app-release change.
+ */
+enum class DistributionState {
+    UNPUBLISHED,
+    PUBLISHED
+}
+
+/**
  * Pinned GitHub Release asset for one `.fbmodel` package. The runtime
  * builds the download URL from repo/tag/asset only; it never polls the
  * API and never uses latest/main. Upstream repo/revision/file stay as
@@ -105,8 +116,19 @@ data class ModelDistribution(
     val asset: String,
     val bytes: Long,
     val sha256: String,
+    val state: DistributionState = DistributionState.UNPUBLISHED,
     val parts: List<DistributionPart>? = null
-)
+) {
+    /** True only when the release asset is published and downloadable. */
+    fun isPublished(): Boolean = state == DistributionState.PUBLISHED
+}
+
+/**
+ * Honest failure note for unpublished distributions. The catalogue stays
+ * authoritative: no HEAD requests, no API lookups, no existence probing.
+ */
+const val UNPUBLISHED_DISTRIBUTION_MESSAGE =
+    "Package prepared but not published in this build. Network download is disabled."
 
 /**
  * One chunk part when a single asset would exceed the per-asset limit.
