@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { Bot, Home, PlusCircle, Search, UserRound } from "lucide-react";
 import { TabTapProvider, useTabTap } from "./TabTap";
@@ -15,7 +15,12 @@ import {
   type GenerateTextRequest,
   type GenerateTextResult,
 } from "../services/models/textRuntime";
-import { getVlmBridge, isTextBridge } from "../services/vlmPlugin";
+import {
+  getVlmBridge,
+  isTextBridge,
+  textSeamsFromStatus,
+  type NativeTextRuntimeStatus,
+} from "../services/vlmPlugin";
 
 const NAV: Array<{
   to: string;
@@ -61,12 +66,17 @@ export interface ShellAssistantSeams {
   /** Real text-bridge probe override. Defaults to probing the bound bridge. */
   textRuntimePresent?: boolean;
   /**
-   * Whether the preferred text model data is on device. No observable
-   * install registry exists for the text entry in this build, so the
-   * default is false (fail closed to the grounded fallback); a future
-   * native install-state signal plugs in here.
+   * Whether the preferred text model data is on device in an installed
+   * state. Defaults to the live native status read while the sheet is
+   * open, fail closed to the grounded fallback when unreadable.
    */
   textInstalled?: boolean;
+  /**
+   * Observed TEXT_READY proof for the preferred text model. Defaults to
+   * the live native status read; installed without TEXT_READY never
+   * answers locally and is never labeled ready.
+   */
+  textReady?: boolean;
   /** Explicit-modelId text generation override. Defaults to the bound bridge when present. */
   generateText?: (request: GenerateTextRequest) => Promise<GenerateTextResult>;
 }
@@ -74,10 +84,10 @@ export interface ShellAssistantSeams {
 /**
  * Builds the assistant runtime for the open sheet. The preferred text
  * entry answers only while it is the resident entry, its data is
- * installed, and the real text bridge is present; any missing
- * precondition resolves to a generator-free runtime and the sheet stays
- * on the deterministic grounded fallback. The result never claims a
- * model is active — the sheet states the fallback truthfully.
+ * installed, TEXT_READY is observed, and the real text bridge is present;
+ * any missing precondition resolves to a generator-free runtime and the
+ * sheet stays on the deterministic grounded fallback. The result never
+ * claims a model is active — the sheet states the fallback truthfully.
  */
 export function resolveShellAssistantRuntime(
   seams: ShellAssistantSeams = {},
@@ -94,8 +104,24 @@ export function resolveShellAssistantRuntime(
     activeEntryId: seams.residentEntryId ?? loadResidentEntryId(),
     textRuntimePresent,
     installed: seams.textInstalled ?? false,
+    textReady: seams.textReady ?? false,
     generateText,
   });
+}
+
+/**
+ * Reads the live native text-runtime status for the open sheet. Returns
+ * null when the bridge has no text surface or the read fails — callers
+ * fail closed to the grounded fallback. Never initializes the runtime.
+ */
+export async function readTextRuntimeStatus(): Promise<NativeTextRuntimeStatus | null> {
+  const bridge = getVlmBridge();
+  if (!isTextBridge(bridge)) return null;
+  try {
+    return await bridge.getTextRuntimeStatus();
+  } catch {
+    return null;
+  }
 }
 
 export function Shell({ seams }: { seams?: ShellAssistantSeams } = {}) {
@@ -103,10 +129,28 @@ export function Shell({ seams }: { seams?: ShellAssistantSeams } = {}) {
   const navigate = useNavigate();
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [textStatus, setTextStatus] = useState<NativeTextRuntimeStatus | null>(null);
+  // Live native install/readiness read while the sheet is open. Explicit
+  // seams always win (tests); otherwise the status read decides; when it
+  // is missing or fails the resolver fails closed to the fallback.
+  useEffect(() => {
+    if (!assistantOpen) {
+      setTextStatus(null);
+      return;
+    }
+    let cancelled = false;
+    readTextRuntimeStatus().then((status) => {
+      if (!cancelled) setTextStatus(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [assistantOpen]);
   // Resolved fresh on every render while open, so a model activated in the
   // library is picked up without remounting the layout route.
+  const liveSeams = { ...textSeamsFromStatus(textStatus), ...(seams ?? {}) };
   const assistantRuntime = assistantOpen
-    ? resolveShellAssistantRuntime(seams ?? {})
+    ? resolveShellAssistantRuntime(liveSeams)
     : undefined;
 
   return (

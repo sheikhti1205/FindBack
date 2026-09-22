@@ -18,6 +18,7 @@ function signals(
     activeEntryId: QWEN_TEXT_ENTRY_ID,
     textRuntimePresent: true,
     installed: true,
+    textReady: true,
     generateText: async (request: GenerateTextRequest) => ({
       text: `echo:${request.prompt.slice(0, 8)}`,
       modelId: request.modelId,
@@ -64,6 +65,12 @@ describe("resolveLocalTextRuntime", () => {
       resolveLocalTextRuntime(signals({ textRuntimePresent: false })).generate,
     ).toBeUndefined();
     expect(resolveLocalTextRuntime(signals({ installed: false })).generate).toBe(
+      undefined,
+    );
+  });
+
+  it("stays generator-free when installed but TEXT_READY is not observed", () => {
+    expect(resolveLocalTextRuntime(signals({ textReady: false })).generate).toBe(
       undefined,
     );
   });

@@ -295,6 +295,10 @@ export interface TextSelfTestResult {
  * Wire result for native `getTextRuntimeStatus` (diagnostics read only —
  * readiness, native activity, backend, model-file presence; never
  * initializes the runtime and never means lifecycle-installed).
+ *
+ * `installed` is lifecycle-validated (verified record + pinned file);
+ * `modelFilePresent` is diagnostic file observation only and never implies
+ * `installed`. `textReady` is observed TEXT_READY proof, never persisted.
  */
 export interface NativeTextRuntimeStatus {
   modelId: string;
@@ -302,6 +306,24 @@ export interface NativeTextRuntimeStatus {
   nativeRunning: boolean;
   backend: string;
   modelFilePresent: boolean;
+  installed: boolean;
+  textReady: boolean;
+  residentModelId?: string | null;
+}
+
+/**
+ * Maps a native text-runtime status read to assistant install/readiness
+ * seams. Fail closed: a missing or unreadable status yields installed=false
+ * and textReady=false, keeping the assistant on the grounded fallback.
+ */
+export function textSeamsFromStatus(
+  status: NativeTextRuntimeStatus | null | undefined,
+): { textInstalled: boolean; textReady: boolean } {
+  if (status == null) return { textInstalled: false, textReady: false };
+  return {
+    textInstalled: status.installed === true,
+    textReady: status.textReady === true,
+  };
 }
 
 /** GPU self-test failure classification (mirrors native SelfTestFailure).
