@@ -19,6 +19,7 @@
    "downloadBytes": 360823868,
    "installedBytes": 360822960,
    "sha256": "41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e",
+   "installedSha256": "b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0",
    "minFreeRamMb": 1536,
    "recommendedFreeRamMb": 2560,
    "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
