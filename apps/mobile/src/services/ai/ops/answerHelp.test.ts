@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerHelp } from "./answerHelp";
+import { HELP_INSTRUCTION, answerHelp } from "./answerHelp";
 import { FakeAiProvider } from "../testing/FakeAiProvider";
 import { fakeGenerate, mustProfile, stubGenerate } from "./testSupport";
 
@@ -42,5 +42,38 @@ describe("answer-help op", () => {
       expect(result.error.errorClass).toBe("INVALID_OUTPUT");
       expect(result.error.diagnostic).toBe("R4_EMPTY_OUTPUT");
     }
+  });
+
+  it("rejects userContext echo with no explicit context (R6 wired)", async () => {
+    const userMessage = "how do I report a lost black umbrella near the central market fountain";
+    const result = await answerHelp(
+      stubGenerate(userMessage),
+      userMessage,
+      mustProfile("lfm2.5-1.2b-q4_0"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
+  });
+
+  it("rejects instruction verbatim with no explicit context (BV08-stock shape)", async () => {
+    const result = await answerHelp(
+      stubGenerate(HELP_INSTRUCTION),
+      "How do I report a lost item?",
+      mustProfile("lfm2.5-1.2b-q4_0"),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
+  });
+
+  it("rejects echo of explicitly supplied context", async () => {
+    const supplied = "custom user context about a lost wallet near the fountain entrance gate";
+    const result = await answerHelp(
+      stubGenerate(`You asked about this: ${supplied} and here is that again.`),
+      "How do I report a lost item?",
+      mustProfile("lfm2.5-1.2b-q4_0"),
+      { context: { userContext: supplied } },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
   });
 });

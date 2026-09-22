@@ -58,7 +58,7 @@ export const MAX_ARRAY_ITEMS = 12;
 export const MAX_HELP_CHARS = 2000;
 const MIN_ECHO_CHARS = 40;
 const MIN_STUFF_VALUE_CHARS = 4;
-const CROSS_FIELD_STUFF_LIMIT = 4;
+const CROSS_FIELD_STUFF_LIMIT = 3;
 const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
 const SCHEMA_ECHO_PATTERN = /string\s*(\[\]| *\| *null)/i;
 
@@ -178,7 +178,7 @@ function isStuffedArray(items: readonly string[]): boolean {
   if (items.length > MAX_ARRAY_ITEMS) return true;
   if (items.length >= 4) {
     const distinct = new Set(items.map((item) => norm(item)));
-    if (distinct.size / items.length < 0.5) return true;
+    if (distinct.size / items.length <= 0.5) return true;
   }
   return false;
 }

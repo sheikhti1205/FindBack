@@ -34,11 +34,15 @@ export async function extractReportFields(
     maxOutputTokens: profile.maxOutputTokensText,
     temperature: profile.defaultTemperature,
   });
+  const context = {
+    instruction: REPORT_SLOTS_INSTRUCTION,
+    userContext: options?.context?.userContext ?? userMessage,
+  };
   const parsed = normalizeJsonOp(
     rawText,
     profile,
-    (value, context) => validateReportSlots(value, context),
-    options,
+    (value, innerContext) => validateReportSlots(value, innerContext),
+    { ...options, context },
   );
   if (!parsed.ok) return parsed;
   const action: AssistantAction =

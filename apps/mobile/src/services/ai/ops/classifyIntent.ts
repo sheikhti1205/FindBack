@@ -30,5 +30,12 @@ export async function classifyIntent(
     maxOutputTokens: profile.maxOutputTokensText,
     temperature: profile.defaultTemperature,
   });
-  return normalizeJsonOp(rawText, profile, (value) => validateIntentPayload(value), options);
+  const context = {
+    instruction: CLASSIFY_INTENT_INSTRUCTION,
+    userContext: options?.context?.userContext ?? userMessage,
+  };
+  return normalizeJsonOp(rawText, profile, (value) => validateIntentPayload(value), {
+    ...options,
+    context,
+  });
 }
