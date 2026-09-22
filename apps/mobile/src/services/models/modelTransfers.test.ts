@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogueEntry } from "./catalogueTypes";
 import {
   checkDownloadGate,
@@ -6,6 +6,8 @@ import {
   exportPackageStream,
   findUnsafePathReason,
   hasDeniedMagic,
+  hashByteStream,
+  hashWebFile,
   importPackageStream,
   MAX_PACKAGE_EXPANDED_BYTES,
   sha256BytesHex,
@@ -14,7 +16,7 @@ import {
   type PackageWriter,
   type StreamingArchive,
 } from "./modelTransfers";
-import { MemoryTransferStore } from "./transferStore";
+import { MemoryTransferStore, TransferCancelledError } from "./transferStore";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -776,6 +778,229 @@ describe("exportPackageStream", () => {
       ),
     ).toMatchObject({ ok: false, code: "DENIED_FILE" });
     expect(elfWriter.files.has("tokenizer/vocab.json")).toBe(false);
+  });
+});
+
+describe("hashByteStream / hashWebFile", () => {
+  it("hashes a chunk stream without buffering the whole input", async () => {
+    const bytes = weightsBytes();
+    const expected = sha256BytesHex(bytes);
+    expect(await hashByteStream(chunkedStream(bytes, 7))).toBe(expected);
+    expect(await hashByteStream(chunkedStream(bytes, 1))).toBe(expected);
+    expect(await hashByteStream(chunkedStream(new Uint8Array(0), 7))).toBe(
+      sha256BytesHex(new Uint8Array(0)),
+    );
+  });
+
+  it("hashes a picked file via stream() without touching arrayBuffer", async () => {
+    const bytes = encoder.encode("streamed-package-bytes");
+    const file = new File(["streamed-package-bytes"], "model.fbmodel");
+    const buffered = vi.spyOn(file, "arrayBuffer");
+    Object.defineProperty(file, "stream", {
+      configurable: true,
+      value: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes.slice(0, 9));
+            controller.enqueue(bytes.slice(9));
+            controller.close();
+          },
+        }),
+    });
+    expect(await hashWebFile(file)).toBe(sha256BytesHex(bytes));
+    expect(buffered).not.toHaveBeenCalled();
+  });
+
+  it("aborts a chunk stream on cancellation", async () => {
+    await expect(
+      hashByteStream(chunkedStream(weightsBytes(), 7), {
+        isCancelled: () => true,
+      }),
+    ).rejects.toBeInstanceOf(TransferCancelledError);
+  });
+});
+
+describe("streaming import/export adversarial (small fixtures)", () => {
+  it("cancels before validation and mid-file with nothing installed", async () => {
+    const target = verifiedEntry();
+    const { archive } = await exportedArchive(target);
+    expect(
+      await importPackageStream(target, archive, {
+        control: { isCancelled: () => true },
+      }),
+    ).toMatchObject({ ok: false, code: "CANCELLED" });
+
+    let polls = 0;
+    expect(
+      await importPackageStream(target, archive, {
+        control: {
+          isCancelled: () => {
+            polls += 1;
+            return polls > 3;
+          },
+        },
+      }),
+    ).toMatchObject({ ok: false, code: "CANCELLED" });
+  });
+
+  it("rejects a truncated interior stream as a size mismatch", async () => {
+    const target = verifiedEntry();
+    const { archive } = await exportedArchive(target);
+    const truncated: StreamingArchive = {
+      entries: archive.entries,
+      openEntry: (path) =>
+        path === "weights/model.litertlm"
+          ? chunkedStream(weightsBytes().slice(0, 10), 7)
+          : archive.openEntry(path),
+    };
+    expect(await importPackageStream(target, truncated)).toMatchObject({
+      ok: false,
+      code: "SIZE_MISMATCH",
+    });
+  });
+
+  it("maps an unreadable container to CORRUPT_ARCHIVE", async () => {
+    const target = verifiedEntry();
+    const { archive } = await exportedArchive(target);
+    const unreadableManifest: StreamingArchive = {
+      entries: archive.entries,
+      openEntry: () => {
+        throw new Error("bad central directory");
+      },
+    };
+    expect(await importPackageStream(target, unreadableManifest)).toMatchObject({
+      ok: false,
+      code: "CORRUPT_ARCHIVE",
+    });
+
+    const unreadableInterior: StreamingArchive = {
+      entries: archive.entries,
+      openEntry: (path) => {
+        if (path !== "manifest.json") throw new Error("truncated entry");
+        return archive.openEntry(path);
+      },
+    };
+    expect(await importPackageStream(target, unreadableInterior)).toMatchObject({
+      ok: false,
+      code: "CORRUPT_ARCHIVE",
+    });
+  });
+
+  it("rejects zip-slip path variants", async () => {
+    const target = verifiedEntry();
+    for (const badPath of [
+      "a\\b.bin",
+      "C:/evil.bin",
+      "a//b.bin",
+      "nested/../../evil.bin",
+    ]) {
+      const attempt = await exportedArchive(target, (files, manifest) => {
+        const payload = { path: badPath, bytes: encoder.encode("x") };
+        files.push(payload);
+        (manifest["files"] as unknown[]).push({
+          path: payload.path,
+          bytes: payload.bytes.length,
+          sha256: sha256BytesHex(payload.bytes),
+          method: "DEFLATE",
+        });
+      });
+      expect(await importPackageStream(target, attempt.archive)).toMatchObject({
+        ok: false,
+        code: "UNSAFE_PATH",
+      });
+    }
+  });
+
+  it("enforces the expanded-size cap via the test override (zip bomb)", async () => {
+    const target = verifiedEntry();
+    const { archive } = await exportedArchive(target);
+    expect(
+      await importPackageStream(target, archive, { maxExpandedBytes: 16 }),
+    ).toMatchObject({ ok: false, code: "PACKAGE_TOO_LARGE" });
+
+    const writer = new TestWriter();
+    expect(
+      await exportPackageStream(target, testReader(installedParts()), writer, {
+        createdAt: "2026-09-22T00:00:00.000Z",
+        maxExpandedBytes: 16,
+      }),
+    ).toMatchObject({ ok: false, code: "PACKAGE_TOO_LARGE" });
+  });
+
+  it("rejects a wrong catalogue id and tampered content", async () => {
+    const target = verifiedEntry();
+    const { archive } = await exportedArchive(target);
+    expect(
+      await importPackageStream(entry({ id: "other-entry" }), archive),
+    ).toMatchObject({ ok: false, code: "ENTRY_MISMATCH" });
+
+    const tampered = await exportedArchive(target, (files) => {
+      const flipped = files[0]!.bytes.slice();
+      flipped[0] = (flipped[0]! + 1) & 0xff;
+      files[0] = { path: files[0]!.path, bytes: flipped };
+    });
+    expect(await importPackageStream(target, tampered.archive)).toMatchObject({
+      ok: false,
+      code: "HASH_MISMATCH",
+    });
+  });
+
+  it("refuses import and export when storage is short", async () => {
+    const target = verifiedEntry();
+    const { archive } = await exportedArchive(target);
+    expect(
+      await importPackageStream(target, archive, {
+        freeBytes: 10,
+        requiredBytes: 100,
+      }),
+    ).toMatchObject({ ok: false, code: "INSUFFICIENT_STORAGE" });
+    expect(
+      await importPackageStream(target, archive, { freeBytes: 10 }),
+    ).toMatchObject({ ok: false, code: "INSUFFICIENT_STORAGE" });
+
+    const writer = new TestWriter();
+    expect(
+      await exportPackageStream(target, testReader(installedParts()), writer, {
+        createdAt: "2026-09-22T00:00:00.000Z",
+        freeBytes: 10,
+        requiredBytes: 100,
+      }),
+    ).toMatchObject({ ok: false, code: "INSUFFICIENT_STORAGE" });
+  });
+
+  it("discards partial output when export is interrupted", async () => {
+    const target = verifiedEntry();
+    class FailingWriter extends TestWriter {
+      override async writeFile(
+        file: { path: string; method: "STORE" | "DEFLATE" },
+        chunks: AsyncIterable<Uint8Array>,
+      ): Promise<void> {
+        if (file.path === "tokenizer/vocab.json") {
+          throw new Error("simulated disk drop");
+        }
+        return super.writeFile(file, chunks);
+      }
+    }
+    const failing = new FailingWriter();
+    expect(
+      await exportPackageStream(target, testReader(installedParts()), failing, {
+        createdAt: "2026-09-22T00:00:00.000Z",
+      }),
+    ).toMatchObject({ ok: false, code: "CORRUPT_ARCHIVE" });
+    expect(failing.files.has("tokenizer/vocab.json")).toBe(false);
+
+    const cancelled = new TestWriter();
+    expect(
+      await exportPackageStream(
+        target,
+        testReader(installedParts()),
+        cancelled,
+        {
+          createdAt: "2026-09-22T00:00:00.000Z",
+          control: { isCancelled: () => true },
+        },
+      ),
+    ).toMatchObject({ ok: false, code: "CANCELLED" });
   });
 });
 
