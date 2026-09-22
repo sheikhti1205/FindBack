@@ -253,6 +253,184 @@ class ModelStore(val root: File, private val appVersion: String = "unknown") {
     }
 
     /**
+     * Returns the entry-keyed text transfer-state record file
+     * (`root/<entryId>/text-state.json`). The record itself is read and
+     * written by [TextTransferStateStore]; this only resolves the path.
+     */
+    fun textStateFile(entryId: String): File {
+        return TextTransferStateStore.fileFor(root, entryId)
+    }
+
+    /**
+     * Promotes validated package-staging files into the authoritative
+     * layout (`root/<manifest.id>/<manifest.revision>/…`). Each spec
+     * resolves to the staged file with the same base name (release
+     * packages nest artifacts under `weights/` while installed files
+     * are addressed by spec path); package envelope files
+     * (`manifest.json`, `checksums.json`) are ignored. Resolution is
+     * exact: one spec must match exactly one staged file and every
+     * non-envelope staged file must match a spec, otherwise nothing is
+     * installed. Every resolved file is verified against the spec size
+     * and SHA — the installed pins, never values from inside the
+     * package — before any move. Each move is atomic with the
+     * pre-existing final quarantined aside first, so any failure
+     * restores every pre-existing final byte-exact and removes every
+     * placed file. Writes no state records: lifecycle recording stays
+     * with the caller, as does the staging dir lifecycle.
+     *
+     * @return true when every spec file is the verified content.
+     */
+    fun promoteValidatedSandbox(manifest: ModelManifest, sandbox: File): Boolean {
+        if (manifest.files.isEmpty()) return false
+        val sandboxCanonical = try {
+            sandbox.canonicalPath
+        } catch (e: java.io.IOException) {
+            return false
+        }
+        val walkFiles = try {
+            if (!sandbox.isDirectory) return false
+            sandbox.walkTopDown().filter { it.isFile }.toList()
+        } catch (e: java.io.IOException) {
+            return false
+        }
+        val candidates = mutableListOf<Pair<String, File>>()
+        for (file in walkFiles) {
+            val canonical = try {
+                file.canonicalPath
+            } catch (e: java.io.IOException) {
+                return false
+            }
+            if (!canonical.startsWith(sandboxCanonical + File.separator)) return false
+            val relativePath = canonical.removePrefix(sandboxCanonical + File.separator)
+                .replace(File.separatorChar, '/')
+            if (relativePath != PackageHost.MANIFEST_NAME && relativePath != PackageHost.CHECKSUMS_NAME) {
+                candidates.add(relativePath to file)
+            }
+        }
+        val staged = manifest.files.map { spec ->
+            val baseName = spec.path.substringAfterLast('/')
+            val matches = candidates.filter { (relativePath, _) -> relativePath.substringAfterLast('/') == baseName }
+            if (matches.size != 1) return false
+            spec to matches.single().second
+        }
+        val stagedCanonicals = staged.map { (_, source) ->
+            try {
+                source.canonicalPath
+            } catch (e: java.io.IOException) {
+                return false
+            }
+        }.toSet()
+        if (candidates.any { (_, file) ->
+                try {
+                    file.canonicalPath !in stagedCanonicals
+                } catch (e: java.io.IOException) {
+                    return false
+                }
+            }
+        ) return false
+        for ((spec, source) in staged) {
+            if (!source.isFile || source.length() != spec.expectedBytes) return false
+            if (!Sha256.matchesFile(source, spec.sha256)) return false
+        }
+        val targetDir = dirFor(manifest)
+        targetDir.mkdirs()
+        val placed = mutableListOf<Pair<File, File?>>()
+        val nonce = System.nanoTime()
+        for ((spec, source) in staged) {
+            val final = finalFile(manifest, spec)
+            final.parentFile?.mkdirs()
+            var backup: File? = null
+            if (final.exists()) {
+                backup = File(final.parentFile, "${final.name}.promotebak-$nonce")
+                try {
+                    java.nio.file.Files.move(
+                        final.toPath(),
+                        backup.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                    )
+                } catch (e: java.io.IOException) {
+                    rollbackPromotion(placed)
+                    return false
+                }
+            }
+            val moved = try {
+                try {
+                    java.nio.file.Files.move(
+                        source.toPath(),
+                        final.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                    )
+                } catch (e: java.nio.file.AtomicMoveNotSupportedException) {
+                    java.nio.file.Files.move(
+                        source.toPath(),
+                        final.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                    )
+                }
+                true
+            } catch (e: java.io.IOException) {
+                false
+            }
+            if (!moved || !isValidFinal(final, spec)) {
+                try {
+                    if (final.exists() && !isValidFinal(final, spec)) final.delete()
+                } catch (_: Exception) {
+                }
+                if (backup != null) restorePromotionBackup(backup, final)
+                rollbackPromotion(placed)
+                return false
+            }
+            placed.add(final to backup)
+        }
+        for ((_, backup) in placed) {
+            try {
+                backup?.delete()
+            } catch (_: Exception) {
+            }
+        }
+        return true
+    }
+
+    private fun restorePromotionBackup(backup: File, final: File) {
+        try {
+            if (backup.exists()) {
+                java.nio.file.Files.move(
+                    backup.toPath(),
+                    final.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                )
+            }
+        } catch (e: java.io.IOException) {
+        }
+    }
+
+    private fun rollbackPromotion(placed: List<Pair<File, File?>>) {
+        for ((final, backup) in placed.asReversed()) {
+            try {
+                if (final.exists()) final.delete()
+            } catch (_: Exception) {
+            }
+            if (backup != null) restorePromotionBackup(backup, final)
+        }
+    }
+
+    /**
+     * Deletes exactly the `root/<entryId>/` prefix: all revisions,
+     * transfer artifacts, and entry-keyed records. Sibling entries are
+     * untouched. Writes no state records.
+     */
+    fun deleteEntry(entryId: String) {
+        if (TextTransferStateStore.isUnsafeEntryId(entryId)) {
+            throw IllegalArgumentException("Unsafe entry id: $entryId")
+        }
+        val dir = File(root, entryId)
+        if (dir.exists()) {
+            deleteRecursively(dir)
+        }
+    }
+
+    /**
      * Deletes all files for a specific model ID, preserving other models.
      */
     fun deleteModel(modelId: VlmModelId) {

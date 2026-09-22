@@ -942,10 +942,14 @@ class LocalVlmPlugin : Plugin() {
     /**
      * Streaming package import from a SAF content URI: the document stream
      * is staged with an incremental whole-package hash, ZIP entries are
-     * validated and extracted to a temp sandbox, and on full success the
-     * sandbox is atomically promoted. Any rejection leaves nothing
-     * installed. The expected pin comes from the in-app shipped catalogue
-     * via the caller — never from inside the package under test.
+     * validated into a temp staging dir, and on full success the staged
+     * files are promoted into the authoritative `ModelStore` layout
+     * (`root/<entryId>/<revision>/…`) with interior hashes re-verified
+     * against the installed pins — never values from inside the package.
+     * Staging is temp-only and always removed: no second installation
+     * root survives. Any rejection leaves nothing installed. The
+     * expected pin comes from the in-app shipped catalogue via the
+     * caller — never from inside the package under test.
      */
     @PluginMethod
     fun importPackageFromUri(call: PluginCall) {
@@ -955,19 +959,63 @@ class LocalVlmPlugin : Plugin() {
         val expectedSha256 = call.getString("expectedSha256") ?: return call.reject("Missing expectedSha256")
         scope.launch {
             try {
+                val manifest = MODEL_MANIFESTS.singleOrNull { it.id == entryId }
+                if (manifest == null) {
+                    call.reject("Unknown catalogue entry: $entryId", PackageHost.Code.ENTRY_MISMATCH)
+                    return@launch
+                }
                 val uri = Uri.parse(sourceUri)
-                val result = getContext().contentResolver.openInputStream(uri)?.use { input ->
-                    val workDir = File(getContext().filesDir, "package-host")
-                    val installRoot = File(getContext().filesDir, "findback-packages")
-                    PackageHost.importPackage(input, entryId, expectedSha256, workDir, installRoot, getFreeBytes())
-                } ?: throw IllegalStateException("The document could not be opened.")
-                if (result.ok) {
+                val workDir = File(getContext().filesDir, "package-host")
+                val stagingRoot = File(workDir, "staging-${System.nanoTime()}")
+                try {
+                    val staged = getContext().contentResolver.openInputStream(uri)?.use { input ->
+                        PackageHost.importPackage(input, entryId, expectedSha256, workDir, stagingRoot, getFreeBytes())
+                    } ?: throw IllegalStateException("The document could not be opened.")
+                    if (!staged.ok) {
+                        call.reject(staged.reason ?: "Package rejected", staged.code)
+                        return@launch
+                    }
+                    val store = requireStore()
+                    if (!store.promoteValidatedSandbox(manifest, File(stagingRoot, entryId))) {
+                        call.reject(
+                            "Package interior does not match the installed pins for $entryId. Nothing installed.",
+                            PackageHost.Code.HASH_MISMATCH
+                        )
+                        return@launch
+                    }
+                    if (entryId == QwenTextRuntime.ENTRY_ID) {
+                        TextTransferStateStore.saveAtomic(
+                            store.textStateFile(entryId),
+                            TextTransferState(
+                                entryId = entryId,
+                                revision = manifest.revision,
+                                state = VlmState.INSTALLED_UNVERIFIED,
+                                installedBytes = manifest.files.sumOf { it.expectedBytes },
+                                installedSha256 = manifest.files.joinToString("") { it.sha256 },
+                                installTimestamp = System.currentTimeMillis()
+                            )
+                        )
+                    } else {
+                        val modelId = VlmModelId.fromWire(entryId)
+                        if (modelId == null) {
+                            call.reject(
+                                "No lifecycle binding for catalogue entry: $entryId",
+                                PackageHost.Code.ENTRY_MISMATCH
+                            )
+                            return@launch
+                        }
+                        updateModelState(modelId, VlmState.INSTALLED_UNVERIFIED)
+                        persistModelState(modelId, manifest, VlmState.INSTALLED_UNVERIFIED)
+                        if (modelId == VlmModelId.SMOLVLM2_500M) {
+                            engine500 = initializeEngine500()
+                        }
+                    }
                     val response = JSObject()
                     response.put("ok", true)
-                    response.put("manifest", result.manifest?.toJSObject())
+                    response.put("manifest", staged.manifest?.toJSObject())
                     call.resolve(response)
-                } else {
-                    call.reject(result.reason ?: "Package rejected", result.code)
+                } finally {
+                    stagingRoot.deleteRecursively()
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -978,9 +1026,11 @@ class LocalVlmPlugin : Plugin() {
     }
 
     /**
-     * Streaming package export of the installed files for [entryId] to a
-     * SAF destination URI. Only data-only packages can be produced; writer
-     * failures resolve as rejections with nothing claimed as packaged.
+     * Streaming package export of the authoritative installed files for
+     * [entryId] (`root/<entryId>/<revision>/…` — the same files the
+     * runtime resolves) to a SAF destination URI. Only data-only
+     * packages can be produced; writer failures resolve as rejections
+     * with nothing claimed as packaged.
      */
     @PluginMethod
     fun exportPackageToUri(call: PluginCall) {
@@ -989,8 +1039,13 @@ class LocalVlmPlugin : Plugin() {
         val destUri = call.getString("destUri") ?: return call.reject("Missing destUri")
         scope.launch {
             try {
+                val manifest = MODEL_MANIFESTS.singleOrNull { it.id == entryId }
+                if (manifest == null) {
+                    call.reject("Unknown catalogue entry: $entryId", PackageHost.Code.ENTRY_MISMATCH)
+                    return@launch
+                }
                 val uri = Uri.parse(destUri)
-                val installDir = File(File(getContext().filesDir, "findback-packages"), entryId)
+                val installDir = requireStore().dirFor(manifest)
                 val result = getContext().contentResolver.openOutputStream(uri)?.use { output ->
                     PackageHost.exportPackage(entryId, installDir, output)
                 } ?: throw IllegalStateException("The destination could not be opened.")
