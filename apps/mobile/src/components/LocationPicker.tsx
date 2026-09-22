@@ -3,6 +3,7 @@ import { Crosshair, ExternalLink, MapPin } from "lucide-react";
 import { Button } from "./Button";
 import { announce } from "./LiveRegion";
 import { MapEmbed } from "./MapEmbed";
+import { MapPickerSheet } from "./MapPickerSheet";
 import {
   FIND_IN_MAPS_HELP,
   openInMaps,
@@ -41,6 +42,7 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
   const [geoError, setGeoError] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
   // Legacy drafts carry no precision; they were always rounded.
   const [approx, setApprox] = useState(() => value.precision !== "EXACT");
   const [sourceText, setSourceText] = useState(value.label);
@@ -182,6 +184,21 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
     announce("Exact pin enabled. It will be shown publicly.");
   }
 
+  function handleMapConfirm(next: LocationValue) {
+    // The sheet already commits through the same approximate-by-default path;
+    // re-enter via setCoords so precise/approx state stays in sync, and show
+    // the confirmed label in the text field.
+    setSourceText(next.label);
+    setParseError(null);
+    setGeoError(null);
+    setCoords(
+      next.label,
+      next.preciseLatitude ?? next.latitude,
+      next.preciseLongitude ?? next.longitude,
+      next.precision ?? "APPROXIMATE",
+    );
+  }
+
   const hasCoords = value.latitude != null && value.longitude != null;
 
   return (
@@ -214,6 +231,10 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
         >
           <Crosshair size={16} aria-hidden />
           Use my location once
+        </Button>
+        <Button type="button" variant="outline" size="md" onClick={() => setMapOpen(true)}>
+          <MapPin size={16} aria-hidden />
+          Choose on map
         </Button>
         <Button
           type="button"
@@ -270,6 +291,13 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
       <p className="text-xs text-on-surface-variant">{FIND_IN_MAPS_HELP} Paste the coordinates or link back here.</p>
 
       <MapEmbed lat={value.latitude} lng={value.longitude} label={value.label} />
+
+      <MapPickerSheet
+        open={mapOpen}
+        onClose={() => setMapOpen(false)}
+        value={value}
+        onConfirm={handleMapConfirm}
+      />
     </div>
   );
 }
