@@ -7,7 +7,7 @@ import {
   isFbmodelDeniedSuffix,
 } from "./fbmodelSeam";
 
-describe("fbmodel seam (Task 28 reserved, no implementation)", () => {
+describe("fbmodel seam (reserved, no implementation)", () => {
   it("pins the package extension and manifest version", () => {
     expect(FBMODEL_EXTENSION).toBe(".fbmodel");
     expect(FBMODEL_PACKAGE_VERSION).toBe("1");

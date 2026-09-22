@@ -89,7 +89,7 @@ const emptyValue: LocationValue = {
   preciseLongitude: null,
 };
 
-describe("LocationPicker coordinate readout (WP17 #14)", () => {
+describe("LocationPicker coordinate readout", () => {
   it("shows approximate pins at 3 decimals, matching the ~100 m claim", () => {
     renderPicker(approxValue);
     expect(screen.getByText("23.810, 90.412")).toBeTruthy();

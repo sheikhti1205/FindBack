@@ -1,5 +1,5 @@
 /**
- * Model Library RAM policy (Task 26, NEW FILE).
+ * Model Library RAM policy.
  *
  * Pure presentation rules from `docs/specs/model-library/ram-ui.md`. No
  * enforcement, no native wiring, no allocation probes: callers pass a

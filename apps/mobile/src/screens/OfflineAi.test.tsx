@@ -312,7 +312,7 @@ describe("OfflineAi", () => {
     expect(photo.takePhoto).not.toHaveBeenCalled();
   });
 
-  it("surfaces a friendly error when a model action rejects (WP10a)", async () => {
+  it("surfaces a friendly error when a model action rejects", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "CORRUPT" }]);
@@ -325,7 +325,7 @@ describe("OfflineAi", () => {
     expect(alert.textContent).toContain("Repair failed: disk busy");
   });
 
-  it("hides GPU self-test when native photo capture is unavailable (WP10)", async () => {
+  it("hides GPU self-test when native photo capture is unavailable", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(false);
     try {
       bridge.getCapabilities.mockResolvedValue({ ...capabilities, gpuDelegateClassPresent: true });
@@ -342,7 +342,7 @@ describe("OfflineAi", () => {
     }
   });
 
-  it("disables Download with unknown storage when capabilities fail (W5 #21)", async () => {
+  it("disables Download with unknown storage when capabilities fail", async () => {
     bridge.getCapabilities.mockRejectedValue(new Error("process dead"));
     bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
@@ -354,7 +354,7 @@ describe("OfflineAi", () => {
     expect((download as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("still renders NOT_INSTALLED rows when model states fail (WP10 #20)", async () => {
+  it("still renders NOT_INSTALLED rows when model states fail", async () => {
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getModelStates.mockRejectedValue(new Error("process dead"));
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());

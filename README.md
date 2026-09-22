@@ -67,15 +67,17 @@ Node Express API remains in the repo as a Docker/coursework reference but is not
 part of the mobile runtime. Post and comment payloads expose a public author
 profile only — never email or phone.
 
-**On-device AI (no network):** the create-report screen runs local sentence
-embeddings (Universal Sentence Encoder via TF.js/WASM) for "Possible Matches"
-(top-3 cosine similarity, never a probability, no vector DB, no server AI) and
-a local VLM (LiteRT-LM / SmolVLM2, GPU preferred with an explicit,
-user-controlled CPU compatibility mode as a clearly labeled fallback) for
-"Generate report". The Help Assistant (Edge Function `ai-help`)
-remains available as a secondary fallback. Runtime GPU proof and 256M readiness
-are **BLOCKED on the ARM64 phone pass** and must not be claimed from a host
-`x86_64` build.
+**On-device AI (no network):** the create-report screen offers a local VLM
+(LiteRT-LM / SmolVLM2, GPU preferred with an explicit, user-controlled CPU
+compatibility mode as a clearly labeled fallback) behind the "Analyze photo" /
+"Generate suggestions" buttons, and the post-detail screen shows
+"Possible Matches" (top-3 cosine similarity over local sentence embeddings
+from the native bridge to the MediaPipe TextEmbedder asset — never a
+probability, no vector DB, no server AI). The Help Assistant (Edge Function
+`ai-help`) remains available as a secondary fallback. The 256M model is kept
+for diagnostic/storage compatibility only and is never offered for report
+generation. Runtime GPU proof is **BLOCKED on the ARM64 phone pass** and must
+not be claimed from a host `x86_64` build.
 
 Demo login for the **local/demo backend** (`DB_PROVIDER=sqlite` seed only): any of
 `rafi_cu`, `nusrat`, `tanvir_ce`, `shimu`, `arif_cse`, `mitu`, `sayeed_bsc`,

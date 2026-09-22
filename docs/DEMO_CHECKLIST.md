@@ -31,9 +31,11 @@ _Signup and login now go directly from the app to Supabase Auth (publishable key
 2. Fill multiple text boxes (title/description), pick a **category dropdown**
    and the **date picker** (req 14), and capture an approximate location with the
    one-time "Use my location" button plus a free-text label (req 10).
-3. Attach a photo (req 13) and press **Possible Matches (on-device text embeddings)** before
-   publishing — local sentence embeddings + cosine similarity (top 3, never a probability, no vector DB, no server AI) runs on the device using weights bundled in the app, with no CDN fallback and no network request; the photo never leaves the device (req 12).
-4. Press **Generate report (local VLM on GPU)** — LiteRT-LM / SmolVLM2 runs inference on the GPU delegate with no CPU fallback (policy + build property); the structured report is applied as suggestions to the form fields (req 23).
+3. Attach a photo (req 13); on the published post, **Possible Matches (on-device text embeddings)** shows
+   up to 3 open opposite-type reports ranked by text similarity — local sentence embeddings via the
+   native bridge to the MediaPipe TextEmbedder asset plus cosine similarity (never a probability, no
+   vector DB, no server AI); the photo never leaves the device (req 12).
+4. On the create-report screen press **Analyze photo**, then **Generate suggestions (local VLM, GPU preferred)** — LiteRT-LM / SmolVLM2 prefers the GPU delegate; if GPU initialization fails and the user allows CPU compatibility mode, analysis runs on CPU with an explicit on-screen notice, never silently; the structured report is applied as suggestions to the form fields (req 23).
 5. Paste a YouTube link and watch the embedded player render live (req 9).
 6. Publish → open the post (tailwind-styled, animated card entrance — req 16/15).
 
