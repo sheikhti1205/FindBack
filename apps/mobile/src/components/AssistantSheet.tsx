@@ -3,11 +3,13 @@ import { BottomSheet } from "./BottomSheet";
 import { RECOVERY_COPY, type RecoveryAction } from "../services/ai/errors";
 import type { AiErrorClass } from "../services/ai/types";
 import {
+  executeAssistantMessage,
+  type AssistantExecutionRuntime,
+} from "../services/assistant/assistantExecution";
+import {
   GUIDED_FLOWS,
   LOCATION_CHOICES,
   PHOTO_CHOICES,
-  applyReportFields,
-  applySearchFields,
   chooseLocation,
   choosePhoto,
   nextMissingQuestion,
@@ -158,6 +160,13 @@ export interface AssistantSheetProps {
   onPhotoChoice?: (choice: PhotoChoice) => void;
   onLocationChoice?: (choice: LocationChoice) => void;
   onRecoveryAction?: (action: RecoveryAction) => void;
+  /**
+   * Execution runtime. Defaults to grounded local routing with the server
+   * Help path for app questions (no model required).
+   */
+  runtime?: AssistantExecutionRuntime;
+  /** Emitted on every snapshot change so outer flows can consume held results. */
+  onSnapshot?: (snapshot: GuidedSnapshot) => void;
 }
 
 export function AssistantSheet({
@@ -167,62 +176,71 @@ export function AssistantSheet({
   onPhotoChoice,
   onLocationChoice,
   onRecoveryAction,
+  runtime,
+  onSnapshot,
 }: AssistantSheetProps) {
   const [snapshot, setSnapshot] = useState<GuidedSnapshot | null>(null);
+  const [reply, setReply] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [input, setInput] = useState("");
 
+  function update(next: GuidedSnapshot): void {
+    setSnapshot(next);
+    onSnapshot?.(next);
+  }
+
   function begin(flow: GuidedFlow): void {
-    setSnapshot(startFlow(flow));
+    update(startFlow(flow));
+    setReply(null);
     onShortcut?.(flow);
+  }
+
+  async function submitText(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (trimmed === "" || busy) return;
+    if (snapshot !== null && snapshot.state === "recovering") return;
+    const typedLocation =
+      snapshot !== null &&
+      snapshot.state === "awaitingLocation" &&
+      snapshot.flow !== "search" &&
+      snapshot.flow !== "ask";
+    setBusy(true);
+    try {
+      const result = await executeAssistantMessage(snapshot, trimmed, runtime ?? {});
+      update(result.snapshot);
+      setReply(result.reply);
+      if (typedLocation && result.snapshot.locationChoice === "typed") {
+        onLocationChoice?.("typed");
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   function submitInput(event: FormEvent): void {
     event.preventDefault();
-    const text = input.trim();
-    if (text === "") return;
+    const text = input;
     setInput("");
-    if (snapshot === null) {
-      setSnapshot(applySearchFields(startFlow("ask"), { query: text }));
-      onShortcut?.("ask");
-      return;
-    }
-    if (snapshot.state === "recovering") return;
-    if (snapshot.state === "awaitingLocation") {
-      setSnapshot(chooseLocation(snapshot, "typed", text));
-      onLocationChoice?.("typed");
-      return;
-    }
-    if (snapshot.flow === "search") {
-      setSnapshot(applySearchFields(snapshot, { query: text }));
-      return;
-    }
-    if (snapshot.flow === "ask") return;
-    const missing = snapshot.missingFields;
-    if (missing.includes("category")) {
-      setSnapshot(applyReportFields(snapshot, { category: text }));
-    } else if (missing.includes("date")) {
-      setSnapshot(applyReportFields(snapshot, { dateText: text }));
-    } else if (missing.includes("location")) {
-      setSnapshot(applyReportFields(snapshot, { locationNote: text }));
-    }
+    void submitText(text);
   }
 
   function pickPhoto(choice: PhotoChoice): void {
     if (snapshot === null) return;
-    setSnapshot(choosePhoto(snapshot, choice));
+    update(choosePhoto(snapshot, choice));
     onPhotoChoice?.(choice);
   }
 
   function pickLocation(choice: LocationChoice): void {
     if (snapshot === null || snapshot.state === "recovering") return;
     if (choice === "typed") return;
-    setSnapshot(chooseLocation(snapshot, choice));
+    update(chooseLocation(snapshot, choice));
     onLocationChoice?.(choice);
   }
 
   function recover(action: RecoveryAction): void {
     if (snapshot !== null && action === "Retry") {
-      setSnapshot(retryAfterRecovery(snapshot));
+      update(retryAfterRecovery(snapshot));
+      setReply(null);
     }
     onRecoveryAction?.(action);
   }
@@ -259,6 +277,11 @@ export function AssistantSheet({
             {question.question}
           </p>
         ) : null}
+        {reply !== null && reply !== question?.question ? (
+          <p data-testid="assistant-reply" className="text-sm">
+            {reply}
+          </p>
+        ) : null}
         {snapshot?.state === "awaitingPhoto" && snapshot.photoRequest !== undefined ? (
           <AssistantPhotoStep onChoice={pickPhoto} />
         ) : null}
@@ -269,6 +292,24 @@ export function AssistantSheet({
           <AssistantRecoveryNotice errorClass={snapshot.recovery.errorClass} onAction={recover} />
         ) : null}
         {snapshot?.state === "ready" ? <AssistantReadySummary snapshot={snapshot} /> : null}
+        {snapshot?.state === "ready" &&
+        (snapshot.flow === "lost" || snapshot.flow === "found") ? (
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              data-testid="assistant-review-held"
+              disabled
+              aria-disabled="true"
+              title="Review stays in the assistant — the report form is never filled in automatically."
+              className="min-h-[48px] rounded-full bg-on-surface px-3 text-xs font-medium text-surface disabled:opacity-40"
+            >
+              Review report
+            </button>
+            <p data-testid="assistant-review-held-note" className="text-xs text-on-surface-variant">
+              Review stays here for now — the report form is never filled in automatically.
+            </p>
+          </div>
+        ) : null}
         <form data-testid="assistant-form" onSubmit={submitInput} className="flex items-center gap-2">
           <input
             data-testid="assistant-input"
@@ -282,7 +323,7 @@ export function AssistantSheet({
           <button
             type="submit"
             aria-label="Send"
-            disabled={input.trim() === ""}
+            disabled={input.trim() === "" || busy}
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-on-surface text-surface disabled:opacity-40"
           >
             Send

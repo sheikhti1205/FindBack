@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router";
-import { Home, PlusCircle, Search, UserRound } from "lucide-react";
+import { Bot, Home, PlusCircle, Search, UserRound } from "lucide-react";
 import { TabTapProvider, useTabTap } from "./TabTap";
+import { AssistantSheet } from "./AssistantSheet";
 import { LiveRegion } from "./LiveRegion";
 import { requestHistorySuppression } from "./backNavigation";
 
@@ -24,6 +26,7 @@ const HIDE_NAV = ["/help", "/posts/", "/offline-ai"];
 export function Shell() {
   const { pathname } = useLocation();
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   return (
     <TabTapProvider>
@@ -32,6 +35,16 @@ export function Shell() {
           <Outlet />
         </main>
         {showNav && <BottomNav />}
+        <button
+          type="button"
+          data-testid="assistant-entry"
+          aria-label="Open assistant"
+          onClick={() => setAssistantOpen(true)}
+          className="fixed bottom-24 right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-on-surface text-surface shadow-lg"
+        >
+          <Bot size={24} aria-hidden />
+        </button>
+        <AssistantSheet open={assistantOpen} onClose={() => setAssistantOpen(false)} />
         <LiveRegion />
       </div>
     </TabTapProvider>
