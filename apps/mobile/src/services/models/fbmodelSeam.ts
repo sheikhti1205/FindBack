@@ -1,8 +1,8 @@
 /**
- * `.fbmodel` import/export seam for Task 28 (Task 26, NEW FILE — SEAM ONLY).
+ * `.fbmodel` import/export seam (types + filename predicate — SEAM ONLY).
  *
- * Task 26 must NOT build import/export. This module reserves the documented
- * seam the Task-28 importer/exporter will implement: package manifest types,
+ * This module reserves the documented seam a future importer/exporter will
+ * implement: package manifest types,
  * the data-only invariants from `docs/specs/model-library/fbmodel-package.md`,
  * and one pure filename predicate. No file I/O, no ZIP handling, no network.
  */
@@ -25,7 +25,7 @@ export interface FbmodelManifestFile {
   method: FbmodelCompressionMethod;
 }
 
-/** In-package manifest (source of truth for extraction in Task 28). */
+/** In-package manifest (source of truth for extraction). */
 export interface FbmodelManifest {
   packageVersion: typeof FBMODEL_PACKAGE_VERSION;
   entryId: string;
@@ -72,17 +72,17 @@ export function isFbmodelDeniedSuffix(interiorPath: string): boolean {
 }
 
 /**
- * Task-28 seam: the importer/exporter interface (DECLARED here, IMPLEMENTED
- * in Task 28). Task-26 code must reference this seam type only and must not
+ * Seam for the future importer/exporter: the package interface (DECLARED here,
+ * IMPLEMENTED later). Callers must reference this seam type only and must not
  * provide an implementation.
  */
 export interface FbmodelPackageSeam {
-  /** Task 28: validate + extract a package into the per-model sandbox. */
+  /** Validate + extract a package into the per-model sandbox. */
   importPackage: (args: {
     packagePath: string;
     entryId: string;
   }) => Promise<{ manifest: FbmodelManifest }>;
-  /** Task 28: assemble a shareable offline package from installed files. */
+  /** Assemble a shareable offline package from installed files. */
   exportPackage: (args: {
     entryId: string;
     outputPath: string;

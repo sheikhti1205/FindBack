@@ -1,5 +1,5 @@
 /**
- * Below-minimum advanced-confirmation gate (Task 26, NEW FILE — design UI).
+ * Below-minimum advanced-confirmation gate (design UI).
  *
  * Implements the ram-ui.md §3 gate DIALOG only: it shows the three figures +
  * source chip + ramNotes, requires an explicit checkbox acknowledgement (never

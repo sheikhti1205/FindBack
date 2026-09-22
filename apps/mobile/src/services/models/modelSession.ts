@@ -1,5 +1,5 @@
 /**
- * Single-resident generative-model switching semantics (Task 26, NEW FILE).
+ * Single-resident generative-model switching semantics.
  *
  * Guard G7: at most one generative model is resident at a time. Switching
  * models follows the ordered sequence cancel → release → verify memory →

@@ -1,5 +1,5 @@
 /**
- * Curated Model Library catalogue helpers (Task 26, NEW FILE).
+ * Curated Model Library catalogue helpers.
  *
  * Pure selection/label logic over {@link ModelCatalogueEntry}. No fetching,
  * no downloading, no runtime integration — the downloader/importer and the
