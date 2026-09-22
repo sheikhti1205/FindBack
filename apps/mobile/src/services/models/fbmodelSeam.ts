@@ -57,7 +57,7 @@ export const FBMODEL_DENIED_SUFFIXES: readonly string[] = [
 
 /** Magic prefixes the Task-28 importer must sniff for (ELF, MZ, dex). */
 export const FBMODEL_DENIED_MAGICS: readonly string[] = [
-  "\\x7fELF",
+  "\x7fELF",
   "MZ",
   "dex\n",
 ] as const;
