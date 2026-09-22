@@ -20,6 +20,7 @@ import {
   qwenExportArgs,
   qwenImportArgs,
   qwenOwnedRelativePaths,
+  shellTextSeamsFromBridgeStatus,
   shippedQwenEntry,
   signalsFromBridgeStatus,
   TEXT_READY_STATE,
@@ -52,6 +53,7 @@ function qwenEntry(
     upstreamRepo: "litert-community/Qwen3-0.6B",
     upstreamFile: "Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm",
     provenance: [{ kind: "VENDOR_MODEL_CARD", ref: "x", note: "test" }],
+    // Mirrors the shipped catalogue: prepared but not published.
     distribution: {
       repo: "sheikhti1205/FindBack-Models",
       tag: "models-2026-09-22-v1",
@@ -59,9 +61,24 @@ function qwenEntry(
       bytes: 64,
       sha256:
         "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+      state: "UNPUBLISHED",
       parts: null,
     },
     ...overrides,
+  };
+}
+
+/** Fixture entry with a PUBLISHED distribution for download success paths. */
+function publishedQwenEntry(
+  overrides: Partial<ModelCatalogueEntry> = {},
+): ModelCatalogueEntry {
+  const entry = qwenEntry(overrides);
+  return {
+    ...entry,
+    distribution:
+      entry.distribution == null
+        ? null
+        : { ...entry.distribution, state: "PUBLISHED" },
   };
 }
 
@@ -214,7 +231,7 @@ describe("activateQwenText", () => {
 describe("downloadQwenToStore", () => {
   it("downloads, verifies, and commits the qualified entry", async () => {
     const data = fixtureBytes();
-    const entry = qwenEntry({
+    const entry = publishedQwenEntry({
       downloadBytes: data.length,
       installedBytes: data.length,
       sha256: sha256BytesHex(data),
@@ -226,6 +243,26 @@ describe("downloadQwenToStore", () => {
     });
     expect(result.ok).toBe(true);
     expect(store.installedBytes(entry.id)).toBe(data.length);
+  });
+
+  it("refuses network download while the distribution is unpublished", async () => {
+    const data = fixtureBytes();
+    const entry = qwenEntry({
+      downloadBytes: data.length,
+      installedBytes: data.length,
+      sha256: sha256BytesHex(data),
+    });
+    const transport = fakeTransport(data);
+    const download = vi.spyOn(transport, "download");
+    const store = new MemoryTransferStore();
+    const result = await downloadQwenToStore(entry, transport, store, {
+      availableFreeRamMb: 4096,
+      advancedConfirmed: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("NOT_PUBLISHED");
+    expect(download).not.toHaveBeenCalled();
+    expect(store.installedBytes(entry.id)).toBe(null);
   });
 
   it("refuses entries without a pinned release asset", async () => {
@@ -244,7 +281,7 @@ describe("downloadQwenToStore", () => {
     const data = fixtureBytes();
     const tampered = data.slice();
     tampered[0] = ((tampered[0] ?? 0) + 1) & 0xff;
-    const entry = qwenEntry({
+    const entry = publishedQwenEntry({
       downloadBytes: data.length,
       installedBytes: data.length,
       sha256: sha256BytesHex(data),
@@ -263,10 +300,14 @@ describe("downloadQwenToStore", () => {
 
 describe("qwenDownloadUrl", () => {
   it("builds the pinned release URL for the qualified entry only", () => {
-    expect(qwenDownloadUrl(qwenEntry())).toBe(
+    expect(qwenDownloadUrl(publishedQwenEntry())).toBe(
       "https://github.com/sheikhti1205/FindBack-Models/releases/download/models-2026-09-22-v1/qwen3-0.6b-litert-dynamic-int4.fbmodel",
     );
-    expect(qwenDownloadUrl(qwenEntry({ id: "other-entry" }))).toBe(null);
+    expect(qwenDownloadUrl(publishedQwenEntry({ id: "other-entry" }))).toBe(null);
+  });
+
+  it("withholds the URL while the distribution is unpublished", () => {
+    expect(qwenDownloadUrl(qwenEntry())).toBe(null);
   });
 });
 
@@ -388,6 +429,55 @@ describe("signalsFromBridgeStatus", () => {
       residentModelId: "smolvlm2-500m",
     });
     expect(signals.residentModelId).toBe(null);
+  });
+});
+
+describe("shellTextSeamsFromBridgeStatus", () => {
+  it("fails closed on a missing status read", () => {
+    expect(shellTextSeamsFromBridgeStatus(null)).toEqual({
+      textInstalled: false,
+      textReady: false,
+    });
+    expect(shellTextSeamsFromBridgeStatus(undefined)).toEqual({
+      textInstalled: false,
+      textReady: false,
+    });
+  });
+
+  it("projects installed and ready, never file presence alone", () => {
+    expect(
+      shellTextSeamsFromBridgeStatus({
+        modelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+        ready: true,
+        nativeRunning: false,
+        backend: "gpu",
+        modelFilePresent: true,
+        installed: true,
+        textReady: true,
+      }),
+    ).toEqual({ textInstalled: true, textReady: true });
+    expect(
+      shellTextSeamsFromBridgeStatus({
+        modelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+        ready: false,
+        nativeRunning: false,
+        backend: "gpu",
+        modelFilePresent: true,
+        installed: true,
+        textReady: false,
+      }),
+    ).toEqual({ textInstalled: true, textReady: false });
+    expect(
+      shellTextSeamsFromBridgeStatus({
+        modelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+        ready: false,
+        nativeRunning: false,
+        backend: "gpu",
+        modelFilePresent: true,
+        installed: false,
+        textReady: false,
+      }),
+    ).toEqual({ textInstalled: false, textReady: false });
   });
 });
 

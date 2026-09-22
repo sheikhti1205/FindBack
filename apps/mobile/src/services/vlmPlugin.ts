@@ -311,21 +311,6 @@ export interface NativeTextRuntimeStatus {
   residentModelId?: string | null;
 }
 
-/**
- * Maps a native text-runtime status read to assistant install/readiness
- * seams. Fail closed: a missing or unreadable status yields installed=false
- * and textReady=false, keeping the assistant on the grounded fallback.
- */
-export function textSeamsFromStatus(
-  status: NativeTextRuntimeStatus | null | undefined,
-): { textInstalled: boolean; textReady: boolean } {
-  if (status == null) return { textInstalled: false, textReady: false };
-  return {
-    textInstalled: status.installed === true,
-    textReady: status.textReady === true,
-  };
-}
-
 /** GPU self-test failure classification (mirrors native SelfTestFailure).
  * RUNTIME_ERROR and MODEL_MISSING/CANCELLED are accepted for the canonical
  * bridge taxonomy; legacy MODEL_RUNTIME_ERROR keeps working. */

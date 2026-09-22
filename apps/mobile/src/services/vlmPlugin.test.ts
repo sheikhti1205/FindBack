@@ -14,7 +14,7 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: () => native,
 }));
 
-import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState, isTransferActive, getModelAction, nativePackageHostFrom, isTextBridge, textSeamsFromStatus } from "./vlmPlugin";
+import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState, isTransferActive, getModelAction, nativePackageHostFrom, isTextBridge } from "./vlmPlugin";
 import { isTextRuntimePresent } from "./models/textRuntime";
 
 beforeEach(() => {
@@ -292,28 +292,5 @@ describe("vlmPlugin text bridge (explicit-modelId production path)", () => {
       modelFilePresent: true,
     });
     expect(native.getTextRuntimeStatus).toHaveBeenCalledWith();
-  });
-
-  it("maps native text status to seams, fail closed on missing status", () => {
-    expect(textSeamsFromStatus(null)).toEqual({ textInstalled: false, textReady: false });
-    expect(textSeamsFromStatus(undefined)).toEqual({ textInstalled: false, textReady: false });
-    expect(
-      textSeamsFromStatus({
-        modelId: "qwen3-0.6b", ready: true, nativeRunning: false, backend: "gpu",
-        modelFilePresent: true, installed: true, textReady: true,
-      }),
-    ).toEqual({ textInstalled: true, textReady: true });
-    expect(
-      textSeamsFromStatus({
-        modelId: "qwen3-0.6b", ready: false, nativeRunning: false, backend: "gpu",
-        modelFilePresent: true, installed: true, textReady: false,
-      }),
-    ).toEqual({ textInstalled: true, textReady: false });
-    expect(
-      textSeamsFromStatus({
-        modelId: "qwen3-0.6b", ready: false, nativeRunning: false, backend: "gpu",
-        modelFilePresent: true, installed: false, textReady: false,
-      }),
-    ).toEqual({ textInstalled: false, textReady: false });
   });
 });
