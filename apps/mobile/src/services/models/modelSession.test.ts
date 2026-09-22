@@ -44,6 +44,8 @@ describe("planModelSwitch", () => {
       target: entry(),
       availableFreeRamMb: 3000,
       advancedConfirmed: false,
+      // Same-id short-circuits before the runtime gate.
+      runtimeCapability: "RUNTIME_UNAVAILABLE",
     });
     expect(plan).toEqual({ blocked: false, steps: [] });
   });
@@ -54,6 +56,7 @@ describe("planModelSwitch", () => {
       target: entry(),
       availableFreeRamMb: 3000,
       advancedConfirmed: false,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(plan).toEqual({ blocked: false, steps: MODEL_SWITCH_STEPS });
     expect(MODEL_SWITCH_STEPS).toEqual([
@@ -70,6 +73,7 @@ describe("planModelSwitch", () => {
       target: entry({ id: "gemma", catalogOnly: true }),
       availableFreeRamMb: 99999,
       advancedConfirmed: true,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(plan.blocked).toBe(true);
   });
@@ -83,6 +87,7 @@ describe("planModelSwitch", () => {
       }),
       availableFreeRamMb: 99999,
       advancedConfirmed: true,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(plan.blocked).toBe(true);
   });
@@ -93,6 +98,7 @@ describe("planModelSwitch", () => {
       target: entry(),
       availableFreeRamMb: 512,
       advancedConfirmed: false,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(blocked.blocked).toBe(true);
   });
@@ -103,7 +109,24 @@ describe("planModelSwitch", () => {
       target: entry(),
       availableFreeRamMb: 512,
       advancedConfirmed: true,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(plan).toEqual({ blocked: false, steps: MODEL_SWITCH_STEPS });
+  });
+
+  it("never offers activation without a wired executable runtime", () => {
+    for (const capability of ["RUNTIME_UNAVAILABLE", "UNKNOWN"] as const) {
+      const blocked = planModelSwitch({
+        currentResidentId: null,
+        target: entry(),
+        availableFreeRamMb: 99999,
+        advancedConfirmed: true,
+        runtimeCapability: capability,
+      });
+      expect(blocked.blocked).toBe(true);
+      if (blocked.blocked) {
+        expect(blocked.reason).toMatch(/no executable runtime/i);
+      }
+    }
   });
 });

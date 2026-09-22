@@ -25,6 +25,12 @@ import {
 import { checkDownloadGate } from "../services/models/modelTransfers";
 import { planModelSwitch } from "../services/models/modelSession";
 import {
+  availabilityForEntry,
+  availabilityLabel,
+  canOfferActivation,
+  runtimeCapabilityForEntry,
+} from "../services/models/runtimeCapability";
+import {
   bridgeModelIdForEntry,
   LEGACY_BRIDGE_MODELS,
   SHIPPED_CATALOGUE_ENTRIES,
@@ -317,6 +323,15 @@ function CatalogueModelCard({
   const warnings = catalogueWarnings(entry);
   const showDeviceWarning = needsOnDeviceWarning(entry);
   const installable = isInstallable(entry);
+  // Catalogue membership, installation, and executable runtime support are
+  // separate facts: the card states its availability explicitly and never
+  // offers activation where this build has no wired runtime path.
+  const availability = availabilityForEntry(entry, {
+    bridgeId,
+    installed: info != null && isInstalledState(info.state),
+    isActive,
+  });
+  const canActivate = canOfferActivation(runtimeCapabilityForEntry(entry.id));
 
   // The native requiredBytes is authoritative; the fallback mirrors the native
   // policy (model + max(256 MiB, 25%)) so the button never lies.
@@ -346,6 +361,9 @@ function CatalogueModelCard({
             <span>{entry.runtime}</span>
             {" · "}
             <span>{verificationLabel(entry.verificationStatus)}</span>
+          </p>
+          <p className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">
+            Library status: {availabilityLabel(availability)}
           </p>
           <p className="min-w-0 break-words text-xs text-on-surface-variant">{formatCatalogueBytes(entry.installedBytes, "installed")}</p>
 
@@ -570,7 +588,7 @@ function CatalogueModelCard({
                   )}
                 </div>
               )}
-              {!isActive && (
+              {!isActive && canActivate && (
                 <button
                   onClick={() => onSetActive(entry)}
                   className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors"
@@ -833,6 +851,7 @@ export function OfflineAi(seams?: OfflineAiSeams) {
       target: entry,
       availableFreeRamMb,
       advancedConfirmed: confirmedEntries.includes(entry.id),
+      runtimeCapability: runtimeCapabilityForEntry(entry.id),
     });
     if (plan.blocked) {
       setActionError(plan.reason);

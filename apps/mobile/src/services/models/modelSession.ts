@@ -10,6 +10,7 @@
 
 import type { ModelCatalogueEntry } from "./catalogueTypes";
 import { needsAdvancedConfirm, type AvailableFreeRamMb } from "./ramPolicy";
+import type { RuntimeCapability } from "./runtimeCapability";
 
 /** At most one generative model resident (guard G7 invariant). */
 export const MAX_RESIDENT_GENERATIVE_MODELS = 1;
@@ -33,6 +34,12 @@ export interface ModelSwitchRequest {
   availableFreeRamMb: AvailableFreeRamMb;
   /** Whether the advanced-confirmation gate was explicitly accepted. */
   advancedConfirmed: boolean;
+  /**
+   * TS-level runtime capability for the target (see `runtimeCapability`).
+   * Activation is offered only for RUNTIME_AVAILABLE targets: entries with
+   * no wired executable runtime path (or unverifiable ids) are blocked.
+   */
+  runtimeCapability: RuntimeCapability;
 }
 
 export type ModelSwitchPlan =
@@ -45,14 +52,21 @@ export type ModelSwitchPlan =
  * - Same id as resident → no steps (already resident).
  * - Non-installable targets (catalogue reference, experimental eval-only
  *   slots) → blocked, never planned as downloads.
+ * - Targets with no executable runtime path (or unverifiable capability) →
+ *   blocked: a switch must never be offered where nothing can run it.
  * - Gate-triggering targets without `advancedConfirmed` → blocked with the
  *   gate reason; the gate UI lives in `ModelAdvancedConfirmGate`.
  * - Otherwise → the full cancel → release → verify-memory → init sequence
  *   (`cancel`/`release` are no-ops when idle but stay in the plan for audit).
  */
 export function planModelSwitch(request: ModelSwitchRequest): ModelSwitchPlan {
-  const { currentResidentId, target, availableFreeRamMb, advancedConfirmed } =
-    request;
+  const {
+    currentResidentId,
+    target,
+    availableFreeRamMb,
+    advancedConfirmed,
+    runtimeCapability,
+  } = request;
 
   if (currentResidentId === target.id) {
     return { blocked: false, steps: [] };
@@ -71,6 +85,14 @@ export function planModelSwitch(request: ModelSwitchRequest): ModelSwitchPlan {
       blocked: true,
       reason:
         "Experimental eval-only entry: activation is not offered in the v1 library.",
+    };
+  }
+
+  if (runtimeCapability !== "RUNTIME_AVAILABLE") {
+    return {
+      blocked: true,
+      reason:
+        "Cannot activate: no executable runtime for this entry in this build.",
     };
   }
 
