@@ -262,8 +262,8 @@ export function AssistantSheet({
         </p>
         <p data-testid="assistant-source-note" className="text-xs text-on-surface-variant">
           {localModelOn
-            ? "On-device text answers are on for this session."
-            : "Built-in answers only — no on-device text model is running."}
+            ? "Using Qwen locally for this session."
+            : "Using built-in help — no on-device text model is running."}
         </p>
         <div className="flex flex-wrap gap-2">
           {GUIDED_FLOWS.map((flow) => (

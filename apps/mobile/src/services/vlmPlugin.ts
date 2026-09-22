@@ -1,6 +1,11 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { FbmodelManifest } from "./models/fbmodelSeam";
 import type {
+  GenerateTextRequest,
+  GenerateTextResult,
+  TextBridgeModelId,
+} from "./models/textRuntime";
+import type {
   ExportStreamResult,
   ImportResult,
   NativePackageHost,
@@ -269,6 +274,36 @@ export interface EmbedTextsResult {
   vectors: number[][];
 }
 
+/** Wire result for native `generateText` (explicit-modelId text generation). */
+export interface NativeGenerateTextResult {
+  text: string;
+  modelId: string;
+  backend?: string;
+  runtime?: string;
+}
+
+/** Wire result for native `runTextSelfTest` (readiness probe, real init plus a small generation). */
+export interface TextSelfTestResult {
+  modelId: string;
+  ready: boolean;
+  state: string;
+  failure?: string;
+  diagnostics: string[];
+}
+
+/**
+ * Wire result for native `getTextRuntimeStatus` (diagnostics read only —
+ * readiness, native activity, backend, model-file presence; never
+ * initializes the runtime and never means lifecycle-installed).
+ */
+export interface NativeTextRuntimeStatus {
+  modelId: string;
+  ready: boolean;
+  nativeRunning: boolean;
+  backend: string;
+  modelFilePresent: boolean;
+}
+
 /** GPU self-test failure classification (mirrors native SelfTestFailure).
  * RUNTIME_ERROR and MODEL_MISSING/CANCELLED are accepted for the canonical
  * bridge taxonomy; legacy MODEL_RUNTIME_ERROR keeps working. */
@@ -353,6 +388,9 @@ interface NativeVlmBridge {
   embedTexts(options: { texts: string[] }): Promise<{ vectors: number[][] }>;
   runGpuSelfTest(options: { modelId: VlmModelId; imageUri?: string }): Promise<GpuSelfTestResult>;
   analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
+  generateText(options: { modelId: TextBridgeModelId; prompt: string; maxOutputTokens: number; temperature: number; traceId?: string }): Promise<NativeGenerateTextResult>;
+  runTextSelfTest(options: { modelId: TextBridgeModelId }): Promise<TextSelfTestResult>;
+  getTextRuntimeStatus(): Promise<NativeTextRuntimeStatus>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
   releaseWarmLease(): Promise<void>;
@@ -475,6 +513,19 @@ export interface VlmBridge {
   embedTexts(texts: string[]): Promise<number[][]>;
   runGpuSelfTest(modelId: VlmModelId, imageUri?: string): Promise<GpuSelfTestResult>;
   analyzeImage(options: AnalyzeRequest): Promise<AnalyzeResult>;
+  /**
+   * Explicit-modelId text generation. Optional: present on Android, absent
+   * on web (refusal by absence keeps the `isTextRuntimePresent` probe false
+   * off-device). Unlike `analyzeImage` — where native picks by mode and
+   * never takes a modelId — the requested model always travels with the
+   * call: native rejects modelId-less calls, so the request carries a
+   * required `modelId` and the bridge never substitutes another model.
+   */
+  generateText?(request: GenerateTextRequest): Promise<GenerateTextResult>;
+  /** Readiness probe for the text runtime (real init plus a small generation). */
+  runTextSelfTest?(modelId: TextBridgeModelId): Promise<TextSelfTestResult>;
+  /** Diagnostics read for the text runtime (never initializes, never means installed). */
+  getTextRuntimeStatus?(): Promise<NativeTextRuntimeStatus>;
   cancelInference(): Promise<void>;
   release(): Promise<void>;
   releaseWarmLease(): Promise<void>;
@@ -483,7 +534,24 @@ export interface VlmBridge {
   onModelStateChange(listener: (event: VlmModelInfo) => void): Promise<() => void>;
 }
 
-/** Web adapter that refuses local AI operations. */
+/** Production text surface: the VlmBridge text methods, all present together. */
+export type TextCapableVlmBridge = VlmBridge &
+  Required<Pick<VlmBridge, "generateText" | "runTextSelfTest" | "getTextRuntimeStatus">>;
+
+/**
+ * Narrows a bridge to the production text surface without casting. Null on
+ * web (methods absent) or any native build without the text methods.
+ */
+export function isTextBridge(bridge: VlmBridge): bridge is TextCapableVlmBridge {
+  return (
+    bridge.generateText !== undefined &&
+    bridge.runTextSelfTest !== undefined &&
+    bridge.getTextRuntimeStatus !== undefined
+  );
+}
+
+/** Web adapter that refuses local AI operations. The text methods stay absent
+ * (refusal by absence) so the real-bridge probe stays false off-device. */
 class WebVlmBridge implements VlmBridge {
   platform = "web" as const;
   gpuDelegateClassPresent = false;
@@ -696,6 +764,26 @@ class AndroidVlmBridge implements VlmBridge {
       ? (cpuDiagnostic ?? "GPU unavailable. Using CPU compatibility mode.")
       : null;
     return result;
+  }
+
+  async generateText(request: GenerateTextRequest): Promise<GenerateTextResult> {
+    // The requested model always travels with the call; native rejects
+    // modelId-less calls and any id other than the qualified text model.
+    const result = await this.native.generateText({
+      modelId: request.modelId,
+      prompt: request.prompt,
+      maxOutputTokens: request.maxOutputTokens,
+      temperature: request.temperature,
+    });
+    return { text: result.text, modelId: request.modelId };
+  }
+
+  async runTextSelfTest(modelId: TextBridgeModelId): Promise<TextSelfTestResult> {
+    return this.native.runTextSelfTest({ modelId });
+  }
+
+  async getTextRuntimeStatus(): Promise<NativeTextRuntimeStatus> {
+    return this.native.getTextRuntimeStatus();
   }
 
   async cancelInference(): Promise<void> {

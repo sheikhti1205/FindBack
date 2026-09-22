@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const native = vi.hoisted(() => ({
   getCapabilities: vi.fn(), getSettings: vi.fn(), setMode: vi.fn(), setCpuFallback: vi.fn(), getModelStates: vi.fn(),
   downloadModel: vi.fn(), cancelDownload: vi.fn(), deleteModel: vi.fn(), embedTexts: vi.fn(), runGpuSelfTest: vi.fn(),
-  analyzeImage: vi.fn(), cancelInference: vi.fn(), release: vi.fn(), addListener: vi.fn(),
+  analyzeImage: vi.fn(), generateText: vi.fn(), runTextSelfTest: vi.fn(), getTextRuntimeStatus: vi.fn(),
+  cancelInference: vi.fn(), release: vi.fn(), addListener: vi.fn(),
 }));
 const state = vi.hoisted(() => ({ native: true }));
 
@@ -13,7 +14,8 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: () => native,
 }));
 
-import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState, isTransferActive, getModelAction, nativePackageHostFrom } from "./vlmPlugin";
+import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState, isTransferActive, getModelAction, nativePackageHostFrom, isTextBridge } from "./vlmPlugin";
+import { isTextRuntimePresent } from "./models/textRuntime";
 
 beforeEach(() => {
   state.native = true;
@@ -124,6 +126,13 @@ describe("vlmPlugin native payload unwrapping", () => {
     ).rejects.toThrow(/Android/i);
   });
 
+  it("exposes no text methods on the web adapter (refusal by absence)", () => {
+    state.native = false;
+    resetVlmBridgeCache();
+    const bridge = getVlmBridge();
+    expect(isTextBridge(bridge)).toBe(false);
+    expect(isTextRuntimePresent(bridge)).toBe(false);
+  });
   it("classifies settled vs installed states for transfer sequencing", () => {
     expect(isSettledState("DOWNLOADING")).toBe(false);
     expect(isSettledState("QUEUED")).toBe(false);
@@ -220,5 +229,68 @@ describe("nativePackageHostFrom", () => {
     });
     const result = await host.exportPackageToUri({ entryId: "entry-a", destUri: "content://y" });
     expect(result).toEqual({ ok: false, code: "CORRUPT_ARCHIVE", reason: "boom" });
+  });
+});
+
+describe("vlmPlugin text bridge (explicit-modelId production path)", () => {
+  it("sends generateText with the required modelId and never substitutes", async () => {
+    native.generateText.mockResolvedValue({ text: "answer", modelId: "qwen3-0.6b", backend: "gpu", runtime: "0.16.0" });
+    const bridge = getVlmBridge();
+    await expect(
+      bridge.generateText?.({ modelId: "qwen3-0.6b", prompt: "hi", maxOutputTokens: 64, temperature: 0.1 }),
+    ).resolves.toEqual({ text: "answer", modelId: "qwen3-0.6b" });
+    expect(native.generateText).toHaveBeenCalledWith({
+      modelId: "qwen3-0.6b",
+      prompt: "hi",
+      maxOutputTokens: 64,
+      temperature: 0.1,
+    });
+  });
+
+  it("narrows the native bridge to the typed text surface without casting", () => {
+    const bridge = getVlmBridge();
+    expect(isTextBridge(bridge)).toBe(true);
+    expect(isTextRuntimePresent(bridge)).toBe(true);
+    if (isTextBridge(bridge)) {
+      expect(typeof bridge.generateText).toBe("function");
+      expect(typeof bridge.runTextSelfTest).toBe("function");
+      expect(typeof bridge.getTextRuntimeStatus).toBe("function");
+    } else {
+      throw new Error("native bridge must expose the text surface");
+    }
+  });
+
+  it("passes runTextSelfTest through with the explicit modelId", async () => {
+    native.runTextSelfTest.mockResolvedValue({
+      modelId: "qwen3-0.6b",
+      ready: true,
+      state: "TEXT_READY",
+      diagnostics: ["init ok"],
+    });
+    const bridge = getVlmBridge();
+    await expect(bridge.runTextSelfTest?.("qwen3-0.6b")).resolves.toMatchObject({
+      ready: true,
+      state: "TEXT_READY",
+    });
+    expect(native.runTextSelfTest).toHaveBeenCalledWith({ modelId: "qwen3-0.6b" });
+  });
+
+  it("passes getTextRuntimeStatus through without initializing", async () => {
+    native.getTextRuntimeStatus.mockResolvedValue({
+      modelId: "qwen3-0.6b",
+      ready: false,
+      nativeRunning: false,
+      backend: "gpu",
+      modelFilePresent: true,
+    });
+    const bridge = getVlmBridge();
+    await expect(bridge.getTextRuntimeStatus?.()).resolves.toEqual({
+      modelId: "qwen3-0.6b",
+      ready: false,
+      nativeRunning: false,
+      backend: "gpu",
+      modelFilePresent: true,
+    });
+    expect(native.getTextRuntimeStatus).toHaveBeenCalledWith();
   });
 });

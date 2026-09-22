@@ -110,7 +110,7 @@ describe("Shell assistant runtime hookup", () => {
     renderShell("/");
     fireEvent.click(screen.getByTestId("assistant-entry"));
     expect(screen.getByTestId("assistant-source-note").textContent).toContain(
-      "Built-in answers only",
+      "Using built-in help",
     );
   });
 
@@ -118,7 +118,7 @@ describe("Shell assistant runtime hookup", () => {
     renderShell("/", localSeams());
     fireEvent.click(screen.getByTestId("assistant-entry"));
     expect(screen.getByTestId("assistant-source-note").textContent).toContain(
-      "On-device text answers are on",
+      "Using Qwen locally",
     );
   });
 
