@@ -384,22 +384,95 @@ class ModelStoreConvergenceTest {
         }
     }
 
-    @Test fun flatAuthoritativeExportFailsClosedMissingWeights() {
-        val store = ModelStore(tempDir("aa-store-flat"))
+    @Test fun flatLitertlmExportMapsToWeightsInterior() {
+        val store = ModelStore(tempDir("aa-store-flatmap"))
         val weights = fixtureBytes(7, 1024)
         val manifest = smolManifest(listOf(FixtureFile("SmolVLM2-500M.litertlm", weights)))
         val staged = validatedStaging(
             manifest, listOf(FixtureFile("weights/SmolVLM2-500M.litertlm", weights)),
-            tempDir("aa-work-flat"), tempDir("aa-staging-flat")
+            tempDir("aa-work-flatmap"), tempDir("aa-staging-flatmap")
         )
         assertTrue(store.promoteValidatedSandbox(manifest, staged))
-        val result = PackageHost.exportPackage(manifest.id, store.dirFor(manifest), ByteArrayOutputStream())
-        assertFalse(result.ok, "flat spec paths carry no weights/ artifact under the package spec")
-        assertEquals(PackageHost.Code.MISSING_WEIGHTS, result.code)
-        val spec = manifest.files.single()
-        assertTrue(
-            Sha256.matchesFile(store.finalFile(manifest, spec), spec.sha256),
-            "refused export must leave authoritative files untouched"
+        val exported = ByteArrayOutputStream()
+        val result = PackageHost.exportPackage(manifest.id, store.dirFor(manifest), exported)
+        assertTrue(result.ok, result.reason)
+        val entry = result.manifest!!.files.single { it.path != PackageHost.CHECKSUMS_NAME }
+        assertEquals("weights/SmolVLM2-500M.litertlm", entry.path)
+        assertEquals("STORE", entry.method)
+        assertEquals(manifest.files.single().sha256, entry.sha256)
+    }
+
+    @Test fun realSmolLayoutExportReimportRoundTrip() {
+        val storeA = ModelStore(tempDir("aa-store-smolrt-a"))
+        val storeB = ModelStore(tempDir("aa-store-smolrt-b"))
+        val weights = fixtureBytes(7, 2048)
+        val manifest = smolManifest(listOf(FixtureFile("SmolVLM2-500M.litertlm", weights)))
+        val stagedA = validatedStaging(
+            manifest, listOf(FixtureFile("weights/SmolVLM2-500M.litertlm", weights)),
+            tempDir("aa-work-smolrt"), tempDir("aa-staging-smolrt")
         )
+        assertTrue(storeA.promoteValidatedSandbox(manifest, stagedA))
+
+        val exported = ByteArrayOutputStream()
+        val exportResult = PackageHost.exportPackage(manifest.id, storeA.dirFor(manifest), exported)
+        assertTrue(exportResult.ok, exportResult.reason)
+
+        val pkg = exported.toByteArray()
+        val stagingB = tempDir("aa-staging-smolrt-b")
+        val reimported = PackageHost.importPackage(
+            ByteArrayInputStream(pkg), manifest.id, sha256Hex(pkg), tempDir("aa-work-smolrt-b"), stagingB
+        )
+        assertTrue(reimported.ok, reimported.reason)
+        assertTrue(storeB.promoteValidatedSandbox(manifest, File(stagingB, manifest.id)))
+        val spec = manifest.files.single()
+        val final = storeB.finalFile(manifest, spec)
+        assertTrue(final.isFile, "re-imported final missing: ${spec.path}")
+        assertTrue(Sha256.matchesFile(final, spec.sha256), "round-trip SHA must match the installed pin exactly")
+        assertEquals(sha256Hex(weights), Sha256.ofFile(final))
+        assertNoPromotionResidue(storeB.root)
+    }
+
+    @Test fun realQwenLayoutExportReimportRoundTrip() {
+        val storeA = ModelStore(tempDir("aa-store-qwenrt-a"))
+        val storeB = ModelStore(tempDir("aa-store-qwenrt-b"))
+        val weights = fixtureBytes(11, 2048)
+        val manifest = qwenManifest(listOf(FixtureFile(QwenTextRuntime.MODEL_FILE_NAME, weights)))
+        val stagedA = validatedStaging(
+            manifest, listOf(FixtureFile("weights/${QwenTextRuntime.MODEL_FILE_NAME}", weights)),
+            tempDir("aa-work-qwenrt"), tempDir("aa-staging-qwenrt")
+        )
+        assertTrue(storeA.promoteValidatedSandbox(manifest, stagedA))
+
+        val exported = ByteArrayOutputStream()
+        val exportResult = PackageHost.exportPackage(manifest.id, storeA.dirFor(manifest), exported)
+        assertTrue(exportResult.ok, exportResult.reason)
+        val entry = exportResult.manifest!!.files.single { it.path != PackageHost.CHECKSUMS_NAME }
+        assertEquals("weights/${QwenTextRuntime.MODEL_FILE_NAME}", entry.path)
+        assertEquals("STORE", entry.method)
+
+        val pkg = exported.toByteArray()
+        val stagingB = tempDir("aa-staging-qwenrt-b")
+        val reimported = PackageHost.importPackage(
+            ByteArrayInputStream(pkg), manifest.id, sha256Hex(pkg), tempDir("aa-work-qwenrt-b"), stagingB
+        )
+        assertTrue(reimported.ok, reimported.reason)
+        assertTrue(storeB.promoteValidatedSandbox(manifest, File(stagingB, manifest.id)))
+        val spec = manifest.files.single()
+        val lookup = storeB.finalFile(manifest, spec)
+        assertTrue(lookup.isFile, "re-imported lookup file missing: ${spec.path}")
+        assertTrue(Sha256.matchesFile(lookup, spec.sha256), "round-trip SHA must match the installed pin exactly")
+        assertEquals(sha256Hex(weights), Sha256.ofFile(lookup))
+        assertNoPromotionResidue(storeB.root)
+    }
+
+    @Test fun weightsLessFlatExportFailsClosedMissingWeights() {
+        val store = ModelStore(tempDir("aa-store-flatweightsless"))
+        val manifest = smolManifest(listOf(FixtureFile("tokenizer.model", fixtureBytes(7, 1024))))
+        val targetDir = store.dirFor(manifest)
+        targetDir.mkdirs()
+        File(targetDir, "tokenizer.model").writeBytes(fixtureBytes(7, 1024))
+        val result = PackageHost.exportPackage(manifest.id, targetDir, ByteArrayOutputStream())
+        assertFalse(result.ok, "tokenizer-only install carries no weights/ artifact under the package spec")
+        assertEquals(PackageHost.Code.MISSING_WEIGHTS, result.code)
     }
 }

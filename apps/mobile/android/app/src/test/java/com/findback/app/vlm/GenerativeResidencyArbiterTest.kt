@@ -192,6 +192,55 @@ class GenerativeResidencyArbiterTest {
         assertTrue(slots.imageResident)
     }
 
+    @Test fun missingQwenRequestClearsTextClaimToNoResident() {
+        val slots = FakeSlots()
+        val arbiter = slots.arbiter()
+        arbiter.acquireImage(IMAGE_ID)
+        slots.imageResident = true
+        arbiter.acquireText(TEXT_ID)
+        slots.imageResident = false
+        arbiter.release(GenerativeResidencyArbiter.ResidencyRole.TEXT, TEXT_ID)
+        assertNull(arbiter.snapshot().residentEntryId)
+        assertNull(arbiter.snapshot().residentRole)
+    }
+
+    @Test fun failedImageInitClearsImageClaimToNoResident() {
+        val slots = FakeSlots()
+        val arbiter = slots.arbiter()
+        arbiter.acquireText(TEXT_ID)
+        slots.textResident = true
+        arbiter.acquireImage(IMAGE_ID)
+        slots.textResident = false
+        arbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, IMAGE_ID)
+        assertNull(arbiter.snapshot().residentEntryId)
+        assertNull(arbiter.snapshot().residentRole)
+    }
+
+    @Test fun warmLeaseReleaseClearsMatchingImageResidentOnly() {
+        val slots = FakeSlots()
+        val arbiter = slots.arbiter()
+        arbiter.acquireImage(IMAGE_ID)
+        slots.imageResident = true
+        arbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, "other-entry")
+        assertEquals(IMAGE_ID, arbiter.snapshot().residentEntryId)
+        assertEquals(GenerativeResidencyArbiter.ResidencyRole.IMAGE, arbiter.snapshot().residentRole)
+        arbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, IMAGE_ID)
+        assertNull(arbiter.snapshot().residentEntryId)
+        assertNull(arbiter.snapshot().residentRole)
+    }
+
+    @Test fun sameRoleTextReacquireKeepsResidentWithoutEvicting() {
+        val slots = FakeSlots()
+        val arbiter = slots.arbiter()
+        arbiter.acquireText(TEXT_ID)
+        slots.textResident = true
+        val snapshot = arbiter.acquireText(TEXT_ID)
+        assertEquals(TEXT_ID, snapshot.residentEntryId)
+        assertEquals(GenerativeResidencyArbiter.ResidencyRole.TEXT, snapshot.residentRole)
+        assertEquals(0, slots.imageEvictions)
+        assertTrue(slots.textResident)
+    }
+
     @Test fun releaseClearsOnlyMatchingEntry() {
         val arbiter = GenerativeResidencyArbiter()
         arbiter.acquireImage(IMAGE_ID)

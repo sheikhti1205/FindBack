@@ -243,7 +243,7 @@ class LocalVlmPlugin : Plugin() {
         if (activeInference.isNativeRunning()) return
         val expired = warmLease.takeExpiredResident() ?: return
         releaseEngine500()
-        residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE)
+        residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, expired.wire)
         notifyListeners("warmLeaseExpired", warmLeaseEvent(expired))
     }
 
@@ -1674,8 +1674,10 @@ class LocalVlmPlugin : Plugin() {
                             traceId,
                             mapOf("modelId" to modelId, "code" to outcome.code, "error" to outcome.message)
                         )
-                        // No engine exists on this path, so drop the claim.
-                        if (outcome.code == TextRuntimeController.CODE_MODEL_NOT_INSTALLED) {
+                        // Residency means an actually resident initialized
+                        // engine: drop the claim whenever no initialized text
+                        // engine exists.
+                        if (!textController.isReady()) {
                             residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.TEXT, modelId)
                         }
                         call.reject(outcome.message, outcome.code)
@@ -1718,6 +1720,11 @@ class LocalVlmPlugin : Plugin() {
                     residencyArbiter.acquireText(modelId)
                 }
                 val result = textController.runSelfTest(modelId, "Describe the current task briefly.")
+                // Residency means an actually resident initialized engine:
+                // a self-test that cannot init leaves no TEXT resident.
+                if (!textController.isReady()) {
+                    residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.TEXT, modelId)
+                }
                 // TEXT_READY proof for the lifecycle status: success plus
                 // the canonical ready state. Any other outcome clears it.
                 lastTextSelfTestReady =
