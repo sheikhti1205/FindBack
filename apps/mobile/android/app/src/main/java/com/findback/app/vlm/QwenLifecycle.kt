@@ -1,9 +1,6 @@
 package com.findback.app.vlm
 
-import com.google.gson.Gson
-import com.google.gson.GsonBuilder
 import java.io.File
-import java.io.FileWriter
 
 /**
  * Transfer-state record for the qualified text entry. Entry-id keyed and
@@ -53,46 +50,58 @@ data class QwenLifecycleStatus(
  */
 object QwenLifecycle {
 
-    const val STATE_FILE_NAME = "text-state.json"
-
-    private val gson: Gson = GsonBuilder().create()
+    const val STATE_FILE_NAME = TextTransferStateStore.FILE_NAME
 
     /** Directory holding one entry's revisions, transfer artifacts, and state record. */
     fun entryDir(storeRoot: File, entryId: String = QwenTextRuntime.ENTRY_ID): File =
         File(storeRoot, entryId)
 
-    /** Entry-id-keyed transfer-state record file. */
+    /** Entry-id-keyed transfer-state record file (single persistence seam: [TextTransferStateStore]). */
     fun stateFile(storeRoot: File, entryId: String = QwenTextRuntime.ENTRY_ID): File =
-        File(entryDir(storeRoot, entryId), STATE_FILE_NAME)
+        TextTransferStateStore.fileFor(storeRoot, entryId)
 
-    /** Loads the persisted text transfer state, or null when absent/unreadable. */
+    /**
+     * Loads the persisted text transfer state, or null when absent/unreadable.
+     * Delegates to the single persistence seam; validation stays here.
+     */
     fun loadState(storeRoot: File, entryId: String = QwenTextRuntime.ENTRY_ID): QwenTextStateRecord? {
         val file = stateFile(storeRoot, entryId)
-        if (!file.exists()) return null
-        return try {
-            file.reader().use { reader ->
-                gson.fromJson(reader, QwenTextStateRecord::class.java)
-            }
-        } catch (_: Exception) {
-            null
-        }
+        return TextTransferStateStore.load(file)?.toRecord()
     }
 
-    /** Persists the text transfer state (atomic temp + rename). */
+    /**
+     * Persists the text transfer state via the single persistence seam
+     * (atomic temp + rename). Validation stays here.
+     */
     fun saveState(storeRoot: File, record: QwenTextStateRecord) {
-        val file = stateFile(storeRoot, record.entryId)
-        file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, "${file.name}.tmp")
-        FileWriter(tmp).use { writer ->
-            gson.toJson(record, writer)
-        }
-        if (file.exists() && !file.delete()) {
-            throw IllegalStateException("Failed to replace text state file: ${file.absolutePath}")
-        }
-        if (!tmp.renameTo(file)) {
-            throw IllegalStateException("Failed to atomically write text state file: ${file.absolutePath}")
-        }
+        TextTransferStateStore.saveAtomic(
+            stateFile(storeRoot, record.entryId),
+            record.toTransferState()
+        )
     }
+
+    /** In-memory record ↔ persistence-seam conversions (field-identical schemas). */
+    private fun TextTransferState.toRecord(): QwenTextStateRecord =
+        QwenTextStateRecord(
+            entryId = entryId,
+            revision = revision,
+            state = state,
+            installedBytes = installedBytes,
+            installTimestamp = installTimestamp,
+            installedSha256 = installedSha256,
+            lastError = lastError
+        )
+
+    private fun QwenTextStateRecord.toTransferState(): TextTransferState =
+        TextTransferState(
+            entryId = entryId,
+            revision = revision,
+            state = state,
+            installedBytes = installedBytes,
+            installedSha256 = installedSha256,
+            installTimestamp = installTimestamp,
+            lastError = lastError
+        )
 
     /** Diagnostic file-presence probe only — never lifecycle state. */
     fun isFilePresent(storeRoot: File, manifest: ModelManifest = QwenTextRuntime.manifest()): Boolean {
@@ -170,6 +179,9 @@ object QwenLifecycle {
      * nothing and returns empty.
      */
     fun deleteExactly(storeRoot: File, entryId: String = QwenTextRuntime.ENTRY_ID): List<String> {
+        if (TextTransferStateStore.isUnsafeEntryId(entryId)) {
+            throw IllegalArgumentException("Unsafe entry id: $entryId")
+        }
         val dir = entryDir(storeRoot, entryId)
         if (!dir.exists()) return emptyList()
         val deleted = mutableListOf<String>()
