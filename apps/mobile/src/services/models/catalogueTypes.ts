@@ -56,6 +56,13 @@ export interface ModelCatalogueEntry {
   installedBytes: number | null;
   /** 64-char lowercase hex, or null when not established. */
   sha256: string | null;
+  /**
+   * Installed-weights artifact hash (64-char lowercase hex), or null when not
+   * established. Distinct from `sha256`, which pins the distribution package:
+   * packaging changes package bytes/hash by design, while the installed
+   * weights must keep matching the qualified pin.
+   */
+  installedSha256?: string | null;
   minFreeRamMb: number;
   recommendedFreeRamMb: number;
   ramRequirementSource: RamRequirementSource;

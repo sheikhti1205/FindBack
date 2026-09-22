@@ -48,16 +48,16 @@ export type TextBridgeModelId = typeof QWEN_TEXT_BRIDGE_MODEL_ID;
 export const QWEN_TEXT_PROFILE_ID = "qwen3-0.6b-dynamic-int4" as const;
 
 /**
- * Qualified pin for the text runtime. Source: scope packet
- * `20260922T130000-local-text-runtime-scope-01.md`, verified against the
- * shipped catalogue entry (`upstreamFile`
- * `Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm`).
+ * Qualified pin for the text runtime: the INSTALLED weights artifact
+ * (rev a3c5d805, 344671744 B, lab-verified hash), NOT the distribution
+ * package — packaging changes package bytes/hash by design, so the pin
+ * tracks `installedBytes`/`installedSha256` plus the upstream revision.
  */
 export const QWEN_TEXT_MODEL_PIN = {
   fileName: "Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm",
   revision: "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
-  downloadBytes: 344671744,
-  sha256:
+  installedBytes: 344671744,
+  installedSha256:
     "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
 } as const;
 
@@ -218,13 +218,13 @@ export function verifyQwenCataloguePin(
   }
   if (
     entry.revision !== QWEN_TEXT_MODEL_PIN.revision ||
-    entry.downloadBytes !== QWEN_TEXT_MODEL_PIN.downloadBytes ||
-    entry.sha256 !== QWEN_TEXT_MODEL_PIN.sha256
+    entry.installedBytes !== QWEN_TEXT_MODEL_PIN.installedBytes ||
+    entry.installedSha256 !== QWEN_TEXT_MODEL_PIN.installedSha256
   ) {
     return {
       ok: false,
       reason:
-        "Catalogue pin mismatch: the entry no longer matches the qualified text-runtime pin (revision, bytes, hash). Re-qualification required before activation.",
+        "Catalogue pin mismatch: the entry no longer matches the qualified text-runtime pin (revision, installed bytes, installed-weights hash). Re-qualification required before activation.",
     };
   }
   return { ok: true };
