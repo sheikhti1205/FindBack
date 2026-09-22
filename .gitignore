@@ -28,6 +28,7 @@ Thumbs.db
 # Runtime artifacts
 *.log
 coverage/
+test-evidence/
 
 # Supabase CLI local state / temp
 supabase/.temp/
