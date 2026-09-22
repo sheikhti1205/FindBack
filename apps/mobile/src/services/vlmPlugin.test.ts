@@ -13,7 +13,7 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: () => native,
 }));
 
-import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState, isTransferActive, getModelAction } from "./vlmPlugin";
+import { getVlmBridge, resetVlmBridgeCache, isSettledState, isInstalledState, isTransferActive, getModelAction, nativePackageHostFrom } from "./vlmPlugin";
 
 beforeEach(() => {
   state.native = true;
@@ -163,5 +163,62 @@ describe("vlmPlugin native payload unwrapping", () => {
     expect(getModelAction("GPU_SELF_TESTING").canDownload).toBe(false);
     expect(getModelAction("NOT_INSTALLED").canDownload).toBe(true);
     expect(getModelAction("READY_GPU").canSelfTest).toBe(true);
+  });
+});
+
+describe("nativePackageHostFrom", () => {
+  const manifest = {
+    packageVersion: "1" as const,
+    entryId: "entry-a",
+    upstream: { repo: "r", rev: "v", file: "f" },
+    createdAt: "2026-09-22T00:00:00Z",
+    files: [{ path: "weights/model.litertlm", bytes: 3, sha256: "abc", method: "STORE" as const }],
+  };
+
+  it("passes the installer-observed import manifest through", async () => {
+    const host = nativePackageHostFrom({
+      importPackageFromUri: async () => ({ ok: true, manifest }),
+      exportPackageToUri: async () => { throw new Error("unused"); },
+    });
+    const result = await host.importPackageFromUri({ entryId: "entry-a", sourceUri: "content://x", expectedSha256: "pin" });
+    expect(result).toEqual({ ok: true, manifest });
+  });
+
+  it("maps a coded native import rejection to the shared failure code", async () => {
+    const rejection = Object.assign(new Error("Checksum mismatch for weights/model.litertlm."), { code: "HASH_MISMATCH" });
+    const host = nativePackageHostFrom({
+      importPackageFromUri: async () => { throw rejection; },
+      exportPackageToUri: async () => { throw new Error("unused"); },
+    });
+    const result = await host.importPackageFromUri({ entryId: "entry-a", sourceUri: "content://x", expectedSha256: "pin" });
+    expect(result).toEqual({ ok: false, code: "HASH_MISMATCH", reason: "Checksum mismatch for weights/model.litertlm." });
+  });
+
+  it("fails a malformed native import result closed without installing", async () => {
+    const host = nativePackageHostFrom({
+      importPackageFromUri: async () => ({ ok: true }),
+      exportPackageToUri: async () => { throw new Error("unused"); },
+    });
+    const result = await host.importPackageFromUri({ entryId: "entry-a", sourceUri: "content://x", expectedSha256: "pin" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("CORRUPT_ARCHIVE");
+  });
+
+  it("passes the installer-observed export manifest and checksums through", async () => {
+    const host = nativePackageHostFrom({
+      importPackageFromUri: async () => { throw new Error("unused"); },
+      exportPackageToUri: async () => ({ ok: true, manifest, checksumsJson: "{}" }),
+    });
+    const result = await host.exportPackageToUri({ entryId: "entry-a", destUri: "content://y" });
+    expect(result).toEqual({ ok: true, manifest, checksumsJson: "{}" });
+  });
+
+  it("fails an unknown native export error closed as corrupt archive", async () => {
+    const host = nativePackageHostFrom({
+      importPackageFromUri: async () => { throw new Error("unused"); },
+      exportPackageToUri: async () => { throw new Error("boom"); },
+    });
+    const result = await host.exportPackageToUri({ entryId: "entry-a", destUri: "content://y" });
+    expect(result).toEqual({ ok: false, code: "CORRUPT_ARCHIVE", reason: "boom" });
   });
 });

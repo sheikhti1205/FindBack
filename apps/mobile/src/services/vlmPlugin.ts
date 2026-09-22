@@ -1,4 +1,11 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import type { FbmodelManifest } from "./models/fbmodelSeam";
+import type {
+  ExportStreamResult,
+  ImportResult,
+  NativePackageHost,
+  TransferErrorCode,
+} from "./models/modelTransfers";
 
 /** VLM model identifiers. */
 export type VlmModelId =
@@ -349,10 +356,99 @@ interface NativeVlmBridge {
   cancelInference(): Promise<void>;
   release(): Promise<void>;
   releaseWarmLease(): Promise<void>;
+  importPackageFromUri(options: { entryId: string; sourceUri: string; expectedSha256: string }): Promise<NativePackageResult>;
+  exportPackageToUri(options: { entryId: string; destUri: string }): Promise<NativeExportResult>;
   addListener<T extends InferenceStateEvent | DownloadProgressEvent | VlmModelInfo>(
     eventName: string,
     listener: (event: T) => void
   ): Promise<{ remove: () => void }>;
+}
+
+/** Observed package manifest resolved by the Android platform installer. */
+export interface NativePackageResult {
+  ok: boolean;
+  manifest?: FbmodelManifest;
+}
+
+/** Observed export product resolved by the Android platform installer. */
+export interface NativeExportResult {
+  ok: boolean;
+  manifest?: FbmodelManifest;
+  checksumsJson?: string;
+}
+
+/** Narrow native surface the package-host adapter needs (subset of `NativeVlmBridge`). */
+export interface NativePackageHostBridge {
+  importPackageFromUri(options: { entryId: string; sourceUri: string; expectedSha256: string }): Promise<NativePackageResult>;
+  exportPackageToUri(options: { entryId: string; destUri: string }): Promise<NativeExportResult>;
+}
+
+const PACKAGE_HOST_ERROR_CODES: readonly TransferErrorCode[] = [
+  "NOT_INSTALLABLE", "NEEDS_ADVANCED_CONFIRM", "MISSING_PIN", "TRANSPORT_ERROR",
+  "CANCELLED", "SIZE_MISMATCH", "HASH_MISMATCH", "WHOLE_HASH_MISMATCH",
+  "MANIFEST_MISSING", "MANIFEST_INVALID", "ENTRY_MISMATCH", "MISSING_FILE",
+  "EXTRA_FILE", "UNSAFE_PATH", "DENIED_FILE", "PACKAGE_TOO_LARGE",
+  "MISSING_WEIGHTS", "NO_FILES", "INSUFFICIENT_STORAGE", "CORRUPT_ARCHIVE",
+];
+
+function packageHostFailure(error: unknown, fallbackReason: string): { code: TransferErrorCode; reason: string } {
+  const message = error instanceof Error && error.message ? error.message : fallbackReason;
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && (PACKAGE_HOST_ERROR_CODES as readonly string[]).includes(code)) {
+    return { code: code as TransferErrorCode, reason: message };
+  }
+  return { code: "CORRUPT_ARCHIVE", reason: message };
+}
+
+function isObservedManifest(value: unknown): value is FbmodelManifest {
+  if (typeof value !== "object" || value === null) return false;
+  const manifest = value as { entryId?: unknown; files?: unknown };
+  return typeof manifest.entryId === "string" && Array.isArray(manifest.files);
+}
+
+/**
+ * Adapts the Android platform installer (`LocalVlm` import/export bridge
+ * methods) to the `NativePackageHost` seam consumed by the import/export
+ * UI. Success carries the installer-observed manifest; rejections map to
+ * the shared transfer failure codes (unknown errors fail closed as
+ * `CORRUPT_ARCHIVE`). SAF document URIs still come from a document
+ * picker — wiring that picker is a separate UI step.
+ */
+export function nativePackageHostFrom(native: NativePackageHostBridge): NativePackageHost {
+  return {
+    importPackageFromUri: async ({ entryId, sourceUri, expectedSha256 }): Promise<ImportResult> => {
+      try {
+        const result = await native.importPackageFromUri({ entryId, sourceUri, expectedSha256 });
+        if (result?.ok === true && isObservedManifest(result.manifest)) {
+          return { ok: true, manifest: result.manifest };
+        }
+        return {
+          ok: false,
+          code: "CORRUPT_ARCHIVE",
+          reason: "The platform installer returned an unreadable import result. Nothing installed.",
+        };
+      } catch (error) {
+        const failure = packageHostFailure(error, "The package file could not be read. Nothing installed.");
+        return { ok: false, code: failure.code, reason: failure.reason };
+      }
+    },
+    exportPackageToUri: async ({ entryId, destUri }): Promise<ExportStreamResult> => {
+      try {
+        const result = await native.exportPackageToUri({ entryId, destUri });
+        if (result?.ok === true && isObservedManifest(result.manifest) && typeof result.checksumsJson === "string") {
+          return { ok: true, manifest: result.manifest, checksumsJson: result.checksumsJson };
+        }
+        return {
+          ok: false,
+          code: "CORRUPT_ARCHIVE",
+          reason: "The platform installer returned an unreadable export result. Nothing written.",
+        };
+      } catch (error) {
+        const failure = packageHostFailure(error, "Export packaging runs in the platform installer and failed. Nothing written.");
+        return { ok: false, code: failure.code, reason: failure.reason };
+      }
+    },
+  };
 }
 
 /** Public bridge interface (unwrapped payloads). */
