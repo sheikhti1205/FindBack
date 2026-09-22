@@ -64,6 +64,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     cursorRef.current = loadFeedCache(cacheKey)?.cursor ?? null;
   }
   const generationRef = useRef(0);
+  const loadedRef = useRef(false);
   const restoredScrollRef = useRef<string | null>(null);
   const latestRef = useRef({ items, total, cursor: cursorRef.current });
   latestRef.current = { items, total, cursor: cursorRef.current };
@@ -82,6 +83,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
       const cached = loadFeedCache(cacheKey);
       if (cached) {
         cursorRef.current = cached.cursor;
+        loadedRef.current = true;
         setItems(cached.items);
         setTotal(cached.total);
         setError(null);
@@ -90,6 +92,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
         return;
       }
     }
+    loadedRef.current = false;
     setItems([]);
     setTotal(0);
     setError(null);
@@ -110,9 +113,12 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
 
   // Persist the feed for Detail→Back. The cleanup runs on unmount and whenever
   // the cache key changes, so it always writes the latest state for that key.
+  // Skip an empty never-loaded snapshot so an early unmount cannot pin an
+  // empty artifact that would suppress the next mount's fetch.
   useEffect(() => {
     if (!cacheKey) return;
     return () => {
+      if (!loadedRef.current && latestRef.current.items.length === 0) return;
       const el = scrollRef?.current;
       saveFeedCache(cacheKey, {
         items: latestRef.current.items,
@@ -133,6 +139,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
         const page: FeedPage = await fetchFeed(filters, cursor ?? undefined);
         // Discard if filters/generation changed while we were fetching
         if (gen !== generationRef.current) return;
+        loadedRef.current = true;
         // Keep the initial full filtered total stable: keyset follow-up
         // pages carry a page-relative count, so appends must never overwrite it.
         if (!append) setTotal(page.total);

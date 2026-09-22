@@ -142,8 +142,9 @@ describe("useFeed", () => {
 
   it("restores per-filter results without refetch after unmount", async () => {
     fetchFeedMock.mockResolvedValue(page([{ id: "kept" }], "cur-1", 1));
-    const { unmount } = renderHook(() => useFeed({ q: "same" }, { cacheKey: "test:restore" }));
+    const { result, unmount } = renderHook(() => useFeed({ q: "same" }, { cacheKey: "test:restore" }));
     await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.items.map((i) => i.id)).toEqual(["kept"]));
     unmount();
     fetchFeedMock.mockClear();
     const { result: second } = renderHook(() => useFeed({ q: "same" }, { cacheKey: "test:restore" }));
@@ -234,8 +235,9 @@ describe("useFeed", () => {
     const firstScroll = { scrollTop: 0 };
     const firstRef = { current: firstScroll };
     fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], "cur-1", 2));
-    const { unmount } = renderHook(() => useFeed({}, { cacheKey: "test:backnav", scrollRef: firstRef }));
+    const { result: first, unmount } = renderHook(() => useFeed({}, { cacheKey: "test:backnav", scrollRef: firstRef }));
     await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(first.current.items.map((i) => i.id)).toEqual(["a", "b"]));
 
     // User scrolled, then opened a post (unmount saves scrollTop).
     firstScroll.scrollTop = 350;
@@ -251,6 +253,30 @@ describe("useFeed", () => {
     expect(second.current.hasMore).toBe(true);
     await waitFor(() => expect(secondScroll.scrollTop).toBe(350));
     expect(fetchFeedMock).not.toHaveBeenCalled();
+  });
+
+  it("does not pin an empty cache when unmounted before the first load", async () => {
+    let resolveFirst: (p: unknown) => void;
+    const first = new Promise((r) => {
+      resolveFirst = r;
+    });
+    fetchFeedMock.mockImplementationOnce(() => first);
+    const { unmount } = renderHook(() =>
+      useFeed({}, { cacheKey: "test:early-unmount", scrollRef: { current: { scrollTop: 0 } } }),
+    );
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    unmount();
+    await act(async () => {
+      resolveFirst!(page([{ id: "a" }, { id: "b" }], "cur-1", 2));
+      await first;
+    });
+
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], "cur-1", 2));
+    const { result: second } = renderHook(() =>
+      useFeed({}, { cacheKey: "test:early-unmount", scrollRef: { current: { scrollTop: 0 } } }),
+    );
+    await waitFor(() => expect(second.current.items.map((i) => i.id)).toEqual(["a", "b"]));
+    expect(fetchFeedMock).toHaveBeenCalledTimes(2);
   });
 
   it("refetches when the session cache is stale (WP8)", async () => {
