@@ -5,8 +5,18 @@ import { TabTapProvider, useTabTap } from "./TabTap";
 import { AssistantSheet } from "./AssistantSheet";
 import { LiveRegion } from "./LiveRegion";
 import { requestHistorySuppression } from "./backNavigation";
+import type { AssistantExecutionRuntime } from "../services/assistant/assistantExecution";
+import { resolveLocalTextRuntime } from "../services/assistant/localTextRuntime";
 import type { GuidedSnapshot } from "../services/assistant/guidedAssistantController";
 import { mapAssistantSearchFilters } from "../services/assistant/searchFilterMapping";
+import { loadResidentEntryId } from "../services/models/roleSelection";
+import {
+  isTextRuntimePresent,
+  type GenerateTextRequest,
+  type GenerateTextResult,
+  type TextGenerationBridge,
+} from "../services/models/textRuntime";
+import { getVlmBridge } from "../services/vlmPlugin";
 
 const NAV: Array<{
   to: string;
@@ -41,11 +51,65 @@ export function assistantSearchNavigationTarget(snapshot: GuidedSnapshot): strin
   return mapAssistantSearchFilters(snapshot.searchFilters).path;
 }
 
-export function Shell() {
+/**
+ * Seams for the assistant runtime hookup. Every field is optional: omitted
+ * fields resolve from the live sources (resident record, bridge probe), so
+ * production passes no seams and tests inject exact signals.
+ */
+export interface ShellAssistantSeams {
+  /** Resident catalogue entry id override. Defaults to the stored resident record. */
+  residentEntryId?: string | null;
+  /** Real text-bridge probe override. Defaults to probing the bound bridge. */
+  textRuntimePresent?: boolean;
+  /**
+   * Whether the preferred text model data is on device. No observable
+   * install registry exists for the text entry in this build, so the
+   * default is false (fail closed to the grounded fallback); a future
+   * native install-state signal plugs in here.
+   */
+  textInstalled?: boolean;
+  /** Explicit-modelId text generation override. Defaults to the bound bridge when present. */
+  generateText?: (request: GenerateTextRequest) => Promise<GenerateTextResult>;
+}
+
+/**
+ * Builds the assistant runtime for the open sheet. The preferred text
+ * entry answers only while it is the resident entry, its data is
+ * installed, and the real text bridge is present; any missing
+ * precondition resolves to a generator-free runtime and the sheet stays
+ * on the deterministic grounded fallback. The result never claims a
+ * model is active — the sheet states the fallback truthfully.
+ */
+export function resolveShellAssistantRuntime(
+  seams: ShellAssistantSeams = {},
+): AssistantExecutionRuntime {
+  const bridge = getVlmBridge();
+  const textRuntimePresent = seams.textRuntimePresent ?? isTextRuntimePresent(bridge);
+  const generateText =
+    seams.generateText ??
+    (textRuntimePresent
+      ? (request: GenerateTextRequest) =>
+          (bridge as unknown as TextGenerationBridge).generateText(request)
+      : undefined);
+  if (generateText === undefined) return {};
+  return resolveLocalTextRuntime({
+    activeEntryId: seams.residentEntryId ?? loadResidentEntryId(),
+    textRuntimePresent,
+    installed: seams.textInstalled ?? false,
+    generateText,
+  });
+}
+
+export function Shell({ seams }: { seams?: ShellAssistantSeams } = {}) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
   const [assistantOpen, setAssistantOpen] = useState(false);
+  // Resolved fresh on every render while open, so a model activated in the
+  // library is picked up without remounting the layout route.
+  const assistantRuntime = assistantOpen
+    ? resolveShellAssistantRuntime(seams ?? {})
+    : undefined;
 
   return (
     <TabTapProvider>
@@ -66,6 +130,7 @@ export function Shell() {
         <AssistantSheet
           open={assistantOpen}
           onClose={() => setAssistantOpen(false)}
+          runtime={assistantRuntime}
           onSnapshot={(snapshot) => {
             const target = assistantSearchNavigationTarget(snapshot);
             if (target !== null) {

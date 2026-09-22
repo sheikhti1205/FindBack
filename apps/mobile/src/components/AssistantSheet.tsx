@@ -246,6 +246,7 @@ export function AssistantSheet({
   }
 
   const question = snapshot === null ? null : nextMissingQuestion(snapshot);
+  const localModelOn = runtime?.generate !== undefined;
 
   return (
     <BottomSheet
@@ -258,6 +259,11 @@ export function AssistantSheet({
         <p data-testid="assistant-greeting" className="text-sm">
           Hello! I can guide you through reporting a lost or found item, searching
           listings, or answering questions about the app.
+        </p>
+        <p data-testid="assistant-source-note" className="text-xs text-on-surface-variant">
+          {localModelOn
+            ? "On-device text answers are on for this session."
+            : "Built-in answers only — no on-device text model is running."}
         </p>
         <div className="flex flex-wrap gap-2">
           {GUIDED_FLOWS.map((flow) => (

@@ -136,6 +136,22 @@ describe("AssistantSheet", () => {
     );
   });
 
+  it("states the built-in fallback when no model runtime is attached", () => {
+    renderSheet();
+    expect(screen.getByTestId("assistant-source-note").textContent).toContain(
+      "Built-in answers only",
+    );
+  });
+
+  it("states the on-device session when a model runtime is attached", () => {
+    renderSheet({
+      runtime: { generate: async () => "answer" },
+    });
+    expect(screen.getByTestId("assistant-source-note").textContent).toContain(
+      "On-device text answers are on",
+    );
+  });
+
   it("answers app questions and follow-ups through the grounded help path", async () => {
     const runtime: AssistantExecutionRuntime = {
       answerAppQuestion: async (question) => ({ text: `Built-in: ${question}`, source: "fallback" }),
