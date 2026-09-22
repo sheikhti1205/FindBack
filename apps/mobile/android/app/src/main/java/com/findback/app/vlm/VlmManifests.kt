@@ -3,6 +3,8 @@ package com.findback.app.vlm
 /**
  * Pinned model manifests for the two supported VLM models.
  * Revisions, byte counts, and SHA-256 values are from Locked Decisions / RESOLVED_MODEL_FACTS.json.
+ * Upstream repo/revision/file are provenance-only; production downloads use
+ * the pinned GitHub Release distribution record (see releases-distribution.md).
  */
 val MODEL_MANIFESTS: List<ModelManifest> = listOf(
     ModelManifest(
@@ -16,6 +18,14 @@ val MODEL_MANIFESTS: List<ModelManifest> = listOf(
                 expectedBytes = 360822960L,
                 sha256 = "b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0"
             )
+        ),
+        distribution = ModelDistribution(
+            repo = "sheikhti1205/FindBack-Models",
+            tag = "models-2026-09-22-v1",
+            asset = "smolvlm2-500m-litert-int4.fbmodel",
+            bytes = 360823868L,
+            sha256 = "41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e",
+            parts = null
         )
     ),
     ModelManifest(

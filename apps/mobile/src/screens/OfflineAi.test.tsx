@@ -728,9 +728,9 @@ describe("OfflineAi", () => {
     expect(await within(card).findByText(/does not match the shipped catalogue pin/i)).toBeTruthy();
 
     const unpinned = await screen.findByRole("listitem", { name: "Qwen3 0.6B (LiteRT, mixed int4)" });
-    fireEvent.click(within(unpinned).getByRole("button", { name: /import qwen3 0.6b/i }));
-    fireEvent.change(input, { target: { files: [streamText("x")] } });
-    expect(await within(unpinned).findByText(/no shipped hash pin/i)).toBeTruthy();
+    expect(
+      within(unpinned).queryByRole("button", { name: /import qwen3 0.6b/i }),
+    ).toBeNull();
   });
 
   it("exports through the injected writer seam, and explains when no writer exists", async () => {

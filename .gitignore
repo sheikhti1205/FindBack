@@ -44,6 +44,7 @@ apps/mobile/android/app/src/main/assets/models/
 apps/mobile/public/models/
 *.litertlm
 *.tflite
+*.fbmodel
 *.part
 tmp-*.mjs
 .playwright-mcp/

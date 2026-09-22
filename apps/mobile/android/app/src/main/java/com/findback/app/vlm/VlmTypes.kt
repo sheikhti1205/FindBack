@@ -81,11 +81,10 @@ enum class VlmErrorCode(val wire: String) {
 /**
  * Specification for a model file.
  *
- * [path] is the local on-device storage name. [remotePath] is the exact
- * filename on the pinned Hugging Face revision; it defaults to [path] but
- * MUST differ when the upstream filename does not match (e.g. the 256M
- * TFLite, whose upstream file contains the typo `smalvlm`). Download URLs
- * are built from [remotePath] so a spelling mismatch can never 404 on device.
+ * [path] is the local on-device storage name. [remotePath] is retained as
+ * provenance-only metadata for previously pinned upstream files (e.g. the
+ * 256M TFLite typo `smalvlm`); production downloads never build URLs from
+ * it. Pinned release-asset downloads use [ModelManifest.distribution].
  */
 data class ModelFileSpec(
     val path: String,
@@ -95,14 +94,53 @@ data class ModelFileSpec(
 )
 
 /**
+ * Pinned GitHub Release asset for one `.fbmodel` package. The runtime
+ * builds the download URL from repo/tag/asset only; it never polls the
+ * API and never uses latest/main. Upstream repo/revision/file stay as
+ * provenance only. [parts] is null for single-asset v1 entries.
+ */
+data class ModelDistribution(
+    val repo: String,
+    val tag: String,
+    val asset: String,
+    val bytes: Long,
+    val sha256: String,
+    val parts: List<DistributionPart>? = null
+)
+
+/**
+ * One chunk part when a single asset would exceed the per-asset limit.
+ */
+data class DistributionPart(
+    val asset: String,
+    val bytes: Long,
+    val sha256: String
+)
+
+/**
+ * Returns the pinned release-asset download URL, or null when the
+ * manifest carries no distribution pin. No API polling, no latest/main,
+ * no Hugging Face resolve URLs in the production path.
+ */
+fun distributionUrlFor(distribution: ModelDistribution): String {
+    return "https://github.com/${distribution.repo}/releases/download/${distribution.tag}/${distribution.asset}"
+}
+
+/**
  * A model manifest with pinned revision, source repo, and file list.
+ *
+ * [sourceRepo] and [revision] are provenance-only (upstream identity for
+ * storage paths and diagnostics); production downloads use [distribution].
+ * A null [distribution] means the model has no release-asset download path
+ * (legacy storage compatibility only).
  */
 data class ModelManifest(
     val id: String,
     val sourceRepo: String,
     val revision: String,
     val files: List<ModelFileSpec>,
-    val runtime: String
+    val runtime: String,
+    val distribution: ModelDistribution? = null
 )
 
 /**

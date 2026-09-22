@@ -77,6 +77,21 @@ class VlmTypesTest {
         assertEquals("abcdef1234567890abcdef1234567890abcdef12", manifest.revision)
         assertEquals(files, manifest.files)
         assertEquals("com.example:runtime:1.0.0", manifest.runtime)
+        assertNull(manifest.distribution)
+    }
+
+    @Test fun distributionUrlUsesPinnedReleaseAssetOnly() {
+        val dist = ModelDistribution(
+            repo = "sheikhti1205/FindBack-Models",
+            tag = "models-2026-09-22-v1",
+            asset = "smolvlm2-500m-litert-int4.fbmodel",
+            bytes = 10L,
+            sha256 = "ab".repeat(32)
+        )
+        assertEquals(
+            "https://github.com/sheikhti1205/FindBack-Models/releases/download/models-2026-09-22-v1/smolvlm2-500m-litert-int4.fbmodel",
+            distributionUrlFor(dist)
+        )
     }
 
     @Test fun modelErrorHoldsCodeAndMessage() {

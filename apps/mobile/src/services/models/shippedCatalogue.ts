@@ -19,7 +19,7 @@
  */
 
 import catalogueJson from "../../../../../docs/specs/model-library/catalogue.v1.json";
-import type { ModelCatalogueEntry } from "./catalogueTypes";
+import type { ModelCatalogueEntry, ModelDistribution } from "./catalogueTypes";
 import type { VlmModelId } from "../vlmPlugin";
 
 /** Catalogue version the UI was built against. */
@@ -27,6 +27,21 @@ export const SHIPPED_CATALOGUE_VERSION = "1" as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isDistribution(value: unknown): value is ModelDistribution {
+  if (value === null || value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return (
+    typeof value["repo"] === "string" &&
+    typeof value["tag"] === "string" &&
+    typeof value["asset"] === "string" &&
+    typeof value["bytes"] === "number" &&
+    typeof value["sha256"] === "string" &&
+    (value["parts"] === null ||
+      value["parts"] === undefined ||
+      Array.isArray(value["parts"]))
+  );
 }
 
 function isCatalogueEntry(value: unknown): value is ModelCatalogueEntry {
@@ -50,7 +65,8 @@ function isCatalogueEntry(value: unknown): value is ModelCatalogueEntry {
     typeof value["description"] === "string" &&
     Array.isArray(value["supportedCapabilities"]) &&
     typeof value["upstreamRepo"] === "string" &&
-    Array.isArray(value["provenance"])
+    Array.isArray(value["provenance"]) &&
+    (value["distribution"] === undefined || isDistribution(value["distribution"]))
   );
 }
 
@@ -81,6 +97,20 @@ export const SHIPPED_CATALOGUE_ENTRIES: readonly ModelCatalogueEntry[] =
 export function bridgeModelIdForEntry(entryId: string): VlmModelId | null {
   if (entryId === "smolvlm2-500m-litert-int4") return "smolvlm2-500m";
   return null;
+}
+
+/**
+ * Pinned release-asset download URL for a catalogue entry, or null when
+ * the entry carries no distribution pin. Built from the shipped
+ * repo/tag/asset only — never a mutable remote list, never latest/main,
+ * never an API lookup.
+ */
+export function distributionUrlForEntry(
+  entry: ModelCatalogueEntry,
+): string | null {
+  const distribution = entry.distribution ?? null;
+  if (distribution == null) return null;
+  return `https://github.com/${distribution.repo}/releases/download/${distribution.tag}/${distribution.asset}`;
 }
 
 /**
