@@ -286,6 +286,9 @@ export class FakeAiProvider {
   private readonly modelId: string;
   private loadedRuntime: string | null;
   private readonly releasedRuntimes: string[];
+  /** Captured generation requests so callers can assert cap propagation. */
+  readonly textRequests: FakeTextRequest[] = [];
+  readonly photoRequests: FakePhotoRequest[] = [];
 
   constructor(options: FakeAiProviderOptions) {
     this.mode = options.mode;
@@ -338,10 +341,12 @@ export class FakeAiProvider {
   }
 
   async generateText(request: FakeTextRequest, signal?: AbortSignal): Promise<FakeAiResult> {
+    this.textRequests.push({ ...request });
     return this.run(request.prompt, "help", signal);
   }
 
   async analyzePhoto(request: FakePhotoRequest, signal?: AbortSignal): Promise<FakeAiResult> {
+    this.photoRequests.push({ ...request });
     return this.run(request.instruction, "photo", signal);
   }
 
