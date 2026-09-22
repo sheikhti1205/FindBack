@@ -650,7 +650,7 @@ describe("OfflineAi", () => {
     window.localStorage.removeItem("findback:offline-ai:active-model");
     bridge.getCapabilities.mockResolvedValue(capabilities);
     bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
-    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "READY_GPU" }]);
     bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
     bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
     bridge.cancelInference.mockClear();
@@ -668,6 +668,21 @@ describe("OfflineAi", () => {
     expect(screen.queryByRole("button", { name: /set smolvlm2 500m.*as active model/i })).toBeNull();
     expect(bridge.cancelInference).toHaveBeenCalledTimes(1);
     expect(bridge.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to persist activation when the runtime never initialized", async () => {
+    window.localStorage.removeItem("findback:offline-ai:active-model");
+    bridge.getCapabilities.mockResolvedValue(capabilities);
+    bridge.getSettings.mockResolvedValue({ mode: "AUTO" });
+    bridge.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "INSTALLED_UNVERIFIED" }]);
+    bridge.onDownloadProgress.mockResolvedValue(() => Promise.resolve());
+    bridge.onModelStateChange.mockResolvedValue(() => Promise.resolve());
+    render(<MemoryRouter><OfflineAi /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /set smolvlm2 500m.*as active model/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/runtime is not ready/i);
+    expect(screen.queryByText("Active for analysis")).toBeNull();
+    expect(window.localStorage.getItem("findback:offline-ai:active-model")).toBeNull();
   });
 
   it("blocks activation below minimum without confirmation, with the gate reason", async () => {

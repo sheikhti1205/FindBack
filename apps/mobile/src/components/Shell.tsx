@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { Bot, Home, PlusCircle, Search, UserRound } from "lucide-react";
 import { TabTapProvider, useTabTap } from "./TabTap";
 import { AssistantSheet } from "./AssistantSheet";
 import { LiveRegion } from "./LiveRegion";
 import { requestHistorySuppression } from "./backNavigation";
+import type { GuidedSnapshot } from "../services/assistant/guidedAssistantController";
+import { mapAssistantSearchFilters } from "../services/assistant/searchFilterMapping";
 
 const NAV: Array<{
   to: string;
@@ -23,8 +25,25 @@ const NAV: Array<{
 /** Bottom navigation appears on tab screens only (not on detail/help/offline-ai screens). */
 const HIDE_NAV = ["/help", "/posts/", "/offline-ai"];
 
+/**
+ * Search route for a search-ready assistant snapshot, else null. Only a
+ * completed search flow (state `ready` with extracted filters) navigates;
+ * collecting/recovering/report snapshots never leave the sheet.
+ */
+export function assistantSearchNavigationTarget(snapshot: GuidedSnapshot): string | null {
+  if (
+    snapshot.flow !== "search" ||
+    snapshot.state !== "ready" ||
+    snapshot.searchFilters === undefined
+  ) {
+    return null;
+  }
+  return mapAssistantSearchFilters(snapshot.searchFilters).path;
+}
+
 export function Shell() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
   const [assistantOpen, setAssistantOpen] = useState(false);
 
@@ -44,7 +63,17 @@ export function Shell() {
         >
           <Bot size={24} aria-hidden />
         </button>
-        <AssistantSheet open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+        <AssistantSheet
+          open={assistantOpen}
+          onClose={() => setAssistantOpen(false)}
+          onSnapshot={(snapshot) => {
+            const target = assistantSearchNavigationTarget(snapshot);
+            if (target !== null) {
+              setAssistantOpen(false);
+              navigate(target);
+            }
+          }}
+        />
         <LiveRegion />
       </div>
     </TabTapProvider>

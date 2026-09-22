@@ -61,6 +61,7 @@ describe("activateModel", () => {
       currentResidentId: null,
       availableFreeRamMb: null,
       advancedConfirmed: false,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(result).toEqual({ ok: true, alreadyActive: false });
     expect(order).toEqual(["cancel", "release"]);
@@ -73,6 +74,7 @@ describe("activateModel", () => {
       currentResidentId: null,
       availableFreeRamMb: null,
       advancedConfirmed: false,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(result.ok).toBe(false);
     expect(order).toEqual(["cancel", "release"]);
@@ -89,7 +91,7 @@ describe("activateModel", () => {
         role: "chat-text",
         verificationStatus: "SUPPORTED_UNVERIFIED",
       }),
-      { currentResidentId: null, availableFreeRamMb: null, advancedConfirmed: false },
+      { currentResidentId: null, availableFreeRamMb: null, advancedConfirmed: false, runtimeCapability: "RUNTIME_UNAVAILABLE" },
     );
     expect(result.ok).toBe(false);
     expect(bridge.cancelInference).not.toHaveBeenCalled();
@@ -103,6 +105,7 @@ describe("activateModel", () => {
       currentResidentId: "smolvlm2-500m-litert-int4",
       availableFreeRamMb: null,
       advancedConfirmed: false,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(result).toEqual({ ok: true, alreadyActive: true });
     expect(bridge.cancelInference).not.toHaveBeenCalled();
@@ -116,6 +119,7 @@ describe("activateModel", () => {
       currentResidentId: null,
       availableFreeRamMb: 512,
       advancedConfirmed: true,
+      runtimeCapability: "RUNTIME_AVAILABLE",
     });
     expect(result.ok).toBe(false);
     expect(order).toEqual(["cancel", "release"]);
