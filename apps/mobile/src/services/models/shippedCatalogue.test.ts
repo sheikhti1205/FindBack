@@ -36,6 +36,7 @@ describe("shipped catalogue", () => {
         "downloadBytes",
         "installedBytes",
         "sha256",
+        "installedSha256",
         "minFreeRamMb",
         "recommendedFreeRamMb",
         "ramRequirementSource",
@@ -93,6 +94,10 @@ describe("shipped catalogue", () => {
         "41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e",
       parts: null,
     });
+    expect(fiveHundred?.installedBytes).toBe(360822960);
+    expect(fiveHundred?.installedSha256).toBe(
+      "b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0",
+    );
     const qwen = SHIPPED_CATALOGUE_ENTRIES.find(
       (entry) => entry.id === "qwen3-0.6b-litert-dynamic-int4",
     );
@@ -105,6 +110,10 @@ describe("shipped catalogue", () => {
         "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
       parts: null,
     });
+    expect(qwen?.installedBytes).toBe(344671744);
+    expect(qwen?.installedSha256).toBe(
+      "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
+    );
     for (const entry of SHIPPED_CATALOGUE_ENTRIES) {
       if (
         entry.id !== "smolvlm2-500m-litert-int4" &&
