@@ -89,6 +89,23 @@ class LocalVlmPlugin : Plugin() {
     private var textDownloadJob: Job? = null
     @Volatile private var lastTextSelfTestReady: Boolean = false
 
+    // Single-residency arbiter over the image engine and the text
+    // controller: acquiring one role evicts the other first through the
+    // existing deferring release paths, never underneath native work.
+    private val residencyArbiter = GenerativeResidencyArbiter(
+        evictImage = {
+            cancelLeaseExpiry()
+            warmLease.releaseNow()
+            if (activeInference.isNativeRunning()) {
+                activeInference.cancel()
+                activeInference.deferEngineRelease()
+            } else {
+                releaseEngine500()
+            }
+        },
+        evictText = { textController.release() }
+    )
+
     private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
     private fun requireDownloader(): ModelDownloader = downloader ?: throw IllegalStateException("Plugin not initialized")
     private fun requirePrefs(): SharedPreferences = prefs ?: throw IllegalStateException("Plugin not initialized")
@@ -226,6 +243,7 @@ class LocalVlmPlugin : Plugin() {
         if (activeInference.isNativeRunning()) return
         val expired = warmLease.takeExpiredResident() ?: return
         releaseEngine500()
+        residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE)
         notifyListeners("warmLeaseExpired", warmLeaseEvent(expired))
     }
 
@@ -340,7 +358,11 @@ class LocalVlmPlugin : Plugin() {
                     )
                 }
                 if (event.state == VlmState.INSTALLED_UNVERIFIED && event.modelId == VlmModelId.SMOLVLM2_500M) {
+                    residencyArbiter.acquireImage(VlmModelId.SMOLVLM2_500M.wire)
                     engine500 = initializeEngine500()
+                    if (engine500 == null) {
+                        residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, VlmModelId.SMOLVLM2_500M.wire)
+                    }
                 }
             }
         }
@@ -406,7 +428,10 @@ class LocalVlmPlugin : Plugin() {
         requirePrefs().edit().putBoolean("cpu_fallback_allowed", allowCpuFallback).apply()
         // A resident engine built for the other path is stale: drop it so the
         // next analysis initializes the newly permitted backend.
-        if (!allowCpuFallback && engine500IsCpu) releaseEngine500()
+        if (!allowCpuFallback && engine500IsCpu) {
+            releaseEngine500()
+            residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE)
+        }
         call.resolve()
     }
 
@@ -520,7 +545,11 @@ class LocalVlmPlugin : Plugin() {
                         persistModelState(modelId, manifest, finalState)
                         // Re-initialize engine if this is the 500M model
                         if (modelId == VlmModelId.SMOLVLM2_500M) {
+                            residencyArbiter.acquireImage(VlmModelId.SMOLVLM2_500M.wire)
                             engine500 = initializeEngine500()
+                            if (engine500 == null) {
+                                residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, VlmModelId.SMOLVLM2_500M.wire)
+                            }
                         }
                     }
                     call.resolve()
@@ -670,6 +699,7 @@ class LocalVlmPlugin : Plugin() {
                 cancelLeaseExpiry()
                 warmLease.releaseNow()
                 releaseEngine500()
+                residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE)
             }
 
             // Reset state
@@ -1123,12 +1153,14 @@ class LocalVlmPlugin : Plugin() {
             when (modelId) {
                 VlmModelId.SMOLVLM2_500M -> {
                     val manifest = MODEL_MANIFESTS.single { it.id == modelId.wire }
+                    residencyArbiter.acquireImage(modelId.wire)
 
                     scope.launch {
                         // Heavy GPU init runs here on IO, never on the
                         // plugin-method thread. Null means missing model
                         // file or failed engine init: settle and bail.
                         val engineInstance = initializeEngine500() ?: run {
+                            residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, modelId.wire)
                             activeInference.finishNative(testToken)
                             inferenceMutex.release()
                             val result = GpuSelfTestResult(GpuSelfTestState.GPU_UNAVAILABLE, "Model not installed")
@@ -1349,6 +1381,9 @@ class LocalVlmPlugin : Plugin() {
             notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.RUNTIME_ERROR, error = "Busy").toJSObject())
             return
         }
+        // Single generative residency: evict the text engine first when it
+        // holds residency, then record the image entry.
+        residencyArbiter.acquireImage(modelId.wire)
 
         scope.launch {
             var prepared: ImagePreparer.PreparedImage? = null
@@ -1379,6 +1414,7 @@ class LocalVlmPlugin : Plugin() {
                             traceId,
                             mapOf("stage" to "loading_model", "reason" to "model-file-missing")
                         )
+                        residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, modelId.wire)
                         call.reject("Model not installed or not ready")
                         notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                         return@launch
@@ -1390,6 +1426,7 @@ class LocalVlmPlugin : Plugin() {
                             traceId,
                             mapOf("stage" to "loading_model", "reason" to "gpu-unavailable-cpu-off")
                         )
+                        residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, modelId.wire)
                         call.reject("GPU backend unavailable and CPU compatibility mode is off")
                         notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                         return@launch
@@ -1401,6 +1438,7 @@ class LocalVlmPlugin : Plugin() {
                             traceId,
                             mapOf("stage" to "loading_model", "reason" to "cpu-engine-start-failed")
                         )
+                        residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE, modelId.wire)
                         call.reject("Inference failed: CPU compatibility engine could not start")
                         notifyListeners("inferenceState", InferenceStateEvent(modelId, VlmState.READY_GPU).toJSObject())
                         return@launch
@@ -1546,6 +1584,7 @@ class LocalVlmPlugin : Plugin() {
                 inferenceMutex.release()
                 if (deferredRelease) {
                     releaseEngine500()
+                    residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE)
                 }
             }
         }
@@ -1593,6 +1632,13 @@ class LocalVlmPlugin : Plugin() {
                 mapOf("modelId" to modelId, "maxOutputTokens" to maxOutputTokens)
             )
             try {
+                // Single generative residency: evict the image engine first
+                // when it holds residency, then record the text entry. Only
+                // the accepted id can create residency; anything else is
+                // rejected inside the controller without touching it.
+                if (QwenTextRuntime.isAcceptedModelId(modelId)) {
+                    residencyArbiter.acquireText(modelId)
+                }
                 when (val outcome = textController.generateText(modelId, prompt, maxOutputTokens, temperature, traceId)) {
                     is TextGenerateOutcome.Ok -> {
                         val result = JSObject()
@@ -1619,6 +1665,10 @@ class LocalVlmPlugin : Plugin() {
                             traceId,
                             mapOf("modelId" to modelId, "code" to outcome.code, "error" to outcome.message)
                         )
+                        // No engine exists on this path, so drop the claim.
+                        if (outcome.code == TextRuntimeController.CODE_MODEL_NOT_INSTALLED) {
+                            residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.TEXT, modelId)
+                        }
                         call.reject(outcome.message, outcome.code)
                     }
                 }
@@ -1655,6 +1705,9 @@ class LocalVlmPlugin : Plugin() {
         }
         scope.launch {
             try {
+                if (QwenTextRuntime.isAcceptedModelId(modelId)) {
+                    residencyArbiter.acquireText(modelId)
+                }
                 val result = textController.runSelfTest(modelId, "Describe the current task briefly.")
                 // TEXT_READY proof for the lifecycle status: success plus
                 // the canonical ready state. Any other outcome clears it.
@@ -1724,6 +1777,13 @@ class LocalVlmPlugin : Plugin() {
         call.resolve(response)
     }
 
+    /**
+     * Residency diagnostics for the later device proof: which entry, if any,
+     * holds the single generative residency and in which role.
+     */
+    internal fun residencySnapshot(): GenerativeResidencyArbiter.ResidencySnapshot =
+        residencyArbiter.snapshot()
+
     @PluginMethod
     fun cancelInference(call: PluginCall) {
         if (!ensureInitialized(call)) return
@@ -1756,6 +1816,7 @@ class LocalVlmPlugin : Plugin() {
         // The text controller defers its own close while native text code
         // runs and cancels the in-flight generation first.
         textController.release()
+        residencyArbiter.releaseAll()
 
         // Cancel the event collector and downloads, but never cancel the root
         // scope itself: a cancelled scope silently drops every later launch,
@@ -1780,6 +1841,7 @@ class LocalVlmPlugin : Plugin() {
         cancelLeaseExpiry()
         warmLease.releaseNow()
         releaseEngine500()
+        residencyArbiter.release(GenerativeResidencyArbiter.ResidencyRole.IMAGE)
         call.resolve()
     }
 
