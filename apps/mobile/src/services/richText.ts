@@ -13,7 +13,9 @@ export type InlineNode =
   | { type: "InlineText"; text: string }
   | { type: "Bold"; text: string }
   | { type: "Italic"; text: string }
-  | { type: "Link"; href: string; text: string };
+  | { type: "Link"; href: string; text: string }
+  | { type: "BoldLink"; href: string; text: string }
+  | { type: "ItalicLink"; href: string; text: string };
 
 export type Block =
   | { type: "Paragraph"; runs: InlineNode[] }
@@ -68,6 +70,14 @@ function coerceRun(run: unknown): InlineNode {
       return typeof run.href === "string" && isSafeRichTextHref(run.href)
         ? { type: "Link", href: run.href, text }
         : { type: "InlineText", text };
+    case "BoldLink":
+      return typeof run.href === "string" && isSafeRichTextHref(run.href)
+        ? { type: "BoldLink", href: run.href, text }
+        : { type: "Bold", text };
+    case "ItalicLink":
+      return typeof run.href === "string" && isSafeRichTextHref(run.href)
+        ? { type: "ItalicLink", href: run.href, text }
+        : { type: "Italic", text };
     case "InlineText":
       return { type: "InlineText", text };
     default:
@@ -171,6 +181,16 @@ function emitRun(run: InlineNode): string {
         return escapeText(run.text);
       }
       return `[${escapeText(run.text)}](${run.href.trim()})`;
+    case "BoldLink":
+      if (!isSafeRichTextHref(run.href) || /\s/.test(run.href) || hasControlChars(run.href)) {
+        return `**${escapeText(run.text)}**`;
+      }
+      return `**[${escapeText(run.text)}](${run.href.trim()})**`;
+    case "ItalicLink":
+      if (!isSafeRichTextHref(run.href) || /\s/.test(run.href) || hasControlChars(run.href)) {
+        return `*${escapeText(run.text)}*`;
+      }
+      return `*[${escapeText(run.text)}](${run.href.trim()})*`;
     case "InlineText":
       return escapeText(run.text);
   }
@@ -255,6 +275,12 @@ function isWordChar(ch: string | undefined): boolean {
   return ch !== undefined && /[A-Za-z0-9]/.test(ch);
 }
 
+function parseEmphasisInner(inner: string): InlineNode | null {
+  const parsed = parseBracketLink(inner, 0);
+  if (!parsed || parsed.next !== inner.length) return null;
+  return parsed.node;
+}
+
 function parseInline(s: string): InlineNode[] {
   const runs: InlineNode[] = [];
   let literal = "";
@@ -276,7 +302,11 @@ function parseInline(s: string): InlineNode[] {
       const close = findCloser(s, i + 2, "**");
       if (close !== -1) {
         flush();
-        runs.push({ type: "Bold", text: s.slice(i + 2, close) });
+        const inner = s.slice(i + 2, close);
+        const linked = parseEmphasisInner(inner);
+        if (linked?.type === "Link") runs.push({ type: "BoldLink", href: linked.href, text: linked.text });
+        else if (linked) runs.push({ type: "Bold", text: linked.text });
+        else runs.push({ type: "Bold", text: inner });
         i = close + 2;
         continue;
       }
@@ -284,7 +314,11 @@ function parseInline(s: string): InlineNode[] {
       const close = findCloser(s, i + 1, "*");
       if (close !== -1 && close > i + 1) {
         flush();
-        runs.push({ type: "Italic", text: s.slice(i + 1, close) });
+        const inner = s.slice(i + 1, close);
+        const linked = parseEmphasisInner(inner);
+        if (linked?.type === "Link") runs.push({ type: "ItalicLink", href: linked.href, text: linked.text });
+        else if (linked) runs.push({ type: "Italic", text: linked.text });
+        else runs.push({ type: "Italic", text: inner });
         i = close + 1;
         continue;
       }
@@ -292,7 +326,11 @@ function parseInline(s: string): InlineNode[] {
       const close = findCloser(s, i + 1, "_");
       if (close !== -1 && close > i + 1 && !isWordChar(s[close + 1])) {
         flush();
-        runs.push({ type: "Italic", text: s.slice(i + 1, close) });
+        const inner = s.slice(i + 1, close);
+        const linked = parseEmphasisInner(inner);
+        if (linked?.type === "Link") runs.push({ type: "ItalicLink", href: linked.href, text: linked.text });
+        else if (linked) runs.push({ type: "Italic", text: linked.text });
+        else runs.push({ type: "Italic", text: inner });
         i = close + 1;
         continue;
       }

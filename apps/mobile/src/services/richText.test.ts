@@ -248,3 +248,50 @@ describe("richText link-scheme security", () => {
     ).toBe(false);
   });
 });
+
+describe("richText combined emphasis links", () => {
+  it("preserves bold+link and italic+link runs", () => {
+    const doc: RichTextDocument = {
+      v: 1,
+      blocks: [
+        {
+          type: "Paragraph",
+          runs: [
+            { type: "BoldLink", href: "https://example.com/photo", text: "photo" },
+            { type: "InlineText", text: " and " },
+            { type: "ItalicLink", href: "https://example.com/map", text: "map" },
+          ],
+        },
+      ],
+    };
+    expect(toMarkdown(doc)).toBe("**[photo](https://example.com/photo)** and *[map](https://example.com/map)*");
+    expect(roundTrip(doc)).toEqual(doc);
+  });
+
+  it("keeps display text when emphasis wraps an unsafe link", () => {
+    const doc = fromMarkdown("**[evil](javascript:alert(1))**");
+    const runs = doc.blocks.flatMap((b) => (b.type === "Paragraph" ? b.runs : []));
+    expect(runs.some((r) => r.type === "Link" || r.type === "BoldLink" || r.type === "ItalicLink")).toBe(false);
+    expect(runs.map((r) => r.text).join("")).toContain("evil");
+    expect(toMarkdown(doc)).toBe("**evil**");
+  });
+
+  it("never emits an unsafe link from a hostile combined run", () => {
+    const hostile = {
+      v: 1,
+      blocks: [
+        {
+          type: "Paragraph",
+          runs: [
+            { type: "BoldLink", href: "javascript:alert(1)", text: "click" },
+            { type: "ItalicLink", href: "data:text/html,hi", text: "tap" },
+          ],
+        },
+      ],
+    } as unknown as RichTextDocument;
+    const md = toMarkdown(hostile);
+    expect(md).not.toMatch(/javascript:|data:/i);
+    expect(md).toBe("**click***tap*");
+    expect(roundTrip(fromMarkdown(md))).toEqual(fromMarkdown(md));
+  });
+});
