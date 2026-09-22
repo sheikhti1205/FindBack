@@ -10,10 +10,11 @@
  * - `TextGenerationBridge`: the explicit-modelId native contract,
  *   conceptually `generateText({modelId, prompt, maxOutputTokens,
  *   temperature})`. Unlike `analyzeImage`, the requested model is always
- *   explicit. No native implementation exists in this tree yet (no
- *   `generateText` `@PluginMethod` on `LocalVlmPlugin`, no text engine
- *   beside `VlmEngine500`); `isTextRuntimePresent` probes for it so Qwen
- *   stays non-runnable until the real bridge lands.
+ *   explicit. The native `generateText` / `runTextSelfTest` /
+ *   `getTextRuntimeStatus` methods live on `LocalVlmPlugin` and are bound
+ *   through the production `VlmBridge` text surface (`vlmPlugin.ts`);
+ *   `isTextRuntimePresent` probes for it so Qwen stays non-runnable where
+ *   the bridge is absent.
  * - `TextEngine` / `createBridgeTextEngine`: generic LiteRT-LM text engine
  *   seam — `initialize(model)`, conversation, `sendText`, cancel, `release`.
  *   No image requirement. Streaming has no bridge method yet, so the

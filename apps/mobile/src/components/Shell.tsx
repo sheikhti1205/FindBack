@@ -14,9 +14,8 @@ import {
   isTextRuntimePresent,
   type GenerateTextRequest,
   type GenerateTextResult,
-  type TextGenerationBridge,
 } from "../services/models/textRuntime";
-import { getVlmBridge } from "../services/vlmPlugin";
+import { getVlmBridge, isTextBridge } from "../services/vlmPlugin";
 
 const NAV: Array<{
   to: string;
@@ -87,9 +86,8 @@ export function resolveShellAssistantRuntime(
   const textRuntimePresent = seams.textRuntimePresent ?? isTextRuntimePresent(bridge);
   const generateText =
     seams.generateText ??
-    (textRuntimePresent
-      ? (request: GenerateTextRequest) =>
-          (bridge as unknown as TextGenerationBridge).generateText(request)
+    (textRuntimePresent && isTextBridge(bridge)
+      ? (request: GenerateTextRequest) => bridge.generateText(request)
       : undefined);
   if (generateText === undefined) return {};
   return resolveLocalTextRuntime({
