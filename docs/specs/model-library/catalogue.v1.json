@@ -1,0 +1,381 @@
+{
+ "catalogueVersion": "1",
+ "updatedAt": "2026-09-21",
+ "pinnedModelsRelease": {
+  "repo": "FindBack-Models",
+  "tag": "models-2026-09-TBD"
+ },
+ "entries": [
+  {
+   "id": "smolvlm2-500m-litert-int4",
+   "displayName": "SmolVLM2 500M (LiteRT, int4)",
+   "category": "vision",
+   "role": "report-from-photo",
+   "runtime": "litert-lm",
+   "format": "litertlm",
+   "revision": "dad030b6e56756201d670cfb4d042736a2ce3a5c",
+   "license": "apache-2.0",
+   "licenseUrl": "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+   "downloadBytes": 360822960,
+   "installedBytes": 360822960,
+   "sha256": "b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0",
+   "minFreeRamMb": 1536,
+   "recommendedFreeRamMb": 2560,
+   "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
+   "ramNotes": "Formula: installedMiB(344)+1150 reserve=1494, rounded to 1536; rec installedMiB+2048=2392, rounded to 2560. Reference only: SmolVLM paper (arXiv:2504.05299, Table 1) reports 1.2 GB RAM for SmolVLM v1 500M at batch=1 on the transformers stack (desktop GPU) — related but NOT this artifact and NOT LiteRT/Android. No on-device LiteRT RAM measurement exists (GPU proof blocked on phone per FINAL_ACCEPTANCE_REPORT). Re-measure on device before promoting source to MEASURED.",
+   "verificationStatus": "VERIFIED",
+   "catalogOnly": false,
+   "requiresAdvancedConfirm": true,
+   "description": "Tiny vision-language model (SigLIP encoder + SmolLM2-360M decoder, int4 weights / int8 embedder, KV context 2048) for on-device report-from-photo. Verified by exact byte count + whole-file SHA-256 before chunking; lab baseline evaluated. Text/Help use NOT recommended: Task-20 text arm shows invented features on 18/31 rows with loops on 17/31 (median length 2699 chars, max 9936). Vision structured path unreliable without guards: 0/12 valid JSON (11 unterminated loops + 1 schema regurgitation) — needs server-side repair / loop and echo guards before structured photo-qual use.",
+   "supportedCapabilities": [
+    "report-from-photo",
+    "caption",
+    "visual-qa"
+   ],
+   "upstreamRepo": "litert-community/SmolVLM2-500M",
+   "upstreamFile": "SmolVLM2-500M.litertlm",
+   "releaseAsset": [
+    "smolvlm2-500m-litert-int4.fbmodel"
+   ],
+   "provenance": [
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "apps/mobile/android/app/src/main/assets/chunks/PROVENANCE.md",
+     "note": "rev, 360822960 bytes, sha256 b808b328.. verified pre-chunking; 44x8MiB chunks"
+    },
+    {
+     "kind": "VENDOR_MODEL_CARD",
+     "ref": "https://huggingface.co/litert-community/SmolVLM2-500M/blob/main/README.md",
+     "note": "~361 MB .litertlm; int4 blockwise-32+OCTAV, int8 embedder; KV ctx 2048; base HuggingFaceTB/SmolVLM2-500M-Video-Instruct; Apache-2.0"
+    },
+    {
+     "kind": "PAPER",
+     "ref": "arXiv:2504.05299 (SmolVLM), Table 1",
+     "note": "500M-class 1.2 GB RAM batch=1 (transformers stack) — reference only, stack differs"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox Worker-B Task-20 FINAL09 (2026-09-21T17:40Z)",
+     "note": "Text arm: invented_feature 18/31, loops 17/31 — not recommended for Help/text; vision arm: valid JSON 0/12 — structured path unreliable without guards"
+    }
+   ]
+  },
+  {
+   "id": "qwen3-0.6b-litert-dynamic-int4",
+   "displayName": "Qwen3 0.6B (LiteRT, dynamic int4)",
+   "category": "text",
+   "role": "chat-text",
+   "runtime": "litert-lm",
+   "format": "litertlm",
+   "revision": "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
+   "license": "apache-2.0",
+   "licenseUrl": "https://huggingface.co/Qwen/Qwen3-0.6B",
+   "downloadBytes": 344671744,
+   "installedBytes": 344671744,
+   "sha256": "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
+   "minFreeRamMb": 1280,
+   "recommendedFreeRamMb": 2560,
+   "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
+   "ramNotes": "Formula (ram-ui.md s4, text <=1.2B): installed 344671744 B = 328 MiB -> min 328+700=1028, ceil_to_256 = 1280; rec 328+2048=2376, ceil_to_256 = 2560. Vendor publishes NO mobile RAM figure; KV floor observed in lab: fails at --max-num-tokens 256, runs at 1024 (coordinator 2026-09-21T15:00Z). Full 40-char rev + 64-char SHA-256 from frozen Task-20 provenance (tested artifact, not HF main head). Status stays SUPPORTED_UNVERIFIED until app contract + Android run proven. Running below minimum needs explicit advanced confirmation (gate designed, enforcement later).",
+   "verificationStatus": "SUPPORTED_UNVERIFIED",
+   "catalogOnly": false,
+   "requiresAdvancedConfirm": true,
+   "description": "First text target post-normalization (Task-20 one-quant rule): Qwen3 0.6B dynamic-int4 LiteRT artifact, rev a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76, 344671744 B verified on disk. Emits [thought]...[/thought] reasoning traces into output (thought-envelope: 30/31 lab rows, 2 thought-only with no answer) — strip the envelope before parsing/scoring (normalization R2, owner review pending). Shape-valid JSON on 4/5 probes with invented content — instruction-following beats truthfulness.",
+   "supportedCapabilities": [
+    "text-generation"
+   ],
+   "upstreamRepo": "litert-community/Qwen3-0.6B",
+   "upstreamFile": "Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm",
+   "releaseAsset": null,
+   "provenance": [
+    {
+     "kind": "VENDOR_MODEL_CARD",
+     "ref": "https://huggingface.co/Qwen/Qwen3-0.6B",
+     "note": "0.6B params (0.44B non-embedding), 28 layers, 32K context, Apache-2.0"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox Worker-B Task-20 msg 01 (2026-09-21T15:40Z)",
+     "note": "One-quant rule: dynamic INT4 only (rev a3c5d805, 344671744 B, matches registry 03e7da1e); mixed-INT4 + INT8 rejected for Task-20 comparability"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox Worker-B Task-20 FINAL09 (2026-09-21T17:40Z)",
+     "note": "On-disk re-verified 344,671,744 B MATCH frozen pin; thought-leak 30/31, invented 8/31, loops 6/31; KV floor 1024 honored (all 31 green)"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox coordinator 2026-09-21T15:00Z/15:20Z",
+     "note": "Upstream HF revision unpinned at Task-0 time; KV floor (fails 256, runs 1024); evaluator thought-text false-positive caveat"
+    },
+    {
+     "kind": "UNKNOWN",
+     "ref": "unknown / not established",
+     "note": "Full 64-char SHA-256 of the curated .fbmodel not established (only truncated local 03e7da1e...45285); curated .fbmodel not yet packaged"
+    },
+    {
+     "kind": "FROZEN_TASK20_PROVENANCE",
+     "ref": "ai-behavior-v2/model-profiles.json (rev) + results/task20-text-coded.jsonl modelSha256 + runs/20260921/run_text.py (sha)",
+     "note": "Full tested rev a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76; tested file SHA-256 03e7da1e...45285 (64-char). Filled 2026-09-21 per coordinator ruling; never re-resolved from HF main."
+    }
+   ]
+  },
+  {
+   "id": "qwen3-0.6b-litert-mixed-int4",
+   "displayName": "Qwen3 0.6B (LiteRT, mixed int4)",
+   "category": "text",
+   "role": "chat-text",
+   "runtime": "litert-lm",
+   "format": "litertlm",
+   "revision": "UNKNOWN_NOT_ESTABLISHED",
+   "license": "apache-2.0",
+   "licenseUrl": "https://huggingface.co/Qwen/Qwen3-0.6B",
+   "downloadBytes": null,
+   "installedBytes": null,
+   "sha256": null,
+   "minFreeRamMb": 1024,
+   "recommendedFreeRamMb": 2048,
+   "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
+   "ramNotes": "As per qwen3-0.6b-litert-dynamic-int4: class-based floor; vendor publishes no mobile RAM figure; per-artifact formula once pinned.",
+   "verificationStatus": "SUPPORTED_UNVERIFIED",
+   "catalogOnly": false,
+   "requiresAdvancedConfirm": true,
+   "description": "Qwen3 0.6B mixed-int4 lab variant (deprioritized by the Task-20 one-quant rule — dynamic-int4 is the first text target; kept for record, not removed). Unpinned revision; bytes/sha not established.",
+   "supportedCapabilities": [
+    "text-generation"
+   ],
+   "upstreamRepo": "Qwen/Qwen3-0.6B",
+   "upstreamFile": null,
+   "releaseAsset": null,
+   "provenance": [
+    {
+     "kind": "VENDOR_MODEL_CARD",
+     "ref": "https://huggingface.co/Qwen/Qwen3-0.6B",
+     "note": "0.6B params (0.44B non-embedding), 28 layers, 32K context, Apache-2.0"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox Worker-B Task-20 msg 01 (2026-09-21T15:40Z)",
+     "note": "Mixed-INT4 rejected for Task-20 comparability under the one-quant rule (Task 0 covers it); upstream rev UNPINNED"
+    },
+    {
+     "kind": "UNKNOWN",
+     "ref": "unknown / not established",
+     "note": "Exact downloadBytes/installedBytes/sha256 for the curated .fbmodel not established"
+    }
+   ]
+  },
+  {
+   "id": "qwen3-0.6b-litert-int8",
+   "displayName": "Qwen3 0.6B (LiteRT, int8)",
+   "category": "text",
+   "role": "chat-text",
+   "runtime": "litert-lm",
+   "format": "litertlm",
+   "revision": "UNKNOWN_NOT_ESTABLISHED",
+   "license": "apache-2.0",
+   "licenseUrl": "https://huggingface.co/Qwen/Qwen3-0.6B",
+   "downloadBytes": null,
+   "installedBytes": null,
+   "sha256": null,
+   "minFreeRamMb": 1024,
+   "recommendedFreeRamMb": 2048,
+   "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
+   "ramNotes": "As per qwen3-0.6b-litert-dynamic-int4: class-based floor; vendor publishes no mobile RAM figure; per-artifact formula once pinned. int8 weights are ~2x int4 — re-check against formula at pin time.",
+   "verificationStatus": "SUPPORTED_UNVERIFIED",
+   "catalogOnly": false,
+   "requiresAdvancedConfirm": true,
+   "description": "Qwen3 0.6B int8 lab variant (deprioritized by the Task-20 one-quant rule — dynamic-int4 is the first text target; kept for record, not removed). Unpinned revision; bytes/sha not established.",
+   "supportedCapabilities": [
+    "text-generation"
+   ],
+   "upstreamRepo": "Qwen/Qwen3-0.6B",
+   "upstreamFile": null,
+   "releaseAsset": null,
+   "provenance": [
+    {
+     "kind": "VENDOR_MODEL_CARD",
+     "ref": "https://huggingface.co/Qwen/Qwen3-0.6B",
+     "note": "0.6B params (0.44B non-embedding), 28 layers, 32K context, Apache-2.0"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox Worker-B Task-20 msg 01 (2026-09-21T15:40Z)",
+     "note": "INT8 rejected for Task-20 comparability under the one-quant rule (Task 0 covers it); upstream rev UNPINNED"
+    },
+    {
+     "kind": "UNKNOWN",
+     "ref": "unknown / not established",
+     "note": "Exact downloadBytes/installedBytes/sha256 for the curated .fbmodel not established"
+    }
+   ]
+  },
+  {
+   "id": "lfm2.5-1.2b-instruct-litert-int4-gpu",
+   "displayName": "LFM2.5 1.2B Instruct (LiteRT, int4 GPU)",
+   "category": "text",
+   "role": "chat-text",
+   "runtime": "litert-lm",
+   "format": "litertlm",
+   "revision": "UNKNOWN_NOT_ESTABLISHED",
+   "license": "lfm-open-1.0",
+   "licenseUrl": "https://liquid.ai/legal",
+   "downloadBytes": null,
+   "installedBytes": null,
+   "sha256": null,
+   "minFreeRamMb": 1536,
+   "recommendedFreeRamMb": 2816,
+   "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
+   "ramNotes": "Formula applied to the third-party card figure (~736 MB ~= 702 MiB): 702+700=1402 -> 1536; rec 702+2048=2750 -> 2816. Vendor publishes NO mobile RAM figure. Recompute from exact bytes at pin time. NOTE: LFM Open License v1.0 commercial-use threshold ($10M revenue) must be surfaced in UI alongside the entry.",
+   "verificationStatus": "EXPERIMENTAL",
+   "catalogOnly": false,
+   "requiresAdvancedConfirm": true,
+   "description": "Liquid AI flagship on-device text model (hybrid conv+attention, 32K context), int4 LiteRT conversion with GPU path. EXPERIMENTAL: Task-20 lab profile (GGUF Q4_0 arm) shows silence on 10/31 rows (incl. all JSON probes and the refusal probe with NO refusal text) and invented content on 11/21 non-empty rows, complying where Qwen refuses — NOT for structured actions. Lab smoke passed on a DIFFERENT artifact (GGUF Q4_K_M via llama.cpp) — the .litertlm file itself is unverified. License is LFM Open License v1.0, not Apache; no shipment inference.",
+   "supportedCapabilities": [
+    "text-generation"
+   ],
+   "upstreamRepo": "litert-community/LFM2.5-1.2B-Instruct",
+   "upstreamFile": "LFM2.5-1.2B-Instruct_int4_gpu.litertlm",
+   "releaseAsset": null,
+   "provenance": [
+    {
+     "kind": "THIRD_PARTY_CONVERSION",
+     "ref": "https://huggingface.co/litert-community/LFM2.5-1.2B-Instruct",
+     "note": "int8 1.25 GB / int4 736 MB / int4_gpu 736 MB; GPU needs litert-lm >=0.16; KV 4096 max; converter claims, not vendor"
+    },
+    {
+     "kind": "VENDOR_DOCS",
+     "ref": "https://docs.liquid.ai/lfm/models/lfm25-1.2b-instruct",
+     "note": "1.2B params, 32K context, LFM2.5 dense"
+    },
+    {
+     "kind": "VENDOR_DOCS",
+     "ref": "https://docs.liquid.ai/lfm/help/model-license.md",
+     "note": "LFM Open License v1.0: free commercial use under $10M annual revenue; attribution required"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox 2026-09-21T15:20Z",
+     "note": "Lab smoke PASS refers to GGUF Q4_K_M 697 MB via llama-cpp — different artifact"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox Worker-B Task-20 FINAL09 (2026-09-21T17:40Z)",
+     "note": "LFM2.5-1.2B-Q4_0 text arm: silence 10/31, invented 11/21 non-empty, tersest (median 265 chars) but least safe — basis for EXPERIMENTAL, not for structured actions"
+    },
+    {
+     "kind": "UNKNOWN",
+     "ref": "unknown / not established",
+     "note": "Pinned upstream revision + exact bytes/sha256 of the curated .fbmodel not established"
+    }
+   ]
+  },
+  {
+   "id": "lfm2.5-vl-450m",
+   "displayName": "LFM2.5-VL 450M (multimodal, packaging TBD)",
+   "category": "multimodal",
+   "role": "report-from-photo",
+   "runtime": "tbd",
+   "format": "tbd-litertlm",
+   "revision": "UNKNOWN_NOT_ESTABLISHED",
+   "license": "lfm-open-1.0",
+   "licenseUrl": "https://liquid.ai/legal",
+   "downloadBytes": null,
+   "installedBytes": null,
+   "sha256": null,
+   "minFreeRamMb": 1024,
+   "recommendedFreeRamMb": 2048,
+   "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
+   "ramNotes": "Class-based floor for a compact VL artifact; NO litertlm conversion exists yet so no per-artifact arithmetic is possible. Reference only: vendor MLX bf16 export is 0.84 GB; Liquid blog reports 242 ms/512px on Jetson Orin and 2.4 s on Galaxy S25 Ultra (latency, NOT RAM). Recompute at packaging time.",
+   "verificationStatus": "EXPERIMENTAL",
+   "catalogOnly": false,
+   "requiresAdvancedConfirm": true,
+   "description": "Liquid AI compact vision-language model (350M backbone + 86M SigLIP2, 32K ctx, grounding + function calling). EVAL-ONLY slot: the int4_fixB lab file (406817104 B, local SHA-256 6854cd9677a34e680070b60076793e49aeb3224de7cb4101076b261cb9bf6033, NO upstream hash published) is recorded for evaluation reference and is NEVER a catalogue-distributable production artifact — do not present as downloadable. No verified distributable LiteRT packaging exists — do not offer install until packaged + verified. License is LFM Open License v1.0, not Apache; no shipment inference.",
+   "supportedCapabilities": [
+    "report-from-photo",
+    "caption",
+    "grounding"
+   ],
+   "upstreamRepo": "LiquidAI/LFM2.5-VL-450M",
+   "upstreamFile": null,
+   "releaseAsset": null,
+   "provenance": [
+    {
+     "kind": "VENDOR_MODEL_CARD",
+     "ref": "https://huggingface.co/LiquidAI/LFM2.5-VL-450M",
+     "note": "450M, SigLIP2 NaFlex 86M, 32K ctx, 9 languages, lfm1.0"
+    },
+    {
+     "kind": "VENDOR_DOCS",
+     "ref": "https://www.liquid.ai/blog/lfm2-5-vl-450m",
+     "note": "Edge latency table (Jetson/S25/AMD) — latency only, no RAM figures; vision benchmarks vs SmolVLM2-500M"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox Worker-F Task-29 interim+final (2026-09-21T22:15Z/22:35Z)",
+     "note": "Eval download under LFM Open License v1.0 from litert-community/LFM2.5-VL-450M rev be196f4f: stock int4 406820224 B SHA 45a02241...5db4797 MATCHES manifest pin; fixB 406817104 B local SHA 6854cd96...61cb9bf with NO upstream pin — fixB eval-only, never a catalogue artifact; stock DISQUALIFIED as silently spatially wrong, fixB QUALIFIED_FOR_ANDROID_SPIKE only"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox Worker-B Task-20 FINAL09 (2026-09-21T17:40Z)",
+     "note": "Reused F files independently: stock 406,820,224 B 45a02241...5db4797 MATCH manifest pin; fixB 406,817,104 B 6854cd96...61cb9bf RECORDED, no pin exists, eval-only; VL-fixB only arm with majority-valid + uncertainty signaling"
+    },
+    {
+     "kind": "UNKNOWN",
+     "ref": "unknown / not established",
+     "note": "No verified distributable litertlm packaging exists; runtime, revision, catalogue bytes/sha all not established — eval-only local bytes/SHA above are reference records, not install pins"
+    }
+   ]
+  },
+  {
+   "id": "gemma-3n-e2b-it-litert-int4",
+   "displayName": "Gemma 3n E2B IT (LiteRT, int4) — catalog reference only",
+   "category": "experimental-large",
+   "role": "catalog-reference",
+   "runtime": "litert-lm",
+   "format": "litertlm",
+   "revision": "UNKNOWN_NOT_ESTABLISHED",
+   "license": "gemma",
+   "licenseUrl": "https://ai.google.dev/gemma/docs/gemma-3n/model_card",
+   "downloadBytes": null,
+   "installedBytes": null,
+   "sha256": null,
+   "minFreeRamMb": 4096,
+   "recommendedFreeRamMb": 6144,
+   "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
+   "ramNotes": "NOT VERIFIED — do not present as installable. Class-based floor only: vendor publishes NO phone free-RAM requirement. Raw params 5B+ (effective ~1.91B via MatFormer/PLE offload); HF lists the int4 .litertlm at ~3.66 GB (reviewer registry note corrects an older ~2 GB figure to ~3.39 GB — neither is a pinned byte count). Any future packaging MUST re-derive RAM from measured artifacts and keep the not-verified/min-free-RAM warning.",
+   "verificationStatus": "EXPERIMENTAL",
+   "catalogOnly": true,
+   "requiresAdvancedConfirm": true,
+   "description": "CATALOG ONLY. Google Gemma 3n E2B instruction-tuned multimodal model (text/image/video/audio in, text out; 32K ctx; gated Gemma Terms of Use). Listed for roadmap comparison; exceeds the 2 GiB per-asset GitHub Releases limit unchunked, untested on FindBack, no pinned bytes/sha. Carries the mandatory not-verified + min-free-RAM warning design.",
+   "supportedCapabilities": [
+    "catalog-reference"
+   ],
+   "upstreamRepo": "google/gemma-3n-E2B-it-litert-lm-preview",
+   "upstreamFile": "gemma-3n-E2B-it-int4.litertlm",
+   "releaseAsset": null,
+   "provenance": [
+    {
+     "kind": "VENDOR_MODEL_CARD",
+     "ref": "https://ai.google.dev/gemma/docs/gemma-3n/model_card",
+     "note": "Gemma Terms of Use (gated); effective 2B/4B via selective activation; multimodal; 140+ languages"
+    },
+    {
+     "kind": "VENDOR_MODEL_CARD",
+     "ref": "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm-preview/tree/main",
+     "note": "int4 .litertlm listed ~3.66 GB, Web ~3.04 GB, mediatek ~4.33 GB (listing figures, NOT pinned byte counts)"
+    },
+    {
+     "kind": "REPO_EVIDENCE",
+     "ref": "coordination mailbox 2026-09-21T16:20Z (MODEL-LAB-REVIEWER)",
+     "note": "Registry notes correct old ~2 GB figure to ~3.39 GB and forbid citing 2 GB"
+    },
+    {
+     "kind": "UNKNOWN",
+     "ref": "unknown / not established",
+     "note": "Pinned revision, exact bytes, sha256, and any on-device RAM measurement not established; entry is EXPERIMENTAL + catalogOnly"
+    }
+   ]
+  }
+ ]
+}
