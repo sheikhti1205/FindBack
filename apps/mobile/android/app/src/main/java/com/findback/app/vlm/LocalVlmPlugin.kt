@@ -81,6 +81,14 @@ class LocalVlmPlugin : Plugin() {
         isModelInstalled = { qwenModelFileIfPresent() != null }
     )
 
+    // Text transfer lifecycle (Y owner, text-specific bridge keyed by the
+    // exact qualified bridge id). Foreground chunk-engine download with the
+    // same verified-promotion discipline as the image path; the image
+    // scheduler, router, and `VlmModelId` channel are untouched.
+    @Volatile private var textTransferState: VlmState = VlmState.NOT_INSTALLED
+    private var textDownloadJob: Job? = null
+    @Volatile private var lastTextSelfTestReady: Boolean = false
+
     private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
     private fun requireDownloader(): ModelDownloader = downloader ?: throw IllegalStateException("Plugin not initialized")
     private fun requirePrefs(): SharedPreferences = prefs ?: throw IllegalStateException("Plugin not initialized")
@@ -284,6 +292,23 @@ class LocalVlmPlugin : Plugin() {
             )
             modelStates[modelId] = VlmModelInfo(modelId, state, record?.installedBytes)
         }
+        // Restore the text transfer state. Transient transfer states with no
+        // live job park as PAUSED (verified chunks staged for resume) or
+        // NOT_INSTALLED; the text path has no platform scheduler to
+        // reconcile against.
+        val qwenManifest = QwenTextRuntime.manifest()
+        val qwenSpec = qwenManifest.files.firstOrNull()
+        val textRecord = try {
+            QwenLifecycle.loadState(requireStore().root)
+        } catch (_: Exception) {
+            null
+        }
+        val textPartExists = try {
+            qwenSpec != null && requireStore().partFile(qwenManifest, qwenSpec).exists()
+        } catch (_: Exception) {
+            false
+        }
+        textTransferState = QwenLifecycle.reconcileAtBoot(textRecord, textPartExists)
         initialized = true
 
         scope.launch {
@@ -651,6 +676,267 @@ class LocalVlmPlugin : Plugin() {
             updateModelState(modelId, VlmState.NOT_INSTALLED)
             call.resolve()
         } ?: call.reject("Invalid modelId: $modelIdWire")
+    }
+
+    /**
+     * Text-model lifecycle transfers (Y owner). Text-specific bridge keyed
+     * by the exact qualified bridge id — any other id is rejected, never
+     * substituted. Foreground chunk-engine download with verified
+     * promotion into the authoritative `ModelStore` layout; no second
+     * install root, no scheduler identity, no `VlmModelId` widening.
+     * Residency and activation stay with the text controller (AB's
+     * arbiter wraps acquisition when it lands).
+     */
+    @PluginMethod
+    fun downloadTextModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val modelIdWire = call.getString("modelId") ?: return
+        try {
+            QwenTextRuntime.requireAcceptedModelId(modelIdWire)
+        } catch (_: IllegalArgumentException) {
+            call.reject("Invalid modelId: $modelIdWire")
+            return
+        }
+        val manifest = QwenTextRuntime.manifest()
+        if (textDownloadJob?.isActive == true || activeDownloads.isNotEmpty()) {
+            call.reject("Another download is in progress")
+            return
+        }
+        if (QwenLifecycle.isInstalledValid(requireStore().root, QwenLifecycle.loadState(requireStore().root))) {
+            call.reject("Model already downloaded or downloading")
+            return
+        }
+        if (textTransferState == VlmState.DOWNLOADING || textTransferState == VlmState.QUEUED) {
+            call.reject("Model already downloaded or downloading")
+            return
+        }
+        val totalExpectedBytes = manifest.files.sumOf { it.expectedBytes } +
+            (manifest.distribution?.bytes ?: 0L)
+        if (!ModelInstallPolicy.canInstall(getFreeBytes(), totalExpectedBytes)) {
+            updateTextState(VlmState.INSUFFICIENT_STORAGE, error = "Insufficient storage space")
+            call.reject("Insufficient storage")
+            return
+        }
+        updateTextState(VlmState.QUEUED)
+        textDownloadJob = scope.launch {
+            try {
+                runTextDownload(call)
+            } catch (e: CancellationException) {
+                // Pause/cancel/teardown own the state; never report failure.
+                throw e
+            } catch (e: Exception) {
+                updateTextState(VlmState.DOWNLOAD_FAILED, error = e.message ?: "Download failed")
+                try {
+                    call.reject("Download failed: ${e.message}")
+                } catch (_: Exception) {
+                }
+            } finally {
+                if (textDownloadJob?.isCancelled == false) {
+                    textDownloadJob = null
+                }
+            }
+        }
+    }
+
+    private suspend fun runTextDownload(call: PluginCall) {
+        val manifest = QwenTextRuntime.manifest()
+        updateTextState(VlmState.DOWNLOADING)
+        val finalState = requireDownloader().download(
+            manifest = manifest,
+            onProgress = { downloaded, total ->
+                val progress = if (total > 0) downloaded.toFloat() / total else 0f
+                val event = JSObject()
+                event.put("modelId", QwenTextRuntime.BRIDGE_MODEL_ID)
+                event.put("progress", progress)
+                event.put("downloadedBytes", downloaded)
+                event.put("totalBytes", total)
+                notifyListeners("textDownloadProgress", event)
+            },
+            onState = { transferState ->
+                if (transferState != VlmState.DOWNLOADING) {
+                    updateTextState(transferState)
+                }
+            }
+        )
+        // A verified promotion is the only path to installed: the record
+        // carries the asserted hash and the status derives installed from
+        // record plus file facts, never from presence alone.
+        updateTextState(finalState)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun pauseTextDownload(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val modelIdWire = call.getString("modelId") ?: return
+        try {
+            QwenTextRuntime.requireAcceptedModelId(modelIdWire)
+        } catch (_: IllegalArgumentException) {
+            call.reject("Invalid modelId: $modelIdWire")
+            return
+        }
+        // Graceful stop preserving verified chunks; the PAUSED record
+        // survives restarts until resume.
+        requireDownloader().requestPause()
+        textDownloadJob?.cancel()
+        textDownloadJob = null
+        requireDownloader().resetControl()
+        updateTextState(VlmState.PAUSED)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun resumeTextDownload(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val modelIdWire = call.getString("modelId") ?: return
+        try {
+            QwenTextRuntime.requireAcceptedModelId(modelIdWire)
+        } catch (_: IllegalArgumentException) {
+            call.reject("Invalid modelId: $modelIdWire")
+            return
+        }
+        if (textDownloadJob?.isActive == true ||
+            textTransferState == VlmState.DOWNLOADING || textTransferState == VlmState.QUEUED
+        ) {
+            call.reject("Download already in progress")
+            return
+        }
+        updateTextState(VlmState.QUEUED)
+        // Resume continues missing chunks only; verified ranges are kept.
+        textDownloadJob = scope.launch {
+            try {
+                runTextDownload(call)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateTextState(VlmState.DOWNLOAD_FAILED, error = e.message ?: "Download failed")
+                try {
+                    call.reject("Download failed: ${e.message}")
+                } catch (_: Exception) {
+                }
+            } finally {
+                if (textDownloadJob?.isCancelled == false) {
+                    textDownloadJob = null
+                }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun cancelTextDownload(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val modelIdWire = call.getString("modelId") ?: return
+        // Keep downloaded data for later (default) vs remove partial download.
+        val removePartial = call.getBoolean("removePartial") ?: false
+        try {
+            QwenTextRuntime.requireAcceptedModelId(modelIdWire)
+        } catch (_: IllegalArgumentException) {
+            call.reject("Invalid modelId: $modelIdWire")
+            return
+        }
+        // Never cancel underneath a running generation: the transfer job
+        // is stopped, native text code is untouched.
+        textDownloadJob?.cancel()
+        textDownloadJob = null
+        requireDownloader().requestCancel(removePartial)
+        requireDownloader().resetControl()
+        if (textTransferState == VlmState.DOWNLOADING || textTransferState == VlmState.QUEUED ||
+            textTransferState == VlmState.PAUSING || textTransferState == VlmState.PAUSED
+        ) {
+            if (removePartial) {
+                val manifest = QwenTextRuntime.manifest()
+                for (spec in manifest.files) {
+                    requireStore().partFile(manifest, spec).delete()
+                    requireStore().journalFile(manifest, spec).delete()
+                    requireStore().chunkTmpFile(manifest, spec).delete()
+                }
+                updateTextState(VlmState.NOT_INSTALLED)
+            } else {
+                // Keep verified chunks for later resume.
+                updateTextState(VlmState.PAUSED)
+            }
+        }
+        call.resolve()
+    }
+
+    /**
+     * Deletes exactly the qualified text model: cancels in-flight text
+     * transfer, releases the resident text engine first (never deletes
+     * files underneath running native code — rejects BUSY while text
+     * code runs, mirroring image `deleteModel`), removes only this
+     * entry's directory, and resets the transfer record. Sibling models
+     * are unaffected.
+     */
+    @PluginMethod
+    fun deleteTextModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val modelIdWire = call.getString("modelId") ?: return
+        try {
+            QwenTextRuntime.requireAcceptedModelId(modelIdWire)
+        } catch (_: IllegalArgumentException) {
+            call.reject("Invalid modelId: $modelIdWire")
+            return
+        }
+        if (textController.isNativeRunning()) {
+            call.reject("Inference in progress", "BUSY")
+            return
+        }
+        textDownloadJob?.cancel()
+        textDownloadJob = null
+        requireDownloader().requestCancel(removePartial = true)
+        requireDownloader().resetControl()
+        // Release the resident engine before deleting its files.
+        textController.release()
+        lastTextSelfTestReady = false
+        QwenLifecycle.deleteExactly(requireStore().root)
+        updateTextState(VlmState.NOT_INSTALLED)
+        call.resolve()
+    }
+
+    /**
+     * Text transfer-state update: in-memory state, persisted record, and
+     * the text-specific state event. The record carries the asserted
+     * installed hash only for verified promotions; every other state
+     * carries no hash so presence can never read as installed.
+     */
+    private fun updateTextState(state: VlmState, error: String? = null) {
+        textTransferState = state
+        val manifest = QwenTextRuntime.manifest()
+        val spec = manifest.files.firstOrNull()
+        var installedBytes = 0L
+        var installedSha256 = ""
+        if (state == VlmState.INSTALLED_UNVERIFIED && spec != null) {
+            try {
+                val final = requireStore().finalFile(manifest, spec)
+                if (final.exists() && final.length() == spec.expectedBytes &&
+                    Sha256.matchesFile(final, spec.sha256)
+                ) {
+                    installedBytes = spec.expectedBytes
+                    installedSha256 = spec.sha256
+                }
+            } catch (_: Exception) {
+            }
+        }
+        try {
+            QwenLifecycle.saveState(
+                requireStore().root,
+                QwenTextStateRecord(
+                    entryId = manifest.id,
+                    revision = manifest.revision,
+                    state = state,
+                    installedBytes = installedBytes,
+                    installTimestamp = System.currentTimeMillis(),
+                    installedSha256 = installedSha256,
+                    lastError = error
+                )
+            )
+        } catch (_: Exception) {
+        }
+        val event = JSObject()
+        event.put("modelId", QwenTextRuntime.BRIDGE_MODEL_ID)
+        event.put("state", state.wire)
+        error?.let { event.put("error", it) }
+        notifyListeners("textStateChange", event)
     }
 
     /**
@@ -1315,6 +1601,10 @@ class LocalVlmPlugin : Plugin() {
         scope.launch {
             try {
                 val result = textController.runSelfTest(modelId, "Describe the current task briefly.")
+                // TEXT_READY proof for the lifecycle status: success plus
+                // the canonical ready state. Any other outcome clears it.
+                lastTextSelfTestReady =
+                    result.ready && result.state == TextRuntimeController.STATE_READY
                 val response = JSObject()
                 response.put("modelId", modelId)
                 response.put("ready", result.ready)
@@ -1339,8 +1629,11 @@ class LocalVlmPlugin : Plugin() {
     }
 
     /**
-     * Diagnostics read for the text runtime: readiness, native activity,
-     * backend, and model-file presence. Never initializes the runtime.
+     * Diagnostics read for the text runtime: lifecycle-validated install,
+     * file presence, TEXT_READY proof, residency, native activity, and
+     * backend. Never initializes the runtime. `installed` is true only
+     * for a verified promotion record plus matching file facts — a merely
+     * present file reports `modelFilePresent` without `installed`.
      */
     @PluginMethod
     fun getTextRuntimeStatus(call: PluginCall) {
@@ -1351,12 +1644,28 @@ class LocalVlmPlugin : Plugin() {
             call.reject("Status read failed: ${e.message}")
             return
         }
+        val record = try {
+            QwenLifecycle.loadState(requireStore().root)
+        } catch (_: Exception) {
+            null
+        }
+        val installed = try {
+            QwenLifecycle.isInstalledValid(requireStore().root, record)
+        } catch (_: Exception) {
+            false
+        }
+        val engineReady = textController.isReady()
         val response = JSObject()
         response.put("modelId", status.modelId)
         response.put("ready", status.ready)
         response.put("nativeRunning", status.nativeRunning)
         response.put("backend", status.backend)
         response.put("modelFilePresent", status.modelFilePresent)
+        response.put("installed", installed)
+        response.put("textReady", lastTextSelfTestReady && engineReady)
+        if (engineReady) {
+            response.put("residentModelId", QwenTextRuntime.BRIDGE_MODEL_ID)
+        }
         call.resolve(response)
     }
 
