@@ -24,5 +24,7 @@ describe("fbmodel seam (Task 28 reserved, no implementation)", () => {
     expect(FBMODEL_DENIED_SUFFIXES).toContain(".apk");
     expect(FBMODEL_DENIED_SUFFIXES).toContain(".py");
     expect(FBMODEL_DENIED_MAGICS.length).toBeGreaterThan(0);
+    const elf = FBMODEL_DENIED_MAGICS[0];
+    expect([...elf].map((c) => c.charCodeAt(0))).toEqual([0x7f, 0x45, 0x4c, 0x46]);
   });
 });
