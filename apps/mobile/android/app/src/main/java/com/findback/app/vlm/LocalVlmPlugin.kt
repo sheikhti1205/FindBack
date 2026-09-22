@@ -73,6 +73,14 @@ class LocalVlmPlugin : Plugin() {
     private var engine500IsCpu: Boolean = false
     private val engineLock = Any()
 
+    // Qualified text runtime behind the explicit-modelId generateText bridge.
+    // The lambdas resolve context/store lazily so construction never touches
+    // getContext(); every invocation runs after ensureInitialized().
+    private val textController = TextRuntimeController(
+        engineFactory = { createQwenTextEngine() },
+        isModelInstalled = { qwenModelFileIfPresent() != null }
+    )
+
     private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
     private fun requireDownloader(): ModelDownloader = downloader ?: throw IllegalStateException("Plugin not initialized")
     private fun requirePrefs(): SharedPreferences = prefs ?: throw IllegalStateException("Plugin not initialized")
@@ -170,6 +178,34 @@ class LocalVlmPlugin : Plugin() {
         engine500?.release()
         engine500 = null
         engine500IsCpu = false
+    }
+
+    private fun qwenModelFileIfPresent(): File? {
+        val manifest = QwenTextRuntime.manifest()
+        val spec = manifest.files.firstOrNull() ?: return null
+        return try {
+            requireStore().finalFile(manifest, spec).takeIf { it.exists() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun createQwenTextEngine(): QwenTextEngine? {
+        val modelFile = qwenModelFileIfPresent() ?: return null
+        val context = try {
+            getContext()
+        } catch (_: Exception) {
+            return null
+        } ?: return null
+        val cacheDir = try {
+            context.cacheDir
+        } catch (_: Exception) {
+            return null
+        }
+        return QwenTextEngine(
+            hostFactory = { LiteRtQwenTextHost(modelFile.absolutePath, cacheDir) },
+            diagCacheDir = cacheDir
+        )
     }
 
     /**
@@ -1174,6 +1210,156 @@ class LocalVlmPlugin : Plugin() {
         }
     }
 
+    /**
+     * Explicit-modelId text generation against the qualified on-device text
+     * runtime. The requested model id travels with every call and any id
+     * other than the exact qualified entry is rejected, never substituted.
+     * Serializes with image inference through the shared mutex; cancel and
+     * release are shared with the image path (see below).
+     */
+    @PluginMethod
+    fun generateText(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val modelId = call.getString("modelId") ?: run {
+            call.reject("Missing modelId")
+            return
+        }
+        val prompt = call.getString("prompt") ?: run {
+            call.reject("Missing prompt")
+            return
+        }
+        val maxOutputTokens = call.getInt("maxOutputTokens") ?: 256
+        val temperature = call.getFloat("temperature") ?: 0.1f
+        val traceId = call.getString("traceId")
+
+        if (!inferenceMutex.tryAcquire()) {
+            Diag.event(
+                diagCacheDir(),
+                "qwen.generate.error",
+                traceId,
+                mapOf("stage" to "mutex", "reason" to "busy")
+            )
+            call.reject("Inference already in progress")
+            return
+        }
+        scope.launch {
+            val startMs = System.currentTimeMillis()
+            val diagDir = diagCacheDir()
+            Diag.event(
+                diagDir,
+                "qwen.generate.start",
+                traceId,
+                mapOf("modelId" to modelId, "maxOutputTokens" to maxOutputTokens)
+            )
+            try {
+                when (val outcome = textController.generateText(modelId, prompt, maxOutputTokens, temperature, traceId)) {
+                    is TextGenerateOutcome.Ok -> {
+                        val result = JSObject()
+                        result.put("text", outcome.text)
+                        result.put("modelId", modelId)
+                        result.put("backend", outcome.backend)
+                        result.put("runtime", "0.16.0")
+                        call.resolve(result)
+                        Diag.event(
+                            diagDir,
+                            "qwen.generate.done",
+                            traceId,
+                            Diag.outputDigest(outcome.text) + mapOf(
+                                "modelId" to modelId,
+                                "backend" to outcome.backend,
+                                "ms" to (System.currentTimeMillis() - startMs)
+                            )
+                        )
+                    }
+                    is TextGenerateOutcome.Err -> {
+                        Diag.event(
+                            diagDir,
+                            "qwen.generate.error",
+                            traceId,
+                            mapOf("modelId" to modelId, "code" to outcome.code, "error" to outcome.message)
+                        )
+                        call.reject(outcome.message, outcome.code)
+                    }
+                }
+            } catch (e: CancellationException) {
+                try {
+                    call.reject("Text generation cancelled", "CANCELLED")
+                } catch (_: Exception) {
+                }
+                throw e
+            } catch (e: Exception) {
+                call.reject("Text generation failed: ${e.message}")
+            } finally {
+                inferenceMutex.release()
+            }
+        }
+    }
+
+    /**
+     * Runtime-ready probe for the text runtime: a real init plus a small
+     * generation. Activation succeeds only when the returned state is
+     * TEXT_READY; any other model id is rejected without touching the
+     * runtime.
+     */
+    @PluginMethod
+    fun runTextSelfTest(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val modelId = call.getString("modelId") ?: run {
+            call.reject("Missing modelId")
+            return
+        }
+        if (!inferenceMutex.tryAcquire()) {
+            call.reject("Inference already in progress")
+            return
+        }
+        scope.launch {
+            try {
+                val result = textController.runSelfTest(modelId, "Describe the current task briefly.")
+                val response = JSObject()
+                response.put("modelId", modelId)
+                response.put("ready", result.ready)
+                response.put("state", result.state)
+                result.failure?.let { response.put("failure", it.wire) }
+                val diagnostics = JSArray()
+                result.diagnostics.forEach { diagnostics.put(it) }
+                response.put("diagnostics", diagnostics)
+                call.resolve(response)
+            } catch (e: CancellationException) {
+                try {
+                    call.reject("Self-test cancelled", "CANCELLED")
+                } catch (_: Exception) {
+                }
+                throw e
+            } catch (e: Exception) {
+                call.reject("Self-test failed: ${e.message}")
+            } finally {
+                inferenceMutex.release()
+            }
+        }
+    }
+
+    /**
+     * Diagnostics read for the text runtime: readiness, native activity,
+     * backend, and model-file presence. Never initializes the runtime.
+     */
+    @PluginMethod
+    fun getTextRuntimeStatus(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val status = try {
+            textController.status()
+        } catch (e: Exception) {
+            call.reject("Status read failed: ${e.message}")
+            return
+        }
+        val response = JSObject()
+        response.put("modelId", status.modelId)
+        response.put("ready", status.ready)
+        response.put("nativeRunning", status.nativeRunning)
+        response.put("backend", status.backend)
+        response.put("modelFilePresent", status.modelFilePresent)
+        call.resolve(response)
+    }
+
     @PluginMethod
     fun cancelInference(call: PluginCall) {
         if (!ensureInitialized(call)) return
@@ -1181,6 +1367,7 @@ class LocalVlmPlugin : Plugin() {
         // result is ignored. The mutex stays held until the native analyze()
         // returns — never unlock early, never resolve the stale call.
         activeInference.cancel()
+        textController.cancel()
         call.resolve()
     }
 
@@ -1202,6 +1389,9 @@ class LocalVlmPlugin : Plugin() {
         } else {
             releaseEngine500()
         }
+        // The text controller defers its own close while native text code
+        // runs and cancels the in-flight generation first.
+        textController.release()
 
         // Cancel the event collector and downloads, but never cancel the root
         // scope itself: a cancelled scope silently drops every later launch,

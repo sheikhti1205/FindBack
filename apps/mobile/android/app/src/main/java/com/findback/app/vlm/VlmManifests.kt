@@ -1,10 +1,16 @@
 package com.findback.app.vlm
 
 /**
- * Pinned model manifests for the two supported VLM models.
- * Revisions, byte counts, and SHA-256 values are from Locked Decisions / RESOLVED_MODEL_FACTS.json.
+ * Pinned model manifests: the two supported VLM models plus the single
+ * qualified on-device text entry. Revisions, byte counts, and SHA-256 values
+ * are from Locked Decisions / RESOLVED_MODEL_FACTS.json and the qualified
+ * text pin (installed weights identity, not the distribution package).
  * Upstream repo/revision/file are provenance-only; production downloads use
  * the pinned GitHub Release distribution record (see releases-distribution.md).
+ *
+ * The text entry carries a non-VLM id on purpose: the VLM model id set stays
+ * exactly the two image models, so image-path lookups by VLM id are
+ * unaffected and the text runtime resolves its entry explicitly.
  */
 val MODEL_MANIFESTS: List<ModelManifest> = listOf(
     ModelManifest(
@@ -49,5 +55,6 @@ val MODEL_MANIFESTS: List<ModelManifest> = listOf(
                 sha256 = "6682f47d3b33538490b21265ba3b2a83f8d48e09dcd7f957b46b508abb427a04"
             )
         )
-    )
+    ),
+    QwenTextRuntime.manifest()
 )
