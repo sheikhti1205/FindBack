@@ -11,6 +11,7 @@
 
 import type { ModelCatalogueEntry } from "./catalogueTypes";
 import type { AvailableFreeRamMb } from "./ramPolicy";
+import type { RuntimeCapability } from "./runtimeCapability";
 import type { VlmModelId, VlmModelInfo } from "../vlmPlugin";
 import { planModelSwitch } from "./modelSession";
 import { routeEntryToAdapter } from "./runtimeAdapters";
@@ -26,6 +27,8 @@ export interface ActivateModelOptions {
   currentResidentId: string | null;
   availableFreeRamMb: AvailableFreeRamMb;
   advancedConfirmed: boolean;
+  /** TS-level runtime capability; non-RUNTIME_AVAILABLE targets stay blocked. */
+  runtimeCapability: RuntimeCapability;
 }
 
 export type ActivationResult =
@@ -60,6 +63,7 @@ export async function activateModel(
     target: entry,
     availableFreeRamMb: options.availableFreeRamMb,
     advancedConfirmed: options.advancedConfirmed,
+    runtimeCapability: options.runtimeCapability,
   });
   if (plan.blocked) {
     return { ok: false, reason: plan.reason };

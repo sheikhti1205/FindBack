@@ -23,7 +23,7 @@ import {
   type AvailableFreeRamMb,
 } from "../services/models/ramPolicy";
 import { checkDownloadGate } from "../services/models/modelTransfers";
-import { planModelSwitch } from "../services/models/modelSession";
+import { activateModel } from "../services/models/modelActivation";
 import {
   availabilityForEntry,
   availabilityLabel,
@@ -848,37 +848,23 @@ export function OfflineAi(seams?: OfflineAiSeams) {
     await runAction(() => bridge.repairModel(bridgeId));
   };
 
-  /** Single-resident switch: cancel inference → release → verify memory → mark active. */
+  /** Single-resident switch: real activation — persists only on runtime proof. */
   const handleSetActive = async (entry: ModelCatalogueEntry) => {
     if (!mountedRef.current) return;
     setActionError(null);
-    const plan = planModelSwitch({
-      currentResidentId: activeModelId,
-      target: entry,
-      availableFreeRamMb,
-      advancedConfirmed: confirmedEntries.includes(entry.id),
-      runtimeCapability: runtimeCapabilityForEntry(entry.id),
-    });
-    if (plan.blocked) {
-      setActionError(plan.reason);
-      return;
-    }
-    if (plan.steps.length === 0) return;
     try {
-      await bridge.cancelInference();
-      await bridge.release();
-      // Verify-memory: with no native free-RAM source the reading stays
-      // unknown and the switch proceeds; a known below-minimum reading
-      // aborts the activation (the engine is already released, honestly).
-      if (availableFreeRamMb != null && availableFreeRamMb < entry.minFreeRamMb) {
-        if (mountedRef.current) {
-          setActionError(
-            "Memory verification failed: available memory dropped below the entry minimum after release. Activation aborted.",
-          );
-        }
+      const result = await activateModel(bridge, entry, {
+        currentResidentId: activeModelId,
+        availableFreeRamMb,
+        advancedConfirmed: confirmedEntries.includes(entry.id),
+        runtimeCapability: runtimeCapabilityForEntry(entry.id),
+      });
+      if (!mountedRef.current) return;
+      if (!result.ok) {
+        setActionError(result.reason);
         return;
       }
-      if (mountedRef.current) {
+      if (!result.alreadyActive) {
         setActiveModelId(entry.id);
         saveActiveModel(entry.id);
       }

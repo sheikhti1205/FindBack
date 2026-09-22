@@ -2,8 +2,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { Shell } from "./Shell";
+import { Shell, assistantSearchNavigationTarget } from "./Shell";
 import { resetBackInterceptors } from "./backNavigation";
+import {
+  applySearchFields,
+  startFlow,
+} from "../services/assistant/guidedAssistantController";
 
 afterEach(() => {
   cleanup();
@@ -44,5 +48,19 @@ describe("Shell assistant entry point", () => {
   it("keeps the entry button on screens without bottom navigation", () => {
     renderShell("/help");
     expect(screen.getByTestId("assistant-entry")).toBeTruthy();
+  });
+});
+
+describe("assistantSearchNavigationTarget", () => {
+  it("maps a ready search snapshot to the ordinary search route", () => {
+    const ready = applySearchFields(startFlow("search"), { query: "keys" });
+    expect(ready.state).toBe("ready");
+    expect(assistantSearchNavigationTarget(ready)).toBe("/search?q=keys");
+  });
+
+  it("never navigates for collecting, report-ready, or filterless snapshots", () => {
+    expect(assistantSearchNavigationTarget(startFlow("search"))).toBeNull();
+    const reportReady = applySearchFields(startFlow("lost"), { query: "keys" });
+    expect(assistantSearchNavigationTarget(reportReady)).toBeNull();
   });
 });
