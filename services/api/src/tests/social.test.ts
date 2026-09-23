@@ -119,6 +119,55 @@ describe("social features: reactions, ratings, comments, realtime", () => {
       .expect(200);
   });
 
+  it("comment delete policy: author yes, post owner yes, unrelated denied 403", async () => {
+    const owner = await registerAgent("owner");
+    const commenter = await registerAgent("commenter");
+    const stranger = await registerAgent("stranger");
+    const created = await request(app)
+      .post("/posts")
+      .set("Authorization", `Bearer ${owner.token}`)
+      .send({
+        type: "LOST",
+        title: "Blue pencil case lost near the Science building",
+        description: "A blue zip pencil case with several pens and a ruler was left near the entrance.",
+        category: "Books & Stationery",
+        eventDate: "2026-09-08",
+      })
+      .expect(201);
+    const postId = (created.body as { id: string }).id;
+
+    const first = await request(app)
+      .post(`/posts/${postId}/comments`)
+      .set("Authorization", `Bearer ${commenter.token}`)
+      .send({ body: "author deletes own comment" })
+      .expect(201);
+    await request(app)
+      .delete(`/posts/${postId}/comments/${first.body.id}`)
+      .set("Authorization", `Bearer ${commenter.token}`)
+      .expect(200);
+
+    const second = await request(app)
+      .post(`/posts/${postId}/comments`)
+      .set("Authorization", `Bearer ${commenter.token}`)
+      .send({ body: "owner moderates this comment" })
+      .expect(201);
+    await request(app)
+      .delete(`/posts/${postId}/comments/${second.body.id}`)
+      .set("Authorization", `Bearer ${owner.token}`)
+      .expect(200);
+
+    const third = await request(app)
+      .post(`/posts/${postId}/comments`)
+      .set("Authorization", `Bearer ${commenter.token}`)
+      .send({ body: "stranger must be denied" })
+      .expect(201);
+    const denied = await request(app)
+      .delete(`/posts/${postId}/comments/${third.body.id}`)
+      .set("Authorization", `Bearer ${stranger.token}`)
+      .expect(403);
+    expect(String(denied.body?.error ?? "")).not.toMatch(/your own/i);
+  });
+
   it("emits realtime events on comment/reaction/rating changes", async () => {
     const events: { event: string; payload: unknown }[] = [];
     const off = onGatewayEvent((event, payload) => events.push({ event, payload }));
