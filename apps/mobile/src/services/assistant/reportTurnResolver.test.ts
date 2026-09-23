@@ -26,6 +26,13 @@ describe("resolveReportTurn", () => {
     expect(resolved.fields?.dateText).toBe("2026-09-01");
     expect(resolved.fields?.locationNote).toBe("Central library");
   });
+  it("extracts a location introduced by a capitalized preposition", () => {
+    const resolved = resolveReportTurn(
+      startFlow("lost"),
+      "I lost my phone. Near Central Park on 2026-09-01",
+    );
+    expect(resolved.fields?.locationNote).toBe("Central Park");
+  });
   it("resolves a greeting without consuming the pending flow", () => {
     const snapshot = startFlow("lost");
     const resolved = resolveReportTurn(snapshot, "hello");

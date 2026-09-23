@@ -246,7 +246,7 @@ function extractLocationNote(message: string, dateText: string | undefined): str
   const withoutDate =
     dateText !== undefined ? message.replace(dateText, " ") : message;
   const match = withoutDate.match(
-    /\b(?:at|in|near|nearby|around|from|outside|inside|by|on)\s+([A-Za-z][A-Za-z0-9 .,'-]{2,80})/,
+    /\b(?:at|in|near|nearby|around|from|outside|inside|by|on)\s+([A-Za-z][A-Za-z0-9 .,'-]{2,80})/i,
   );
   const captured = match?.[1]
     ?.trim()
