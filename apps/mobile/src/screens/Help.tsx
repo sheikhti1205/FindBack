@@ -74,7 +74,7 @@ export function Help() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      text: `Hi ${user?.username ?? "there"}! I am the FindBack Help Assistant. Ask me anything about using the app — reporting, recovering, searching, verifying, ratings and more.`,
+      text: `Hi ${user?.username ?? "there"}! I am the FindBack Help & FAQ. Ask me anything about using the app — reporting, recovering, searching, verifying, ratings and more.`,
       source: "fallback",
     },
   ]);
@@ -206,7 +206,7 @@ export function Help() {
         <BackButton fallbackTo="/profile" label="Back to profile" />
         <Bot size={20} aria-hidden />
         <div className="flex-1">
-          <h1 className="text-base font-semibold leading-tight">Help Assistant</h1>
+          <h1 className="text-base font-semibold leading-tight">Help &amp; FAQ</h1>
           <p className="text-xs text-on-surface-variant">
             App-specific answers · answered by our server
           </p>
@@ -323,7 +323,7 @@ export function Help() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about reporting, recovering, searching…"
-          aria-label="Ask the Help Assistant"
+          aria-label="Ask the Help & FAQ"
           maxLength={500}
           className="w-full rounded-full border border-outline-variant bg-surface px-4 py-2.5 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
         />

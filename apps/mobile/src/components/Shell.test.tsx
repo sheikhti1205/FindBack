@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { Shell, assistantSearchNavigationTarget, resolveShellAssistantRuntime, readTextRuntimeStatus, type ShellAssistantSeams } from "./Shell";
+import { Shell, assistantSearchNavigationTarget, resolveShellAssistantRuntime, readTextRuntimeStatus, shouldShowAssistantFab, type ShellAssistantSeams } from "./Shell";
 import { resetBackInterceptors } from "./backNavigation";
 import { QWEN_TEXT_BRIDGE_MODEL_ID, QWEN_TEXT_ENTRY_ID, type GenerateTextRequest, type GenerateTextResult } from "../services/models/textRuntime";
 import {
@@ -22,7 +22,14 @@ function renderShell(entry = "/", seams?: ShellAssistantSeams) {
       <Routes>
         <Route element={<Shell seams={seams} />}>
           <Route index element={<p>Home screen</p>} />
+          <Route path="/search" element={<p>Search screen</p>} />
+          <Route path="/report" element={<p>Report screen</p>} />
+          <Route path="/posts/:id" element={<p>Post screen</p>} />
+          <Route path="/my" element={<p>My reports screen</p>} />
+          <Route path="/profile" element={<p>Profile screen</p>} />
+          <Route path="/about" element={<p>About screen</p>} />
           <Route path="/help" element={<p>Help screen</p>} />
+          <Route path="/offline-ai" element={<p>Offline AI screen</p>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -60,9 +67,62 @@ describe("Shell assistant entry point", () => {
     expect(screen.queryByTestId("assistant-greeting")).toBeNull();
   });
 
-  it("keeps the entry button on screens without bottom navigation", () => {
+  it("hides the entry button on task-heavy screens without bottom navigation", () => {
     renderShell("/help");
+    expect(screen.queryByTestId("assistant-entry")).toBeNull();
+  });
+
+  it("hides the entry button while the assistant sheet is open and restores it on close", () => {
+    renderShell("/");
     expect(screen.getByTestId("assistant-entry")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("assistant-entry"));
+    expect(screen.queryByTestId("assistant-entry")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByTestId("assistant-entry")).toBeTruthy();
+  });
+
+  it("uses a semantic 44px+ button with safe-area and bottom-nav clearance", () => {
+    renderShell("/");
+    const entry = screen.getByTestId("assistant-entry");
+    expect(entry.tagName).toBe("BUTTON");
+    expect(entry.getAttribute("aria-label")).toBe("Open assistant");
+    expect(entry.className).toContain("h-14");
+    expect(entry.className).toContain("w-14");
+    expect(entry.className).toContain("env(safe-area-inset-bottom)");
+  });
+});
+
+describe("shouldShowAssistantFab", () => {
+  it("shows only the tab screens and My reports", () => {
+    expect(shouldShowAssistantFab("/")).toBe(true);
+    expect(shouldShowAssistantFab("/search")).toBe(true);
+    expect(shouldShowAssistantFab("/profile")).toBe(true);
+    expect(shouldShowAssistantFab("/my")).toBe(true);
+  });
+
+  it("hides task-heavy routes by safe default", () => {
+    expect(shouldShowAssistantFab("/report")).toBe(false);
+    expect(shouldShowAssistantFab("/offline-ai")).toBe(false);
+    expect(shouldShowAssistantFab("/help")).toBe(false);
+    expect(shouldShowAssistantFab("/posts/abc")).toBe(false);
+    expect(shouldShowAssistantFab("/posts/")).toBe(false);
+    expect(shouldShowAssistantFab("/about")).toBe(false);
+    expect(shouldShowAssistantFab("/verify")).toBe(false);
+    expect(shouldShowAssistantFab("/unknown-route")).toBe(false);
+  });
+
+  it("shows the entry button only on allowed routes through the Shell", () => {
+    for (const entry of ["/", "/search", "/profile", "/my"]) {
+      cleanup();
+      renderShell(entry);
+      expect(screen.getByTestId("assistant-entry")).toBeTruthy();
+      cleanup();
+    }
+    for (const entry of ["/report", "/offline-ai", "/help", "/posts/abc", "/about"]) {
+      renderShell(entry);
+      expect(screen.queryByTestId("assistant-entry")).toBeNull();
+      cleanup();
+    }
   });
 });
 

@@ -60,7 +60,7 @@ export function Profile() {
           className="flex min-h-[48px] items-center gap-3 rounded-m3-md border border-outline-variant px-4 text-sm font-medium hover:bg-surface-container"
         >
           <ShieldQuestion size={18} aria-hidden />
-          Help Assistant
+          Help &amp; FAQ
         </Link>
         <Link
           to="/offline-ai"
