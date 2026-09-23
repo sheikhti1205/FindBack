@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Trash2, Cpu, AlertTriangle, CheckCircle, XCircle, Loader2, HardDrive, Upload, PackageOpen } from "lucide-react";
 import { BackButton } from "../components/BackButton";
 import { ModelAdvancedConfirmGate } from "../components/ModelAdvancedConfirmGate";
-import { getModelAction, getVlmBridge, isInstalledState } from "../services/vlmPlugin";
+import { getModelAction, getNativePackageHost, getVlmBridge, isInstalledState, isTextBridge } from "../services/vlmPlugin";
+import { friendlyVlmMessage } from "../services/vlmErrors";
+import { isTextRuntimePresent } from "../services/models/textRuntime";
+import { shellTextSeamsFromBridgeStatus } from "../services/models/qwenLifecycle";
+import {
+  deriveLibraryRuntimeState,
+  libraryRoleForEntry,
+} from "../services/models/libraryRuntimeState";
 import { chooseFromGallery, isCancellation, isNativeCameraAvailable, takePhoto, toNativeImageUri } from "../services/photo";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
@@ -50,13 +57,15 @@ import { exportPackageStream, hashWebFile } from "../services/models/modelTransf
  * Injectable seams for the library UI. The download/pause/resume/delete
  * paths run through the native bridge (which streams Range → temp → hash →
  * journal on-device); import/export run through the streaming transfer
- * layer. `availableFreeRamMb` has no native source yet, so it defaults to
- * null ("unknown", never gating on its own); export needs a platform
- * archive writer, so it stays disabled until one is injected. The Android
- * production import/export path runs through `nativePackageHost` (SAF
- * content URI → native streaming validation/extraction/install); the web
- * fallback only stream-hashes the picked file against the shipped pin and
- * never buffers it.
+ * layer. `availableFreeRamMb` overrides the passive native
+ * `availableRamMb` reading (ActivityManager.MemoryInfo.availMem) and
+ * defaults to null ("unknown", never gating on its own); export needs a
+ * platform archive writer, so it stays disabled until one is injected. The
+ * Android production import/export path runs through `nativePackageHost`
+ * (SAF content URI → native streaming validation/extraction/install,
+ * auto-wired from the platform installer when no seam is injected); the
+ * web fallback only stream-hashes the picked file against the shipped pin
+ * and never buffers it.
  */
 export interface OfflineAiSeams {
   availableFreeRamMb?: AvailableFreeRamMb;
@@ -121,16 +130,14 @@ const ERROR_LABELS: Record<string, string> = {
 
 function friendlyError(code: string | undefined | null): string | null {
   if (!code) return null;
-  return ERROR_LABELS[code] ?? code.replace(/_/g, " ").toLowerCase();
+  const mapped = ERROR_LABELS[code];
+  if (mapped != null) return mapped;
+  return friendlyVlmMessage(code);
 }
 
-/** Plain-language message for a rejected bridge action; raw errors stay readable. */
+/** Plain-language message for a rejected bridge action; raw codes never reach users. */
 function actionErrorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return ERROR_LABELS[err.message] ?? err.message;
-  if (typeof err === "string" && err) return ERROR_LABELS[err] ?? err;
-  const code = (err as { code?: string } | null)?.code;
-  if (typeof code === "string" && code) return ERROR_LABELS[code] ?? code;
-  return "Something went wrong. Please try again.";
+  return friendlyVlmMessage(err);
 }
 
 /** True when a bridge rejection is just a cancellation (quiet, never an error). */
@@ -285,6 +292,9 @@ function CatalogueModelCard({
   isActive,
   importMessage,
   exportMessage,
+  textInstalled,
+  textReady,
+  textRuntimePresent,
   onDownload,
   onDelete,
   onPickSelfTest,
@@ -305,6 +315,9 @@ function CatalogueModelCard({
   isActive: boolean;
   importMessage: string | null;
   exportMessage: string | null;
+  textInstalled?: boolean;
+  textReady?: boolean;
+  textRuntimePresent?: boolean;
   onDownload: (entry: ModelCatalogueEntry, bridgeId: VlmModelId) => void;
   onDelete: (entry: ModelCatalogueEntry, bridgeId: VlmModelId) => void;
   onPickSelfTest: (bridgeId: VlmModelId, source: "camera" | "gallery") => void;
@@ -332,6 +345,17 @@ function CatalogueModelCard({
   const warnings = catalogueWarnings(entry);
   const showDeviceWarning = needsOnDeviceWarning(entry);
   const installable = isInstallable(entry);
+  // Role-aware runtime state: IMAGE follows the image bridge lifecycle,
+  // TEXT follows the Qwen lifecycle, information-only entries stay static.
+  // Qwen is never forced into VlmModelId.
+  const libraryRole = libraryRoleForEntry(entry);
+  const runtimeState = deriveLibraryRuntimeState(entry, {
+    isActive,
+    imageState: info?.state ?? null,
+    textInstalled,
+    textReady,
+    textRuntimePresent,
+  });
   // Catalogue membership, installation, and executable runtime support are
   // separate facts: the card states its availability explicitly and never
   // offers activation where this build has no wired runtime path.
@@ -341,6 +365,22 @@ function CatalogueModelCard({
     isActive,
   });
   const canActivate = canOfferActivation(runtimeCapabilityForEntry(entry.id));
+  const textAvailabilityLabel =
+    libraryRole !== "TEXT"
+      ? null
+      : isActive && (textInstalled ?? false)
+        ? "Active"
+        : (textInstalled ?? false)
+          ? "Installed"
+          : (textRuntimePresent ?? false) === false
+            ? "No executable runtime in this build"
+            : hasUnpublishedDistribution(entry)
+              ? "Unpublished"
+              : entry.sha256 == null
+                ? "Not distributed in this build"
+                : "Available to import";
+  const canOfferImport = runtimeState.canImport;
+  const canOfferExport = runtimeState.canExport;
 
   // The native requiredBytes is authoritative; the fallback mirrors the native
   // policy (model + max(256 MiB, 25%)) so the button never lies.
@@ -376,7 +416,7 @@ function CatalogueModelCard({
             <span>{verificationLabel(entry.verificationStatus)}</span>
           </p>
           <p className="mt-1 min-w-0 break-words text-xs text-on-surface-variant">
-            Library status: {availabilityLabel(availability)}
+            Library status: {libraryRole === "TEXT" && textAvailabilityLabel != null ? textAvailabilityLabel : availabilityLabel(availability)}
           </p>
           <p className="min-w-0 break-words text-xs text-on-surface-variant">{formatCatalogueBytes(entry.installedBytes, "installed")}</p>
 
@@ -491,8 +531,15 @@ function CatalogueModelCard({
             <p className="mt-2 min-w-0 break-words text-xs text-on-surface-variant">
               {entry.catalogOnly === true
                 ? "Catalog reference only — not distributed in this build."
+                : libraryRole === "TEXT" &&
+                  (textRuntimePresent ?? false) === false
+                ? "No on-device runtime is wired for this entry in this build, so it cannot download here."
+                : libraryRole === "TEXT" && unpublishedDistribution
+                ? `${UNPUBLISHED_DISTRIBUTION_MESSAGE} Offline import stays available.`
                 : bridgeId != null && installable && unpublishedDistribution
                 ? UNPUBLISHED_DISTRIBUTION_MESSAGE
+                : libraryRole === "TEXT" && entry.sha256 == null
+                ? "Download size not established — not distributed in this build."
                 : "No on-device runtime is wired for this entry in this build, so it cannot download here."}
             </p>
           )}
@@ -623,24 +670,28 @@ function CatalogueModelCard({
           ) : bridgeId != null && !unpublishedDistribution ? (
             <span className="min-w-0 break-words text-xs text-on-surface-variant">Verification running…</span>
           ) : null}
-          {entry.catalogOnly !== true && bridgeId != null && (
+          {(canOfferImport || canOfferExport) && (
             <div className="flex w-full min-w-0 flex-col gap-2">
-              <button
-                onClick={() => onImport(entry)}
-                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
-                aria-label={`Import ${entry.displayName} package`}
-              >
-                <Upload size={14} aria-hidden className="shrink-0" />
-                <span className="min-w-0 break-words">Import</span>
-              </button>
-              <button
-                onClick={() => onExport(entry)}
-                className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
-                aria-label={`Export ${entry.displayName} package`}
-              >
-                <PackageOpen size={14} aria-hidden className="shrink-0" />
-                <span className="min-w-0 break-words">Export</span>
-              </button>
+              {canOfferImport && (
+                <button
+                  onClick={() => onImport(entry)}
+                  className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+                  aria-label={`Import ${entry.displayName} package`}
+                >
+                  <Upload size={14} aria-hidden className="shrink-0" />
+                  <span className="min-w-0 break-words">Import</span>
+                </button>
+              )}
+              {canOfferExport && (
+                <button
+                  onClick={() => onExport(entry)}
+                  className="min-h-[48px] w-full min-w-0 justify-center whitespace-normal break-words px-3 py-1.5 text-center text-sm border border-outline-variant rounded-lg hover:bg-surface-container transition-colors flex items-center gap-1"
+                  aria-label={`Export ${entry.displayName} package`}
+                >
+                  <PackageOpen size={14} aria-hidden className="shrink-0" />
+                  <span className="min-w-0 break-words">Export</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -651,8 +702,19 @@ function CatalogueModelCard({
 
 export function OfflineAi(seams?: OfflineAiSeams) {
   const bridge = getVlmBridge();
-  const availableFreeRamMb = seams?.availableFreeRamMb ?? null;
   const [capabilities, setCapabilities] = useState<VlmCapabilities | null>(null);
+  const [textStatus, setTextStatus] = useState<{
+    textInstalled: boolean;
+    textReady: boolean;
+  } | null>(null);
+  const seamRam = seams?.availableFreeRamMb ?? null;
+  const nativeRam =
+    capabilities?.availableRamMb != null &&
+    Number.isFinite(capabilities.availableRamMb)
+      ? Math.max(0, Math.floor(capabilities.availableRamMb))
+      : null;
+  const availableFreeRamMb = seamRam ?? nativeRam ?? null;
+  const packageHost = seams?.nativePackageHost ?? getNativePackageHost() ?? null;
   const [wifiOnly, setWifiOnly] = useState(loadWifiOnly);
   const [allowCpuFallback, setAllowCpuFallback] = useState(true);
   const [modelStates, setModelStates] = useState<VlmModelInfo[]>([]);
@@ -753,6 +815,26 @@ export function OfflineAi(seams?: OfflineAiSeams) {
       offState.then((f) => f());
     };
   }, [bridge]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isTextBridge(bridge)) {
+      setTextStatus(null);
+      return;
+    }
+    void bridge
+      .getTextRuntimeStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setTextStatus(shellTextSeamsFromBridgeStatus(status));
+      })
+      .catch(() => {
+        if (!cancelled) setTextStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge, modelStates]);
 
   const handleDownload = (entry: ModelCatalogueEntry, bridgeId: VlmModelId) => {
     const info = modelStates.find((m) => m.id === bridgeId);
@@ -902,8 +984,8 @@ export function OfflineAi(seams?: OfflineAiSeams) {
     }
     try {
       const sourceUri = seams?.importSourceUriForFile?.(file) ?? null;
-      if (seams?.nativePackageHost != null && sourceUri != null) {
-        const installed = await seams.nativePackageHost.importPackageFromUri({
+      if (packageHost != null && sourceUri != null) {
+        const installed = await packageHost.importPackageFromUri({
           entryId: entry.id,
           sourceUri,
           expectedSha256: entry.sha256,
@@ -939,8 +1021,8 @@ export function OfflineAi(seams?: OfflineAiSeams) {
 
   const handleExport = async (entry: ModelCatalogueEntry) => {
     const destUri = seams?.exportDestUriForEntry?.(entry.id) ?? null;
-    if (seams?.nativePackageHost != null && destUri != null) {
-      const native = await seams.nativePackageHost.exportPackageToUri({
+    if (packageHost != null && destUri != null) {
+      const native = await packageHost.exportPackageToUri({
         entryId: entry.id,
         destUri,
       });
@@ -1164,6 +1246,7 @@ export function OfflineAi(seams?: OfflineAiSeams) {
             const info =
               (bridgeId != null ? modelStates.find((m) => m.id === bridgeId) : undefined) ??
               null;
+            const isQwenEntry = libraryRoleForEntry(entry) === "TEXT";
             return (
               <CatalogueModelCard
                 key={entry.id}
@@ -1175,6 +1258,9 @@ export function OfflineAi(seams?: OfflineAiSeams) {
                 isActive={activeModelId === entry.id}
                 importMessage={importMessages[entry.id] ?? null}
                 exportMessage={exportMessages[entry.id] ?? null}
+                textInstalled={isQwenEntry ? (textStatus?.textInstalled ?? false) : undefined}
+                textReady={isQwenEntry ? (textStatus?.textReady ?? false) : undefined}
+                textRuntimePresent={isQwenEntry ? isTextRuntimePresent(bridge) : undefined}
                 onDownload={handleDownload}
                 onDelete={handleDelete}
                 onPickSelfTest={handlePickSelfTest}

@@ -233,6 +233,28 @@ class VlmTypesTest {
         val obj = caps.toJSObject()
         assertEquals("0.1.0", obj.getString("appVersion"))
         assertEquals("3524a8f2c488", obj.getString("buildGitSha"))
+        assertNull(caps.availableRamMb)
+    }
+
+    @Test fun vlmCapabilitiesCarriesPassiveAvailableRam() {
+        val withRam = VlmCapabilities(
+            abi = "arm64-v8a",
+            androidVersion = "14",
+            apiLevel = 34,
+            hardware = "pixel",
+            deviceCategory = DeviceCategory.PHYSICAL,
+            gpuVendor = "Qualcomm",
+            gpuRenderer = "Adreno 730",
+            memoryClassMb = 256,
+            freeAppStorageMb = 1024L,
+            availableRamMb = 2048L,
+            gpuDelegateClassPresent = true,
+            runtimeVersion = "0.16.0",
+            appVersion = "0.1.0",
+            buildGitSha = "3524a8f2c488"
+        )
+        assertEquals(2048L, withRam.availableRamMb)
+        assertEquals(2048L, withRam.toJSObject().getLong("availableRamMb"))
     }
 
     @Test fun vlmSettingsHoldsMode() {

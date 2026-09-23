@@ -26,6 +26,10 @@ import {
   subscribeStagedAssistantReportHandoff,
   takeStagedAssistantReportHandoff,
 } from "../services/assistant/assistantReportNavigation";
+import {
+  readImageAnalysisReadiness,
+  type ImageAnalysisReadiness,
+} from "../services/models/imageAnalysisReadiness";
 
 const inputCls =
   "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
@@ -114,6 +118,10 @@ export function CreateReport() {
   const [handoffAdded, setHandoffAdded] = useState<string[]>([]);
   const formSnapshotRef = useRef({ type, title, description, category, eventDate, location });
   formSnapshotRef.current = { type, title, description, category, eventDate, location };
+  const [imageReadiness, setImageReadiness] = useState<ImageAnalysisReadiness>({
+    available: false,
+    reason: "CHECKING",
+  });
 
   // Restore the uploadable File for a draft whose photo came from the native
   // camera/gallery, where only a native URI survives in the draft.
@@ -246,6 +254,16 @@ export function CreateReport() {
       applyAssistantHandoff(handoff);
     });
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void readImageAnalysisReadiness().then((readiness) => {
+      if (!cancelled) setImageReadiness(readiness);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pickedPhoto]);
 
   // Preserve the draft across in-app navigation (Help, map helper, model setup).
   useEffect(() => {
@@ -690,6 +708,7 @@ export function CreateReport() {
           imageUri={toNativeImageUri(pickedPhoto)!}
           onApply={applyVlmSuggestion}
           userContext={{ title, description }}
+          readiness={imageReadiness}
         />
       )}
       {isNativeCameraAvailable() && pickedPhoto && !toNativeImageUri(pickedPhoto) && (

@@ -232,6 +232,7 @@ data class VlmCapabilities(
     val gpuRenderer: String?,
     val memoryClassMb: Int,
     val freeAppStorageMb: Long,
+    val availableRamMb: Long? = null,
     /**
      * Whether the litert-gpu delegate class ships in the APK. Class
      * presence only — never LiteRT-LM runtime availability (audit #26).
@@ -254,6 +255,7 @@ data class VlmCapabilities(
         obj.put("gpuRenderer", gpuRenderer)
         obj.put("memoryClassMb", memoryClassMb)
         obj.put("freeAppStorageMb", freeAppStorageMb)
+        if (availableRamMb != null) obj.put("availableRamMb", availableRamMb)
         obj.put("gpuDelegateClassPresent", gpuDelegateClassPresent)
         obj.put("runtimeVersion", runtimeVersion)
         obj.put("appVersion", appVersion)

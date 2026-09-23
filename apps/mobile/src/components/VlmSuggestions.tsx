@@ -3,7 +3,6 @@ import { useNavigate } from "react-router";
 import { Sparkles, AlertCircle, Download } from "lucide-react";
 import { Button } from "./Button";
 import { MarkdownView } from "./MarkdownView";
-import { VlmUnstructuredOutputError } from "../services/vlm";
 import {
   discoverObjectsLocally,
   suggestForPrimaryLocally,
@@ -13,12 +12,16 @@ import {
 import { getVlmBridge, type InferenceStateEvent, type VlmState } from "../services/vlmPlugin";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
+import { friendlyVlmMessage } from "../services/vlmErrors";
+import type { ImageAnalysisReadiness } from "../services/models/imageAnalysisReadiness";
 
 interface VlmSuggestionsProps {
   imageUri: string;
   onApply: (patch: Partial<VlmAnalysis>) => void;
   /** Report text already written; sent as context so suggestions fit the draft. */
   userContext?: { title: string; description: string };
+  /** Frozen presentation-only readiness; Analyze stays gated until READY. */
+  readiness?: ImageAnalysisReadiness;
 }
 
 const FIELD_LABELS: Record<"suggestedTitle" | "suggestedCategory" | "suggestedDescription", string> = {
@@ -51,7 +54,7 @@ function hasValue(value: VlmAnalysis[keyof VlmAnalysis]): boolean {
 
 type Phase = "idle" | "discovering" | "review" | "generating" | "done";
 
-export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestionsProps) {
+export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: VlmSuggestionsProps) {
   const navigate = useNavigate();
   const [phase, setPhase] = useState<Phase>("idle");
   const [selections, setSelections] = useState<ObjectSelection[]>([]);
@@ -104,7 +107,8 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
     };
   }, []);
 
-  const disabled = !imageUri || busy || inferenceRunning;
+  const readinessGate = readiness != null && !readiness.available;
+  const disabled = !imageUri || busy || inferenceRunning || readinessGate;
 
   /**
    * Reads the bridge's explicit CPU compatibility notice, if any. Missing on
@@ -123,15 +127,10 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
   }
 
   function fail(err: unknown) {
-    const isUnstructured = err instanceof VlmUnstructuredOutputError || (err instanceof Error && err.name === "VlmUnstructuredOutputError");
-    const isGpuUnavailable = err instanceof Error && (err.message.includes("GPU_UNAVAILABLE") || err.message.includes("MODEL_UNAVAILABLE"));
-    if (isUnstructured) {
-      setError("Could not read the photo — fill the details manually.");
-    } else if (isGpuUnavailable) {
-      setError("Model not available. Tap to download.");
-    } else {
-      setError(err instanceof Error ? err.message : "Analysis failed");
-    }
+    diag("vlm.error.raw", {
+      message: err instanceof Error ? err.message : String(err ?? "unknown"),
+    }, { traceId: traceIdRef.current ?? undefined });
+    setError(friendlyVlmMessage(err));
   }
 
   async function handleDiscover() {
@@ -271,6 +270,23 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
         </p>
       )}
 
+      {readinessGate && readiness != null && (
+        <div role="status" className="flex flex-col gap-2 rounded-m3-sm border border-outline-variant px-3 py-2 text-sm">
+          <span>
+            {readiness.reason === "CHECKING" && "Checking model status…"}
+            {readiness.reason === "NO_MODEL" && "No on-device model yet. Set it up in Offline AI — you can still fill the details manually below."}
+            {readiness.reason === "VERIFY_REQUIRED" && "Model installed but not verified. Verify the accelerator in Offline AI — you can still fill the details manually below."}
+            {readiness.reason === "UNAVAILABLE" && "Model unavailable on this device. Check Offline AI for details — you can still fill the details manually below."}
+          </span>
+          {readiness.reason !== "CHECKING" && (
+            <Button type="button" variant="outline" size="md" onClick={() => navigate("/offline-ai")}>
+              <Download size={14} aria-hidden />
+              {readiness.reason === "VERIFY_REQUIRED" ? "Verify in Offline AI" : "Set up in Offline AI"}
+            </Button>
+          )}
+        </div>
+      )}
+
       {(phase === "idle" || phase === "discovering") && (
         <div className="flex flex-wrap gap-2">
           <Button
@@ -293,13 +309,13 @@ export function VlmSuggestions({ imageUri, onApply, userContext }: VlmSuggestion
       )}
 
       {error && (
-        <div className="flex items-center gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
+        <div className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
           <AlertCircle size={16} aria-hidden />
           <span>{error}</span>
-          {(error.includes("Model not available") || error.includes("GPU_UNAVAILABLE") || error.includes("MODEL_UNAVAILABLE")) && (
+          {(error.includes("isn't available") || error.includes("Offline AI")) && (
             <Button type="button" variant="text" size="md" onClick={() => navigate("/offline-ai")}>
               <Download size={14} aria-hidden />
-              Download model
+              Open Offline AI
             </Button>
           )}
         </div>
