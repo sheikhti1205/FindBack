@@ -23,8 +23,25 @@ vi.mock("../services/posts", () => ({ publishReport: (...args: unknown[]) => pub
 vi.mock("../services/photo", () => photo);
 
 import { CreateReport } from "./CreateReport";
-import { clearDraft } from "../services/reportDraft";
+import { clearDraft, saveDraft } from "../services/reportDraft";
 import { clearPhotoStore } from "../services/photoStore";
+import { todayInputValue } from "../utils/dates";
+
+function seedDescription(description: string): void {
+  saveDraft({
+    type: "LOST",
+    title: "",
+    description,
+    category: "",
+    eventDate: todayInputValue(),
+    location: { label: "", latitude: null, longitude: null },
+    youtubeUrl: "",
+    photoId: null,
+    photoNativeUri: null,
+    photoWebPath: null,
+    photoFormat: null,
+  });
+}
 
 function pickFile(file: File) {
   const input = document.querySelector('input[type="file"]');
@@ -108,9 +125,9 @@ describe("CreateReport", () => {
 
   it("publishes with the selected photo on submit", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     const file = new File(["abc"], "p.jpg", { type: "image/jpeg" });
     pickFile(file);
@@ -120,9 +137,9 @@ describe("CreateReport", () => {
 
   it("keeps the selected photo when publish fails", async () => {
     publishReportMock.mockRejectedValue(new Error("Could not publish"));
+    seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
@@ -132,9 +149,9 @@ describe("CreateReport", () => {
 
   it("allows manual category selection without AI", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("house keys on a blue lanyard");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost keys" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "house keys on a blue lanyard" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Keys" } });
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ category: "Keys" }), null, expect.any(String)));
@@ -142,9 +159,9 @@ describe("CreateReport", () => {
 
   it("keeps the photo uploadable across navigation (draft restore)", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("a black phone lost near the library");
     const { unmount } = render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     const file = new File(["abc"], "p.jpg", { type: "image/jpeg" });
     pickFile(file);
@@ -181,9 +198,9 @@ describe("CreateReport", () => {
 
   it("requires a date before publishing", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
     fireEvent.change(dateInput, { target: { value: "" } });
@@ -219,9 +236,9 @@ describe("CreateReport", () => {
   // Validation alignment tests (W6 #17)
   it("rejects title shorter than 3 characters", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Ab" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/title must be at least 3 characters/i)).toBeTruthy();
@@ -230,10 +247,10 @@ describe("CreateReport", () => {
 
   it("rejects title longer than 120 characters", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     const longTitle = "A".repeat(121);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: longTitle } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/title must be at most 120 characters/i)).toBeTruthy();
@@ -242,9 +259,9 @@ describe("CreateReport", () => {
 
   it("rejects description shorter than 10 characters", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("short");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "short" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/description must be at least 10 characters/i)).toBeTruthy();
@@ -253,10 +270,10 @@ describe("CreateReport", () => {
 
   it("rejects description longer than 3000 characters", async () => {
     publishReportMock.mockResolvedValue("p1");
+    const longDesc = "A".repeat(3001);
+    seedDescription(longDesc);
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    const longDesc = "A".repeat(3001);
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: longDesc } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/description must be at most 3000 characters/i)).toBeTruthy();
@@ -265,9 +282,9 @@ describe("CreateReport", () => {
 
   it("rejects location label longer than 200 characters", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     const longLocation = "A".repeat(201);
     const locationInput = screen.getByLabelText(/approximate location/i) as HTMLInputElement;
@@ -371,9 +388,9 @@ describe("CreateReport", () => {
 
   it("publish: revokes blob and removes stashed File", async () => {
     publishReportMock.mockResolvedValue("p1");
+    seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByPlaceholderText(/colour, brand, markings/i), { target: { value: "a black phone lost near the library" } });
     fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
     pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
     await screen.findByRole("button", { name: /remove photo/i });
