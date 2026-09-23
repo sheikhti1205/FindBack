@@ -1,5 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { BottomSheet } from "./BottomSheet";
+import { announce } from "./LiveRegion";
+import {
+  buildAssistantReportHandoff,
+  type AssistantReportHandoff,
+} from "../services/assistant/assistantHandoff";
 import { RECOVERY_COPY, type RecoveryAction } from "../services/ai/errors";
 import type { AiErrorClass } from "../services/ai/types";
 import {
@@ -153,6 +158,11 @@ function AssistantReadySummary({ snapshot }: { snapshot: GuidedSnapshot }) {
   );
 }
 
+export interface AssistantTranscriptEntry {
+  readonly role: "user" | "assistant";
+  readonly text: string;
+}
+
 export interface AssistantSheetProps {
   open: boolean;
   onClose: () => void;
@@ -167,6 +177,8 @@ export interface AssistantSheetProps {
   runtime?: AssistantExecutionRuntime;
   /** Emitted on every snapshot change so outer flows can consume held results. */
   onSnapshot?: (snapshot: GuidedSnapshot) => void;
+  /** Emitted with the frozen handoff when the enabled Review report action runs. */
+  onReviewReport?: (handoff: AssistantReportHandoff) => void;
 }
 
 export function AssistantSheet({
@@ -178,9 +190,10 @@ export function AssistantSheet({
   onRecoveryAction,
   runtime,
   onSnapshot,
+  onReviewReport,
 }: AssistantSheetProps) {
   const [snapshot, setSnapshot] = useState<GuidedSnapshot | null>(null);
-  const [reply, setReply] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<readonly AssistantTranscriptEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState("");
 
@@ -191,7 +204,7 @@ export function AssistantSheet({
 
   function begin(flow: GuidedFlow): void {
     update(startFlow(flow));
-    setReply(null);
+    setTranscript([]);
     onShortcut?.(flow);
   }
 
@@ -204,11 +217,13 @@ export function AssistantSheet({
       snapshot.state === "awaitingLocation" &&
       snapshot.flow !== "search" &&
       snapshot.flow !== "ask";
+    setTranscript((previous) => [...previous, { role: "user", text: trimmed }]);
     setBusy(true);
     try {
       const result = await executeAssistantMessage(snapshot, trimmed, runtime ?? {});
       update(result.snapshot);
-      setReply(result.reply);
+      setTranscript((previous) => [...previous, { role: "assistant", text: result.reply }]);
+      announce(result.reply);
       if (typedLocation && result.snapshot.locationChoice === "typed") {
         onLocationChoice?.("typed");
       }
@@ -240,13 +255,26 @@ export function AssistantSheet({
   function recover(action: RecoveryAction): void {
     if (snapshot !== null && action === "Retry") {
       update(retryAfterRecovery(snapshot));
-      setReply(null);
     }
     onRecoveryAction?.(action);
   }
 
+  function reviewReport(): void {
+    if (snapshot === null) return;
+    const handoff = buildAssistantReportHandoff(snapshot);
+    if (handoff === null) return;
+    onReviewReport?.(handoff);
+    announce("Report ready for review.");
+    onClose();
+  }
+
   const question = snapshot === null ? null : nextMissingQuestion(snapshot);
   const localModelOn = runtime?.generate !== undefined;
+  const handoff = snapshot === null ? null : buildAssistantReportHandoff(snapshot);
+  const lastAssistantIndex = transcript.reduce(
+    (found, entry, index) => (entry.role === "assistant" ? index : found),
+    -1,
+  );
 
   return (
     <BottomSheet
@@ -283,10 +311,36 @@ export function AssistantSheet({
             {question.question}
           </p>
         ) : null}
-        {reply !== null && reply !== question?.question ? (
-          <p data-testid="assistant-reply" className="text-sm">
-            {reply}
-          </p>
+        {transcript.length > 0 ? (
+          <div
+            data-testid="assistant-transcript"
+            role="log"
+            aria-live="polite"
+            aria-label="Assistant conversation"
+            className="flex flex-col gap-2"
+          >
+            <ul className="flex flex-col gap-2">
+              {transcript.map((entry, index) => (
+                <li
+                  key={`${entry.role}-${index}-${entry.text.length}`}
+                  data-testid={`assistant-transcript-${entry.role}`}
+                  className="flex flex-col gap-0.5 rounded-m3-sm border border-outline-variant px-3 py-2"
+                >
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant">
+                    {entry.role === "user" ? "You" : "Assistant"}
+                  </span>
+                  <p
+                    className="text-sm"
+                    {...(index === lastAssistantIndex && entry.role === "assistant"
+                      ? { "data-testid": "assistant-reply" }
+                      : null)}
+                  >
+                    {entry.text}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
         {snapshot?.state === "awaitingPhoto" && snapshot.photoRequest !== undefined ? (
           <AssistantPhotoStep onChoice={pickPhoto} />
@@ -298,21 +352,20 @@ export function AssistantSheet({
           <AssistantRecoveryNotice errorClass={snapshot.recovery.errorClass} onAction={recover} />
         ) : null}
         {snapshot?.state === "ready" ? <AssistantReadySummary snapshot={snapshot} /> : null}
-        {snapshot?.state === "ready" &&
-        (snapshot.flow === "lost" || snapshot.flow === "found") ? (
+        {handoff !== null ? (
           <div className="flex flex-col gap-1">
             <button
               type="button"
-              data-testid="assistant-review-held"
-              disabled
-              aria-disabled="true"
-              title="Review stays in the assistant — the report form is never filled in automatically."
-              className="min-h-[48px] rounded-full bg-on-surface px-3 text-xs font-medium text-surface disabled:opacity-40"
+              data-testid="assistant-review-report"
+              onClick={reviewReport}
+              aria-label="Review report"
+              className="min-h-[48px] rounded-full bg-on-surface px-3 text-xs font-medium text-surface"
             >
               Review report
             </button>
-            <p data-testid="assistant-review-held-note" className="text-xs text-on-surface-variant">
-              Review stays here for now — the report form is never filled in automatically.
+            <p data-testid="assistant-review-note" className="text-xs text-on-surface-variant">
+              Continue to the report form to review these details before publishing. Nothing is
+              published automatically.
             </p>
           </div>
         ) : null}
