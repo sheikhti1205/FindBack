@@ -1,8 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getVlmBridge } from "../vlmPlugin";
 import {
   deriveImageAnalysisReadiness,
+  readImageAnalysisReadiness,
   readinessFromImageState,
 } from "./imageAnalysisReadiness";
+
+vi.mock("../vlmPlugin", () => ({ getVlmBridge: vi.fn() }));
+
+const getVlmBridgeMock = vi.mocked(getVlmBridge);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("deriveImageAnalysisReadiness (frozen contract)", () => {
   it("reports CHECKING while the bridge has not settled", () => {
@@ -55,5 +65,16 @@ describe("deriveImageAnalysisReadiness (frozen contract)", () => {
   it("never exposes native enums in the frozen shape", () => {
     const readiness = readinessFromImageState("READY_GPU", false);
     expect(Object.keys(readiness).sort()).toEqual(["available", "reason"]);
+  });
+
+  it("reports UNAVAILABLE when the native readiness check fails", async () => {
+    getVlmBridgeMock.mockReturnValue({
+      getModelStates: vi.fn().mockRejectedValue(new Error("bridge unavailable")),
+    } as never);
+
+    await expect(readImageAnalysisReadiness()).resolves.toEqual({
+      available: false,
+      reason: "UNAVAILABLE",
+    });
   });
 });

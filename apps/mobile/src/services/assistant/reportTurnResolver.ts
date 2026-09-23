@@ -189,7 +189,7 @@ function isAppQuestion(message: string): boolean {
   if (/\b(search|find|look for|looking for|show me|browse)\b/.test(lower)) {
     return APP_NOUNS.some((noun) => lower.includes(noun));
   }
-  return APP_NOUNS.some((noun) => lower.includes(noun)) || trimmed.endsWith("?");
+  return APP_NOUNS.some((noun) => lower.includes(noun));
 }
 
 function switchTargetFor(message: string): Intent | undefined {
@@ -248,7 +248,10 @@ function extractLocationNote(message: string, dateText: string | undefined): str
   const match = withoutDate.match(
     /\b(?:at|in|near|nearby|around|from|outside|inside|by|on)\s+([A-Za-z][A-Za-z0-9 .,'-]{2,80})/,
   );
-  const captured = match?.[1]?.trim().replace(/[.,;]+$/, "");
+  const captured = match?.[1]
+    ?.trim()
+    .replace(/[.,;]+$/, "")
+    .replace(/\s+(?:at|on)$/i, "");
   if (captured === undefined || captured === "") return undefined;
   return captured;
 }
@@ -299,12 +302,12 @@ export function resolveReportTurn(
     if (snapshot.missingFields.includes("category") && isShortAnswer(trimmed)) {
       return { kind: "UNRECOGNIZED", unmatchedCategory: trimmed };
     }
+    if (snapshot.missingFields.includes("location") && snapshot.patch.title !== undefined) {
+      return { kind: "SLOT_VALUE", fields: { locationNote: trimmed } };
+    }
     if (trimmed.endsWith("?") || trimmed.length <= 2) return { kind: "UNRECOGNIZED" };
     if (!isShortAnswer(trimmed) && snapshot.patch.title === undefined) {
       return { kind: "SLOT_VALUE", fields: { title: trimmed } };
-    }
-    if (snapshot.missingFields.includes("location") && snapshot.patch.title !== undefined) {
-      return { kind: "SLOT_VALUE", fields: { locationNote: trimmed } };
     }
     return { kind: "UNRECOGNIZED", unmatchedCategory: undefined };
   }

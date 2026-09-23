@@ -21,7 +21,7 @@ export function buildAssistantReportHandoff(
   return {
     version: 1,
     source: "assistant",
-    patch: snapshot.patch,
+    patch: { ...snapshot.patch },
     ...(snapshot.photoChoice !== undefined ? { photoChoice: snapshot.photoChoice } : null),
     ...(snapshot.locationChoice !== undefined
       ? { locationChoice: snapshot.locationChoice }
