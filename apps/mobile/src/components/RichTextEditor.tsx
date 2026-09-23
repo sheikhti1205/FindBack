@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -21,6 +21,10 @@ interface RichTextEditorProps {
   onChange: (markdown: string) => void;
   placeholder?: string;
   editorRef?: RefObject<Editor | null>;
+  error?: string;
+  required?: boolean;
+  maxLength?: number;
+  inputId?: string;
 }
 
 interface PMTextMark {
@@ -250,9 +254,12 @@ export function tiptapToMarkdown(json: unknown): string {
  * the parent immediately so no keystroke is lost on submit or unmount, while
  * external value changes (draft restore, reset) replace the editor content.
  */
-export function RichTextEditor({ label, value, onChange, placeholder, editorRef }: RichTextEditorProps) {
+export function RichTextEditor({ label, value, onChange, placeholder, editorRef, error, required, maxLength, inputId }: RichTextEditorProps) {
   const [empty, setEmpty] = useState(true);
   const [charCount, setCharCount] = useState(0);
+  const baseId = useId();
+  const errorId = `${baseId}-error`;
+  const countId = `${baseId}-count`;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const valueRef = useRef(value);
@@ -278,7 +285,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef 
       editorProps: {
         attributes: {
           "aria-label": label,
-          class: "tiptap min-h-[120px] rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base focus:outline-none",
+          class: `tiptap min-h-[120px] rounded-m3-sm border bg-surface px-3.5 py-3 text-base focus:border-on-surface focus:outline-none ${error ? "border-error" : "border-outline-variant"}`,
         },
       },
       onCreate: ({ editor: created }) => {
@@ -305,6 +312,18 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef 
     setEmpty(editor.isEmpty);
     setCharCount(editor.getText().length);
   }, [editor, value]);
+
+  useEffect(() => {
+    const dom = editor?.view.dom as HTMLElement | undefined;
+    if (!dom) return;
+    dom.setAttribute("aria-describedby", error ? `${errorId} ${countId}` : countId);
+    if (error) dom.setAttribute("aria-invalid", "true");
+    else dom.removeAttribute("aria-invalid");
+    if (required) dom.setAttribute("aria-required", "true");
+    else dom.removeAttribute("aria-required");
+    if (inputId) dom.setAttribute("id", inputId);
+    else dom.removeAttribute("id");
+  }, [editor, error, required, inputId, errorId, countId]);
 
   function applyLink() {
     if (!editor) return;
@@ -339,7 +358,15 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef 
   return (
     <div className="flex flex-col gap-2">
       <span className="text-sm font-medium text-on-surface">{label}</span>
-      <div role="toolbar" aria-label={`${label} formatting`} className="flex flex-wrap gap-1">
+      <div className="relative">
+        <EditorContent editor={editor} />
+        {(!editor || empty) && placeholder ? (
+          <div aria-hidden className="pointer-events-none absolute inset-0 px-3.5 py-3 text-base text-on-surface-variant">
+            {placeholder}
+          </div>
+        ) : null}
+      </div>
+      <div role="toolbar" aria-label={`${label} formatting`} className="flex flex-nowrap gap-1 overflow-x-auto pb-1">
         {tools.map(({ label: toolLabel, icon: Icon, active, disabled, run }) => (
           <button
             key={toolLabel}
@@ -349,7 +376,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef 
             aria-pressed={active}
             disabled={!editor || disabled}
             onClick={run}
-            className={`flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs text-on-surface-variant hover:bg-surface-container ${
+            className={`flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-m3-xs text-on-surface-variant hover:bg-surface-container ${
               active ? "bg-surface-container-high text-on-surface" : ""
             }`}
           >
@@ -357,16 +384,15 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef 
           </button>
         ))}
       </div>
-      <div className="relative">
-        <EditorContent editor={editor} />
-        {(!editor || empty) && placeholder ? (
-          <div aria-hidden className="pointer-events-none absolute inset-0 px-3.5 py-3 text-base text-on-surface-variant">
-            {placeholder}
-          </div>
-        ) : null}
-      </div>
-      <span role="status" aria-label="Character count" className="text-xs text-on-surface-variant">
-        {charCount} {charCount === 1 ? "character" : "characters"}
+      {error ? (
+        <p id={errorId} className="text-xs text-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <span id={countId} role="status" aria-label="Character count" className="text-xs text-on-surface-variant">
+        {maxLength !== undefined
+          ? `${charCount} / ${maxLength} ${charCount === 1 ? "character" : "characters"}`
+          : `${charCount} ${charCount === 1 ? "character" : "characters"}`}
       </span>
     </div>
   );

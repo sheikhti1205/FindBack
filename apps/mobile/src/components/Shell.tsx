@@ -9,6 +9,11 @@ import type { AssistantExecutionRuntime } from "../services/assistant/assistantE
 import { resolveLocalTextRuntime } from "../services/assistant/localTextRuntime";
 import type { GuidedSnapshot } from "../services/assistant/guidedAssistantController";
 import { mapAssistantSearchFilters } from "../services/assistant/searchFilterMapping";
+import {
+  ASSISTANT_REPORT_ROUTE,
+  assistantReportNavigationTarget as reportHandoffTarget,
+  stageAssistantReportHandoff,
+} from "../services/assistant/assistantReportNavigation";
 import { loadResidentEntryId } from "../services/models/roleSelection";
 import {
   isTextRuntimePresent,
@@ -54,6 +59,17 @@ export function assistantSearchNavigationTarget(snapshot: GuidedSnapshot): strin
   }
   return mapAssistantSearchFilters(snapshot.searchFilters).path;
 }
+
+/**
+ * Versioned Review-report navigation seam. Returns the ordinary report route
+ * only for the frozen assistant handoff; otherwise null. CreateReport owns
+ * intake and never auto-publishes.
+ */
+export function assistantReportNavigationTarget(handoff: unknown): string | null {
+  return reportHandoffTarget(handoff);
+}
+
+export { ASSISTANT_REPORT_ROUTE };
 
 /**
  * Seams for the assistant runtime hookup. Every field is optional: omitted
@@ -179,6 +195,13 @@ export function Shell({ seams }: { seams?: ShellAssistantSeams } = {}) {
               setAssistantOpen(false);
               navigate(target);
             }
+          }}
+          onReviewReport={(handoff) => {
+            const target = assistantReportNavigationTarget(handoff);
+            if (target === null) return;
+            stageAssistantReportHandoff(handoff);
+            setAssistantOpen(false);
+            navigate(target);
           }}
         />
         <LiveRegion />

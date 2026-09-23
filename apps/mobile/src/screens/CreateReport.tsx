@@ -7,7 +7,8 @@ import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import { Segmented } from "../components/Segmented";
 import { CategoryField } from "../components/CategoryField";
-import { MarkdownComposer } from "../components/MarkdownComposer";
+import { RichTextEditor, tiptapToMarkdown } from "../components/RichTextEditor";
+import type { Editor } from "@tiptap/react";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { VlmSuggestions } from "../components/VlmSuggestions";
@@ -20,6 +21,11 @@ import { dropStashedPhoto, getStashedPhoto, stashPhotoFile } from "../services/p
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
 import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
+import { isAssistantReportHandoff, type AssistantReportHandoff } from "../services/assistant/assistantHandoff";
+import {
+  subscribeStagedAssistantReportHandoff,
+  takeStagedAssistantReportHandoff,
+} from "../services/assistant/assistantReportNavigation";
 
 const inputCls =
   "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
@@ -99,6 +105,15 @@ export function CreateReport() {
   }>({});
   const submitting = useRef(false);
   const traceIdRef = useRef<string | null>(null);
+  const descriptionEditorRef = useRef<Editor | null>(null);
+  const descriptionLiveRef = useRef(description);
+  const [assistantHandoff, setAssistantHandoff] = useState<AssistantReportHandoff | null>(null);
+  const [handoffConflicts, setHandoffConflicts] = useState<
+    Array<{ field: "type" | "title" | "description" | "category" | "eventDate" | "location"; label: string; incoming: string }>
+  >([]);
+  const [handoffAdded, setHandoffAdded] = useState<string[]>([]);
+  const formSnapshotRef = useRef({ type, title, description, category, eventDate, location });
+  formSnapshotRef.current = { type, title, description, category, eventDate, location };
 
   // Restore the uploadable File for a draft whose photo came from the native
   // camera/gallery, where only a native URI survives in the draft.
@@ -115,6 +130,121 @@ export function CreateReport() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  function applyAssistantHandoff(handoff: AssistantReportHandoff): void {
+    if (!isAssistantReportHandoff(handoff)) return;
+    const current = formSnapshotRef.current;
+    const added: string[] = [];
+    const conflicts: Array<{ field: "type" | "title" | "description" | "category" | "eventDate" | "location"; label: string; incoming: string }> = [];
+    if (handoff.patch.type !== undefined && handoff.patch.type !== current.type) {
+      const isDefaultType = initialDraft?.type === undefined && current.type === "LOST";
+      if (current.type.trim() === "" || isDefaultType) {
+        setType(handoff.patch.type);
+        added.push("Type");
+      } else {
+        conflicts.push({ field: "type", label: "Type", incoming: handoff.patch.type });
+      }
+    }
+    if (handoff.patch.title !== undefined && handoff.patch.title !== current.title) {
+      if (current.title.trim() === "") {
+        setTitle(handoff.patch.title);
+        added.push("Title");
+      } else {
+        conflicts.push({ field: "title", label: "Title", incoming: handoff.patch.title });
+      }
+    }
+    if (handoff.patch.description !== undefined && handoff.patch.description !== current.description) {
+      if (current.description.trim() === "") {
+        descriptionLiveRef.current = handoff.patch.description;
+        setDescription(handoff.patch.description);
+        added.push("Description");
+      } else {
+        conflicts.push({ field: "description", label: "Description", incoming: handoff.patch.description });
+      }
+    }
+    if (handoff.patch.category !== undefined && handoff.patch.category !== current.category) {
+      if (current.category === "") {
+        setCategory(handoff.patch.category);
+        added.push("Category");
+      } else {
+        conflicts.push({ field: "category", label: "Category", incoming: handoff.patch.category });
+      }
+    }
+    if (handoff.patch.eventDate !== undefined && handoff.patch.eventDate !== current.eventDate) {
+      const isDefaultDate = initialDraft?.eventDate === undefined && current.eventDate === todayInputValue();
+      if (current.eventDate.trim() === "" || isDefaultDate) {
+        setEventDate(handoff.patch.eventDate);
+        added.push("Date");
+      } else {
+        conflicts.push({ field: "eventDate", label: "Date", incoming: handoff.patch.eventDate });
+      }
+    }
+    if (handoff.patch.locationNote !== undefined && handoff.patch.locationNote !== current.location.label) {
+      if (current.location.label.trim() === "") {
+        setLocation({ ...current.location, label: handoff.patch.locationNote });
+        added.push("Location");
+      } else {
+        conflicts.push({ field: "location", label: "Location", incoming: handoff.patch.locationNote });
+      }
+    }
+    setAssistantHandoff(handoff);
+    setHandoffAdded(added);
+    setHandoffConflicts(conflicts);
+    if (added.length > 0 && conflicts.length === 0) {
+      announce("Assistant suggestions added to empty fields. Review before publishing.");
+    } else if (conflicts.length > 0 && added.length === 0) {
+      announce("Assistant suggestions kept aside. Your details were kept. Confirm to use the assistant values.");
+    } else if (added.length > 0 && conflicts.length > 0) {
+      announce("Assistant suggestions added to empty fields. Some fields already have your details and were kept.");
+    } else {
+      announce("Assistant suggestions ready for review. Nothing was published automatically.");
+    }
+    if (added.length > 0) {
+      setFieldErrors((previous) => {
+        const next = { ...previous };
+        if (added.includes("Title")) next.title = undefined;
+        if (added.includes("Description")) next.description = undefined;
+        if (added.includes("Category")) next.category = undefined;
+        if (added.includes("Date")) next.eventDate = undefined;
+        return next;
+      });
+    }
+  }
+
+  function applyConflictingHandoffValues(): void {
+    if (!assistantHandoff) return;
+    for (const conflict of handoffConflicts) {
+      if (conflict.field === "type") setType(conflict.incoming as PostType);
+      else if (conflict.field === "title") setTitle(conflict.incoming);
+      else if (conflict.field === "description") {
+        descriptionLiveRef.current = conflict.incoming;
+        setDescription(conflict.incoming);
+      } else if (conflict.field === "category") setCategory(conflict.incoming as Category);
+      else if (conflict.field === "eventDate") setEventDate(conflict.incoming);
+      else if (conflict.field === "location") {
+        const current = formSnapshotRef.current.location;
+        setLocation({ ...current, label: conflict.incoming });
+      }
+    }
+    setHandoffAdded((previous) => [...previous, ...handoffConflicts.map((conflict) => conflict.label)]);
+    setHandoffConflicts([]);
+    announce("Assistant suggestions applied. Review before publishing.");
+  }
+
+  // Assistant handoff intake: versioned staged draft consumed once on mount,
+  // plus live subscription while mounted. Fill-only-empty; conflicts need an
+  // explicit confirmation. Photo/location choices stay user-reviewed.
+  useEffect(() => {
+    const pending = takeStagedAssistantReportHandoff();
+    if (pending && isAssistantReportHandoff(pending)) applyAssistantHandoff(pending);
+  }, []);
+
+  useEffect(() => {
+    return subscribeStagedAssistantReportHandoff((handoff) => {
+      takeStagedAssistantReportHandoff();
+      applyAssistantHandoff(handoff);
+    });
   }, []);
 
   // Preserve the draft across in-app navigation (Help, map helper, model setup).
@@ -153,12 +283,16 @@ export function CreateReport() {
     clearDraft();
     setType("LOST");
     setTitle("");
+    descriptionLiveRef.current = "";
     setDescription("");
     setCategory("");
     setEventDate(todayInputValue());
     setLocation({ label: "", latitude: null, longitude: null });
     setYoutubeUrl("");
     clearPhoto();
+    setAssistantHandoff(null);
+    setHandoffConflicts([]);
+    setHandoffAdded([]);
     announce("Report draft discarded.");
   }
 
@@ -220,7 +354,10 @@ export function CreateReport() {
 
   function applyVlmSuggestion(patch: Partial<VlmAnalysis>) {
     if (patch.suggestedTitle !== undefined) setTitle(patch.suggestedTitle ?? "");
-    if (patch.suggestedDescription !== undefined) setDescription(patch.suggestedDescription ?? "");
+    if (patch.suggestedDescription !== undefined) {
+      descriptionLiveRef.current = patch.suggestedDescription ?? "";
+      setDescription(patch.suggestedDescription ?? "");
+    }
     if (patch.suggestedCategory !== undefined && patch.suggestedCategory !== null) setCategory(patch.suggestedCategory);
   }
 
@@ -232,7 +369,27 @@ export function CreateReport() {
     clearAmbientTrace();
     setError(null);
     const trimmedTitle = title.trim();
-    const trimmedDescription = description.trim();
+    const editorDescription =
+      descriptionEditorRef.current !== null
+        ? (() => {
+            try {
+              return tiptapToMarkdown(descriptionEditorRef.current.getJSON());
+            } catch {
+              return null;
+            }
+          })()
+        : null;
+    const liveDescription =
+      descriptionLiveRef.current === description &&
+      editorDescription !== null &&
+      editorDescription !== description
+        ? editorDescription
+        : descriptionLiveRef.current;
+    if (liveDescription !== description) {
+      descriptionLiveRef.current = liveDescription;
+      setDescription(liveDescription);
+    }
+    const trimmedDescription = liveDescription.trim();
     const trimmedYoutube = youtubeUrl.trim();
     const trimmedLocationLabel = location.label.trim();
     const errs = {
@@ -360,10 +517,68 @@ export function CreateReport() {
         maxLength={TITLE_MAX}
       />
 
-      <MarkdownComposer
+      {assistantHandoff && (
+        <section
+          data-testid="assistant-handoff-notice"
+          role="status"
+          aria-label="Assistant suggestions"
+          className="flex flex-col gap-2 rounded-m3-md border border-outline-variant p-3"
+        >
+          <p className="text-sm font-medium">Assistant suggestions</p>
+          <p className="text-sm text-on-surface-variant">
+            Review these details before publishing. Nothing was published automatically.
+          </p>
+          {handoffAdded.length > 0 && (
+            <p className="text-xs text-on-surface-variant">Added to empty fields: {handoffAdded.join(", ")}.</p>
+          )}
+          {assistantHandoff.photoChoice !== undefined && (
+            <p className="text-xs text-on-surface-variant">
+              Photo suggestion:{" "}
+              {assistantHandoff.photoChoice === "take"
+                ? "Take a photo"
+                : assistantHandoff.photoChoice === "choose"
+                  ? "Choose a photo"
+                  : "No photo"}
+              . Review the photo section below.
+            </p>
+          )}
+          {assistantHandoff.locationChoice !== undefined && (
+            <p className="text-xs text-on-surface-variant">
+              Location suggestion:{" "}
+              {assistantHandoff.locationChoice === "map"
+                ? "Pick on a map"
+                : assistantHandoff.locationChoice === "current"
+                  ? "Use current location"
+                  : assistantHandoff.locationChoice === "typed"
+                    ? "Typed place name"
+                    : "Skipped location"}
+              . Review the location section below.
+            </p>
+          )}
+          {handoffConflicts.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-on-surface-variant">
+                Kept your details for: {handoffConflicts.map((conflict) => conflict.label).join(", ")}. Confirm to
+                replace them with the assistant values.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="md" onClick={() => setHandoffConflicts([])}>
+                  Keep my details
+                </Button>
+                <Button type="button" variant="outline" size="md" onClick={applyConflictingHandoffValues}>
+                  Use assistant suggestions
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      <RichTextEditor
         label="Description"
         value={description}
         onChange={(v) => {
+          descriptionLiveRef.current = v;
           setDescription(v);
           if (fieldErrors.description) setFieldErrors((f) => ({ ...f, description: undefined }));
         }}
@@ -371,6 +586,7 @@ export function CreateReport() {
         error={fieldErrors.description}
         required
         maxLength={DESCRIPTION_MAX}
+        editorRef={descriptionEditorRef}
       />
 
       <CategoryField
