@@ -8,7 +8,7 @@ import { BackButton } from "../components/BackButton";
 import { Button } from "../components/Button";
 import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
-import { MapEmbed } from "../components/MapEmbed";
+import { InteractiveLocationMap } from "../components/InteractiveLocationMap";
 import { EmptyState, Spinner } from "../components/PostCard";
 import { MarkdownView } from "../components/MarkdownView";
 import { RatingStars } from "../components/RatingStars";
@@ -367,7 +367,7 @@ export function PostDetail() {
         {post.youtubeUrl && <YouTubeEmbed url={post.youtubeUrl} />}
 
         {(post.latitude != null || post.locationLabel) && (
-          <MapEmbed lat={post.latitude} lng={post.longitude} label={post.locationLabel} />
+          <InteractiveLocationMap lat={post.latitude} lng={post.longitude} label={post.locationLabel} />
         )}
 
         {/* Reactions hydrate independently; the post never waits on them. */}
