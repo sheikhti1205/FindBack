@@ -8,6 +8,7 @@ import { EmptyState, Spinner } from "./PostCard";
 interface PostListProps {
   items: PostItem[];
   loading: boolean;
+  refreshing?: boolean;
   loadingMore: boolean;
   error: string | null;
   hasMore: boolean;
@@ -20,6 +21,7 @@ interface PostListProps {
 export function PostList({
   items,
   loading,
+  refreshing = false,
   loadingMore,
   error,
   hasMore,
@@ -72,6 +74,11 @@ export function PostList({
 
   return (
     <div className="flex flex-col gap-3 px-4">
+      {refreshing && items.length > 0 && (
+        <p role="status" className="py-1 text-center text-xs text-on-surface-variant">
+          Refreshing…
+        </p>
+      )}
       {error && (
         <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
           <span>{error}</span>

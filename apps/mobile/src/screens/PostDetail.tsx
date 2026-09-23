@@ -15,6 +15,7 @@ import { RatingStars } from "../components/RatingStars";
 import { PossibleMatches } from "../components/PossibleMatches";
 import { announce } from "../components/LiveRegion";
 import { friendlyError } from "../utils/friendlyErrors";
+import { recordLoadTiming } from "../utils/loadTiming";
 import { openInMaps } from "../utils/location";
 import { formatEventDate, formatTimestamp } from "../utils/dates";
 import {
@@ -42,34 +43,117 @@ export function PostDetail() {
   const [myRating, setMyRating] = useState<number | null>(null);
   const [commentText, setCommentText] = useState("");
   const [busy, setBusy] = useState(false);
+  // Post shell state: the article renders as soon as the post resolves.
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Independent secondary states: comments/social hydrate on their own and
+  // never block the post shell.
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [socialLoading, setSocialLoading] = useState(true);
+  const [socialError, setSocialError] = useState<string | null>(null);
 
   // Sequence tokens for latest-request-wins mutation sequencing
   const reactionSeq = useRef(0);
   const ratingSeq = useRef(0);
   const statusSeq = useRef(0);
+  // Generation guard: only the current post id / reload may apply results.
+  const loadGen = useRef(0);
+  const postPresentRef = useRef(false);
   // Track in-flight mutations to disable owner controls
   const [mutationActive, setMutationActive] = useState<"reaction" | "rating" | "status" | null>(null);
 
+  const loadPost = useCallback(
+    async (gen: number) => {
+      const startedAt = Date.now();
+      try {
+        const p = await fetchPost(id);
+        recordLoadTiming("post", Date.now() - startedAt);
+        if (loadGen.current !== gen) return;
+        postPresentRef.current = true;
+        setError(null);
+        setPost(p);
+      } catch (err) {
+        recordLoadTiming("post", Date.now() - startedAt);
+        if (loadGen.current !== gen) return;
+        setError(friendlyError(err).message);
+      } finally {
+        if (loadGen.current === gen) setLoading(false);
+      }
+    },
+    [id],
+  );
+
+  const loadComments = useCallback(
+    async (gen: number) => {
+      const startedAt = Date.now();
+      try {
+        const cs = await fetchComments(id);
+        recordLoadTiming("comments", Date.now() - startedAt);
+        if (loadGen.current !== gen) return;
+        setCommentsError(null);
+        setComments(cs);
+      } catch (err) {
+        recordLoadTiming("comments", Date.now() - startedAt);
+        if (loadGen.current !== gen) return;
+        setCommentsError(friendlyError(err).message);
+      } finally {
+        if (loadGen.current === gen) setCommentsLoading(false);
+      }
+    },
+    [id],
+  );
+
+  const loadSocial = useCallback(
+    async (gen: number) => {
+      const startedAt = Date.now();
+      try {
+        const social = await fetchSocialState(id);
+        recordLoadTiming("social", Date.now() - startedAt);
+        if (loadGen.current !== gen) return;
+        setSocialError(null);
+        setMyReaction(social.myReaction);
+        setMyRating(social.myRating);
+      } catch (err) {
+        recordLoadTiming("social", Date.now() - startedAt);
+        if (loadGen.current !== gen) return;
+        setSocialError(friendlyError(err).message);
+      } finally {
+        if (loadGen.current === gen) setSocialLoading(false);
+      }
+    },
+    [id],
+  );
+
+  // Start post/comments/social in parallel; each section reconciles on its
+  // own generation-guarded resolution so the post never waits on the
+  // secondaries. A reload with a visible post keeps it on screen.
   const load = useCallback(async () => {
-    try {
-      const [p, cs, social] = await Promise.all([
-        fetchPost(id),
-        fetchComments(id),
-        fetchSocialState(id),
-      ]);
-      setError(null);
-      setPost(p);
-      setComments(cs);
-      setMyReaction(social.myReaction);
-      setMyRating(social.myRating);
-    } catch (err) {
-      setError(friendlyError(err).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [id]);
+    const gen = ++loadGen.current;
+    if (!postPresentRef.current) setLoading(true);
+    setCommentsLoading(true);
+    setSocialLoading(true);
+    setError(null);
+    setCommentsError(null);
+    setSocialError(null);
+    void loadPost(gen);
+    void loadComments(gen);
+    void loadSocial(gen);
+  }, [loadPost, loadComments, loadSocial]);
+
+  const retryComments = useCallback(() => {
+    const gen = loadGen.current;
+    setCommentsLoading(true);
+    setCommentsError(null);
+    void loadComments(gen);
+  }, [loadComments]);
+
+  const retrySocial = useCallback(() => {
+    const gen = loadGen.current;
+    setSocialLoading(true);
+    setSocialError(null);
+    void loadSocial(gen);
+  }, [loadSocial]);
 
   useEffect(() => {
     void load();
@@ -286,7 +370,24 @@ export function PostDetail() {
           <MapEmbed lat={post.latitude} lng={post.longitude} label={post.locationLabel} />
         )}
 
-        {/* Reactions */}
+        {/* Reactions hydrate independently; the post never waits on them. */}
+        {socialLoading && (
+          <p role="status" className="text-sm text-on-surface-variant">
+            Loading reactions…
+          </p>
+        )}
+        {socialError && (
+          <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
+            <span>Could not load reactions: {socialError}</span>
+            <button
+              type="button"
+              onClick={retrySocial}
+              className="min-h-[48px] shrink-0 px-3 font-medium underline"
+            >
+              Retry
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <Button
             variant={myReaction === "LIKE" ? "primary" : "outline"}
@@ -354,37 +455,56 @@ export function PostDetail() {
           </Button>
         </form>
 
-        {comments.length === 0 && (
-          <p className="text-sm text-on-surface-variant">No comments yet.</p>
+        {commentsLoading ? (
+          <p role="status" className="text-sm text-on-surface-variant">
+            Loading comments…
+          </p>
+        ) : commentsError ? (
+          <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
+            <span>Could not load comments: {commentsError}</span>
+            <button
+              type="button"
+              onClick={retryComments}
+              className="min-h-[48px] shrink-0 px-3 font-medium underline"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <>
+            {comments.length === 0 && (
+              <p className="text-sm text-on-surface-variant">No comments yet.</p>
+            )}
+            <ul className="flex flex-col gap-3">
+              {comments.map((c) => {
+                const mine = c.author.id === user?.id || isOwner;
+                return (
+                  <li key={c.id} className="rounded-m3-md border border-outline-variant p-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
+                      <span className="shrink-0 text-[11px] text-on-surface-variant">
+                        {formatTimestamp(c.createdAt)}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-sm leading-relaxed">
+                      <MarkdownView text={c.body} />
+                    </div>
+                    {mine && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteComment(c.id)}
+                        aria-label={`Delete comment by ${c.author.username}`}
+                        className="mt-2 inline-flex min-h-[48px] items-center gap-1 px-2 text-xs text-on-surface-variant hover:text-error"
+                      >
+                        <Trash2 size={13} aria-hidden /> Delete
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
-        <ul className="flex flex-col gap-3">
-          {comments.map((c) => {
-            const mine = c.author.id === user?.id || isOwner;
-            return (
-              <li key={c.id} className="rounded-m3-md border border-outline-variant p-3">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
-                  <span className="shrink-0 text-[11px] text-on-surface-variant">
-                    {formatTimestamp(c.createdAt)}
-                  </span>
-                </div>
-                <div className="mt-1 text-sm leading-relaxed">
-                  <MarkdownView text={c.body} />
-                </div>
-                {mine && (
-                  <button
-                    type="button"
-                    onClick={() => onDeleteComment(c.id)}
-                    aria-label={`Delete comment by ${c.author.username}`}
-                    className="mt-2 inline-flex min-h-[48px] items-center gap-1 px-2 text-xs text-on-surface-variant hover:text-error"
-                  >
-                    <Trash2 size={13} aria-hidden /> Delete
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
       </section>
 
       <div className="h-4" aria-hidden />

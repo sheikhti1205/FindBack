@@ -2,12 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FeedPage, PostItem } from "@findback/shared";
 import { fetchFeed, type FeedFilters } from "../services/posts";
 import { friendlyError } from "../utils/friendlyErrors";
+import { recordLoadTiming } from "../utils/loadTiming";
 import { feedFilterKey, loadFeedCache, saveFeedCache } from "./feedCache";
 
 export interface FeedState {
   items: PostItem[];
   total: number;
+  /** Cold load with no visible items. Stays false during background refresh. */
   loading: boolean;
+  /** Background refresh with visible items preserved. */
+  refreshing: boolean;
   loadingMore: boolean;
   error: string | null;
   hasMore: boolean;
@@ -31,6 +35,11 @@ interface UseFeedOptions {
  * generation may replace items — stale responses from earlier generations are
  * silently discarded. This replaces the old global busy flag which could drop
  * newer requests.
+ *
+ * A non-append load with visible items is a background `refreshing` pass:
+ * items stay on screen until the current generation reconciles them. A
+ * non-append load with no visible items is a cold `loading` pass. A failed
+ * refresh preserves the visible items; only a failed cold load clears them.
  *
  * Pagination is scoped to { filterKey, generation, cursor }.
  *
@@ -57,6 +66,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     if (cacheKey) return loadFeedCache(cacheKey) == null;
     return true;
   });
+  const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cursorRef = useRef<string | null>(null);
@@ -88,6 +98,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
         setTotal(cached.total);
         setError(null);
         setLoading(false);
+        setRefreshing(false);
         setLoadingMore(false);
         return;
       }
@@ -95,6 +106,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     loadedRef.current = false;
     setItems([]);
     setTotal(0);
+    setRefreshing(false);
     setError(null);
   }, [cacheKey]);
 
@@ -132,11 +144,18 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
   const load = useCallback(
     async (cursor: string | null, append: boolean) => {
       const gen = ++generationRef.current;
+      // A non-append load over visible items is a background refresh: keep
+      // the items on screen and reconcile atomically when this generation
+      // resolves. Only an empty list takes the cold-loading path.
+      const isRefresh = !append && latestRef.current.items.length > 0;
       if (append) setLoadingMore(true);
+      else if (isRefresh) setRefreshing(true);
       else setLoading(true);
       setError(null);
+      const startedAt = Date.now();
       try {
         const page: FeedPage = await fetchFeed(filters, cursor ?? undefined);
+        recordLoadTiming("feed", Date.now() - startedAt);
         // Discard if filters/generation changed while we were fetching
         if (gen !== generationRef.current) return;
         loadedRef.current = true;
@@ -146,12 +165,16 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
         cursorRef.current = page.nextCursor;
         setItems((prev) => (append ? [...prev, ...page.items] : page.items));
       } catch (err) {
+        recordLoadTiming("feed", Date.now() - startedAt);
         if (gen !== generationRef.current) return;
         setError(friendlyError(err).message);
-        if (!append) setItems([]);
+        // A failed refresh keeps the visible items; only a failed cold load
+        // clears the list.
+        if (!append && !isRefresh) setItems([]);
       } finally {
         if (gen === generationRef.current) {
           setLoading(false);
+          setRefreshing(false);
           setLoadingMore(false);
         }
       }
@@ -190,6 +213,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     items,
     total,
     loading,
+    refreshing,
     loadingMore,
     error,
     hasMore: Boolean(cursorRef.current),

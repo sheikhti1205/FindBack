@@ -16,7 +16,7 @@ export function MyPosts() {
   // The feed filter carries userId, so the resolved cache key is already
   // user-scoped: `my:reports:<filterKey>`. Passing the base (not a
   // pre-scoped key) keeps it identical to the hook's own key.
-  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
+  const { items, total, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
     { userId: user?.id },
     { cacheKey: MY_CACHE_BASE, scrollRef },
   );
@@ -41,10 +41,11 @@ export function MyPosts() {
         </div>
       </header>
 
-      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading} className="flex-1">
+      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="flex-1">
         <PostList
           items={items}
           loading={loading}
+          refreshing={refreshing}
           loadingMore={loadingMore}
           error={error}
           hasMore={hasMore}
