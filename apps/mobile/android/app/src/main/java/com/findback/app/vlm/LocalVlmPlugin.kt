@@ -383,6 +383,7 @@ class LocalVlmPlugin : Plugin() {
         }
         val (gpuVendor, gpuRenderer) = GpuProbe.info()
         val memoryClassMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).memoryClass
+        val availableRamMb = availableRamMb(context)
         val freeAppStorageMb = getFreeAppStorageMb(context)
         val gpuDelegateClassPresent = GpuProbe.gpuDelegateClassPresent()
         val runtimeVersion = "0.16.0" // LiteRT version
@@ -397,6 +398,7 @@ class LocalVlmPlugin : Plugin() {
             gpuRenderer = gpuRenderer,
             memoryClassMb = memoryClassMb,
             freeAppStorageMb = freeAppStorageMb,
+            availableRamMb = availableRamMb,
             gpuDelegateClassPresent = gpuDelegateClassPresent,
             runtimeVersion = runtimeVersion,
             appVersion = appVersionName(),
@@ -1984,6 +1986,17 @@ class LocalVlmPlugin : Plugin() {
         val file = context.filesDir
         val stat = android.os.StatFs(file.path)
         return (stat.availableBlocksLong * stat.blockSizeLong) / (1024 * 1024)
+    }
+
+    private fun availableRamMb(context: Context): Long? {
+        return try {
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val info = android.app.ActivityManager.MemoryInfo()
+            manager.getMemoryInfo(info)
+            info.availMem / (1024 * 1024)
+        } catch (e: Exception) {
+            null
+        }
     }
 }
 

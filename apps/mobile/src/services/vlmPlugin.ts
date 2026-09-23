@@ -84,6 +84,8 @@ export interface VlmCapabilities {
   gpuRenderer: string | null;
   memoryClassMb: number;
   freeAppStorageMb: number;
+  /** Passively observed free RAM (ActivityManager.MemoryInfo.availMem); null when unreadable. */
+  availableRamMb?: number | null;
   /** Whether the litert-gpu delegate class ships in the APK (class presence only, never runtime availability). */
   gpuDelegateClassPresent: boolean;
   runtimeVersion: string | null;
@@ -843,4 +845,20 @@ export function getVlmBridge(): VlmBridge {
 /** Reset the bridge cache (for testing). */
 export function resetVlmBridgeCache(): void {
   bridgeCache = null;
+}
+
+/**
+ * Production package host for SAF import/export. Wraps the Android
+ * platform installer (`importPackageFromUri`/`exportPackageToUri`) via the
+ * shared adapter; null on web where no platform installer exists. The
+ * library UI falls back to the streaming web verification path when null.
+ */
+export function getNativePackageHost(): NativePackageHost | null {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const native = registerPlugin<NativePackageHostBridge>("LocalVlm");
+    return nativePackageHostFrom(native);
+  } catch {
+    return null;
+  }
 }

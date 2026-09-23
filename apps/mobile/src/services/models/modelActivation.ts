@@ -84,12 +84,10 @@ export async function activateModel(
     };
   }
   const states = await bridge.getModelStates();
-  const info = states.find((m) => m.id === route.bridgeId);
   if (!isRuntimeReadyForEntry(states, route.bridgeId)) {
-    const state = info?.state ?? "unknown";
     return {
       ok: false,
-      reason: `Model runtime is not ready (state: ${state}). Complete accelerator verification before setting it active.`,
+      reason: "Model runtime is not ready. Complete accelerator verification before setting it active.",
     };
   }
   return { ok: true, alreadyActive: false };
