@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -263,5 +263,61 @@ describe("PostDetail mutation sequencing", () => {
     // We need to reject the first promise. Since we can't easily do that with the current mock setup,
     // we'll test that the UI doesn't change when an error occurs for an older request.
     // The implementation should track sequence numbers and ignore stale responses.
+  });
+});
+
+describe("PostDetail progressive loading", () => {
+  beforeEach(() => {
+    postsMock.addComment.mockReset();
+    postsMock.deleteComment.mockReset();
+    postsMock.ratePost.mockReset();
+    postsMock.reactToPost.mockReset();
+    postsMock.updatePostStatus.mockReset();
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+  });
+
+  afterEach(cleanup);
+
+  it("renders the post immediately while delayed comments/social remain pending", async () => {
+    let resolveComments: (v: unknown) => void = () => {};
+    let resolveSocial: (v: unknown) => void = () => {};
+    const commentsPromise = new Promise((r) => {
+      resolveComments = r;
+    });
+    const socialPromise = new Promise((r) => {
+      resolveSocial = r;
+    });
+    postsMock.fetchPost.mockResolvedValue(basePost);
+    postsMock.fetchComments.mockImplementation(() => commentsPromise);
+    postsMock.fetchSocialState.mockImplementation(() => socialPromise);
+
+    renderDetail();
+
+    // Fast post must not wait behind ~2s secondaries.
+    const heading = await screen.findByRole("heading", { level: 1 }, { timeout: 3000 });
+    expect(heading.textContent).toBe(LONG);
+    // Secondary pending state is announced; delayed comment is absent.
+    expect(await screen.findByText(/loading comments/i)).toBeTruthy();
+    expect(screen.queryByText(/plain comment/)).toBeNull();
+
+    await act(async () => {
+      resolveComments([longComment]);
+      resolveSocial({ myReaction: null, myRating: null });
+      await commentsPromise;
+      await socialPromise;
+    });
+    expect(await screen.findByText(/plain comment/)).toBeTruthy();
+  });
+
+  it("shows an independent comments error without blocking the post", async () => {
+    postsMock.fetchPost.mockResolvedValue(basePost);
+    postsMock.fetchComments.mockRejectedValue(new Error("comments down"));
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+
+    renderDetail();
+
+    const heading = await screen.findByRole("heading", { level: 1 }, { timeout: 3000 });
+    expect(heading.textContent).toBe(LONG);
+    expect(await screen.findByText(/could not load comments/i)).toBeTruthy();
   });
 });

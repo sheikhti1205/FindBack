@@ -47,7 +47,7 @@ export function Home() {
     setQParam(appliedQuery);
   }, [appliedQuery, setQParam]);
 
-  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore, removeItem } = useFeed(
+  const { items, total, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore, removeItem } = useFeed(
     feedFilters,
     { cacheKey: HOME_CACHE_KEY, scrollRef },
   );
@@ -170,10 +170,11 @@ export function Home() {
 
       <NewPostsPill count={newPostCount} hasUpdates={hasUpdates} onTap={onNewPostsTap} />
 
-      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading} className="flex-1">
+      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="flex-1">
         <PostList
           items={items}
           loading={loading}
+          refreshing={refreshing}
           loadingMore={loadingMore}
           error={error}
           hasMore={hasMore}

@@ -341,4 +341,50 @@ describe("useFeed", () => {
     expect(result.current.items.map((i) => i.id)).toEqual(["a"]);
     expect(result.current.total).toBe(1);
   });
+
+  it("keeps visible items while a refresh is pending (refreshing distinct from loading)", async () => {
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], null, 2));
+    const { result } = renderHook(() => useFeed({}));
+    await waitFor(() => expect(result.current.items).toHaveLength(2));
+    expect(result.current.loading).toBe(false);
+
+    let resolveRefresh: (p: unknown) => void = () => {};
+    const pending = new Promise((r) => {
+      resolveRefresh = r;
+    });
+    fetchFeedMock.mockImplementationOnce(() => pending);
+    let refreshDone: Promise<void> | undefined;
+    act(() => {
+      refreshDone = result.current.refresh();
+    });
+    await waitFor(() => expect(result.current.refreshing).toBe(true));
+    // Visible items stay put while the refresh is unresolved; cold loading
+    // must not re-enter.
+    expect(result.current.items.map((i) => i.id)).toEqual(["a", "b"]);
+    expect(result.current.loading).toBe(false);
+
+    await act(async () => {
+      resolveRefresh(page([{ id: "z" }], null, 1));
+      await refreshDone!;
+    });
+    await waitFor(() => expect(result.current.refreshing).toBe(false));
+    expect(result.current.items.map((i) => i.id)).toEqual(["z"]);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("preserves visible items when a refresh fails", async () => {
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }], null, 1));
+    const { result } = renderHook(() => useFeed({}));
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+
+    fetchFeedMock.mockRejectedValueOnce(new Error("network down"));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.items.map((i) => i.id)).toEqual(["a"]);
+    expect(result.current.error).toContain("Network problem");
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.loading).toBe(false);
+  });
 });
