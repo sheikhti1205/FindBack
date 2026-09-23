@@ -45,6 +45,17 @@ const NAV: Array<{
 const HIDE_NAV = ["/help", "/posts/", "/offline-ai"];
 
 /**
+ * Assistant entry button appears only on low-friction tab screens and My
+ * reports. Task-heavy routes (/report, /offline-ai, /help, /posts/*) and
+ * unknown routes hide it by safe default so it never obstructs the task.
+ */
+const ASSISTANT_FAB_ROUTES: ReadonlySet<string> = new Set(["/", "/search", "/profile", "/my"]);
+
+export function shouldShowAssistantFab(pathname: string): boolean {
+  return ASSISTANT_FAB_ROUTES.has(pathname);
+}
+
+/**
  * Search route for a search-ready assistant snapshot, else null. Only a
  * completed search flow (state `ready` with extracted filters) navigates;
  * collecting/recovering/report snapshots never leave the sheet.
@@ -168,6 +179,7 @@ export function Shell({ seams }: { seams?: ShellAssistantSeams } = {}) {
   const assistantRuntime = assistantOpen
     ? resolveShellAssistantRuntime(liveSeams)
     : undefined;
+  const showFab = shouldShowAssistantFab(pathname) && !assistantOpen;
 
   return (
     <TabTapProvider>
@@ -176,15 +188,17 @@ export function Shell({ seams }: { seams?: ShellAssistantSeams } = {}) {
           <Outlet />
         </main>
         {showNav && <BottomNav />}
+        {showFab && (
         <button
           type="button"
           data-testid="assistant-entry"
           aria-label="Open assistant"
           onClick={() => setAssistantOpen(true)}
-          className="fixed bottom-24 right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-on-surface text-surface shadow-lg"
+          className="fixed right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-on-surface text-surface shadow-lg bottom-[calc(6rem+env(safe-area-inset-bottom))]"
         >
           <Bot size={24} aria-hidden />
         </button>
+        )}
         <AssistantSheet
           open={assistantOpen}
           onClose={() => setAssistantOpen(false)}
