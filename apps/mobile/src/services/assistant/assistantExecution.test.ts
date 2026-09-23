@@ -270,12 +270,12 @@ describe("assistant correctness regression matrix", () => {
   it("extracts multiple report fields from one sentence", async () => {
     const result = await executeAssistantMessage(
       null,
-      "I lost my black phone near Central library on 2026-09-01",
+      "I lost my black phone Near Central library on 2026-09-01",
       localRuntime(),
     );
     expect(result.snapshot.patch.category).toBe("Electronics");
     expect(result.snapshot.patch.eventDate).toBe("2026-09-01");
-    expect(result.snapshot.patch.locationNote).toContain("Central library");
+    expect(result.snapshot.patch.locationNote).toBe("Central library");
   });
   it("clarifies degenerate input without consuming the pending flow", async () => {
     const runtime = localRuntime();

@@ -146,9 +146,12 @@ function guessDateText(text: string): string | undefined {
 function guessLocationNote(text: string, dateText: string | undefined): string | undefined {
   const withoutDate = dateText !== undefined ? text.replace(dateText, " ") : text;
   const match = withoutDate.match(
-    /\b(?:at|in|near|nearby|around|from|outside|inside|by|on)\s+([A-Za-z][A-Za-z0-9 .,'-]{2,80})/,
+    /\b(?:at|in|near|nearby|around|from|outside|inside|by|on)\s+([A-Za-z][A-Za-z0-9 .,'-]{2,80})/i,
   );
-  const captured = match?.[1]?.trim().replace(/[.,;]+$/, "");
+  const captured = match?.[1]
+    ?.trim()
+    .replace(/[.,;]+$/, "")
+    .replace(/\s+(?:at|on)$/i, "");
   if (captured === undefined || captured === "") return undefined;
   return captured;
 }

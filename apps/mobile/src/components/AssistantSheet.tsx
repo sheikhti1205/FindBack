@@ -223,7 +223,6 @@ export function AssistantSheet({
       const result = await executeAssistantMessage(snapshot, trimmed, runtime ?? {});
       update(result.snapshot);
       setTranscript((previous) => [...previous, { role: "assistant", text: result.reply }]);
-      announce(result.reply);
       if (typedLocation && result.snapshot.locationChoice === "typed") {
         onLocationChoice?.("typed");
       }

@@ -12,10 +12,14 @@ import {
   type GuidedSnapshot,
 } from "../services/assistant/guidedAssistantController";
 
+const announceMock = vi.hoisted(() => vi.fn());
+vi.mock("./LiveRegion", () => ({ announce: announceMock }));
+
 afterEach(() => {
   cleanup();
   resetBackInterceptors();
   document.body.style.overflow = "";
+  announceMock.mockClear();
 });
 
 function renderSheet(props?: {
@@ -168,6 +172,7 @@ describe("AssistantSheet", () => {
     const log = screen.getByTestId("assistant-transcript");
     expect(log.getAttribute("role")).toBe("log");
     expect(log.getAttribute("aria-live")).toBe("polite");
+    expect(announceMock).not.toHaveBeenCalled();
     expect(screen.getByTestId("assistant-question").textContent).toContain("category");
   });
 
