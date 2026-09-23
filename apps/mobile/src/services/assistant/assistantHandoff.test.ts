@@ -40,4 +40,15 @@ describe("buildAssistantReportHandoff", () => {
     expect(isAssistantReportHandoff(handoff)).toBe(true);
     expect(isAssistantReportHandoff({ version: 2, source: "assistant", patch: {} })).toBe(false);
   });
+  it("detaches the emitted patch from the guided snapshot", () => {
+    const snapshot = readyLost();
+    const handoff = buildAssistantReportHandoff(snapshot);
+    expect(handoff).not.toBeNull();
+
+    if (handoff) {
+      (handoff.patch as { title?: string }).title = "Changed after handoff";
+    }
+
+    expect(snapshot.patch.title).not.toBe("Changed after handoff");
+  });
 });

@@ -41,6 +41,6 @@ export async function readImageAnalysisReadiness(): Promise<ImageAnalysisReadine
     if (info == null) return { available: false, reason: "NO_MODEL" };
     return readinessFromImageState(info.state, false);
   } catch {
-    return { available: false, reason: "CHECKING" };
+    return { available: false, reason: "UNAVAILABLE" };
   }
 }

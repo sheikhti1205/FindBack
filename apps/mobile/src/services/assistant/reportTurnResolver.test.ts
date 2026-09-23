@@ -24,7 +24,7 @@ describe("resolveReportTurn", () => {
     expect(resolved.kind).toBe("SLOT_VALUE");
     expect(resolved.fields?.category).toBe("Electronics");
     expect(resolved.fields?.dateText).toBe("2026-09-01");
-    expect(resolved.fields?.locationNote).toContain("Central library");
+    expect(resolved.fields?.locationNote).toBe("Central library");
   });
   it("resolves a greeting without consuming the pending flow", () => {
     const snapshot = startFlow("lost");
@@ -35,6 +35,17 @@ describe("resolveReportTurn", () => {
     const snapshot = startFlow("lost");
     const resolved = resolveReportTurn(snapshot, "how do I add a photo?");
     expect(resolved.kind).toBe("SIDE_QUESTION");
+  });
+  it("keeps a question-shaped location answer in the pending report flow", () => {
+    const snapshot = {
+      ...startFlow("lost"),
+      state: "awaitingLocation" as const,
+      patch: { title: "Black phone" },
+      missingFields: ["location" as const],
+    };
+    const resolved = resolveReportTurn(snapshot, "North gate bench?");
+    expect(resolved.kind).toBe("SLOT_VALUE");
+    expect(resolved.fields?.locationNote).toBe("North gate bench?");
   });
   it("resolves an explicit search pivot as an intent switch", () => {
     const snapshot = startFlow("lost");
