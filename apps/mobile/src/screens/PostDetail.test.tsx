@@ -312,6 +312,148 @@ describe("PostDetail mutation sequencing", () => {
   });
 });
 
+describe("PostDetail retry sequencing", () => {
+  const oldComment = {
+    id: "c-old",
+    postId: "p1",
+    body: "older retry comment",
+    createdAt: "2026-09-02T00:00:00.000Z",
+    updatedAt: "2026-09-02T00:00:00.000Z",
+    author: { id: "u3", username: "commenter" },
+  };
+  const newComment = {
+    id: "c-new-retry",
+    postId: "p1",
+    body: "newer retry comment",
+    createdAt: "2026-09-03T00:00:00.000Z",
+    updatedAt: "2026-09-03T00:00:00.000Z",
+    author: { id: "u4", username: "commenter2" },
+  };
+
+  beforeEach(() => {
+    postsMock.fetchPost.mockResolvedValue(basePost);
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+    postsMock.fetchComments.mockResolvedValue([]);
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+  });
+
+  afterEach(cleanup);
+
+  it("older in-flight comments retry cannot overwrite the newer retry result", async () => {
+    postsMock.fetchComments.mockRejectedValueOnce(new Error("comments down"));
+    renderDetail();
+    const errorBox = await screen.findByText(/could not load comments/i);
+    const retryButton = errorBox.parentElement!.querySelector("button")!;
+
+    let resolveOlder!: (v: unknown) => void;
+    let resolveNewer!: (v: unknown) => void;
+    postsMock.fetchComments
+      .mockImplementationOnce(() => new Promise((r) => { resolveOlder = r; }))
+      .mockImplementationOnce(() => new Promise((r) => { resolveNewer = r; }));
+
+    // Two retries issued before either resolves (same generation).
+    act(() => {
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(postsMock.fetchComments).toHaveBeenCalledTimes(3);
+
+    // Newer retry resolves first, then the older one resolves late.
+    await act(async () => { resolveNewer([newComment]); });
+    expect(await screen.findByText(/newer retry comment/)).toBeTruthy();
+    await act(async () => { resolveOlder([oldComment]); });
+
+    expect(screen.getByText(/newer retry comment/)).toBeTruthy();
+    expect(screen.queryByText(/older retry comment/)).toBeNull();
+  });
+
+  it("older in-flight social retry cannot overwrite the newer retry result", async () => {
+    postsMock.fetchSocialState.mockRejectedValueOnce(new Error("social down"));
+    renderDetail();
+    const errorBox = await screen.findByText(/could not load reactions/i);
+    const retryButton = errorBox.parentElement!.querySelector("button")!;
+
+    let resolveOlder!: (v: unknown) => void;
+    let resolveNewer!: (v: unknown) => void;
+    postsMock.fetchSocialState
+      .mockImplementationOnce(() => new Promise((r) => { resolveOlder = r; }))
+      .mockImplementationOnce(() => new Promise((r) => { resolveNewer = r; }));
+
+    // Two retries issued before either resolves (same generation).
+    act(() => {
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(postsMock.fetchSocialState).toHaveBeenCalledTimes(3);
+
+    // Newer retry resolves first, then the older one resolves late.
+    await act(async () => { resolveNewer({ myReaction: null, myRating: 5 }); });
+    expect(await screen.findByText(/your rating: 5 out of 5/i)).toBeTruthy();
+    await act(async () => { resolveOlder({ myReaction: null, myRating: 1 }); });
+
+    expect(screen.getByText(/your rating: 5 out of 5/i)).toBeTruthy();
+    expect(screen.queryByText(/your rating: 1 out of 5/i)).toBeNull();
+  });
+
+  it("older comments retry failure cannot overwrite newer retry success", async () => {
+    postsMock.fetchComments.mockRejectedValueOnce(new Error("comments down"));
+    renderDetail();
+    const errorBox = await screen.findByText(/could not load comments/i);
+    const retryButton = errorBox.parentElement!.querySelector("button")!;
+
+    let rejectOlder!: (e: unknown) => void;
+    let resolveNewer!: (v: unknown) => void;
+    postsMock.fetchComments
+      .mockImplementationOnce(() => new Promise((_, rej) => { rejectOlder = rej; }))
+      .mockImplementationOnce(() => new Promise((res) => { resolveNewer = res; }));
+
+    // Two retries issued before either settles (same generation).
+    act(() => {
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(postsMock.fetchComments).toHaveBeenCalledTimes(3);
+
+    // Newer retry succeeds first...
+    await act(async () => { resolveNewer([newComment]); });
+    expect(await screen.findByText(/newer retry comment/)).toBeTruthy();
+
+    // ...then the older retry fails late: no error may surface, content stays.
+    await act(async () => { rejectOlder(new Error("stale comments failure")); });
+    expect(screen.queryByText(/could not load comments/i)).toBeNull();
+    expect(screen.getByText(/newer retry comment/)).toBeTruthy();
+  });
+
+  it("older social retry settling cannot clear loading while newer retry is pending", async () => {
+    postsMock.fetchSocialState.mockRejectedValueOnce(new Error("social down"));
+    renderDetail();
+    const errorBox = await screen.findByText(/could not load reactions/i);
+    const retryButton = errorBox.parentElement!.querySelector("button")!;
+
+    let resolveOlder!: (v: unknown) => void;
+    let resolveNewer!: (v: unknown) => void;
+    postsMock.fetchSocialState
+      .mockImplementationOnce(() => new Promise((res) => { resolveOlder = res; }))
+      .mockImplementationOnce(() => new Promise((res) => { resolveNewer = res; }));
+
+    // Two retries issued before either settles (same generation).
+    act(() => {
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(postsMock.fetchSocialState).toHaveBeenCalledTimes(3);
+
+    // Older retry settles while the newer one is still pending: loading stays.
+    await act(async () => { resolveOlder({ myReaction: null, myRating: 1 }); });
+    expect(screen.getByText(/loading reactions/i)).toBeTruthy();
+
+    // Newer retry resolves: loading clears and its result applies.
+    await act(async () => { resolveNewer({ myReaction: null, myRating: 5 }); });
+    expect(await screen.findByText(/your rating: 5 out of 5/i)).toBeTruthy();
+    expect(screen.queryByText(/loading reactions/i)).toBeNull();
+  });
+});
+
 describe("PostDetail progressive loading", () => {
   beforeEach(() => {
     postsMock.addComment.mockReset();

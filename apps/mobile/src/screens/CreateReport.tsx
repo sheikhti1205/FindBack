@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { ImageUp, X } from "lucide-react";
 import { extractYouTubeId, type Category, type PostType } from "@findback/shared";
@@ -117,7 +117,11 @@ export function CreateReport() {
   >([]);
   const [handoffAdded, setHandoffAdded] = useState<string[]>([]);
   const formSnapshotRef = useRef({ type, title, description, category, eventDate, location });
-  formSnapshotRef.current = { type, title, description, category, eventDate, location };
+  // Post-commit snapshot of the latest committed form; layout timing closes
+  // the commit-to-passive-effect gap for synchronous external handoffs.
+  useLayoutEffect(() => {
+    formSnapshotRef.current = { type, title, description, category, eventDate, location };
+  });
   const [imageReadiness, setImageReadiness] = useState<ImageAnalysisReadiness>({
     available: false,
     reason: "CHECKING",
