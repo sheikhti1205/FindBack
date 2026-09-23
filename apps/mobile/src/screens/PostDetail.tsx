@@ -59,6 +59,10 @@ export function PostDetail() {
   const statusSeq = useRef(0);
   // Generation guard: only the current post id / reload may apply results.
   const loadGen = useRef(0);
+  // Per-section retry tokens: retries reuse the same generation, so each
+  // comments/social request carries its own latest-request-wins sequence.
+  const commentsSeq = useRef(0);
+  const socialSeq = useRef(0);
   const postPresentRef = useRef(false);
   // Track in-flight mutations to disable owner controls
   const [mutationActive, setMutationActive] = useState<"reaction" | "rating" | "status" | null>(null);
@@ -85,41 +89,41 @@ export function PostDetail() {
   );
 
   const loadComments = useCallback(
-    async (gen: number) => {
+    async (gen: number, seq: number) => {
       const startedAt = Date.now();
       try {
         const cs = await fetchComments(id);
         recordLoadTiming("comments", Date.now() - startedAt);
-        if (loadGen.current !== gen) return;
+        if (loadGen.current !== gen || commentsSeq.current !== seq) return;
         setCommentsError(null);
         setComments(cs);
       } catch (err) {
         recordLoadTiming("comments", Date.now() - startedAt);
-        if (loadGen.current !== gen) return;
+        if (loadGen.current !== gen || commentsSeq.current !== seq) return;
         setCommentsError(friendlyError(err).message);
       } finally {
-        if (loadGen.current === gen) setCommentsLoading(false);
+        if (loadGen.current === gen && commentsSeq.current === seq) setCommentsLoading(false);
       }
     },
     [id],
   );
 
   const loadSocial = useCallback(
-    async (gen: number) => {
+    async (gen: number, seq: number) => {
       const startedAt = Date.now();
       try {
         const social = await fetchSocialState(id);
         recordLoadTiming("social", Date.now() - startedAt);
-        if (loadGen.current !== gen) return;
+        if (loadGen.current !== gen || socialSeq.current !== seq) return;
         setSocialError(null);
         setMyReaction(social.myReaction);
         setMyRating(social.myRating);
       } catch (err) {
         recordLoadTiming("social", Date.now() - startedAt);
-        if (loadGen.current !== gen) return;
+        if (loadGen.current !== gen || socialSeq.current !== seq) return;
         setSocialError(friendlyError(err).message);
       } finally {
-        if (loadGen.current === gen) setSocialLoading(false);
+        if (loadGen.current === gen && socialSeq.current === seq) setSocialLoading(false);
       }
     },
     [id],
@@ -130,6 +134,8 @@ export function PostDetail() {
   // secondaries. A reload with a visible post keeps it on screen.
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
+    const cSeq = ++commentsSeq.current;
+    const sSeq = ++socialSeq.current;
     if (!postPresentRef.current) setLoading(true);
     setCommentsLoading(true);
     setSocialLoading(true);
@@ -137,22 +143,24 @@ export function PostDetail() {
     setCommentsError(null);
     setSocialError(null);
     void loadPost(gen);
-    void loadComments(gen);
-    void loadSocial(gen);
+    void loadComments(gen, cSeq);
+    void loadSocial(gen, sSeq);
   }, [loadPost, loadComments, loadSocial]);
 
   const retryComments = useCallback(() => {
     const gen = loadGen.current;
+    const seq = ++commentsSeq.current;
     setCommentsLoading(true);
     setCommentsError(null);
-    void loadComments(gen);
+    void loadComments(gen, seq);
   }, [loadComments]);
 
   const retrySocial = useCallback(() => {
     const gen = loadGen.current;
+    const seq = ++socialSeq.current;
     setSocialLoading(true);
     setSocialError(null);
-    void loadSocial(gen);
+    void loadSocial(gen, seq);
   }, [loadSocial]);
 
   useEffect(() => {
