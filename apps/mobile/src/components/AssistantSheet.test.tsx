@@ -5,6 +5,7 @@ import { AssistantRecoveryNotice, AssistantSheet } from "./AssistantSheet";
 import { resetBackInterceptors } from "./backNavigation";
 import { RECOVERY_COPY } from "../services/ai/errors";
 import type { AssistantExecutionRuntime } from "../services/assistant/assistantExecution";
+import type { AssistantReportHandoff } from "../services/assistant/assistantHandoff";
 import {
   GUIDED_RECOVERY_CLASSES,
   type GuidedFlow,
@@ -22,24 +23,29 @@ function renderSheet(props?: {
   onPhotoChoice?: (choice: string) => void;
   onLocationChoice?: (choice: string) => void;
   onSnapshot?: (snapshot: GuidedSnapshot) => void;
+  onReviewReport?: (handoff: AssistantReportHandoff) => void;
+  onClose?: () => void;
   runtime?: AssistantExecutionRuntime;
 }) {
   const onShortcut = vi.fn();
   const onPhotoChoice = vi.fn();
   const onLocationChoice = vi.fn();
   const onSnapshot = vi.fn();
+  const onReviewReport = vi.fn();
+  const onClose = vi.fn();
   render(
     <AssistantSheet
       open
-      onClose={vi.fn()}
+      onClose={props?.onClose ?? onClose}
       onShortcut={props?.onShortcut ?? onShortcut}
       onPhotoChoice={props?.onPhotoChoice ?? onPhotoChoice}
       onLocationChoice={props?.onLocationChoice ?? onLocationChoice}
       onSnapshot={props?.onSnapshot ?? onSnapshot}
+      onReviewReport={props?.onReviewReport ?? onReviewReport}
       runtime={props?.runtime}
     />,
   );
-  return { onShortcut, onPhotoChoice, onLocationChoice, onSnapshot };
+  return { onShortcut, onPhotoChoice, onLocationChoice, onSnapshot, onReviewReport, onClose };
 }
 
 const DATE_QUESTION = "When was the item lost or found? An approximate date is enough.";
@@ -49,6 +55,20 @@ const LOCATION_QUESTION =
 function typeAndSend(text: string): void {
   fireEvent.change(screen.getByTestId("assistant-input"), { target: { value: text } });
   fireEvent.submit(screen.getByTestId("assistant-form"));
+}
+
+async function collectToReady() {
+  fireEvent.click(screen.getByTestId("assistant-shortcut-lost"));
+  typeAndSend("Keys");
+  await screen.findAllByText(DATE_QUESTION);
+  typeAndSend("2026-09-01");
+  await screen.findAllByText(LOCATION_QUESTION);
+  typeAndSend("Central library");
+  await screen.findByTestId("assistant-photo-step");
+  fireEvent.click(screen.getByTestId("assistant-photo-none"));
+  await screen.findByTestId("assistant-location-step");
+  fireEvent.click(screen.getByTestId("assistant-location-skip"));
+  await screen.findByTestId("assistant-ready");
 }
 
 describe("AssistantSheet", () => {
@@ -85,9 +105,9 @@ describe("AssistantSheet", () => {
     const seams = renderSheet();
     fireEvent.click(screen.getByTestId("assistant-shortcut-lost"));
     typeAndSend("Keys");
-    await screen.findByText(DATE_QUESTION);
+    await screen.findAllByText(DATE_QUESTION);
     typeAndSend("2026-09-01");
-    await screen.findByText(LOCATION_QUESTION);
+    await screen.findAllByText(LOCATION_QUESTION);
     typeAndSend("Central library");
     await screen.findByTestId("assistant-photo-step");
     fireEvent.click(screen.getByTestId("assistant-photo-take"));
@@ -104,9 +124,9 @@ describe("AssistantSheet", () => {
     const seams = renderSheet();
     fireEvent.click(screen.getByTestId("assistant-shortcut-found"));
     typeAndSend("Keys");
-    await screen.findByText(DATE_QUESTION);
+    await screen.findAllByText(DATE_QUESTION);
     typeAndSend("2026-09-01");
-    await screen.findByText(LOCATION_QUESTION);
+    await screen.findAllByText(LOCATION_QUESTION);
     typeAndSend("Central library");
     await screen.findByTestId("assistant-photo-step");
     fireEvent.click(screen.getByTestId("assistant-photo-none"));
@@ -117,23 +137,59 @@ describe("AssistantSheet", () => {
     expect(seams.onLocationChoice).toHaveBeenCalledWith("typed");
   });
 
-  it("holds the report review action instead of applying it", async () => {
+  it("emits the frozen handoff through an enabled Review report action", async () => {
+    const seen: AssistantReportHandoff[] = [];
+    const { onClose } = renderSheet({ onReviewReport: (handoff) => seen.push(handoff) });
+    await collectToReady();
+    const review = await screen.findByTestId("assistant-review-report");
+    expect((review as HTMLButtonElement).disabled).toBe(false);
+    expect(review.textContent).toContain("Review report");
+    fireEvent.click(review);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.version).toBe(1);
+    expect(seen[0]?.source).toBe("assistant");
+    expect(seen[0]?.patch.category).toBe("Keys");
+    expect(seen[0]?.photoChoice).toBe("none");
+    expect(seen[0]?.locationChoice).toBe("skip");
+    expect(onClose).toHaveBeenCalled();
+    expect(screen.getByTestId("assistant-review-note").textContent).toContain(
+      "Nothing is",
+    );
+  });
+
+  it("keeps a visible user/assistant transcript and never swallows input", async () => {
     renderSheet();
     fireEvent.click(screen.getByTestId("assistant-shortcut-lost"));
-    typeAndSend("Keys");
-    await screen.findByText(DATE_QUESTION);
-    typeAndSend("2026-09-01");
-    await screen.findByText(LOCATION_QUESTION);
-    typeAndSend("Central library");
-    await screen.findByTestId("assistant-photo-step");
-    fireEvent.click(screen.getByTestId("assistant-photo-none"));
-    await screen.findByTestId("assistant-location-step");
-    fireEvent.click(screen.getByTestId("assistant-location-skip"));
-    const review = await screen.findByTestId("assistant-review-held");
-    expect((review as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByTestId("assistant-review-held-note").textContent).toContain(
-      "never filled in automatically",
-    );
+    typeAndSend("hello");
+    const users = await screen.findAllByTestId("assistant-transcript-user");
+    expect(users.at(-1)?.textContent).toContain("hello");
+    const assistants = await screen.findAllByTestId("assistant-transcript-assistant");
+    expect(assistants.at(-1)?.textContent).toContain("Hello!");
+    const log = screen.getByTestId("assistant-transcript");
+    expect(log.getAttribute("role")).toBe("log");
+    expect(log.getAttribute("aria-live")).toBe("polite");
+    expect(screen.getByTestId("assistant-question").textContent).toContain("category");
+  });
+
+  it("answers unknown bj with an explicit can't-match in the transcript", async () => {
+    renderSheet();
+    fireEvent.click(screen.getByTestId("assistant-shortcut-lost"));
+    typeAndSend("bj");
+    const users = await screen.findAllByTestId("assistant-transcript-user");
+    expect(users.at(-1)?.textContent).toContain("bj");
+    const assistants = await screen.findAllByTestId("assistant-transcript-assistant");
+    expect(assistants.at(-1)?.textContent).toContain('couldn\'t match "bj"');
+    expect(assistants.at(-1)?.textContent).toContain("Electronics");
+    expect(screen.getByTestId("assistant-question").textContent).toContain("category");
+  });
+
+  it("maps keychain to Keys from the sheet input", async () => {
+    renderSheet();
+    fireEvent.click(screen.getByTestId("assistant-shortcut-lost"));
+    typeAndSend("my keychain");
+    await screen.findAllByText(DATE_QUESTION);
+    const assistants = await screen.findAllByTestId("assistant-transcript-assistant");
+    expect(assistants.at(-1)?.textContent).toContain(DATE_QUESTION);
   });
 
   it("states the built-in fallback when no model runtime is attached", () => {
@@ -159,11 +215,9 @@ describe("AssistantSheet", () => {
     renderSheet({ runtime });
     fireEvent.click(screen.getByTestId("assistant-shortcut-ask"));
     typeAndSend("How do I search?");
-    const first = await screen.findByTestId("assistant-reply");
-    expect(first.textContent).toBe("Built-in: How do I search?");
+    await screen.findByText("Built-in: How do I search?");
     typeAndSend("What about filters?");
-    const second = await screen.findByTestId("assistant-reply");
-    expect(second.textContent).toBe("Built-in: What about filters?");
+    await screen.findByText("Built-in: What about filters?");
   });
 });
 

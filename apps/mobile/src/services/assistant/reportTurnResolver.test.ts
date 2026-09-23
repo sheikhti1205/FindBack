@@ -1,0 +1,51 @@
+import { describe, expect, it } from "vitest";
+import { startFlow } from "./guidedAssistantController";
+import { resolveAssistantCategory, resolveReportTurn } from "./reportTurnResolver";
+
+describe("resolveAssistantCategory", () => {
+  it("maps phone to Electronics", () => {
+    expect(resolveAssistantCategory("I lost my phone")).toBe("Electronics");
+  });
+  it("maps keychain to Keys", () => {
+    expect(resolveAssistantCategory("I lost my keychain")).toBe("Keys");
+  });
+  it("returns undefined for unknown bj", () => {
+    expect(resolveAssistantCategory("bj")).toBeUndefined();
+  });
+});
+
+describe("resolveReportTurn", () => {
+  it("resolves a slot value with multiple fields from one sentence", () => {
+    const snapshot = startFlow("lost");
+    const resolved = resolveReportTurn(
+      snapshot,
+      "I lost my black phone near Central library on 2026-09-01",
+    );
+    expect(resolved.kind).toBe("SLOT_VALUE");
+    expect(resolved.fields?.category).toBe("Electronics");
+    expect(resolved.fields?.dateText).toBe("2026-09-01");
+    expect(resolved.fields?.locationNote).toContain("Central library");
+  });
+  it("resolves a greeting without consuming the pending flow", () => {
+    const snapshot = startFlow("lost");
+    const resolved = resolveReportTurn(snapshot, "hello");
+    expect(resolved.kind).toBe("GREETING");
+  });
+  it("resolves an app question as a side question", () => {
+    const snapshot = startFlow("lost");
+    const resolved = resolveReportTurn(snapshot, "how do I add a photo?");
+    expect(resolved.kind).toBe("SIDE_QUESTION");
+  });
+  it("resolves an explicit search pivot as an intent switch", () => {
+    const snapshot = startFlow("lost");
+    const resolved = resolveReportTurn(snapshot, "actually I want to search for black umbrella");
+    expect(resolved.kind).toBe("INTENT_SWITCH");
+    expect(resolved.intent).toBe("SEARCH");
+  });
+  it("resolves unknown bj as unrecognized with the unmatched value", () => {
+    const snapshot = startFlow("lost");
+    const resolved = resolveReportTurn(snapshot, "bj");
+    expect(resolved.kind).toBe("UNRECOGNIZED");
+    expect(resolved.unmatchedCategory).toBe("bj");
+  });
+});

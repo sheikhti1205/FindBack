@@ -214,3 +214,85 @@ describe("groundedHelpAnswer", () => {
     expect(answer).not.toContain("private messaging");
   });
 });
+
+describe("assistant correctness regression matrix", () => {
+  it("maps phone to Electronics", async () => {
+    const result = await executeAssistantMessage(null, "I lost my phone", localRuntime());
+    expect(result.snapshot.patch.category).toBe("Electronics");
+  });
+  it("maps keychain to Keys", async () => {
+    const result = await executeAssistantMessage(null, "I lost my keychain", localRuntime());
+    expect(result.snapshot.patch.category).toBe("Keys");
+  });
+  it("answers unknown bj with an explicit can't-match plus category choices", async () => {
+    const runtime = localRuntime();
+    const first = await executeAssistantMessage(null, "I lost something", runtime);
+    expect(first.snapshot.missingFields).toContain("category");
+    const second = await executeAssistantMessage(first.snapshot, "bj", runtime);
+    expect(second.snapshot.patch.category).toBeUndefined();
+    expect(second.snapshot.missingFields).toContain("category");
+    expect(second.reply).toContain('couldn\'t match "bj"');
+    expect(second.reply).toContain("Electronics");
+    expect(second.reply).toContain("Keys");
+  });
+  it("keeps a greeting from consuming the pending report flow", async () => {
+    const runtime = localRuntime();
+    const first = await executeAssistantMessage(null, "I lost my keys", runtime);
+    const second = await executeAssistantMessage(first.snapshot, "hello", runtime);
+    expect(second.snapshot.patch).toEqual(first.snapshot.patch);
+    expect(second.snapshot.missingFields).toEqual(first.snapshot.missingFields);
+    expect(second.reply).toContain("Hello!");
+    expect(second.reply).toContain("When was the item");
+  });
+  it("answers an app question while preserving the pending report flow", async () => {
+    const runtime = localRuntime(async (question) => ({
+      text: `Built-in: ${question}`,
+      source: "fallback",
+    }));
+    const first = await executeAssistantMessage(null, "I lost my keys", runtime);
+    const second = await executeAssistantMessage(first.snapshot, "how do I add a photo?", runtime);
+    expect(second.snapshot.patch).toEqual(first.snapshot.patch);
+    expect(second.snapshot.missingFields).toEqual(first.snapshot.missingFields);
+    expect(second.reply).toContain("Built-in: how do I add a photo?");
+    expect(second.reply).toContain("When was the item");
+  });
+  it("switches to search on an explicit pivot", async () => {
+    const runtime = localRuntime();
+    const first = await executeAssistantMessage(null, "I lost my keys", runtime);
+    const second = await executeAssistantMessage(
+      first.snapshot,
+      "actually I want to search for black umbrella",
+      runtime,
+    );
+    expect(second.snapshot.flow).toBe("search");
+    expect(second.snapshot.searchFilters?.query).toContain("umbrella");
+  });
+  it("extracts multiple report fields from one sentence", async () => {
+    const result = await executeAssistantMessage(
+      null,
+      "I lost my black phone near Central library on 2026-09-01",
+      localRuntime(),
+    );
+    expect(result.snapshot.patch.category).toBe("Electronics");
+    expect(result.snapshot.patch.eventDate).toBe("2026-09-01");
+    expect(result.snapshot.patch.locationNote).toContain("Central library");
+  });
+  it("clarifies degenerate input without consuming the pending flow", async () => {
+    const runtime = localRuntime();
+    const first = await executeAssistantMessage(null, "I lost my keys", runtime);
+    const second = await executeAssistantMessage(first.snapshot, "??", runtime);
+    expect(second.snapshot.patch).toEqual(first.snapshot.patch);
+    expect(second.reply).toContain("didn't catch");
+  });
+  it("keeps ready actions inside the contract allowlist", async () => {
+    const runtime = localRuntime();
+    const first = await executeAssistantMessage(null, "I lost my keys", runtime);
+    const second = await executeAssistantMessage(first.snapshot, "2026-09-01", runtime);
+    const third = await executeAssistantMessage(second.snapshot, "Central library", runtime);
+    expect(third.snapshot.allowedActions).toContain("PICK_PHOTO");
+    const withPhoto = choosePhoto(third.snapshot, "none");
+    const typed = await executeAssistantMessage(withPhoto, "North gate bench", runtime);
+    expect(typed.snapshot.state).toBe("ready");
+    expect(typed.snapshot.allowedActions).toContain("APPLY_REPORT_DRAFT");
+  });
+});

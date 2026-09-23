@@ -21,6 +21,7 @@
  * populates or modifies the report form.
  */
 import { CATEGORIES, type Category } from "@findback/shared";
+import { resolveAssistantCategory, resolveReportTurn } from "./reportTurnResolver";
 import { answerHelp } from "../ai/ops/answerHelp";
 import { classifyIntent } from "../ai/ops/classifyIntent";
 import { extractReportFields } from "../ai/ops/extractReportFields";
@@ -133,38 +134,29 @@ function guardErrorToAiError(error: unknown): AiError {
   return { errorClass: "RUNTIME_ERROR", diagnostic: "EXECUTION_UNEXPECTED_THROW" };
 }
 
-const CATEGORY_KEYWORDS: ReadonlyArray<{ keywords: readonly string[]; category: Category }> = [
-  { keywords: ["phone", "mobile", "laptop", "tablet", "camera", "headphone", "earbud", "charger", "cable", "electronics"], category: "Electronics" },
-  { keywords: ["backpack", "purse", "suitcase", "handbag", "wallet", "bag"], category: "Bags & Wallets" },
-  { keywords: ["keys", "key"], category: "Keys" },
-  { keywords: ["passport", "license", "certificate", "document", "nid", " id ", "id card"], category: "Documents & IDs" },
-  { keywords: ["book", "notebook", "stationery", "pen", "pencil"], category: "Books & Stationery" },
-  { keywords: ["shirt", "jacket", "shoe", "dress", "cloth", "cap", "trouser"], category: "Clothing" },
-  { keywords: ["watch", "ring", "jewelry", "glasses", "sunglasses", "bracelet", "necklace"], category: "Accessories & Jewelry" },
-];
-
 function guessCategory(text: string): Category | undefined {
-  const padded = ` ${text.toLowerCase()} `;
-  for (const entry of CATEGORY_KEYWORDS) {
-    for (const raw of entry.keywords) {
-      const keyword = raw.trim();
-      if (
-        padded.includes(` ${keyword} `) ||
-        padded.includes(` ${keyword}s `) ||
-        padded.includes(` ${keyword}es `)
-      ) {
-        if ((CATEGORIES as readonly string[]).includes(entry.category)) {
-          return entry.category;
-        }
-      }
-    }
-  }
-  return undefined;
+  return resolveAssistantCategory(text);
 }
 
 function guessDateText(text: string): string | undefined {
   const match = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
   return match?.[1];
+}
+
+function guessLocationNote(text: string, dateText: string | undefined): string | undefined {
+  const withoutDate = dateText !== undefined ? text.replace(dateText, " ") : text;
+  const match = withoutDate.match(
+    /\b(?:at|in|near|nearby|around|from|outside|inside|by|on)\s+([A-Za-z][A-Za-z0-9 .,'-]{2,80})/,
+  );
+  const captured = match?.[1]?.trim().replace(/[.,;]+$/, "");
+  if (captured === undefined || captured === "") return undefined;
+  return captured;
+}
+
+function normalizeReportCategory(category: string | undefined): Category | undefined {
+  if (category === undefined) return undefined;
+  if ((CATEGORIES as readonly string[]).includes(category)) return category as Category;
+  return resolveAssistantCategory(category);
 }
 
 const APP_NOUNS = [
@@ -235,13 +227,15 @@ export function guessIntentLocal(text: string): Intent {
   return "SEARCH";
 }
 
-/** Local report slots for the no-model path. Location is never inferred here. */
+/** Local report slots for the no-model path. Location comes only from explicit prepositions. */
 function localReportGuess(text: string): ReportSlotFields {
   const fields: Record<string, string> = {};
   const category = guessCategory(text);
   if (category !== undefined) fields.category = category;
   const dateText = guessDateText(text);
   if (dateText !== undefined) fields.dateText = dateText;
+  const locationNote = guessLocationNote(text, dateText);
+  if (locationNote !== undefined) fields.locationNote = locationNote;
   return { title: text, ...fields };
 }
 
@@ -410,7 +404,16 @@ async function reportTurn(
     try {
       const extracted = await extractReportFields(guarded, message, profile);
       if (!extracted.ok) return recoverSnapshot(start, extracted.error);
-      const snapshot = applyReportFields(start, extracted.value.fields);
+      const normalized =
+        extracted.value.fields.category === undefined
+          ? extracted.value.fields
+          : {
+              ...extracted.value.fields,
+              ...(normalizeReportCategory(extracted.value.fields.category) !== undefined
+                ? { category: normalizeReportCategory(extracted.value.fields.category) as string }
+                : null),
+            };
+      const snapshot = applyReportFields(start, normalized);
       const held = snapshot.state === "ready";
       return { snapshot, reply: replyForState(snapshot), replySource: "model", reviewHeld: held };
     } catch (error) {
@@ -426,6 +429,62 @@ async function reportTurn(
   };
 }
 
+function resumeQuestion(snapshot: GuidedSnapshot): string {
+  return nextMissingQuestion(snapshot)?.question ?? DEFAULT_CLARIFICATION_QUESTIONS.other;
+}
+
+function categoryMismatchReply(unmatched: string): string {
+  return (
+    `I couldn't match "${unmatched}" to a category. ` +
+    `Choose one: ${CATEGORIES.join(", ")}.`
+  );
+}
+
+function greetingReply(snapshot: GuidedSnapshot): string {
+  return `Hello! ${resumeQuestion(snapshot)}`;
+}
+
+async function answerSideQuestion(
+  snapshot: GuidedSnapshot,
+  message: string,
+  runtime: AssistantExecutionRuntime,
+  guarded: GenerateFn | undefined,
+  profile: ModelProfile | undefined,
+): Promise<AssistantExecutionResult> {
+  const resume = resumeQuestion(snapshot);
+  if (guarded !== undefined && profile !== undefined) {
+    try {
+      const answer = await answerHelp(guarded, message, profile);
+      if (!answer.ok) return recoverSnapshot(snapshot, answer.error);
+      return {
+        snapshot,
+        reply: `${answer.value.answerText} ${resume}`,
+        replySource: "model",
+        reviewHeld: false,
+      };
+    } catch (error) {
+      return recoverSnapshot(snapshot, guardErrorToAiError(error));
+    }
+  }
+  const answerAppQuestion = runtime.answerAppQuestion ?? defaultAnswerAppQuestion;
+  try {
+    const answer = await answerAppQuestion(message);
+    return {
+      snapshot,
+      reply: `${answer.text} ${resume}`,
+      replySource: answer.source === "llm" ? "model" : "grounded",
+      reviewHeld: false,
+    };
+  } catch {
+    return {
+      snapshot,
+      reply: `${groundedHelpAnswer(message)} ${resume}`,
+      replySource: "grounded",
+      reviewHeld: false,
+    };
+  }
+}
+
 async function continueCollection(
   snapshot: GuidedSnapshot,
   message: string,
@@ -436,6 +495,50 @@ async function continueCollection(
   if (snapshot.flow === "search") {
     return searchTurn(snapshot, message, guarded, profile);
   }
+  const turn = resolveReportTurn(snapshot, message);
+  if (turn.kind === "GREETING") {
+    return {
+      snapshot,
+      reply: greetingReply(snapshot),
+      replySource: "grounded",
+      reviewHeld: false,
+    };
+  }
+  if (turn.kind === "SIDE_QUESTION") {
+    return answerSideQuestion(snapshot, message, runtime, guarded, profile);
+  }
+  if (turn.kind === "INTENT_SWITCH") {
+    if (turn.intent === "SEARCH") return searchTurn(startFlow("search"), message, guarded, profile);
+    if (turn.intent === "REPORT_LOST" || turn.intent === "REPORT_FOUND") {
+      return reportTurn(turn.intent, message, guarded, profile);
+    }
+    return helpTurn(snapshot, message, runtime, guarded, profile, true);
+  }
+  if (turn.kind === "UNRECOGNIZED") {
+    if (snapshot.state === "awaitingLocation") {
+      const next = chooseLocation(snapshot, "typed", message);
+      return {
+        snapshot: next,
+        reply: replyForState(next),
+        replySource: "grounded",
+        reviewHeld: next.state === "ready",
+      };
+    }
+    if (turn.unmatchedCategory !== undefined) {
+      return {
+        snapshot,
+        reply: `${categoryMismatchReply(turn.unmatchedCategory)} ${resumeQuestion(snapshot)}`,
+        replySource: "grounded",
+        reviewHeld: false,
+      };
+    }
+    return {
+      snapshot,
+      reply: `I didn't catch that. ${resumeQuestion(snapshot)}`,
+      replySource: "grounded",
+      reviewHeld: false,
+    };
+  }
   if (snapshot.state === "awaitingLocation") {
     const next = chooseLocation(snapshot, "typed", message);
     return { snapshot: next, reply: replyForState(next), replySource: "grounded", reviewHeld: next.state === "ready" };
@@ -445,11 +548,24 @@ async function continueCollection(
       try {
         const extracted = await extractReportFields(guarded, message, profile);
         if (!extracted.ok) return recoverSnapshot(snapshot, extracted.error);
-        const next = applyReportFields(snapshot, extracted.value.fields);
+        const normalized =
+          extracted.value.fields.category === undefined
+            ? extracted.value.fields
+            : {
+                ...extracted.value.fields,
+                ...(normalizeReportCategory(extracted.value.fields.category) !== undefined
+                  ? { category: normalizeReportCategory(extracted.value.fields.category) as string }
+                  : null),
+              };
+        const next = applyReportFields(snapshot, normalized);
         return { snapshot: next, reply: replyForState(next), replySource: "model", reviewHeld: next.state === "ready" };
       } catch (error) {
         return recoverSnapshot(snapshot, guardErrorToAiError(error));
       }
+    }
+    if (turn.fields !== undefined) {
+      const next = applyReportFields(snapshot, turn.fields);
+      return { snapshot: next, reply: replyForState(next), replySource: "grounded", reviewHeld: next.state === "ready" };
     }
     return { snapshot, reply: replyForState(snapshot), replySource: "grounded", reviewHeld: false };
   }
@@ -457,11 +573,24 @@ async function continueCollection(
     try {
       const extracted = await extractReportFields(guarded, message, profile);
       if (!extracted.ok) return recoverSnapshot(snapshot, extracted.error);
-      const next = applyReportFields(snapshot, extracted.value.fields);
+      const normalized =
+        extracted.value.fields.category === undefined
+          ? extracted.value.fields
+          : {
+              ...extracted.value.fields,
+              ...(normalizeReportCategory(extracted.value.fields.category) !== undefined
+                ? { category: normalizeReportCategory(extracted.value.fields.category) as string }
+                : null),
+            };
+      const next = applyReportFields(snapshot, normalized);
       return { snapshot: next, reply: replyForState(next), replySource: "model", reviewHeld: next.state === "ready" };
     } catch (error) {
       return recoverSnapshot(snapshot, guardErrorToAiError(error));
     }
+  }
+  if (turn.fields !== undefined) {
+    const next = applyReportFields(snapshot, turn.fields);
+    return { snapshot: next, reply: replyForState(next), replySource: "grounded", reviewHeld: next.state === "ready" };
   }
   const missing = snapshot.missingFields;
   let fields: ReportSlotFields = { description: message };
