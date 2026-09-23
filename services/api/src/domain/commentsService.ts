@@ -60,7 +60,7 @@ export async function deleteComment(
   const isOwner = String(comment.user_id) === userId;
   const isPostAuthor = postOwnerId === userId;
   if (!isOwner && !isPostAuthor) {
-    throw new AppError(403, "You can only delete your own comments");
+    throw new AppError(403, "You do not have permission to delete this comment");
   }
   await getStore().deleteComment(commentId);
   emitGateway("comment:deleted", { postId, commentId });

@@ -11,7 +11,7 @@ vi.mock("@capacitor/app-launcher", () => ({
   AppLauncher: { openUrl: vi.fn() },
 }));
 
-const { postsMock, findMock } = vi.hoisted(() => ({
+const { postsMock, findMock, authState } = vi.hoisted(() => ({
   postsMock: {
     fetchPost: vi.fn(),
     fetchComments: vi.fn(),
@@ -23,6 +23,7 @@ const { postsMock, findMock } = vi.hoisted(() => ({
     updatePostStatus: vi.fn(),
   },
   findMock: vi.fn(),
+  authState: { user: { id: "u9", username: "reader" } as { id: string; username: string } | null },
 }));
 
 vi.mock("../services/posts", () => postsMock);
@@ -31,10 +32,14 @@ vi.mock("../services/realtime", () => ({
   leavePostRoom: vi.fn(),
   onRealtime: vi.fn(() => () => {}),
 }));
-vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u9", username: "reader" } }) }));
+vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
 
 import { PostDetail } from "./PostDetail";
+
+beforeEach(() => {
+  authState.user = { id: "u9", username: "reader" };
+});
 
 const LONG = `a${"very".repeat(40)}longword`;
 
@@ -170,6 +175,47 @@ describe("PostDetail comments", () => {
     const submitButton = screen.getByRole("button", { name: "Post" });
     fireEvent.click(submitButton);
     expect(postsMock.addComment).not.toHaveBeenCalled();
+  });
+});
+
+describe("PostDetail comment delete visibility", () => {
+  const otherComment = {
+    id: "c2",
+    postId: "p1",
+    body: "someone else's comment",
+    createdAt: "2026-09-02T00:00:00.000Z",
+    updatedAt: "2026-09-02T00:00:00.000Z",
+    author: { id: "u3", username: "commenter" },
+  };
+
+  beforeEach(() => {
+    postsMock.fetchPost.mockResolvedValue(basePost);
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+  });
+
+  afterEach(cleanup);
+
+  it("shows Delete to the comment author", async () => {
+    authState.user = { id: "u3", username: "commenter" };
+    postsMock.fetchComments.mockResolvedValue([otherComment]);
+    renderDetail();
+    expect(await screen.findByRole("button", { name: "Delete comment by commenter" })).toBeTruthy();
+  });
+
+  it("shows Delete to the post owner moderating another user's comment", async () => {
+    authState.user = { id: "u2", username: "owner" };
+    postsMock.fetchComments.mockResolvedValue([otherComment]);
+    renderDetail();
+    expect(await screen.findByRole("button", { name: "Delete comment by commenter" })).toBeTruthy();
+  });
+
+  it("hides Delete from an unrelated third user", async () => {
+    authState.user = { id: "u9", username: "reader" };
+    postsMock.fetchComments.mockResolvedValue([otherComment]);
+    renderDetail();
+    await waitFor(() => expect(screen.getByText(/someone else's comment/)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Delete comment by commenter" })).toBeNull();
   });
 });
 

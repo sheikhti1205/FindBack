@@ -477,7 +477,7 @@ export function PostDetail() {
             )}
             <ul className="flex flex-col gap-3">
               {comments.map((c) => {
-                const mine = c.author.id === user?.id || isOwner;
+                const canDelete = c.author.id === user?.id || isOwner;
                 return (
                   <li key={c.id} className="rounded-m3-md border border-outline-variant p-3">
                     <div className="flex items-baseline justify-between gap-2">
@@ -489,7 +489,7 @@ export function PostDetail() {
                     <div className="mt-1 text-sm leading-relaxed">
                       <MarkdownView text={c.body} />
                     </div>
-                    {mine && (
+                    {canDelete && (
                       <button
                         type="button"
                         onClick={() => onDeleteComment(c.id)}
