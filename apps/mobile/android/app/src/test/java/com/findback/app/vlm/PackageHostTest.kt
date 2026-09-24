@@ -146,6 +146,27 @@ class PackageHostTest {
         assertEquals(0, work.listFiles()?.size ?: 0)
     }
 
+    @Test fun refusesUntrustedEntryIdTraversalBeforeCreatingAnInstallDirectory() {
+        val (work, install) = tempDirs()
+        val files = listOf(FixtureFile("weights/model.litertlm", weightsBytes()))
+        val bytes = packageBytes("../escape", files)
+        val result = PackageHost.importPackage(
+            ByteArrayInputStream(bytes), "../escape", sha256Hex(bytes), work, install
+        )
+        assertEquals(PackageHost.Code.ENTRY_MISMATCH, result.code)
+        assertFalse(File(install.parentFile, "escape").exists())
+    }
+
+    @Test fun peekManifestReadsOnlyBoundedSchemaAndNeverTrustsAnUnsafeIdentity() {
+        val (work, _) = tempDirs()
+        val files = listOf(FixtureFile("weights/model.litertlm", weightsBytes()))
+        val good = File(work, "good.fbmodel").apply { writeBytes(packageBytes("candidate-a", files)) }
+        assertEquals("candidate-a", PackageHost.peekManifest(good)?.entryId)
+        val bad = File(work, "bad.fbmodel").apply { writeBytes(packageBytes("../escape", files)) }
+        assertNull(PackageHost.peekManifest(bad))
+        assertNull(PackageHost.peekManifest(File(work, "missing.fbmodel")))
+    }
+
     // Import rejections.
 
     @Test fun rejectsTraversalEntryConfinedToSandbox() {
@@ -371,6 +392,27 @@ class PackageHostTest {
         // The exporter stamps empty upstream fields while the importer only
         // checks schema shape, entry id, and file pins — so this re-imports.
         assertTrue(reimport.ok, reimport.reason)
+    }
+
+    @Test fun trustedExportPackagesOnlyPinnedWeightsAndRejectsTamperedFiles() {
+        val (work, install) = tempDirs()
+        val weights = weightsBytes()
+        val spec = ModelFileSpec("model.litertlm", weights.size.toLong(), sha256Hex(weights))
+        val installed = File(install, "model.litertlm")
+        installed.writeBytes(weights)
+        File(install, "model.fbmodel").writeText("stale package cache")
+        val out = ByteArrayOutputStream()
+        val result = PackageHost.exportPackage("known-entry", install, out, trustedFiles = listOf(spec))
+        assertTrue(result.ok, result.reason)
+        assertEquals(listOf("weights/model.litertlm", "checksums.json"), result.manifest?.files?.map { it.path })
+        val imported = PackageHost.importPackage(
+            ByteArrayInputStream(out.toByteArray()), "known-entry", sha256Hex(out.toByteArray()), work,
+            File(work.parentFile, "second-install")
+        )
+        assertTrue(imported.ok, imported.reason)
+        installed.writeBytes("tampered".toByteArray())
+        val refused = PackageHost.exportPackage("known-entry", install, ByteArrayOutputStream(), trustedFiles = listOf(spec))
+        assertEquals(PackageHost.Code.HASH_MISMATCH, refused.code)
     }
 
     @Test fun refusesExportWithoutWeightsDeniedContentOrWriterFailure() {

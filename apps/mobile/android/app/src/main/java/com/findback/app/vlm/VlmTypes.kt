@@ -162,7 +162,8 @@ data class ModelManifest(
     val revision: String,
     val files: List<ModelFileSpec>,
     val runtime: String,
-    val distribution: ModelDistribution? = null
+    val distribution: ModelDistribution? = null,
+    val rawSource: PinnedRawSource? = null
 )
 
 /**

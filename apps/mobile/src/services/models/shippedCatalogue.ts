@@ -85,7 +85,15 @@ function isCatalogueEntry(value: unknown): value is ModelCatalogueEntry {
     Array.isArray(value["supportedCapabilities"]) &&
     typeof value["upstreamRepo"] === "string" &&
     Array.isArray(value["provenance"]) &&
-    (value["distribution"] === undefined || isDistribution(value["distribution"]))
+    (value["distribution"] === undefined || isDistribution(value["distribution"])) &&
+    (value["pinnedRawSource"] === undefined || value["pinnedRawSource"] === null || (
+      isRecord(value["pinnedRawSource"]) &&
+      typeof value["pinnedRawSource"]["repo"] === "string" &&
+      typeof value["pinnedRawSource"]["revision"] === "string" &&
+      typeof value["pinnedRawSource"]["file"] === "string" &&
+      typeof value["pinnedRawSource"]["bytes"] === "number" &&
+      typeof value["pinnedRawSource"]["sha256"] === "string"
+    ))
   );
 }
 
@@ -110,7 +118,7 @@ export const SHIPPED_CATALOGUE_ENTRIES: readonly ModelCatalogueEntry[] =
 /**
  * Catalogue entry id → wired native runtime model id. Only entries with a
  * proven complete on-device path are mapped; everything else (Qwen text
- * candidates, LFM eval slots, Gemma reference) returns null: visible as
+ * candidates and LFM experimental slots) returns null: visible as
  * catalogue information, never as a download.
  */
 export function bridgeModelIdForEntry(entryId: string): VlmModelId | null {
@@ -154,6 +162,23 @@ export function distributionUrlForEntry(
   const distribution = entry.distribution ?? null;
   if (distribution == null) return null;
   return `https://github.com/${distribution.repo}/releases/download/${distribution.tag}/${distribution.asset}`;
+}
+
+/** A raw .litertlm URL is never interchangeable with a release .fbmodel URL. */
+export function rawWeightUrlForEntry(entry: ModelCatalogueEntry): string | null {
+  const shipped = SHIPPED_CATALOGUE_ENTRIES.find((candidate) => candidate.id === entry.id);
+  const source = entry.pinnedRawSource;
+  if (!shipped?.pinnedRawSource || !source || entry.distribution != null) return null;
+  if (JSON.stringify(source) !== JSON.stringify(shipped.pinnedRawSource)) return null;
+  if (source.revision !== entry.revision || source.repo !== entry.upstreamRepo ||
+    source.file !== entry.upstreamFile || source.bytes !== entry.installedBytes ||
+    source.sha256 !== entry.installedSha256 ||
+    !/^[\w.-]+\/[\w.-]+$/.test(source.repo) ||
+    !/^[0-9a-f]{40}$/.test(source.revision) ||
+    !/^[\w.-]+\.litertlm$/.test(source.file) ||
+    !Number.isSafeInteger(source.bytes) || source.bytes <= 0 ||
+    !/^[0-9a-f]{64}$/.test(source.sha256)) return null;
+  return `https://huggingface.co/${source.repo}/resolve/${source.revision}/${source.file}`;
 }
 
 /**

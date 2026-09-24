@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bridgeModelIdForEntry,
   distributionUrlForEntry,
+  rawWeightUrlForEntry,
   hasUnpublishedDistribution,
   isDistributionPublished,
   SHIPPED_CATALOGUE_ENTRIES,
@@ -11,6 +12,46 @@ import { isInstallable } from "./modelCatalogue";
 import catalogueJson from "../../../../../docs/specs/model-library/catalogue.v1.json";
 
 describe("shipped catalogue", () => {
+  it("offers exactly the six owner-selected model identities and excludes Gemma", () => {
+    expect(SHIPPED_CATALOGUE_ENTRIES.map((entry) => entry.id)).toEqual([
+      "smolvlm2-500m-litert-int4",
+      "qwen3-0.6b-litert-dynamic-int4",
+      "qwen3-0.6b-litert-mixed-int4",
+      "qwen3-0.6b-litert-int8",
+      "lfm2.5-1.2b-instruct-litert-int4-gpu",
+      "lfm2.5-vl-450m",
+    ]);
+  });
+
+  it("pins each experimental download to exact raw bytes and an immutable upstream revision", () => {
+    const pins = [
+      ["qwen3-0.6b-litert-mixed-int4", 497516544, "7900eb4e7362d88c58782c6f9999bb7a129e03544aa98b8f338ea0cc5d8c22c1"],
+      ["qwen3-0.6b-litert-int8", 614236160, "555579ff2f4fd13379abe69c1c3ab5200f7338bc92471557f1d6614a6e5ab0b4"],
+      ["lfm2.5-1.2b-instruct-litert-int4-gpu", 736220768, "97e6a9700208f59fce2ceb993cd6c18ea77ada8c2a940f68332004f38a404671"],
+      ["lfm2.5-vl-450m", 406817104, "6854cd9677a34e680070b60076793e49aeb3224de7cb4101076b261cb9bf6033"],
+    ] as const;
+    for (const [id, bytes, sha256] of pins) {
+      const entry = SHIPPED_CATALOGUE_ENTRIES.find((item) => item.id === id);
+      expect(entry?.installedBytes, id).toBe(bytes);
+      expect(entry?.installedSha256, id).toBe(sha256);
+      expect(entry?.revision, id).toMatch(/^[0-9a-f]{40}$/);
+      expect(entry?.upstreamFile, id).toMatch(/\.litertlm$/);
+      expect(entry && isInstallable(entry), id).toBe(true);
+      expect(rawWeightUrlForEntry(entry!)).toBe(
+        `https://huggingface.co/${entry?.pinnedRawSource?.repo}/resolve/${entry?.revision}/${entry?.upstreamFile}`,
+      );
+    }
+  });
+
+  it("refuses mutable or mismatched raw source metadata instead of inventing a URL", () => {
+    const entry = SHIPPED_CATALOGUE_ENTRIES.find((model) => model.id === "lfm2.5-vl-450m")!;
+    expect(rawWeightUrlForEntry(entry)).toContain("/be196f4fa88b2dfba8cdbbbff07b641df794f977/");
+    expect(rawWeightUrlForEntry({ ...entry, revision: "main" })).toBeNull();
+    expect(rawWeightUrlForEntry({ ...entry, installedSha256: "f".repeat(64) })).toBeNull();
+    expect(rawWeightUrlForEntry({ ...entry, pinnedRawSource: { ...entry.pinnedRawSource!, repo: "someone/other" } })).toBeNull();
+    expect(rawWeightUrlForEntry({ ...entry, distribution: { ...SHIPPED_CATALOGUE_ENTRIES[0]!.distribution! } })).toBeNull();
+    expect(rawWeightUrlForEntry(SHIPPED_CATALOGUE_ENTRIES[0]!)).toBeNull();
+  });
   it("ships catalogue version 1 with the pinned entries", () => {
     expect(SHIPPED_CATALOGUE_VERSION).toBe("1");
     expect(SHIPPED_CATALOGUE_ENTRIES.length).toBeGreaterThan(0);
@@ -68,18 +109,16 @@ describe("shipped catalogue", () => {
     }
   });
 
-  it("never distributes the eval-only VL fixB bytes", () => {
+  it("keeps fixB downloadable only through its pinned upstream weights, not the release", () => {
     const fixBHash =
       "6854cd9677a34e680070b60076793e49aeb3224de7cb4101076b261cb9bf6033";
-    for (const entry of SHIPPED_CATALOGUE_ENTRIES) {
-      expect(entry.sha256, entry.id).not.toBe(fixBHash);
-      expect(entry.id.toLowerCase().includes("fixb")).toBe(false);
-    }
     const vlSlot = SHIPPED_CATALOGUE_ENTRIES.find(
       (entry) => entry.id === "lfm2.5-vl-450m",
     );
     expect(vlSlot).toBeDefined();
-    expect(isInstallable(vlSlot!)).toBe(false);
+    expect(vlSlot?.installedSha256).toBe(fixBHash);
+    expect(isInstallable(vlSlot!)).toBe(true);
+    expect(vlSlot?.distribution).toBeNull();
     expect(bridgeModelIdForEntry("lfm2.5-vl-450m")).toBeNull();
   });
 
@@ -184,9 +223,6 @@ describe("shipped catalogue", () => {
         expect(url).not.toContain("/main");
       }
     }
-    const gemma = published.find(
-      (entry) => entry.id === "gemma-3n-e2b-it-litert-int4",
-    );
-    expect(gemma && distributionUrlForEntry(gemma)).toBeNull();
+    expect(published.filter((entry) => entry.distribution != null)).toHaveLength(2);
   });
 });

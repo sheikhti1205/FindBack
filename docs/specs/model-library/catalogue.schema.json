@@ -88,7 +88,7 @@
         "provenance"
       ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{1,63}$" },
         "displayName": { "type": "string", "minLength": 1 },
         "category": { "enum": ["vision", "text", "multimodal", "experimental-large"] },
         "role": {
@@ -112,6 +112,19 @@
         "installedSha256": {
           "$ref": "#/$defs/sha256OrUnknown",
           "description": "Installed-weights artifact hash; distinct from the distribution-package sha256, which packaging may change by design."
+        },
+        "pinnedRawSource": {
+          "description": "Immutable upstream raw .litertlm; distinct from the .fbmodel distribution package.",
+          "type": ["object", "null"],
+          "required": ["repo", "revision", "file", "bytes", "sha256"],
+          "properties": {
+            "repo": { "type": "string", "pattern": "^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$" },
+            "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "file": { "type": "string", "pattern": "^[a-zA-Z0-9._-]+\\.litertlm$" },
+            "bytes": { "type": "integer", "minimum": 1 },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          },
+          "additionalProperties": false
         },
         "minFreeRamMb": { "type": "integer", "minimum": 0 },
         "recommendedFreeRamMb": { "type": "integer", "minimum": 0 },

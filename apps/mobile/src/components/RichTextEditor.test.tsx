@@ -19,6 +19,8 @@ describe("richTextEditor converters", () => {
       "[photo](https://example.com/photo)",
       "**[photo](https://example.com/photo)**",
       "*[map](https://example.com/map)*",
+      "***black*** ***[case](https://example.com/c)***",
+      "3. one\n4. two",
       "# Lost keys\n\nSilver keychain.\n\n- lobby\n- gym\n\n> Ask at reception.",
     ]) {
       expect(tiptapToMarkdown(markdownToTiptap(md))).toBe(md);
@@ -77,7 +79,7 @@ describe("richTextEditor converters", () => {
     expect(tiptapToMarkdown(markdownToTiptap(md))).toBe(md);
   });
 
-  it("degrades numbered lists to paragraphs, preserving text", () => {
+  it("persists numbered lists as real Markdown list blocks", () => {
     const json = {
       type: "doc",
       content: [
@@ -90,7 +92,7 @@ describe("richTextEditor converters", () => {
         },
       ],
     };
-    expect(tiptapToMarkdown(json)).toBe("one\n\ntwo");
+    expect(tiptapToMarkdown(json)).toBe("1. one\n2. two");
   });
 
   it("drops unsafe link marks, keeps the display text", () => {
@@ -246,7 +248,7 @@ describe("RichTextEditor", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Numbered list" }));
     expect(ref.current?.isActive("orderedList")).toBe(true);
-    expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("item");
+    expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("1. item");
   });
 });
 

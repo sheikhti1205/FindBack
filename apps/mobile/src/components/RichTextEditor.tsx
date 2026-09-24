@@ -4,6 +4,8 @@ import type { JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useModalBack } from "../hooks/useModalBack";
 import { Bold, Heading2, Italic, Link2, List, ListOrdered, Pilcrow, Quote, Redo2, RemoveFormatting, Undo2 } from "lucide-react";
 import {
   fromMarkdown,
@@ -14,6 +16,50 @@ import {
 } from "../services/richText";
 
 export const RICH_TEXT_DEBOUNCE_MS = 300;
+
+interface LinkSelection {
+  from: number;
+  to: number;
+  text: string;
+  doc: Editor["state"]["doc"];
+  href: string;
+}
+
+function LinkSheet({ selection, onCancel, onSave }: {
+  selection: LinkSelection;
+  onCancel: () => void;
+  onSave: (url: string) => string | null;
+}) {
+  const id = useId();
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const [url, setUrl] = useState(selection.href || "https://");
+  const [message, setMessage] = useState<string | null>(null);
+  useFocusTrap(sheetRef, onCancel);
+  useModalBack(true, onCancel);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4" role="presentation">
+      <div ref={sheetRef} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} className="w-full max-w-md space-y-4 rounded-m3-lg bg-surface p-5 shadow-xl">
+        <h2 id={`${id}-title`} className="text-lg font-semibold">{selection.href ? "Edit link" : "Add link"}</h2>
+        <label className="block text-sm" htmlFor={`${id}-text`}>Selected text</label>
+        <input id={`${id}-text`} value={selection.text} readOnly className="w-full rounded-m3-xs border border-outline-variant bg-surface-container p-3" />
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          const error = onSave(url.trim());
+          if (error) setMessage(error);
+        }}>
+          <label htmlFor={`${id}-url`} className="block text-sm">URL</label>
+          <input id={`${id}-url`} type="url" value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={message != null} aria-describedby={message ? `${id}-error` : undefined} className="w-full rounded-m3-xs border border-outline-variant p-3" />
+          {message && <p id={`${id}-error`} role="alert" className="text-sm text-error">{message}</p>}
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" onClick={onCancel} className="min-h-[48px] min-w-[48px] px-3">Cancel</button>
+            <button type="submit" className="min-h-[48px] min-w-[48px] rounded-m3-xs bg-on-surface px-3 text-surface">{selection.href ? "Save link" : "Add link"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 interface RichTextEditorProps {
   label: string;
@@ -34,7 +80,7 @@ interface PMTextMark {
 
 interface PMNode {
   type: string;
-  attrs?: { level?: number; href?: string };
+  attrs?: { level?: number; href?: string; start?: number };
   text?: string;
   marks?: PMTextMark[];
   content?: PMNode[];
@@ -46,6 +92,8 @@ function markForRun(run: InlineNode): PMTextMark[] | undefined {
       return [{ type: "bold" }];
     case "Italic":
       return [{ type: "italic" }];
+    case "BoldItalic":
+      return [{ type: "bold" }, { type: "italic" }];
     case "Link":
       return isSafeRichTextHref(run.href) ? [{ type: "link", attrs: { href: run.href } }] : undefined;
     case "BoldLink":
@@ -62,6 +110,10 @@ function markForRun(run: InlineNode): PMTextMark[] | undefined {
             { type: "link", attrs: { href: run.href } },
           ]
         : [{ type: "italic" }];
+    case "BoldItalicLink":
+      return isSafeRichTextHref(run.href)
+        ? [{ type: "bold" }, { type: "italic" }, { type: "link", attrs: { href: run.href } }]
+        : [{ type: "bold" }, { type: "italic" }];
     case "InlineText":
       return undefined;
   }
@@ -102,6 +154,13 @@ export function markdownToTiptap(md: string): JSONContent {
         case "BulletList":
           content.push({
             type: "bulletList",
+            content: block.items.map((item) => ({ type: "listItem", content: [{ type: "paragraph", content: runsToPM(item) }] })),
+          });
+          break;
+        case "OrderedList":
+          content.push({
+            type: "orderedList",
+            attrs: { start: block.start },
             content: block.items.map((item) => ({ type: "listItem", content: [{ type: "paragraph", content: runsToPM(item) }] })),
           });
           break;
@@ -155,12 +214,14 @@ function inlineToRuns(content: PMNode[] | undefined): InlineNode[] {
     const linkHref = link?.attrs?.href;
     if (typeof linkHref === "string" && isSafeRichTextHref(linkHref)) {
       const href = linkHref.trim();
-      if (marks.some((m) => m.type === "bold")) runs.push({ type: "BoldLink", href, text: node.text });
+      if (marks.some((m) => m.type === "bold") && marks.some((m) => m.type === "italic")) runs.push({ type: "BoldItalicLink", href, text: node.text });
+      else if (marks.some((m) => m.type === "bold")) runs.push({ type: "BoldLink", href, text: node.text });
       else if (marks.some((m) => m.type === "italic")) runs.push({ type: "ItalicLink", href, text: node.text });
       else runs.push({ type: "Link", href, text: node.text });
       continue;
     }
-    if (marks.some((m) => m.type === "bold")) runs.push({ type: "Bold", text: node.text });
+    if (marks.some((m) => m.type === "bold") && marks.some((m) => m.type === "italic")) runs.push({ type: "BoldItalic", text: node.text });
+    else if (marks.some((m) => m.type === "bold")) runs.push({ type: "Bold", text: node.text });
     else if (marks.some((m) => m.type === "italic")) runs.push({ type: "Italic", text: node.text });
     else runs.push({ type: "InlineText", text: node.text });
   }
@@ -170,9 +231,11 @@ function inlineToRuns(content: PMNode[] | undefined): InlineNode[] {
     if (prev?.type === "InlineText" && run.type === "InlineText") prev.text += run.text;
     else if (prev?.type === "Bold" && run.type === "Bold") prev.text += run.text;
     else if (prev?.type === "Italic" && run.type === "Italic") prev.text += run.text;
+    else if (prev?.type === "BoldItalic" && run.type === "BoldItalic") prev.text += run.text;
     else if (prev?.type === "Link" && run.type === "Link" && prev.href === run.href) prev.text += run.text;
     else if (prev?.type === "BoldLink" && run.type === "BoldLink" && prev.href === run.href) prev.text += run.text;
     else if (prev?.type === "ItalicLink" && run.type === "ItalicLink" && prev.href === run.href) prev.text += run.text;
+    else if (prev?.type === "BoldItalicLink" && run.type === "BoldItalicLink" && prev.href === run.href) prev.text += run.text;
     else merged.push({ ...run });
   }
   return merged.length > 0 ? merged : [{ type: "InlineText", text: "" }];
@@ -218,7 +281,7 @@ export function tiptapToMarkdown(json: unknown): string {
               ),
             )
             .filter((runs) => runs.some((run) => run.text !== ""));
-          for (const item of items) blocks.push({ type: "Paragraph", runs: item });
+          if (items.length > 0) blocks.push({ type: "OrderedList", start: node.attrs?.start ?? 1, items });
           break;
         }
         case "blockquote": {
@@ -257,6 +320,8 @@ export function tiptapToMarkdown(json: unknown): string {
 export function RichTextEditor({ label, value, onChange, placeholder, editorRef, error, required, maxLength, inputId }: RichTextEditorProps) {
   const [empty, setEmpty] = useState(true);
   const [charCount, setCharCount] = useState(0);
+  const [, refreshSelection] = useState(0);
+  const [linkSelection, setLinkSelection] = useState<LinkSelection | null>(null);
   const baseId = useId();
   const errorId = `${baseId}-error`;
   const countId = `${baseId}-count`;
@@ -299,6 +364,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
         const markdown = tiptapToMarkdown(updated.getJSON());
         if (markdown !== valueRef.current) onChangeRef.current(markdown);
       },
+      onSelectionUpdate: () => refreshSelection((revision) => revision + 1),
     },
     [],
   );
@@ -327,15 +393,29 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
 
   function applyLink() {
     if (!editor) return;
-    if (editor.isActive("link")) {
+    const { from, to, empty: collapsed } = editor.state.selection;
+    if (collapsed && editor.isActive("link")) {
       editor.chain().focus().unsetLink().run();
       return;
     }
-    const href = window.prompt("Link URL", "https://");
-    if (!href) return;
-    const clean = href.trim();
-    if (!isSafeRichTextHref(clean)) return;
-    editor.chain().focus().setLink({ href: clean }).run();
+    if (collapsed) return;
+    setLinkSelection({
+      from, to, text: editor.state.doc.textBetween(from, to), doc: editor.state.doc,
+      href: (editor.getAttributes("link")["href"] as string | undefined) ?? "",
+    });
+  }
+
+  function saveLink(href: string): string | null {
+    if (!editor || !linkSelection) return "Selection is no longer available.";
+    if (!isSafeRichTextHref(href) || /\s/.test(href) || Array.from(href).some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return "Enter a safe HTTP(S) URL.";
+    const { from, to, doc, text } = linkSelection;
+    if (editor.state.doc !== doc || editor.state.doc.textBetween(from, to) !== text) {
+      return "The selected text changed. Cancel and select it again.";
+    }
+    editor.chain().focus().setTextSelection({ from, to }).setLink({ href }).run();
+    setLinkSelection(null);
+    queueMicrotask(() => editor.commands.focus());
+    return null;
   }
 
   const canUndo = editor?.can().chain().focus().undo().run() ?? false;
@@ -344,15 +424,15 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   const tools = [
     { label: "Paragraph", icon: Pilcrow, active: editor?.isActive("paragraph") ?? false, disabled: false, run: () => editor?.chain().focus().setParagraph().run() },
     { label: "Heading", icon: Heading2, active: editor?.isActive("heading", { level: 2 }) ?? false, disabled: false, run: () => editor?.chain().focus().toggleHeading({ level: 2 }).run() },
+    { label: "Bold", icon: Bold, active: editor?.isActive("bold") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBold().run() },
+    { label: "Italic", icon: Italic, active: editor?.isActive("italic") ?? false, disabled: false, run: () => editor?.chain().focus().toggleItalic().run() },
     { label: "Bullet list", icon: List, active: editor?.isActive("bulletList") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBulletList().run() },
     { label: "Numbered list", icon: ListOrdered, active: editor?.isActive("orderedList") ?? false, disabled: false, run: () => editor?.chain().focus().toggleOrderedList().run() },
     { label: "Quote", icon: Quote, active: editor?.isActive("blockquote") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBlockquote().run() },
-    { label: "Bold", icon: Bold, active: editor?.isActive("bold") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBold().run() },
-    { label: "Italic", icon: Italic, active: editor?.isActive("italic") ?? false, disabled: false, run: () => editor?.chain().focus().toggleItalic().run() },
-    { label: "Link", icon: Link2, active: editor?.isActive("link") ?? false, disabled: false, run: applyLink },
+    { label: "Link", icon: Link2, active: editor?.isActive("link") ?? false, disabled: (editor?.state.selection.empty ?? true) && !(editor?.isActive("link") ?? false), run: applyLink },
+    { label: "Clear formatting", icon: RemoveFormatting, active: false, disabled: false, run: () => editor?.chain().focus().clearNodes().unsetAllMarks().run() },
     { label: "Undo", icon: Undo2, active: false, disabled: !canUndo, run: () => editor?.chain().focus().undo().run() },
     { label: "Redo", icon: Redo2, active: false, disabled: !canRedo, run: () => editor?.chain().focus().redo().run() },
-    { label: "Clear formatting", icon: RemoveFormatting, active: false, disabled: false, run: () => editor?.chain().focus().clearNodes().unsetAllMarks().run() },
   ];
 
   return (
@@ -384,6 +464,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           </button>
         ))}
       </div>
+      {linkSelection && <LinkSheet selection={linkSelection} onCancel={() => setLinkSelection(null)} onSave={saveLink} />}
       {error ? (
         <p id={errorId} className="text-xs text-error" role="alert">
           {error}

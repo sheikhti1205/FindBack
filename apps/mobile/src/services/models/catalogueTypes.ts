@@ -63,6 +63,14 @@ export interface ModelCatalogueEntry {
    * weights must keep matching the qualified pin.
    */
   installedSha256?: string | null;
+  /** Immutable raw-weight source; never interpreted as a release package. */
+  pinnedRawSource?: {
+    repo: string;
+    revision: string;
+    file: string;
+    bytes: number;
+    sha256: string;
+  } | null;
   minFreeRamMb: number;
   recommendedFreeRamMb: number;
   ramRequirementSource: RamRequirementSource;

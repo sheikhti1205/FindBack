@@ -258,7 +258,7 @@ export function checkDownloadGate(
         "Catalog reference or unverifiable entry: this entry is not distributed as a downloadable package.",
     };
   }
-  if (entry.sha256 == null) {
+  if (entry.sha256 == null && entry.pinnedRawSource == null) {
     return {
       allowed: false,
       code: "MISSING_PIN",

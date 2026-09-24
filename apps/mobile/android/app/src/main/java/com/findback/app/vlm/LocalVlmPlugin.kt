@@ -2,8 +2,13 @@ package com.findback.app.vlm
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.app.ActivityManager
+import android.app.Activity
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
 import com.findback.app.R
@@ -12,6 +17,8 @@ import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import androidx.activity.result.ActivityResult
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -36,11 +43,17 @@ class LocalVlmPlugin : Plugin() {
     // init{} or lazy initializers.
     private var store: ModelStore? = null
     private var downloader: ModelDownloader? = null
+    private var inspectionStore: PackageInspectionStore? = null
     private var prefs: SharedPreferences? = null
     private var expiryHandler: Handler? = null
     @Volatile private var initialized = false
 
     private val activeDownloads = ConcurrentHashMap<VlmModelId, Job>()
+    private val candidateDownloads = ConcurrentHashMap<String, Job>()
+    private val candidateDownloaders = ConcurrentHashMap<String, ModelDownloader>()
+    private val candidateStates = ConcurrentHashMap<String, VlmState>()
+    private val candidateErrors = ConcurrentHashMap<String, String>()
+    private val candidateReady = ConcurrentHashMap.newKeySet<String>()
     private var currentMode: BackendMode = BackendMode.AUTO
     private var eventCollector: Job? = null
     /**
@@ -109,6 +122,679 @@ class LocalVlmPlugin : Plugin() {
     private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
     private fun requireDownloader(): ModelDownloader = downloader ?: throw IllegalStateException("Plugin not initialized")
     private fun requirePrefs(): SharedPreferences = prefs ?: throw IllegalStateException("Plugin not initialized")
+
+    private fun candidateManifest(id: String?): ModelManifest? =
+        PinnedModelSources.manifests.singleOrNull { it.id == id }
+
+    /** SAF returns content URIs only; no received Intent is ever forwarded. */
+    @PluginMethod
+    fun pickImportPackage(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivityForResult(call, intent, "importPackagePicked")
+    }
+
+    @ActivityCallback
+    private fun importPackagePicked(call: PluginCall, result: ActivityResult) {
+        if (result.resultCode != Activity.RESULT_OK) {
+            call.resolve(JSObject().put("cancelled", true))
+            return
+        }
+        val uri = result.data?.data
+        if (uri?.scheme != "content") {
+            call.reject("Choose a document from the Android file picker", "INVALID_DOCUMENT")
+            return
+        }
+        val response = JSObject()
+        response.put("uri", uri.toString())
+        val name = try {
+            getContext().contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0)?.take(128) else null
+            }
+        } catch (_: Exception) { null }
+        response.put("name", name ?: "model.fbmodel")
+        call.resolve(response)
+    }
+
+    private fun isExportableEntry(id: String): Boolean =
+        exportManifestFor(id) != null || isImportedEntry(id)
+
+    private fun isImportedEntry(id: String): Boolean {
+        if (!ImportCommitPolicy.isNamespacedEntryId(id)) return false
+        return try {
+            ImportedModelRegistry.list(requireStore().root).any { it.entryId == id }
+        } catch (_: Exception) { false }
+    }
+
+    /** A single directory choice writes separate checked packages, never a combined archive. */
+    @PluginMethod
+    fun exportSelectedModels(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val entryIds = try { call.getArray("entryIds")?.toList<String>() ?: emptyList() } catch (_: Exception) { emptyList() }
+        if (entryIds.isEmpty() || entryIds.size > 6 || entryIds.toSet().size != entryIds.size ||
+            entryIds.any { !isExportableEntry(it) }) {
+            call.reject("Select installed catalogue or imported models to export", "ENTRY_MISMATCH")
+            return
+        }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        startActivityForResult(call, intent, "exportDirectoryPicked")
+    }
+
+    private fun exportManifestFor(entryId: String): ModelManifest? =
+        KnownPackageIdentity.forCatalogueId(entryId)?.manifest ?: candidateManifest(entryId)
+
+    @ActivityCallback
+    private fun exportDirectoryPicked(call: PluginCall, result: ActivityResult) {
+        if (result.resultCode != Activity.RESULT_OK) {
+            call.resolve(JSObject().put("cancelled", true))
+            return
+        }
+        val treeUri = result.data?.data
+        if (treeUri?.scheme != "content" || !DocumentsContract.isTreeUri(treeUri)) {
+            call.reject("Choose an Android document directory", "INVALID_DOCUMENT")
+            return
+        }
+        val ids = try { call.getArray("entryIds")?.toList<String>() ?: emptyList() } catch (_: Exception) { emptyList() }
+        scope.launch {
+            val results = JSArray()
+            try {
+                val parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
+                for (id in ids) {
+                    val row = JSObject()
+                    row.put("entryId", id)
+                    var destination: Uri? = null
+                    try {
+                        if (isImportedEntry(id)) {
+                            val record = ImportedModelRegistry.list(requireStore().root).singleOrNull { it.entryId == id }
+                                ?: throw IllegalStateException("Imported model not found")
+                val installDir = ImportedModelRegistry.dirFor(requireStore().root, id)
+                if (!installDir.isDirectory) throw IllegalStateException("Imported model files are missing")
+                val trustedFiles = ImportedModelRegistry.verifiedExportFiles(requireStore().root, id)
+                    ?: throw IllegalStateException("Imported model failed its installed hash check")
+                            val fileName = "${ImportCommitPolicy.sanitizeFileStem(record.label, id)}.fbmodel"
+                            row.put("fileName", fileName)
+                            destination = DocumentsContract.createDocument(
+                                getContext().contentResolver, parent, "application/octet-stream", fileName
+                            ) ?: throw IllegalStateException("Could not create destination document")
+                            val output = getContext().contentResolver.openOutputStream(destination, "w")
+                                ?: throw IllegalStateException("Could not write destination document")
+                            // Re-hashes installed bytes while streaming; only
+                            // data-only packages with a weights artifact pass.
+                            val exported = output.use { stream ->
+                    PackageHost.exportPackage(id, installDir, stream, trustedFiles = trustedFiles)
+                            }
+                            if (!exported.ok) throw IllegalStateException(exported.reason ?: "Export failed")
+                            row.put("ok", true)
+                        } else {
+                            val manifest = exportManifestFor(id) ?: continue
+                            val name = "$id.fbmodel"
+                            row.put("fileName", name)
+                            if (!CandidateModelStatus.hasVerifiedWeights(requireStore(), manifest)) {
+                                throw IllegalStateException("Installed model failed its hash check")
+                            }
+                            destination = DocumentsContract.createDocument(
+                                getContext().contentResolver, parent, "application/octet-stream", name
+                            ) ?: throw IllegalStateException("Could not create destination document")
+                            val output = getContext().contentResolver.openOutputStream(destination, "w")
+                                ?: throw IllegalStateException("Could not write destination document")
+                            val exported = output.use { stream ->
+                                PackageHost.exportPackage(id, requireStore().dirFor(manifest), stream, trustedFiles = manifest.files)
+                            }
+                            if (!exported.ok) throw IllegalStateException(exported.reason ?: "Export failed")
+                            row.put("ok", true)
+                        }
+                    } catch (e: Exception) {
+                        destination?.let { try { DocumentsContract.deleteDocument(getContext().contentResolver, it) } catch (_: Exception) { } }
+                        row.put("ok", false)
+                        row.put("reason", e.message ?: "Export failed")
+                    }
+                    results.put(row)
+                }
+                call.resolve(JSObject().put("results", results))
+            } catch (_: Exception) {
+                call.reject("The selected directory could not be used", "EXPORT_FAILED")
+            }
+        }
+    }
+
+    /**
+     * Staged import inspection: a SAF content URI is staged and
+     * data-only validated into a session without installing anything.
+     * Known catalogue ids inspect here too (exact shipped package plus
+     * interior pins, never an unknown fallback); unknown must be a
+     * data-only schema-v1 bundle with exactly one `.litertlm`.
+     * The UI must show the inspection summary and take an explicit
+     * user confirmation before [commitInspectedPackage].
+     */
+    @PluginMethod
+    fun inspectImportPackage(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val sourceUri = call.getString("sourceUri") ?: return call.reject("Missing sourceUri")
+        val sessions = inspectionStore ?: return call.reject("Plugin not initialized")
+        scope.launch {
+            try {
+                val uri = Uri.parse(sourceUri)
+                if (uri?.scheme != "content") {
+                    call.reject("Choose a document from the Android file picker", "INVALID_DOCUMENT")
+                    return@launch
+                }
+                val inspected = getContext().contentResolver.openInputStream(uri)?.use { input ->
+                    sessions.inspect(input, getFreeBytes())
+                }
+                if (inspected == null) {
+                    call.reject(
+                        "Package rejected: unreadable, oversized, failed validation, or a catalogue pin mismatch. Nothing installed.",
+                        "IMPORT_REJECTED"
+                    )
+                    return@launch
+                }
+                val response = JSObject()
+                response.put("inspectionId", inspected.id)
+                response.put("entryId", inspected.manifest.entryId)
+                response.put("packageSha256", inspected.packageSha256)
+                response.put("unknown", inspected.unknown)
+                response.put("manifest", inspected.manifest.toJSObject())
+                call.resolve(response)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                call.reject("Import inspection failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Role-specific compatibility probe for a staged session: bounded
+     * nonempty generation for the chosen role. Vision requires a
+     * user-selected real image URI. Only an actual `OutOfMemoryError` or
+     * a distinctly identified native allocation failure reports
+     * `lowMemory`; every other error is incompatible and cannot be kept.
+     * Metrics are measured only — never fabricated.
+     */
+    @PluginMethod
+    fun probeInspectedPackage(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val inspectionId = call.getString("inspectionId") ?: return call.reject("Missing inspectionId")
+        val role = call.getString("role")
+        val imageUri = call.getString("imageUri")
+        val sessions = inspectionStore ?: return call.reject("Plugin not initialized")
+        val roleError = InspectedProbeClassifier.validateRole(role, imageUri)
+        if (roleError != null) return call.reject("Choose Text or Images with a real test image", roleError)
+        if (!inferenceMutex.tryAcquire()) return call.reject("Inference already in progress", "BUSY")
+        scope.launch {
+            try {
+                val inspected = sessions.get(inspectionId)
+                    ?: run { call.reject("Inspection session expired or not found", "IMPORT_REJECTED"); return@launch }
+                val weightsFile = findStagedLitertlm(inspected.sandbox)
+                    ?: run { call.reject("Staged model weights are missing", "IMPORT_REJECTED"); return@launch }
+                // Probe in isolation from both resident production engines.
+                textController.release()
+                releaseEngine500()
+                residencyArbiter.releaseAll()
+                val memoryBefore = availableMemoryMb()
+                val response = if (role == "Vision") {
+                    probeVisionWeights(weightsFile, imageUri!!, memoryBefore)
+                } else {
+                    probeTextWeights(weightsFile, memoryBefore)
+                }
+                sessions.recordProbe(inspectionId, response.first, role!!)
+                call.resolve(response.second)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                call.reject("Compatibility test failed: ${e.message}")
+            } finally {
+                inferenceMutex.release()
+            }
+        }
+    }
+
+    private fun probeTextWeights(weightsFile: File, memoryBefore: Long?): Pair<ProbeResult, JSObject> {
+        val host = LiteRtQwenTextHost(weightsFile.absolutePath, getContext().cacheDir)
+        return try {
+            val loadStart = System.currentTimeMillis()
+            host.initialize()
+            val loadMs = System.currentTimeMillis() - loadStart
+            val inferenceStart = System.currentTimeMillis()
+            val text = host.generate("Name one item that could be lost.", 32, 0.1f)
+            val inferenceMs = System.currentTimeMillis() - inferenceStart
+            // A post-run free-memory sample is not a peak allocation measurement.
+            val probe = InspectedProbeClassifier.classifySuccess(
+                loadMs, inferenceMs, memoryBefore, null, text.isNotBlank()
+            )
+            probe to probeToJS(probe)
+        } catch (e: OutOfMemoryError) {
+            val probe = InspectedProbeClassifier.classifyFailure(e)
+            probe to probeToJS(probe)
+        } catch (e: Exception) {
+            val probe = InspectedProbeClassifier.classifyFailure(e)
+            probe to probeToJS(probe)
+        } finally {
+            try { host.close() } catch (_: Exception) { }
+        }
+    }
+
+    private fun probeVisionWeights(weightsFile: File, imageUri: String, memoryBefore: Long?): Pair<ProbeResult, JSObject> {
+        val engine = VlmEngine500(getContext(), weightsFile.absolutePath, getContext().cacheDir)
+        return try {
+            val loadStart = System.currentTimeMillis()
+            engine.initialize()
+            val loadMs = System.currentTimeMillis() - loadStart
+            val inferenceStart = System.currentTimeMillis()
+            val outcome = engine.runSelfTest(imageUri, "Describe this image briefly.")
+            val inferenceMs = System.currentTimeMillis() - inferenceStart
+            val probe = if (outcome.success) {
+                InspectedProbeClassifier.classifySuccess(loadMs, inferenceMs, memoryBefore, null, true)
+            } else if (outcome.failure == SelfTestFailure.INPUT_ERROR) {
+                ProbeResult(false, false, loadMs, inferenceMs, memoryBefore, null, "INPUT_ERROR")
+            } else {
+                ProbeResult(false, false, loadMs, inferenceMs, memoryBefore, null, "INCOMPATIBLE")
+            }
+            probe to probeToJS(probe)
+        } catch (e: OutOfMemoryError) {
+            val probe = InspectedProbeClassifier.classifyFailure(e)
+            probe to probeToJS(probe)
+        } catch (e: Exception) {
+            val probe = InspectedProbeClassifier.classifyFailure(e)
+            probe to probeToJS(probe)
+        } finally {
+            try { engine.release() } catch (_: Exception) { }
+        }
+    }
+
+    private fun probeToJS(probe: ProbeResult): JSObject {
+        val obj = JSObject()
+        obj.put("ready", probe.ready)
+        obj.put("lowMemory", probe.lowMemory)
+        probe.loadMs?.let { obj.put("loadMs", it) }
+        probe.inferenceMs?.let { obj.put("inferenceMs", it) }
+        probe.memoryBeforeMb?.let { obj.put("memoryBeforeMb", it) }
+        probe.observedPeakMb?.let { obj.put("observedPeakMb", it) }
+        probe.reason?.let { obj.put("reason", it) }
+        return obj
+    }
+
+    private fun findStagedLitertlm(sandbox: File): File? {
+        if (!sandbox.isDirectory) return null
+        return try {
+            sandbox.walkTopDown().filter { it.isFile && it.name.lowercase().endsWith(".litertlm") }.firstOrNull()
+        } catch (_: Exception) { null }
+    }
+
+    /**
+     * Commits a previously inspected session.
+     *
+     * Known branch promotes into the existing authoritative catalogue
+     * store (exact shipped pins, never an Imported duplicate). Unknown
+     * branch requires an explicit confirmed bounded `name`+`role` and a
+     * recorded probe: success, or typed memory failure plus explicit
+     * `keepUnverified`. Identity is namespaced by full package SHA-256;
+     * unknown never auto-activates.
+     */
+    @PluginMethod
+    fun commitInspectedPackage(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val inspectionId = call.getString("inspectionId") ?: return call.reject("Missing inspectionId")
+        val sessions = inspectionStore ?: return call.reject("Plugin not initialized")
+        scope.launch {
+            try {
+                sessions.pruneExpired()
+                val inspected = sessions.get(inspectionId)
+                    ?: return@launch call.reject("Inspection session expired or not found", "IMPORT_REJECTED")
+                if (!inspected.unknown) {
+                    val known = KnownPackageIdentity.forCatalogueId(inspected.manifest.entryId)
+                        ?: return@launch call.reject("Catalogue pin missing for this package", PackageHost.Code.MISSING_PIN)
+                    val committed = PackageCommitter.commitKnownInspected(inspected, requireStore(), known)
+                    sessions.discard(inspectionId)
+                    if (!committed.ok) {
+                        call.reject(committed.reason ?: "Import failed", committed.code)
+                        return@launch
+                    }
+                    recordKnownInstall(known)
+                    call.resolve(JSObject().put("ok", true).put("entryId", known.catalogueId))
+                    return@launch
+                }
+                val name = call.getString("name")
+                val role = call.getString("role")
+                val description = call.getString("description")
+                val keepUnverified = call.getBoolean("keepUnverified") == true
+                val decision = ImportCommitPolicy.validateUnknown(
+                    name, role, description, keepUnverified, inspected.lastProbe, inspected.probedRole
+                )
+                if (!decision.ok) {
+                    call.reject(decision.reason ?: "Import refused", decision.code)
+                    return@launch
+                }
+                val committed = PackageCommitter.commitInspected(inspected, requireStore())
+                if (!committed.ok) {
+                    call.reject(committed.reason ?: "Import failed", committed.code)
+                    return@launch
+                }
+                val namespaced = ImportCommitPolicy.namespacedEntryId(inspected.packageSha256)!!
+                val probe = inspected.lastProbe
+                val entryDir = ImportedModelRegistry.dirFor(requireStore().root, namespaced)
+                ImportedModelRegistry.upsert(
+                    requireStore().root,
+                    ImportedModelRegistry.Record(
+                        entryId = namespaced,
+                        label = name!!.trim(),
+                        description = description?.take(ImportCommitPolicy.MAX_DESCRIPTION_CHARS),
+                        role = role!!,
+                        state = if (probe?.ready == true) ImportedModelRegistry.STATE_READY else ImportedModelRegistry.STATE_NOT_VERIFIED,
+                        bytes = ImportedModelRegistry.installedBytes(entryDir),
+                        error = if (probe?.ready == true) null else probe?.reason,
+                        loadMs = probe?.loadMs,
+                        inferenceMs = probe?.inferenceMs,
+                        memoryBeforeMb = probe?.memoryBeforeMb,
+                        observedPeakMb = probe?.observedPeakMb,
+                        packageSha256 = inspected.packageSha256.lowercase(),
+                        manifestEntryId = inspected.manifest.entryId
+                    )
+                )
+                sessions.discard(inspectionId)
+                call.resolve(JSObject().put("ok", true).put("entryId", namespaced))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                call.reject("Import failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun recordKnownInstall(known: KnownPackageIdentity) {
+        try {
+            if (known.catalogueId == QwenTextRuntime.ENTRY_ID) {
+                TextTransferStateStore.saveAtomic(
+                    requireStore().textStateFile(known.catalogueId),
+                    TextTransferState(
+                        entryId = known.catalogueId,
+                        revision = known.manifest.revision,
+                        state = VlmState.INSTALLED_UNVERIFIED,
+                        installedBytes = known.manifest.files.sumOf { it.expectedBytes },
+                        installedSha256 = known.manifest.files.joinToString("") { it.sha256 },
+                        installTimestamp = System.currentTimeMillis()
+                    )
+                )
+            } else {
+                val modelId = VlmModelId.fromWire(known.manifest.id) ?: return
+                updateModelState(modelId, VlmState.INSTALLED_UNVERIFIED)
+                persistModelState(modelId, known.manifest, VlmState.INSTALLED_UNVERIFIED)
+            }
+        } catch (_: Exception) { }
+    }
+
+    /** Lists imported models from the persistent app-private registry. */
+    @PluginMethod
+    fun getImportedModels(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        scope.launch {
+            try {
+                val models = JSArray()
+                for (record in ImportedModelRegistry.list(requireStore().root)) {
+                    val obj = JSObject()
+                    obj.put("entryId", record.entryId)
+                    obj.put("label", record.label)
+                    obj.put("description", record.description)
+                    obj.put("role", record.role)
+                    obj.put("state", record.state)
+                    val dir = try { ImportedModelRegistry.dirFor(requireStore().root, record.entryId) } catch (_: Exception) { null }
+                    obj.put("bytes", if (dir != null) ImportedModelRegistry.installedBytes(dir) else record.bytes)
+                    record.error?.let { obj.put("error", it) }
+                    record.loadMs?.let { obj.put("loadMs", it) }
+                    record.inferenceMs?.let { obj.put("inferenceMs", it) }
+                    record.memoryBeforeMb?.let { obj.put("memoryBeforeMb", it) }
+                    record.observedPeakMb?.let { obj.put("observedPeakMb", it) }
+                    models.put(obj)
+                }
+                call.resolve(JSObject().put("models", models))
+            } catch (_: Exception) {
+                call.reject("Could not read imported models")
+            }
+        }
+    }
+
+    /** Deletes exactly one imported entry (files + registry). */
+    @PluginMethod
+    fun deleteImportedModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val entryId = call.getString("entryId") ?: return call.reject("Missing entryId")
+        if (inferenceMutex.isHeld()) return call.reject("Model is in use", "BUSY")
+        if (!ImportedModelRegistry.remove(requireStore().root, entryId)) {
+            return call.reject("Imported model not found", "ENTRY_MISMATCH")
+        }
+        call.resolve()
+    }
+
+    /** Discards an inspection session without installing anything. */
+    @PluginMethod
+    fun discardInspectedPackage(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val inspectionId = call.getString("inspectionId") ?: return call.reject("Missing inspectionId")
+        inspectionStore?.discard(inspectionId)
+        inspectionStore?.pruneExpired()
+        call.resolve()
+    }
+
+    private fun updateCandidateState(id: String, state: VlmState, error: String? = null) {        candidateStates[id] = state
+        if (error != null) candidateErrors[id] = error else candidateErrors.remove(id)
+        if (state != VlmState.INSTALLED_UNVERIFIED) candidateReady.remove(id)
+        val event = JSObject()
+        event.put("entryId", id)
+        event.put("state", state.wire)
+        if (error != null) event.put("error", error)
+        notifyListeners("candidateStateChange", event)
+    }
+
+    /** Candidate identity is the catalogue id, never an image-only VlmModelId or qualified Qwen id. */
+    @PluginMethod
+    fun getCandidateStates(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        scope.launch {
+            try {
+                val models = JSArray()
+                for (manifest in PinnedModelSources.manifests) {
+                    val installed = CandidateModelStatus.hasVerifiedWeights(requireStore(), manifest)
+                    val transfer = candidateStates[manifest.id] ?: VlmState.NOT_INSTALLED
+                    val info = JSObject()
+                    info.put("entryId", manifest.id)
+                    info.put("state", CandidateModelStatus.visibleState(installed, manifest.id in candidateReady, transfer))
+                    info.put("installed", installed)
+                    info.put("sizeBytes", manifest.files.single().expectedBytes)
+                    val staged = requireStore().partFile(manifest, manifest.files.single())
+                    info.put("downloadedBytes", if (staged.isFile) staged.length() else 0L)
+                    candidateErrors[manifest.id]?.let { info.put("error", it) }
+                    models.put(info)
+                }
+                val response = JSObject()
+                response.put("models", models)
+                call.resolve(response)
+            } catch (_: Exception) {
+                call.reject("Could not read model library status")
+            }
+        }
+    }
+
+    @PluginMethod
+    fun downloadCandidateModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val manifest = candidateManifest(call.getString("entryId"))
+            ?: return call.reject("Unknown candidate model", "ENTRY_MISMATCH")
+        if (candidateDownloads.values.any { it.isActive } || activeDownloads.isNotEmpty() || textDownloadJob?.isActive == true) {
+            return call.reject("Another download is in progress", "BUSY")
+        }
+        val downloader = ModelDownloader(getContext(), requireStore())
+        candidateDownloaders[manifest.id] = downloader
+        candidateReady.remove(manifest.id)
+        updateCandidateState(manifest.id, VlmState.QUEUED)
+        val job = scope.launch {
+            try {
+                val result = downloader.download(manifest,
+                    onProgress = { downloaded, total ->
+                        val event = JSObject()
+                        event.put("entryId", manifest.id)
+                        event.put("downloadedBytes", downloaded)
+                        event.put("totalBytes", total)
+                        notifyListeners("candidateDownloadProgress", event)
+                    },
+                    onState = { updateCandidateState(manifest.id, it) }
+                )
+                updateCandidateState(manifest.id, result,
+                    if (result == VlmState.DOWNLOAD_FAILED) "Pinned source unavailable or rejected." else null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateCandidateState(manifest.id, VlmState.DOWNLOAD_FAILED, e.message ?: "Download failed")
+            } finally {
+                candidateDownloads.remove(manifest.id)
+                candidateDownloaders.remove(manifest.id)
+            }
+        }
+        candidateDownloads[manifest.id] = job
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun pauseCandidateDownload(call: PluginCall) {
+        val manifest = candidateManifest(call.getString("entryId"))
+            ?: return call.reject("Unknown candidate model", "ENTRY_MISMATCH")
+        val downloader = candidateDownloaders[manifest.id]
+            ?: return call.reject("No active transfer to pause", "NOT_DOWNLOADING")
+        downloader.requestPause()
+        updateCandidateState(manifest.id, VlmState.PAUSING)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun cancelCandidateDownload(call: PluginCall) {
+        val manifest = candidateManifest(call.getString("entryId"))
+            ?: return call.reject("Unknown candidate model", "ENTRY_MISMATCH")
+        val downloader = candidateDownloaders[manifest.id]
+        if (downloader != null) {
+            downloader.requestCancel(removePartial = true)
+        } else {
+            manifest.files.forEach { spec ->
+                requireStore().partFile(manifest, spec).delete()
+                requireStore().journalFile(manifest, spec).delete()
+                requireStore().chunkTmpFile(manifest, spec).delete()
+            }
+            updateCandidateState(manifest.id, VlmState.NOT_INSTALLED)
+        }
+        call.resolve()
+    }
+
+    /** Verify means a real role-specific generation, never merely a successful hash. */
+    @PluginMethod
+    fun verifyCandidateModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val manifest = candidateManifest(call.getString("entryId"))
+            ?: return call.reject("Unknown candidate model", "ENTRY_MISMATCH")
+        if (!inferenceMutex.tryAcquire()) return call.reject("Inference already in progress", "BUSY")
+        scope.launch {
+            val started = System.currentTimeMillis()
+            val memoryBefore = availableMemoryMb()
+            try {
+                if (!CandidateModelStatus.hasVerifiedWeights(requireStore(), manifest)) {
+                    call.reject("Installed bytes failed integrity verification", "HASH_MISMATCH")
+                    return@launch
+                }
+                val file = requireStore().finalFile(manifest, manifest.files.single())
+                // Candidate probes are isolated from both resident production engines.
+                textController.release()
+                releaseEngine500()
+                residencyArbiter.releaseAll()
+                val isVision = manifest.id == "lfm2.5-vl-450m"
+                val text: String
+                val loadMs: Long
+                val inferenceMs: Long
+                if (isVision) {
+                    val imageUri = call.getString("imageUri")
+                    if (imageUri.isNullOrBlank()) {
+                        call.reject("Choose a real image to verify this vision model", "INPUT_ERROR")
+                        return@launch
+                    }
+                    val engine = VlmEngine500(getContext(), file.absolutePath, getContext().cacheDir)
+                    try {
+                        val loadStart = System.currentTimeMillis()
+                        engine.initialize()
+                        loadMs = System.currentTimeMillis() - loadStart
+                        val result = engine.runSelfTest(imageUri, "Describe this image briefly.")
+                        inferenceMs = System.currentTimeMillis() - loadStart - loadMs
+                        if (!result.success) {
+                            call.reject("Vision compatibility test failed", result.failure?.name ?: "GENERATION_ERROR")
+                            return@launch
+                        }
+                        text = "Vision test generated usable output"
+                    } finally {
+                        engine.release()
+                    }
+                } else {
+                    val host = LiteRtQwenTextHost(file.absolutePath, getContext().cacheDir)
+                    try {
+                        val loadStart = System.currentTimeMillis()
+                        host.initialize()
+                        loadMs = System.currentTimeMillis() - loadStart
+                        val inferenceStart = System.currentTimeMillis()
+                        text = host.generate("Name one item that could be lost.", 32, 0.1f)
+                        inferenceMs = System.currentTimeMillis() - inferenceStart
+                    } finally {
+                        host.close()
+                    }
+                }
+                if (text.isBlank()) {
+                    call.reject("The model generated no usable output", "GENERATION_ERROR")
+                    return@launch
+                }
+                candidateReady.add(manifest.id)
+                val response = JSObject()
+                response.put("entryId", manifest.id)
+                response.put("ready", true)
+                response.put("observedOnThisDevice", true)
+                response.put("loadMs", loadMs)
+                response.put("inferenceMs", inferenceMs)
+                if (memoryBefore != null) response.put("memoryBeforeMb", memoryBefore)
+                availableMemoryMb()?.let { response.put("memoryAfterMb", it) }
+                response.put("totalMs", System.currentTimeMillis() - started)
+                call.resolve(response)
+            } catch (_: OutOfMemoryError) {
+                candidateReady.remove(manifest.id)
+                call.reject("Not enough available memory to complete verification", "LOW_MEMORY")
+            } catch (_: Exception) {
+                candidateReady.remove(manifest.id)
+                call.reject("This model could not run with this build", "INCOMPATIBLE")
+            } finally {
+                inferenceMutex.release()
+            }
+        }
+    }
+
+    private fun availableMemoryMb(): Long? = try {
+        val service = getContext().getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memory = ActivityManager.MemoryInfo()
+        service.getMemoryInfo(memory)
+        memory.availMem / (1024L * 1024L)
+    } catch (_: Exception) { null }
+
+    @PluginMethod
+    fun deleteCandidateModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val manifest = candidateManifest(call.getString("entryId"))
+            ?: return call.reject("Unknown candidate model", "ENTRY_MISMATCH")
+        if (inferenceMutex.isHeld() || candidateDownloads[manifest.id]?.isActive == true) {
+            return call.reject("Model is in use", "BUSY")
+        }
+        candidateReady.remove(manifest.id)
+        if (!requireStore().dirFor(manifest).deleteRecursively() && requireStore().dirFor(manifest).exists()) {
+            return call.reject("Could not delete model files", "DELETE_FAILED")
+        }
+        updateCandidateState(manifest.id, VlmState.NOT_INSTALLED)
+        call.resolve()
+    }
 
     /**
      * Diag sink directory, nullable so a torn-down plugin degrades
@@ -279,6 +965,7 @@ class LocalVlmPlugin : Plugin() {
         // getContext() is valid from here on; nothing above may touch it.
         store = ModelStore.create(getContext())
         downloader = ModelDownloader(getContext(), requireStore())
+        inspectionStore = PackageInspectionStore(File(getContext().filesDir, "package-inspections"))
         prefs = getContext().getSharedPreferences("findback_vlm", Context.MODE_PRIVATE)
         expiryHandler = Handler(Looper.getMainLooper())
 
@@ -997,20 +1684,21 @@ class LocalVlmPlugin : Plugin() {
         if (!ensureInitialized(call)) return
         val entryId = call.getString("entryId") ?: return call.reject("Missing entryId")
         val sourceUri = call.getString("sourceUri") ?: return call.reject("Missing sourceUri")
-        val expectedSha256 = call.getString("expectedSha256") ?: return call.reject("Missing expectedSha256")
+        val known = KnownPackageIdentity.forCatalogueId(entryId)
+            ?: return call.reject("This model has no prepared package pin", PackageHost.Code.MISSING_PIN)
+        val requestedPin = call.getString("expectedSha256")
+        if (requestedPin != known.packageSha256) {
+            return call.reject("The requested package pin differs from this build", PackageHost.Code.HASH_MISMATCH)
+        }
         scope.launch {
             try {
-                val manifest = MODEL_MANIFESTS.singleOrNull { it.id == entryId }
-                if (manifest == null) {
-                    call.reject("Unknown catalogue entry: $entryId", PackageHost.Code.ENTRY_MISMATCH)
-                    return@launch
-                }
+                val manifest = known.manifest
                 val uri = Uri.parse(sourceUri)
                 val workDir = File(getContext().filesDir, "package-host")
                 val stagingRoot = File(workDir, "staging-${System.nanoTime()}")
                 try {
                     val staged = getContext().contentResolver.openInputStream(uri)?.use { input ->
-                        PackageHost.importPackage(input, entryId, expectedSha256, workDir, stagingRoot, getFreeBytes())
+                        PackageHost.importPackage(input, entryId, known.packageSha256, workDir, stagingRoot, getFreeBytes())
                     } ?: throw IllegalStateException("The document could not be opened.")
                     if (!staged.ok) {
                         call.reject(staged.reason ?: "Package rejected", staged.code)
@@ -1037,7 +1725,7 @@ class LocalVlmPlugin : Plugin() {
                             )
                         )
                     } else {
-                        val modelId = VlmModelId.fromWire(entryId)
+                        val modelId = VlmModelId.fromWire(manifest.id)
                         if (modelId == null) {
                             call.reject(
                                 "No lifecycle binding for catalogue entry: $entryId",

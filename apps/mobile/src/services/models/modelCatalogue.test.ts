@@ -24,6 +24,14 @@ function entry(overrides: Partial<ModelCatalogueEntry> = {}): ModelCatalogueEntr
     downloadBytes: 344671744,
     installedBytes: 344671744,
     sha256: null,
+    installedSha256: "a".repeat(64),
+    pinnedRawSource: {
+      repo: "litert-community/Qwen3-0.6B",
+      revision: "a".repeat(40),
+      file: "model.litertlm",
+      bytes: 344671744,
+      sha256: "a".repeat(64),
+    },
     minFreeRamMb: 1280,
     recommendedFreeRamMb: 2560,
     ramRequirementSource: "CONSERVATIVE_ESTIMATE",
@@ -58,15 +66,15 @@ describe("isInstallable", () => {
     expect(isInstallable(entry())).toBe(true);
   });
 
-  it("refuses catalogue-only, experimental, and unpinned entries", () => {
+  it("refuses catalogue-only, incompatible, and unpinned entries", () => {
     expect(isInstallable(entry({ catalogOnly: true }))).toBe(false);
-    expect(isInstallable(entry({ verificationStatus: "EXPERIMENTAL" }))).toBe(false);
     expect(isInstallable(entry({ verificationStatus: "INCOMPATIBLE" }))).toBe(false);
     expect(isInstallable(entry({ downloadBytes: null }))).toBe(false);
     expect(isInstallable(entry({ installedBytes: null }))).toBe(false);
   });
 
-  it("never offers the eval-only VL slot as installable", () => {
+  it("allows a pinned experimental candidate but not an unpinned one", () => {
+    expect(isInstallable(entry({ verificationStatus: "EXPERIMENTAL" }))).toBe(true);
     expect(
       isInstallable(
         entry({ verificationStatus: "EXPERIMENTAL", downloadBytes: null }),
