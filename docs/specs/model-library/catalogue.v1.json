@@ -44,7 +44,7 @@
     "asset": "smolvlm2-500m-litert-int4.fbmodel",
     "bytes": 360823865,
     "sha256": "6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137",
-    "state": "UNPUBLISHED",
+    "state": "PUBLISHED",
     "parts": null
    },
    "provenance": [
@@ -111,7 +111,7 @@
     "asset": "qwen3-0.6b-litert-dynamic-int4.fbmodel",
     "bytes": 344672709,
     "sha256": "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
-    "state": "UNPUBLISHED",
+    "state": "PUBLISHED",
     "parts": null
    },
    "provenance": [

@@ -165,20 +165,20 @@ describe("shipped catalogue", () => {
     }
   });
 
-  it("ships both v1 distributions as UNPUBLISHED", () => {
+  it("ships both v1 distributions as PUBLISHED", () => {
     const fiveHundred = SHIPPED_CATALOGUE_ENTRIES.find(
       (entry) => entry.id === "smolvlm2-500m-litert-int4",
     );
     const qwen = SHIPPED_CATALOGUE_ENTRIES.find(
       (entry) => entry.id === "qwen3-0.6b-litert-dynamic-int4",
     );
-    expect(fiveHundred?.distribution?.state).toBe("UNPUBLISHED");
-    expect(qwen?.distribution?.state).toBe("UNPUBLISHED");
+    expect(fiveHundred?.distribution?.state).toBe("PUBLISHED");
+    expect(qwen?.distribution?.state).toBe("PUBLISHED");
     for (const entry of SHIPPED_CATALOGUE_ENTRIES) {
       if (entry.distribution != null) {
-        expect(entry.distribution.state, entry.id).toBe("UNPUBLISHED");
-        expect(isDistributionPublished(entry), entry.id).toBe(false);
-        expect(hasUnpublishedDistribution(entry), entry.id).toBe(true);
+        expect(entry.distribution.state, entry.id).toBe("PUBLISHED");
+        expect(isDistributionPublished(entry), entry.id).toBe(true);
+        expect(hasUnpublishedDistribution(entry), entry.id).toBe(false);
       } else {
         expect(isDistributionPublished(entry), entry.id).toBe(false);
         expect(hasUnpublishedDistribution(entry), entry.id).toBe(false);
@@ -186,9 +186,17 @@ describe("shipped catalogue", () => {
     }
   });
 
-  it("fails closed while UNPUBLISHED: no distribution URL is handed out", () => {
+  it("hands out pinned release URLs for PUBLISHED distributions only", () => {
     for (const entry of SHIPPED_CATALOGUE_ENTRIES) {
-      expect(distributionUrlForEntry(entry), entry.id).toBeNull();
+      const url = distributionUrlForEntry(entry);
+      if (entry.distribution != null) {
+        expect(url, entry.id).not.toBeNull();
+        expect(url, entry.id).toContain(
+          "https://github.com/sheikhti1205/FindBack-Models/releases/download/models-2026-09-22-v1/",
+        );
+      } else {
+        expect(url, entry.id).toBeNull();
+      }
     }
   });
 

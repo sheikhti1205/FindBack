@@ -25,6 +25,13 @@ export interface CandidateProgress {
   totalBytes: number;
 }
 
+export interface CandidateUseProof {
+  entryId: string;
+  role: "IMAGE" | "TEXT";
+  ready: boolean;
+  loadMs: number;
+}
+
 export interface NativeCandidateHost {
   getCandidateStates(): Promise<{ models: CandidateState[] }>;
   downloadCandidateModel(options: { entryId: string }): Promise<void>;
@@ -32,6 +39,9 @@ export interface NativeCandidateHost {
   cancelCandidateDownload(options: { entryId: string }): Promise<void>;
   verifyCandidateModel(options: { entryId: string; imageUri?: string }): Promise<CandidateProbe>;
   deleteCandidateModel(options: { entryId: string }): Promise<void>;
+  useCandidateModel(options: { entryId: string }): Promise<CandidateUseProof>;
+  releaseCandidateModel(): Promise<void>;
+  getCandidateActive(): Promise<{ entryId: string | null }>;
   addListener<T extends CandidateState | CandidateProgress>(name: string, listener: (event: T) => void): Promise<{ remove(): void }>;
 }
 
@@ -42,6 +52,9 @@ export interface CandidateHost {
   cancel(entryId: string): Promise<void>;
   verify(entryId: string, imageUri?: string): Promise<CandidateProbe>;
   delete(entryId: string): Promise<void>;
+  use(entryId: string): Promise<CandidateUseProof>;
+  releaseUse(): Promise<void>;
+  getActive(): Promise<string | null>;
   onState(listener: (event: CandidateState) => void): Promise<() => void>;
   onProgress(listener: (event: CandidateProgress) => void): Promise<() => void>;
 }
@@ -54,6 +67,9 @@ export function candidateHostFrom(native: NativeCandidateHost): CandidateHost {
     cancel: (entryId) => native.cancelCandidateDownload({ entryId }),
     verify: (entryId, imageUri) => native.verifyCandidateModel({ entryId, imageUri }),
     delete: (entryId) => native.deleteCandidateModel({ entryId }),
+    use: (entryId) => native.useCandidateModel({ entryId }),
+    releaseUse: () => native.releaseCandidateModel(),
+    getActive: async () => (await native.getCandidateActive()).entryId,
     onState: async (listener) => (await native.addListener("candidateStateChange", listener)).remove,
     onProgress: async (listener) => (await native.addListener("candidateDownloadProgress", listener)).remove,
   };

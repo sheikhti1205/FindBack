@@ -21,7 +21,7 @@ class VlmManifestsTest {
         assertEquals("smolvlm2-500m-litert-int4.fbmodel", dist500.asset)
         assertEquals(360823865L, dist500.bytes)
         assertEquals("6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137", dist500.sha256)
-        assertEquals(DistributionState.UNPUBLISHED, dist500.state)
+        assertEquals(DistributionState.PUBLISHED, dist500.state)
         assertNull(dist500.parts)
 
         val twoFiftySix = MODEL_MANIFESTS.single { it.id == "smolvlm-256m" }

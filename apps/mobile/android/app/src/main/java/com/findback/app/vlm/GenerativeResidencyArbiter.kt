@@ -12,7 +12,8 @@ package com.findback.app.vlm
  */
 class GenerativeResidencyArbiter(
     private val evictImage: () -> Unit = {},
-    private val evictText: () -> Unit = {}
+    private val evictText: () -> Unit = {},
+    private val evictCandidate: () -> Unit = {}
 ) {
     enum class ResidencyRole { IMAGE, TEXT }
 
@@ -26,6 +27,10 @@ class GenerativeResidencyArbiter(
 
     @Synchronized
     fun acquireImage(entryId: String): ResidencySnapshot {
+        // A dedicated resident always evicts any experimental candidate
+        // first: the candidate sits outside this arbiter's role record but
+        // obeys the same single-resident invariant.
+        evictCandidate()
         if (residentRole == ResidencyRole.TEXT) evictText()
         residentRole = ResidencyRole.IMAGE
         residentEntryId = entryId
@@ -34,6 +39,7 @@ class GenerativeResidencyArbiter(
 
     @Synchronized
     fun acquireText(entryId: String): ResidencySnapshot {
+        evictCandidate()
         if (residentRole == ResidencyRole.IMAGE) evictImage()
         residentRole = ResidencyRole.TEXT
         residentEntryId = entryId

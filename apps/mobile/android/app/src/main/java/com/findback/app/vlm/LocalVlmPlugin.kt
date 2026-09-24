@@ -54,6 +54,11 @@ class LocalVlmPlugin : Plugin() {
     private val candidateStates = ConcurrentHashMap<String, VlmState>()
     private val candidateErrors = ConcurrentHashMap<String, String>()
     private val candidateReady = ConcurrentHashMap.newKeySet<String>()
+
+    private companion object {
+        /** Prefs key holding the active experimental-candidate entry id. */
+        const val CANDIDATE_ACTIVE_KEY = "candidate_active_entry"
+    }
     private var currentMode: BackendMode = BackendMode.AUTO
     private var eventCollector: Job? = null
     /**
@@ -94,6 +99,12 @@ class LocalVlmPlugin : Plugin() {
         isModelInstalled = { qwenModelFileIfPresent() != null }
     )
 
+    // Resident experimental-candidate runtime for the four raw-weight
+    // entries. At most one candidate engine is resident and it never
+    // coexists with the dedicated image/text residents: activation evicts
+    // them first through the same deferring release paths.
+    private val candidateRuntime = CandidateRuntimeController()
+
     // Text transfer lifecycle (Y owner, text-specific bridge keyed by the
     // exact qualified bridge id). Foreground chunk-engine download with the
     // same verified-promotion discipline as the image path; the image
@@ -116,7 +127,8 @@ class LocalVlmPlugin : Plugin() {
                 releaseEngine500()
             }
         },
-        evictText = { textController.release() }
+        evictText = { textController.release() },
+        evictCandidate = { candidateRuntime.release() }
     )
 
     private fun requireStore(): ModelStore = store ?: throw IllegalStateException("Plugin not initialized")
@@ -125,6 +137,45 @@ class LocalVlmPlugin : Plugin() {
 
     private fun candidateManifest(id: String?): ModelManifest? =
         PinnedModelSources.manifests.singleOrNull { it.id == id }
+
+    /**
+     * Builds and installs the resident engine for a verified candidate. The
+     * handle wraps the exact generic LiteRT-LM host the verify probe used:
+     * [VlmEngine500] for image candidates, [LiteRtQwenTextHost] for text.
+     */
+    private fun activateCandidate(entryId: String, role: CandidateRuntimeController.Role) {
+        val manifest = candidateManifest(entryId)
+            ?: throw IllegalStateException("Unknown candidate model: $entryId")
+        val file = requireStore().finalFile(manifest, manifest.files.single())
+        val context = getContext()
+        when (role) {
+            CandidateRuntimeController.Role.IMAGE -> {
+                val engine = VlmEngine500(context, file.absolutePath, context.cacheDir)
+                candidateRuntime.activateImage(
+                    entryId,
+                    CandidateRuntimeController.VisionHandle(
+                        initialize = { engine.initialize() },
+                        run = { prepared, instruction, max, temperature, traceId ->
+                            engine.analyze(prepared, instruction, max, temperature, traceId)
+                        },
+                        release = { engine.release() }
+                    )
+                )
+            }
+            CandidateRuntimeController.Role.TEXT -> {
+                val host = LiteRtQwenTextHost(file.absolutePath, context.cacheDir)
+                candidateRuntime.activateText(
+                    entryId,
+                    CandidateRuntimeController.TextHandle(
+                        initialize = { host.initialize() },
+                        run = { prompt, max, temperature -> host.generate(prompt, max, temperature) },
+                        cancel = { host.cancelInFlight() },
+                        release = { host.close() }
+                    )
+                )
+            }
+        }
+    }
 
     /** SAF returns content URIs only; no received Intent is ever forwarded. */
     @PluginMethod
@@ -852,8 +903,164 @@ class LocalVlmPlugin : Plugin() {
         if (!requireStore().dirFor(manifest).deleteRecursively() && requireStore().dirFor(manifest).exists()) {
             return call.reject("Could not delete model files", "DELETE_FAILED")
         }
+        // Deleting the active candidate drops its residency and pointer.
+        if (candidateRuntime.residentEntryId() == manifest.id) {
+            candidateRuntime.release()
+            try { requirePrefs().edit().remove(CANDIDATE_ACTIVE_KEY).apply() } catch (_: Exception) { }
+        }
         updateCandidateState(manifest.id, VlmState.NOT_INSTALLED)
         call.resolve()
+    }
+
+    private fun persistedCandidateEntryId(): String? =
+        try {
+            requirePrefs().getString(CANDIDATE_ACTIVE_KEY, null)
+        } catch (_: Exception) {
+            null
+        }
+
+    /**
+     * Activates a verified experimental candidate as the resident engine for
+     * its role. Requires verified installed weights; evicts the dedicated
+     * image/text residents first; initializes the same generic LiteRT-LM host
+     * the verify probe used. Persists the active entry so inference routing
+     * survives a process restart (the engine re-initializes lazily).
+     */
+    @PluginMethod
+    fun useCandidateModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val manifest = candidateManifest(call.getString("entryId"))
+            ?: return call.reject("Unknown candidate model", "ENTRY_MISMATCH")
+        val role = CandidateRuntimeController.roleFor(manifest.id)
+            ?: return call.reject("Unknown candidate role", "ENTRY_MISMATCH")
+        if (!CandidateModelStatus.hasVerifiedWeights(requireStore(), manifest)) {
+            return call.reject("Installed bytes failed integrity verification", "HASH_MISMATCH")
+        }
+        if (!inferenceMutex.tryAcquire()) return call.reject("Inference already in progress", "BUSY")
+        scope.launch {
+            val started = System.currentTimeMillis()
+            try {
+                // Single residency: evict the dedicated residents first.
+                textController.release()
+                releaseEngine500()
+                residencyArbiter.releaseAll()
+                activateCandidate(manifest.id, role)
+                requirePrefs().edit().putString(CANDIDATE_ACTIVE_KEY, manifest.id).apply()
+                val response = JSObject()
+                response.put("entryId", manifest.id)
+                response.put("role", role.wire)
+                response.put("ready", true)
+                response.put("loadMs", System.currentTimeMillis() - started)
+                call.resolve(response)
+            } catch (_: OutOfMemoryError) {
+                candidateRuntime.release()
+                try { requirePrefs().edit().remove(CANDIDATE_ACTIVE_KEY).apply() } catch (_: Exception) { }
+                call.reject("Not enough available memory to activate this model", "LOW_MEMORY")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                candidateRuntime.release()
+                try { requirePrefs().edit().remove(CANDIDATE_ACTIVE_KEY).apply() } catch (_: Exception) { }
+                call.reject("This model could not run with this build", "INCOMPATIBLE")
+            } finally {
+                inferenceMutex.release()
+            }
+        }
+    }
+
+    /** Releases the resident candidate engine and clears the persisted pointer. */
+    @PluginMethod
+    fun releaseCandidateModel(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        candidateRuntime.release()
+        try { requirePrefs().edit().remove(CANDIDATE_ACTIVE_KEY).apply() } catch (_: Exception) { }
+        call.resolve()
+    }
+
+    /** Active candidate entry id (persisted), or null when none is selected. */
+    @PluginMethod
+    fun getCandidateActive(call: PluginCall) {
+        if (!ensureInitialized(call)) return
+        val response = JSObject()
+        response.put("entryId", persistedCandidateEntryId())
+        call.resolve(response)
+    }
+
+    /**
+     * Runs one image generation on the active vision candidate, lazily
+     * activating it from the persisted pointer if the process restarted.
+     * Called from `analyzeImage` when the active entry is a vision candidate.
+     */
+    private fun runVisionCandidate(
+        call: PluginCall,
+        entryId: String,
+        imageUri: String,
+        instruction: String,
+        maxOutputTokens: Int,
+        temperature: Float,
+        traceId: String?
+    ) {
+        val manifest = candidateManifest(entryId)
+        if (manifest == null) {
+            call.reject("No runnable runtime is wired for this entry in this build.")
+            return
+        }
+        if (!CandidateModelStatus.hasVerifiedWeights(requireStore(), manifest)) {
+            call.reject("Installed bytes failed integrity verification", "HASH_MISMATCH")
+            return
+        }
+        if (!inferenceMutex.tryAcquire()) {
+            call.reject("Inference already in progress", "BUSY")
+            return
+        }
+        val token = activeInference.begin()
+        if (token == null) {
+            inferenceMutex.release()
+            call.reject("Inference already in progress", "BUSY")
+            return
+        }
+        scope.launch {
+            var prepared: ImagePreparer.PreparedImage? = null
+            try {
+                if (!candidateRuntime.isActive(entryId)) {
+                    textController.release()
+                    releaseEngine500()
+                    residencyArbiter.releaseAll()
+                    activateCandidate(entryId, CandidateRuntimeController.Role.IMAGE)
+                }
+                prepared = ImagePreparer.prepare(getContext(), imageUri, traceId)
+                activeInference.markNativeRunning(token, true)
+                val resultText = try {
+                    candidateRuntime.analyzeImage(prepared, instruction, maxOutputTokens, temperature, traceId)
+                } finally {
+                    activeInference.markNativeRunning(token, false)
+                }
+                if (activeInference.isCancelled(token)) {
+                    call.reject("Inference cancelled", "CANCELLED")
+                    return@launch
+                }
+                val result = JSObject()
+                result.put("text", resultText)
+                result.put("modelId", entryId)
+                result.put("backend", VlmEngineBackend.GPU.wire)
+                result.put("runtime", "0.16.0")
+                result.put("diagnostics", JSArray())
+                call.resolve(result)
+            } catch (_: OutOfMemoryError) {
+                call.reject("Not enough available memory to run this model", "LOW_MEMORY")
+            } catch (e: CancellationException) {
+                try { call.reject("Inference cancelled", "CANCELLED") } catch (_: Exception) { }
+                throw e
+            } catch (e: Exception) {
+                if (!activeInference.isCancelled(token)) {
+                    call.reject("Inference failed: ${e.message}")
+                }
+            } finally {
+                prepared?.let { ImagePreparer.cleanup(it) }
+                activeInference.finishNative(token)
+                inferenceMutex.release()
+            }
+        }
     }
 
     /**
@@ -1248,9 +1455,10 @@ class LocalVlmPlugin : Plugin() {
                 return
             }
 
-            // Publication gate: the catalogue stays authoritative — while the
-            // distribution is UNPUBLISHED no scheduler work is queued and no
-            // network fetch starts. Fail closed with the honest state.
+            // Publication gate: the catalogue stays authoritative — a
+            // PUBLISHED distribution queues the pinned release-asset fetch;
+            // any entry whose record is missing or not published fails
+            // closed before any network work starts.
             if (!ModelDownloader.isDownloadPermitted(manifest.distribution)) {
                 updateModelState(modelId, VlmState.DOWNLOAD_FAILED, error = UNPUBLISHED_DISTRIBUTION_MESSAGE)
                 call.reject(UNPUBLISHED_DISTRIBUTION_MESSAGE)
@@ -2086,6 +2294,18 @@ class LocalVlmPlugin : Plugin() {
         // means untraced; Diag hooks no-op unless verbose logging is on.
         val traceId = call.getString("traceId")
 
+        // Experimental candidate dispatch: when a vision candidate is the
+        // active entry, run it instead of the recommended image model. The
+        // candidate engine is the same generic LiteRT-LM host the verify
+        // probe used; it never silently falls back to another model.
+        val activeCandidate = persistedCandidateEntryId()
+        if (activeCandidate != null &&
+            CandidateRuntimeController.roleFor(activeCandidate) == CandidateRuntimeController.Role.IMAGE
+        ) {
+            runVisionCandidate(call, activeCandidate, imageUri, instruction, maxOutputTokens, temperature, traceId)
+            return
+        }
+
         val selectedModel = VlmRouter.selectForAnalysis(mode, modelStates.mapValues { it.value.state })
         val modelId = when (selectedModel) {
             is AnalysisSelection.Ready -> selectedModel.modelId
@@ -2401,6 +2621,44 @@ class LocalVlmPlugin : Plugin() {
                 mapOf("modelId" to modelId, "maxOutputTokens" to maxOutputTokens)
             )
             try {
+                // Experimental candidate dispatch: when the requested id is
+                // the active text candidate, run its resident engine (lazily
+                // activated from the persisted pointer after a restart).
+                val activeCandidate = persistedCandidateEntryId()
+                if (activeCandidate != null && modelId == activeCandidate &&
+                    CandidateRuntimeController.roleFor(activeCandidate) == CandidateRuntimeController.Role.TEXT
+                ) {
+                    try {
+                        if (!candidateRuntime.isActive(activeCandidate)) {
+                            val candidateManifest = candidateManifest(activeCandidate)
+                            if (candidateManifest == null ||
+                                !CandidateModelStatus.hasVerifiedWeights(requireStore(), candidateManifest)
+                            ) {
+                                call.reject("Installed bytes failed integrity verification", "HASH_MISMATCH")
+                                return@launch
+                            }
+                            textController.release()
+                            releaseEngine500()
+                            residencyArbiter.releaseAll()
+                            activateCandidate(activeCandidate, CandidateRuntimeController.Role.TEXT)
+                        }
+                        val candidateText = candidateRuntime.generateText(
+                            activeCandidate, prompt, maxOutputTokens, temperature
+                        )
+                        val candidateResult = JSObject()
+                        candidateResult.put("text", candidateText)
+                        candidateResult.put("modelId", activeCandidate)
+                        candidateResult.put("backend", VlmEngineBackend.GPU.wire)
+                        candidateResult.put("runtime", "0.16.0")
+                        call.resolve(candidateResult)
+                    } catch (_: OutOfMemoryError) {
+                        call.reject("Not enough available memory to run this model", "LOW_MEMORY")
+                    } catch (e: Exception) {
+                        call.reject("Text generation failed: ${e.message}")
+                    }
+                    return@launch
+                }
+
                 // Single generative residency: evict the image engine first
                 // when it holds residency, then record the text entry. Only
                 // the accepted id can create residency; anything else is
@@ -2522,6 +2780,30 @@ class LocalVlmPlugin : Plugin() {
     @PluginMethod
     fun getTextRuntimeStatus(call: PluginCall) {
         if (!ensureInitialized(call)) return
+        // A selected experimental text candidate answers the assistant's
+        // status read too: report ready only when its installed weights still
+        // verify (cached), so a stale pointer never inflates readiness. The
+        // engine itself re-initializes lazily on the first generateText call.
+        val activeCandidate = persistedCandidateEntryId()
+        val activeCandidateManifest =
+            activeCandidate?.let { candidateManifest(it) }
+        if (activeCandidate != null &&
+            activeCandidateManifest != null &&
+            CandidateRuntimeController.roleFor(activeCandidate) == CandidateRuntimeController.Role.TEXT &&
+            CandidateModelStatus.hasVerifiedWeights(requireStore(), activeCandidateManifest)
+        ) {
+            val candidateStatus = JSObject()
+            candidateStatus.put("modelId", activeCandidate)
+            candidateStatus.put("ready", true)
+            candidateStatus.put("nativeRunning", false)
+            candidateStatus.put("backend", VlmEngineBackend.GPU.wire)
+            candidateStatus.put("modelFilePresent", true)
+            candidateStatus.put("installed", true)
+            candidateStatus.put("textReady", true)
+            candidateStatus.put("residentModelId", activeCandidate)
+            call.resolve(candidateStatus)
+            return
+        }
         val status = try {
             textController.status()
         } catch (e: Exception) {
@@ -2568,6 +2850,7 @@ class LocalVlmPlugin : Plugin() {
         // returns — never unlock early, never resolve the stale call.
         activeInference.cancel()
         textController.cancel()
+        candidateRuntime.cancel()
         call.resolve()
     }
 
@@ -2592,7 +2875,12 @@ class LocalVlmPlugin : Plugin() {
         // The text controller defers its own close while native text code
         // runs and cancels the in-flight generation first.
         textController.release()
+        candidateRuntime.release()
         residencyArbiter.releaseAll()
+        // Dropping residency also clears any selected candidate pointer so a
+        // later dedicated activation (Smol image / Qwen text) can never be
+        // shadowed by a stale candidate dispatch.
+        try { requirePrefs().edit().remove(CANDIDATE_ACTIVE_KEY).apply() } catch (_: Exception) { }
 
         // Cancel the event collector and downloads, but never cancel the root
         // scope itself: a cancelled scope silently drops every later launch,

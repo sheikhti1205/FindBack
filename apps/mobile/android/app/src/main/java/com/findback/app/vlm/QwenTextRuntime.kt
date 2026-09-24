@@ -71,7 +71,7 @@ object QwenTextRuntime {
             asset = DISTRIBUTION_ASSET,
             bytes = DISTRIBUTION_BYTES,
             sha256 = DISTRIBUTION_SHA256,
-            state = DistributionState.UNPUBLISHED,
+            state = DistributionState.PUBLISHED,
             parts = null
         )
     )

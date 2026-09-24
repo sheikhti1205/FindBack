@@ -62,7 +62,7 @@ describe("compact six-model mapping", () => {
       for (const action of lifecycleActions) {
         expect(actionOwnerFor(entryId, action, "EXPERIMENTAL")).toBe("candidate");
       }
-      expect(actionOwnerFor(entryId, "use", "EXPERIMENTAL")).toBe("none");
+      expect(actionOwnerFor(entryId, "use", "EXPERIMENTAL")).toBe("candidate");
     }
     expect(actionOwnerFor("imported-1", "delete", "IMPORTED")).toBe("transfer");
     expect(actionOwnerFor("imported-1", "use", "IMPORTED")).toBe("none");

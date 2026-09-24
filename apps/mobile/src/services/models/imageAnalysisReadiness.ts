@@ -1,4 +1,6 @@
 import { getVlmBridge, type VlmState } from "../vlmPlugin";
+import { getCandidateHost } from "./candidateHost";
+import { CANDIDATE_VISION_ENTRY_ID } from "./shippedCatalogue";
 
 export interface ImageAnalysisReadiness {
   available: boolean;
@@ -38,9 +40,28 @@ export async function readImageAnalysisReadiness(): Promise<ImageAnalysisReadine
       states.find((m) => m.id === "smolvlm2-500m") ??
       states.find((m) => m.state === "READY_GPU") ??
       null;
-    if (info == null) return { available: false, reason: "NO_MODEL" };
-    return readinessFromImageState(info.state, false);
+    const dedicated = info == null ? null : readinessFromImageState(info.state, false);
+    if (dedicated?.available) return dedicated;
+    // A verified, resident vision candidate powers the same native
+    // `analyzeImage` entry point (no modelId is sent), so analysis is
+    // available even when the recommended image model is not installed.
+    const activeCandidate = await readActiveCandidateEntryId();
+    if (activeCandidate === CANDIDATE_VISION_ENTRY_ID) {
+      return { available: true, reason: "READY" };
+    }
+    if (dedicated != null) return dedicated;
+    return { available: false, reason: "NO_MODEL" };
   } catch {
     return { available: false, reason: "UNAVAILABLE" };
+  }
+}
+
+async function readActiveCandidateEntryId(): Promise<string | null> {
+  try {
+    const host = getCandidateHost();
+    if (host == null) return null;
+    return await host.getActive();
+  } catch {
+    return null;
   }
 }

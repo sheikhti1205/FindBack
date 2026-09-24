@@ -38,7 +38,7 @@ import {
   QWEN_ENTRY_ID,
   SMOL_ENTRY_ID,
 } from "../services/models/compactManager";
-import { bridgeModelIdForEntry, hasUnpublishedDistribution, SHIPPED_CATALOGUE_ENTRIES, UNPUBLISHED_DISTRIBUTION_MESSAGE } from "../services/models/shippedCatalogue";
+import { bridgeModelIdForEntry, hasUnpublishedDistribution, isExperimentalCandidateEntryId, SHIPPED_CATALOGUE_ENTRIES, UNPUBLISHED_DISTRIBUTION_MESSAGE } from "../services/models/shippedCatalogue";
 import { activateQwenText, isTextReadySelfTest, shellTextSeamsFromBridgeStatus, type QwenLifecycleBridge } from "../services/models/qwenLifecycle";
 import { activateModel } from "../services/models/modelActivation";
 import { isTextRuntimePresent, QWEN_TEXT_BRIDGE_MODEL_ID } from "../services/models/textRuntime";
@@ -285,8 +285,17 @@ async function executeCandidateAction(entryId: string, action: ManagerAction, ct
       await candidates.delete(entryId);
       await ctx.refresh();
       return;
-    case "use":
-      throw new Error("Verified only — no executable runtime is wired for this entry in this build, so it cannot run analysis here.");
+    case "use": {
+      // Verified candidate Use: native installs the resident engine for the
+      // entry's role (vision or text) and later inference routes to it.
+      const proof = await candidates.use(entryId);
+      if (!proof?.ready) {
+        throw new Error("This model could not be activated in this build. Nothing changed.");
+      }
+      ctx.onBecameActive(entryId);
+      await ctx.refresh();
+      return;
+    }
     case "tryAgain":
       await ctx.refresh();
       return;
@@ -548,6 +557,7 @@ export function OfflineAiCompact(seams?: CompactSeams) {
       const canUse =
         model.entryId === SMOL_ENTRY_ID ? vlm != null
         : model.entryId === QWEN_ENTRY_ID ? isTextRuntimePresent(vlm)
+        : isExperimentalCandidateEntryId(model.entryId) ? candidates != null && next.state === "READY"
         : false;
       return { ...next, canUse };
     });
