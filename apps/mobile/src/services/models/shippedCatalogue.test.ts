@@ -130,9 +130,9 @@ describe("shipped catalogue", () => {
       repo: "sheikhti1205/FindBack-Models",
       tag: "models-2026-09-22-v1",
       asset: "smolvlm2-500m-litert-int4.fbmodel",
-      bytes: 360823868,
+      bytes: 360823865,
       sha256:
-        "41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e",
+        "6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137",
       parts: null,
     });
     expect(fiveHundred?.installedBytes).toBe(360822960);
@@ -146,9 +146,9 @@ describe("shipped catalogue", () => {
       repo: "sheikhti1205/FindBack-Models",
       tag: "models-2026-09-22-v1",
       asset: "qwen3-0.6b-litert-dynamic-int4.fbmodel",
-      bytes: 344672713,
+      bytes: 344672709,
       sha256:
-        "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+        "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
       parts: null,
     });
     expect(qwen?.installedBytes).toBe(344671744);

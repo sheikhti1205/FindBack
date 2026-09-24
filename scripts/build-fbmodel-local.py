@@ -17,15 +17,13 @@ Usage:
   python3 scripts/build-fbmodel-local.py [--cache-dir ~/.cache/findback-model-lab] [--out-dir /tmp/findback-modeldist]
 """
 import argparse
-import datetime
 import hashlib
 import json
 import os
 import sys
 import zipfile
 
-ENTRIES = [
-    {
+ENTRIES = [    {
         "entryId": "smolvlm2-500m-litert-int4",
         "srcName": "SmolVLM2-500M.litertlm",
         "weightsPath": "weights/SmolVLM2-500M.litertlm",
@@ -62,12 +60,30 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+# Fixed package timestamps. Package bytes are pinned exactly by the shipped
+# catalogue, so the build must be bit-for-bit reproducible: no wall-clock
+# time anywhere in the manifest or the ZIP headers. The value below is part
+# of the package recipe (v1), not the actual build moment; the real build
+# moment is recorded nowhere because it would break the pin.
+PACKAGE_CREATED_AT = "2026-09-24T00:00:00Z"
+ZIP_DATE_TIME = (2026, 9, 24, 0, 0, 0)
+
+
+def fixed_entry(name, data, compress_type, compress_level=None):
+    info = zipfile.ZipInfo(name, date_time=ZIP_DATE_TIME)
+    info.compress_type = compress_type
+    if compress_level is not None:
+        info.compress_level = compress_level
+    info.create_system = 3
+    return info, data
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache-dir", default=os.path.expanduser("~/.cache/findback-model-lab"))
     parser.add_argument("--out-dir", default="/tmp/findback-modeldist")
     args = parser.parse_args()
-    created = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    created = PACKAGE_CREATED_AT
     os.makedirs(args.out_dir, exist_ok=True)
     for entry in ENTRIES:
         src = os.path.join(args.cache_dir, entry["srcName"])
@@ -107,9 +123,12 @@ def main():
         with open(src, "rb") as src_file:
             weights_bytes = src_file.read()
         with zipfile.ZipFile(fbmodel, "w") as archive:
-            archive.writestr(entry["weightsPath"], weights_bytes, compress_type=zipfile.ZIP_STORED)
-            archive.writestr("checksums.json", checks_json, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
-            archive.writestr("manifest.json", manifest_json, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+            info, data = fixed_entry(entry["weightsPath"], weights_bytes, zipfile.ZIP_STORED)
+            archive.writestr(info, data)
+            info, data = fixed_entry("checksums.json", checks_json, zipfile.ZIP_DEFLATED, 6)
+            archive.writestr(info, data)
+            info, data = fixed_entry("manifest.json", manifest_json, zipfile.ZIP_DEFLATED, 6)
+            archive.writestr(info, data)
         package_bytes = os.path.getsize(fbmodel)
         package_sha = sha256_file(fbmodel)
         with open(fbmodel + ".sha256", "w") as f:
