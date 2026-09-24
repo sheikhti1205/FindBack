@@ -1,17 +1,25 @@
 /**
- * Compact six-model manager screen (Phase A revision 03).
+ * Compact six-model manager screen (Phase A revision 04).
  *
  * Mounted at `/offline-ai`. Renders the green presentational
  * `ModelManagerView` with real native state:
  * - SmolVLM2 500M through the image `VlmBridge`;
- * - Qwen3 0.6B Dynamic INT4 through the text-bridge status;
+ * - Qwen3 0.6B Dynamic INT4 through the qualified text lifecycle;
  * - four pinned raw candidates through `getCandidateHost()`;
  * - global Import/Export through `getTransferHost()`.
  *
- * Known release-package downloads stay blocked while UNPUBLISHED (honest
- * Unavailable, never a bypass). Experimental `Use` never claims activation:
- * only entries with a wired role-safe runtime path can activate, the rest
- * report verified-only. New flows use dialogs, never window.prompt/confirm.
+ * All entry actions route through one explicit dispatcher
+ * (`executeManagerAction`, keyed by catalogue entry identity via
+ * `actionOwnerFor`): Smol hits the image lifecycle, Qwen the text
+ * lifecycle, experimental candidates the candidate host, imported rows the
+ * transfer host. No per-button bridge guessing.
+ *
+ * Known release-package downloads derive from the catalogue release
+ * record: UNPUBLISHED stays honestly Unavailable, and a future PUBLISHED
+ * flip enables the buttons with no UI change. Readiness renders only from
+ * verified installation/readiness evidence — never from optimistic local
+ * overrides. Only entries with a wired role-safe runtime path offer Use.
+ * New flows use dialogs, never window.prompt/confirm.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -23,15 +31,17 @@ import { getVlmBridge, isTextBridge } from "../services/vlmPlugin";
 import { getCandidateHost, type CandidateHost } from "../services/models/candidateHost";
 import { getTransferHost, type ImportedModelRecord, type InspectedImport, type ProbeInspectedResult, type TransferHost } from "../services/models/packageTransferHost";
 import {
+  actionOwnerFor,
   applyLiveState,
   compactDescriptors,
   importedToManagerModels,
-  managerStatusFrom,
+  QWEN_ENTRY_ID,
+  SMOL_ENTRY_ID,
 } from "../services/models/compactManager";
-import { bridgeModelIdForEntry, hasUnpublishedDistribution, SHIPPED_CATALOGUE_ENTRIES } from "../services/models/shippedCatalogue";
-import { shellTextSeamsFromBridgeStatus } from "../services/models/qwenLifecycle";
+import { bridgeModelIdForEntry, hasUnpublishedDistribution, SHIPPED_CATALOGUE_ENTRIES, UNPUBLISHED_DISTRIBUTION_MESSAGE } from "../services/models/shippedCatalogue";
+import { activateQwenText, isTextReadySelfTest, shellTextSeamsFromBridgeStatus, type QwenLifecycleBridge } from "../services/models/qwenLifecycle";
 import { activateModel } from "../services/models/modelActivation";
-import { activateTextModel, isTextRuntimePresent, QWEN_TEXT_BRIDGE_MODEL_ID } from "../services/models/textRuntime";
+import { isTextRuntimePresent, QWEN_TEXT_BRIDGE_MODEL_ID } from "../services/models/textRuntime";
 import { loadResidentEntryId, saveResidentEntryId } from "../services/models/roleSelection";
 import { chooseFromGallery, toNativeImageUri } from "../services/photo";
 
@@ -47,6 +57,19 @@ export interface CompactVlmSeam {
   runTextSelfTest?(id: string): Promise<{ ready?: boolean; state?: string }>;
   getTextRuntimeStatus?(): Promise<{ textInstalled?: boolean; textReady?: boolean; installed?: boolean; ready?: boolean }>;
   generateText?: (request: unknown) => Promise<unknown>;
+  cancelInference?(): Promise<void>;
+  release?(): Promise<void>;
+  /**
+   * Qualified text download/delete lifecycle (see `QwenLifecycleBridge`).
+   * Optional: present only on native builds that wire the text transfer
+   * path. Absent methods fail closed with an honest unavailable error —
+   * never invent a native call, never fall through to another lifecycle.
+   */
+  downloadTextModel?: QwenLifecycleBridge["downloadTextModel"];
+  pauseTextDownload?: QwenLifecycleBridge["pauseTextDownload"];
+  resumeTextDownload?: QwenLifecycleBridge["resumeTextDownload"];
+  cancelTextDownload?: QwenLifecycleBridge["cancelTextDownload"];
+  deleteTextModel?: QwenLifecycleBridge["deleteTextModel"];
   onDownloadProgress?(listener: (event: { modelId: string; downloadedBytes: number; totalBytes: number }) => void): Promise<() => void>;
   onModelStateChange?(listener: (info: { id: string; state: string }) => void): Promise<() => void>;
 }
@@ -59,8 +82,9 @@ export interface CompactSeams {
   pickTestImage?: () => Promise<string | null>;
 }
 
-const SMOL_ENTRY = "smolvlm2-500m-litert-int4";
-const QWEN_ENTRY = "qwen3-0.6b-litert-dynamic-int4";
+/** Bridge-level image model id backing the recommended SmolVLM2 entry. */
+export const SMOL_BRIDGE_ID = "smolvlm2-500m" as const;
+
 const LARGE_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 
 function formatBytes(bytes: number): string {
@@ -70,6 +94,240 @@ function formatBytes(bytes: number): string {
 
 function entryById(id: string) {
   return SHIPPED_CATALOGUE_ENTRIES.find((entry) => entry.id === id) ?? null;
+}
+
+export interface ManagerActionContext {
+  model: ManagerModel;
+  vlm: CompactVlmSeam | null;
+  candidates: CandidateHost | null;
+  transfers: TransferHost | null;
+  vlmStates: ReadonlyArray<{ id: string; state: string }>;
+  textStatus: { textInstalled: boolean; textReady: boolean } | null;
+  activeId: string | null;
+  ramMb: number | null;
+  pickTestImage: () => Promise<string | null>;
+  onBecameActive: (entryId: string) => void;
+  onImportedDeleted: (entryId: string) => void;
+  refresh: () => Promise<void>;
+}
+
+function requireVlm(ctx: ManagerActionContext) {
+  if (!ctx.vlm) throw new Error("The image runtime is missing in this build. Nothing changed.");
+  return ctx.vlm;
+}
+
+function requireCandidates(ctx: ManagerActionContext) {
+  if (!ctx.candidates) throw new Error("Candidate downloads are unavailable in this build. Nothing changed.");
+  return ctx.candidates;
+}
+
+async function executeImageAction(entryId: string, action: ManagerAction, ctx: ManagerActionContext): Promise<void> {
+  const vlm = requireVlm(ctx);
+  switch (action) {
+    case "download": {
+      const entry = entryById(entryId);
+      if (entry && hasUnpublishedDistribution(entry)) throw new Error(UNPUBLISHED_DISTRIBUTION_MESSAGE + " Download is unavailable.");
+      await vlm.downloadModel(SMOL_BRIDGE_ID);
+      await ctx.refresh();
+      return;
+    }
+    case "pause":
+      await vlm.pauseDownload(SMOL_BRIDGE_ID);
+      break;
+    case "resume":
+      await vlm.resumeDownload(SMOL_BRIDGE_ID);
+      break;
+    case "cancel":
+      await vlm.cancelDownload(SMOL_BRIDGE_ID);
+      break;
+    case "verify": {
+      const uri = await ctx.pickTestImage();
+      if (!uri) throw new Error("Choose a test photo to verify this vision model. Nothing changed.");
+      const result = await vlm.runGpuSelfTest(SMOL_BRIDGE_ID, uri);
+      if (result?.state !== "GPU_AVAILABLE") {
+        throw new Error("This model cannot run with this FindBack build. See Details for the reason.");
+      }
+      // Readiness renders from the refreshed authoritative native state only.
+      await ctx.refresh();
+      return;
+    }
+    case "use": {
+      const entry = entryById(entryId);
+      if (!entry) throw new Error("No executable runtime is wired for this entry in this build.");
+      if (typeof vlm.cancelInference !== "function" || typeof vlm.release !== "function") {
+        throw new Error("No executable image runtime is wired for this entry in this build.");
+      }
+      const result = await activateModel(vlm as never, entry, {
+        currentResidentId: ctx.activeId,
+        availableFreeRamMb: ctx.ramMb,
+        advancedConfirmed: true,
+        runtimeCapability: "RUNTIME_AVAILABLE",
+      });
+      if (!result.ok) throw new Error(result.reason);
+      if (!result.alreadyActive) ctx.onBecameActive(entryId);
+      return;
+    }
+    case "delete":
+      await vlm.deleteModel(SMOL_BRIDGE_ID);
+      await ctx.refresh();
+      return;
+    case "tryAgain":
+      await ctx.refresh();
+      return;
+  }
+  await ctx.refresh();
+}
+
+async function executeTextAction(entryId: string, action: ManagerAction, ctx: ManagerActionContext): Promise<void> {
+  const vlm = requireVlm(ctx);
+  switch (action) {
+    case "download": {
+      const entry = entryById(entryId);
+      if (!entry) throw new Error("No executable text runtime is wired for this entry in this build.");
+      if (hasUnpublishedDistribution(entry)) throw new Error(UNPUBLISHED_DISTRIBUTION_MESSAGE + " Download is unavailable.");
+      if (typeof vlm.downloadTextModel !== "function") {
+        throw new Error("No executable text download is wired for this entry in this build. Nothing changed.");
+      }
+      await vlm.downloadTextModel({ modelId: QWEN_TEXT_BRIDGE_MODEL_ID });
+      await ctx.refresh();
+      return;
+    }
+    case "pause":
+      if (typeof vlm.pauseTextDownload !== "function") {
+        throw new Error("Pause is unavailable for the text runtime in this build. Nothing changed.");
+      }
+      await vlm.pauseTextDownload({ modelId: QWEN_TEXT_BRIDGE_MODEL_ID });
+      break;
+    case "resume":
+      if (typeof vlm.resumeTextDownload !== "function") {
+        throw new Error("Resume is unavailable for the text runtime in this build. Nothing changed.");
+      }
+      await vlm.resumeTextDownload({ modelId: QWEN_TEXT_BRIDGE_MODEL_ID });
+      break;
+    case "cancel":
+      if (typeof vlm.cancelTextDownload !== "function") {
+        throw new Error("Cancel is unavailable for the text runtime in this build. Nothing changed.");
+      }
+      await vlm.cancelTextDownload({ modelId: QWEN_TEXT_BRIDGE_MODEL_ID });
+      break;
+    case "verify": {
+      if (typeof vlm.runTextSelfTest !== "function") {
+        throw new Error("No executable text runtime is wired for this entry in this build, so it cannot be verified here.");
+      }
+      const result = await vlm.runTextSelfTest(QWEN_TEXT_BRIDGE_MODEL_ID);
+      if (!isTextReadySelfTest({ ready: result?.ready === true, state: result?.state ?? "" })) {
+        throw new Error("This model cannot run with this FindBack build. See Details for the reason.");
+      }
+      // Readiness renders from the refreshed authoritative native state only.
+      await ctx.refresh();
+      return;
+    }
+    case "use": {
+      const entry = entryById(entryId);
+      if (!entry) throw new Error("No executable runtime is wired for this entry in this build.");
+      if (!isTextRuntimePresent(vlm) || typeof vlm.cancelInference !== "function" || typeof vlm.release !== "function") {
+        throw new Error("Cannot activate: no executable text runtime for this entry in this build.");
+      }
+      const result = await activateQwenText(vlm as never, entry, {
+        currentResidentId: ctx.activeId,
+        availableFreeRamMb: ctx.ramMb,
+        advancedConfirmed: true,
+        textRuntimePresent: true,
+        runtimeReady: ctx.textStatus?.textReady === true,
+      });
+      if (!result.ok) throw new Error(result.reason);
+      if (!result.alreadyActive) ctx.onBecameActive(entryId);
+      return;
+    }
+    case "delete":
+      if (typeof vlm.deleteTextModel !== "function") {
+        throw new Error("Delete is unavailable for the text runtime in this build. Nothing changed.");
+      }
+      await vlm.deleteTextModel({ modelId: QWEN_TEXT_BRIDGE_MODEL_ID });
+      await ctx.refresh();
+      return;
+    case "tryAgain":
+      await ctx.refresh();
+      return;
+  }
+  await ctx.refresh();
+}
+
+async function executeCandidateAction(entryId: string, action: ManagerAction, ctx: ManagerActionContext): Promise<void> {
+  const candidates = requireCandidates(ctx);
+  switch (action) {
+    case "download":
+    case "resume":
+      // The candidate host has no separate resume op: re-issuing download
+      // resumes staged bytes.
+      await candidates.download(entryId);
+      await ctx.refresh();
+      return;
+    case "pause":
+      await candidates.pause(entryId);
+      break;
+    case "cancel":
+      await candidates.cancel(entryId);
+      break;
+    case "verify": {
+      const needsImage = entryId === "lfm2.5-vl-450m";
+      const uri = needsImage ? await ctx.pickTestImage() : undefined;
+      if (needsImage && !uri) throw new Error("Choose a test photo to verify this vision model. Nothing changed.");
+      const probe = await candidates.verify(entryId, uri ?? undefined);
+      if (!probe?.ready) {
+        throw new Error("This model cannot run with this FindBack build. See Details for the reason.");
+      }
+      // Readiness renders from the refreshed authoritative native state only.
+      await ctx.refresh();
+      return;
+    }
+    case "delete":
+      await candidates.delete(entryId);
+      await ctx.refresh();
+      return;
+    case "use":
+      throw new Error("Verified only — no executable runtime is wired for this entry in this build, so it cannot run analysis here.");
+    case "tryAgain":
+      await ctx.refresh();
+      return;
+  }
+  await ctx.refresh();
+}
+
+/**
+ * Single entry-id action dispatcher. Every manager action routes by
+ * catalogue entry identity (`actionOwnerFor`) to exactly one lifecycle —
+ * image, text, candidate, or transfer — and finishes with an authoritative
+ * native refresh. Throws honest unavailable errors; never guesses a bridge.
+ */
+export async function executeManagerAction(entryId: string, action: ManagerAction, ctx: ManagerActionContext): Promise<void> {
+  const owner = actionOwnerFor(entryId, action, ctx.model.category);
+  switch (owner) {
+    case "image":
+      return executeImageAction(entryId, action, ctx);
+    case "text":
+      return executeTextAction(entryId, action, ctx);
+    case "candidate":
+      return executeCandidateAction(entryId, action, ctx);
+    case "transfer": {
+      if (!ctx.transfers) throw new Error("Delete is unavailable in this build.");
+      await ctx.transfers.deleteImported(entryId);
+      ctx.onImportedDeleted(entryId);
+      return;
+    }
+    case "none":
+      if (action === "tryAgain") {
+        await ctx.refresh();
+        return;
+      }
+      if (action === "use") {
+        throw new Error("Verified only — no executable runtime is wired for this entry in this build, so it cannot run analysis here.");
+      }
+      if (ctx.model.category === "IMPORTED") {
+        throw new Error("Imported models verify during import. Delete and re-import to test again.");
+      }
+      throw new Error("This action is unavailable for this entry in this build.");
+  }
 }
 
 export function OfflineAiCompact(seams?: CompactSeams) {
@@ -107,7 +365,6 @@ export function OfflineAiCompact(seams?: CompactSeams) {
   const [candidateProgress, setCandidateProgress] = useState<Record<string, { downloadedBytes: number; totalBytes: number }>>({});
   const [vlmProgress, setVlmProgress] = useState<Record<string, number>>({});
   const [imported, setImported] = useState<ImportedModelRecord[]>([]);
-  const [overrides, setOverrides] = useState<Record<string, { state: ManagerStatus; error?: string }>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -262,27 +519,40 @@ export function OfflineAiCompact(seams?: CompactSeams) {
       vlmStates,
       bridgeIdFor: (entryId) => bridgeModelIdForEntry(entryId),
       textStatus,
-      textEntryId: QWEN_ENTRY,
+      textEntryId: QWEN_ENTRY_ID,
       candidateStates,
       candidateProgress,
       downloadedBytesByBridgeId: vlmProgress,
       availableFreeRamMb: ramMb,
       canDownloadFor: (entryId) => {
-        if (entryId === SMOL_ENTRY || entryId === QWEN_ENTRY) return false;
+        const entry = entryById(entryId);
+        if (!entry) return false;
+        // Release-record-driven enablement: UNPUBLISHED stays honestly
+        // disabled; a future PUBLISHED flip enables with no UI change.
+        // Release packages bind their image/text lifecycle via the vlm
+        // seam; raw candidates bind the candidate host.
+        if (hasUnpublishedDistribution(entry)) return false;
+        if (entry.distribution != null) return vlm != null;
         return candidates != null;
       },
     }).map((model) => {
-      const override = overrides[model.entryId];
-      if (!override) {
-        if ((model.entryId === SMOL_ENTRY || model.entryId === QWEN_ENTRY) && model.state === "NOT_INSTALLED") {
-          return { ...model, state: "UNAVAILABLE" as ManagerStatus, canDownload: false };
-        }
-        return model;
+      const entry = entryById(model.entryId);
+      let next = model;
+      if (entry && hasUnpublishedDistribution(entry) && model.state === "NOT_INSTALLED") {
+        next = { ...next, state: "UNAVAILABLE" as ManagerStatus, canDownload: false, error: UNPUBLISHED_DISTRIBUTION_MESSAGE };
       }
-      return { ...model, state: override.state, error: override.error ?? model.error };
+      // Honest Use: only wired role-safe runtime paths (Smol image, Qwen
+      // text with a present runtime) may offer Use, and only once the
+      // runtime reports runnable state (READY). Probe-only entries stay
+      // Use-free with Details/retest.
+      const canUse =
+        model.entryId === SMOL_ENTRY_ID ? vlm != null
+        : model.entryId === QWEN_ENTRY_ID ? isTextRuntimePresent(vlm)
+        : false;
+      return { ...next, canUse };
     });
     return [...live, ...importedToManagerModels(imported)];
-  }, [base, vlmStates, textStatus, candidateStates, candidateProgress, vlmProgress, ramMb, candidates, overrides, imported]);
+  }, [base, vlmStates, textStatus, candidateStates, candidateProgress, vlmProgress, ramMb, candidates, vlm, imported]);
 
   const fail = useCallback((message: string) => {
     if (mountedRef.current) setActionError(message);
@@ -304,149 +574,60 @@ export function OfflineAiCompact(seams?: CompactSeams) {
     setConfirm({ entryId, bytes, acknowledged: false, seconded: false });
   }, [models]);
 
+  const buildActionContext = useCallback((entryId: string): ManagerActionContext | null => {
+    const model = models.find((m) => m.entryId === entryId) ?? null;
+    if (!model) return null;
+    return {
+      model,
+      vlm,
+      candidates,
+      transfers,
+      vlmStates,
+      textStatus,
+      activeId,
+      ramMb,
+      pickTestImage: async () => (await pickTestImage?.()) ?? null,
+      onBecameActive: (id) => {
+        setActiveId(id);
+        saveResidentEntryId(id);
+      },
+      onImportedDeleted: (id) => {
+        if (mountedRef.current) setImported((prev) => prev.filter((m) => m.entryId !== id));
+      },
+      refresh,
+    };
+  }, [models, vlm, candidates, transfers, vlmStates, textStatus, activeId, ramMb, pickTestImage, refresh]);
+
   const confirmDownloadNow = useCallback(async () => {
     if (!confirm) return;
     const { entryId } = confirm;
     setConfirm(null);
+    const ctx = buildActionContext(entryId);
+    if (!ctx) {
+      fail("Unknown model entry. Nothing changed.");
+      return;
+    }
+    // The confirmation dialog gates the download; the single dispatcher
+    // owns the lifecycle routing from here.
     await runGuarded(async () => {
-      if (entryId !== SMOL_ENTRY && entryId !== QWEN_ENTRY) {
-        if (!candidates) throw new Error("Candidate downloads are unavailable in this build.");
-        await candidates.download(entryId);
-      } else {
-        const bridgeId = bridgeModelIdForEntry(entryId);
-        if (!bridgeId || !vlm) throw new Error("Package prepared but not published in this build. Download is unavailable.");
-        await vlm.downloadModel(bridgeId);
-      }
-      await refresh();
+      await executeManagerAction(entryId, "download", ctx);
     });
-  }, [confirm, candidates, vlm, refresh, runGuarded]);
+  }, [confirm, buildActionContext, refresh, runGuarded, fail]);
 
   const handleAction = useCallback((entryId: string, action: ManagerAction) => {
+    if (action === "download") {
+      void startDownload(entryId);
+      return;
+    }
+    const ctx = buildActionContext(entryId);
+    if (!ctx) {
+      fail("Unknown model entry. Nothing changed.");
+      return;
+    }
     void runGuarded(async () => {
-      const model = models.find((m) => m.entryId === entryId);
-      const isImported = model?.category === "IMPORTED";
-      const bridgeId = bridgeModelIdForEntry(entryId);
-      switch (action) {
-        case "download":
-          await startDownload(entryId);
-          return;
-        case "pause":
-          if (bridgeId && vlm && vlmStates.some((s) => s.id === bridgeId)) await vlm.pauseDownload(bridgeId);
-          else if (candidates) await candidates.pause(entryId);
-          break;
-        case "resume":
-          if (bridgeId && vlm && vlmStates.some((s) => s.id === bridgeId)) await vlm.resumeDownload(bridgeId);
-          else if (candidates) await candidates.download(entryId);
-          break;
-        case "cancel":
-          if (bridgeId && vlm && vlmStates.some((s) => s.id === bridgeId)) await vlm.cancelDownload(bridgeId);
-          else if (candidates) await candidates.cancel(entryId);
-          break;
-        case "verify": {
-          if (entryId === SMOL_ENTRY) {
-            if (!vlm) throw new Error("Verification is unavailable: the image runtime is missing in this build.");
-            const uri = await pickTestImage?.() ?? null;
-            if (!uri) throw new Error("Choose a test photo to verify this vision model. Nothing changed.");
-            const result = await vlm.runGpuSelfTest("smolvlm2-500m", uri);
-            if (result?.state === "GPU_AVAILABLE") {
-              setOverrides((prev) => ({ ...prev, [entryId]: { state: "READY" } }));
-            } else {
-              throw new Error("This model cannot run with this FindBack build. See Details for the reason.");
-            }
-          } else if (entryId === QWEN_ENTRY) {
-            if (typeof vlm?.runTextSelfTest !== "function") {
-              throw new Error("No executable text runtime is wired for this entry in this build, so it cannot be verified here.");
-            }
-            const result = await vlm.runTextSelfTest(QWEN_TEXT_BRIDGE_MODEL_ID);
-            if (result && (result.ready === true || result.state === "TEXT_READY")) {
-              setOverrides((prev) => ({ ...prev, [entryId]: { state: "READY" } }));
-            } else {
-              throw new Error("This model cannot run with this FindBack build. See Details for the reason.");
-            }
-          } else if (!isImported && candidates) {
-            const needsImage = entryId === "lfm2.5-vl-450m";
-            const uri = needsImage ? await pickTestImage?.() ?? null : undefined;
-            if (needsImage && !uri) throw new Error("Choose a test photo to verify this vision model. Nothing changed.");
-            const probe = await candidates.verify(entryId, uri ?? undefined);
-            if (probe?.ready) {
-              setOverrides((prev) => ({ ...prev, [entryId]: { state: "READY" } }));
-            } else {
-              throw new Error("This model cannot run with this FindBack build. See Details for the reason.");
-            }
-          } else if (isImported && transfers) {
-            throw new Error("Imported models verify during import. Delete and re-import to test again.");
-          } else {
-            throw new Error("Verification is unavailable for this entry in this build.");
-          }
-          break;
-        }
-        case "use": {
-          if (entryId === SMOL_ENTRY) {
-            const entry = entryById(entryId);
-            if (!entry || !vlm) throw new Error("No executable runtime is wired for this entry in this build.");
-            const result = await activateModel(vlm as never, entry, {
-              currentResidentId: activeId,
-              availableFreeRamMb: ramMb,
-              advancedConfirmed: true,
-              runtimeCapability: "RUNTIME_AVAILABLE",
-            });
-            if (!result.ok) throw new Error(result.reason);
-            if (!result.alreadyActive) {
-              setActiveId(entryId);
-              saveResidentEntryId(entryId);
-            }
-          } else if (entryId === QWEN_ENTRY) {
-            const entry = entryById(entryId);
-            if (!entry) throw new Error("No executable runtime is wired for this entry in this build.");
-            const runtimePresent = isTextRuntimePresent(vlm);
-            const result = await activateTextModel(
-              vlm as never,
-              entry,
-              { currentResidentId: activeId, availableFreeRamMb: ramMb, advancedConfirmed: true, textRuntimePresent: runtimePresent, runtimeReady: textStatus?.textReady === true },
-            );
-            if (!result.ok) throw new Error(result.reason);
-            if (!result.alreadyActive) {
-              setActiveId(entryId);
-              saveResidentEntryId(entryId);
-            }
-          } else {
-            throw new Error("Verified only — no executable runtime is wired for this entry in this build, so it cannot run analysis here.");
-          }
-          break;
-        }
-        case "tryAgain": {
-          setOverrides((prev) => {
-            const next = { ...prev };
-            delete next[entryId];
-            return next;
-          });
-          await refresh();
-          break;
-        }
-        case "delete": {
-          if (isImported) {
-            if (!transfers) throw new Error("Delete is unavailable in this build.");
-            await transfers.deleteImported(entryId);
-            if (mountedRef.current) setImported((prev) => prev.filter((m) => m.entryId !== entryId));
-          } else if (bridgeId && vlm && vlmStates.some((s) => s.id === bridgeId)) {
-            await vlm.deleteModel(bridgeId);
-          } else if (candidates) {
-            await candidates.delete(entryId);
-          } else {
-            throw new Error("Delete is unavailable for this entry in this build.");
-          }
-          setOverrides((prev) => {
-            const next = { ...prev };
-            delete next[entryId];
-            return next;
-          });
-          await refresh();
-          break;
-        }
-      }
-      await refresh();
+      await executeManagerAction(entryId, action, ctx);
     });
-  }, [models, vlmStates, vlm, candidates, transfers, pickTestImage, activeId, ramMb, textStatus, refresh, runGuarded, startDownload]);
+  }, [buildActionContext, fail, runGuarded, startDownload]);
 
   const discardInspection = useCallback(async () => {
     if (!inspection || !transfers) {
@@ -576,6 +757,7 @@ export function OfflineAiCompact(seams?: CompactSeams) {
 
   const confirmModel = confirm ? models.find((m) => m.entryId === confirm.entryId) ?? null : null;
   const confirmEntry = confirm ? entryById(confirm.entryId) : null;
+  const knownMatch = inspection && !inspection.unknown ? entryById(inspection.entryId) : null;
   const confirmNeedsAck =
     confirmEntry != null &&
     (confirmEntry.verificationStatus === "EXPERIMENTAL" ||
@@ -596,7 +778,7 @@ export function OfflineAiCompact(seams?: CompactSeams) {
         </div>
       )}
       <ModelManagerView
-        models={models.map((m) => (managerStatusFrom(m.state) === "UNAVAILABLE" && m.state === "NOT_INSTALLED" ? { ...m, state: "UNAVAILABLE" as ManagerStatus } : m))}
+        models={models}
         availableRamMb={ramMb}
         onAction={handleAction}
         onImport={handleImport}
@@ -703,6 +885,9 @@ export function OfflineAiCompact(seams?: CompactSeams) {
             {!inspection.unknown ? (
               <>
                 <p className="mt-2 text-sm font-medium">Model recognized</p>
+                <p className="mt-1 text-sm" aria-label="Matched catalogue entry">
+                  {knownMatch?.displayName ?? inspection.entryId} · {inspection.entryId}
+                </p>
                 <p className="mt-1 text-sm text-on-surface-variant">✓ Matches FindBack catalogue · ✓ Package integrity verified</p>
                 <button type="button" onClick={handleCommitKnown} className="mt-4 min-h-[48px] w-full rounded-m3-xs bg-on-surface px-4 text-surface">Install</button>
               </>

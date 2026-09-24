@@ -68,15 +68,59 @@ object ImportedModelRegistry {
         writeAll(storeRoot, current.sortedBy { it.createdAt })
     }
 
+    data class DeleteResult(
+        val ok: Boolean,
+        val code: String? = null,
+        val reason: String? = null
+    )
+
     @Synchronized
     fun remove(storeRoot: File, entryId: String): Boolean {
-        if (!ImportCommitPolicy.isNamespacedEntryId(entryId)) return false
+        return try {
+            removeWithResult(storeRoot, entryId).ok
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Deletes exactly one imported entry, files first. The entry directory
+     * is removed and its removal verified BEFORE the registry is updated —
+     * a deletion failure returns an error with the registry left intact.
+     * [deleteOp] performs the directory removal (injectable for tests);
+     * removal counts only when it returns true AND the directory is gone.
+     */
+    @Synchronized
+    fun removeWithResult(
+        storeRoot: File,
+        entryId: String,
+        deleteOp: (File) -> Boolean = { dir -> dir.deleteRecursively() }
+    ): DeleteResult {
+        if (!ImportCommitPolicy.isNamespacedEntryId(entryId)) {
+            return DeleteResult(false, PackageHost.Code.ENTRY_MISMATCH, "Imported model not found")
+        }
         val current = list(storeRoot)
-        if (current.none { it.entryId == entryId }) return false
-        writeAll(storeRoot, current.filter { it.entryId != entryId })
+        if (current.none { it.entryId == entryId }) {
+            return DeleteResult(false, PackageHost.Code.ENTRY_MISMATCH, "Imported model not found")
+        }
+        // Files FIRST, verify removal, THEN the registry write.
         val dir = File(File(storeRoot, "imported"), entryId)
-        if (dir.exists()) dir.deleteRecursively()
-        return true
+        if (dir.exists()) {
+            val removed = try {
+                deleteOp(dir)
+            } catch (_: Exception) {
+                false
+            }
+            if (!removed || dir.exists()) {
+                return DeleteResult(false, "DELETE_FAILED", "Could not delete model files; the registry is unchanged.")
+            }
+        }
+        return try {
+            writeAll(storeRoot, current.filter { it.entryId != entryId })
+            DeleteResult(true)
+        } catch (e: Exception) {
+            DeleteResult(false, PackageHost.Code.CORRUPT_ARCHIVE, "Could not update the imported registry: ${e.message}")
+        }
     }
 
     private fun writeAll(storeRoot: File, records: List<Record>) {

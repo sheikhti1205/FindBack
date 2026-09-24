@@ -21,8 +21,14 @@ import java.util.zip.ZipFile
  *
  * Known catalogue ids inspect here without installing: the whole package
  * must equal the shipped pin and every interior pin must agree, otherwise
- * the session is rejected and never falls back to unknown. Unknown
- * packages must be data-only schema v1 with exactly one `.litertlm`.
+ * the session is rejected and never falls back to unknown. Locally
+ * re-exported catalogue packages (export marker + declared entryId +
+ * per-file hashes) inspect on a separate branch: accepted IFF the declared
+ * entryId is one of the six catalogue IDs AND every artifact hash equals
+ * trusted native-side pins (shipped interior pins or the app-private
+ * [ExportTrustStore] tombstone) — the manifest self-declaration alone is
+ * never sufficient. Unknown packages must be data-only schema v1 with
+ * exactly one `.litertlm`.
  *
  * This file has no Android framework dependencies so it runs as JVM
  * unit tests; SAF stream opening and free-space reading stay with the
@@ -30,7 +36,9 @@ import java.util.zip.ZipFile
  */
 class PackageInspectionStore(
     private val root: File,
-    private val clockMs: () -> Long = System::currentTimeMillis
+    private val clockMs: () -> Long = System::currentTimeMillis,
+    private val trustRoot: File? = null,
+    private val trustedPins: ((String) -> List<ModelFileSpec>?)? = null
 ) {
 
     companion object {
@@ -49,6 +57,8 @@ class PackageInspectionStore(
         val sandbox: File,
         val packageFile: File,
         val createdAtMs: Long = System.currentTimeMillis(),
+        /** True for locally re-exported catalogue packages (not official, not unknown). */
+        val reexport: Boolean = false,
         @Volatile var lastProbe: ProbeResult? = null,
         @Volatile var probedRole: String? = null
     )
@@ -77,6 +87,53 @@ class PackageInspectionStore(
     fun pruneExpired(nowMs: Long = clockMs()) {
         val expired = synchronized(sessions) { sessions.values.filter { isExpired(it, nowMs) } }
         for (session in expired) discard(session.id)
+    }
+
+    /**
+     * Startup reconcile: prunes abandoned private staging directories that
+     * are older than [INSPECTION_TTL_MS] or unknown to live sessions.
+     * Inspection sessions are in-memory, so after a process restart the new
+     * store instance sees orphan `staging/<id>/` dirs on disk and must clean
+     * them safely (never touches the model library or imported entries).
+     * Live sessions (known ids with fresh mtimes) always survive.
+     *
+     * @return number of staging directories removed.
+     */
+    fun reconcileStagingOnStartup(nowMs: Long = clockMs()): Int {
+        pruneExpired(nowMs)
+        val stagingRoot = File(root, "staging")
+        if (!stagingRoot.isDirectory) return 0
+        val liveIds = synchronized(sessions) { sessions.keys.toSet() }
+        var pruned = 0
+        val children = try {
+            stagingRoot.listFiles()?.toList() ?: return 0
+        } catch (_: Exception) {
+            return 0
+        }
+        for (child in children) {
+            if (!child.isDirectory) continue
+            val id = child.name
+            if (liveIds.contains(id)) continue
+            val ageMs = try {
+                nowMs - child.lastModified()
+            } catch (_: Exception) {
+                INSPECTION_TTL_MS + 1
+            }
+            // Unknown to live sessions: prune when stale, when the id is not
+            // a session id at all (dead-process debris), or when the dir no
+            // longer backs any session regardless of age.
+            val orphanId = !isSessionId(id)
+            if (orphanId || ageMs > INSPECTION_TTL_MS || !synchronized(sessions) { sessions.containsKey(id) }) {
+                try {
+                    // Only prune when there is no live session claiming it;
+                    // re-check under lock to avoid racing a fresh inspect().
+                    val claimed = synchronized(sessions) { sessions.containsKey(id) }
+                    if (!claimed && child.deleteRecursively()) pruned++
+                } catch (_: Exception) {
+                }
+            }
+        }
+        return pruned
     }
 
     fun recordProbe(id: String, probe: ProbeResult, role: String): Boolean {
@@ -129,15 +186,37 @@ class PackageInspectionStore(
             val manifest = PackageHost.peekManifest(staged) ?: return null
             val known = KnownPackageIdentity.forCatalogueId(manifest.entryId)
             val unknown: Boolean
+            val reexport: Boolean
             if (known != null) {
                 // Known branch: exact shipped package plus interior pins.
                 // Any mismatch rejects — never falls back to unknown.
-                if (!packageSha256.equals(known.packageSha256, ignoreCase = true)) return null
-                if (!interiorMatchesKnown(manifest, known)) return null
+                if (!packageSha256.equals(known.packageSha256, ignoreCase = true)) {
+                    // Whole-package bytes differ (e.g. a fresh local export
+                    // stamps a new timestamp): try the re-export branch —
+                    // marker + trusted native pins — before rejecting. The
+                    // exact-match checks above stay byte-identical.
+                    val trusted = resolveTrustedPins(manifest.entryId)
+                    if (!(manifest.exported && trusted != null && interiorMatchesTrusted(manifest, trusted))) return null
+                    unknown = false
+                    reexport = true
+                } else {
+                    if (!interiorMatchesKnown(manifest, known)) return null
+                    unknown = false
+                    reexport = false
+                }
+            } else if (SixModelCatalogue.isCatalogueId(manifest.entryId)) {
+                // Experimental catalogue ids have no whole-package pin, so
+                // only the re-export branch (export marker + every artifact
+                // hash equal to trusted native-side pins) can accept them;
+                // never an unknown fallback.
+                val trusted = resolveTrustedPins(manifest.entryId)
+                if (!(manifest.exported && trusted != null && interiorMatchesTrusted(manifest, trusted))) return null
                 unknown = false
+                reexport = true
             } else {
                 if (!isStrictUnknownManifest(manifest)) return null
                 unknown = true
+                reexport = false
             }
 
             if (!verifyMembers(staged, manifest, sandbox, freeBytes)) return null
@@ -149,7 +228,8 @@ class PackageInspectionStore(
                 unknown = unknown,
                 sandbox = sandbox,
                 packageFile = staged,
-                createdAtMs = clockMs()
+                createdAtMs = clockMs(),
+                reexport = reexport
             )
             synchronized(sessions) { sessions[id] = inspected }
             return inspected
@@ -178,6 +258,49 @@ class PackageInspectionStore(
         for (spec in specs) {
             val base = spec.path.substringAfterLast('/')
             val matches = manifest.files.filter { it.path.substringAfterLast('/') == base }
+            if (matches.size != 1) return false
+            val candidate = matches.single()
+            if (candidate.bytes != spec.expectedBytes) return false
+            if (!candidate.sha256.equals(spec.sha256, ignoreCase = true)) return false
+        }
+        return true
+    }
+
+    /**
+     * Trusted native-side pins for a catalogue id: the injected test/provider
+     * pins first, then the app-private tombstone, then the shipped pins
+     * (official interiors via [KnownPackageIdentity], experimental raw pins
+     * via [PinnedModelSources]). Null when none exists — the manifest
+     * self-declaration alone is never trusted.
+     */
+    private fun resolveTrustedPins(entryId: String): List<ModelFileSpec>? {
+        trustedPins?.invoke(entryId)?.let { return it }
+        val root = trustRoot
+        if (root != null) {
+            ExportTrustStore.trustedFor(root, entryId)?.let { return it }
+            // Fall through to shipped pins so official interiors verify even
+            // before the first tombstone write.
+            SixModelCatalogue.manifestForCatalogueId(entryId)?.let { return it.files }
+            return null
+        }
+        return SixModelCatalogue.manifestForCatalogueId(entryId)?.files
+    }
+
+    /**
+     * True when every non-envelope artifact in [manifest] equals the trusted
+     * native-side pins (matched by base name: release packages nest artifacts
+     * under `weights/` while installed specs may be flat). The
+     * `checksums.json` envelope entry is excluded — it is derived output,
+     * never a trust input.
+     */
+    private fun interiorMatchesTrusted(manifest: PackageHost.Manifest, trusted: List<ModelFileSpec>): Boolean {
+        val artifacts = manifest.files.filter {
+            it.path != PackageHost.MANIFEST_NAME && it.path != PackageHost.CHECKSUMS_NAME
+        }
+        if (artifacts.isEmpty() || artifacts.size != trusted.size) return false
+        for (spec in trusted) {
+            val base = spec.path.substringAfterLast('/')
+            val matches = artifacts.filter { it.path.substringAfterLast('/') == base }
             if (matches.size != 1) return false
             val candidate = matches.single()
             if (candidate.bytes != spec.expectedBytes) return false

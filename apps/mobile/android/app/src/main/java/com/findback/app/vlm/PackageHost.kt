@@ -83,6 +83,14 @@ object PackageHost {
         val method: String
     )
 
+    /**
+     * Observed package manifest. [exported] is the local re-export marker:
+     * true only for packages produced by [exportPackage] from verified
+     * installed files (declared entryId + per-file hashes + marker). Official
+     * release packages carry `exported=false`/absent and are recognized by
+     * exact whole-package SHA-256 instead — the marker never substitutes for
+     * a pin check.
+     */
     data class Manifest(
         val packageVersion: String,
         val entryId: String,
@@ -90,7 +98,8 @@ object PackageHost {
         val upstreamRev: String,
         val upstreamFile: String,
         val createdAt: String,
-        val files: List<ManifestFile>
+        val files: List<ManifestFile>,
+        val exported: Boolean = false
     )
 
     data class ImportResult(
@@ -215,7 +224,13 @@ object PackageHost {
             upstreamRev = upstream.get("rev").asString,
             upstreamFile = upstream.get("file").asString,
             createdAt = obj.get("createdAt").asString,
-            files = files
+            files = files,
+            exported = try {
+                obj.has("exported") && obj.get("exported").isJsonPrimitive &&
+                    obj.get("exported").asBoolean
+            } catch (_: Exception) {
+                false
+            }
         )
     }
 
@@ -241,6 +256,10 @@ object PackageHost {
         sb.append("{\n")
         sb.append("  \"packageVersion\": \"${manifest.packageVersion}\",\n")
         sb.append("  \"entryId\": \"${manifest.entryId}\",\n")
+        // Local re-export marker: declared entryId + per-file hashes + marker.
+        // Official release packages never carry this marker; they are
+        // recognized by exact whole-package SHA-256 instead.
+        sb.append("  \"exported\": ${if (manifest.exported) "true" else "false"},\n")
         sb.append("  \"upstream\": {\"repo\": \"${manifest.upstreamRepo}\", " +
             "\"rev\": \"${manifest.upstreamRev}\", \"file\": \"${manifest.upstreamFile}\"},\n")
         sb.append("  \"createdAt\": \"${manifest.createdAt}\",\n")
@@ -809,7 +828,8 @@ object PackageHost {
                     upstreamRev = "",
                     upstreamFile = "",
                     createdAt = createdAt,
-                    files = manifestFiles
+                    files = manifestFiles,
+                    exported = true
                 )
                 val manifestBytes = manifestJson(manifest).toByteArray(Charsets.UTF_8)
                 try {

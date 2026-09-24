@@ -5,7 +5,9 @@ import com.getcapacitor.JSObject
 
 /**
  * VLM model identifiers with their wire-format strings.
- * Exactly two models as per Locked Interfaces.
+ * Exactly two image models as per Locked Interfaces; the Phase A six-model
+ * catalogue (package entry ids, including text/candidate ids) lives in
+ * [SixModelCatalogue] and never extends this enum.
  */
 enum class VlmModelId(val wire: String) {
     SMOLVLM2_500M("smolvlm2-500m"),

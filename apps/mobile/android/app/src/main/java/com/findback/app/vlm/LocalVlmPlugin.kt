@@ -170,13 +170,17 @@ class LocalVlmPlugin : Plugin() {
         } catch (_: Exception) { false }
     }
 
-    /** A single directory choice writes separate checked packages, never a combined archive. */
+    /**
+     * A single directory choice writes separate checked packages, never a
+     * combined archive. Bounded by [ExportSelectionPolicy]: 6 catalogue
+     * slots plus up to 8 imported slots (14 total) so every installed
+     * imported model stays selectable.
+     */
     @PluginMethod
     fun exportSelectedModels(call: PluginCall) {
         if (!ensureInitialized(call)) return
         val entryIds = try { call.getArray("entryIds")?.toList<String>() ?: emptyList() } catch (_: Exception) { emptyList() }
-        if (entryIds.isEmpty() || entryIds.size > 6 || entryIds.toSet().size != entryIds.size ||
-            entryIds.any { !isExportableEntry(it) }) {
+        if (!ExportSelectionPolicy.validate(entryIds, ::isExportableEntry)) {
             call.reject("Select installed catalogue or imported models to export", "ENTRY_MISMATCH")
             return
         }
@@ -448,6 +452,25 @@ class LocalVlmPlugin : Plugin() {
                 val inspected = sessions.get(inspectionId)
                     ?: return@launch call.reject("Inspection session expired or not found", "IMPORT_REJECTED")
                 if (!inspected.unknown) {
+                    // Locally re-exported catalogue packages re-enter here:
+                    // route them back to their catalogue row via trusted
+                    // native pins (never the unknown/imported path).
+                    if (inspected.reexport) {
+                        val trustedManifest = SixModelCatalogue.manifestForCatalogueId(inspected.manifest.entryId)?.let { shipped ->
+                            ExportTrustStore.trustedFor(requireStore().root, inspected.manifest.entryId)?.let { tombstoned ->
+                                shipped.copy(files = tombstoned)
+                            } ?: shipped
+                        } ?: return@launch call.reject("Catalogue pin missing for this package", PackageHost.Code.MISSING_PIN)
+                        val recommitted = PackageCommitter.commitReexportedInspected(inspected, requireStore(), trustedManifest)
+                        sessions.discard(inspectionId)
+                        if (!recommitted.ok) {
+                            call.reject(recommitted.reason ?: "Import failed", recommitted.code)
+                            return@launch
+                        }
+                        recordReexportInstall(inspected.manifest.entryId, trustedManifest)
+                        call.resolve(JSObject().put("ok", true).put("entryId", inspected.manifest.entryId))
+                        return@launch
+                    }
                     val known = KnownPackageIdentity.forCatalogueId(inspected.manifest.entryId)
                         ?: return@launch call.reject("Catalogue pin missing for this package", PackageHost.Code.MISSING_PIN)
                     val committed = PackageCommitter.commitKnownInspected(inspected, requireStore(), known)
@@ -471,32 +494,31 @@ class LocalVlmPlugin : Plugin() {
                     call.reject(decision.reason ?: "Import refused", decision.code)
                     return@launch
                 }
-                val committed = PackageCommitter.commitInspected(inspected, requireStore())
+                val namespaced = ImportCommitPolicy.namespacedEntryId(inspected.packageSha256)!!
+                val probe = inspected.lastProbe
+                // Atomic unknown import: promotion + registry upsert are one
+                // recoverable transaction (rollback on registry failure,
+                // reconcile on retry after interruption).
+                val atomicRecord = ImportedModelRegistry.Record(
+                    entryId = namespaced,
+                    label = name!!.trim(),
+                    description = description?.take(ImportCommitPolicy.MAX_DESCRIPTION_CHARS),
+                    role = role!!,
+                    state = if (probe?.ready == true) ImportedModelRegistry.STATE_READY else ImportedModelRegistry.STATE_NOT_VERIFIED,
+                    bytes = inspected.manifest.files.sumOf { it.bytes },
+                    error = if (probe?.ready == true) null else probe?.reason,
+                    loadMs = probe?.loadMs,
+                    inferenceMs = probe?.inferenceMs,
+                    memoryBeforeMb = probe?.memoryBeforeMb,
+                    observedPeakMb = probe?.observedPeakMb,
+                    packageSha256 = inspected.packageSha256.lowercase(),
+                    manifestEntryId = inspected.manifest.entryId
+                )
+                val committed = PackageCommitter.commitUnknownAtomically(inspected, requireStore(), atomicRecord)
                 if (!committed.ok) {
                     call.reject(committed.reason ?: "Import failed", committed.code)
                     return@launch
                 }
-                val namespaced = ImportCommitPolicy.namespacedEntryId(inspected.packageSha256)!!
-                val probe = inspected.lastProbe
-                val entryDir = ImportedModelRegistry.dirFor(requireStore().root, namespaced)
-                ImportedModelRegistry.upsert(
-                    requireStore().root,
-                    ImportedModelRegistry.Record(
-                        entryId = namespaced,
-                        label = name!!.trim(),
-                        description = description?.take(ImportCommitPolicy.MAX_DESCRIPTION_CHARS),
-                        role = role!!,
-                        state = if (probe?.ready == true) ImportedModelRegistry.STATE_READY else ImportedModelRegistry.STATE_NOT_VERIFIED,
-                        bytes = ImportedModelRegistry.installedBytes(entryDir),
-                        error = if (probe?.ready == true) null else probe?.reason,
-                        loadMs = probe?.loadMs,
-                        inferenceMs = probe?.inferenceMs,
-                        memoryBeforeMb = probe?.memoryBeforeMb,
-                        observedPeakMb = probe?.observedPeakMb,
-                        packageSha256 = inspected.packageSha256.lowercase(),
-                        manifestEntryId = inspected.manifest.entryId
-                    )
-                )
                 sessions.discard(inspectionId)
                 call.resolve(JSObject().put("ok", true).put("entryId", namespaced))
             } catch (e: CancellationException) {
@@ -509,6 +531,12 @@ class LocalVlmPlugin : Plugin() {
 
     private fun recordKnownInstall(known: KnownPackageIdentity) {
         try {
+            // Trust tombstone (verify time): verified artifact pins recorded
+            // app-private so a later local re-export stays recognizable after
+            // its container bytes change. Survives catalogue-row deletion.
+            try {
+                ExportTrustStore.record(requireStore().root, known.catalogueId, known.manifest.files)
+            } catch (_: Exception) { }
             if (known.catalogueId == QwenTextRuntime.ENTRY_ID) {
                 TextTransferStateStore.saveAtomic(
                     requireStore().textStateFile(known.catalogueId),
@@ -529,6 +557,17 @@ class LocalVlmPlugin : Plugin() {
         } catch (_: Exception) { }
     }
 
+    /**
+     * Trust tombstone for a re-exported catalogue row: refreshes the
+     * app-private artifact pins from the natively verified [manifest] so the
+     * row stays re-exportable. Lifecycle state recording stays with the
+     * existing known-install paths.
+     */
+    private fun recordReexportInstall(catalogueId: String, manifest: ModelManifest) {
+        try {
+            ExportTrustStore.record(requireStore().root, catalogueId, manifest.files)
+        } catch (_: Exception) { }
+    }
     /** Lists imported models from the persistent app-private registry. */
     @PluginMethod
     fun getImportedModels(call: PluginCall) {
@@ -559,14 +598,19 @@ class LocalVlmPlugin : Plugin() {
         }
     }
 
-    /** Deletes exactly one imported entry (files + registry). */
+    /**
+     * Deletes exactly one imported entry: files first (verified), then the
+     * registry. A deletion failure returns its error with the registry
+     * intact — never a silent partial delete.
+     */
     @PluginMethod
     fun deleteImportedModel(call: PluginCall) {
         if (!ensureInitialized(call)) return
         val entryId = call.getString("entryId") ?: return call.reject("Missing entryId")
         if (inferenceMutex.isHeld()) return call.reject("Model is in use", "BUSY")
-        if (!ImportedModelRegistry.remove(requireStore().root, entryId)) {
-            return call.reject("Imported model not found", "ENTRY_MISMATCH")
+        val deleted = ImportedModelRegistry.removeWithResult(requireStore().root, entryId)
+        if (!deleted.ok) {
+            return call.reject(deleted.reason ?: "Imported model not found", deleted.code)
         }
         call.resolve()
     }
@@ -646,6 +690,16 @@ class LocalVlmPlugin : Plugin() {
                 )
                 updateCandidateState(manifest.id, result,
                     if (result == VlmState.DOWNLOAD_FAILED) "Pinned source unavailable or rejected." else null)
+                if (result == VlmState.INSTALLED_UNVERIFIED &&
+                    CandidateModelStatus.hasVerifiedWeights(requireStore(), manifest)
+                ) {
+                    // Trust tombstone (download/verify time): verified
+                    // artifact pins recorded app-private so a later local
+                    // re-export stays recognizable. Survives row deletion.
+                    try {
+                        ExportTrustStore.record(requireStore().root, manifest.id, manifest.files)
+                    } catch (_: Exception) { }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -751,6 +805,12 @@ class LocalVlmPlugin : Plugin() {
                     return@launch
                 }
                 candidateReady.add(manifest.id)
+                // Trust tombstone (verify time): the on-device generation
+                // proof above re-verified the installed bytes first, so these
+                // pins are native-observed, never manifest-declared.
+                try {
+                    ExportTrustStore.record(requireStore().root, manifest.id, manifest.files)
+                } catch (_: Exception) { }
                 val response = JSObject()
                 response.put("entryId", manifest.id)
                 response.put("ready", true)
@@ -965,7 +1025,17 @@ class LocalVlmPlugin : Plugin() {
         // getContext() is valid from here on; nothing above may touch it.
         store = ModelStore.create(getContext())
         downloader = ModelDownloader(getContext(), requireStore())
-        inspectionStore = PackageInspectionStore(File(getContext().filesDir, "package-inspections"))
+        inspectionStore = PackageInspectionStore(
+            File(getContext().filesDir, "package-inspections"),
+            trustRoot = requireStore().root
+        )
+        // Startup staging recovery: prune abandoned private staging dirs
+        // (older than TTL or unknown to live sessions — inspection sessions
+        // are in-memory, so a restart orphans them on disk).
+        try {
+            inspectionStore?.reconcileStagingOnStartup()
+        } catch (_: Exception) {
+        }
         prefs = getContext().getSharedPreferences("findback_vlm", Context.MODE_PRIVATE)
         expiryHandler = Handler(Looper.getMainLooper())
 
@@ -2708,12 +2778,15 @@ internal fun modelStatesToJSArray(infos: List<VlmModelInfo>): JSArray {
  * Serializes an observed package manifest for the `NativePackageHost`
  * seam. Every field is observed by the platform installer (import: from
  * the package manifest; export: from the streamed files, with empty
- * upstream metadata the installer does not carry).
+ * upstream metadata the installer does not carry). `exported` marks
+ * locally re-exported packages (declared entryId + per-file hashes +
+ * marker); official release packages carry false.
  */
 internal fun PackageHost.Manifest.toJSObject(): JSObject {
     val obj = JSObject()
     obj.put("packageVersion", packageVersion)
     obj.put("entryId", entryId)
+    obj.put("exported", exported)
     val upstream = JSObject()
     upstream.put("repo", upstreamRepo)
     upstream.put("rev", upstreamRev)

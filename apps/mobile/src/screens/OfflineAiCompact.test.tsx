@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OfflineAiCompact } from "./OfflineAiCompact";
+import { executeManagerAction, OfflineAiCompact } from "./OfflineAiCompact";
+import type { ManagerModel } from "../components/ModelManagerView";
 import * as photo from "../services/photo";
 
 function fakeVlm() {
@@ -16,6 +17,14 @@ function fakeVlm() {
     runGpuSelfTest: vi.fn().mockResolvedValue({ state: "GPU_AVAILABLE" }),
     runTextSelfTest: vi.fn().mockResolvedValue({ ready: true, state: "TEXT_READY" }),
     getTextRuntimeStatus: vi.fn().mockResolvedValue({ textInstalled: false, textReady: false }),
+    generateText: vi.fn().mockResolvedValue({ text: "hi", modelId: "qwen3-0.6b" }),
+    cancelInference: vi.fn().mockResolvedValue(undefined),
+    release: vi.fn().mockResolvedValue(undefined),
+    downloadTextModel: vi.fn().mockResolvedValue(undefined),
+    pauseTextDownload: vi.fn().mockResolvedValue(undefined),
+    resumeTextDownload: vi.fn().mockResolvedValue(undefined),
+    cancelTextDownload: vi.fn().mockResolvedValue(undefined),
+    deleteTextModel: vi.fn().mockResolvedValue(undefined),
     onDownloadProgress: vi.fn().mockResolvedValue(() => undefined),
     onModelStateChange: vi.fn().mockResolvedValue(() => undefined),
   };
@@ -105,16 +114,39 @@ describe("OfflineAiCompact six-model route", () => {
     await waitFor(() => expect(candidates.download).toHaveBeenCalled());
   });
 
-  it("verifies a candidate to Ready but reports Use as verified-only without a wired runtime", async () => {
-    const candidates = fakeCandidates("INSTALLED_UNVERIFIED");
+  it("never renders Use for probe-only models, even when the candidate host reports verified readiness", async () => {
+    const candidates = fakeCandidates("READY");
     render(<OfflineAiCompact vlm={fakeVlm()} candidates={candidates} transfers={fakeTransfers()} ramOverrideMb={4300} />);
     const experimental = await screen.findByRole("region", { name: "Experimental" });
-    fireEvent.click(within(experimental).getAllByRole("button", { name: /Verify/i })[0]!);
-    const use = await within(experimental).findAllByRole("button", { name: /Use/i });
-    expect(use.length).toBeGreaterThan(0);
-    fireEvent.click(use[0]!);
-    expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toMatch(/verified only|no executable runtime/i);
+    await waitFor(() => expect(candidates.getStates).toHaveBeenCalled());
+    // Authoritative native READY still offers retest, never Use.
+    const verify = await within(experimental).findAllByRole("button", { name: /Verify/i });
+    expect(verify.length).toBeGreaterThan(0);
+    expect(within(experimental).queryByRole("button", { name: /Use/i })).toBeNull();
+  });
+
+  it("Use activates the runnable image seam when SmolVLM2 reports ready", async () => {
+    const vlm = fakeVlm();
+    vlm.getModelStates.mockResolvedValue([{ id: "smolvlm2-500m", state: "READY_GPU" }]);
+    render(<OfflineAiCompact vlm={vlm} candidates={fakeCandidates()} transfers={fakeTransfers()} ramOverrideMb={4300} />);
+    const recommended = await screen.findByRole("region", { name: "Recommended" });
+    const use = await within(recommended).findByRole("button", { name: /Use SmolVLM2/i });
+    fireEvent.click(use);
+    await waitFor(() => expect(vlm.cancelInference).toHaveBeenCalled());
+    expect(vlm.release).toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Use activates the runnable text seam when Qwen reports text-ready", async () => {
+    const vlm = fakeVlm();
+    vlm.getTextRuntimeStatus.mockResolvedValue({ textInstalled: true, textReady: true });
+    render(<OfflineAiCompact vlm={vlm} candidates={fakeCandidates()} transfers={fakeTransfers()} ramOverrideMb={4300} />);
+    const recommended = await screen.findByRole("region", { name: "Recommended" });
+    const use = await within(recommended).findByRole("button", { name: /Use Qwen3/i });
+    fireEvent.click(use);
+    await waitFor(() => expect(vlm.cancelInference).toHaveBeenCalled());
+    expect(vlm.release).toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("does not stack native progress listeners each time the library refreshes", async () => {
@@ -124,8 +156,11 @@ describe("OfflineAiCompact six-model route", () => {
     const experimental = await screen.findByRole("region", { name: "Experimental" });
     await waitFor(() => expect(candidates.onProgress).toHaveBeenCalledOnce());
     fireEvent.click(within(experimental).getAllByRole("button", { name: /Verify/i })[0]!);
-    await within(experimental).findAllByRole("button", { name: /Use/i });
+    // Authoritative refresh keeps the row at Verify (no optimistic Ready),
+    // while native state is re-read exactly once.
     await waitFor(() => expect(candidates.getStates).toHaveBeenCalledTimes(2));
+    expect(within(experimental).getAllByRole("button", { name: /Verify/i })).toHaveLength(1);
+    expect(within(experimental).queryByRole("button", { name: /Use/i })).toBeNull();
     expect(candidates.onProgress).toHaveBeenCalledOnce();
     expect(vlm.onDownloadProgress).toHaveBeenCalledOnce();
   });
@@ -209,6 +244,28 @@ describe("OfflineAiCompact six-model route", () => {
     expect(screen.getByText("My Vision Model")).toBeTruthy();
   });
 
+  it("shows the exact matched catalogue label and entry identity before known Install", async () => {
+    const transfers = fakeTransfers({
+      inspect: vi.fn().mockResolvedValue({
+        inspectionId: "s2",
+        entryId: "smolvlm2-500m-litert-int4",
+        packageSha256: "ee",
+        unknown: false,
+        manifest,
+      }),
+    });
+    render(<OfflineAiCompact vlm={fakeVlm()} candidates={fakeCandidates()} transfers={transfers} ramOverrideMb={4300} />);
+    await screen.findByRole("heading", { name: "On-device AI" });
+    fireEvent.click(screen.getByRole("button", { name: "Import model" }));
+    const dialog = await screen.findByRole("dialog", { name: "Import model" });
+    expect(within(dialog).getByText("Model recognized")).toBeTruthy();
+    expect(within(dialog).getByText(/SmolVLM2 500M \(LiteRT, int4\)/)).toBeTruthy();
+    expect(within(dialog).getByText(/smolvlm2-500m-litert-int4/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Install" }));
+    await waitFor(() => expect(transfers.commitDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({ inspectionId: "s2" }),
+    ));
+  });
   it("exports selected installed models with a byte-derived total and per-file results", async () => {
     const transfers = fakeTransfers();
     const candidates = fakeCandidates("INSTALLED_UNVERIFIED");
@@ -222,5 +279,98 @@ describe("OfflineAiCompact six-model route", () => {
     fireEvent.click(screen.getByRole("button", { name: /Choose destination & export/i }));
     await waitFor(() => expect(transfers.exportAll).toHaveBeenCalled());
     expect(await screen.findByText(/✓ lfm2\.5-vl-450m\.fbmodel/)).toBeTruthy();
+  });
+});
+
+function modelFor(entryId: string, category: ManagerModel["category"]): ManagerModel {
+  return { entryId, label: entryId, role: "Text", bytes: 100, category, state: "NOT_INSTALLED", canDownload: false };
+}
+
+function actionCtx(seams: Record<string, unknown>, model: ManagerModel) {
+  return {
+    model,
+    vlm: null,
+    candidates: null,
+    transfers: null,
+    vlmStates: [] as Array<{ id: string; state: string }>,
+    textStatus: null,
+    activeId: null,
+    ramMb: 4300,
+    pickTestImage: vi.fn().mockResolvedValue(null),
+    onBecameActive: vi.fn(),
+    onImportedDeleted: vi.fn(),
+    refresh: vi.fn().mockResolvedValue(undefined),
+    ...seams,
+  };
+}
+
+describe("OfflineAiCompact single entry-id dispatcher", () => {
+  it("routes Smol pause/delete to the image seam even with no bridge state cached", async () => {
+    const vlm = fakeVlm();
+    const candidates = fakeCandidates();
+    const ctx = actionCtx({ vlm, candidates }, modelFor("smolvlm2-500m-litert-int4", "RECOMMENDED"));
+    await executeManagerAction("smolvlm2-500m-litert-int4", "pause", ctx as never);
+    expect(vlm.pauseDownload).toHaveBeenCalledWith("smolvlm2-500m");
+    expect(candidates.pause).not.toHaveBeenCalled();
+    await executeManagerAction("smolvlm2-500m-litert-int4", "delete", ctx as never);
+    expect(vlm.deleteModel).toHaveBeenCalledWith("smolvlm2-500m");
+    expect(candidates.delete).not.toHaveBeenCalled();
+  });
+
+  it("routes Qwen pause/resume/cancel/delete to the text seam, never the candidate host", async () => {
+    const vlm = fakeVlm();
+    const candidates = fakeCandidates();
+    const model = modelFor("qwen3-0.6b-litert-dynamic-int4", "RECOMMENDED");
+    const pauseCtx = actionCtx({ vlm, candidates }, model);
+    await executeManagerAction("qwen3-0.6b-litert-dynamic-int4", "pause", pauseCtx as never);
+    expect(vlm.pauseTextDownload).toHaveBeenCalledWith({ modelId: "qwen3-0.6b" });
+    await executeManagerAction("qwen3-0.6b-litert-dynamic-int4", "resume", actionCtx({ vlm, candidates }, model) as never);
+    expect(vlm.resumeTextDownload).toHaveBeenCalledWith({ modelId: "qwen3-0.6b" });
+    await executeManagerAction("qwen3-0.6b-litert-dynamic-int4", "cancel", actionCtx({ vlm, candidates }, model) as never);
+    expect(vlm.cancelTextDownload).toHaveBeenCalledWith({ modelId: "qwen3-0.6b" });
+    await executeManagerAction("qwen3-0.6b-litert-dynamic-int4", "delete", actionCtx({ vlm, candidates }, model) as never);
+    expect(vlm.deleteTextModel).toHaveBeenCalledWith({ modelId: "qwen3-0.6b" });
+    expect(candidates.pause).not.toHaveBeenCalled();
+    expect(candidates.download).not.toHaveBeenCalled();
+    expect(candidates.cancel).not.toHaveBeenCalled();
+    expect(candidates.delete).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with an honest error when the native text transfer methods are absent", async () => {
+    const full = fakeVlm();
+    const { downloadTextModel, pauseTextDownload, resumeTextDownload, cancelTextDownload, deleteTextModel, ...vlm } = full;
+    expect([downloadTextModel, pauseTextDownload, resumeTextDownload, cancelTextDownload, deleteTextModel].length).toBe(5);
+    const candidates = fakeCandidates();
+    const ctx = actionCtx({ vlm, candidates }, modelFor("qwen3-0.6b-litert-dynamic-int4", "RECOMMENDED"));
+    await expect(executeManagerAction("qwen3-0.6b-litert-dynamic-int4", "pause", ctx as never))
+      .rejects.toThrow(/unavailable for the text runtime/i);
+    expect(candidates.pause).not.toHaveBeenCalled();
+  });
+  it("keeps Qwen downloads honestly blocked while the release record is UNPUBLISHED", async () => {
+    const vlm = fakeVlm();
+    const candidates = fakeCandidates();
+    const ctx = actionCtx({ vlm, candidates }, modelFor("qwen3-0.6b-litert-dynamic-int4", "RECOMMENDED"));
+    await expect(executeManagerAction("qwen3-0.6b-litert-dynamic-int4", "download", ctx as never)).rejects.toThrow(/not published/i);
+    expect(candidates.download).not.toHaveBeenCalled();
+    expect(vlm.downloadModel).not.toHaveBeenCalled();
+  });
+
+  it("routes experimental delete to the candidate host and rejects probe-only Use honestly", async () => {
+    const candidates = fakeCandidates();
+    const model = modelFor("lfm2.5-vl-450m", "EXPERIMENTAL");
+    const ctx = actionCtx({ vlm: fakeVlm(), candidates }, model);
+    await executeManagerAction("lfm2.5-vl-450m", "delete", ctx as never);
+    expect(candidates.delete).toHaveBeenCalledWith("lfm2.5-vl-450m");
+    await expect(executeManagerAction("lfm2.5-vl-450m", "use", actionCtx({ vlm: fakeVlm(), candidates }, model) as never))
+      .rejects.toThrow(/verified only|no executable runtime/i);
+  });
+
+  it("routes imported delete to the transfer host", async () => {
+    const transfers = fakeTransfers();
+    const model = modelFor("imported-1", "IMPORTED");
+    const ctx = actionCtx({ transfers }, model);
+    await executeManagerAction("imported-1", "delete", ctx as never);
+    expect(transfers.deleteImported).toHaveBeenCalledWith("imported-1");
+    expect(ctx.onImportedDeleted).toHaveBeenCalledWith("imported-1");
   });
 });

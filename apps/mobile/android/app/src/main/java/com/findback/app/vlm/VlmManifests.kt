@@ -11,6 +11,10 @@ package com.findback.app.vlm
  * The text entry carries a non-VLM id on purpose: the VLM model id set stays
  * exactly the two image models, so image-path lookups by VLM id are
  * unaffected and the text runtime resolves its entry explicitly.
+ *
+ * Phase A note: the six-model manager catalogue (two official release
+ * packages + four experimental raw candidates) lives in
+ * [SixModelCatalogue]; this list keeps the transfer-scheduler manifests only.
  */
 val MODEL_MANIFESTS: List<ModelManifest> = listOf(
     ModelManifest(
