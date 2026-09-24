@@ -24,7 +24,6 @@ import { QWEN_TEXT_ENTRY_ID } from "./textRuntime";
 const SMOLVLM_ENTRY_ID = "smolvlm2-500m-litert-int4";
 const LFM_TEXT_ENTRY_ID = "lfm2.5-1.2b-instruct-litert-int4-gpu";
 const LFM_VL_ENTRY_ID = "lfm2.5-vl-450m";
-const GEMMA_ENTRY_ID = "gemma-3n-e2b-it-litert-int4";
 
 function entryById(id: string) {
   const entry = SHIPPED_CATALOGUE_ENTRIES.find((candidate) => candidate.id === id);
@@ -83,7 +82,6 @@ describe("validateRoleAssignment", () => {
 
   it("refuses unknown, catalogue-only, experimental, and incompatible ids", () => {
     expect(validateRoleAssignment("text", "no-such-model")).toMatchObject({ ok: false });
-    expect(validateRoleAssignment("text", GEMMA_ENTRY_ID)).toMatchObject({ ok: false });
     expect(validateRoleAssignment("text", LFM_TEXT_ENTRY_ID)).toMatchObject({ ok: false });
     expect(validateRoleAssignment("image", LFM_VL_ENTRY_ID)).toMatchObject({ ok: false });
   });
@@ -93,7 +91,7 @@ describe("entryRole", () => {
   it("maps catalogue roles to text, image, or neither", () => {
     expect(entryRole(entryById(QWEN_TEXT_ENTRY_ID))).toBe("text");
     expect(entryRole(entryById(SMOLVLM_ENTRY_ID))).toBe("image");
-    expect(entryRole(entryById(GEMMA_ENTRY_ID))).toBe("other");
+    expect(entryRole({ ...entryById(QWEN_TEXT_ENTRY_ID), role: "unrecognized" })).toBe("other");
   });
 });
 

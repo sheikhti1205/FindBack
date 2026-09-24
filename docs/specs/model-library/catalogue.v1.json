@@ -154,12 +154,20 @@
    "role": "chat-text",
    "runtime": "litert-lm",
    "format": "litertlm",
-   "revision": "UNKNOWN_NOT_ESTABLISHED",
+    "revision": "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
    "license": "apache-2.0",
    "licenseUrl": "https://huggingface.co/Qwen/Qwen3-0.6B",
-   "downloadBytes": null,
-   "installedBytes": null,
-   "sha256": null,
+    "downloadBytes": 497516544,
+    "installedBytes": 497516544,
+    "sha256": null,
+    "installedSha256": "7900eb4e7362d88c58782c6f9999bb7a129e03544aa98b8f338ea0cc5d8c22c1",
+    "pinnedRawSource": {
+     "repo": "litert-community/Qwen3-0.6B",
+     "revision": "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
+     "file": "qwen3_0_6b_mixed_int4.litertlm",
+     "bytes": 497516544,
+     "sha256": "7900eb4e7362d88c58782c6f9999bb7a129e03544aa98b8f338ea0cc5d8c22c1"
+    },
    "minFreeRamMb": 1024,
    "recommendedFreeRamMb": 2048,
    "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
@@ -167,12 +175,12 @@
    "verificationStatus": "SUPPORTED_UNVERIFIED",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "Qwen3 0.6B mixed-int4 lab variant (deprioritized by the one-quant selection rule — dynamic-int4 is the first text target; kept for record, not removed). Unpinned revision; bytes/sha not established.",
+    "description": "Pinned upstream mixed-INT4 LiteRT candidate. Not verified on this device; dynamic INT4 remains the qualified default. A downloaded hash alone is not a compatibility test.",
    "supportedCapabilities": [
     "text-generation"
    ],
-   "upstreamRepo": "Qwen/Qwen3-0.6B",
-   "upstreamFile": null,
+    "upstreamRepo": "litert-community/Qwen3-0.6B",
+    "upstreamFile": "qwen3_0_6b_mixed_int4.litertlm",
    "releaseAsset": null,
    "distribution": null,
    "provenance": [
@@ -189,7 +197,7 @@
     {
      "kind": "UNKNOWN",
      "ref": "unknown / not established",
-     "note": "Exact downloadBytes/installedBytes/sha256 for the curated .fbmodel not established"
+      "note": "No FindBack release package exists; raw upstream immutable LFS size/hash are pinned in pinnedRawSource. Device compatibility remains unknown."
     }
    ]
   },
@@ -200,12 +208,20 @@
    "role": "chat-text",
    "runtime": "litert-lm",
    "format": "litertlm",
-   "revision": "UNKNOWN_NOT_ESTABLISHED",
+    "revision": "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
    "license": "apache-2.0",
    "licenseUrl": "https://huggingface.co/Qwen/Qwen3-0.6B",
-   "downloadBytes": null,
-   "installedBytes": null,
-   "sha256": null,
+    "downloadBytes": 614236160,
+    "installedBytes": 614236160,
+    "sha256": null,
+    "installedSha256": "555579ff2f4fd13379abe69c1c3ab5200f7338bc92471557f1d6614a6e5ab0b4",
+    "pinnedRawSource": {
+     "repo": "litert-community/Qwen3-0.6B",
+     "revision": "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
+     "file": "Qwen3-0.6B.litertlm",
+     "bytes": 614236160,
+     "sha256": "555579ff2f4fd13379abe69c1c3ab5200f7338bc92471557f1d6614a6e5ab0b4"
+    },
    "minFreeRamMb": 1024,
    "recommendedFreeRamMb": 2048,
    "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
@@ -213,12 +229,12 @@
    "verificationStatus": "SUPPORTED_UNVERIFIED",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "Qwen3 0.6B int8 lab variant (deprioritized by the one-quant selection rule — dynamic-int4 is the first text target; kept for record, not removed). Unpinned revision; bytes/sha not established.",
+    "description": "Pinned upstream dynamic INT8 LiteRT candidate. Not verified on this device; dynamic INT4 remains the qualified default. A downloaded hash alone is not a compatibility test.",
    "supportedCapabilities": [
     "text-generation"
    ],
-   "upstreamRepo": "Qwen/Qwen3-0.6B",
-   "upstreamFile": null,
+    "upstreamRepo": "litert-community/Qwen3-0.6B",
+    "upstreamFile": "Qwen3-0.6B.litertlm",
    "releaseAsset": null,
    "distribution": null,
    "provenance": [
@@ -235,7 +251,7 @@
     {
      "kind": "UNKNOWN",
      "ref": "unknown / not established",
-     "note": "Exact downloadBytes/installedBytes/sha256 for the curated .fbmodel not established"
+      "note": "No FindBack release package exists; raw upstream immutable LFS size/hash are pinned in pinnedRawSource. Device compatibility remains unknown."
     }
    ]
   },
@@ -246,12 +262,20 @@
    "role": "chat-text",
    "runtime": "litert-lm",
    "format": "litertlm",
-   "revision": "UNKNOWN_NOT_ESTABLISHED",
+    "revision": "4ef1641b562b70ffca66ce4fee7bef4446b374b6",
    "license": "lfm-open-1.0",
    "licenseUrl": "https://liquid.ai/legal",
-   "downloadBytes": null,
-   "installedBytes": null,
-   "sha256": null,
+    "downloadBytes": 736220768,
+    "installedBytes": 736220768,
+    "sha256": null,
+    "installedSha256": "97e6a9700208f59fce2ceb993cd6c18ea77ada8c2a940f68332004f38a404671",
+    "pinnedRawSource": {
+     "repo": "litert-community/LFM2.5-1.2B-Instruct",
+     "revision": "4ef1641b562b70ffca66ce4fee7bef4446b374b6",
+     "file": "LFM2.5-1.2B-Instruct_int4_gpu.litertlm",
+     "bytes": 736220768,
+     "sha256": "97e6a9700208f59fce2ceb993cd6c18ea77ada8c2a940f68332004f38a404671"
+    },
    "minFreeRamMb": 1536,
    "recommendedFreeRamMb": 2816,
    "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
@@ -259,7 +283,7 @@
    "verificationStatus": "EXPERIMENTAL",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "Liquid AI flagship on-device text model (hybrid conv+attention, 32K context), int4 LiteRT conversion with GPU path. EXPERIMENTAL: lab evaluation profile (GGUF Q4_0 arm) shows silence on 10/31 rows (incl. all JSON probes and the refusal probe with NO refusal text) and invented content on 11/21 non-empty rows, complying where Qwen refuses — NOT for structured actions. Lab smoke passed on a DIFFERENT artifact (GGUF Q4_K_M via llama.cpp) — the .litertlm file itself is unverified. License is LFM Open License v1.0, not Apache; no shipment inference.",
+    "description": "Experimental community INT4 GPU LiteRT conversion under LFM Open License v1.0. This exact LiteRT file is pinned but untested on this device. Prior GGUF results concern a different artifact and do not establish compatibility or suitability for structured actions.",
    "supportedCapabilities": [
     "text-generation"
    ],
@@ -296,38 +320,46 @@
     {
      "kind": "UNKNOWN",
      "ref": "unknown / not established",
-     "note": "Pinned upstream revision + exact bytes/sha256 of the curated .fbmodel not established"
+      "note": "No FindBack release package exists; raw upstream immutable LFS size/hash are pinned in pinnedRawSource. Device compatibility remains unknown."
     }
    ]
   },
   {
    "id": "lfm2.5-vl-450m",
-   "displayName": "LFM2.5-VL 450M (multimodal, packaging TBD)",
+    "displayName": "LFM2.5 VL 450M fixB (LiteRT, INT4)",
    "category": "multimodal",
    "role": "report-from-photo",
-   "runtime": "tbd",
-   "format": "tbd-litertlm",
-   "revision": "UNKNOWN_NOT_ESTABLISHED",
+    "runtime": "litert-lm",
+    "format": "litertlm",
+    "revision": "be196f4fa88b2dfba8cdbbbff07b641df794f977",
    "license": "lfm-open-1.0",
    "licenseUrl": "https://liquid.ai/legal",
-   "downloadBytes": null,
-   "installedBytes": null,
-   "sha256": null,
+    "downloadBytes": 406817104,
+    "installedBytes": 406817104,
+    "sha256": null,
+    "installedSha256": "6854cd9677a34e680070b60076793e49aeb3224de7cb4101076b261cb9bf6033",
+    "pinnedRawSource": {
+     "repo": "litert-community/LFM2.5-VL-450M",
+     "revision": "be196f4fa88b2dfba8cdbbbff07b641df794f977",
+     "file": "LFM2.5-VL-450M_int4_fixB.litertlm",
+     "bytes": 406817104,
+     "sha256": "6854cd9677a34e680070b60076793e49aeb3224de7cb4101076b261cb9bf6033"
+    },
    "minFreeRamMb": 1024,
    "recommendedFreeRamMb": 2048,
    "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
-   "ramNotes": "Class-based floor for a compact VL artifact; NO litertlm conversion exists yet so no per-artifact arithmetic is possible. Reference only: vendor MLX bf16 export is 0.84 GB; Liquid blog reports 242 ms/512px on Jetson Orin and 2.4 s on Galaxy S25 Ultra (latency, NOT RAM). Recompute at packaging time.",
+    "ramNotes": "Conservative unmeasured phone estimate; exact 406817104-byte INT4 fixB community LiteRT conversion is pinned, but has not been verified on this device. Do not infer memory requirements from desktop or another phone.",
    "verificationStatus": "EXPERIMENTAL",
    "catalogOnly": false,
    "requiresAdvancedConfirm": true,
-   "description": "Liquid AI compact vision-language model (350M backbone + 86M SigLIP2, 32K ctx, grounding + function calling). EVAL-ONLY slot: the int4_fixB lab file (406817104 B, local SHA-256 6854cd9677a34e680070b60076793e49aeb3224de7cb4101076b261cb9bf6033, NO upstream hash published) is recorded for evaluation reference and is NEVER a catalogue-distributable production artifact — do not present as downloadable. No verified distributable LiteRT packaging exists — do not offer install until packaged + verified. License is LFM Open License v1.0, not Apache; no shipment inference.",
+    "description": "Experimental — needs device verification. Pinned community INT4 fixB LiteRT conversion under LFM Open License v1.0, not an official Liquid AI packaging endorsement. Immutable upstream LFS size/hash and private lab artifact match, but no phone run has established compatibility; do not auto-promote to Recommended.",
    "supportedCapabilities": [
     "report-from-photo",
     "caption",
     "grounding"
    ],
-   "upstreamRepo": "LiquidAI/LFM2.5-VL-450M",
-   "upstreamFile": null,
+    "upstreamRepo": "litert-community/LFM2.5-VL-450M",
+    "upstreamFile": "LFM2.5-VL-450M_int4_fixB.litertlm",
    "releaseAsset": null,
    "distribution": null,
    "provenance": [
@@ -354,60 +386,9 @@
     {
      "kind": "UNKNOWN",
      "ref": "unknown / not established",
-     "note": "No verified distributable litertlm packaging exists; runtime, revision, catalogue bytes/sha all not established — eval-only local bytes/SHA above are reference records, not install pins"
+      "note": "No FindBack release package exists; immutable upstream tree pins the fixB raw weights, but no Android compatibility proof exists."
     }
    ]
-  },
-  {
-   "id": "gemma-3n-e2b-it-litert-int4",
-   "displayName": "Gemma 3n E2B IT (LiteRT, int4) — catalog reference only",
-   "category": "experimental-large",
-   "role": "catalog-reference",
-   "runtime": "litert-lm",
-   "format": "litertlm",
-   "revision": "UNKNOWN_NOT_ESTABLISHED",
-   "license": "gemma",
-   "licenseUrl": "https://ai.google.dev/gemma/docs/gemma-3n/model_card",
-   "downloadBytes": null,
-   "installedBytes": null,
-   "sha256": null,
-   "minFreeRamMb": 4096,
-   "recommendedFreeRamMb": 6144,
-   "ramRequirementSource": "CONSERVATIVE_ESTIMATE",
-   "ramNotes": "NOT VERIFIED — do not present as installable. Class-based floor only: vendor publishes NO phone free-RAM requirement. Raw params 5B+ (effective ~1.91B via MatFormer/PLE offload); HF lists the int4 .litertlm at ~3.66 GB (registry notes correct an older ~2 GB figure to ~3.39 GB — neither is a pinned byte count). Any future packaging MUST re-derive RAM from measured artifacts and keep the not-verified/min-free-RAM warning.",
-   "verificationStatus": "EXPERIMENTAL",
-   "catalogOnly": true,
-   "requiresAdvancedConfirm": true,
-   "description": "CATALOG ONLY. Google Gemma 3n E2B instruction-tuned multimodal model (text/image/video/audio in, text out; 32K ctx; gated Gemma Terms of Use). Listed for roadmap comparison; exceeds the 2 GiB per-asset GitHub Releases limit unchunked, untested on FindBack, no pinned bytes/sha. Carries the mandatory not-verified + min-free-RAM warning design.",
-   "supportedCapabilities": [
-    "catalog-reference"
-   ],
-   "upstreamRepo": "google/gemma-3n-E2B-it-litert-lm-preview",
-   "upstreamFile": "gemma-3n-E2B-it-int4.litertlm",
-   "releaseAsset": null,
-   "distribution": null,
-   "provenance": [
-    {
-     "kind": "VENDOR_MODEL_CARD",
-     "ref": "https://ai.google.dev/gemma/docs/gemma-3n/model_card",
-     "note": "Gemma Terms of Use (gated); effective 2B/4B via selective activation; multimodal; 140+ languages"
-    },
-    {
-     "kind": "VENDOR_MODEL_CARD",
-     "ref": "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm-preview/tree/main",
-     "note": "int4 .litertlm listed ~3.66 GB, Web ~3.04 GB, mediatek ~4.33 GB (listing figures, NOT pinned byte counts)"
-    },
-    {
-     "kind": "REPO_EVIDENCE",
-     "ref": "evaluation record 2026-09-21T16:20Z (model-lab review)",
-     "note": "Registry notes correct old ~2 GB figure to ~3.39 GB and forbid citing 2 GB"
-    },
-    {
-     "kind": "UNKNOWN",
-     "ref": "unknown / not established",
-     "note": "Pinned revision, exact bytes, sha256, and any on-device RAM measurement not established; entry is EXPERIMENTAL + catalogOnly"
-    }
-   ]
-  }
+   }
  ]
 }

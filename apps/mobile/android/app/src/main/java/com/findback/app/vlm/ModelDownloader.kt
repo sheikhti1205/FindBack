@@ -59,6 +59,10 @@ class ModelDownloader(
          */
         fun isDownloadPermitted(distribution: ModelDistribution?): Boolean =
             distribution?.isPublished() == true
+
+        fun isRawDownloadPermitted(manifest: ModelManifest): Boolean =
+            manifest.rawSource != null && manifest.distribution == null &&
+                PinnedModelSources.manifests.any { it == manifest }
     }
 
     @Volatile private var pauseRequested = false
@@ -111,6 +115,14 @@ class ModelDownloader(
         // Publication gate: already-verified on-device weights above never
         // touch the network, but any fetch requires a PUBLISHED distribution
         // record — fail closed before disk-space checks or byte counting.
+        if (isRawDownloadPermitted(manifest)) {
+            val spec = manifest.files.single()
+            if (!ModelInstallPolicy.canInstall(getFreeBytes(), spec.expectedBytes)) {
+                return VlmState.INSUFFICIENT_STORAGE
+            }
+            return downloadFile(manifest, spec, onProgress, onState)
+        }
+
         val distribution = manifest.distribution ?: return VlmState.DOWNLOAD_FAILED
         if (!distribution.isPublished()) return VlmState.DOWNLOAD_FAILED
         val totalNeeded = distribution.bytes + manifest.files.sumOf { it.expectedBytes }
@@ -643,6 +655,9 @@ class ModelDownloader(
      * unpublished distributions so no URL string escapes the gate.
      */
     private fun buildDownloadUrl(manifest: ModelManifest, spec: ModelFileSpec): String {
+        if (isRawDownloadPermitted(manifest) && spec == manifest.files.single()) {
+            return manifest.rawSource!!.url()
+        }
         val distribution = manifest.distribution
             ?: throw DownloadException("No distribution pin for ${manifest.id}")
         if (!distribution.isPublished()) {
@@ -733,15 +748,26 @@ class ModelDownloader(
     }
 
     private fun openConnection(urlString: String, partBytes: Long): HttpURLConnection {
-        val url = URL(urlString)
-        val connection = url.openConnection() as HttpURLConnection
-        connection.connectTimeout = CONNECT_TIMEOUT_MS
-        connection.readTimeout = READ_TIMEOUT_MS
-        connection.requestMethod = "GET"
-        if (partBytes > 0) {
-            connection.setRequestProperty("Range", "bytes=$partBytes-")
+        var current = URL(urlString)
+        val rawSource = PinnedRawSource.isApprovedUrl(urlString)
+        repeat(6) { redirects ->
+            if (rawSource && !PinnedRawSource.isApprovedUrl(current.toString())) {
+                throw DownloadException("Pinned source redirected to an unapproved host")
+            }
+            val connection = current.openConnection() as HttpURLConnection
+            connection.instanceFollowRedirects = !rawSource
+            connection.connectTimeout = CONNECT_TIMEOUT_MS
+            connection.readTimeout = READ_TIMEOUT_MS
+            connection.requestMethod = "GET"
+            if (partBytes > 0) connection.setRequestProperty("Range", "bytes=$partBytes-")
+            if (!rawSource || connection.responseCode !in listOf(301, 302, 303, 307, 308)) return connection
+            val location = connection.getHeaderField("Location")
+                ?: throw DownloadException("Pinned source redirected without a destination")
+            current = URL(current, location)
+            connection.disconnect()
+            if (redirects == 5) throw DownloadException("Too many pinned source redirects")
         }
-        return connection
+        throw DownloadException("Too many pinned source redirects")
     }
 
     private fun validateContentRange(contentRange: String?, partBytes: Long, expectedBytes: Long): Boolean {

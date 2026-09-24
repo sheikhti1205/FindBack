@@ -62,6 +62,43 @@ describe("richText round-trip fidelity", () => {
     expect(roundTrip(doc)).toEqual(doc);
   });
 
+  it("preserves ordered lists, numbering and adjacent list kinds across drafts", () => {
+    const doc: RichTextDocument = {
+      v: 1,
+      blocks: [
+        { type: "OrderedList", start: 3, items: [[{ type: "Bold", text: "one" }], [{ type: "InlineText", text: "two" }]] },
+        { type: "BulletList", items: [[{ type: "Italic", text: "three" }]] },
+        { type: "OrderedList", start: 1, items: [[{ type: "InlineText", text: "four" }]] },
+      ],
+    };
+    expect(toMarkdown(doc)).toBe("3. **one**\n4. two\n\n- *three*\n\n1. four");
+    expect(roundTrip(doc)).toEqual(doc);
+  });
+
+  it("round trips bold and italic with and without a safe link", () => {
+    const markdown = "***black*** **[badge](https://example.com/b)** *[map](https://example.com/m)* ***[case](https://example.com/c)***";
+    const doc = fromMarkdown(markdown);
+    expect(doc.blocks[0]).toEqual({
+      type: "Paragraph",
+      runs: [
+        { type: "BoldItalic", text: "black" },
+        { type: "InlineText", text: " " },
+        { type: "BoldLink", text: "badge", href: "https://example.com/b" },
+        { type: "InlineText", text: " " },
+        { type: "ItalicLink", text: "map", href: "https://example.com/m" },
+        { type: "InlineText", text: " " },
+        { type: "BoldItalicLink", text: "case", href: "https://example.com/c" },
+      ],
+    });
+    expect(toMarkdown(doc)).toBe(markdown);
+  });
+
+  it("keeps bold+italic while stripping an unsafe nested link", () => {
+    const doc = fromMarkdown("***[case](javascript:alert(1))***");
+    expect(doc.blocks[0]).toEqual({ type: "Paragraph", runs: [{ type: "BoldItalic", text: "case" }] });
+    expect(toMarkdown(doc)).toBe("***case***");
+  });
+
   it("preserves quotes", () => {
     const doc: RichTextDocument = {
       v: 1,
@@ -112,18 +149,16 @@ describe("richText round-trip fidelity", () => {
         "",
         "#### too deep",
         "",
-        "1. first",
-        "2. second",
+         "1. first",
+         "2. second",
         "",
         "---",
         "",
         "<div>raw block</div>",
       ].join("\n"),
     );
-    for (const block of doc.blocks) {
-      expect(block.type).toBe("Paragraph");
-    }
-    const text = doc.blocks.map((b) => (b.type === "Paragraph" ? b.runs : [])).flat().map((r) => r.text).join("\n");
+     expect(doc.blocks.some((block) => block.type === "OrderedList")).toBe(true);
+    const text = doc.blocks.flatMap((block) => block.type === "Paragraph" ? block.runs : block.type === "OrderedList" ? block.items.flat() : []).map((run) => run.text).join("\n");
     expect(text).toContain("photo");
     expect(text).toContain("too deep");
     expect(text).toContain("first");

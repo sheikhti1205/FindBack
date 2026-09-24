@@ -219,6 +219,23 @@ object PackageHost {
         )
     }
 
+    /** Inspection only; the full import must still rehash and validate every member. */
+    fun peekManifest(packageFile: File): Manifest? {
+        if (!packageFile.isFile || packageFile.length() > MAX_EXPANDED_BYTES + MAX_MANIFEST_BYTES) return null
+        return try {
+            ZipFile(packageFile).use { zip ->
+                val symlinks = centralDirSymlinkNames(packageFile) ?: return null
+                if (MANIFEST_NAME in symlinks) return null
+                val entries = zip.entries().asSequence().filter { it.name == MANIFEST_NAME && !it.isDirectory }.toList()
+                if (entries.size != 1) return null
+                val raw = readBounded(zip.getInputStream(entries.single()), MAX_MANIFEST_BYTES) ?: return null
+                val manifest = parseManifest(raw) ?: return null
+                if (!Regex("[a-z0-9][a-z0-9.-]{1,63}").matches(manifest.entryId)) return null
+                manifest
+            }
+        } catch (_: Exception) { null }
+    }
+
     private fun manifestJson(manifest: Manifest): String {
         val sb = StringBuilder()
         sb.append("{\n")
@@ -340,7 +357,9 @@ object PackageHost {
         freeBytes: Long? = null,
         maxExpandedBytes: Long = MAX_EXPANDED_BYTES
     ): ImportResult {
-        if (entryId.isBlank()) return fail(Code.ENTRY_MISMATCH, "Import refused: empty catalogue entry id.")
+        if (!Regex("[a-z0-9][a-z0-9.-]{1,63}").matches(entryId)) {
+            return fail(Code.ENTRY_MISMATCH, "Import refused: invalid catalogue entry id.")
+        }
         if (expectedSha256.isBlank()) {
             return fail(Code.MISSING_PIN, "No shipped hash pin: the package cannot be verified, so import is refused.")
         }
@@ -615,21 +634,45 @@ object PackageHost {
         installDir: File,
         dest: OutputStream,
         createdAt: String = java.time.Instant.now().toString(),
-        maxExpandedBytes: Long = MAX_EXPANDED_BYTES
+        maxExpandedBytes: Long = MAX_EXPANDED_BYTES,
+        trustedFiles: List<ModelFileSpec>? = null
     ): ExportResult {
         fun exportFail(code: String, reason: String) = ExportResult(false, code, reason)
-        if (entryId.isBlank()) return exportFail(Code.ENTRY_MISMATCH, "Export refused: empty catalogue entry id.")
+        if (!Regex("[a-z0-9][a-z0-9.-]{1,63}").matches(entryId)) {
+            return exportFail(Code.ENTRY_MISMATCH, "Export refused: invalid catalogue entry id.")
+        }
         if (!installDir.isDirectory) return exportFail(Code.NO_FILES, "Nothing to package: no installed files supplied.")
         val baseCanonical = try {
             installDir.canonicalPath
         } catch (_: Exception) {
             return exportFail(Code.CORRUPT_ARCHIVE, "Installed files could not be read. Nothing written.")
         }
-        val regularFiles = installDir.walkTopDown()
-            .filter { it.isFile }
-            .map { it.canonicalPath.removePrefix(baseCanonical + File.separator).replace(File.separatorChar, '/') to it }
-            .sortedBy { it.first }
-            .toList()
+        val regularFiles = if (trustedFiles == null) {
+            installDir.walkTopDown()
+                .filter { it.isFile }
+                .map { it.canonicalPath.removePrefix(baseCanonical + File.separator).replace(File.separatorChar, '/') to it }
+                .sortedBy { it.first }
+                .toList()
+        } else {
+            if (trustedFiles.isEmpty() || trustedFiles.map { it.path }.toSet().size != trustedFiles.size) {
+                return exportFail(Code.NO_FILES, "No unambiguous trusted model weights to export.")
+            }
+            trustedFiles.map { spec ->
+                val path = spec.path
+                if (findUnsafePathReason(path) != null || isDeniedSuffix(path)) {
+                    return exportFail(Code.UNSAFE_PATH, "Unsafe trusted model path.")
+                }
+                val file = File(installDir, path)
+                if (!file.isFile || java.nio.file.Files.isSymbolicLink(file.toPath()) ||
+                    !file.canonicalPath.startsWith(baseCanonical + File.separator)) {
+                    return exportFail(Code.MISSING_FILE, "Trusted installed model file is missing.")
+                }
+                if (file.length() != spec.expectedBytes || !Sha256.matchesFile(file, spec.sha256)) {
+                    return exportFail(Code.HASH_MISMATCH, "Trusted installed weights failed integrity verification.")
+                }
+                path to file
+            }.sortedBy { it.first }
+        }
         if (regularFiles.isEmpty()) return exportFail(Code.NO_FILES, "Nothing to package: no installed files supplied.")
         val exportEntries = regularFiles.map { (relative, file) -> exportInteriorPath(relative) to file }
         if (exportEntries.none { it.first.startsWith("weights/") }) {
@@ -735,9 +778,14 @@ object PackageHost {
                             "Expanded package size exceeds the $maxExpandedBytes-byte cap."
                         )
                     }
-                    observed.add(
-                        Observed(interior, observedBytes, fileDigest.digest().joinToString("") { "%02x".format(it) }, method)
-                    )
+                    val hash = fileDigest.digest().joinToString("") { "%02x".format(it) }
+                    if (trustedFiles != null) {
+                        val spec = trustedFiles.singleOrNull { exportInteriorPath(it.path) == interior }
+                        if (spec == null || observedBytes != spec.expectedBytes || hash != spec.sha256) {
+                            return exportFail(Code.HASH_MISMATCH, "Trusted weights changed during export.")
+                        }
+                    }
+                    observed.add(Observed(interior, observedBytes, hash, method))
                 }
 
                 val manifestFiles = observed.map { ManifestFile(it.path, it.bytes, it.sha256, it.method) }.toMutableList()

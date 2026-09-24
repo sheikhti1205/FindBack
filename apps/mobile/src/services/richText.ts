@@ -13,14 +13,17 @@ export type InlineNode =
   | { type: "InlineText"; text: string }
   | { type: "Bold"; text: string }
   | { type: "Italic"; text: string }
+  | { type: "BoldItalic"; text: string }
   | { type: "Link"; href: string; text: string }
   | { type: "BoldLink"; href: string; text: string }
-  | { type: "ItalicLink"; href: string; text: string };
+  | { type: "ItalicLink"; href: string; text: string }
+  | { type: "BoldItalicLink"; href: string; text: string };
 
 export type Block =
   | { type: "Paragraph"; runs: InlineNode[] }
   | { type: "Heading"; level: 1 | 2 | 3; runs: InlineNode[] }
   | { type: "BulletList"; items: InlineNode[][] }
+  | { type: "OrderedList"; start: number; items: InlineNode[][] }
   | { type: "Quote"; runs: InlineNode[] };
 
 export interface RichTextDocument {
@@ -66,6 +69,8 @@ function coerceRun(run: unknown): InlineNode {
       return { type: "Bold", text };
     case "Italic":
       return { type: "Italic", text };
+    case "BoldItalic":
+      return { type: "BoldItalic", text };
     case "Link":
       return typeof run.href === "string" && isSafeRichTextHref(run.href)
         ? { type: "Link", href: run.href, text }
@@ -78,6 +83,10 @@ function coerceRun(run: unknown): InlineNode {
       return typeof run.href === "string" && isSafeRichTextHref(run.href)
         ? { type: "ItalicLink", href: run.href, text }
         : { type: "Italic", text };
+    case "BoldItalicLink":
+      return typeof run.href === "string" && isSafeRichTextHref(run.href)
+        ? { type: "BoldItalicLink", href: run.href, text }
+        : { type: "BoldItalic", text };
     case "InlineText":
       return { type: "InlineText", text };
     default:
@@ -114,6 +123,17 @@ export function asSafeDocument(value: unknown): RichTextDocument {
             ? raw.items.map((item) => coerceRuns(item)).filter((runs) => runs.length > 0)
             : [];
           if (items.length > 0) blocks.push({ type: "BulletList", items });
+          break;
+        }
+        case "OrderedList": {
+          const items = Array.isArray(raw.items)
+            ? raw.items.map((item) => coerceRuns(item)).filter((runs) => runs.length > 0)
+            : [];
+          if (items.length > 0) {
+            const start = typeof raw.start === "number" && Number.isSafeInteger(raw.start) && raw.start >= 1 && raw.start <= 999999999
+              ? raw.start : 1;
+            blocks.push({ type: "OrderedList", start, items });
+          }
           break;
         }
         case "Quote":
@@ -162,11 +182,12 @@ function escapeText(text: string): string {
 function protectLineStarts(text: string): string {
   return text
     .split("\n")
-    .map((line) =>
-      /^(\s{0,3})(#{1,6}\s|>\s?|[-+*]\s|\d+[.)]\s|```|\||-{3,}|\*{3,}|_{3,})/.test(line)
+    .map((line) => {
+      const isBlockMarker = /^(\s{0,3})(#{1,6}\s|>\s?|[-+*]\s|\d+[.)]\s|```|\||-{3,}|_{3,})/.test(line);
+      return isBlockMarker || /^\s{0,3}\*{3,}\s*$/.test(line)
         ? line.replace(/^(\s{0,3})/, "$1\\")
-        : line,
-    )
+        : line;
+    })
     .join("\n");
 }
 
@@ -176,6 +197,8 @@ function emitRun(run: InlineNode): string {
       return `**${escapeText(run.text)}**`;
     case "Italic":
       return `*${escapeText(run.text)}*`;
+    case "BoldItalic":
+      return `***${escapeText(run.text)}***`;
     case "Link":
       if (!isSafeRichTextHref(run.href) || /\s/.test(run.href) || hasControlChars(run.href)) {
         return escapeText(run.text);
@@ -191,6 +214,11 @@ function emitRun(run: InlineNode): string {
         return `*${escapeText(run.text)}*`;
       }
       return `*[${escapeText(run.text)}](${run.href.trim()})*`;
+    case "BoldItalicLink":
+      if (!isSafeRichTextHref(run.href) || /\s/.test(run.href) || hasControlChars(run.href)) {
+        return `***${escapeText(run.text)}***`;
+      }
+      return `***[${escapeText(run.text)}](${run.href.trim()})***`;
     case "InlineText":
       return escapeText(run.text);
   }
@@ -215,6 +243,9 @@ export function toMarkdown(doc: RichTextDocument): string {
           break;
         case "BulletList":
           parts.push(block.items.map((item) => `- ${emitInline(item).replace(/\n/g, " ")}`).join("\n"));
+          break;
+        case "OrderedList":
+          parts.push(block.items.map((item, index) => `${block.start + index}. ${emitInline(item).replace(/\n/g, " ")}`).join("\n"));
           break;
         case "Quote":
           parts.push(
@@ -297,6 +328,18 @@ function parseInline(s: string): InlineNode[] {
       literal += unescapeChar(s[i + 1]);
       i += 2;
       continue;
+    }
+    if (s.startsWith("***", i)) {
+      const close = findCloser(s, i + 3, "***");
+      if (close > i + 3) {
+        flush();
+        const inner = s.slice(i + 3, close);
+        const linked = parseEmphasisInner(inner);
+        if (linked?.type === "Link") runs.push({ type: "BoldItalicLink", href: linked.href, text: linked.text });
+        else runs.push({ type: "BoldItalic", text: linked?.text ?? inner });
+        i = close + 3;
+        continue;
+      }
     }
     if (ch === "*" && s[i + 1] === "*") {
       const close = findCloser(s, i + 2, "**");
@@ -391,6 +434,7 @@ export function fromMarkdown(md: unknown): RichTextDocument {
     let para: string[] = [];
     let quote: string[] | null = null;
     let list: string[][] | null = null;
+    let ordered: { start: number; items: string[][] } | null = null;
     let fence: string[] | null = null;
 
     const flushPara = () => {
@@ -412,10 +456,17 @@ export function fromMarkdown(md: unknown): RichTextDocument {
         list = null;
       }
     };
+    const flushOrdered = () => {
+      if (ordered !== null) {
+        blocks.push({ type: "OrderedList", start: ordered.start, items: ordered.items.map((lines) => parseInline(lines.join("\n"))) });
+        ordered = null;
+      }
+    };
     const flushAll = () => {
       flushPara();
       flushQuote();
       flushList();
+      flushOrdered();
     };
 
     for (const rawLine of lines) {
@@ -460,6 +511,7 @@ export function fromMarkdown(md: unknown): RichTextDocument {
       if (quoteMatch) {
         flushPara();
         flushList();
+        flushOrdered();
         if (quote === null) quote = [];
         quote.push(quoteMatch[1] ?? "");
         continue;
@@ -468,6 +520,7 @@ export function fromMarkdown(md: unknown): RichTextDocument {
       if (bullet?.[1] !== undefined && bullet[1] !== "") {
         flushPara();
         flushQuote();
+        flushOrdered();
         if (list === null) list = [];
         list.push([bullet[1]]);
         continue;
@@ -476,11 +529,15 @@ export function fromMarkdown(md: unknown): RichTextDocument {
         flushAll();
         continue;
       }
-      const ordered = /^\d{1,9}[.)]\s+(.*)$/.exec(scan);
-      if (ordered?.[1] !== undefined && ordered[1] !== "") {
+      const orderedMatch = /^(\d{1,9})[.)]\s+(.*)$/.exec(scan);
+      if (orderedMatch?.[2] !== undefined && orderedMatch[2] !== "") {
+        flushPara();
         flushQuote();
         flushList();
-        para.push(ordered[1]);
+        const number = Number(orderedMatch[1]);
+        if (ordered !== null && number !== ordered.start + ordered.items.length) flushOrdered();
+        if (ordered === null) ordered = { start: number, items: [] };
+        ordered.items.push([orderedMatch[2]]);
         continue;
       }
       if (scan.startsWith("|")) {
@@ -495,6 +552,7 @@ export function fromMarkdown(md: unknown): RichTextDocument {
       }
       flushQuote();
       flushList();
+      flushOrdered();
       para.push(scan);
     }
     if (fence !== null) {

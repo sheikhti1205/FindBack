@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import type { Editor } from "@tiptap/react";
-import { RichTextEditor, markdownToTiptap } from "./RichTextEditor";
+import { RichTextEditor, markdownToTiptap, tiptapToMarkdown } from "./RichTextEditor";
 
 afterEach(cleanup);
 
@@ -55,8 +55,19 @@ describe("RichTextEditor workset2 visual marks", () => {
     expect(editorEl.textContent).not.toContain("**");
   });
 
-  it("links selected text with a visual mark and no literal markdown syntax", () => {
-    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("https://example.com/map");
+  it("keeps combined Bold and Italic on only the selected word across Markdown restore", () => {
+    const ref = createRef<Editor | null>();
+    const { container } = render(<RichTextEditor label="Description" value="The phone has a black case." onChange={() => {}} editorRef={ref} />);
+    act(() => ref.current?.commands.setTextSelection({ from: 17, to: 22 }));
+    fireEvent.click(screen.getByRole("button", { name: "Bold" }));
+    fireEvent.click(screen.getByRole("button", { name: "Italic" }));
+    expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("The phone has a ***black*** case.");
+    expect(container.querySelector(".tiptap strong em")?.textContent).toBe("black");
+    expect(markdownToTiptap(tiptapToMarkdown(ref.current?.getJSON())).content).toBeTruthy();
+  });
+
+  it("links precisely the selected text through a cancellable sheet, never a browser prompt", () => {
+    const promptSpy = vi.spyOn(window, "prompt");
     try {
       const seen: string[] = [];
       const ref = createRef<Editor | null>();
@@ -67,7 +78,12 @@ describe("RichTextEditor workset2 visual marks", () => {
         ref.current?.commands.setContent(markdownToTiptap("see map here"));
         ref.current?.commands.setTextSelection({ from: 5, to: 8 });
       });
-      fireEvent.click(screen.getByRole("button", { name: "Link" }));
+       fireEvent.click(screen.getByRole("button", { name: "Link" }));
+       expect(screen.getByRole("dialog", { name: "Add link" })).toBeTruthy();
+       expect((screen.getByLabelText("Selected text") as HTMLInputElement).value).toBe("map");
+       expect(promptSpy).not.toHaveBeenCalled();
+       fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://example.com/map" } });
+       fireEvent.click(screen.getByRole("button", { name: "Add link" }));
       const last = seen[seen.length - 1] ?? "";
       expect(last).toBe("see [map](https://example.com/map) here");
       const editorEl = container.querySelector(".tiptap") as HTMLElement;
@@ -78,5 +94,26 @@ describe("RichTextEditor workset2 visual marks", () => {
     } finally {
       promptSpy.mockRestore();
     }
+  });
+
+  it("leaves the selected word unchanged when the link sheet is cancelled", () => {
+    const ref = createRef<Editor | null>();
+    render(<RichTextEditor label="Description" value="see map here" onChange={() => {}} editorRef={ref} />);
+    act(() => ref.current?.commands.setTextSelection({ from: 5, to: 8 }));
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("see map here");
+  });
+
+  it("disables Link at an unlinked caret and rejects unsafe URLs without changing marks", () => {
+    const ref = createRef<Editor | null>();
+    render(<RichTextEditor label="Description" value="see map here" onChange={() => {}} editorRef={ref} />);
+    expect((screen.getByRole("button", { name: "Link" }) as HTMLButtonElement).disabled).toBe(true);
+    act(() => ref.current?.commands.setTextSelection({ from: 5, to: 8 }));
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "javascript:alert(1)" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add link" }));
+    expect(screen.getByRole("alert").textContent).toMatch(/safe HTTP/i);
+    expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("see map here");
   });
 });

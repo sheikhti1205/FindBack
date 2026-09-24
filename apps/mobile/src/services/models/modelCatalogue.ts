@@ -47,15 +47,13 @@ export function verificationLabel(status: VerificationStatus): string {
 /**
  * Whether the library may offer an install affordance for the entry.
  *
- * True only for non-catalogue, non-experimental, compatible entries whose
- * exact byte counts are pinned. In particular this is false for the
- * LFM2.5-VL-450M eval-only slot (never a downloadable production artifact)
- * and for every `catalogOnly` large entry.
+ * A catalogue entry may be offered for installation when it has exact sizes.
+ * The transfer gate independently requires a source-specific trusted hash and
+ * refuses an unpublished release. Installability does not imply device support.
  */
 export function isInstallable(entry: ModelCatalogueEntry): boolean {
   if (entry.catalogOnly === true) return false;
   if (entry.verificationStatus === "INCOMPATIBLE") return false;
-  if (entry.verificationStatus === "EXPERIMENTAL") return false;
   if (entry.downloadBytes == null || entry.installedBytes == null) return false;
   return true;
 }
