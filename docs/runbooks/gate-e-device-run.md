@@ -1,18 +1,24 @@
 # Runbook X1 — Gate-E device-day run (CreateReport integration set)
 
-Device-day replay of the prepared pass. Everything automatable without a
-phone is already dry-run by `scripts/devprep/gate-e-run.mjs`; this runbook
-is the human checklist for the device-only steps.
+Device-day replay of the prepared pass. The retired
+`scripts/devprep/gate-e-run.mjs` dry-run no longer exists (removed in
+`34b6ae7`); this runbook is the human checklist for the device steps,
+with the host preconditions in §0 using currently supported commands.
 
 ## 0. Preconditions (host)
 
-- `node scripts/devprep/gate-e-run.mjs --dry-run` passes (manifest in
-  `test-evidence/devprep/gate-e/<stamp>/manifest.json`).
-- `node scripts/devprep/collect-build-info.mjs` written
-  (`test-evidence/devprep/shared/build-info.json`): git SHA + versionName.
-- Debug APK installed from the recorded SHA; record versionCode from the
-  About screen (native `versionCode`, `build.gradle` `gitVersionCode()` rule)
-  into `test-evidence/devprep/gate-e/<run>/build-capture.json`.
+The `scripts/devprep/` host harnesses (`gate-e-run.mjs`,
+`collect-build-info.mjs`) were retired in commit `34b6ae7` — there is no
+`--dry-run` command anymore. Run the supported host checks instead:
+
+- `npm run typecheck` passes (repo root).
+- `npm test -w @findback/mobile` passes (repo root).
+- Record the build identity manually into
+  `test-evidence/gate-e/<run>/build-capture.json`: `git rev-parse HEAD`
+  (git SHA), `node -p "require('./apps/mobile/package.json').version"`
+  (versionName), and the native `versionCode` from the About screen
+  (`build.gradle` `gitVersionCode()` rule).
+- Debug APK installed from the recorded SHA.
 
 ## 1. camera → Analyze
 
@@ -51,6 +57,7 @@ with the tap sequence. Do not paraphrase — exact text only.
 
 ## 6. Close-out
 
-Re-run `gate-e-run.mjs --device --serial=<serial>` to flip step statuses;
-attach the run dir listing to the status report. Timing rows from §§1–3 are
-the Gate-E performance evidence.
+Update the step statuses in the run dir manually (the retired
+`gate-e-run.mjs --device` flip no longer exists); attach the run dir
+listing to the status report. Timing rows from §§1–3 are the Gate-E
+performance evidence.

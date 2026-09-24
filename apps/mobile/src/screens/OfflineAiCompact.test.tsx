@@ -280,6 +280,83 @@ describe("OfflineAiCompact six-model route", () => {
     await waitFor(() => expect(transfers.exportAll).toHaveBeenCalled());
     expect(await screen.findByText(/✓ lfm2\.5-vl-450m\.fbmodel/)).toBeTruthy();
   });
+
+  it("renders NOT_INSTALLED rows with Unknown memory when native reads fail", async () => {
+    const vlm = fakeVlm();
+    vlm.getCapabilities.mockResolvedValue({});
+    vlm.getModelStates.mockRejectedValue(new Error("no-bridge-states"));
+    const candidates = fakeCandidates();
+    candidates.getStates.mockRejectedValue(new Error("no-candidate-states"));
+    render(<OfflineAiCompact vlm={vlm} candidates={candidates} transfers={fakeTransfers()} />);
+    expect(await screen.findByRole("heading", { name: "On-device AI" })).toBeTruthy();
+    expect(await screen.findByText("Available memory: Unknown")).toBeTruthy();
+    const recommended = screen.getByRole("region", { name: "Recommended" });
+    const experimental = screen.getByRole("region", { name: "Experimental" });
+    await waitFor(() => {
+      expect(within(recommended).getAllByRole("listitem")).toHaveLength(2);
+      expect(within(experimental).getAllByRole("listitem")).toHaveLength(4);
+    });
+    // Catalogue rows render from shipped truth even with no live state;
+    // experimental rows stay installable, recommended stay honestly unavailable.
+    expect(within(experimental).getAllByRole("button", { name: /Download/i })).toHaveLength(4);
+    expect(within(recommended).getAllByText(/Unavailable/).length).toBeGreaterThan(0);
+  });
+
+  it("shows the real pinned revision and the untested-device warning in entry details", async () => {
+    // Unknown RAM keeps the honest untested-device fallback instead of a fit claim.
+    const vlm = fakeVlm();
+    vlm.getCapabilities.mockResolvedValue({});
+    render(<OfflineAiCompact vlm={vlm} candidates={fakeCandidates()} transfers={fakeTransfers()} />);
+    const experimental = await screen.findByRole("region", { name: "Experimental" });
+    fireEvent.click(within(experimental).getAllByRole("button", { name: /Details for/i })[0]!);
+    const dialog = await screen.findByRole("dialog", { name: /details/i });
+    expect(within(dialog).getByText("Pinned revision")).toBeTruthy();
+    expect(within(dialog).getByText("a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76")).toBeTruthy();
+    expect(within(dialog).getByText(/Not tested on this device/)).toBeTruthy();
+  });
+
+  it("discloses the exact download size in the confirm dialog", async () => {
+    render(<OfflineAiCompact vlm={fakeVlm()} candidates={fakeCandidates()} transfers={fakeTransfers()} ramOverrideMb={4300} />);
+    const experimental = await screen.findByRole("region", { name: "Experimental" });
+    fireEvent.click(within(experimental).getAllByRole("button", { name: /Download/i })[0]!);
+    const dialog = await screen.findByRole("dialog", { name: /Confirm download/i });
+    // 497516544 B formats to 474 MB — never a placeholder, never hidden.
+    expect(within(dialog).getByText("Download size: 474 MB.")).toBeTruthy();
+  });
+
+  it("keeps Pause/Cancel — never Download — on an in-flight transfer row", async () => {
+    const candidates = fakeCandidates();
+    candidates.getStates.mockResolvedValue([
+      { entryId: "qwen3-0.6b-litert-mixed-int4", state: "DOWNLOADING", installed: false, sizeBytes: 497516544, downloadedBytes: 100663296 },
+      { entryId: "qwen3-0.6b-litert-int8", state: "NOT_INSTALLED", installed: false, sizeBytes: 614236160, downloadedBytes: 0 },
+      { entryId: "lfm2.5-1.2b-instruct-litert-int4-gpu", state: "NOT_INSTALLED", installed: false, sizeBytes: 736220768, downloadedBytes: 0 },
+      { entryId: "lfm2.5-vl-450m", state: "NOT_INSTALLED", installed: false, sizeBytes: 406817104, downloadedBytes: 0 },
+    ]);
+    render(<OfflineAiCompact vlm={fakeVlm()} candidates={candidates} transfers={fakeTransfers()} ramOverrideMb={4300} />);
+    const experimental = await screen.findByRole("region", { name: "Experimental" });
+    await waitFor(() => expect(within(experimental).getByRole("button", { name: /Pause/i })).toBeTruthy());
+    expect(within(experimental).getByRole("button", { name: /Cancel/i })).toBeTruthy();
+    expect(within(experimental).queryByRole("button", { name: /Download Qwen3.*mixed|Download.*Mixed/i })).toBeNull();
+    expect(within(experimental).getAllByRole("button", { name: /Download/i })).toHaveLength(3);
+    expect(within(experimental).getByRole("progressbar")).toBeTruthy();
+  });
+
+  it("surfaces a failed download as an honest alert with nothing installed", async () => {
+    const candidates = fakeCandidates();
+    candidates.download.mockRejectedValue(new Error("candidate-offline-no-bytes-moved"));
+    render(<OfflineAiCompact vlm={fakeVlm()} candidates={candidates} transfers={fakeTransfers()} ramOverrideMb={4300} />);
+    const experimental = await screen.findByRole("region", { name: "Experimental" });
+    fireEvent.click(within(experimental).getAllByRole("button", { name: /Download/i })[0]!);
+    await screen.findByRole("dialog", { name: /Confirm download/i });
+    const confirm = screen.getByRole("button", { name: "Confirm download" });
+    if ((confirm as HTMLButtonElement).disabled) {
+      fireEvent.click(screen.getByRole("checkbox"));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Confirm download" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch("candidate-offline-no-bytes-moved");
+    expect(candidates.download).toHaveBeenCalled();
+  });
 });
 
 function modelFor(entryId: string, category: ManagerModel["category"]): ManagerModel {

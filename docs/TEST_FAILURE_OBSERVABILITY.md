@@ -7,26 +7,28 @@ timeout adjustments.
 
 ## Command
 
-```
-node scripts/repeat-mobile-tests.mjs [--runs=20] [--out=test-evidence/mobile-repeat]
+`scripts/repeat-mobile-tests.mjs` was retired in commit `34b6ae7` with no
+replacement harness. The supported equivalent is a plain shell loop that
+captures the next failure with its full identity:
+
+```sh
+mkdir -p test-evidence/mobile-repeat
+for i in $(seq 1 20); do
+  npm test -w @findback/mobile > "test-evidence/mobile-repeat/run-$i.log" 2>&1 \
+    || { echo "first failure at run $i — see run-$i.log"; break; }
+done
 ```
 
-Runs the full mobile suite (`npm test -w @findback/mobile`) up to `--runs`
-times (default 20) and stops at the first failure with identity. Each run is a
-single attempt with reporter output only; nothing about scheduling, timeouts,
-or test selection is altered.
+Each run is a single full-suite attempt with default scheduling, timeouts
+and test selection; the loop stops at the first failing run. Triage from
+the failing log tail: failing file(s), test name(s), seed/worker setup,
+stderr tail, duration and environment (`node --version`,
+`git rev-parse HEAD`, vitest version from the log header).
 
 ## Artifacts (local only, gitignored under `test-evidence/`)
 
-- `run-NN.log` — raw combined stdout/stderr of run N.
-- `run-NN.vitest.json` — machine-readable vitest JSON report for run N.
-- `run-NN.json` — run metadata (command, start time, duration, exit code,
-  parsed failures) plus environment.
-- `failure-identity.json` — written on the first failing run: failing file(s),
-  test name(s), seed/config defaults, worker setup, stderr tail, duration,
-  environment, and pointers to the per-run files. The runner exits 1.
-- `summary.json` — written when every run passes: per-run metadata and the
-  conclusion that the intermittent did not reproduce in this set. Exit 0.
+- `run-NN.log` — raw combined stdout/stderr of run N. Quote the identity
+  fields from the first failing log in the report; the raw logs stay local.
 
 ## Environment captured per run
 

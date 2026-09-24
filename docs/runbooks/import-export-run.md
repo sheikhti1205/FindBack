@@ -2,22 +2,30 @@
 
 The gate is the order: **small safe fixture first, real Qwen package only
 after the fixture passes.** The real-package step must refuse to run until
-`fixture-verify.mjs gate --real` exits 0. Evidence lands in
-`test-evidence/devprep/import-export/`.
+the fixture gate below passes. Evidence lands in
+`test-evidence/import-export/`.
+
+`scripts/devprep/fixture-verify.mjs` was retired in commit `34b6ae7`;
+the gate is reproduced with shell tools — no replacement harness exists.
 
 ## Step 0. Fixture pass (host-runnable, do this first)
 
 ```sh
-node scripts/devprep/fixture-verify.mjs generate
-node scripts/devprep/fixture-verify.mjs verify
-node scripts/devprep/fixture-verify.mjs gate --real
+run=test-evidence/import-export/fixture
+mkdir -p "$run" && cd "$run"
+head -c 65536 /dev/urandom > photo-thumb.bin
+head -c 65536 /dev/urandom > weights-note.bin
+printf '{"report":"fixture"}' > report-fields.json
+sha256sum photo-thumb.bin report-fields.json weights-note.bin > checksums.json
+sha256sum -c checksums.json
+printf '{"passedAt":"%s"}' "$(date -u +%FT%TZ)" > fixture-pass.json
 ```
 
 Expected: three 64 KiB synthetic payloads (`photo-thumb.bin`,
 `report-fields.json`, `weights-note.bin` — clearly not weights),
-`checksums.json` + `manifest.json` agree, sha256 chain verifies, and
-`fixture-pass.json` is written with `passedAt`. If `verify` fails, stop:
-debug the harness, never skip to the real package.
+`checksums.json` verifies, and `fixture-pass.json` is written with
+`passedAt`. If `sha256sum -c` fails, stop: debug the payloads, never
+skip to the real package.
 
 ## Step 1. Fixture import/export in-app (device)
 
@@ -29,7 +37,8 @@ Evidence: `fixture-import.json`, `fixture-export.json`
 ## Step 2. Gate check (device day, before touching the real package)
 
 ```sh
-node scripts/devprep/fixture-verify.mjs gate --real
+cd test-evidence/import-export/fixture
+sha256sum -c checksums.json && test -f fixture-pass.json
 ```
 
 Non-zero exit = BLOCKED. Re-run Step 0/1; do not proceed.

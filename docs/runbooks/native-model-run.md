@@ -2,7 +2,7 @@
 
 Ordered pass. One generative model resident at a time (G7): every switch is
 release-current → load-next → verify. Evidence lands in
-`test-evidence/devprep/native-models/<run>/`.
+`test-evidence/native-models/<run>/`.
 
 Qualified pins (never re-resolve, never substitute):
 
