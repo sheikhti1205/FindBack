@@ -66,6 +66,29 @@ describe("compact Model Manager visual contract", () => {
     expect(screen.getByRole("button", { name: /Use Qwen3/i })).toBeTruthy();
   });
 
+  it("never offers Use to probe-only entries, even when natively verified", () => {
+    const onAction = vi.fn();
+    const probeReady = { ...candidateRows[2]!, state: "READY" as const, canUse: false as const };
+    const { rerender } = render(<ModelManagerView models={[probeReady]} onAction={onAction} onImport={() => {}} onExport={() => {}} />);
+    expect(screen.queryByRole("button", { name: /Use Qwen3/i })).toBeNull();
+    // Experimental probe-only rows offer a device retest instead of Use.
+    expect(screen.getByRole("button", { name: /Verify Qwen3/i })).toBeTruthy();
+    rerender(<ModelManagerView models={[{ ...probeReady, category: "IMPORTED" as const }]} onAction={onAction} onImport={() => {}} onExport={() => {}} />);
+    expect(screen.queryByRole("button", { name: /Use Qwen3/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Verify Qwen3/i })).toBeNull();
+  });
+
+  it("surfaces failed and error states distinctly with a retry path", () => {
+    const onAction = vi.fn();
+    const failed = { ...candidateRows[2]!, state: "FAILED" as const, error: "Download failed" };
+    const { rerender } = render(<ModelManagerView models={[failed]} onAction={onAction} onImport={() => {}} onExport={() => {}} />);
+    expect(screen.getByText("Failed")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Try again Qwen3/i }));
+    expect(onAction).toHaveBeenCalledWith(failed.entryId, "tryAgain");
+    rerender(<ModelManagerView models={[{ ...failed, state: "ERROR" as const }]} onAction={onAction} onImport={() => {}} onExport={() => {}} />);
+    expect(screen.getByText("Error")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Use Qwen3/i })).toBeNull();
+  });
   it("renders user-confirmed imported entries only in their own section", () => {
     const imported = { ...candidateRows[2]!, entryId: "imported-example", label: "My Vision Model", category: "IMPORTED" as const, state: "INSTALLED_UNVERIFIED" as const };
     render(<ModelManagerView models={[...candidateRows, imported]} onAction={() => {}} onImport={() => {}} onExport={() => {}} />);

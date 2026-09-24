@@ -7,7 +7,8 @@ import { licenseLabel } from "../services/models/modelCatalogue";
 export type ManagerAction = "download" | "pause" | "resume" | "cancel" | "verify" | "use" | "delete" | "tryAgain";
 export type ManagerStatus =
   | "NOT_INSTALLED" | "DOWNLOADING" | "PAUSED" | "INSTALLED_UNVERIFIED"
-  | "READY" | "LOW_MEMORY" | "INCOMPATIBLE" | "UNAVAILABLE";
+  | "READY" | "LOW_MEMORY" | "INCOMPATIBLE" | "UNAVAILABLE"
+  | "FAILED" | "ERROR";
 
 export interface ManagerModel {
   entryId: string;
@@ -17,6 +18,14 @@ export interface ManagerModel {
   category: "RECOMMENDED" | "EXPERIMENTAL" | "IMPORTED";
   state: ManagerStatus;
   canDownload: boolean;
+  /**
+   * True only for entries with a wired role-safe runtime path whose runtime
+   * reports runnable state. Probe-only entries (experimental candidates,
+   * imported models) always carry false: they never offer Use, only
+   * compatibility results via Details/retest. Undefined keeps the legacy
+   * runnable default for callers that predate the flag.
+   */
+  canUse?: boolean;
   deviceFit?: string;
   downloadedBytes?: number;
   source?: string;
@@ -49,6 +58,8 @@ function status(model: ManagerModel): string {
     case "LOW_MEMORY": return "Installed";
     case "INCOMPATIBLE": return "Installed";
     case "UNAVAILABLE": return "Unavailable";
+    case "FAILED": return "Failed";
+    case "ERROR": return "Error";
   }
 }
 
@@ -76,7 +87,7 @@ function ModelDetails({ model, availableRamMb, onClose, onAction }: {
           <button type="button" onClick={onClose} aria-label="Close details" className="flex min-h-[48px] min-w-[48px] items-center justify-center"><X aria-hidden size={20} /></button>
         </div>
         <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide">Status</h3>
-        <p className="mt-1 text-sm">{status(model)} · {model.state === "READY" ? "Verified on this device" : model.state === "LOW_MEMORY" ? "Could not verify — memory was low" : model.state === "INCOMPATIBLE" ? "Not compatible with this build" : model.state === "INSTALLED_UNVERIFIED" ? "Needs device verification" : model.deviceFit ?? "Not tested on this device"}</p>
+        <p className="mt-1 text-sm">{status(model)} · {model.state === "READY" ? "Verified on this device" : model.state === "LOW_MEMORY" ? "Could not verify — memory was low" : model.state === "INCOMPATIBLE" ? "Not compatible with this build" : model.state === "INSTALLED_UNVERIFIED" ? "Needs device verification" : model.state === "FAILED" || model.state === "ERROR" ? "See error below — nothing is installed" : model.deviceFit ?? "Not tested on this device"}</p>
         {model.error && <p role="alert" className="mt-1 text-sm text-error">{model.error}</p>}
         <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide">Device</h3>
         {details([["Available memory now", availableRamMb == null ? "Unknown" : `${(availableRamMb / 1024).toFixed(1)} GB`], ["Observed compatibility", model.state === "READY" ? "Observed on this device" : "Not tested or not verified"]])}
@@ -88,6 +99,9 @@ function ModelDetails({ model, availableRamMb, onClose, onAction }: {
         {details([["Load result", model.state === "READY" ? "Passed · Observed on this device" : "—"], ["Load time", model.loadMs == null ? "—" : `${model.loadMs} ms · Observed on this device`], ["Inference time", model.inferenceMs == null ? "—" : `${model.inferenceMs} ms · Observed on this device`], ["Memory before", model.memoryBeforeMb == null ? "—" : `${model.memoryBeforeMb} MB · Observed on this device`], ["Observed memory peak", model.observedPeakMb == null ? "—" : `${model.observedPeakMb} MB · Observed on this device`]])}
         {(model.state === "INSTALLED_UNVERIFIED" || model.state === "LOW_MEMORY") && (
           <button type="button" onClick={() => onAction("verify")} className="mt-4 min-h-[48px] w-full rounded-m3-xs bg-on-surface px-3 text-surface">Verify model</button>
+        )}
+        {(model.state === "FAILED" || model.state === "ERROR") && (
+          <button type="button" onClick={() => onAction("tryAgain")} className="mt-4 min-h-[48px] w-full rounded-m3-xs bg-on-surface px-3 text-surface">Try again</button>
         )}
         {model.state !== "NOT_INSTALLED" && model.state !== "DOWNLOADING" && model.state !== "PAUSED" && model.state !== "UNAVAILABLE" && (
           <button type="button" onClick={() => onAction("delete")} className="mt-4 min-h-[48px] w-full border-t border-outline-variant pt-3 text-error">Delete model</button>
@@ -125,8 +139,11 @@ export function ModelManagerView({ models, availableRamMb, onAction, onImport, o
               const actions: Array<[ManagerAction, string]> = model.state === "DOWNLOADING" ? [["pause", "Pause"], ["cancel", "Cancel"]]
                 : model.state === "PAUSED" ? [["resume", "Resume"], ["cancel", "Cancel"]]
                 : model.state === "INSTALLED_UNVERIFIED" ? [["verify", "Verify"]]
+                : model.state === "READY" && model.canUse === false
+                  ? (model.category === "EXPERIMENTAL" ? [["verify", "Verify"]] : [])
                 : model.state === "READY" ? [["use", "Use"]]
                 : model.state === "LOW_MEMORY" ? [["tryAgain", "Try again"]]
+                : model.state === "FAILED" || model.state === "ERROR" ? [["tryAgain", "Try again"]]
                 : model.state === "NOT_INSTALLED" && model.canDownload ? [["download", "Download"]] : [];
               return <li key={model.entryId} className="grid min-h-[80px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 py-2">
                 <button type="button" onClick={() => setSelected(model.entryId)} aria-label={`Details for ${model.label}`} className="min-h-[48px] min-w-0 text-left focus-visible:outline-2">

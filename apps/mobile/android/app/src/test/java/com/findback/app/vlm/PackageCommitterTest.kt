@@ -69,7 +69,7 @@ class PackageCommitterTest {
     }
 
     @Test
-    fun commitInspectedRefusesOccupiedTargetAndKnownIds() {
+    fun commitInspectedReconcilesOccupiedTargetAndStillRefusesKnownIds() {
         val root = Files.createTempDirectory("model-commit-").toFile()
         try {
             val inspectionRoot = File(root, "inspection").apply { mkdirs() }
@@ -77,8 +77,10 @@ class PackageCommitterTest {
             val store2 = PackageInspectionStore(inspectionRoot)
             val first = store2.inspect(unknownFixture().inputStream(), freeBytes = 1024 * 1024)!!
             assertTrue(PackageCommitter.commitInspected(first, store).ok)
+            // Retry after an interruption reconciles the intact occupant
+            // (same package SHA namespace) instead of a dead-end refusal.
             val second = store2.inspect(unknownFixture().inputStream(), freeBytes = 1024 * 1024)!!
-            assertFalse(PackageCommitter.commitInspected(second, store).ok)
+            assertTrue(PackageCommitter.commitInspected(second, store).ok)
 
             val forged = PackageInspectionStore.InspectedPackage(
                 id = UUID.randomUUID().toString(),

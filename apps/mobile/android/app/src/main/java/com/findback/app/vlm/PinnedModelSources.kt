@@ -33,7 +33,16 @@ data class PinnedRawSource(
     }
 }
 
-/** Four candidate catalogue entries with independently pinned installed weights. */
+/**
+ * Four experimental candidate catalogue entries with independently pinned
+ * installed weights — the remaining four of the Phase A six-model catalogue
+ * (see [SixModelCatalogue]; the other two are official release packages via
+ * [KnownPackageIdentity]). Raw `.litertlm` identity only, never a `.fbmodel`
+ * package or release asset: the LFM VL fixB file (`..._fixB.litertlm`) is a
+ * pinned, downloadable raw candidate here. Historical caveat preserved: fixB
+ * never shipped as a prepared `.fbmodel` release package
+ * ([KnownPackageIdentity] stays null for it by design).
+ */
 object PinnedModelSources {
     private const val RUNTIME = "com.google.ai.edge.litertlm:litertlm-android:0.16.0"
     private const val QWEN_REV = "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76"

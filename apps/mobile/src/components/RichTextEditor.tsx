@@ -329,6 +329,13 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   onChangeRef.current = onChange;
   const valueRef = useRef(value);
   valueRef.current = value;
+  // Last non-collapsed selection, stashed on selection updates so toolbar
+  // actions (ordinary button onClick handlers) can restore it after focus
+  // moves from the editor/WebView to a bottom-toolbar button (e.g. Android
+  // long-press popup focus loss collapses the visible DOM selection).
+  // Native Android selection/clipboard behavior is untouched; this only
+  // remembers ProseMirror offsets to re-apply formatting to the right range.
+  const savedRangeRef = useRef<{ from: number; to: number } | null>(null);
 
   const initialContent = useMemo(() => markdownToTiptap(value), []);
 
@@ -364,7 +371,11 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
         const markdown = tiptapToMarkdown(updated.getJSON());
         if (markdown !== valueRef.current) onChangeRef.current(markdown);
       },
-      onSelectionUpdate: () => refreshSelection((revision) => revision + 1),
+      onSelectionUpdate: ({ editor: updated }) => {
+        const { from, to, empty } = updated.state.selection;
+        if (!empty) savedRangeRef.current = { from, to };
+        refreshSelection((revision) => revision + 1);
+      },
     },
     [],
   );
@@ -391,16 +402,54 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     else dom.removeAttribute("id");
   }, [editor, error, required, inputId, errorId, countId]);
 
+  function validSavedRange(): { from: number; to: number } | null {
+    if (!editor) return null;
+    const saved = savedRangeRef.current;
+    if (!saved) return null;
+    const max = editor.state.doc.content.size;
+    if (saved.from < 0 || saved.to > max || saved.from >= saved.to) return null;
+    return saved;
+  }
+
+  function resolveFormatRange(): { from: number; to: number } | null {
+    if (!editor) return null;
+    const { from, to, empty } = editor.state.selection;
+    if (!empty) {
+      savedRangeRef.current = { from, to };
+      return { from, to };
+    }
+    return validSavedRange();
+  }
+
+  function toggleMarkWithSavedSelection(mark: "bold" | "italic") {
+    if (!editor) return;
+    const range = resolveFormatRange();
+    if (range && editor.state.selection.empty) {
+      if (mark === "bold") editor.chain().focus().setTextSelection(range).toggleBold().run();
+      else editor.chain().focus().setTextSelection(range).toggleItalic().run();
+      return;
+    }
+    if (mark === "bold") editor.chain().focus().toggleBold().run();
+    else editor.chain().focus().toggleItalic().run();
+  }
+
   function applyLink() {
     if (!editor) return;
-    const { from, to, empty: collapsed } = editor.state.selection;
+    const { empty: collapsed } = editor.state.selection;
     if (collapsed && editor.isActive("link")) {
       editor.chain().focus().unsetLink().run();
       return;
     }
-    if (collapsed) return;
+    const range = resolveFormatRange();
+    if (!range) return;
+    let text: string;
+    try {
+      text = editor.state.doc.textBetween(range.from, range.to);
+    } catch {
+      return;
+    }
     setLinkSelection({
-      from, to, text: editor.state.doc.textBetween(from, to), doc: editor.state.doc,
+      from: range.from, to: range.to, text, doc: editor.state.doc,
       href: (editor.getAttributes("link")["href"] as string | undefined) ?? "",
     });
   }
@@ -420,16 +469,22 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
 
   const canUndo = editor?.can().chain().focus().undo().run() ?? false;
   const canRedo = editor?.can().chain().focus().redo().run() ?? false;
+  // Keep Link enabled when a stashed word-range survives toolbar focus loss;
+  // otherwise a collapsed visible selection would disable the button and the
+  // pre-dialog range could never be applied.
+  const linkDisabled = editor
+    ? editor.state.selection.empty && !editor.isActive("link") && !validSavedRange()
+    : true;
 
   const tools = [
     { label: "Paragraph", icon: Pilcrow, active: editor?.isActive("paragraph") ?? false, disabled: false, run: () => editor?.chain().focus().setParagraph().run() },
     { label: "Heading", icon: Heading2, active: editor?.isActive("heading", { level: 2 }) ?? false, disabled: false, run: () => editor?.chain().focus().toggleHeading({ level: 2 }).run() },
-    { label: "Bold", icon: Bold, active: editor?.isActive("bold") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBold().run() },
-    { label: "Italic", icon: Italic, active: editor?.isActive("italic") ?? false, disabled: false, run: () => editor?.chain().focus().toggleItalic().run() },
+    { label: "Bold", icon: Bold, active: editor?.isActive("bold") ?? false, disabled: false, run: () => toggleMarkWithSavedSelection("bold") },
+    { label: "Italic", icon: Italic, active: editor?.isActive("italic") ?? false, disabled: false, run: () => toggleMarkWithSavedSelection("italic") },
     { label: "Bullet list", icon: List, active: editor?.isActive("bulletList") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBulletList().run() },
     { label: "Numbered list", icon: ListOrdered, active: editor?.isActive("orderedList") ?? false, disabled: false, run: () => editor?.chain().focus().toggleOrderedList().run() },
     { label: "Quote", icon: Quote, active: editor?.isActive("blockquote") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBlockquote().run() },
-    { label: "Link", icon: Link2, active: editor?.isActive("link") ?? false, disabled: (editor?.state.selection.empty ?? true) && !(editor?.isActive("link") ?? false), run: applyLink },
+    { label: "Link", icon: Link2, active: editor?.isActive("link") ?? false, disabled: linkDisabled, run: applyLink },
     { label: "Clear formatting", icon: RemoveFormatting, active: false, disabled: false, run: () => editor?.chain().focus().clearNodes().unsetAllMarks().run() },
     { label: "Undo", icon: Undo2, active: false, disabled: !canUndo, run: () => editor?.chain().focus().undo().run() },
     { label: "Redo", icon: Redo2, active: false, disabled: !canRedo, run: () => editor?.chain().focus().redo().run() },

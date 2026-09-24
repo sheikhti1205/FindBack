@@ -10,16 +10,25 @@
  */
 
 import { SHIPPED_CATALOGUE_ENTRIES } from "./shippedCatalogue";
-import type { ManagerModel, ManagerStatus } from "../../components/ModelManagerView";
+import type { ManagerAction, ManagerModel, ManagerStatus } from "../../components/ModelManagerView";
 import type { ImportedModelRecord } from "./packageTransferHost";
 
-export const COMPACT_ORDER: readonly string[] = [
-  "smolvlm2-500m-litert-int4",
-  "qwen3-0.6b-litert-dynamic-int4",
+/** Catalogue entry id of the recommended image (VLM) runtime slot. */
+export const SMOL_ENTRY_ID = "smolvlm2-500m-litert-int4" as const;
+/** Catalogue entry id of the recommended text-runtime slot. */
+export const QWEN_ENTRY_ID = "qwen3-0.6b-litert-dynamic-int4" as const;
+/** The four probe-only experimental raw-candidate entry ids. */
+export const EXPERIMENTAL_ENTRY_IDS: readonly string[] = [
   "qwen3-0.6b-litert-mixed-int4",
   "qwen3-0.6b-litert-int8",
   "lfm2.5-1.2b-instruct-litert-int4-gpu",
   "lfm2.5-vl-450m",
+] as const;
+
+export const COMPACT_ORDER: readonly string[] = [
+  SMOL_ENTRY_ID,
+  QWEN_ENTRY_ID,
+  ...EXPERIMENTAL_ENTRY_IDS,
 ] as const;
 
 export const COMPACT_LABELS: Readonly<Record<string, string>> = {
@@ -66,6 +75,10 @@ export function compactDescriptors(): ManagerModel[] {
       category: index < 2 ? "RECOMMENDED" : "EXPERIMENTAL",
       state: "NOT_INSTALLED" as ManagerStatus,
       canDownload: false,
+      // Recommended slots own the only wired role-safe runtime paths; the
+      // screen narrows this further with live runtime presence. Probe-only
+      // experimental entries never offer Use.
+      canUse: index < 2,
       deviceFit: "Not tested on this device",
       source: entry.upstreamRepo,
       revision: entry.revision,
@@ -86,7 +99,6 @@ export function managerStatusFrom(nativeState: string | null | undefined): Manag
     case "VERIFYING_FILE":
       return "DOWNLOADING";
     case "PAUSED":
-    case "PAUSED_ERROR":
     case "QUEUED":
     case "WAITING_FOR_NETWORK":
     case "WAITING_FOR_WIFI":
@@ -101,16 +113,19 @@ export function managerStatusFrom(nativeState: string | null | undefined): Manag
     case "INCOMPATIBLE":
     case "GPU_UNAVAILABLE":
       return "INCOMPATIBLE";
+    case "DOWNLOAD_FAILED":
+    case "CORRUPT":
+    case "INSUFFICIENT_STORAGE":
+    case "MANIFEST_MISMATCH":
+    case "REPAIR_NEEDED":
+      return "FAILED";
+    case "PAUSED_ERROR":
+    case "RUNTIME_ERROR":
+      return "ERROR";
     case "INSTALLED_UNVERIFIED":
     case "INSTALLED":
     case "GPU_SELF_TESTING":
-    case "REPAIR_NEEDED":
     case "REPAIRING":
-    case "CORRUPT":
-    case "DOWNLOAD_FAILED":
-    case "RUNTIME_ERROR":
-    case "INSUFFICIENT_STORAGE":
-    case "MANIFEST_MISMATCH":
       return "INSTALLED_UNVERIFIED";
     case "UNPUBLISHED":
     case "UNAVAILABLE":
@@ -120,8 +135,34 @@ export function managerStatusFrom(nativeState: string | null | undefined): Manag
     case undefined:
       return "NOT_INSTALLED";
     default:
-      return "INSTALLED_UNVERIFIED";
+      // Unknown future wire strings fail closed as errors: claiming an
+      // install requires verified actual files, never a guess.
+      return "ERROR";
   }
+}
+
+/**
+ * Which lifecycle owns an entry action. Keyed by catalogue entry identity,
+ * never by bridge guessing:
+ * - recommended image entry -> image (VLM) lifecycle;
+ * - recommended text entry -> qualified text lifecycle;
+ * - experimental raw candidates -> candidate host;
+ * - user-imported rows -> transfer host (delete only);
+ * - `use` on probe-only entries and `tryAgain` (local refresh) -> none.
+ */
+export type EntryActionOwner = "image" | "text" | "candidate" | "transfer" | "none";
+
+export function actionOwnerFor(
+  entryId: string,
+  action: ManagerAction,
+  category: ManagerModel["category"],
+): EntryActionOwner {
+  if (action === "tryAgain") return "none";
+  if (entryId === SMOL_ENTRY_ID) return "image";
+  if (entryId === QWEN_ENTRY_ID) return "text";
+  if (category === "IMPORTED") return action === "delete" ? "transfer" : "none";
+  if (action === "use") return "none";
+  return "candidate";
 }
 
 /**
@@ -196,6 +237,9 @@ export function importedToManagerModels(records: readonly ImportedModelRecord[])
     category: "IMPORTED" as const,
     state: managerStatusFrom(record.state),
     canDownload: false,
+    // Imported models verify during import and have no executable runtime
+    // path here: compatibility results only, never Use.
+    canUse: false,
     deviceFit: record.state === "READY" ? "Verified on this device" : "Not verified on this device",
     source: "Local import",
     revision: "Local package",

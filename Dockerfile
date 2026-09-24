@@ -12,6 +12,7 @@ RUN npm ci --ignore-scripts
 COPY packages/shared packages/shared
 COPY services/api services/api
 COPY apps/mobile apps/mobile
+COPY docs/specs/model-library/catalogue.v1.json docs/specs/model-library/catalogue.v1.json
 RUN npm run build -w @findback/shared \
  && npm run build -w @findback/api \
  && npm run build -w @findback/mobile
