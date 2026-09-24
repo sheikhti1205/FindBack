@@ -1,6 +1,6 @@
 {
   "catalogueVersion": "1",
-  "updatedAt": "2026-09-22",
+  "updatedAt": "2026-09-24",
   "pinnedModelsRelease": {
    "repo": "sheikhti1205/FindBack-Models",
    "tag": "models-2026-09-22-v1"
@@ -16,9 +16,9 @@
    "revision": "dad030b6e56756201d670cfb4d042736a2ce3a5c",
    "license": "apache-2.0",
    "licenseUrl": "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
-   "downloadBytes": 360823868,
+   "downloadBytes": 360823865,
    "installedBytes": 360822960,
-   "sha256": "41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e",
+   "sha256": "6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137",
    "installedSha256": "b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0",
    "minFreeRamMb": 1536,
    "recommendedFreeRamMb": 2560,
@@ -42,8 +42,8 @@
     "repo": "sheikhti1205/FindBack-Models",
     "tag": "models-2026-09-22-v1",
     "asset": "smolvlm2-500m-litert-int4.fbmodel",
-    "bytes": 360823868,
-    "sha256": "41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e",
+    "bytes": 360823865,
+    "sha256": "6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137",
     "state": "UNPUBLISHED",
     "parts": null
    },
@@ -55,8 +55,8 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "local package build 2026-09-22 (unpublished, out of git)",
-     "note": ".fbmodel 360823868 bytes, sha256 41e11106.. built from the pinned weights (STORE) + checksums.json/manifest.json (DEFLATE); interior weights pin unchanged"
+     "ref": "local package build 2026-09-24 deterministic recipe (unpublished, out of git)",
+     "note": ".fbmodel 360823865 bytes, sha256 6504b9e8.. rebuilt 2026-09-24 with the deterministic recipe (fixed createdAt + zip timestamps); built from the pinned weights (STORE) + checksums.json/manifest.json (DEFLATE); interior weights pin unchanged"
     },
     {
      "kind": "VENDOR_MODEL_CARD",
@@ -85,9 +85,9 @@
    "revision": "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
    "license": "apache-2.0",
    "licenseUrl": "https://huggingface.co/Qwen/Qwen3-0.6B",
-   "downloadBytes": 344672713,
+   "downloadBytes": 344672709,
    "installedBytes": 344671744,
-    "sha256": "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+    "sha256": "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
     "installedSha256": "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
     "minFreeRamMb": 1280,
    "recommendedFreeRamMb": 2560,
@@ -109,8 +109,8 @@
     "repo": "sheikhti1205/FindBack-Models",
     "tag": "models-2026-09-22-v1",
     "asset": "qwen3-0.6b-litert-dynamic-int4.fbmodel",
-    "bytes": 344672713,
-    "sha256": "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+    "bytes": 344672709,
+    "sha256": "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
     "state": "UNPUBLISHED",
     "parts": null
    },
@@ -137,13 +137,13 @@
     },
     {
      "kind": "REPO_EVIDENCE",
-     "ref": "local package build 2026-09-22 (unpublished, out of git)",
-     "note": ".fbmodel 344672713 bytes, sha256 8a8a2d57.. built from the pinned weights (STORE) + checksums.json/manifest.json (DEFLATE); interior weights 344671744 B sha256 03e7da1e.. unchanged"
+     "ref": "local package build 2026-09-24 deterministic recipe (unpublished, out of git)",
+     "note": ".fbmodel 344672709 bytes, sha256 83109b67.. rebuilt 2026-09-24 with the deterministic recipe (fixed createdAt + zip timestamps); built from the pinned weights (STORE) + checksums.json/manifest.json (DEFLATE); interior weights 344671744 B sha256 03e7da1e.. unchanged"
     },
     {
      "kind": "REPO_EVIDENCE",
      "ref": "ai-behavior-v2/model-profiles.json (rev) + results/task20-text-coded.jsonl modelSha256 + runs/20260921/run_text.py (sha)",
-     "note": "Full tested rev a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76; tested file SHA-256 03e7da1e…5d2856 (64-char, matches the interior weights pin; the top-level pin is the .fbmodel package hash 8a8a2d57…). Recorded 2026-09-21; never re-resolved from HF main."
+     "note": "Full tested rev a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76; tested file SHA-256 03e7da1e…5d2856 (64-char, matches the interior weights pin; the top-level pin is the .fbmodel package hash 83109b67…). Recorded 2026-09-21; never re-resolved from HF main."
     }
    ]
   },

@@ -19,8 +19,8 @@ class VlmManifestsTest {
         assertEquals("sheikhti1205/FindBack-Models", dist500.repo)
         assertEquals("models-2026-09-22-v1", dist500.tag)
         assertEquals("smolvlm2-500m-litert-int4.fbmodel", dist500.asset)
-        assertEquals(360823868L, dist500.bytes)
-        assertEquals("41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e", dist500.sha256)
+        assertEquals(360823865L, dist500.bytes)
+        assertEquals("6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137", dist500.sha256)
         assertEquals(DistributionState.UNPUBLISHED, dist500.state)
         assertNull(dist500.parts)
 

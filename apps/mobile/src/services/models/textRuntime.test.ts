@@ -29,10 +29,10 @@ function qwenEntry(
     format: "litertlm",
     revision: "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
     license: "apache-2.0",
-    downloadBytes: 344672713,
+    downloadBytes: 344672709,
     installedBytes: 344671744,
     sha256:
-      "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+      "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
     installedSha256:
       "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
     minFreeRamMb: 1280,

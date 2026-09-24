@@ -9,11 +9,11 @@ class KnownPackageIdentityTest {
     fun knownCatalogueIdsResolveOnlyTheirOwnTrustedPackagePins() {
         val smol = KnownPackageIdentity.forCatalogueId("smolvlm2-500m-litert-int4")!!
         assertEquals("smolvlm2-500m", smol.manifest.id)
-        assertEquals("41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e", smol.packageSha256)
+        assertEquals("6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137", smol.packageSha256)
         assertEquals("b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0", smol.manifest.files.single().sha256)
         val qwen = KnownPackageIdentity.forCatalogueId("qwen3-0.6b-litert-dynamic-int4")!!
         assertEquals(QwenTextRuntime.ENTRY_ID, qwen.manifest.id)
-        assertEquals("8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821", qwen.packageSha256)
+        assertEquals("83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb", qwen.packageSha256)
         // The LFM VL fixB entry has a pinned raw candidate record in
         // PinnedModelSources (installed-weights identity, downloadable via the
         // raw path) but no prepared `.fbmodel` whole-package pin — so the

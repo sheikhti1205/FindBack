@@ -23,9 +23,9 @@ object QwenTextRuntime {
     const val DISTRIBUTION_REPO = "sheikhti1205/FindBack-Models"
     const val DISTRIBUTION_TAG = "models-2026-09-22-v1"
     const val DISTRIBUTION_ASSET = "qwen3-0.6b-litert-dynamic-int4.fbmodel"
-    const val DISTRIBUTION_BYTES = 344672713L
+    const val DISTRIBUTION_BYTES = 344672709L
     const val DISTRIBUTION_SHA256 =
-        "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821"
+        "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb"
 
     /**
      * True only for the exact qualified bridge model id. Null, blank, and

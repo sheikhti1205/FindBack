@@ -77,9 +77,9 @@ class QwenTextRuntimeTest {
         assertEquals("sheikhti1205/FindBack-Models", distribution!!.repo)
         assertEquals("models-2026-09-22-v1", distribution.tag)
         assertEquals("qwen3-0.6b-litert-dynamic-int4.fbmodel", distribution.asset)
-        assertEquals(344672713L, distribution.bytes)
+        assertEquals(344672709L, distribution.bytes)
         assertEquals(
-            "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+            "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
             distribution.sha256
         )
         assertEquals(DistributionState.UNPUBLISHED, distribution.state)

@@ -33,8 +33,8 @@ val MODEL_MANIFESTS: List<ModelManifest> = listOf(
             repo = "sheikhti1205/FindBack-Models",
             tag = "models-2026-09-22-v1",
             asset = "smolvlm2-500m-litert-int4.fbmodel",
-            bytes = 360823868L,
-            sha256 = "41e11106a57ae750f61d992ab195f90b9f7bc58c39009b5dac0ce9d1c60a366e",
+            bytes = 360823865L,
+            sha256 = "6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137",
             state = DistributionState.UNPUBLISHED,
             parts = null
         )

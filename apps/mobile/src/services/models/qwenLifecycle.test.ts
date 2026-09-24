@@ -41,7 +41,7 @@ function qwenEntry(
     downloadBytes: 64,
     installedBytes: 344671744,
     sha256:
-      "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+      "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
     installedSha256:
       "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
     minFreeRamMb: 1280,
@@ -60,7 +60,7 @@ function qwenEntry(
       asset: "qwen3-0.6b-litert-dynamic-int4.fbmodel",
       bytes: 64,
       sha256:
-        "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+        "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
       state: "UNPUBLISHED",
       parts: null,
     },
@@ -320,7 +320,7 @@ describe("qwenImportArgs", () => {
         entryId: QWEN_TEXT_ENTRY_ID,
         sourceUri: "content://pkg/model.fbmodel",
         expectedSha256:
-          "8a8a2d5747aa804c8f39e79658d2b3e5962f0451e0e16571b6bdb9dcd8205821",
+          "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
       },
     });
   });
