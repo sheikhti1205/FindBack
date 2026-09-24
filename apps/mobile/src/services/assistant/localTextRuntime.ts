@@ -15,6 +15,7 @@ import type { AssistantExecutionRuntime } from "./assistantExecution";
 import {
   QWEN_TEXT_BRIDGE_MODEL_ID,
   QWEN_TEXT_ENTRY_ID,
+  isLocalTextEntryId,
   isNarrowTextProfile,
   qwenTextProfile,
   type GenerateTextRequest,
@@ -45,8 +46,10 @@ export function resolveLocalTextRuntime(
   signals: LocalTextRuntimeSignals,
 ): AssistantExecutionRuntime {
   const profile = qwenTextProfile();
+  const activeEntryId = signals.activeEntryId;
   if (
-    signals.activeEntryId !== QWEN_TEXT_ENTRY_ID ||
+    activeEntryId === null ||
+    !isLocalTextEntryId(activeEntryId) ||
     !signals.textRuntimePresent ||
     !signals.installed ||
     !signals.textReady ||
@@ -57,8 +60,14 @@ export function resolveLocalTextRuntime(
   }
   return {
     generate: async (prompt, options) => {
+      // The qualified Qwen entry keeps its short bridge id; a resident
+      // experimental candidate is addressed by its catalogue entry id.
+      const modelId =
+        activeEntryId === QWEN_TEXT_ENTRY_ID
+          ? QWEN_TEXT_BRIDGE_MODEL_ID
+          : activeEntryId;
       const result = await signals.generateText({
-        modelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+        modelId,
         prompt,
         maxOutputTokens: options.maxOutputTokens,
         temperature: options.temperature,

@@ -6,7 +6,11 @@ import {
   NO_RUNTIME_MESSAGE,
   runtimeCapabilityForEntry,
 } from "./runtimeCapability";
-import { SHIPPED_CATALOGUE_ENTRIES } from "./shippedCatalogue";
+import {
+  EXPERIMENTAL_CANDIDATE_ENTRY_IDS,
+  isExperimentalCandidateEntryId,
+  SHIPPED_CATALOGUE_ENTRIES,
+} from "./shippedCatalogue";
 import type { ModelCatalogueEntry } from "./catalogueTypes";
 
 function entry(overrides: Partial<ModelCatalogueEntry> = {}): ModelCatalogueEntry {
@@ -41,12 +45,19 @@ describe("runtimeCapabilityForEntry", () => {
     );
   });
 
-  it("reports no runtime for every other shipped entry", () => {
+  it("reports no runtime for shipped entries without a wired path", () => {
     for (const shipped of SHIPPED_CATALOGUE_ENTRIES) {
       if (shipped.id === "smolvlm2-500m-litert-int4") continue;
+      if (isExperimentalCandidateEntryId(shipped.id)) continue;
       expect(runtimeCapabilityForEntry(shipped.id), shipped.id).toBe(
         "RUNTIME_UNAVAILABLE",
       );
+    }
+  });
+
+  it("reports the wired experimental candidates as runnable", () => {
+    for (const id of EXPERIMENTAL_CANDIDATE_ENTRY_IDS) {
+      expect(runtimeCapabilityForEntry(id), id).toBe("RUNTIME_AVAILABLE");
     }
   });
 
@@ -153,7 +164,7 @@ describe("availabilityForEntry", () => {
     ).toBe("DOWNLOADABLE");
   });
 
-  it("reports the shipped SmolVLM2 entry as UNPUBLISHED until the owner publishes", () => {
+  it("reports the shipped SmolVLM2 entry as DOWNLOADABLE now the release is published", () => {
     const smol = SHIPPED_CATALOGUE_ENTRIES.find(
       (shipped) => shipped.id === "smolvlm2-500m-litert-int4",
     );
@@ -164,25 +175,25 @@ describe("availabilityForEntry", () => {
         installed: false,
         isActive: false,
       }),
-    ).toBe("UNPUBLISHED");
+    ).toBe("DOWNLOADABLE");
   });
 
-  it("keeps the eval-only VL slot non-runnable and non-downloadable", () => {
+  it("reports the wired VL candidate as runnable and downloadable", () => {
     const vlSlot = SHIPPED_CATALOGUE_ENTRIES.find(
       (shipped) => shipped.id === "lfm2.5-vl-450m",
     );
     expect(vlSlot).toBeDefined();
     expect(runtimeCapabilityForEntry("lfm2.5-vl-450m")).toBe(
-      "RUNTIME_UNAVAILABLE",
+      "RUNTIME_AVAILABLE",
     );
-    expect(canOfferActivation("RUNTIME_UNAVAILABLE")).toBe(false);
+    expect(canOfferActivation("RUNTIME_AVAILABLE")).toBe(true);
     expect(
       availabilityForEntry(vlSlot!, {
         bridgeId: null,
         installed: false,
         isActive: false,
       }),
-    ).toBe("RUNTIME_UNAVAILABLE");
+    ).toBe("DOWNLOADABLE");
   });
 
   it("labels every availability without implying executability", () => {

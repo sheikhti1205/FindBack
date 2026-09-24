@@ -82,7 +82,7 @@ class QwenTextRuntimeTest {
             "83109b67d59e349e7fdbd178a4742030656813edd9442c8713ca71b38e4a1efb",
             distribution.sha256
         )
-        assertEquals(DistributionState.UNPUBLISHED, distribution.state)
+        assertEquals(DistributionState.PUBLISHED, distribution.state)
         assertNull(distribution.parts)
     }
 

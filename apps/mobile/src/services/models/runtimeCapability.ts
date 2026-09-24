@@ -22,6 +22,7 @@ import type { VlmModelId } from "../vlmPlugin";
 import {
   bridgeModelIdForEntry,
   hasUnpublishedDistribution,
+  isExperimentalCandidateEntryId,
   SHIPPED_CATALOGUE_ENTRIES,
 } from "./shippedCatalogue";
 
@@ -67,6 +68,9 @@ export interface AvailabilitySignals {
  */
 export function runtimeCapabilityForEntry(entryId: string): RuntimeCapability {
   if (bridgeModelIdForEntry(entryId) != null) return "RUNTIME_AVAILABLE";
+  // Experimental candidates own a wired candidate runtime once verified and
+  // made resident; they are runnable in this build.
+  if (isExperimentalCandidateEntryId(entryId)) return "RUNTIME_AVAILABLE";
   if (SHIPPED_CATALOGUE_ENTRIES.some((entry) => entry.id === entryId)) {
     return "RUNTIME_UNAVAILABLE";
   }
@@ -86,7 +90,9 @@ export function availabilityForEntry(
   signals: AvailabilitySignals,
 ): ModelAvailability {
   if (entry.catalogOnly === true) return "CATALOG_ONLY";
-  if (signals.bridgeId == null) return "RUNTIME_UNAVAILABLE";
+  if (signals.bridgeId == null && !isExperimentalCandidateEntryId(entry.id)) {
+    return "RUNTIME_UNAVAILABLE";
+  }
   if (signals.isActive) return "ACTIVE";
   if (signals.installed) return "INSTALLED";
   if (hasUnpublishedDistribution(entry)) return "UNPUBLISHED";

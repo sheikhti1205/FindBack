@@ -127,11 +127,17 @@ describe("runtimeCapabilityForTextEntry", () => {
     );
   });
 
-  it("keeps unpinned and experimental entries unrunnable", () => {
+  it("reports wired experimental text candidates runnable and catalogue-only unrunnable", () => {
     expect(
       runtimeCapabilityForTextEntry(
         qwenEntry({ id: "qwen3-0.6b-litert-mixed-int4" }),
         true,
+      ),
+    ).toBe("RUNTIME_AVAILABLE");
+    expect(
+      runtimeCapabilityForTextEntry(
+        qwenEntry({ id: "qwen3-0.6b-litert-int8" }),
+        false,
       ),
     ).toBe("RUNTIME_UNAVAILABLE");
     expect(

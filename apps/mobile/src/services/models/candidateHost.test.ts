@@ -14,6 +14,12 @@ describe("candidate host bridge", () => {
         return { entryId, ready: true, observedOnThisDevice: true, loadMs: 3, inferenceMs: 5 };
       },
       deleteCandidateModel: async ({ entryId }: { entryId: string }) => { calls.push(`delete:${entryId}`); },
+      useCandidateModel: async ({ entryId }: { entryId: string }) => {
+        calls.push(`use:${entryId}`);
+        return { entryId, role: "IMAGE" as const, ready: true, loadMs: 7 };
+      },
+      releaseCandidateModel: async () => { calls.push("releaseUse"); },
+      getCandidateActive: async () => ({ entryId: null as string | null }),
       addListener: vi.fn().mockResolvedValue({ remove: vi.fn() }),
     };
     const host = candidateHostFrom(native);
@@ -22,10 +28,14 @@ describe("candidate host bridge", () => {
     await host.pause("lfm2.5-vl-450m");
     await host.cancel("lfm2.5-vl-450m");
     expect(await host.verify("lfm2.5-vl-450m", "content://image")).toMatchObject({ ready: true, inferenceMs: 5 });
+    expect(await host.use("lfm2.5-vl-450m")).toMatchObject({ role: "IMAGE", ready: true });
+    expect(await host.getActive()).toBeNull();
+    await host.releaseUse();
     await host.delete("lfm2.5-vl-450m");
     expect(calls).toEqual([
       "download:lfm2.5-vl-450m", "pause:lfm2.5-vl-450m", "cancel:lfm2.5-vl-450m",
-      "verify:lfm2.5-vl-450m:content://image", "delete:lfm2.5-vl-450m",
+      "verify:lfm2.5-vl-450m:content://image", "use:lfm2.5-vl-450m", "releaseUse",
+      "delete:lfm2.5-vl-450m",
     ]);
   });
 });

@@ -36,6 +36,10 @@ import type { RuntimeCapability } from "./runtimeCapability";
 import { profileFor, type ModelProfile } from "../ai/modelProfiles";
 import type { GenerateOptions, NarrowOp } from "../ai/types";
 import { planModelSwitch } from "./modelSession";
+import {
+  CANDIDATE_VISION_ENTRY_ID,
+  EXPERIMENTAL_CANDIDATE_ENTRY_IDS,
+} from "./shippedCatalogue";
 
 /** Catalogue id of the single qualified on-device text entry. */
 export const QWEN_TEXT_ENTRY_ID = "qwen3-0.6b-litert-dynamic-int4" as const;
@@ -43,7 +47,33 @@ export const QWEN_TEXT_ENTRY_ID = "qwen3-0.6b-litert-dynamic-int4" as const;
 /** Bridge-level model id for the qualified Qwen text runtime. */
 export const QWEN_TEXT_BRIDGE_MODEL_ID = "qwen3-0.6b" as const;
 
-export type TextBridgeModelId = typeof QWEN_TEXT_BRIDGE_MODEL_ID;
+/**
+ * Bridge model id carried by a text request. The qualified Qwen runtime uses
+ * the short `qwen3-0.6b` id; a resident experimental text candidate uses its
+ * catalogue entry id (see [CANDIDATE_TEXT_ENTRY_IDS]). Native enforces which
+ * ids are actually accepted, so this stays a plain string.
+ */
+export type TextBridgeModelId = string;
+
+/**
+ * Catalogue entry ids of the three experimental TEXT candidates. These have
+ * no dedicated production runtime; once verified and made resident they run
+ * through the same generic text host (see `CandidateRuntimeController`).
+ */
+export const CANDIDATE_TEXT_ENTRY_IDS: readonly string[] =
+  EXPERIMENTAL_CANDIDATE_ENTRY_IDS.filter(
+    (id) => id !== CANDIDATE_VISION_ENTRY_ID,
+  );
+
+/** True only for one of the experimental text-candidate entry ids. */
+export function isCandidateTextEntryId(id: string | null | undefined): boolean {
+  return id != null && (CANDIDATE_TEXT_ENTRY_IDS as readonly string[]).includes(id);
+}
+
+/** True for any entry the local text path may serve (qualified or candidate). */
+export function isLocalTextEntryId(id: string | null | undefined): boolean {
+  return id === QWEN_TEXT_ENTRY_ID || isCandidateTextEntryId(id);
+}
 
 /** Profile id backing text ops for the qualified Qwen runtime. */
 export const QWEN_TEXT_PROFILE_ID = "qwen3-0.6b-dynamic-int4" as const;
@@ -242,12 +272,16 @@ export function runtimeCapabilityForTextEntry(
   entry: ModelCatalogueEntry,
   textRuntimePresent: boolean,
 ): RuntimeCapability {
-  if (verifyQwenCataloguePin(entry).ok !== true) return "RUNTIME_UNAVAILABLE";
   if (entry.catalogOnly === true) return "RUNTIME_UNAVAILABLE";
-  if (
-    entry.verificationStatus === "EXPERIMENTAL" ||
-    entry.verificationStatus === "INCOMPATIBLE"
-  ) {
+  if (entry.verificationStatus === "INCOMPATIBLE") return "RUNTIME_UNAVAILABLE";
+  // Experimental text candidates are wired through the same generic text
+  // host once verified and made resident, so they report runnable while the
+  // real bridge method is present.
+  if (isCandidateTextEntryId(entry.id)) {
+    return textRuntimePresent ? "RUNTIME_AVAILABLE" : "RUNTIME_UNAVAILABLE";
+  }
+  if (verifyQwenCataloguePin(entry).ok !== true) return "RUNTIME_UNAVAILABLE";
+  if (entry.verificationStatus === "EXPERIMENTAL") {
     return "RUNTIME_UNAVAILABLE";
   }
   return textRuntimePresent ? "RUNTIME_AVAILABLE" : "RUNTIME_UNAVAILABLE";

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getVlmBridge } from "../vlmPlugin";
+import { getCandidateHost } from "./candidateHost";
 import {
   deriveImageAnalysisReadiness,
   readImageAnalysisReadiness,
@@ -7,11 +8,14 @@ import {
 } from "./imageAnalysisReadiness";
 
 vi.mock("../vlmPlugin", () => ({ getVlmBridge: vi.fn() }));
+vi.mock("./candidateHost", () => ({ getCandidateHost: vi.fn() }));
 
 const getVlmBridgeMock = vi.mocked(getVlmBridge);
+const getCandidateHostMock = vi.mocked(getCandidateHost);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getCandidateHostMock.mockReturnValue(null);
 });
 
 describe("deriveImageAnalysisReadiness (frozen contract)", () => {
@@ -75,6 +79,34 @@ describe("deriveImageAnalysisReadiness (frozen contract)", () => {
     await expect(readImageAnalysisReadiness()).resolves.toEqual({
       available: false,
       reason: "UNAVAILABLE",
+    });
+  });
+
+  it("reports READY when a verified vision candidate is the active entry", async () => {
+    getVlmBridgeMock.mockReturnValue({
+      getModelStates: vi.fn().mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]),
+    } as never);
+    getCandidateHostMock.mockReturnValue({
+      getActive: vi.fn().mockResolvedValue("lfm2.5-vl-450m"),
+    } as never);
+
+    await expect(readImageAnalysisReadiness()).resolves.toEqual({
+      available: true,
+      reason: "READY",
+    });
+  });
+
+  it("still reports NO_MODEL when no dedicated or candidate image model is ready", async () => {
+    getVlmBridgeMock.mockReturnValue({
+      getModelStates: vi.fn().mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]),
+    } as never);
+    getCandidateHostMock.mockReturnValue({
+      getActive: vi.fn().mockResolvedValue(null),
+    } as never);
+
+    await expect(readImageAnalysisReadiness()).resolves.toEqual({
+      available: false,
+      reason: "NO_MODEL",
     });
   });
 });

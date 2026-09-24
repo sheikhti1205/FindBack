@@ -33,6 +33,27 @@ import type { VlmModelId } from "../vlmPlugin";
 export const SHIPPED_CATALOGUE_VERSION = "1" as const;
 
 /**
+ * The four experimental raw-weight candidate entry ids. Each owns a wired
+ * runtime path (a verified, resident engine) even though it carries no
+ * release distribution record: the three text candidates share the generic
+ * text host, and the LFM2.5 VL 450M fixB entry drives the vision host.
+ */
+export const EXPERIMENTAL_CANDIDATE_ENTRY_IDS: readonly string[] = [
+  "qwen3-0.6b-litert-mixed-int4",
+  "qwen3-0.6b-litert-int8",
+  "lfm2.5-1.2b-instruct-litert-int4-gpu",
+  "lfm2.5-vl-450m",
+] as const;
+
+/** Catalogue id of the single experimental vision candidate. */
+export const CANDIDATE_VISION_ENTRY_ID = "lfm2.5-vl-450m" as const;
+
+/** True only for one of the four wired experimental candidate entry ids. */
+export function isExperimentalCandidateEntryId(id: string): boolean {
+  return EXPERIMENTAL_CANDIDATE_ENTRY_IDS.includes(id);
+}
+
+/**
  * User-facing copy for entries whose distribution is prepared but not
  * published in this build. Network download stays disabled for them.
  */

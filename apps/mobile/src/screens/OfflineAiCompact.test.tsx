@@ -43,6 +43,9 @@ function fakeCandidates(state = "NOT_INSTALLED") {
     cancel: vi.fn().mockResolvedValue(undefined),
     verify: vi.fn().mockResolvedValue({ entryId: "qwen3-0.6b-litert-mixed-int4", ready: true, observedOnThisDevice: true, loadMs: 10, inferenceMs: 20 }),
     delete: vi.fn().mockResolvedValue(undefined),
+    use: vi.fn().mockResolvedValue({ entryId: "qwen3-0.6b-litert-mixed-int4", role: "TEXT", ready: true, loadMs: 10 }),
+    releaseUse: vi.fn().mockResolvedValue(undefined),
+    getActive: vi.fn().mockResolvedValue(null),
     onState: vi.fn().mockResolvedValue(() => undefined),
     onProgress: vi.fn().mockResolvedValue(() => undefined),
   };
@@ -88,13 +91,12 @@ describe("OfflineAiCompact six-model route", () => {
     expect(screen.queryByRole("button", { name: /Settings/i })).toBeNull();
   });
 
-  it("blocks known-package Download while UNPUBLISHED and says so honestly", async () => {
+  it("offers Download for the recommended entries now the release is published", async () => {
     render(<OfflineAiCompact vlm={fakeVlm()} candidates={fakeCandidates()} transfers={fakeTransfers()} ramOverrideMb={4300} />);
     const recommended = screen.getByRole("region", { name: "Recommended" });
     await waitFor(() => expect(within(recommended).getAllByRole("listitem")).toHaveLength(2));
-    expect(within(recommended).queryByRole("button", { name: /Download SmolVLM2/i })).toBeNull();
-    expect(within(recommended).queryByRole("button", { name: /Download Qwen3/i })).toBeNull();
-    expect(within(recommended).getAllByText(/Unavailable/).length).toBeGreaterThan(0);
+    expect(within(recommended).getByRole("button", { name: /Download SmolVLM2/i })).toBeTruthy();
+    expect(within(recommended).getByRole("button", { name: /Download Qwen3/i })).toBeTruthy();
   });
 
   it("gates a candidate download behind explicit confirmation, then calls the host", async () => {
@@ -114,15 +116,16 @@ describe("OfflineAiCompact six-model route", () => {
     await waitFor(() => expect(candidates.download).toHaveBeenCalled());
   });
 
-  it("never renders Use for probe-only models, even when the candidate host reports verified readiness", async () => {
+  it("renders Use for verified experimental candidates and routes it to the candidate host", async () => {
     const candidates = fakeCandidates("READY");
     render(<OfflineAiCompact vlm={fakeVlm()} candidates={candidates} transfers={fakeTransfers()} ramOverrideMb={4300} />);
     const experimental = await screen.findByRole("region", { name: "Experimental" });
     await waitFor(() => expect(candidates.getStates).toHaveBeenCalled());
-    // Authoritative native READY still offers retest, never Use.
-    const verify = await within(experimental).findAllByRole("button", { name: /Verify/i });
-    expect(verify.length).toBeGreaterThan(0);
-    expect(within(experimental).queryByRole("button", { name: /Use/i })).toBeNull();
+    // Authoritative native READY on a wired candidate now offers Use.
+    const use = await within(experimental).findAllByRole("button", { name: /Use/i });
+    expect(use.length).toBeGreaterThan(0);
+    fireEvent.click(use[0]!);
+    await waitFor(() => expect(candidates.use).toHaveBeenCalled());
   });
 
   it("Use activates the runnable image seam when SmolVLM2 reports ready", async () => {
@@ -297,9 +300,9 @@ describe("OfflineAiCompact six-model route", () => {
       expect(within(experimental).getAllByRole("listitem")).toHaveLength(4);
     });
     // Catalogue rows render from shipped truth even with no live state;
-    // experimental rows stay installable, recommended stay honestly unavailable.
+    // all six rows stay installable now the release is published.
     expect(within(experimental).getAllByRole("button", { name: /Download/i })).toHaveLength(4);
-    expect(within(recommended).getAllByText(/Unavailable/).length).toBeGreaterThan(0);
+    expect(within(recommended).getAllByRole("button", { name: /Download/i })).toHaveLength(2);
   });
 
   it("shows the real pinned revision and the untested-device warning in entry details", async () => {
@@ -423,23 +426,23 @@ describe("OfflineAiCompact single entry-id dispatcher", () => {
       .rejects.toThrow(/unavailable for the text runtime/i);
     expect(candidates.pause).not.toHaveBeenCalled();
   });
-  it("keeps Qwen downloads honestly blocked while the release record is UNPUBLISHED", async () => {
+  it("permits Qwen download once the release record is PUBLISHED", async () => {
     const vlm = fakeVlm();
     const candidates = fakeCandidates();
     const ctx = actionCtx({ vlm, candidates }, modelFor("qwen3-0.6b-litert-dynamic-int4", "RECOMMENDED"));
-    await expect(executeManagerAction("qwen3-0.6b-litert-dynamic-int4", "download", ctx as never)).rejects.toThrow(/not published/i);
+    await executeManagerAction("qwen3-0.6b-litert-dynamic-int4", "download", ctx as never);
+    expect(vlm.downloadTextModel).toHaveBeenCalledWith({ modelId: "qwen3-0.6b" });
     expect(candidates.download).not.toHaveBeenCalled();
-    expect(vlm.downloadModel).not.toHaveBeenCalled();
   });
 
-  it("routes experimental delete to the candidate host and rejects probe-only Use honestly", async () => {
+  it("routes experimental delete and Use to the candidate host", async () => {
     const candidates = fakeCandidates();
     const model = modelFor("lfm2.5-vl-450m", "EXPERIMENTAL");
     const ctx = actionCtx({ vlm: fakeVlm(), candidates }, model);
     await executeManagerAction("lfm2.5-vl-450m", "delete", ctx as never);
     expect(candidates.delete).toHaveBeenCalledWith("lfm2.5-vl-450m");
-    await expect(executeManagerAction("lfm2.5-vl-450m", "use", actionCtx({ vlm: fakeVlm(), candidates }, model) as never))
-      .rejects.toThrow(/verified only|no executable runtime/i);
+    await executeManagerAction("lfm2.5-vl-450m", "use", actionCtx({ vlm: fakeVlm(), candidates }, model) as never);
+    expect(candidates.use).toHaveBeenCalledWith("lfm2.5-vl-450m");
   });
 
   it("routes imported delete to the transfer host", async () => {

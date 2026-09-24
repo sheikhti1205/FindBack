@@ -75,10 +75,11 @@ export function compactDescriptors(): ManagerModel[] {
       category: index < 2 ? "RECOMMENDED" : "EXPERIMENTAL",
       state: "NOT_INSTALLED" as ManagerStatus,
       canDownload: false,
-      // Recommended slots own the only wired role-safe runtime paths; the
-      // screen narrows this further with live runtime presence. Probe-only
-      // experimental entries never offer Use.
-      canUse: index < 2,
+      // Every catalogue entry owns a wired runtime path now: the two
+      // recommended slots via the image/text lifecycles, the four
+      // experimental candidates via the candidate runtime. The screen
+      // narrows this further with live runtime presence and verified state.
+      canUse: true,
       deviceFit: "Not tested on this device",
       source: entry.upstreamRepo,
       revision: entry.revision,
@@ -161,7 +162,7 @@ export function actionOwnerFor(
   if (entryId === SMOL_ENTRY_ID) return "image";
   if (entryId === QWEN_ENTRY_ID) return "text";
   if (category === "IMPORTED") return action === "delete" ? "transfer" : "none";
-  if (action === "use") return "none";
+  if (action === "use") return category === "EXPERIMENTAL" ? "candidate" : "none";
   return "candidate";
 }
 

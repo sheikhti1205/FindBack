@@ -35,7 +35,7 @@ val MODEL_MANIFESTS: List<ModelManifest> = listOf(
             asset = "smolvlm2-500m-litert-int4.fbmodel",
             bytes = 360823865L,
             sha256 = "6504b9e8972b40bd16f87b8e3bf680b2091b2f135cc23189cc0f8c86a3f1b137",
-            state = DistributionState.UNPUBLISHED,
+            state = DistributionState.PUBLISHED,
             parts = null
         )
     ),
