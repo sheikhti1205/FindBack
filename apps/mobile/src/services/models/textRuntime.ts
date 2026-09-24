@@ -1,11 +1,13 @@
 /**
  * Local text runtime seam (Qwen text path).
  *
- * Gap: `AssistantExecutionRuntime.generate` is optional and nothing injects
- * a local generator; Qwen is catalogued but has no production text path
- * (native `VlmModelId` is exactly `smolvlm-500m`/`smolvlm2-500m` and
+ * Background: `AssistantExecutionRuntime.generate` stays optional and is
+ * injected only when the local text path is active
+ * (`localTextRuntime.resolveLocalTextRuntime`). The image path is dedicated,
+ * so text generation is a separate explicit-modelId surface (native
+ * `VlmModelId` is exactly `smolvlm-500m`/`smolvlm2-500m` and
  * `analyzeImage()` takes no `modelId` — `VlmTypes.kt`,
- * `LocalVlmPlugin.analyzeImage`). This module adds the TS half only:
+ * `LocalVlmPlugin.analyzeImage`). This module provides the TS seam:
  *
  * - `TextGenerationBridge`: the explicit-modelId native contract,
  *   conceptually `generateText({modelId, prompt, maxOutputTokens,
@@ -20,14 +22,17 @@
  *   No image requirement. Streaming has no bridge method yet, so the
  *   bridge-backed engine reports `supportsStreaming: false` and carries no
  *   `streamText`; cancel is supported via `cancelInference`.
- * - Qwen gating: only the qualified pin (`QWEN_TEXT_MODEL_PIN`, verified
- *   against `docs/specs/model-library/catalogue.v1.json`) can report
- *   capability or activate, and only while the real bridge is present.
- *   The other Qwen candidates are unpinned (no selection work here) and
- *   stay unrunnable. `activateTextModel` reuses `planModelSwitch` (shared
- *   single-resident semantics) and requires an observed runtime-ready proof
- *   before reporting success. Nothing here edits the sibling-owned routing,
- *   capability, activation, or library-card modules.
+ * - Qwen gating: `activateTextModel` accepts only the qualified pin
+ *   (`QWEN_TEXT_MODEL_PIN`, verified against
+ *   `docs/specs/model-library/catalogue.v1.json`), and only while the real
+ *   bridge is present. The other Qwen candidates are not pinned here (no
+ *   activation selection work in this module); they report capability via
+ *   `runtimeCapabilityForTextEntry` and run through the candidate host once
+ *   verified and made resident. `activateTextModel` reuses `planModelSwitch`
+ *   (shared single-resident semantics) and requires an observed
+ *   runtime-ready proof before reporting success. Nothing here edits the
+ *   sibling-owned modules (`runtimeCapability.ts`, `modelSession.ts`, the
+ *   library-card screens).
  */
 
 import type { ModelCatalogueEntry } from "./catalogueTypes";
@@ -118,8 +123,8 @@ export interface GenerateTextResult {
 
 /**
  * Minimal native surface the text runtime needs. Structural (not an
- * extension of `VlmBridge`) so the image bridge is untouched until the
- * native `generateText` method exists.
+ * extension of `VlmBridge`) so the image bridge stays untouched; the native
+ * methods themselves live on `LocalVlmPlugin` (see the module header).
  */
 export interface TextGenerationBridge {
   generateText(request: GenerateTextRequest): Promise<GenerateTextResult>;
@@ -262,10 +267,11 @@ export function verifyQwenCataloguePin(
 }
 
 /**
- * Text-runtime capability for an entry. RUNTIME_AVAILABLE only for the
- * pin-verified Qwen text entry while the real bridge method is present;
- * every other entry (including the unpinned Qwen candidates) stays
- * RUNTIME_UNAVAILABLE and unlisted ids stay UNKNOWN. Mirrors
+ * Text-runtime capability for an entry. RUNTIME_AVAILABLE for either the
+ * pin-verified Qwen text entry or one of the experimental text candidates,
+ * in both cases only while the real bridge method is present. Catalog
+ * reference entries, `INCOMPATIBLE` entries and shipped entries with no
+ * wired text path stay RUNTIME_UNAVAILABLE. Mirrors
  * `runtimeCapabilityForEntry` without editing it.
  */
 export function runtimeCapabilityForTextEntry(

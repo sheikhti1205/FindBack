@@ -25,7 +25,7 @@ import {
   runtimeCapabilityForEntry,
   type RuntimeCapability,
 } from "./runtimeCapability";
-import { SHIPPED_CATALOGUE_ENTRIES } from "./shippedCatalogue";
+import { SHIPPED_CATALOGUE_ENTRIES, isExperimentalCandidateEntryId } from "./shippedCatalogue";
 import {
   QWEN_TEXT_ENTRY_ID,
   runtimeCapabilityForTextEntry,
@@ -109,6 +109,106 @@ export function saveResidentEntryId(id: string): void {
   } catch {
     /* private mode / storage disabled */
   }
+}
+
+/** Drops the resident record. Called only by the native-truth reconcile pass. */
+export function clearResidentEntryId(): void {
+  try {
+    localStorage.removeItem(RESIDENT_ENTRY_KEY);
+  } catch {
+    /* private mode / storage disabled */
+  }
+}
+
+/**
+ * Genuine native residency truth (entry-id space) for reconciling the stored
+ * web resident record. Built by callers from `getCandidateActive` and
+ * `getTextRuntimeStatus`; the `*Known` flags distinguish "read and empty"
+ * (honest clear) from "unreadable" (keep — an older native or web build can
+ * never disprove the stored claim).
+ */
+export interface NativeResidentTruth {
+  /** Persisted native candidate selection pointer, or null. */
+  readonly candidateSelected: string | null;
+  /** Genuinely resident initialized candidate engine, or null. */
+  readonly candidateResident: string | null;
+  /** Whether that candidate engine is genuinely initialized. */
+  readonly candidateInitialized: boolean;
+  /** Genuine native text resident as an entry id (Qwen or candidate), or null. */
+  readonly textResidentEntryId: string | null;
+  /** The native text-status read succeeded. */
+  readonly textStatusKnown: boolean;
+  /** The native candidate-active read succeeded. */
+  readonly candidateStatusKnown: boolean;
+}
+
+export interface ResidentReconcileDecision {
+  /** The honest resident after reconciliation: native truth, never a stale pointer. */
+  readonly effectiveResidentId: string | null;
+  /** Whether the stored web record must be cleared. */
+  readonly clearStored: boolean;
+}
+
+/**
+ * Reconciles a stored web resident claim against genuine native residency.
+ * Pure: no storage access, so callers apply the decision with a re-read
+ * guard (see `syncStoredResidentId`).
+ *
+ * - Unknown truth (both reads failed): keep — nothing is disproved.
+ * - Stored equals the single genuine native resident: keep.
+ * - Stored candidate without genuine candidate residence: clear (pointer is
+ *   never proof — cold restart, delete, release, verify-evict).
+ * - Stored entry replaced by another genuine resident: adopt the native
+ *   resident and clear (single-resident invariant evicted the stored entry).
+ * - Stored dedicated entry with no genuine resident anywhere: keep (restart
+ *   transient; consumers fail closed on readiness separately).
+ */
+export function reconcileStoredResidentId(
+  storedId: string | null,
+  truth: NativeResidentTruth,
+): ResidentReconcileDecision {
+  if (storedId == null) return { effectiveResidentId: null, clearStored: false };
+  const candidateGenuine =
+    truth.candidateStatusKnown &&
+    truth.candidateInitialized &&
+    truth.candidateResident != null
+      ? truth.candidateResident
+      : null;
+  const textGenuine = truth.textStatusKnown ? truth.textResidentEntryId : null;
+  if (!truth.candidateStatusKnown && !truth.textStatusKnown) {
+    return { effectiveResidentId: storedId, clearStored: false };
+  }
+  const genuine = candidateGenuine ?? textGenuine;
+  if (genuine === storedId) return { effectiveResidentId: storedId, clearStored: false };
+  if (genuine != null) return { effectiveResidentId: genuine, clearStored: true };
+  if (isExperimentalCandidateEntryId(storedId) && truth.candidateStatusKnown) {
+    return { effectiveResidentId: null, clearStored: true };
+  }
+  return { effectiveResidentId: storedId, clearStored: false };
+}
+
+export interface ResidentStoreSeam {
+  load(): string | null;
+  clear(): void;
+}
+
+/**
+ * Applies the reconcile decision to storage with compare-and-clear: the
+ * stored value is re-read and cleared only when it still equals the decided
+ * value, so a newer choice written concurrently is never clobbered. Returns
+ * the honest effective resident (the newer choice when one won the race).
+ */
+export function syncStoredResidentId(
+  truth: NativeResidentTruth,
+  store: ResidentStoreSeam = { load: loadResidentEntryId, clear: clearResidentEntryId },
+): string | null {
+  const stored = store.load();
+  const decision = reconcileStoredResidentId(stored, truth);
+  if (!decision.clearStored) return decision.effectiveResidentId;
+  const reread = store.load();
+  if (reread !== stored) return reread;
+  store.clear();
+  return decision.effectiveResidentId;
 }
 
 export type RoleAssignmentResult =

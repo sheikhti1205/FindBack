@@ -62,6 +62,33 @@ class GenerativeResidencyArbiter(
         return snapshot()
     }
 
+    /**
+     * Single-transaction eviction of every resident, AI-02 fix.
+     *
+     * Unlike [releaseAll] (record clear only), this also evicts the
+     * experimental candidate — which lives outside the dedicated role
+     * record — plus the recorded dedicated resident. Verify/use probes call
+     * this before initializing a fresh engine so two generative engines can
+     * never overlap. Eviction delegates to the existing lifecycle release
+     * paths (which defer the close while native code runs); the arbiter
+     * itself never closes an engine. Residency is runtime state only: the
+     * caller's persisted selection pointer is untouched, so after a probe
+     * the selection still reads "selected" while residency reads empty
+     * until the next lazy activation.
+     */
+    @Synchronized
+    fun evictAllResidents(): ResidencySnapshot {
+        evictCandidate()
+        when (residentRole) {
+            ResidencyRole.IMAGE -> evictImage()
+            ResidencyRole.TEXT -> evictText()
+            null -> Unit
+        }
+        residentRole = null
+        residentEntryId = null
+        return snapshot()
+    }
+
     @Synchronized
     fun snapshot(): ResidencySnapshot = ResidencySnapshot(residentEntryId, residentRole)
 }

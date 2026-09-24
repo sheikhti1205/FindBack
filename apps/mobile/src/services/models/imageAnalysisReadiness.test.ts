@@ -3,12 +3,16 @@ import { getVlmBridge } from "../vlmPlugin";
 import { getCandidateHost } from "./candidateHost";
 import {
   deriveImageAnalysisReadiness,
+  isVisionCandidateGenuinelyActive,
   readImageAnalysisReadiness,
   readinessFromImageState,
 } from "./imageAnalysisReadiness";
 
 vi.mock("../vlmPlugin", () => ({ getVlmBridge: vi.fn() }));
-vi.mock("./candidateHost", () => ({ getCandidateHost: vi.fn() }));
+vi.mock("./candidateHost", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./candidateHost")>();
+  return { ...actual, getCandidateHost: vi.fn() };
+});
 
 const getVlmBridgeMock = vi.mocked(getVlmBridge);
 const getCandidateHostMock = vi.mocked(getCandidateHost);
@@ -82,7 +86,51 @@ describe("deriveImageAnalysisReadiness (frozen contract)", () => {
     });
   });
 
-  it("reports READY when a verified vision candidate is the active entry", async () => {
+  it("reports READY when the vision candidate is genuinely resident and verified", async () => {
+    getVlmBridgeMock.mockReturnValue({
+      getModelStates: vi.fn().mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]),
+    } as never);
+    getCandidateHostMock.mockReturnValue({
+      getActive: vi.fn().mockResolvedValue("lfm2.5-vl-450m"),
+      getActiveStatus: vi.fn().mockResolvedValue({
+        entryId: "lfm2.5-vl-450m",
+        selectedEntryId: "lfm2.5-vl-450m",
+        installedVerified: true,
+        residentEntryId: "lfm2.5-vl-450m",
+        initialized: true,
+      }),
+    } as never);
+
+    await expect(readImageAnalysisReadiness()).resolves.toEqual({
+      available: true,
+      reason: "READY",
+    });
+  });
+
+  it("never reports READY on a selection pointer alone (AI-04/AI-07)", async () => {
+    getVlmBridgeMock.mockReturnValue({
+      getModelStates: vi.fn().mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]),
+    } as never);
+    // Selected but never activated (cold restart), deleted bytes, or released:
+    // the pointer names the vision entry while nothing is genuinely resident.
+    getCandidateHostMock.mockReturnValue({
+      getActive: vi.fn().mockResolvedValue("lfm2.5-vl-450m"),
+      getActiveStatus: vi.fn().mockResolvedValue({
+        entryId: "lfm2.5-vl-450m",
+        selectedEntryId: "lfm2.5-vl-450m",
+        installedVerified: false,
+        residentEntryId: null,
+        initialized: false,
+      }),
+    } as never);
+
+    await expect(readImageAnalysisReadiness()).resolves.toEqual({
+      available: false,
+      reason: "NO_MODEL",
+    });
+  });
+
+  it("fails closed on legacy pointer-only hosts with no residency truth", async () => {
     getVlmBridgeMock.mockReturnValue({
       getModelStates: vi.fn().mockResolvedValue([{ id: "smolvlm2-500m", state: "NOT_INSTALLED" }]),
     } as never);
@@ -91,9 +139,26 @@ describe("deriveImageAnalysisReadiness (frozen contract)", () => {
     } as never);
 
     await expect(readImageAnalysisReadiness()).resolves.toEqual({
-      available: true,
-      reason: "READY",
+      available: false,
+      reason: "NO_MODEL",
     });
+  });
+
+  it("gates vision-candidate readiness on verified genuine residence", () => {
+    const resident = {
+      entryId: "lfm2.5-vl-450m",
+      selectedEntryId: "lfm2.5-vl-450m",
+      installedVerified: true,
+      residentEntryId: "lfm2.5-vl-450m",
+      initialized: true,
+    };
+    expect(isVisionCandidateGenuinelyActive(resident)).toBe(true);
+    expect(
+      isVisionCandidateGenuinelyActive({ ...resident, initialized: false, residentEntryId: null }),
+    ).toBe(false);
+    expect(isVisionCandidateGenuinelyActive({ ...resident, installedVerified: false })).toBe(false);
+    expect(isVisionCandidateGenuinelyActive(null)).toBe(false);
+    expect(isVisionCandidateGenuinelyActive(undefined)).toBe(false);
   });
 
   it("still reports NO_MODEL when no dedicated or candidate image model is ready", async () => {

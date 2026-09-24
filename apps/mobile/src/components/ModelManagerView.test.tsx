@@ -89,6 +89,17 @@ describe("compact Model Manager visual contract", () => {
     expect(screen.getByText("Error")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Use Qwen3/i })).toBeNull();
   });
+  it("never claims device verification from a capacity estimate (AI-06)", () => {
+    const estimated = {
+      ...candidateRows[2]!,
+      state: "NOT_INSTALLED" as const,
+      deviceFit: "May fit this device (estimate — not verified on this device)",
+    };
+    render(<ModelManagerView models={[estimated]} availableRamMb={4300} onAction={() => {}} onImport={() => {}} onExport={() => {}} />);
+    expect(screen.queryByText(/Verified on this device/)).toBeNull();
+    expect(screen.getByText(/estimate — not verified/i)).toBeTruthy();
+  });
+
   it("renders user-confirmed imported entries only in their own section", () => {
     const imported = { ...candidateRows[2]!, entryId: "imported-example", label: "My Vision Model", category: "IMPORTED" as const, state: "INSTALLED_UNVERIFIED" as const };
     render(<ModelManagerView models={[...candidateRows, imported]} onAction={() => {}} onImport={() => {}} onExport={() => {}} />);

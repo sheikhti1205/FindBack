@@ -311,6 +311,15 @@ export interface NativeTextRuntimeStatus {
   installed: boolean;
   textReady: boolean;
   residentModelId?: string | null;
+  /**
+   * Candidate text payload extras (additive AI-03 native follow-up): the
+   * persisted selection pointer plus its verified/initialized facts. Absent
+   * on the dedicated Qwen path and on older native builds; never residency
+   * proof on their own.
+   */
+  selectedEntryId?: string | null;
+  installedVerified?: boolean;
+  initialized?: boolean;
 }
 
 /** GPU self-test failure classification (mirrors native SelfTestFailure).

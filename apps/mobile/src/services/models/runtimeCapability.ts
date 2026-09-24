@@ -8,8 +8,10 @@
  * the shipped catalogue wiring without touching the native bridge:
  *
  * - `runtimeCapabilityForEntry`: whether this build has a wired executable
- *   runtime path for the entry (today only the SmolVLM2 500M entry, via
- *   `bridgeModelIdForEntry`). Shipped entries with no wired path are
+ *   runtime path for the entry — the SmolVLM2 500M entry via its dedicated
+ *   `bridgeModelIdForEntry` mapping, plus the four experimental candidates
+ *   via the candidate runtime (`CandidateRuntimeController`, once verified
+ *   and made resident). Shipped entries with neither path are
  *   RUNTIME_UNAVAILABLE; ids outside the shipped catalogue are UNKNOWN
  *   (unverifiable from this layer, never assumed runnable).
  * - `availabilityForEntry`: the single display status for a card —
@@ -61,10 +63,11 @@ export interface AvailabilitySignals {
 }
 
 /**
- * Runtime capability for a catalogue entry id. Only entries with a wired
- * native runtime path report RUNTIME_AVAILABLE; every other shipped entry
- * (Qwen text candidates, LFM eval slots, Gemma reference) reports
- * RUNTIME_UNAVAILABLE, and unlisted ids report UNKNOWN.
+ * Runtime capability for a catalogue entry id. RUNTIME_AVAILABLE covers the
+ * dedicated SmolVLM2 image path and the four experimental candidates (each
+ * owns a wired candidate runtime once verified and made resident); shipped
+ * entries with neither path report RUNTIME_UNAVAILABLE, and unlisted ids
+ * report UNKNOWN.
  */
 export function runtimeCapabilityForEntry(entryId: string): RuntimeCapability {
   if (bridgeModelIdForEntry(entryId) != null) return "RUNTIME_AVAILABLE";

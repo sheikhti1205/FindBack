@@ -17,7 +17,7 @@ import type { ImportedModelRecord } from "./packageTransferHost";
 export const SMOL_ENTRY_ID = "smolvlm2-500m-litert-int4" as const;
 /** Catalogue entry id of the recommended text-runtime slot. */
 export const QWEN_ENTRY_ID = "qwen3-0.6b-litert-dynamic-int4" as const;
-/** The four probe-only experimental raw-candidate entry ids. */
+/** The four experimental raw-candidate entry ids (candidate host, `Use` enabled). */
 export const EXPERIMENTAL_ENTRY_IDS: readonly string[] = [
   "qwen3-0.6b-litert-mixed-int4",
   "qwen3-0.6b-litert-int8",
@@ -145,11 +145,12 @@ export function managerStatusFrom(nativeState: string | null | undefined): Manag
 /**
  * Which lifecycle owns an entry action. Keyed by catalogue entry identity,
  * never by bridge guessing:
+ * - `tryAgain` (local refresh) -> none;
  * - recommended image entry -> image (VLM) lifecycle;
  * - recommended text entry -> qualified text lifecycle;
- * - experimental raw candidates -> candidate host;
- * - user-imported rows -> transfer host (delete only);
- * - `use` on probe-only entries and `tryAgain` (local refresh) -> none.
+ * - user-imported rows -> transfer host for `delete`, none for anything else;
+ * - experimental raw candidates -> candidate host for `use`, `download` and
+ *   `delete` (the four candidates are runnable here, not probe-only).
  */
 export type EntryActionOwner = "image" | "text" | "candidate" | "transfer" | "none";
 
@@ -167,13 +168,17 @@ export function actionOwnerFor(
 }
 
 /**
- * Device-fit summary. `Good fit` only when measured free RAM meets the
- * catalogue minimum; never a device-run result. Unknown RAM stays honest.
+ * Device-fit summary. Catalogue RAM floors are CONSERVATIVE_ESTIMATEs, so
+ * ample free RAM is reported as an estimate only — never as device proof.
+ * Only an observed on-device run (READY state) may claim verification;
+ * unknown RAM stays honest.
  */
 export function deviceFitFor(minFreeRamMb: number | null | undefined, availableFreeRamMb: number | null | undefined): string {
   if (availableFreeRamMb == null) return "Not tested on this device";
   if (minFreeRamMb == null) return "Needs device verification";
-  return availableFreeRamMb >= minFreeRamMb ? "Good fit" : "Needs device verification";
+  return availableFreeRamMb >= minFreeRamMb
+    ? "May fit this device (estimate — not verified on this device)"
+    : "Needs device verification";
 }
 
 function catalogueMinRam(entryId: string): number | null {

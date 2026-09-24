@@ -20,10 +20,12 @@ import {
   qwenExportArgs,
   qwenImportArgs,
   qwenOwnedRelativePaths,
+  residentEntryIdFromBridgeStatus,
   shellTextSeamsFromBridgeStatus,
   shippedQwenEntry,
   signalsFromBridgeStatus,
   TEXT_READY_STATE,
+  type QwenBridgeStatus,
 } from "./qwenLifecycle";
 
 function qwenEntry(
@@ -484,5 +486,79 @@ describe("shellTextSeamsFromBridgeStatus", () => {
 describe("shippedQwenEntry", () => {
   it("resolves the qualified entry from the shipped catalogue", () => {
     expect(shippedQwenEntry()?.id).toBe(QWEN_TEXT_ENTRY_ID);
+  });
+});
+
+describe("candidate text residency (AI-03/AI-07)", () => {
+  const CANDIDATE_TEXT = "lfm2.5-1.2b-instruct-litert-int4-gpu";
+
+  it("preserves a genuinely resident candidate text id in signals", () => {
+    const signals = signalsFromBridgeStatus({
+      modelId: CANDIDATE_TEXT,
+      ready: true,
+      nativeRunning: false,
+      backend: "gpu",
+      modelFilePresent: true,
+      installed: true,
+      textReady: true,
+      residentModelId: CANDIDATE_TEXT,
+      selectedEntryId: CANDIDATE_TEXT,
+      installedVerified: true,
+      initialized: true,
+    });
+    expect(signals.transferValidated).toBe(true);
+    expect(signals.textReady).toBe(true);
+    expect(signals.residentModelId).toBe(CANDIDATE_TEXT);
+  });
+
+  it("reads a selected-but-not-resident candidate as not ready with no resident", () => {
+    const signals = signalsFromBridgeStatus({
+      modelId: CANDIDATE_TEXT,
+      ready: false,
+      nativeRunning: false,
+      backend: "gpu",
+      modelFilePresent: true,
+      installed: true,
+      textReady: false,
+      selectedEntryId: CANDIDATE_TEXT,
+      installedVerified: true,
+      initialized: false,
+    });
+    expect(signals.transferValidated).toBe(true);
+    expect(signals.textReady).toBe(false);
+    expect(signals.residentModelId).toBe(null);
+  });
+});
+
+describe("residentEntryIdFromBridgeStatus", () => {
+  const CANDIDATE_TEXT = "lfm2.5-1.2b-instruct-litert-int4-gpu";
+
+  function base(overrides: Partial<QwenBridgeStatus> = {}): QwenBridgeStatus {
+    return {
+      modelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+      ready: true,
+      nativeRunning: false,
+      backend: "gpu",
+      modelFilePresent: true,
+      installed: true,
+      textReady: true,
+      ...overrides,
+    };
+  }
+
+  it("maps the Qwen bridge id to the qualified entry and candidate ids to themselves", () => {
+    expect(
+      residentEntryIdFromBridgeStatus(base({ residentModelId: QWEN_TEXT_BRIDGE_MODEL_ID })),
+    ).toBe(QWEN_TEXT_ENTRY_ID);
+    expect(
+      residentEntryIdFromBridgeStatus(base({ modelId: CANDIDATE_TEXT, residentModelId: CANDIDATE_TEXT })),
+    ).toBe(CANDIDATE_TEXT);
+  });
+
+  it("returns null without a genuine native resident, never a pointer", () => {
+    expect(residentEntryIdFromBridgeStatus(base({}))).toBe(null);
+    expect(residentEntryIdFromBridgeStatus(base({ residentModelId: "smolvlm2-500m" }))).toBe(null);
+    expect(residentEntryIdFromBridgeStatus(null)).toBe(null);
+    expect(residentEntryIdFromBridgeStatus(undefined)).toBe(null);
   });
 });

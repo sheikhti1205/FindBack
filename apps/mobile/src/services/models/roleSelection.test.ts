@@ -7,17 +7,21 @@ import {
   PREFERRED_IMAGE_KEY,
   PREFERRED_TEXT_KEY,
   RESIDENT_ENTRY_KEY,
+  clearResidentEntryId,
   defaultEntryIdForRole,
   entryRole,
   loadPreferredEntryId,
   loadResidentEntryId,
   planRoleSwitch,
+  reconcileStoredResidentId,
   resolveEntryForRole,
   resolvePreferredEntryId,
   routeRoleRequest,
   savePreferredEntryId,
   saveResidentEntryId,
+  syncStoredResidentId,
   validateRoleAssignment,
+  type NativeResidentTruth,
 } from "./roleSelection";
 import { QWEN_TEXT_ENTRY_ID } from "./textRuntime";
 
@@ -206,5 +210,117 @@ describe("planRoleSwitch", () => {
     });
     expect(plan).toMatchObject({ blocked: true });
     if (plan.blocked) expect(plan.reason).toMatch(/no executable runtime/i);
+  });
+});
+
+describe("reconcileStoredResidentId (native-selected vs web preference)", () => {
+  function truth(overrides: Partial<NativeResidentTruth> = {}): NativeResidentTruth {
+    return {
+      candidateSelected: null,
+      candidateResident: null,
+      candidateInitialized: false,
+      textResidentEntryId: null,
+      textStatusKnown: true,
+      candidateStatusKnown: true,
+      ...overrides,
+    };
+  }
+
+  it("keeps a genuinely resident candidate selection", () => {
+    expect(reconcileStoredResidentId(LFM_VL_ENTRY_ID, truth({
+      candidateSelected: LFM_VL_ENTRY_ID,
+      candidateResident: LFM_VL_ENTRY_ID,
+      candidateInitialized: true,
+    }))).toEqual({ effectiveResidentId: LFM_VL_ENTRY_ID, clearStored: false });
+  });
+
+  it("clears a pointer-only candidate claim (cold restart, delete, release, verify-evict)", () => {
+    expect(reconcileStoredResidentId(LFM_VL_ENTRY_ID, truth({
+      candidateSelected: LFM_VL_ENTRY_ID,
+      candidateResident: null,
+      candidateInitialized: false,
+    }))).toEqual({ effectiveResidentId: null, clearStored: true });
+    // Pointer itself gone (native delete/release cleared it).
+    expect(reconcileStoredResidentId(LFM_VL_ENTRY_ID, truth()))
+      .toEqual({ effectiveResidentId: null, clearStored: true });
+  });
+
+  it("adopts the genuine native resident when the web record names another entry", () => {
+    expect(reconcileStoredResidentId(QWEN_TEXT_ENTRY_ID, truth({
+      candidateSelected: LFM_TEXT_ENTRY_ID,
+      candidateResident: LFM_TEXT_ENTRY_ID,
+      candidateInitialized: true,
+      textResidentEntryId: null,
+    }))).toEqual({ effectiveResidentId: LFM_TEXT_ENTRY_ID, clearStored: true });
+  });
+
+  it("clears a stale Smol claim only on positive proof of another genuine resident", () => {
+    expect(reconcileStoredResidentId(SMOLVLM_ENTRY_ID, truth({
+      candidateSelected: LFM_VL_ENTRY_ID,
+      candidateResident: LFM_VL_ENTRY_ID,
+      candidateInitialized: true,
+    }))).toEqual({ effectiveResidentId: LFM_VL_ENTRY_ID, clearStored: true });
+    // No genuine resident anywhere: keep (restart transient; Shell fails closed separately).
+    expect(reconcileStoredResidentId(SMOLVLM_ENTRY_ID, truth()))
+      .toEqual({ effectiveResidentId: SMOLVLM_ENTRY_ID, clearStored: false });
+    expect(reconcileStoredResidentId(QWEN_TEXT_ENTRY_ID, truth()))
+      .toEqual({ effectiveResidentId: QWEN_TEXT_ENTRY_ID, clearStored: false });
+  });
+
+  it("keeps every stored claim when the native truth is unknown (older native, web build)", () => {
+    const unknown = truth({ textStatusKnown: false, candidateStatusKnown: false });
+    expect(reconcileStoredResidentId(LFM_VL_ENTRY_ID, unknown))
+      .toEqual({ effectiveResidentId: LFM_VL_ENTRY_ID, clearStored: false });
+    expect(reconcileStoredResidentId(QWEN_TEXT_ENTRY_ID, unknown))
+      .toEqual({ effectiveResidentId: QWEN_TEXT_ENTRY_ID, clearStored: false });
+    expect(reconcileStoredResidentId(null, truth()))
+      .toEqual({ effectiveResidentId: null, clearStored: false });
+  });
+});
+
+describe("syncStoredResidentId (compare-and-clear)", () => {
+  function truth(overrides: Partial<NativeResidentTruth> = {}): NativeResidentTruth {
+    return {
+      candidateSelected: null,
+      candidateResident: null,
+      candidateInitialized: false,
+      textResidentEntryId: null,
+      textStatusKnown: true,
+      candidateStatusKnown: true,
+      ...overrides,
+    };
+  }
+
+  it("clears a stale stored claim and reports the honest effective resident", () => {
+    saveResidentEntryId(LFM_VL_ENTRY_ID);
+    expect(syncStoredResidentId(truth())).toBe(null);
+    expect(loadResidentEntryId()).toBe(null);
+  });
+
+  it("never clears a newer choice written after the decision read", () => {
+    saveResidentEntryId(LFM_VL_ENTRY_ID);
+    const reads = [LFM_VL_ENTRY_ID, QWEN_TEXT_ENTRY_ID];
+    let cleared = false;
+    const effective = syncStoredResidentId(truth(), {
+      load: () => reads.shift() ?? null,
+      clear: () => {
+        cleared = true;
+      },
+    });
+    expect(cleared).toBe(false);
+    expect(effective).toBe(QWEN_TEXT_ENTRY_ID);
+  });
+
+  it("clears through the storage seam when the value is unchanged", () => {
+    let stored: string | null = LFM_VL_ENTRY_ID;
+    const effective = syncStoredResidentId(truth(), {
+      load: () => stored,
+      clear: () => {
+        stored = null;
+      },
+    });
+    expect(effective).toBe(null);
+    expect(stored).toBe(null);
+    expect(clearResidentEntryId).toBeDefined();
   });
 });

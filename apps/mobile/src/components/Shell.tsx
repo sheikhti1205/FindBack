@@ -25,7 +25,7 @@ import {
   isTextBridge,
   type NativeTextRuntimeStatus,
 } from "../services/vlmPlugin";
-import { shellTextSeamsFromBridgeStatus } from "../services/models/qwenLifecycle";
+import { shellTextSeamsFromBridgeStatus, residentEntryIdFromBridgeStatus } from "../services/models/qwenLifecycle";
 
 const NAV: Array<{
   to: string;
@@ -106,6 +106,15 @@ export interface ShellAssistantSeams {
   textReady?: boolean;
   /** Explicit-modelId text generation override. Defaults to the bound bridge when present. */
   generateText?: (request: GenerateTextRequest) => Promise<GenerateTextResult>;
+  /**
+   * Live native text-runtime status read for the open sheet. When present
+   * (even null = read attempted, nothing genuinely resident), the stored
+   * resident claim must equal the actual native resident or the runtime
+   * fails closed — a cold restart or a replaced selection never answers
+   * through the wrong model, and a pointer-only candidate is never used.
+   * Undefined (legacy callers/tests) keeps the previous seam-only behavior.
+   */
+  nativeTextStatus?: NativeTextRuntimeStatus | null;
 }
 
 /**
@@ -115,6 +124,11 @@ export interface ShellAssistantSeams {
  * any missing precondition resolves to a generator-free runtime and the
  * sheet stays on the deterministic grounded fallback. The result never
  * claims a model is active — the sheet states the fallback truthfully.
+ *
+ * When a live native status is supplied, the stored resident claim must
+ * match the actual native resident model id: cold restart (stale record,
+ * no native resident) and replacement (record names another entry) both
+ * fail closed, and a merely selected candidate is never addressed.
  */
 export function resolveShellAssistantRuntime(
   seams: ShellAssistantSeams = {},
@@ -127,8 +141,15 @@ export function resolveShellAssistantRuntime(
       ? (request: GenerateTextRequest) => bridge.generateText(request)
       : undefined);
   if (generateText === undefined) return {};
+  const storedResidentId = seams.residentEntryId ?? loadResidentEntryId();
+  const activeEntryId =
+    seams.nativeTextStatus === undefined
+      ? storedResidentId
+      : residentEntryIdFromBridgeStatus(seams.nativeTextStatus) === storedResidentId
+        ? storedResidentId
+        : null;
   return resolveLocalTextRuntime({
-    activeEntryId: seams.residentEntryId ?? loadResidentEntryId(),
+    activeEntryId,
     textRuntimePresent,
     installed: seams.textInstalled ?? false,
     textReady: seams.textReady ?? false,
@@ -174,8 +195,14 @@ export function Shell({ seams }: { seams?: ShellAssistantSeams } = {}) {
     };
   }, [assistantOpen]);
   // Resolved fresh on every render while open, so a model activated in the
-  // library is picked up without remounting the layout route.
-  const liveSeams = { ...shellTextSeamsFromBridgeStatus(textStatus), ...(seams ?? {}) };
+  // library is picked up without remounting the layout route. The live
+  // native status gates the stored resident claim (cold restart and
+  // replacement fail closed); explicit seams always win (tests).
+  const liveSeams = {
+    ...shellTextSeamsFromBridgeStatus(textStatus),
+    nativeTextStatus: textStatus,
+    ...(seams ?? {}),
+  };
   const assistantRuntime = assistantOpen
     ? resolveShellAssistantRuntime(liveSeams)
     : undefined;

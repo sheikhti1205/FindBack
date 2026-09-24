@@ -56,6 +56,21 @@ describe("model profiles", () => {
     );
   });
 
+  it("confirms the dead fallback id referenced by the execution layer (AI-06)", () => {
+    // `assistantExecution` fell back to "qwen3-0.6b-text": no such profile
+    // exists (the Qwen profile id carries its quantization suffix). This
+    // pins the finding; the execution-layer fix must reference only real ids.
+    expect(profileFor("qwen3-0.6b-text")).toBeUndefined();
+    expect(profileFor("qwen3-0.6b-dynamic-int4")).toBeDefined();
+  });
+
+  it("keeps the LFM text profile prose-help-only for conservative candidate reuse", () => {
+    // The LiteRT LFM text candidate has no litert-lm lab arm; mapping it to
+    // this GGUF-evaluated profile is honest only while it stays prose-only.
+    expect(profileFor("lfm2.5-1.2b-q4_0")?.roles).toEqual(["answer-help"]);
+    expect(profileFor("lfm2.5-1.2b-q4_0")?.maturity).toBe("experimental");
+  });
+
   it("uses evidence-backed sampler caps and one retry, no timeout numbers", () => {
     for (const profile of MODEL_PROFILES) {
       expect(profile.defaultTemperature).toBe(0.0);

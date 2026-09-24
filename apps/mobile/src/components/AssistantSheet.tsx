@@ -11,6 +11,7 @@ import {
   executeAssistantMessage,
   type AssistantExecutionRuntime,
 } from "../services/assistant/assistantExecution";
+import type { ModelProfile } from "../services/ai/modelProfiles";
 import {
   GUIDED_FLOWS,
   LOCATION_CHOICES,
@@ -163,6 +164,24 @@ export interface AssistantTranscriptEntry {
   readonly text: string;
 }
 
+/**
+ * Short display label for a runtime profile. Used only when the injector
+ * did not provide an explicit `modelLabel`; explicit labels (which name
+ * the exact resident entry, including quant variants) always win.
+ */
+export function shortLabelForProfile(profile: ModelProfile): string {
+  switch (profile.id) {
+    case "qwen3-0.6b-dynamic-int4":
+      return "Qwen";
+    case "lfm2.5-1.2b-q4_0":
+      return "LFM2.5 1.2B";
+    case "smolvlm2-500m-text":
+      return "SmolVLM2 500M";
+    default:
+      return profile.corpusLabel;
+  }
+}
+
 export interface AssistantSheetProps {
   open: boolean;
   onClose: () => void;
@@ -269,6 +288,14 @@ export function AssistantSheet({
 
   const question = snapshot === null ? null : nextMissingQuestion(snapshot);
   const localModelOn = runtime?.generate !== undefined;
+  // Actual resident model label (AI-06): the injector that knows the
+  // active entry sets `modelLabel`; a profile-only runtime falls back to
+  // its profile's short label. The bare-`generate` fallback preserves the
+  // legacy Qwen wording for label-less injectors (tests); production
+  // text sessions always carry the real label via resolveLocalTextRuntime.
+  const modelName =
+    runtime?.modelLabel ??
+    (runtime?.profile !== undefined ? shortLabelForProfile(runtime.profile) : "Qwen");
   const handoff = snapshot === null ? null : buildAssistantReportHandoff(snapshot);
   const lastAssistantIndex = transcript.reduce(
     (found, entry, index) => (entry.role === "assistant" ? index : found),
@@ -289,7 +316,7 @@ export function AssistantSheet({
         </p>
         <p data-testid="assistant-source-note" className="text-xs text-on-surface-variant">
           {localModelOn
-            ? "Using Qwen locally for this session."
+            ? `Using ${modelName} locally for this session.`
             : "Using built-in help — no on-device text model is running."}
         </p>
         <div className="flex flex-wrap gap-2">

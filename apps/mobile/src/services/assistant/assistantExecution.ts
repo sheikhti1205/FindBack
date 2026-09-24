@@ -60,6 +60,13 @@ export interface AssistantExecutionRuntime {
   readonly generate?: GenerateFn;
   /** Model profile for narrow ops. Required only when `generate` is present. */
   readonly profile?: ModelProfile;
+  /**
+   * Honest display label for the resident model behind `generate`
+   * (e.g. "Qwen3 0.6B", "LFM2.5 1.2B"). Set by the injector that knows
+   * the active entry (`resolveLocalTextRuntime` always sets it); the
+   * sheet labels the session from this instead of assuming Qwen.
+   */
+  readonly modelLabel?: string;
   /** Guard-owned generation deadline, forwarded to `guardedGenerate`. Omitted means no guard timeout. */
   readonly deadlineMs?: number;
   /** Grounded app-question answerer. Defaults to the server Help path with a local capability fallback. */
@@ -87,8 +94,25 @@ const SEARCH_HELD_NOTE = "Collected search filters. They stay here until you run
 const REVIEW_HELD_NOTE =
   "Review report stays held here for now — the report form is never filled in automatically.";
 
+/**
+ * Fallback profile chain for runtimes that provide `generate` without an
+ * explicit profile (legacy injectors and tests). Every id must resolve via
+ * `profileFor`: a prior revision referenced the non-existent
+ * `"qwen3-0.6b-text"` (the Qwen profile id carries its quantization
+ * suffix), which silently resolved to `undefined`. Unknown ids are
+ * skipped; an empty chain fails closed to grounded routing.
+ */
+export const DEFAULT_ASSISTANT_PROFILE_IDS: readonly string[] = [
+  "smolvlm2-500m-text",
+  "qwen3-0.6b-dynamic-int4",
+];
+
 function defaultAssistantProfile(): ModelProfile | undefined {
-  return profileFor("smolvlm2-500m-text") ?? profileFor("qwen3-0.6b-text");
+  for (const id of DEFAULT_ASSISTANT_PROFILE_IDS) {
+    const profile = profileFor(id);
+    if (profile !== undefined) return profile;
+  }
+  return undefined;
 }
 
 /**

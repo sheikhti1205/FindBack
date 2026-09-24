@@ -139,6 +139,28 @@ class LocalVlmPlugin : Plugin() {
         PinnedModelSources.manifests.singleOrNull { it.id == id }
 
     /**
+     * UX-01 candidate phases on the additive `candidateInferenceState`
+     * listener. Identity is the catalogue entry id (never a dedicated
+     * [VlmModelId]); phase present means active, phaseless means
+     * terminal/idle; never a fabricated percent. Diagnostics must never
+     * break inference settlement, hence the guard.
+     */
+    private fun emitCandidatePhase(
+        entryId: String,
+        state: VlmState,
+        phase: CandidateInferencePhase? = null,
+        error: String? = null
+    ) {
+        try {
+            notifyListeners(
+                "candidateInferenceState",
+                CandidateInferenceStateEvent(entryId, state, error, phase).toJSObject()
+            )
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
      * Builds and installs the resident engine for a verified candidate. The
      * handle wraps the exact generic LiteRT-LM host the verify probe used:
      * [VlmEngine500] for image candidates, [LiteRtQwenTextHost] for text.
@@ -809,10 +831,12 @@ class LocalVlmPlugin : Plugin() {
                     return@launch
                 }
                 val file = requireStore().finalFile(manifest, manifest.files.single())
-                // Candidate probes are isolated from both resident production engines.
-                textController.release()
-                releaseEngine500()
-                residencyArbiter.releaseAll()
+                // Candidate probes are isolated from every resident engine.
+                // AI-02: evictAllResidents() also evicts a resident candidate
+                // A while B is probed, so two generative engines never
+                // overlap. The persisted selection pointer is untouched: a
+                // probe reports residency truth without destroying selection.
+                residencyArbiter.evictAllResidents()
                 val isVision = manifest.id == "lfm2.5-vl-450m"
                 val text: String
                 val loadMs: Long
@@ -940,10 +964,9 @@ class LocalVlmPlugin : Plugin() {
         scope.launch {
             val started = System.currentTimeMillis()
             try {
-                // Single residency: evict the dedicated residents first.
-                textController.release()
-                releaseEngine500()
-                residencyArbiter.releaseAll()
+                // Single residency: evict every resident first, including a
+                // prior candidate (AI-02; activate re-releases defensively).
+                residencyArbiter.evictAllResidents()
                 activateCandidate(manifest.id, role)
                 requirePrefs().edit().putString(CANDIDATE_ACTIVE_KEY, manifest.id).apply()
                 val response = JSObject()
@@ -972,18 +995,36 @@ class LocalVlmPlugin : Plugin() {
     @PluginMethod
     fun releaseCandidateModel(call: PluginCall) {
         if (!ensureInitialized(call)) return
+        // AI-01: an explicit user release while candidate inference runs is
+        // BUSY, not a close-under-work. The controller would only defer the
+        // close; report honestly so the UI retries after completion.
+        // Lifecycle teardown (release()) takes the deferred-close path.
+        if (inferenceMutex.isHeld() || activeInference.isActive()) {
+            call.reject("Inference already in progress", "BUSY")
+            return
+        }
         candidateRuntime.release()
         try { requirePrefs().edit().remove(CANDIDATE_ACTIVE_KEY).apply() } catch (_: Exception) { }
         call.resolve()
     }
 
-    /** Active candidate entry id (persisted), or null when none is selected. */
+    /**
+     * Active candidate truth: persisted selection plus installed/resident
+     * facts (AI-03/AI-04/AI-07 native portion). `entryId` is retained for
+     * existing clients; `installedVerified`, `initialized` and
+     * `residentEntryId` are additive for the TS follow-up.
+     */
     @PluginMethod
     fun getCandidateActive(call: PluginCall) {
         if (!ensureInitialized(call)) return
-        val response = JSObject()
-        response.put("entryId", persistedCandidateEntryId())
-        call.resolve(response)
+        val selected = persistedCandidateEntryId()
+        val manifest = candidateManifest(selected)
+        val installedVerified = selected != null && manifest != null &&
+            CandidateModelStatus.hasVerifiedWeights(requireStore(), manifest)
+        val resident = candidateRuntime.residentEntryId()
+        val initialized = selected != null && resident == selected &&
+            candidateRuntime.isActive(selected)
+        call.resolve(candidateActivePayload(selected, installedVerified, resident, initialized))
     }
 
     /**
@@ -1002,20 +1043,24 @@ class LocalVlmPlugin : Plugin() {
     ) {
         val manifest = candidateManifest(entryId)
         if (manifest == null) {
+            emitCandidatePhase(entryId, VlmState.RUNTIME_ERROR, error = "ENTRY_MISMATCH")
             call.reject("No runnable runtime is wired for this entry in this build.")
             return
         }
         if (!CandidateModelStatus.hasVerifiedWeights(requireStore(), manifest)) {
+            emitCandidatePhase(entryId, VlmState.RUNTIME_ERROR, error = "HASH_MISMATCH")
             call.reject("Installed bytes failed integrity verification", "HASH_MISMATCH")
             return
         }
         if (!inferenceMutex.tryAcquire()) {
+            emitCandidatePhase(entryId, VlmState.RUNTIME_ERROR, error = "BUSY")
             call.reject("Inference already in progress", "BUSY")
             return
         }
         val token = activeInference.begin()
         if (token == null) {
             inferenceMutex.release()
+            emitCandidatePhase(entryId, VlmState.RUNTIME_ERROR, error = "BUSY")
             call.reject("Inference already in progress", "BUSY")
             return
         }
@@ -1023,12 +1068,13 @@ class LocalVlmPlugin : Plugin() {
             var prepared: ImagePreparer.PreparedImage? = null
             try {
                 if (!candidateRuntime.isActive(entryId)) {
-                    textController.release()
-                    releaseEngine500()
-                    residencyArbiter.releaseAll()
+                    emitCandidatePhase(entryId, VlmState.READY_GPU, CandidateInferencePhase.LOADING_MODEL)
+                    residencyArbiter.evictAllResidents()
                     activateCandidate(entryId, CandidateRuntimeController.Role.IMAGE)
                 }
+                emitCandidatePhase(entryId, VlmState.READY_GPU, CandidateInferencePhase.PREPARING_IMAGE)
                 prepared = ImagePreparer.prepare(getContext(), imageUri, traceId)
+                emitCandidatePhase(entryId, VlmState.READY_GPU, CandidateInferencePhase.RUNNING)
                 activeInference.markNativeRunning(token, true)
                 val resultText = try {
                     candidateRuntime.analyzeImage(prepared, instruction, maxOutputTokens, temperature, traceId)
@@ -1036,24 +1082,32 @@ class LocalVlmPlugin : Plugin() {
                     activeInference.markNativeRunning(token, false)
                 }
                 if (activeInference.isCancelled(token)) {
+                    emitCandidatePhase(entryId, VlmState.READY_GPU)
                     call.reject("Inference cancelled", "CANCELLED")
                     return@launch
                 }
+                emitCandidatePhase(entryId, VlmState.READY_GPU, CandidateInferencePhase.POSTPROCESSING)
                 val result = JSObject()
                 result.put("text", resultText)
                 result.put("modelId", entryId)
-                result.put("backend", VlmEngineBackend.GPU.wire)
+                result.put("backend", CANDIDATE_BACKEND_WIRE)
                 result.put("runtime", "0.16.0")
                 result.put("diagnostics", JSArray())
                 call.resolve(result)
+                emitCandidatePhase(entryId, VlmState.READY_GPU)
             } catch (_: OutOfMemoryError) {
+                emitCandidatePhase(entryId, VlmState.RUNTIME_ERROR, error = "LOW_MEMORY")
                 call.reject("Not enough available memory to run this model", "LOW_MEMORY")
             } catch (e: CancellationException) {
+                emitCandidatePhase(entryId, VlmState.READY_GPU)
                 try { call.reject("Inference cancelled", "CANCELLED") } catch (_: Exception) { }
                 throw e
             } catch (e: Exception) {
                 if (!activeInference.isCancelled(token)) {
+                    emitCandidatePhase(entryId, VlmState.RUNTIME_ERROR, error = e.message)
                     call.reject("Inference failed: ${e.message}")
+                } else {
+                    emitCandidatePhase(entryId, VlmState.READY_GPU)
                 }
             } finally {
                 prepared?.let { ImagePreparer.cleanup(it) }
@@ -2634,26 +2688,31 @@ class LocalVlmPlugin : Plugin() {
                             if (candidateManifest == null ||
                                 !CandidateModelStatus.hasVerifiedWeights(requireStore(), candidateManifest)
                             ) {
+                                emitCandidatePhase(activeCandidate, VlmState.RUNTIME_ERROR, error = "HASH_MISMATCH")
                                 call.reject("Installed bytes failed integrity verification", "HASH_MISMATCH")
                                 return@launch
                             }
-                            textController.release()
-                            releaseEngine500()
-                            residencyArbiter.releaseAll()
+                            emitCandidatePhase(activeCandidate, VlmState.READY_GPU, CandidateInferencePhase.LOADING_MODEL)
+                            residencyArbiter.evictAllResidents()
                             activateCandidate(activeCandidate, CandidateRuntimeController.Role.TEXT)
                         }
+                        emitCandidatePhase(activeCandidate, VlmState.READY_GPU, CandidateInferencePhase.RUNNING)
                         val candidateText = candidateRuntime.generateText(
                             activeCandidate, prompt, maxOutputTokens, temperature
                         )
+                        emitCandidatePhase(activeCandidate, VlmState.READY_GPU, CandidateInferencePhase.POSTPROCESSING)
                         val candidateResult = JSObject()
                         candidateResult.put("text", candidateText)
                         candidateResult.put("modelId", activeCandidate)
-                        candidateResult.put("backend", VlmEngineBackend.GPU.wire)
+                        candidateResult.put("backend", CANDIDATE_BACKEND_WIRE)
                         candidateResult.put("runtime", "0.16.0")
                         call.resolve(candidateResult)
+                        emitCandidatePhase(activeCandidate, VlmState.READY_GPU)
                     } catch (_: OutOfMemoryError) {
+                        emitCandidatePhase(activeCandidate, VlmState.RUNTIME_ERROR, error = "LOW_MEMORY")
                         call.reject("Not enough available memory to run this model", "LOW_MEMORY")
                     } catch (e: Exception) {
+                        emitCandidatePhase(activeCandidate, VlmState.RUNTIME_ERROR, error = e.message)
                         call.reject("Text generation failed: ${e.message}")
                     }
                     return@launch
@@ -2781,9 +2840,10 @@ class LocalVlmPlugin : Plugin() {
     fun getTextRuntimeStatus(call: PluginCall) {
         if (!ensureInitialized(call)) return
         // A selected experimental text candidate answers the assistant's
-        // status read too: report ready only when its installed weights still
-        // verify (cached), so a stale pointer never inflates readiness. The
-        // engine itself re-initializes lazily on the first generateText call.
+        // status read too, but residency is never inferred from the pointer:
+        // AI-03 reports ready/resident only for a genuinely resident engine.
+        // Cold restart or post-probe selection reads "selected, needs
+        // loading" until the first generateText lazily activates it.
         val activeCandidate = persistedCandidateEntryId()
         val activeCandidateManifest =
             activeCandidate?.let { candidateManifest(it) }
@@ -2792,16 +2852,13 @@ class LocalVlmPlugin : Plugin() {
             CandidateRuntimeController.roleFor(activeCandidate) == CandidateRuntimeController.Role.TEXT &&
             CandidateModelStatus.hasVerifiedWeights(requireStore(), activeCandidateManifest)
         ) {
-            val candidateStatus = JSObject()
-            candidateStatus.put("modelId", activeCandidate)
-            candidateStatus.put("ready", true)
-            candidateStatus.put("nativeRunning", false)
-            candidateStatus.put("backend", VlmEngineBackend.GPU.wire)
-            candidateStatus.put("modelFilePresent", true)
-            candidateStatus.put("installed", true)
-            candidateStatus.put("textReady", true)
-            candidateStatus.put("residentModelId", activeCandidate)
-            call.resolve(candidateStatus)
+            call.resolve(
+                candidateTextStatusPayload(
+                    selectedEntryId = activeCandidate,
+                    residentTextEntryId = candidateRuntime.residentTextEntryId(),
+                    backendWire = CANDIDATE_BACKEND_WIRE
+                )
+            )
             return
         }
         val status = try {
@@ -3092,6 +3149,65 @@ internal fun PackageHost.Manifest.toJSObject(): JSObject {
     }
     obj.put("files", files)
     return obj
+}
+
+/**
+ * Candidate selection/residency truth (AI-03/AI-04/AI-07 native portion).
+ *
+ * Three facts stay discrete so TS can render honest state without guessing:
+ * - `entryId`/`selectedEntryId`: persisted selection pointer (preference).
+ * - `installedVerified`: the selected entry's bytes hash-verify on disk.
+ * - `residentEntryId`/`initialized`: the genuinely resident initialized
+ *   engine from [CandidateRuntimeController], never the pointer.
+ * `entryId` is retained verbatim for existing clients; the new keys are
+ * additive for the TS follow-up.
+ */
+internal fun candidateActivePayload(
+    selectedEntryId: String?,
+    installedVerified: Boolean,
+    residentEntryId: String?,
+    initialized: Boolean
+): JSObject {
+    val response = JSObject()
+    response.put("entryId", selectedEntryId)
+    response.put("selectedEntryId", selectedEntryId)
+    response.put("installedVerified", installedVerified)
+    response.put("residentEntryId", residentEntryId)
+    response.put("initialized", initialized)
+    return response
+}
+
+/**
+ * Candidate text-runtime status without fictional residency (AI-03).
+ *
+ * Called only when the selected text candidate's installed bytes verify.
+ * `residentModelId`/`ready`/`textReady` are claimed ONLY when
+ * [residentTextEntryId] is the selected entry (genuinely resident and
+ * initialized). Otherwise the pointer reads "selected, needs loading":
+ * `ready=false`, `textReady=false`, no `residentModelId` key, file facts
+ * (`installed`, `modelFilePresent`) still true.
+ */
+internal fun candidateTextStatusPayload(
+    selectedEntryId: String,
+    residentTextEntryId: String?,
+    backendWire: String
+): JSObject {
+    val genuinelyResident = residentTextEntryId == selectedEntryId
+    val status = JSObject()
+    status.put("modelId", selectedEntryId)
+    status.put("selectedEntryId", selectedEntryId)
+    status.put("installedVerified", true)
+    status.put("initialized", genuinelyResident)
+    status.put("ready", genuinelyResident)
+    status.put("nativeRunning", false)
+    status.put("backend", backendWire)
+    status.put("modelFilePresent", true)
+    status.put("installed", true)
+    status.put("textReady", genuinelyResident)
+    if (genuinelyResident) {
+        status.put("residentModelId", selectedEntryId)
+    }
+    return status
 }
 
 data class VlmModelInfo(

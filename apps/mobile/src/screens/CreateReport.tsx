@@ -8,6 +8,7 @@ import { TextField } from "../components/Fields";
 import { Segmented } from "../components/Segmented";
 import { CategoryField } from "../components/CategoryField";
 import { RichTextEditor, tiptapToMarkdown } from "../components/RichTextEditor";
+import { measureDescription } from "../services/richText";
 import type { Editor } from "@tiptap/react";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
@@ -411,7 +412,11 @@ export function CreateReport() {
       descriptionLiveRef.current = liveDescription;
       setDescription(liveDescription);
     }
-    const trimmedDescription = liveDescription.trim();
+    const trimmedDescription = measureDescription(liveDescription).trimmed;
+    // ED-05 contract: the business rule stays stored-Markdown length
+    // (DESCRIPTION_MAX against the submitted string), shared with the editor
+    // counter through measureDescription so `**`, `##`, list prefixes, `>`
+    // and link destinations never surprise the user at publish time.
     const trimmedYoutube = youtubeUrl.trim();
     const trimmedLocationLabel = location.label.trim();
     const errs = {

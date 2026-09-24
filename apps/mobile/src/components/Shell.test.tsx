@@ -46,6 +46,17 @@ function localSeams(overrides: Partial<ShellAssistantSeams> = {}): ShellAssistan
       text: `echo:${request.prompt.slice(0, 8)}`,
       modelId: request.modelId,
     }),
+    // The Qwen signals hold only with a genuinely resident native status.
+    nativeTextStatus: {
+      modelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+      ready: true,
+      nativeRunning: false,
+      backend: "gpu",
+      modelFilePresent: true,
+      installed: true,
+      textReady: true,
+      residentModelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+    },
     ...overrides,
   };
 }
@@ -164,6 +175,58 @@ describe("resolveShellAssistantRuntime", () => {
     expect(resolveShellAssistantRuntime(localSeams({ residentEntryId: null })).generate).toBeUndefined();
     expect(resolveShellAssistantRuntime(localSeams({ textRuntimePresent: false })).generate).toBeUndefined();
     expect(resolveShellAssistantRuntime(localSeams({ textReady: false })).generate).toBeUndefined();
+  });
+
+  it("matches the assistant to the actual native resident and fails closed on mismatch", () => {
+    const qwenStatus = {
+      modelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+      ready: true,
+      nativeRunning: false,
+      backend: "gpu",
+      modelFilePresent: true,
+      installed: true,
+      textReady: true,
+      residentModelId: QWEN_TEXT_BRIDGE_MODEL_ID,
+    };
+    expect(
+      resolveShellAssistantRuntime(localSeams({ nativeTextStatus: qwenStatus })).generate,
+    ).toBeDefined();
+    // Cold restart: the web record still names Qwen while native reports no resident.
+    expect(
+      resolveShellAssistantRuntime(localSeams({ nativeTextStatus: null })).generate,
+    ).toBeUndefined();
+    // Replacement: native resident is a candidate text while the web record names Qwen.
+    const replaced = {
+      ...qwenStatus,
+      modelId: "lfm2.5-1.2b-instruct-litert-int4-gpu",
+      residentModelId: "lfm2.5-1.2b-instruct-litert-int4-gpu",
+    };
+    expect(
+      resolveShellAssistantRuntime(localSeams({ nativeTextStatus: replaced })).generate,
+    ).toBeUndefined();
+  });
+
+  it("never serves a pointer-only candidate (selected, needs loading)", () => {
+    const candidate = "lfm2.5-1.2b-instruct-litert-int4-gpu";
+    const pointerOnly = {
+      modelId: candidate,
+      ready: false,
+      nativeRunning: false,
+      backend: "gpu",
+      modelFilePresent: true,
+      installed: true,
+      textReady: false,
+    };
+    expect(
+      resolveShellAssistantRuntime(
+        localSeams({ residentEntryId: candidate, nativeTextStatus: pointerOnly }),
+      ).generate,
+    ).toBeUndefined();
+    const genuinelyResident = { ...pointerOnly, ready: true, textReady: true, residentModelId: candidate };
+    const runtime = resolveShellAssistantRuntime(
+      localSeams({ residentEntryId: candidate, nativeTextStatus: genuinelyResident }),
+    );
+    expect(runtime.generate).toBeDefined();
   });
 });
 

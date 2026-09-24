@@ -68,9 +68,15 @@ describe("compact six-model mapping", () => {
     expect(actionOwnerFor("imported-1", "use", "IMPORTED")).toBe("none");
     expect(actionOwnerFor("imported-1", "verify", "IMPORTED")).toBe("none");
   });
-  it("reports Good fit only from measured RAM, never as a run result", () => {
+  it("reports a capacity estimate from measured RAM, never as a run result (AI-06)", () => {
+    // Catalogue RAM floors are CONSERVATIVE_ESTIMATEs: ample free RAM is an
+    // estimate, never an observed run. The wording must say so.
     expect(deviceFitFor(1536, null)).toBe("Not tested on this device");
-    expect(deviceFitFor(1536, 4300)).toBe("Good fit");
+    expect(deviceFitFor(1536, 4300)).toBe(
+      "May fit this device (estimate — not verified on this device)",
+    );
+    expect(deviceFitFor(1536, 4300)).toMatch(/estimate/i);
+    expect(deviceFitFor(1536, 4300)).toMatch(/not verified/i);
     expect(deviceFitFor(1536, 512)).toBe("Needs device verification");
   });
 

@@ -232,12 +232,15 @@ export interface DownloadGateInput {
 }
 
 /**
- * Advisory download gate. Never fetches; never auto-downloads. Reference
- * listings, experimental eval-only slots, and entries without a shipped
- * hash pin are never downloadable; entries whose distribution is prepared
- * but not published refuse with NOT_PUBLISHED before any transport is
- * touched; a triggered RAM-envelope gate blocks unless `advancedConfirmed`
- * was explicitly recorded.
+ * Advisory download gate. Never fetches; never auto-downloads. Refuses with
+ * NOT_PUBLISHED when the entry carries a distribution record that is not
+ * PUBLISHED (before any transport is touched), with NOT_INSTALLABLE for
+ * catalog reference or `INCOMPATIBLE` entries, and with MISSING_PIN when the
+ * entry carries neither a package `sha256` nor a `pinnedRawSource` — the four
+ * experimental candidates ship a pinned raw source, so this gate does not
+ * refuse them for being experimental (their bytes are fetched by the native
+ * candidate host, not by `downloadModelToStore`). A triggered RAM-envelope
+ * gate blocks unless `advancedConfirmed` was explicitly recorded.
  */
 export function checkDownloadGate(
   entry: ModelCatalogueEntry,

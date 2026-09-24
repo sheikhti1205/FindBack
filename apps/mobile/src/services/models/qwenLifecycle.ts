@@ -24,6 +24,7 @@ import {
   QWEN_TEXT_BRIDGE_MODEL_ID,
   QWEN_TEXT_ENTRY_ID,
   activateTextModel,
+  isCandidateTextEntryId,
   type ActivateTextModelOptions,
   type TextActivationResult,
   type TextBridgeModelId,
@@ -302,26 +303,57 @@ export interface QwenBridgeStatus {
   /** Last TEXT_READY proof; absent reads fail-closed as false. */
   readonly textReady?: boolean;
   readonly residentModelId?: string | null;
+  /**
+   * Candidate text payload extras (additive AI-03 native follow-up): the
+   * persisted selection pointer plus its verified/initialized facts. Absent
+   * on the dedicated Qwen path; never residency proof on their own.
+   */
+  readonly selectedEntryId?: string | null;
+  readonly installedVerified?: boolean;
+  readonly initialized?: boolean;
 }
 
 /**
  * Maps a native text-runtime status read onto lifecycle signals.
  * Missing lifecycle fields fail closed (uninstalled / not ready) so an
- * older native build can never inflate install or readiness.
+ * older native build can never inflate install or readiness. A genuinely
+ * resident experimental text candidate keeps its entry id as the resident
+ * (AI-03/AI-07); foreign ids still map to null.
  */
 export function signalsFromBridgeStatus(
   status: QwenBridgeStatus,
 ): QwenLifecycleSignals {
+  const rawResident = status.residentModelId ?? null;
   const residentModelId =
-    status.residentModelId === QWEN_TEXT_BRIDGE_MODEL_ID
+    rawResident === QWEN_TEXT_BRIDGE_MODEL_ID
       ? QWEN_TEXT_BRIDGE_MODEL_ID
-      : null;
+      : isCandidateTextEntryId(rawResident)
+        ? rawResident
+        : null;
   return {
     transferValidated: status.installed ?? false,
     modelFilePresent: status.modelFilePresent,
     textReady: status.textReady ?? false,
     residentModelId,
   };
+}
+
+/**
+ * Native resident as a catalogue entry id, or null when nothing is genuinely
+ * resident. Maps the qualified Qwen bridge id to its entry id and keeps
+ * resident experimental text-candidate ids verbatim; a selection pointer
+ * alone (no `residentModelId`) never counts — cold restart reads null until
+ * the first genuine activation. Shared by the Shell gate and the library
+ * reconcile pass so both match the actual native resident.
+ */
+export function residentEntryIdFromBridgeStatus(
+  status: { readonly residentModelId?: string | null } | null | undefined,
+): string | null {
+  if (status == null) return null;
+  if (status.residentModelId === QWEN_TEXT_BRIDGE_MODEL_ID) return QWEN_TEXT_ENTRY_ID;
+  const resident = status.residentModelId ?? null;
+  if (isCandidateTextEntryId(resident)) return resident;
+  return null;
 }
 
 /**

@@ -8,11 +8,15 @@
  * imports that JSON, validates its shape once, and exposes the entries with
  * the runtime/download mappings the UI needs:
  *
- * - `bridgeModelIdForEntry`: catalogue entries with a wired native runtime
- *   map to a bridge model id (today only the SmolVLM2 500M entry). Every
- *   other entry — including the LFM2.5-VL eval-only slot, whose fixB bytes
- *   are evaluation-only and never distributable — maps to null and is never
- *   offered as a download.
+ * - `bridgeModelIdForEntry`: catalogue entries with a dedicated image-bridge
+ *   `VlmModelId` map to that id (today only the SmolVLM2 500M entry). Every
+ *   other entry — including the four experimental candidates — maps to null,
+ *   which only means "no dedicated bridge id"; it is neither a runnability nor
+ *   a download verdict. The four candidates download through the native
+ *   candidate host from their pinned Hugging Face raw source (catalogue
+ *   `pinnedRawSource`, mirrored by native `PinnedModelSources.kt` and exposed
+ *   here by `rawWeightUrlForEntry`); the two recommended entries download from
+ *   `distributionUrlForEntry`.
  * - `distributionUrlForEntry`: pinned release-asset URL, or null when the
  *   entry has no distribution pin or its distribution state is not
  *   PUBLISHED (fail closed while UNPUBLISHED — no network probing).
@@ -137,10 +141,12 @@ export const SHIPPED_CATALOGUE_ENTRIES: readonly ModelCatalogueEntry[] =
   loadShippedEntries();
 
 /**
- * Catalogue entry id → wired native runtime model id. Only entries with a
- * proven complete on-device path are mapped; everything else (Qwen text
- * candidates and LFM experimental slots) returns null: visible as
- * catalogue information, never as a download.
+ * Catalogue entry id → dedicated image-bridge model id. Only the SmolVLM2
+ * 500M entry has one; every other entry returns null. A null result is not a
+ * capability, installability or download verdict: the four experimental
+ * candidates have wired candidate runtimes and their own pinned raw-source
+ * download (see `rawWeightUrlForEntry`), and the recommended Qwen downloads
+ * from its pinned release asset (see `distributionUrlForEntry`).
  */
 export function bridgeModelIdForEntry(entryId: string): VlmModelId | null {
   if (entryId === "smolvlm2-500m-litert-int4") return "smolvlm2-500m";
@@ -149,9 +155,10 @@ export function bridgeModelIdForEntry(entryId: string): VlmModelId | null {
 
 /**
  * True only when the entry carries a distribution record pinned to a
- * PUBLISHED release asset. Entries without a distribution record (reference
- * listings, eval-only slots) report false here — they are covered by the
- * installability gate, not the publication gate.
+ * PUBLISHED release asset. Entries without a distribution record (catalog
+ * reference listings and the four pinned-raw-source candidates) report
+ * false here — they are covered by the installability gate, not the
+ * publication gate.
  */
 export function isDistributionPublished(entry: ModelCatalogueEntry): boolean {
   return entry.distribution?.state === "PUBLISHED";

@@ -213,6 +213,24 @@ describe("AssistantSheet", () => {
     );
   });
 
+  it("labels the actual on-device model instead of always Qwen (AI-06)", () => {
+    renderSheet({
+      runtime: { generate: async () => "answer", modelLabel: "LFM2.5 1.2B" },
+    });
+    const note = screen.getByTestId("assistant-source-note").textContent ?? "";
+    expect(note).toContain("LFM2.5 1.2B");
+    expect(note).not.toContain("Qwen");
+  });
+
+  it("labels the Qwen session from its runtime label", () => {
+    renderSheet({
+      runtime: { generate: async () => "answer", modelLabel: "Qwen3 0.6B" },
+    });
+    expect(screen.getByTestId("assistant-source-note").textContent).toContain(
+      "Using Qwen3 0.6B locally",
+    );
+  });
+
   it("answers app questions and follow-ups through the grounded help path", async () => {
     const runtime: AssistantExecutionRuntime = {
       answerAppQuestion: async (question) => ({ text: `Built-in: ${question}`, source: "fallback" }),

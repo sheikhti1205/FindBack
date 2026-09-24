@@ -31,8 +31,10 @@ function isSafeHref(href?: string): boolean {
   return /^(https?:|mailto:)/i.test(href.trim());
 }
 
-/** Headings shift down so card content never competes with the page h1. */
-const headingMap = { h1: "h3", h2: "h4", h3: "h4" } as const;
+/** Headings shift down one level so card content never competes with the page h1,
+ * while preserving distinct visual levels for editor H1/H2/H3 (ED-03).
+ * Deeper source headings (h4–h6) demote one step for the same reason. */
+const headingMap = { h1: "h2", h2: "h3", h3: "h4" } as const;
 
 export const MarkdownView = memo(function MarkdownView({ text }: { text: string }) {
   return (
@@ -43,9 +45,12 @@ export const MarkdownView = memo(function MarkdownView({ text }: { text: string 
         disallowedElements={["img", "iframe"]}
         unwrapDisallowed
         components={{
-          h1: "h3",
-          h2: "h4",
-          h3: "h4",
+          h1: ({ children }) => <h2 className="fb-h1">{children}</h2>,
+          h2: ({ children }) => <h3 className="fb-h2">{children}</h3>,
+          h3: ({ children }) => <h4 className="fb-h3">{children}</h4>,
+          h4: ({ children }) => <h5 className="fb-h4">{children}</h5>,
+          h5: ({ children }) => <h6 className="fb-h5">{children}</h6>,
+          h6: ({ children }) => <h6 className="fb-h6">{children}</h6>,
           a: ({ href, children }) =>
             isSafeHref(href) ? (
               <a href={href} target="_blank" rel="noopener noreferrer" className="break-all underline">

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stubGenerate, mustProfile } from "../ai/ops/testSupport";
+import { profileFor } from "../ai/modelProfiles";
 import { RECOVERY_COPY } from "../ai/errors";
 import { DEFAULT_CLARIFICATION_QUESTIONS } from "../ai/clarificationCopy";
 import {
@@ -125,6 +126,16 @@ describe("executeAssistantMessage with a model", () => {
     expect(result.snapshot.state).toBe("recovering");
     expect(result.snapshot.recovery?.errorClass).toBe("UNSUPPORTED_REQUEST");
     expect(result.reply).toBe(RECOVERY_COPY.UNSUPPORTED_REQUEST.message);
+  });
+
+  it("exposes a fallback profile chain of real profile ids (AI-06 dead-id guard)", async () => {
+    const mod = (await import("./assistantExecution")) as Record<string, unknown>;
+    const ids = mod["DEFAULT_ASSISTANT_PROFILE_IDS"] as readonly string[] | undefined;
+    expect(ids).toBeDefined();
+    expect(ids?.length).toBeGreaterThan(0);
+    for (const id of ids ?? []) {
+      expect(profileFor(id)).toBeDefined();
+    }
   });
 
   it("passes recovering snapshots through untouched", async () => {

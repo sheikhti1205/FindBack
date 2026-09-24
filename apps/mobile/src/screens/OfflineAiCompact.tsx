@@ -28,7 +28,7 @@ import { ModelManagerView, type ManagerAction, type ManagerModel, type ManagerSt
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
 import { getVlmBridge, isTextBridge } from "../services/vlmPlugin";
-import { getCandidateHost, type CandidateHost } from "../services/models/candidateHost";
+import { getCandidateHost, type CandidateActiveStatus, type CandidateHost } from "../services/models/candidateHost";
 import { getTransferHost, type ImportedModelRecord, type InspectedImport, type ProbeInspectedResult, type TransferHost } from "../services/models/packageTransferHost";
 import {
   actionOwnerFor,
@@ -39,10 +39,10 @@ import {
   SMOL_ENTRY_ID,
 } from "../services/models/compactManager";
 import { bridgeModelIdForEntry, hasUnpublishedDistribution, isExperimentalCandidateEntryId, SHIPPED_CATALOGUE_ENTRIES, UNPUBLISHED_DISTRIBUTION_MESSAGE } from "../services/models/shippedCatalogue";
-import { activateQwenText, isTextReadySelfTest, shellTextSeamsFromBridgeStatus, type QwenLifecycleBridge } from "../services/models/qwenLifecycle";
+import { activateQwenText, isTextReadySelfTest, residentEntryIdFromBridgeStatus, shellTextSeamsFromBridgeStatus, type QwenLifecycleBridge } from "../services/models/qwenLifecycle";
 import { activateModel } from "../services/models/modelActivation";
 import { isTextRuntimePresent, QWEN_TEXT_BRIDGE_MODEL_ID } from "../services/models/textRuntime";
-import { loadResidentEntryId, saveResidentEntryId } from "../services/models/roleSelection";
+import { clearResidentEntryId, loadResidentEntryId, saveResidentEntryId, syncStoredResidentId, type NativeResidentTruth } from "../services/models/roleSelection";
 import { chooseFromGallery, toNativeImageUri } from "../services/photo";
 
 export interface CompactVlmSeam {
@@ -55,7 +55,16 @@ export interface CompactVlmSeam {
   deleteModel(id: string): Promise<void>;
   runGpuSelfTest(id: string, imageUri?: string): Promise<{ state: string }>;
   runTextSelfTest?(id: string): Promise<{ ready?: boolean; state?: string }>;
-  getTextRuntimeStatus?(): Promise<{ textInstalled?: boolean; textReady?: boolean; installed?: boolean; ready?: boolean }>;
+  getTextRuntimeStatus?(): Promise<{
+    textInstalled?: boolean;
+    textReady?: boolean;
+    installed?: boolean;
+    ready?: boolean;
+    /** Genuine native text resident (bridge id or candidate entry id); absent when none. */
+    residentModelId?: string | null;
+    /** Persisted native candidate selection pointer; never residency proof alone. */
+    selectedEntryId?: string | null;
+  }>;
   generateText?: (request: unknown) => Promise<unknown>;
   cancelInference?(): Promise<void>;
   release?(): Promise<void>;
@@ -107,6 +116,12 @@ export interface ManagerActionContext {
   ramMb: number | null;
   pickTestImage: () => Promise<string | null>;
   onBecameActive: (entryId: string) => void;
+  /**
+   * Clears the resident claim when the active entry is deleted. Optional so
+   * hand-built contexts keep working; the screen always provides it and the
+   * refresh reconcile pass covers native-side clears regardless.
+   */
+  onBecameInactive?: (entryId: string) => void;
   onImportedDeleted: (entryId: string) => void;
   refresh: () => Promise<void>;
 }
@@ -169,6 +184,9 @@ async function executeImageAction(entryId: string, action: ManagerAction, ctx: M
     }
     case "delete":
       await vlm.deleteModel(SMOL_BRIDGE_ID);
+      // Deleting the active entry drops its resident claim (compare-and-clear
+      // in the screen context); the refresh reconcile pass re-checks native.
+      if (entryId === ctx.activeId) ctx.onBecameInactive?.(entryId);
       await ctx.refresh();
       return;
     case "tryAgain":
@@ -244,6 +262,7 @@ async function executeTextAction(entryId: string, action: ManagerAction, ctx: Ma
         throw new Error("Delete is unavailable for the text runtime in this build. Nothing changed.");
       }
       await vlm.deleteTextModel({ modelId: QWEN_TEXT_BRIDGE_MODEL_ID });
+      if (entryId === ctx.activeId) ctx.onBecameInactive?.(entryId);
       await ctx.refresh();
       return;
     case "tryAgain":
@@ -283,6 +302,7 @@ async function executeCandidateAction(entryId: string, action: ManagerAction, ct
     }
     case "delete":
       await candidates.delete(entryId);
+      if (entryId === ctx.activeId) ctx.onBecameInactive?.(entryId);
       await ctx.refresh();
       return;
     case "use": {
@@ -337,6 +357,68 @@ export async function executeManagerAction(entryId: string, action: ManagerActio
       }
       throw new Error("This action is unavailable for this entry in this build.");
   }
+}
+
+/**
+ * Reads genuine native residency for the stored-record reconcile pass from
+ * the candidate-active truth plus the text-runtime resident. Reads that fail
+ * or lack the residency truth report unknown (never "empty"), so an older
+ * native build or a missing host can never clear an honest stored claim.
+ * Selection pointers alone never count as residency.
+ */
+async function readLibraryResidentTruth(
+  candidates: CandidateHost | null,
+  vlm: CompactVlmSeam | null,
+): Promise<NativeResidentTruth> {
+  let candidateSelected: string | null = null;
+  let candidateResident: string | null = null;
+  let candidateInitialized = false;
+  let candidateStatusKnown = false;
+  if (candidates != null && typeof candidates.getActiveStatus === "function") {
+    try {
+      const status: CandidateActiveStatus | null = await candidates.getActiveStatus();
+      candidateStatusKnown = true;
+      candidateSelected = status?.selectedEntryId ?? status?.entryId ?? null;
+      if (
+        status != null &&
+        status.initialized === true &&
+        status.residentEntryId != null &&
+        status.residentEntryId === candidateSelected
+      ) {
+        candidateResident = status.residentEntryId;
+        candidateInitialized = true;
+      }
+    } catch {
+      candidateStatusKnown = false;
+    }
+  }
+  let textResidentEntryId: string | null = null;
+  let textStatusKnown = false;
+  try {
+    if (vlm != null && typeof vlm.getTextRuntimeStatus === "function") {
+      const status = await vlm.getTextRuntimeStatus();
+      textStatusKnown = true;
+      textResidentEntryId = residentEntryIdFromBridgeStatus(status ?? null);
+    } else if (vlm != null) {
+      const bridge = getVlmBridge();
+      if (isTextBridge(bridge)) {
+        const status = await bridge.getTextRuntimeStatus();
+        textStatusKnown = true;
+        textResidentEntryId = residentEntryIdFromBridgeStatus(status);
+      }
+    }
+  } catch {
+    textStatusKnown = false;
+    textResidentEntryId = null;
+  }
+  return {
+    candidateSelected,
+    candidateResident,
+    candidateInitialized,
+    textResidentEntryId,
+    textStatusKnown,
+    candidateStatusKnown,
+  };
 }
 
 export function OfflineAiCompact(seams?: CompactSeams) {
@@ -473,6 +555,16 @@ export function OfflineAiCompact(seams?: CompactSeams) {
       );
     }
     await Promise.all(tasks);
+    // Reconcile the stored resident claim with genuine native residency on
+    // every refresh (mount, delete, release, verify-evict): a stale pointer
+    // claim is compare-and-cleared, never rendered as active.
+    try {
+      const truth = await readLibraryResidentTruth(candidateHost, vlm);
+      const effective = syncStoredResidentId(truth);
+      if (mountedRef.current) setActiveId(effective);
+    } catch {
+      /* keep the last active id; readiness still renders from native state */
+    }
   }, [vlm, candidates, transfers, seams?.ramOverrideMb]);
 
   // Native event listeners belong to the screen lifetime, never to a state
@@ -507,7 +599,8 @@ export function OfflineAiCompact(seams?: CompactSeams) {
   }, [vlm, candidates]);
 
   useEffect(() => {
-    setActiveId(loadResidentEntryId());
+    // Mount reads authoritative native residency through refresh, which
+    // reconciles (and compare-and-clears) the stored resident claim.
     void refresh();
   }, [refresh]);
 
@@ -600,6 +693,16 @@ export function OfflineAiCompact(seams?: CompactSeams) {
       onBecameActive: (id) => {
         setActiveId(id);
         saveResidentEntryId(id);
+      },
+      onBecameInactive: (id) => {
+        // Compare-and-clear: drop the stored claim only when it still names
+        // the deleted entry, so a newer activation is never clobbered.
+        try {
+          if (loadResidentEntryId() === id) clearResidentEntryId();
+        } catch {
+          /* storage unreadable: local state still updates */
+        }
+        setActiveId((prev) => (prev === id ? null : prev));
       },
       onImportedDeleted: (id) => {
         if (mountedRef.current) setImported((prev) => prev.filter((m) => m.entryId !== id));

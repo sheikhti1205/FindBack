@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { candidateHostFrom } from "./candidateHost";
+import {
+  candidateHostFrom,
+  isCandidateResidentReady,
+  type CandidateActiveStatus,
+} from "./candidateHost";
 
 describe("candidate host bridge", () => {
   it("keeps catalogue identity through state, transfer and real verification calls", async () => {
@@ -37,5 +41,92 @@ describe("candidate host bridge", () => {
       "verify:lfm2.5-vl-450m:content://image", "use:lfm2.5-vl-450m", "releaseUse",
       "delete:lfm2.5-vl-450m",
     ]);
+  });
+});
+
+describe("candidate active truth (AI-04/AI-07)", () => {
+  const VISION = "lfm2.5-vl-450m";
+
+  function nativeWithActive(status: unknown) {
+    return {
+      getCandidateStates: async () => ({ models: [] }),
+      downloadCandidateModel: async () => undefined,
+      pauseCandidateDownload: async () => undefined,
+      cancelCandidateDownload: async () => undefined,
+      verifyCandidateModel: async ({ entryId }: { entryId: string }) => ({
+        entryId, ready: false, observedOnThisDevice: false, loadMs: 0, inferenceMs: 0,
+      }),
+      deleteCandidateModel: async () => undefined,
+      useCandidateModel: async ({ entryId }: { entryId: string }) => ({
+        entryId, role: "IMAGE" as const, ready: false, loadMs: 0,
+      }),
+      releaseCandidateModel: async () => undefined,
+      getCandidateActive: async () => status,
+      addListener: vi.fn().mockResolvedValue({ remove: vi.fn() }),
+    };
+  }
+
+  it("exposes the full native selection/residency truth, failing closed on legacy shapes", async () => {
+    const full = candidateHostFrom(nativeWithActive({
+      entryId: VISION,
+      selectedEntryId: VISION,
+      installedVerified: true,
+      residentEntryId: VISION,
+      initialized: true,
+    }) as never);
+    expect(await full.getActiveStatus?.()).toEqual({
+      entryId: VISION,
+      selectedEntryId: VISION,
+      installedVerified: true,
+      residentEntryId: VISION,
+      initialized: true,
+    });
+
+    const legacy = candidateHostFrom(nativeWithActive({ entryId: VISION }) as never);
+    expect(await legacy.getActiveStatus?.()).toEqual({
+      entryId: VISION,
+      selectedEntryId: VISION,
+      installedVerified: false,
+      residentEntryId: null,
+      initialized: false,
+    });
+
+    const empty = candidateHostFrom(nativeWithActive({ entryId: null }) as never);
+    expect(await empty.getActiveStatus?.()).toEqual({
+      entryId: null,
+      selectedEntryId: null,
+      installedVerified: false,
+      residentEntryId: null,
+      initialized: false,
+    });
+  });
+
+  it("reports genuinely resident only for verified+initialized residence, never the pointer alone", () => {
+    const resident: CandidateActiveStatus = {
+      entryId: VISION,
+      selectedEntryId: VISION,
+      installedVerified: true,
+      residentEntryId: VISION,
+      initialized: true,
+    };
+    expect(isCandidateResidentReady(resident, VISION)).toBe(true);
+    // Selected but never activated (cold restart), deleted bytes, or released.
+    expect(
+      isCandidateResidentReady(
+        { ...resident, residentEntryId: null, initialized: false },
+        VISION,
+      ),
+    ).toBe(false);
+    expect(
+      isCandidateResidentReady(
+        { ...resident, installedVerified: false, residentEntryId: null, initialized: false },
+        VISION,
+      ),
+    ).toBe(false);
+    expect(
+      isCandidateResidentReady({ ...resident, entryId: "other", selectedEntryId: "other" }, VISION),
+    ).toBe(false);
+    expect(isCandidateResidentReady(null, VISION)).toBe(false);
+    expect(isCandidateResidentReady(undefined, VISION)).toBe(false);
   });
 });

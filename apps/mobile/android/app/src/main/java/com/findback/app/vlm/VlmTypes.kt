@@ -364,6 +364,56 @@ data class InferenceStateEvent(
 }
 
 /**
+ * Requested backend for candidate engines. The LiteRT-LM hosts record only
+ * the *requested* backend (GPU default); nothing observes the actually-bound
+ * delegate, so candidate results/status report "unknown" instead of a false
+ * GPU claim (AI-06). Dedicated paths keep their own backend reporting.
+ */
+internal const val CANDIDATE_BACKEND_WIRE = "unknown"
+
+/**
+ * Candidate inference phases (UX-01 native portion). Real stage transitions
+ * only — fabricated percentages must never be emitted. Contract mirrors
+ * [InferencePhase]: phase present means inference is active, phase absent
+ * means terminal/idle. Carried on the additive `candidateInferenceState`
+ * listener keyed by catalogue `entryId`, never by [VlmModelId] (candidates
+ * are not dedicated models and must not borrow their identity).
+ */
+enum class CandidateInferencePhase(val wire: String) {
+    LOADING_MODEL("LOADING_MODEL"),
+    PREPARING_IMAGE("PREPARING_IMAGE"),
+    RUNNING("RUNNING"),
+    POSTPROCESSING("POSTPROCESSING");
+
+    companion object {
+        fun fromWire(wire: String): CandidateInferencePhase? =
+            values().firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * Candidate inference state event. Identity is the catalogue entry id
+ * string; [state] mirrors the dedicated listener vocabulary (READY_GPU
+ * while active or settled, RUNTIME_ERROR with [error] on failure) so a
+ * future web consumer can share rendering keyed off phase presence.
+ */
+data class CandidateInferenceStateEvent(
+    val entryId: String,
+    val state: VlmState,
+    val error: String? = null,
+    val phase: CandidateInferencePhase? = null
+) {
+    fun toJSObject(): JSObject {
+        val obj = JSObject()
+        obj.put("entryId", entryId)
+        obj.put("state", state.wire)
+        error?.let { obj.put("error", it) }
+        phase?.let { obj.put("phase", it.wire) }
+        return obj
+    }
+}
+
+/**
  * Download progress event.
  */
 data class DownloadProgressEvent(

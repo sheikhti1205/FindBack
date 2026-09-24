@@ -75,6 +75,62 @@ describe("resolveLocalTextRuntime", () => {
     );
   });
 
+  it("never assigns the generic Qwen profile to the LFM LiteRT text candidate (AI-06)", () => {
+    const runtime = resolveLocalTextRuntime(
+      signals({ activeEntryId: "lfm2.5-1.2b-instruct-litert-int4-gpu" }),
+    );
+    expect(runtime.generate).toBeDefined();
+    expect(runtime.profile?.id).not.toBe("qwen3-0.6b-dynamic-int4");
+    expect(runtime.profile?.id).toBe("lfm2.5-1.2b-q4_0");
+  });
+
+  it("keeps the qualified Qwen entry on the Qwen profile with the bridge model id", async () => {
+    const seen: GenerateTextRequest[] = [];
+    const runtime = resolveLocalTextRuntime(
+      signals({
+        activeEntryId: QWEN_TEXT_ENTRY_ID,
+        generateText: async (request: GenerateTextRequest) => {
+          seen.push(request);
+          return { text: "answer", modelId: request.modelId };
+        },
+      }),
+    );
+    expect(runtime.profile?.id).toBe("qwen3-0.6b-dynamic-int4");
+    await runtime.generate?.("hi", { maxOutputTokens: 64, temperature: 0 });
+    expect(seen[0]?.modelId).toBe(QWEN_TEXT_BRIDGE_MODEL_ID);
+  });
+
+  it("addresses a resident LFM text candidate by its catalogue entry id", async () => {
+    const seen: GenerateTextRequest[] = [];
+    const runtime = resolveLocalTextRuntime(
+      signals({
+        activeEntryId: "lfm2.5-1.2b-instruct-litert-int4-gpu",
+        generateText: async (request: GenerateTextRequest) => {
+          seen.push(request);
+          return { text: "answer", modelId: request.modelId };
+        },
+      }),
+    );
+    await runtime.generate?.("hi", { maxOutputTokens: 64, temperature: 0 });
+    expect(seen[0]?.modelId).toBe("lfm2.5-1.2b-instruct-litert-int4-gpu");
+  });
+
+  it("stays generator-free for the vision candidate: no text profile fits it", () => {
+    expect(
+      resolveLocalTextRuntime(signals({ activeEntryId: "lfm2.5-vl-450m" })).generate,
+    ).toBeUndefined();
+  });
+
+  it("labels the runtime with the actual active model, never a silent Qwen (AI-06)", () => {
+    const qwen = resolveLocalTextRuntime(signals({ activeEntryId: QWEN_TEXT_ENTRY_ID }));
+    expect(qwen.modelLabel).toContain("Qwen");
+    const lfm = resolveLocalTextRuntime(
+      signals({ activeEntryId: "lfm2.5-1.2b-instruct-litert-int4-gpu" }),
+    );
+    expect(lfm.modelLabel).toContain("LFM");
+    expect(lfm.modelLabel).not.toContain("Qwen");
+  });
+
   it("drives a model answer through the guard, else the grounded fallback", async () => {
     const modelRuntime = resolveLocalTextRuntime(
       signals({

@@ -50,6 +50,15 @@ class CandidateRuntimeController {
     private var role: Role? = null
     private var vision: VisionHandle? = null
     private var text: TextHandle? = null
+    // In-flight generation lease (AI-01): analyzeImage/generateText capture
+    // their handle under [lock], bump [inFlight], then run outside the lock.
+    // release() always clears residency synchronously so status reads are
+    // honest, but when generations are in flight the handle close is queued
+    // in [deferredCloses] and drained by the last finishing run in its
+    // finally block — never closing underneath native work, never
+    // double-closing. Closes always run outside [lock]: no deadlock.
+    private var inFlight = 0
+    private val deferredCloses = ArrayDeque<() -> Unit>()
 
     @Volatile
     private var ready = false
@@ -80,7 +89,15 @@ class CandidateRuntimeController {
      */
     fun activateImage(entryId: String, handle: VisionHandle) {
         release()
-        handle.initialize()
+        // AI-05: a throwing initialize() leaves the handle untracked, so the
+        // plugin catch cannot reach it. Close it here and rethrow the
+        // original failure instead of leaking a partial engine.
+        try {
+            handle.initialize()
+        } catch (t: Throwable) {
+            safeClose { handle.release() }
+            throw t
+        }
         synchronized(lock) {
             this.entryId = entryId
             this.role = Role.IMAGE
@@ -93,7 +110,12 @@ class CandidateRuntimeController {
     /** Text counterpart of [activateImage]. */
     fun activateText(entryId: String, handle: TextHandle) {
         release()
-        handle.initialize()
+        try {
+            handle.initialize()
+        } catch (t: Throwable) {
+            safeClose { handle.release() }
+            throw t
+        }
         synchronized(lock) {
             this.entryId = entryId
             this.role = Role.TEXT
@@ -114,11 +136,27 @@ class CandidateRuntimeController {
         temperature: Float,
         traceId: String?
     ): String {
-        val handle = synchronized(lock) {
-            if (ready && role == Role.IMAGE) vision else null
-        } ?: throw IllegalStateException("No resident image candidate to run.")
-        return handle.run(prepared, instruction, maxOutputTokens, temperature, traceId)
+        val handle = acquireVision()
+        try {
+            return handle.run(prepared, instruction, maxOutputTokens, temperature, traceId)
+        } finally {
+            endRun()
+        }
     }
+
+    /**
+     * P1: atomic handle+lease acquisition in ONE lock section. Selecting the
+     * handle and taking the lease in two steps let release() close the
+     * captured handle in between (inFlight still 0) before the run started.
+     * Either the caller holds a live handle with the close deferred, or it
+     * throws before touching anything — never a run on a closed handle.
+     */
+    internal fun acquireVision(): VisionHandle =
+        synchronized(lock) {
+            val handle = if (ready && role == Role.IMAGE) vision else null
+            if (handle != null) inFlight++
+            handle
+        } ?: throw IllegalStateException("No resident image candidate to run.")
 
     /**
      * Runs one text generation on the resident text candidate. Throws when
@@ -130,13 +168,24 @@ class CandidateRuntimeController {
         maxOutputTokens: Int,
         temperature: Float
     ): String {
-        val handle = synchronized(lock) {
-            if (ready && role == Role.TEXT && entryId == requestedEntryId) text else null
+        val handle = acquireText(requestedEntryId)
+        try {
+            return handle.run(prompt, maxOutputTokens, temperature)
+        } finally {
+            endRun()
+        }
+    }
+
+    /** Text counterpart of [acquireVision]: atomic select+lease or throw. */
+    internal fun acquireText(requestedEntryId: String): TextHandle =
+        synchronized(lock) {
+            val handle =
+                if (ready && role == Role.TEXT && entryId == requestedEntryId) text else null
+            if (handle != null) inFlight++
+            handle
         } ?: throw IllegalStateException(
             "No resident text candidate for \"$requestedEntryId\"."
         )
-        return handle.run(prompt, maxOutputTokens, temperature)
-    }
 
     /** Best-effort cancel of an in-flight candidate text generation. */
     fun cancel() {
@@ -145,22 +194,58 @@ class CandidateRuntimeController {
 
     /** Releases the resident candidate engine, if any. */
     fun release() {
-        val (staleVision, staleText) = synchronized(lock) {
-            val v = vision
-            val t = text
+        val staleVision: VisionHandle?
+        val staleText: TextHandle?
+        synchronized(lock) {
+            staleVision = vision
+            staleText = text
             vision = null
             text = null
             entryId = null
             role = null
             ready = false
-            v to t
         }
-        try {
-            staleVision?.release()
-        } catch (_: Exception) {
+        val closes = mutableListOf<() -> Unit>()
+        if (staleVision != null) closes.add { staleVision.release() }
+        if (staleText != null) closes.add { staleText.release() }
+        if (closes.isEmpty()) return
+        // Residency is already cleared above; only the close defers while a
+        // generation holds the lease. A second release() sees null handles,
+        // so each handle closes at most once.
+        val immediate: List<() -> Unit> = synchronized(lock) {
+            if (inFlight > 0) {
+                deferredCloses.addAll(closes)
+                emptyList()
+            } else {
+                closes
+            }
         }
+        immediate.forEach { safeClose(it) }
+    }
+
+    /**
+     * Finishes one acquired lease, draining a deferred close outside [lock]
+     * when the last in-flight generation completes. Safe to call without a
+     * lease only in tests; production pairs every acquire with exactly one
+     * endRun in `finally`.
+     */
+    internal fun endRun() {
+        val pending: List<() -> Unit> = synchronized(lock) {
+            if (inFlight > 0) inFlight--
+            if (inFlight == 0 && deferredCloses.isNotEmpty()) {
+                val drained = deferredCloses.toList()
+                deferredCloses.clear()
+                drained
+            } else {
+                emptyList()
+            }
+        }
+        pending.forEach { safeClose(it) }
+    }
+
+    private fun safeClose(close: () -> Unit) {
         try {
-            staleText?.release()
+            close()
         } catch (_: Exception) {
         }
     }

@@ -454,3 +454,65 @@ describe("OfflineAiCompact single entry-id dispatcher", () => {
     expect(ctx.onImportedDeleted).toHaveBeenCalledWith("imported-1");
   });
 });
+
+describe("OfflineAiCompact resident reconciliation (AI-04/AI-07)", () => {
+  const RESIDENT_KEY = "findback:offline-ai:active-model";
+  const VISION_CANDIDATE = "lfm2.5-vl-450m";
+
+  function candidatesWithActiveStatus(status: unknown) {
+    const candidates = fakeCandidates();
+    (candidates as Record<string, unknown>).getActiveStatus = vi.fn().mockResolvedValue(status);
+    return candidates;
+  }
+
+  it("clears a stale stored active entry on mount when native reports no resident", async () => {
+    window.localStorage.setItem(RESIDENT_KEY, VISION_CANDIDATE);
+    try {
+      const candidates = candidatesWithActiveStatus({
+        entryId: VISION_CANDIDATE,
+        selectedEntryId: VISION_CANDIDATE,
+        installedVerified: false,
+        residentEntryId: null,
+        initialized: false,
+      });
+      render(<OfflineAiCompact vlm={fakeVlm()} candidates={candidates} transfers={fakeTransfers()} ramOverrideMb={4300} />);
+      await screen.findByRole("heading", { name: "On-device AI" });
+      await waitFor(() => expect(window.localStorage.getItem(RESIDENT_KEY)).toBeNull());
+    } finally {
+      window.localStorage.removeItem(RESIDENT_KEY);
+    }
+  });
+
+  it("keeps a genuinely resident candidate as the stored active entry", async () => {
+    window.localStorage.setItem(RESIDENT_KEY, VISION_CANDIDATE);
+    try {
+      const candidates = candidatesWithActiveStatus({
+        entryId: VISION_CANDIDATE,
+        selectedEntryId: VISION_CANDIDATE,
+        installedVerified: true,
+        residentEntryId: VISION_CANDIDATE,
+        initialized: true,
+      });
+      render(<OfflineAiCompact vlm={fakeVlm()} candidates={candidates} transfers={fakeTransfers()} ramOverrideMb={4300} />);
+      await screen.findByRole("heading", { name: "On-device AI" });
+      await waitFor(() => expect(candidates.getStates).toHaveBeenCalled());
+      // Let the reconcile pass settle, then the genuine resident must remain stored.
+      await waitFor(() => expect(window.localStorage.getItem(RESIDENT_KEY)).toBe(VISION_CANDIDATE));
+    } finally {
+      window.localStorage.removeItem(RESIDENT_KEY);
+    }
+  });
+
+  it("notifies inactive when the active candidate entry is deleted", async () => {
+    const candidates = fakeCandidates();
+    const onBecameInactive = vi.fn();
+    const ctx = {
+      ...actionCtx({ vlm: fakeVlm(), candidates }, modelFor(VISION_CANDIDATE, "EXPERIMENTAL")),
+      activeId: VISION_CANDIDATE,
+      onBecameInactive,
+    };
+    await executeManagerAction(VISION_CANDIDATE, "delete", ctx as never);
+    expect(candidates.delete).toHaveBeenCalledWith(VISION_CANDIDATE);
+    expect(onBecameInactive).toHaveBeenCalledWith(VISION_CANDIDATE);
+  });
+});

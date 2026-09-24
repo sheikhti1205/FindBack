@@ -9,7 +9,7 @@ import {
   type ObjectSelection,
   type ObjectRole,
 } from "../services/vlmDiscovery";
-import { getVlmBridge, type InferenceStateEvent, type VlmState } from "../services/vlmPlugin";
+import { getVlmBridge, type InferenceStateEvent, type VlmInferencePhase, type VlmState } from "../services/vlmPlugin";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
 import { friendlyVlmMessage } from "../services/vlmErrors";
@@ -54,6 +54,17 @@ function hasValue(value: VlmAnalysis[keyof VlmAnalysis]): boolean {
 
 type Phase = "idle" | "discovering" | "review" | "generating" | "done";
 
+/**
+ * UX-01: honest textual copy for the four real native inference phases.
+ * Indeterminate per phase — never a percentage or seconds remaining.
+ */
+const INFERENCE_PHASE_COPY: Record<VlmInferencePhase, string> = {
+  LOADING_MODEL: "Loading model…",
+  PREPARING_IMAGE: "Preparing photo…",
+  RUNNING: "Analyzing photo…",
+  POSTPROCESSING: "Finishing suggestions…",
+};
+
 export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: VlmSuggestionsProps) {
   const navigate = useNavigate();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -63,6 +74,18 @@ export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: Vl
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inferenceRunning, setInferenceRunning] = useState(false);
+  /** UX-01: real native phase/model identity shown only when native provides them. */
+  const [inferencePhase, setInferencePhase] = useState<VlmInferencePhase | null>(null);
+  const [inferenceModelId, setInferenceModelId] = useState<string | null>(null);
+  /** Raw native terminal error; rendered through friendlyVlmMessage, never raw codes. */
+  const [inferenceError, setInferenceError] = useState<string | null>(null);
+  /**
+   * Stale-event guard: after a local cancel or photo change, phase-bearing
+   * events from the cancelled old job are ignored (no resurrected spinner)
+   * until its terminal event releases the native mutex. The running gate
+   * stays true meanwhile so a second job cannot start early.
+   */
+  const suppressPhaseRef = useRef(false);
   /** Explicit CPU compatibility notice from the last successful analysis. */
   const [cpuNotice, setCpuNotice] = useState<string | null>(null);
   /** Per-photo generation: stale responses after an image change are ignored. */
@@ -71,8 +94,16 @@ export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: Vl
 
   // Changing the photo invalidates all unapplied AI state and stops the
   // native work for the old photo instead of letting it run to completion.
+  // Stale phase events from the cancelled job are suppressed until terminal.
+  // Skipped on first mount so live phases from another session still show.
+  const isFirstPhotoRef = useRef(true);
   useEffect(() => {
+    if (isFirstPhotoRef.current) {
+      isFirstPhotoRef.current = false;
+      return;
+    }
     generation.current++;
+    suppressPhaseRef.current = true;
     void getVlmBridge()
       .cancelInference()
       .catch(() => undefined);
@@ -83,6 +114,9 @@ export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: Vl
     setError(null);
     setCpuNotice(null);
     setBusy(false);
+    setInferencePhase(null);
+    setInferenceModelId(null);
+    setInferenceError(null);
   }, [imageUri]);
 
   // Subscribe to inference state to disable while another analysis runs
@@ -93,7 +127,31 @@ export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: Vl
         const runningStates: VlmState[] = ["DOWNLOADING", "VERIFYING_HASH", "GPU_SELF_TESTING"];
         // Phase present means inference is active (native emits real phases,
         // never fake progress); phase absent on a terminal event means idle.
-        setInferenceRunning(runningStates.includes(event.state) || event.phase !== undefined);
+        const running = runningStates.includes(event.state) || event.phase !== undefined;
+        setInferenceRunning(running);
+        if (event.phase !== undefined) {
+          // Ignore stale phases from a locally-cancelled old job; the gate
+          // above still blocks an early second job until terminal.
+          if (suppressPhaseRef.current) return;
+          setInferencePhase(event.phase);
+          setInferenceModelId(typeof event.modelId === "string" && event.modelId.length > 0 ? event.modelId : null);
+          setInferenceError(null);
+        } else {
+          const wasSuppressed = suppressPhaseRef.current;
+          suppressPhaseRef.current = false;
+          setInferencePhase(null);
+          if (wasSuppressed) {
+            // Locally cancelled: end clean with no error surfacing.
+            setInferenceModelId(null);
+            setInferenceError(null);
+          } else if (typeof event.error === "string" && event.error.length > 0) {
+            setInferenceError(event.error);
+            setInferenceModelId(typeof event.modelId === "string" && event.modelId.length > 0 ? event.modelId : null);
+          } else {
+            setInferenceModelId(null);
+            setInferenceError(null);
+          }
+        }
       })
       .then((remove) => {
         removeListener = remove;
@@ -136,6 +194,10 @@ export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: Vl
   async function handleDiscover() {
     if (disabled) return;
     const gen = ++generation.current;
+    suppressPhaseRef.current = false;
+    setInferencePhase(null);
+    setInferenceModelId(null);
+    setInferenceError(null);
     traceIdRef.current = startActionTrace();
     clearAmbientTrace();
     setBusy(true);
@@ -190,6 +252,10 @@ export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: Vl
     if (!primary || busy) return;
     if (selections.filter((s) => s.role === "PRIMARY").length !== 1) return;
     const gen = ++generation.current;
+    suppressPhaseRef.current = false;
+    setInferencePhase(null);
+    setInferenceModelId(null);
+    setInferenceError(null);
     traceIdRef.current = startActionTrace();
     clearAmbientTrace();
     setBusy(true);
@@ -246,11 +312,18 @@ export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: Vl
 
   function handleCancel() {
     generation.current++;
+    // End local status immediately; stale native phases stay suppressed
+    // until the terminal event releases the mutex (no infinite spinner,
+    // no early second job while inferenceRunning is still true).
+    suppressPhaseRef.current = true;
     void getVlmBridge()
       .cancelInference()
       .catch(() => undefined);
     setBusy(false);
     setError(null);
+    setInferencePhase(null);
+    setInferenceModelId(null);
+    setInferenceError(null);
     setPhase(selections.length > 0 ? "review" : "idle");
   }
 
@@ -305,6 +378,30 @@ export function VlmSuggestions({ imageUri, onApply, userContext, readiness }: Vl
               Cancel
             </Button>
           )}
+        </div>
+      )}
+
+      {inferencePhase && (
+        <p
+          role="status"
+          aria-label="Inference status"
+          className="rounded-m3-sm border border-outline-variant px-3 py-2 text-sm"
+        >
+          {INFERENCE_PHASE_COPY[inferencePhase]}
+          {inferenceModelId ? ` • ${inferenceModelId}` : null}
+        </p>
+      )}
+
+      {!inferencePhase && inferenceError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error"
+        >
+          <AlertCircle size={16} aria-hidden />
+          <span>
+            {friendlyVlmMessage(inferenceError)}
+            {inferenceModelId ? ` (${inferenceModelId})` : null}
+          </span>
         </div>
       )}
 

@@ -241,6 +241,78 @@ class GenerativeResidencyArbiterTest {
         assertTrue(slots.textResident)
     }
 
+    @Test fun releaseAllAloneDoesNotEvictTheCandidate() {
+        // AI-02 characterization: releaseAll() only clears the dedicated
+        // role record, so a verify probe that calls it without evicting the
+        // candidate leaves engine A loaded while B initializes. The fix is
+        // evictAllResidents() below; this documents why it must be used.
+        var candidateEvictions = 0
+        val arbiter = GenerativeResidencyArbiter(
+            evictImage = {},
+            evictText = {},
+            evictCandidate = { candidateEvictions++ }
+        )
+        arbiter.acquireText(TEXT_ID)
+        // acquireText() itself issues one candidate eviction (unconditional
+        // null-op by design); releaseAll() must add none.
+        val afterAcquire = candidateEvictions
+        arbiter.releaseAll()
+        assertEquals(afterAcquire, candidateEvictions)
+        assertNull(arbiter.snapshot().residentEntryId)
+    }
+
+    @Test fun evictAllResidentsClearsEveryResidentIncludingCandidate() {
+        // AI-02: one transaction evicts the candidate plus the recorded
+        // dedicated resident, so a verify probe can never overlap engines.
+        var candidateEvictions = 0
+        val slots = FakeSlots()
+        val arbiter = GenerativeResidencyArbiter(
+            evictImage = {
+                slots.imageEvictions++
+                slots.imageResident = false
+            },
+            evictText = {
+                slots.textEvictions++
+                slots.textResident = false
+            },
+            evictCandidate = { candidateEvictions++ }
+        )
+        arbiter.acquireText(TEXT_ID)
+        slots.textResident = true
+        val candidateAfterAcquire = candidateEvictions
+        arbiter.evictAllResidents()
+        assertEquals(candidateAfterAcquire + 1, candidateEvictions)
+        assertEquals(1, slots.textEvictions)
+        assertEquals(0, slots.imageEvictions, "idle role must not be disturbed")
+        assertFalse(slots.textResident)
+        assertNull(arbiter.snapshot().residentEntryId)
+        assertNull(arbiter.snapshot().residentRole)
+    }
+
+    @Test fun evictAllResidentsWithImageResidentEvictsImageAndCandidate() {
+        var candidateEvictions = 0
+        val slots = FakeSlots()
+        val arbiter = GenerativeResidencyArbiter(
+            evictImage = {
+                slots.imageEvictions++
+                slots.imageResident = false
+            },
+            evictText = {
+                slots.textEvictions++
+                slots.textResident = false
+            },
+            evictCandidate = { candidateEvictions++ }
+        )
+        arbiter.acquireImage(IMAGE_ID)
+        slots.imageResident = true
+        val candidateAfterAcquire = candidateEvictions
+        arbiter.evictAllResidents()
+        assertEquals(candidateAfterAcquire + 1, candidateEvictions)
+        assertEquals(1, slots.imageEvictions)
+        assertEquals(0, slots.textEvictions)
+        assertNull(arbiter.snapshot().residentEntryId)
+    }
+
     @Test fun releaseClearsOnlyMatchingEntry() {
         val arbiter = GenerativeResidencyArbiter()
         arbiter.acquireImage(IMAGE_ID)
