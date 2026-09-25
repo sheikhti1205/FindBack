@@ -4,22 +4,68 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { APP_CAPABILITIES, CAPABILITIES_VERSION } from "./appCapabilities";
 
-// The edge-function mirror lives outside the Vite root, so compare by source:
-// the contract is version parity + no stale mode-selector claims on either side.
+// The server-side mirror lives outside the Vite root, so compare by source:
+// the contract is version parity + no retired local-AI claims on either side.
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const edgeSource = readFileSync(
   join(repoRoot, "supabase", "functions", "ai-help", "capabilities.ts"),
   "utf8",
 );
+const edgeSummary = edgeSource.slice(
+  edgeSource.indexOf("CAPABILITY_SUMMARY"),
+  edgeSource.indexOf("export function buildSystemPrompt"),
+);
+
+const mobileCopy = JSON.stringify(APP_CAPABILITIES);
+
+/**
+ * Vocabulary of the retired local generative runtime. The active architecture is
+ * the OpenRouter free route with a user-owned key, so none of these may be
+ * claimed as a capability again.
+ */
+const RETIRED_CLAIMS: Array<[RegExp, string]> = [
+  [/offline ai/i, "offline AI"],
+  [/smolvlm/i, "SmolVLM"],
+  [/litert/i, "LiteRT"],
+  [/\bmodel download/i, "model downloads"],
+  [/\bmodel mode/i, "model modes"],
+  [/\bGPU\b/, "GPU-preferring model"],
+  [/\bCPU compatibility\b/i, "CPU compatibility mode"],
+  [/\b256M\b/, "256M model"],
+  [/pause and resume/i, "pause/resume downloads"],
+  [/wi-fi only/i, "Wi-Fi-only downloads"],
+  [/never (sent|leaves).{0,30}(server|device|phone)/i, "photo never leaves the device"],
+  [/help answers come from this server/i, "server-side Help"],
+];
 
 describe("capability docs", () => {
-  it("stays in sync with the edge-function mirror", () => {
+  it("stays in sync with the server-side mirror", () => {
     const match = edgeSource.match(/CAPABILITIES_VERSION = "([^"]+)"/);
     expect(match?.[1]).toBe(CAPABILITIES_VERSION);
   });
 
-  it("never describes the removed inference-mode selector", () => {
-    expect(APP_CAPABILITIES.modelModes.join("\n")).not.toMatch(/AUTO|QUALITY/);
-    expect(edgeSource).not.toMatch(/Model modes: AUTO/);
+  it("describes the cloud-AI architecture without retired local-AI claims", () => {
+    for (const [pattern, label] of RETIRED_CLAIMS) {
+      expect(pattern.test(mobileCopy), `mobile capability copy still claims ${label}`).toBe(false);
+      expect(pattern.test(edgeSummary), `server capability copy still claims ${label}`).toBe(false);
+    }
+  });
+
+  it("names the OpenRouter free route for connection, photo analysis and Help", () => {
+    expect(APP_CAPABILITIES.aiConnection.join(" ")).toMatch(/openrouter\/free/i);
+    expect(APP_CAPABILITIES.photoAnalysis.join(" ")).toMatch(/openrouter/i);
+    expect(APP_CAPABILITIES.helpAssistant.join(" ")).toMatch(/openrouter/i);
+    expect(APP_CAPABILITIES.privacy.join(" ")).toMatch(/openrouter/i);
+    expect(edgeSummary).toMatch(/openrouter\/free/i);
+  });
+
+  it("keeps photos consented and off the server unless the user asks", () => {
+    expect(APP_CAPABILITIES.photoAnalysis.join(" ")).toMatch(/consent/i);
+    expect(APP_CAPABILITIES.privacy.join(" ")).toMatch(/until you publish/i);
+  });
+
+  it("never describes a removed inference-mode selector", () => {
+    expect(mobileCopy).not.toMatch(/\bAUTO\b|\bQUALITY\b/);
+    expect(edgeSummary).not.toMatch(/Model modes: AUTO/);
   });
 });

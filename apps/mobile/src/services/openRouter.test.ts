@@ -1,11 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { createOpenRouterClient, OPENROUTER_MODEL, OpenRouterError } from "./openRouter";
+import { createOpenRouterClient, OPENROUTER_MODEL, OpenRouterError, REQUEST_TIMEOUT_MS } from "./openRouter";
 
 function completed(text = "A black backpack") {
   return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: text } }] }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
+}
+
+/**
+ * Emulates a provider that returns headers, streams a partial body, then stalls
+ * forever. The stream is tied to the request signal the way real fetch does, so
+ * aborting the request errors the pending read.
+ */
+function stalledBody(onSignal?: AbortSignal) {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        const fail = () => controller.error(new DOMException("Aborted", "AbortError"));
+        if (onSignal?.aborted) { fail(); return; }
+        controller.enqueue(new TextEncoder().encode('{"choices":'));
+        onSignal?.addEventListener("abort", fail);
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
 }
 
 describe("fixed OpenRouter free route", () => {
@@ -122,5 +141,75 @@ describe("fixed OpenRouter free route", () => {
     expect((fetcher.mock.calls[0] as unknown as [string])[0]).toBe("https://openrouter.ai/api/v1/key");
     const admin = createOpenRouterClient(async () => null, vi.fn(async () => new Response(JSON.stringify({ data: { is_management_key: true } }), { status: 200 })));
     await expect(admin.validateKey("admin-key")).rejects.toMatchObject({ code: "INVALID_KEY" });
+  });
+
+  it("keeps the deadline active while the response body is still streaming", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>(async (_url, init) => stalledBody(init?.signal ?? undefined));
+      const client = createOpenRouterClient(async () => "example-key", fetcher);
+      const pending = client.text("hi");
+      const assertion = expect(pending).rejects.toMatchObject({ code: "TIMEOUT" });
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await assertion;
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out a stalled body read even though headers already arrived", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>(async (_url, init) => stalledBody(init?.signal ?? undefined));
+      const client = createOpenRouterClient(async () => "example-key", fetcher);
+      const pending = client.text("hi");
+      const assertion = expect(pending).rejects.toMatchObject({ code: "TIMEOUT" });
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1);
+      // Still streaming: the deadline must not have fired early.
+      let settled = false;
+      void pending.catch(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("accepts a response body that finishes within the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>(async () => new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            setTimeout(() => {
+              controller.enqueue(new TextEncoder().encode(JSON.stringify({
+                choices: [{ finish_reason: "stop", message: { content: "late but valid" } }],
+              })));
+              controller.close();
+            }, 1_000);
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ));
+      const client = createOpenRouterClient(async () => "example-key", fetcher);
+      const pending = client.text("hi");
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(pending).resolves.toBe("late but valid");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels an in-flight body read when the caller aborts", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => stalledBody(init?.signal ?? undefined));
+    const client = createOpenRouterClient(async () => "example-key", fetcher);
+    const pending = client.text("hi", { signal: controller.signal });
+    const assertion = expect(pending).rejects.toMatchObject({ code: "CANCELLED" });
+    controller.abort();
+    await assertion;
   });
 });

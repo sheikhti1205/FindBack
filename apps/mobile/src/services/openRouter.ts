@@ -4,7 +4,8 @@ const KEY_URL = "https://openrouter.ai/api/v1/key";
 /** Fixed free route enforced at the transport boundary; callers cannot override it. */
 export const OPENROUTER_MODEL = "openrouter/free" as const;
 const MODEL = OPENROUTER_MODEL;
-const TIMEOUT_MS = 25_000;
+/** One deadline spans the request *and* the full consumption of its response body. */
+export const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_PROMPT = 2_400;
 const MAX_ANSWER = 6_000;
 const MAX_IMAGE_BYTES = 2_000_000;
@@ -136,17 +137,36 @@ async function readJsonBounded(res: Response): Promise<unknown> {
   try { return JSON.parse(text); } catch { throw new OpenRouterError("UNUSABLE_RESPONSE"); }
 }
 
-/** Network requests are abortable, time-bounded and never include upstream text in errors. */
-async function boundedFetch(fetcher: typeof fetch, url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+/**
+ * Runs one request and the complete consumption of its response under a single
+ * deadline. The timer is cleared only after `consume` settles, so a stalled or
+ * slow response stream is aborted mid-read instead of outliving the deadline.
+ * Network requests are abortable, time-bounded and never include upstream text
+ * in errors.
+ */
+async function withDeadline<T>(
+  fetcher: typeof fetch,
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal | undefined,
+  consume: (res: Response) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(abort, TIMEOUT_MS);
+  const timer = setTimeout(abort, REQUEST_TIMEOUT_MS);
   if (signal?.aborted) abort();
+  const failure = (): OpenRouterError =>
+    new OpenRouterError(signal?.aborted ? "CANCELLED" : controller.signal.aborted ? "TIMEOUT" : "NETWORK");
   try {
-    return await fetcher(url, { ...init, signal: controller.signal });
-  } catch {
-    throw new OpenRouterError(signal?.aborted ? "CANCELLED" : controller.signal.aborted ? "TIMEOUT" : "NETWORK");
+    const res = await fetcher(url, { ...init, signal: controller.signal });
+    return await consume(res);
+  } catch (error) {
+    // A deadline/cancel that surfaces mid-body-read must win over the generic
+    // body-read error; other semantic errors pass through untouched.
+    if (controller.signal.aborted || signal?.aborted) throw failure();
+    if (error instanceof OpenRouterError) throw error;
+    throw failure();
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
@@ -157,14 +177,13 @@ export function createOpenRouterClient(getKey: () => Promise<string | null>, fet
   async function complete(content: string | unknown[], signal?: AbortSignal): Promise<string> {
     const key = (await getKey())?.trim();
     if (!key) throw new OpenRouterError("MISSING_KEY");
-    const res = await boundedFetch(fetcher, COMPLETIONS_URL, {
+    const { ok, status, data } = await withDeadline(fetcher, COMPLETIONS_URL, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({ model: MODEL, stream: false, messages: [{ role: "user", content }], max_tokens: 600 }),
-    }, signal);
-    const data = await readJsonBounded(res);
-    if (!res.ok || (data && typeof data === "object" && "error" in data)) {
-      throw errorFromStatus(res.status, data);
+    }, signal, async (res) => ({ ok: res.ok, status: res.status, data: await readJsonBounded(res) }));
+    if (!ok || (data && typeof data === "object" && "error" in data)) {
+      throw errorFromStatus(status, data);
     }
     const choice = (data as { choices?: Array<{ finish_reason?: unknown; error?: unknown; message?: { content?: unknown } }> })?.choices?.[0];
     if (choice?.error) throw errorFromStatus(502, { error: choice.error });
@@ -190,11 +209,10 @@ export function createOpenRouterClient(getKey: () => Promise<string | null>, fet
     validateKey: async (rawKey: string, signal?: AbortSignal): Promise<{ remaining: number | null }> => {
       const key = rawKey.trim();
       if (!key || /[\r\n]/.test(key)) throw new OpenRouterError("INVALID_KEY");
-      const res = await boundedFetch(fetcher, KEY_URL, {
+      const { ok, status, body } = await withDeadline(fetcher, KEY_URL, {
         method: "GET", headers: { authorization: `Bearer ${key}` },
-      }, signal);
-      const body = await readJsonBounded(res);
-      if (!res.ok || (body && typeof body === "object" && "error" in body)) throw errorFromStatus(res.status, body);
+      }, signal, async (res) => ({ ok: res.ok, status: res.status, body: await readJsonBounded(res) }));
+      if (!ok || (body && typeof body === "object" && "error" in body)) throw errorFromStatus(status, body);
       const info = (body as { data?: { is_management_key?: unknown; free_model_daily_requests?: { remaining?: unknown } } })?.data;
       if (!info || info.is_management_key === true) throw new OpenRouterError("INVALID_KEY");
       const remaining = info.free_model_daily_requests?.remaining;

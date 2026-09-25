@@ -23,7 +23,7 @@ only needed for the reporting/legacy-API steps.
 | Register → check the email inbox → enter the emailed code on the **Verify** screen | #5: production email is a real Supabase Auth OTP (8 digits) sent via SMTP; the local demo (SQLite) shows the code on screen instead. Phone verification still needs an SMS provider. |
 | Log out and log back in | #11: Supabase access session + rotating refresh token; guarded routes remain authenticated across reloads |
 
-_Signup and login now go directly from the app to Supabase Auth (publishable key); login is email + password (username stays the public profile identity), the live username availability check is also direct to Supabase, and email confirmation remains a real emailed OTP. Browsing the feed, opening a post and viewing My Posts, creating/editing reports, comments/reactions/ratings, and photo uploads now also go directly to Supabase (a public-author-only payload — email/phone never travel with a post; reaction/rating user lists are never exposed; each image is normalized on-device and stored under the uploader's own Storage folder); live updates (comments, reactions, ratings, status changes) arrive via Supabase Realtime, AI Help runs on the Supabase Edge Function `ai-help`, and reporting still goes through the Node API for now._
+_Signup and login now go directly from the app to Supabase Auth (publishable key); login is email + password (username stays the public profile identity), the live username availability check is also direct to Supabase, and email confirmation remains a real emailed OTP. Browsing the feed, opening a post and viewing My Posts, creating/editing reports, comments/reactions/ratings, and photo uploads now also go directly to Supabase (a public-author-only payload — email/phone never travel with a post; reaction/rating user lists are never exposed; each image is normalized on-device and stored under the uploader's own Storage folder); live updates (comments, reactions, ratings, status changes) arrive via Supabase Realtime, AI Help runs through the user's own OpenRouter key on the free route (`openrouter/free`) with a built-in fallback when no key is connected, and reporting still goes through the Node API for now._
 
 ## 2 · Create a report (req 6, 13, 12, 14, 9, 10, 16)
 
@@ -34,8 +34,8 @@ _Signup and login now go directly from the app to Supabase Auth (publishable key
 3. Attach a photo (req 13); on the published post, **Possible Matches (on-device text embeddings)** shows
    up to 3 open opposite-type reports ranked by text similarity — local sentence embeddings via the
    native bridge to the MediaPipe TextEmbedder asset plus cosine similarity (never a probability, no
-   vector DB, no server AI); the photo never leaves the device (req 12).
-4. On the create-report screen press **Analyze photo**, then **Generate suggestions (local VLM, GPU preferred)** — LiteRT-LM / SmolVLM2 prefers the GPU delegate; if GPU initialization fails and the user allows CPU compatibility mode, analysis runs on CPU with an explicit on-screen notice, never silently; the structured report is applied as suggestions to the form fields (req 23).
+   vector DB, no server AI); this similarity computation is on-device (req 12).
+4. Connect your own OpenRouter key (Profile → **AI Connection**), then on the create-report screen press **Analyze photo**: confirm the consent notice and OpenRouter's free model returns a suggested title, category, and description, applied as suggestions to the form fields (req 23). With no key connected, Help falls back to a built-in answer.
 5. Paste a YouTube link and watch the embedded player render live (req 9).
 6. Publish → open the post (tailwind-styled, animated card entrance — req 16/15).
 
@@ -87,8 +87,9 @@ server below is kept as a Docker/coursework reference.
 4. Show `docker-compose.yml` / `Dockerfile` and the GitHub Actions workflow
    (req 22) — CI runs the same lint/typecheck/tests/web build, plus a Docker job
    that builds the image, runs it and passes the `/health` check.
-5. **Profile → Help Assistant**: ask "How do I report a lost item?" — answers
-   from the deterministic fallback (or a configured LLM) (req 23).
+5. **Profile → Help Assistant**: connect your own OpenRouter key (Profile → AI
+   Connection) and ask "How do I report a lost item?" — answers come from
+   OpenRouter's free route, or from the built-in answer when no key is connected (req 23).
 
 ## 8 · Show the deliverable (req 17, 21, 24)
 
