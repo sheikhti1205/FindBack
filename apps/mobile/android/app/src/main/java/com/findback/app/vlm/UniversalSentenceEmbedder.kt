@@ -61,7 +61,7 @@ class UniversalSentenceEmbedder private constructor(
             val result = embedder.embed(text)
             val embeddings = result.embeddingResult().embeddings()
             if (embeddings.isEmpty()) {
-                throw IllegalStateException("No embeddings returned for text: $text")
+                throw IllegalStateException("No embeddings returned")
             }
             val floatEmbedding = embeddings.first().floatEmbedding()
             floatEmbedding.map { it.toFloat() }

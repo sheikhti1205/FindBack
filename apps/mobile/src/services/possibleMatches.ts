@@ -1,5 +1,5 @@
 import { MATCH_CANDIDATE_LIMIT, fetchMatchCandidates } from "./posts";
-import { embeddingInput, embedTexts } from "./embeddings";
+import { embeddingInput, embedTexts, validateEmbeddingVectors } from "./embeddings";
 import { stripMarkdown } from "../utils/stripMarkdown";
 import type { PostItem, PostType } from "@findback/shared";
 import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
@@ -72,7 +72,12 @@ export async function findPossibleMatches(
 
   let vectors: number[][];
   try {
-    vectors = await embed([targetInput, ...candidateInputs]);
+    // Validate BEFORE cosine: an injected (or stale) embedder must not fabricate
+    // scores from a short/ragged/non-finite payload.
+    vectors = validateEmbeddingVectors(
+      [targetInput, ...candidateInputs],
+      await embed([targetInput, ...candidateInputs]),
+    );
   } catch {
     return { matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" };
   }
