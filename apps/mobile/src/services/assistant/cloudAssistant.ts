@@ -4,6 +4,13 @@ import { getConnectedOpenRouterKey } from "../aiCredentials";
 import { builtInHelp } from "../helpFaq";
 import { askAiHelp } from "../auth";
 import { DEFAULT_CLARIFICATION_QUESTIONS } from "../ai/clarificationCopy";
+import {
+  MAX_CHAT_INPUT_CHARS,
+  PromptBudgetError,
+  buildGroundedPrompt,
+  groundAppAnswer,
+  isInstructionOverride,
+} from "../ai/appKnowledge";
 import type { ReportSlotFields, SearchFilterFields } from "../ai/types";
 import { resolveAssistantCategory, resolveReportTurn } from "./reportTurnResolver";
 import {
@@ -15,6 +22,29 @@ import {
   startFlow,
   type GuidedSnapshot,
 } from "./guidedAssistantController";
+
+/**
+ * Policy and knowledge first, the message quoted as untrusted data. Knowledge
+ * is dropped whole only when the transport budget cannot hold it — nothing is
+ * ever cut, and every prompt stays inside `MAX_PROMPT_CHARS`.
+ */
+function groundedPrompt(input: string): string {
+  try {
+    return buildGroundedPrompt(input);
+  } catch (error) {
+    if (error instanceof PromptBudgetError) {
+      return buildGroundedPrompt(input, { includeKnowledge: false });
+    }
+    throw error;
+  }
+}
+
+/** A greeting that still carries a task ("Hi, I lost my keys") is a task. */
+const GREETING_TASK_HINT =
+  /\b(?:lost|found|report(?:s|ed|ing)?|search(?:es|ed|ing)?|look\s+(?:for|up)|filter(?:s|ed|ing)?|find(?:s|ing)?|publish(?:es|ed|ing)?)\b/i;
+
+const GREETING_ASK_REPLY =
+  "Hello! Ask me about FindBack reports, search, status, comments or photos.";
 
 function text(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -114,7 +144,7 @@ async function modelReportFields(generate: CloudGenerate, flow: string, input: s
 }> {
   try {
     const answer = await generate(
-      `Extract report title, description, category, dateText (YYYY-MM-DD) as JSON from this ${flow} item report. Do not invent location or publish: ${input}`,
+      `Extract a JSON object with only title, description, category, dateText (YYYY-MM-DD) from this ${flow} item report. Do not invent location and do not publish.\n\n${groundedPrompt(input)}`,
     );
     const raw = JSON.parse(answer) as Record<string, unknown>;
     if (typeof raw.category === "string") {
@@ -135,7 +165,7 @@ async function modelSearchFields(generate: CloudGenerate, input: string): Promis
 }> {
   try {
     const answer = await generate(
-      `Extract a JSON object with only query, category, status from this FindBack search intent. Do not invent listings or execute a query: ${input}`,
+      `Extract a JSON object with only query, category, status from this FindBack search intent. Do not invent listings and do not execute a query.\n\n${groundedPrompt(input)}`,
     );
     return { ok: true, fields: validatedSearchFields(JSON.parse(answer), input) };
   } catch {
@@ -176,9 +206,13 @@ async function searchTurnFrom(
 async function askTurn(base: GuidedSnapshot, input: string, generate: CloudGenerate): Promise<CloudAssistantResult> {
   try {
     const answer = await generate(
-      `Answer this FindBack question briefly. Do not claim to query the database: ${input}`,
+      `Answer this FindBack question briefly. If you do not know, say so. Do not claim to query the database.\n\n${groundedPrompt(input)}`,
     );
-    return { snapshot: base, reply: answer, replySource: "model", reviewHeld: false };
+    const grounded = groundAppAnswer(answer);
+    if (!grounded.safe) {
+      return { snapshot: base, reply: grounded.reply, replySource: "grounded", reviewHeld: false };
+    }
+    return { snapshot: base, reply: grounded.text, replySource: "model", reviewHeld: false };
   } catch {
     return { snapshot: base, reply: builtInHelp(input), replySource: "grounded", reviewHeld: false };
   }
@@ -306,7 +340,7 @@ export async function executeCloudAssistantMessage(
   message: string,
   generate: CloudGenerate = generateCloud,
 ): Promise<CloudAssistantResult> {
-  const input = message.trim().slice(0, 500);
+  const input = message.trim();
   if (!input) throw new Error("Enter a message.");
   if (snapshot !== null && snapshot.state === "recovering") {
     return {
@@ -316,15 +350,61 @@ export async function executeCloudAssistantMessage(
       reviewHeld: false,
     };
   }
+
+  // Over the chat bound: honest answer, no model call, nothing collected.
+  if (input.length > MAX_CHAT_INPUT_CHARS) {
+    return {
+      snapshot: snapshot ?? startFlow("ask"),
+      reply: `That message is longer than the ${MAX_CHAT_INPUT_CHARS}-character chat limit. Please shorten it and send it again.`,
+      replySource: "grounded",
+      reviewHeld: false,
+    };
+  }
+
+  const current = snapshot ?? startFlow(inferFlow(input));
+
+  // Instruction-override phrasing is ordinary text: no model call, no state.
+  if (isInstructionOverride(input)) {
+    return {
+      snapshot: current,
+      reply: builtInHelp(input),
+      replySource: "grounded",
+      reviewHeld: false,
+    };
+  }
+
+  // A greeting with no task in it never reaches the model and never moves state.
+  const turn = resolveReportTurn(current, input);
+  if (turn.kind === "GREETING" && !GREETING_TASK_HINT.test(input)) {
+    const reply =
+      current.flow === "ask"
+        ? GREETING_ASK_REPLY
+        : current.state === "ready"
+          ? `Hello! ${replyForState(current)}`
+          : `Hello! ${resumeQuestion(current)}`;
+    return {
+      snapshot: current,
+      reply,
+      replySource: "grounded",
+      reviewHeld: current.state === "ready",
+    };
+  }
+
   if (snapshot !== null && snapshot.state !== "ready" && snapshot.flow !== "ask") {
     return continueReportCollection(snapshot, input, generate);
   }
-  const current = snapshot ?? startFlow(
-    /\bsearch|find|look for\b/i.test(input) ? "search"
-      : /\b(found|find owner)\b/i.test(input) ? "found"
-        : /\b(lost|report)\b/i.test(input) ? "lost" : "ask",
-  );
   if (current.flow === "ask") return askTurn(current, input, generate);
   if (current.flow === "search") return searchTurnFrom(current, input, generate);
   return reportTurnFromStart(current.flow, input, generate);
+}
+
+/** Same flow inference the fresh-chat route has always used. */
+function inferFlow(input: string): "search" | "found" | "lost" | "ask" {
+  return /\bsearch|find|look for\b/i.test(input)
+    ? "search"
+    : /\b(found|find owner)\b/i.test(input)
+      ? "found"
+      : /\b(lost|report)\b/i.test(input)
+        ? "lost"
+        : "ask";
 }

@@ -9,13 +9,23 @@ import type {
 } from "@findback/shared";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
-import { createPost, type CreatePostInput } from "./postsCreate";
-import { removeStagedUpload, uploadImage } from "./postsUpload";
+import { createPost, createPostMulti, type CreatePostInput } from "./postsCreate";
+import {
+  IMAGES_BUCKET,
+  removeStagedUpload,
+  removeStagedUploads,
+  uploadImage,
+  uploadPhotos,
+  type UploadProgress,
+} from "./postsUpload";
+import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
+import { diag } from "./diag";
 
-export { createPost } from "./postsCreate";
-export type { CreatePostInput } from "./postsCreate";
-export { removeStagedUpload, uploadImage } from "./postsUpload";
-export type { StoredUpload } from "./postsUpload";
+export { createPost, createPostMulti } from "./postsCreate";
+export type { CreatePostInput, CreatePostMultiInput } from "./postsCreate";
+export { removeStagedUpload, removeStagedUploads, uploadImage, uploadPhotos } from "./postsUpload";
+export type { StoredUpload, UploadProgress } from "./postsUpload";
+export { MAX_REPORT_PHOTOS } from "./media/prepareImages";
 
 export interface FeedFilters {
   type?: PostType | "";
@@ -45,7 +55,7 @@ interface PostCursor {
   id: string;
 }
 
-interface AttachmentRow {
+export interface AttachmentRow {
   id: unknown;
   post_id: unknown;
   file_url: unknown;
@@ -53,6 +63,44 @@ interface AttachmentRow {
   file_name: unknown;
   file_size: unknown;
   created_at: unknown;
+  /**
+   * 1-based position from `public.attachments.display_order` (D1 migration).
+   * The feed/detail RPC payload does not carry it yet (D1 follow-up), so it
+   * is optional here: rows without it keep their relative order.
+   */
+  display_order?: unknown;
+}
+
+function displayOrderKey(row: AttachmentRow): number {
+  const raw = row.display_order;
+  const n = typeof raw === "number" ? raw : typeof raw === "string" && raw !== "" ? Number(raw) : NaN;
+  return Number.isInteger(n) && (n as number) >= 1 ? (n as number) : Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * Map attachment rows into `Attachment[]` honouring `display_order`
+ * (explicit ascending order; legacy rows without it keep relative order,
+ * tie-broken by created_at then id for determinism). Array position IS the
+ * display order — the shared `Attachment` shape is intentionally unchanged.
+ */
+export function mapAttachments(rows: AttachmentRow[] | null): Attachment[] {
+  return (rows ?? [])
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) =>
+      displayOrderKey(a.row) - displayOrderKey(b.row) ||
+      String(a.row.created_at ?? "").localeCompare(String(b.row.created_at ?? "")) ||
+      String(a.row.id ?? "").localeCompare(String(b.row.id ?? "")) ||
+      a.index - b.index,
+    )
+    .map(({ row: a }) => ({
+      id: String(a.id),
+      postId: String(a.post_id),
+      fileUrl: String(a.file_url),
+      mimeType: String(a.mime_type),
+      fileName: String(a.file_name),
+      fileSize: Number(a.file_size),
+      createdAt: String(a.created_at),
+    }));
 }
 
 interface ClientPostRow {
@@ -104,18 +152,6 @@ function encodeCursor(createdAt: string, id: string): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
-}
-
-function mapAttachments(rows: AttachmentRow[] | null): Attachment[] {
-  return (rows ?? []).map((a) => ({
-    id: String(a.id),
-    postId: String(a.post_id),
-    fileUrl: String(a.file_url),
-    mimeType: String(a.mime_type),
-    fileName: String(a.file_name),
-    fileSize: Number(a.file_size),
-    createdAt: String(a.created_at),
-  }));
 }
 
 /** A feed RPC row carries only public author fields — never email/phone. */
@@ -393,4 +429,208 @@ export async function publishReport(input: CreatePostInput, photo: File | null, 
     await removeStagedUpload(stored, traceId);
     throw err;
   }
+}
+
+export interface PublishPhotosOptions {
+  onProgress?: (progress: UploadProgress) => void;
+  traceId?: string;
+}
+
+/**
+ * Publish a report with 0–5 ordered photos.
+ *
+ * 0 photos (or a single photo via the legacy `publishReport` wrapper) keeps
+ * the old RPC path so legacy readers/clients observe no change; ≥1 photo
+ * here stages each image independently in order, then calls the versioned
+ * multi-key RPC with the ordered staging ids. The RPC consumes staging rows
+ * atomically server-side, so a failed publish can never leave a ghost post
+ * (a post row without its images): on failure exactly this attempt's staged
+ * objects are removed and the caller's local Files stay untouched for retry.
+ */
+export async function publishReportWithPhotos(
+  input: CreatePostInput,
+  photos: readonly File[],
+  options: PublishPhotosOptions = {},
+): Promise<string> {
+  if (photos.length > MAX_REPORT_PHOTOS) {
+    throw new PrepareError(
+      "REPORT_LIMIT",
+      `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. ` +
+        "The extra photo was not published — remove one first and try again.",
+    );
+  }
+  if (photos.length === 0) return createPost(input, options.traceId);
+  diag("posts.publish.multi_start", {
+    photoCount: photos.length,
+  }, { traceId: options.traceId });
+  const staged = await uploadPhotos([...photos], {
+    onProgress: options.onProgress,
+    traceId: options.traceId,
+  });
+  try {
+    const postId = await createPostMulti(
+      { ...input, attachmentKeys: staged.map((s) => s.id) },
+      options.traceId,
+    );
+    diag("posts.publish.multi_success", {
+      postId,
+      photoCount: staged.length,
+    }, { traceId: options.traceId });
+    return postId;
+  } catch (err) {
+    await removeStagedUploads(staged, options.traceId);
+    throw err;
+  }
+}
+
+async function requirePostOwner(postId: string): Promise<PostItem> {
+  const { data: userData, error: userError } = await getSupabase().auth.getUser();
+  if (userError || !userData.user) throw new ApiError("Not authenticated", 401);
+  const post = await fetchPost(postId);
+  if (post.userId !== userData.user.id) {
+    throw new ApiError("Only the report owner can change its photos", 403);
+  }
+  return post;
+}
+
+/**
+ * Owner-only photo reorder with a precondition conflict strategy: pass the
+ * order you currently see (`expectedOrder`); if the server order moved since
+ * (another writer won), this throws 409 and writes nothing — reload and
+ * retry. Matching preconditions apply last-writer-wins. Omitting the
+ * precondition skips the check (single-writer callers only).
+ *
+ * LIVE NOTE: `attachments` currently has no UPDATE RLS policy (INSERT-own +
+ * SELECT only), so live calls 403 until a follow-up migration adds owner
+ * UPDATE/DELETE policies. Logic is proven by mocked tests.
+ */
+export async function reorderPostImages(
+  postId: string,
+  orderedAttachmentIds: readonly string[],
+  expectedOrder?: readonly string[],
+  traceId?: string,
+): Promise<PostItem> {
+  const post = await requirePostOwner(postId);
+  const current = post.attachments.map((a) => a.id);
+  if (expectedOrder !== undefined) {
+    const stale =
+      expectedOrder.length !== current.length ||
+      expectedOrder.some((id, index) => id !== current[index]);
+    if (stale) {
+      diag("posts.images.reorder_conflict", { postId }, { traceId });
+      throw new ApiError(
+        "The photos changed since you last loaded them. Reload and try again.",
+        409,
+      );
+    }
+  }
+  const currentSet = new Set(current);
+  if (
+    orderedAttachmentIds.length !== current.length ||
+    new Set(orderedAttachmentIds).size !== current.length ||
+    orderedAttachmentIds.some((id) => !currentSet.has(id))
+  ) {
+    throw new ApiError("The new photo order must list each photo exactly once", 400);
+  }
+  for (let index = 0; index < orderedAttachmentIds.length; index += 1) {
+    const { error } = await getSupabase()
+      .from("attachments")
+      .update({ display_order: index + 1 })
+      .eq("id", orderedAttachmentIds[index]!);
+    if (error) throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
+  }
+  diag("posts.images.reorder_success", { postId, photoCount: current.length }, { traceId });
+  return fetchPost(postId);
+}
+
+/** Owner-only photo rename (display filename). Same RLS live-note as reorder. */
+export async function renamePostImage(
+  postId: string,
+  attachmentId: string,
+  fileName: string,
+  traceId?: string,
+): Promise<PostItem> {
+  const post = await requirePostOwner(postId);
+  if (!post.attachments.some((a) => a.id === attachmentId)) {
+    throw new ApiError("That photo is not part of this report", 404);
+  }
+  const trimmed = fileName.trim().slice(0, 120);
+  if (!trimmed) throw new ApiError("Enter a file name", 400);
+  const { error } = await getSupabase()
+    .from("attachments")
+    .update({ file_name: trimmed })
+    .eq("id", attachmentId);
+  if (error) throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
+  diag("posts.images.rename_success", { postId, attachmentId }, { traceId });
+  return fetchPost(postId);
+}
+
+function storageKeyFromFileUrl(fileUrl: string): string {
+  // Derive `<userId>/<object>` without network: the public URL is always
+  // `<supabaseUrl>/storage/v1/object/public/<bucket>/<key>`.
+  const prefix = getSupabase().storage.from(IMAGES_BUCKET).getPublicUrl("").data.publicUrl;
+  if (!fileUrl.startsWith(prefix) || fileUrl.length === prefix.length) {
+    throw new ApiError(
+      "Could not locate that photo's stored bytes, so it was left untouched",
+      400,
+    );
+  }
+  return fileUrl.slice(prefix.length);
+}
+
+/**
+ * Owner-only photo removal: deletes the attachment row, then removes the
+ * exact Storage object (byte cleanup), then compacts the remaining
+ * `display_order` values 1..n best-effort. A row-delete failure throws before
+ * any bytes move; a Storage failure after the row delete throws an honest
+ * error (orphaned bytes may need manual cleanup) instead of pretending.
+ * Same RLS live-note as reorder.
+ */
+export async function removePostImage(
+  postId: string,
+  attachmentId: string,
+  traceId?: string,
+): Promise<PostItem> {
+  const post = await requirePostOwner(postId);
+  const target = post.attachments.find((a) => a.id === attachmentId);
+  if (!target) throw new ApiError("That photo is not part of this report", 404);
+  const objectKey = storageKeyFromFileUrl(target.fileUrl);
+  const { error: deleteError } = await getSupabase()
+    .from("attachments")
+    .delete()
+    .eq("id", attachmentId);
+  if (deleteError) {
+    throw new ApiError(deleteError.message, deleteError.code === "42501" ? 403 : 400);
+  }
+  const { error: bytesError } = await getSupabase().storage.from(IMAGES_BUCKET).remove([objectKey]);
+  if (bytesError) {
+    diag("posts.images.remove_bytes_failed", {
+      postId,
+      attachmentId,
+      objectKey,
+      message: bytesError.message,
+    }, { traceId });
+    throw new ApiError(
+      `The photo entry was removed but its stored bytes could not be deleted (${bytesError.message}). ` +
+        "They may need manual cleanup.",
+      502,
+    );
+  }
+  const remaining = post.attachments.map((a) => a.id).filter((id) => id !== attachmentId);
+  for (let index = 0; index < remaining.length; index += 1) {
+    const { error } = await getSupabase()
+      .from("attachments")
+      .update({ display_order: index + 1 })
+      .eq("id", remaining[index]!);
+    if (error) {
+      diag("posts.images.compact_failed", {
+        postId,
+        attachmentId: remaining[index],
+        message: error.message,
+      }, { traceId });
+      break;
+    }
+  }
+  diag("posts.images.remove_success", { postId, attachmentId, objectKey }, { traceId });
+  return fetchPost(postId);
 }

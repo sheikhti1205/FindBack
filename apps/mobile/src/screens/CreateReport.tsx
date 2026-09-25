@@ -14,8 +14,9 @@ import { LocationPicker, type LocationValue } from "../components/LocationPicker
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { VlmSuggestions } from "../components/VlmSuggestions";
 import { announce } from "../components/LiveRegion";
-import { publishReport } from "../services/posts";
+import { MAX_REPORT_PHOTOS, publishReport, publishReportWithPhotos } from "../services/posts";
 import { clearDraft, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
+import type { ReportDraft } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
 import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
 import { dropStashedPhoto, getStashedPhoto, stashPhotoFile } from "../services/photoStore";
@@ -57,6 +58,30 @@ function isValidCalendarDate(isoDate: string): boolean {
   );
 }
 
+/** Session carry for report photos 2..5 (photo 1 persists via reportDraft.photoId). */
+let carriedPhotoIds: string[] = [];
+
+/** A draft whose first photo came from native capture but has no stashed File yet. */
+function canCreateObjectUrl(): boolean {
+  return typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
+}
+function findPendingNativeRestore(): { id: string; picked: PickedPhoto } | null {
+  const draft = loadDraft();
+  if (!draft?.photoId) return null;
+  if (getStashedPhoto(draft.photoId)) return null;
+  const uri = draft.photoNativeUri;
+  if (!uri || uri.startsWith("blob:")) return null;
+  const web = draft.photoWebPath;
+  return {
+    id: draft.photoId,
+    picked: {
+      nativeUri: uri,
+      webPath: web && !web.startsWith("blob:") ? web : uri,
+      format: draft.photoFormat ?? "jpg",
+    },
+  };
+}
+
 export function CreateReport() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -74,28 +99,59 @@ export function CreateReport() {
     },
   );
   const [youtubeUrl, setYoutubeUrl] = useState(initialDraft?.youtubeUrl ?? "");
-  const [photoId, setPhotoId] = useState<string | null>(initialDraft?.photoId ?? null);
-  // A restored File keeps the draft publishable after a trip to another screen.
-  const [selectedFile, setSelectedFile] = useState<File | null>(() =>
-    getStashedPhoto(initialDraft?.photoId),
-  );
-  const [pickedPhoto, setPickedPhoto] = useState<PickedPhoto | null>(() => {
-    const uri = initialDraft?.photoNativeUri;
-    if (!uri || uri.startsWith("blob:")) return null;
-    const web = initialDraft?.photoWebPath;
-    return { nativeUri: uri, webPath: web && !web.startsWith("blob:") ? web : uri, format: initialDraft?.photoFormat ?? "jpg" };
-  });
-  const [previewUrl, setPreviewUrl] = useState<string | null>(() => {
-    // A stashed File only has a blob URL, so rebuild one for the preview.
-    const stashed = getStashedPhoto(initialDraft?.photoId);
-    if (stashed && typeof URL !== "undefined" && URL.createObjectURL) {
-      return URL.createObjectURL(stashed);
+  /** Ordered report photos (0–5). Photo 1 persists via reportDraft.photoId; the rest ride a session stash below. */
+  interface ReportPhoto {
+    id: string;
+    file: File;
+    previewUrl: string;
+    picked: PickedPhoto | null;
+  }
+  function initialPhotos(draft: ReportDraft | null): ReportPhoto[] {
+    const restored: ReportPhoto[] = [];
+    if (draft?.photoId) {
+      const stashed = getStashedPhoto(draft.photoId);
+      if (stashed) {
+        const web = draft.photoWebPath;
+        const preview =
+          web && !web.startsWith("blob:") ? web : canCreateObjectUrl() ? URL.createObjectURL(stashed) : "";
+        const nativeUri = draft.photoNativeUri;
+        restored.push({
+          id: draft.photoId,
+          file: stashed,
+          previewUrl: preview,
+          picked:
+            nativeUri && !nativeUri.startsWith("blob:")
+              ? {
+                  nativeUri,
+                  webPath: web && !web.startsWith("blob:") ? web : nativeUri,
+                  format: draft.photoFormat ?? "jpg",
+                }
+              : null,
+        });
+      }
     }
-    const web = initialDraft?.photoWebPath;
-    return web && !web.startsWith("blob:") ? web : null;
-  });
+    // Extras belong to this draft session only when the first id still matches.
+    if (draft?.photoId && carriedPhotoIds[0] === draft.photoId) {
+      for (const id of carriedPhotoIds.slice(1)) {
+        const file = getStashedPhoto(id);
+        if (file && !restored.some((p) => p.id === id)) {
+          restored.push({
+            id,
+            file,
+            previewUrl: canCreateObjectUrl() ? URL.createObjectURL(file) : "",
+            picked: null,
+          });
+        }
+      }
+    } else {
+      carriedPhotoIds = draft?.photoId ? [draft.photoId] : [];
+    }
+    return restored;
+  }
+  const [photos, setPhotos] = useState<ReportPhoto[]>(() => initialPhotos(initialDraft));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [photoLimitNotice, setPhotoLimitNotice] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{
     title?: string;
     description?: string;
@@ -120,16 +176,36 @@ export function CreateReport() {
     formSnapshotRef.current = { type, title, description, category, eventDate, location };
   });
 
-  // Restore the uploadable File for a draft whose photo came from the native
-  // camera/gallery, where only a native URI survives in the draft.
-  const initialPhotoRef = useRef(pickedPhoto);
+  // Restore the uploadable File for a draft whose first photo came from the
+  // native camera/gallery, where only a native URI survives in the draft.
+  const initialNativeRestore = useRef<{ id: string; picked: PickedPhoto } | null>(
+    findPendingNativeRestore(),
+  );
   useEffect(() => {
-    const photo = initialPhotoRef.current;
-    if (!photo || selectedFile) return;
+    const pending = initialNativeRestore.current;
+    if (!pending) return;
     let cancelled = false;
-    void photoToFile(photo)
+    void photoToFile(pending.picked)
       .then((file) => {
-        if (!cancelled) setSelectedFile(file);
+        if (cancelled) return;
+        setPhotos((prev) => {
+          if (prev.some((p) => p.id === pending.id)) return prev;
+          const web = pending.picked.webPath;
+          return [
+            ...prev,
+            {
+              id: pending.id,
+              file,
+              previewUrl:
+                web && !web.startsWith("blob:")
+                  ? web
+                  : canCreateObjectUrl()
+                    ? URL.createObjectURL(file)
+                    : "",
+              picked: pending.picked,
+            },
+          ];
+        });
       })
       .catch(() => undefined);
     return () => {
@@ -253,7 +329,9 @@ export function CreateReport() {
   }, []);
 
   // Preserve the draft across in-app navigation (Help and map helper).
+  // Photo 1 rides reportDraft.photoId; photos 2..5 ride the session carry.
   useEffect(() => {
+    const first = photos[0] ?? null;
     saveDraft({
       type,
       title,
@@ -262,28 +340,30 @@ export function CreateReport() {
       eventDate,
       location,
       youtubeUrl,
-      photoId,
-      photoNativeUri: pickedPhoto?.nativeUri ?? null,
-      photoWebPath: pickedPhoto?.webPath ?? previewUrl,
-      photoFormat: pickedPhoto?.format ?? null,
+      photoId: first?.id ?? null,
+      photoNativeUri: first?.picked?.nativeUri ?? null,
+      photoWebPath: first?.picked?.webPath ?? first?.previewUrl ?? null,
+      photoFormat: first?.picked?.format ?? null,
     });
-  }, [type, title, description, category, eventDate, location, youtubeUrl, photoId, pickedPhoto, previewUrl]);
+    carriedPhotoIds = photos.map((p) => p.id);
+  }, [type, title, description, category, eventDate, location, youtubeUrl, photos]);
 
-  // Blob lifecycle (W6 #16): revoke preview URL on unmount but KEEP stashed File.
-  // Remount will recreate the object URL from the stashed File.
-  const previewUrlRef = useRef(previewUrl);
-  previewUrlRef.current = previewUrl;
+  // Blob lifecycle (W6 #16): revoke preview URLs on unmount but KEEP stashed Files.
+  // Remount recreates object URLs from the stashed Files (photo 1 via the
+  // draft, the rest via the session carry).
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
   useEffect(() => {
     return () => {
-      if (previewUrlRef.current && previewUrlRef.current.startsWith("blob:")) {
-        URL.revokeObjectURL(previewUrlRef.current);
+      for (const p of photosRef.current) {
+        if (p.previewUrl.startsWith("blob:")) URL.revokeObjectURL(p.previewUrl);
       }
     };
   }, []);
 
   function discardDraft() {
     const current = { type, title, description, category, eventDate, location, youtubeUrl };
-    if (!draftIsMeaningful(current) && !pickedPhoto && !selectedFile) return;
+    if (!draftIsMeaningful(current) && photos.length === 0) return;
     if (!window.confirm("Discard this report and clear the selected photo?")) return;
     clearDraft();
     setType("LOST");
@@ -294,7 +374,7 @@ export function CreateReport() {
     setEventDate(todayInputValue());
     setLocation({ label: "", latitude: null, longitude: null });
     setYoutubeUrl("");
-    clearPhoto();
+    clearPhotos();
     setAssistantHandoff(null);
     setHandoffConflicts([]);
     setHandoffAdded([]);
@@ -313,35 +393,62 @@ export function CreateReport() {
       setError("That photo is too large. Choose an image under 8 MB.");
       return;
     }
-    if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-    dropStashedPhoto(photoId);
-    const id = stashPhotoFile(file);
-    setPhotoId(id);
-    setSelectedFile(file);
-    if (photo?.nativeUri && !photo.nativeUri.startsWith("blob:")) {
-      setPickedPhoto(photo);
-      setPreviewUrl(photo.webPath);
-    } else {
-      setPickedPhoto(null);
-      setPreviewUrl(URL.createObjectURL(file));
+    if (photos.length >= MAX_REPORT_PHOTOS) {
+      setPhotoLimitNotice(
+        `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. ` +
+          "This photo was not added — remove one first.",
+      );
+      return;
     }
+    const id = stashPhotoFile(file);
+    const preview =
+      photo?.nativeUri && !photo.nativeUri.startsWith("blob:")
+        ? photo.webPath
+        : canCreateObjectUrl()
+          ? URL.createObjectURL(file)
+          : "";
+    setPhotos((prev) => [...prev, { id, file, previewUrl: preview, picked: photo ?? null }]);
     setError(null);
+    setPhotoLimitNotice(null);
     // Diag: picker result
     diag("report.picker.result", {
       mime: file.type,
       bytes: file.size,
       source: photo?.nativeUri ? "native" : "web",
       hasNativeUri: !!photo?.nativeUri,
+      photoCount: photos.length + 1,
     }, { traceId: traceIdRef.current ?? undefined });
   }
 
-  function clearPhoto() {
-    if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-    dropStashedPhoto(photoId);
-    setPhotoId(null);
-    setPreviewUrl(null);
-    setSelectedFile(null);
-    setPickedPhoto(null);
+  function removePhoto(id: string): void {
+    setPhotos((prev) => {
+      const target = prev.find((p) => p.id === id);
+      if (target?.previewUrl.startsWith("blob:")) URL.revokeObjectURL(target.previewUrl);
+      dropStashedPhoto(id);
+      return prev.filter((p) => p.id !== id);
+    });
+    setPhotoLimitNotice(null);
+  }
+
+  function movePhoto(index: number, direction: -1 | 1): void {
+    setPhotos((prev) => {
+      const next = [...prev];
+      const swapWith = index + direction;
+      if (index < 0 || index >= next.length || swapWith < 0 || swapWith >= next.length) return prev;
+      const [moved] = next.splice(index, 1);
+      if (!moved) return prev;
+      next.splice(swapWith, 0, moved);
+      return next;
+    });
+  }
+
+  function clearPhotos(): void {
+    for (const p of photosRef.current) {
+      if (p.previewUrl.startsWith("blob:")) URL.revokeObjectURL(p.previewUrl);
+      dropStashedPhoto(p.id);
+    }
+    setPhotos([]);
+    setPhotoLimitNotice(null);
   }
 
   // Native capture/conversion rejects on real failures (cancellation returns
@@ -442,42 +549,43 @@ export function CreateReport() {
     if (errs.title || errs.description || errs.category || errs.eventDate || errs.locationLabel || errs.youtubeUrl || !category) return;
     submitting.current = true;
     setBusy(true);
+    const reportFiles = photos.map((p) => p.file);
     // Diag: publish start
     diag("report.publish.start", {
       type,
-      hasPhoto: !!selectedFile,
-      photoBytes: selectedFile?.size ?? 0,
-      photoMime: selectedFile?.type ?? null,
+      hasPhoto: reportFiles.length > 0,
+      photoBytes: reportFiles[0]?.size ?? 0,
+      photoMime: reportFiles[0]?.type ?? null,
+      photoCount: reportFiles.length,
       hasLocation: location.latitude !== null && location.longitude !== null,
       hasYoutube: !!trimmedYoutube,
     }, { traceId: traceIdRef.current ?? undefined });
     try {
-      const postId = await publishReport(
-        {
-          type,
-          title: trimmedTitle,
-          description: trimmedDescription,
-          category,
-          eventDate,
-          locationLabel: trimmedLocationLabel || undefined,
-          latitude: location.latitude,
-          longitude: location.longitude,
-          youtubeUrl: trimmedYoutube || undefined,
-        },
-        selectedFile,
-        traceIdRef.current ?? undefined,
-      );
+      // Explicit user confirmation is this submit: nothing publishes without it.
+      // 0–1 photos keep the legacy single-photo path; 2–5 use the ordered multi path.
+      const reportInput = {
+        type,
+        title: trimmedTitle,
+        description: trimmedDescription,
+        category,
+        eventDate,
+        locationLabel: trimmedLocationLabel || undefined,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        youtubeUrl: trimmedYoutube || undefined,
+      };
+      const postId =
+        reportFiles.length <= 1
+          ? await publishReport(reportInput, reportFiles[0] ?? null, traceIdRef.current ?? undefined)
+          : await publishReportWithPhotos(reportInput, reportFiles, {
+              traceId: traceIdRef.current ?? undefined,
+            });
       // Diag: publish success
       diag("report.publish.success", {
         postId,
       }, { traceId: traceIdRef.current ?? undefined });
       clearDraft();
-      if (previewUrl && previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-      dropStashedPhoto(photoId);
-      setPhotoId(null);
-      setPreviewUrl(null);
-      setSelectedFile(null);
-      setPickedPhoto(null);
+      clearPhotos();
       announce("Report published.");
       navigate(`/posts/${postId}`, { replace: true });
     } catch (err) {
@@ -646,18 +754,62 @@ export function CreateReport() {
       {/* Photo (optional) */}
       <section className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-3">
         <p className="text-sm font-medium">Photo (optional)</p>
-        {previewUrl ? (
-          <div className="relative">
-            <img src={previewUrl} alt="Attachment preview" className="max-h-56 w-full rounded-m3-sm border border-outline-variant object-cover" />
-            <button
-              type="button"
-              aria-label="Remove photo"
-              onClick={clearPhoto}
-              className="absolute right-2 top-2 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-surface/90 text-on-surface shadow"
-            >
-              <X size={16} />
-            </button>
-          </div>
+        <p className="text-xs text-on-surface-variant">
+          Up to {MAX_REPORT_PHOTOS} photos, published in the order shown.
+        </p>
+        {photos.length > 0 && (
+          <ol className="flex flex-col gap-3">
+            {photos.map((item, index) => (
+              <li key={item.id} className="flex flex-col gap-2">
+                <div className="relative">
+                  <img src={item.previewUrl} alt={`Attachment preview ${index + 1}`} className="max-h-56 w-full rounded-m3-sm border border-outline-variant object-cover" />
+                  <button
+                    type="button"
+                    aria-label={`Remove photo ${index + 1}`}
+                    onClick={() => removePhoto(item.id)}
+                    className="absolute right-2 top-2 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-surface/90 text-on-surface shadow"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-on-surface-variant">
+                    Photo {index + 1} of {photos.length}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="md"
+                    disabled={index === 0}
+                    aria-label={`Move photo ${index + 1} earlier`}
+                    onClick={() => movePhoto(index, -1)}
+                  >
+                    Move earlier
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="md"
+                    disabled={index === photos.length - 1}
+                    aria-label={`Move photo ${index + 1} later`}
+                    onClick={() => movePhoto(index, 1)}
+                  >
+                    Move later
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+        {photoLimitNotice && (
+          <p className="text-xs text-error" role="status">
+            {photoLimitNotice}
+          </p>
+        )}
+        {photos.length >= MAX_REPORT_PHOTOS ? (
+          <p className="text-xs text-on-surface-variant" role="status">
+            {MAX_REPORT_PHOTOS} of {MAX_REPORT_PHOTOS} photos — remove one to add a different photo.
+          </p>
         ) : (
           <>
             {isNativeCameraAvailable() && (
@@ -685,7 +837,7 @@ export function CreateReport() {
             {!isNativeCameraAvailable() && (
               <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-m3-sm border border-dashed border-outline px-4 text-center text-sm text-on-surface-variant hover:bg-surface-container">
                 <ImageUp size={22} aria-hidden />
-                Tap to choose an image
+                {photos.length === 0 ? "Tap to choose an image" : "Add another photo"}
                 <input
                   type="file"
                   accept="image/png,image/jpeg,image/webp,image/gif"
@@ -698,7 +850,7 @@ export function CreateReport() {
         )}
       </section>
 
-      {selectedFile && <VlmSuggestions file={selectedFile} onApply={applyVlmSuggestion} />}
+      {photos.length > 0 && <VlmSuggestions file={photos[0]!.file} onApply={applyVlmSuggestion} />}
 
       {/* Optional external YouTube media */}
       <label className="block">

@@ -4,8 +4,10 @@ import { KeyRound } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { Button } from "../components/Button";
+import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
 import { aiCredentials } from "../services/aiCredentials";
 import { createOpenRouterClient } from "../services/openRouter";
+import type { ModelRecord } from "../services/ai/providerContract";
 
 const validator = createOpenRouterClient(async () => null);
 
@@ -16,7 +18,16 @@ export function maskOpenRouterKey(value: string | null): string | null {
   return `••••${trimmed.slice(-4)}`;
 }
 
-export function AiConnection() {
+export function AiConnection({
+  models = [],
+  modelsRetrievedAt = null,
+  modelsStale = false,
+}: {
+  /** Catalogue rows to browse (empty = none loaded). Never implies verification. */
+  readonly models?: readonly ModelRecord[];
+  readonly modelsRetrievedAt?: string | null;
+  readonly modelsStale?: boolean;
+}) {
   const { user } = useAuth();
   const [key, setKey] = useState("");
   const [remember, setRemember] = useState(false);
@@ -107,6 +118,8 @@ export function AiConnection() {
       <p role="status" className="font-medium">
         {connected ? `Connected${masked ? ` · key ending ${masked}` : ""}` : "Disconnected"}
       </p>
+      {/* "Connected" above is set only after validateKey succeeds for this account;
+          the catalogue below is browse-only and never a verified state. */}
       {message ? <p role="alert" className="text-sm text-error">{message}</p> : null}
       <form onSubmit={(event) => void connect(event)} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
@@ -133,6 +146,9 @@ export function AiConnection() {
         </div>
       )}
       {(connected || saved) && <Button type="button" variant="outline" disabled={busy} onClick={() => void remove()}>Remove key</Button>}
+      {models.length > 0 ? (
+        <ModelCatalogSheet models={models} retrievedAt={modelsRetrievedAt} stale={modelsStale} />
+      ) : null}
     </main>
   );
 }

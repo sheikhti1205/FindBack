@@ -22,7 +22,13 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
-/** Per-user OpenRouter credential ciphertext; master key never leaves Android Keystore. */
+/**
+ * Per-account, per-provider AI credential ciphertext; master key never leaves
+ * Android Keystore. The plugin name stays {@code OpenRouterKey} so existing
+ * installs and the registered bridge keep working; the {@code provider}
+ * option (default {@code openrouter}) selects one of the five isolated
+ * vault slots defined by {@link AiCredentialSlots}.
+ */
 @CapacitorPlugin(name = "OpenRouterKey")
 public final class OpenRouterKeyPlugin extends Plugin {
     private static final String STORE = "findback.openrouter.credentials";
@@ -34,12 +40,21 @@ public final class OpenRouterKeyPlugin extends Plugin {
 
     private static String userId(PluginCall call) {
         String value = call.getString("userId");
-        return value != null && value.length() > 0 && value.length() <= 128 ? value : null;
+        return AiCredentialSlots.isValidUserId(value) ? value : null;
     }
 
-    private static String slot(String userId) throws Exception {
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(userId.getBytes(StandardCharsets.UTF_8));
+    private static String provider(PluginCall call) {
+        return AiCredentialSlots.normalizeProvider(call.getString("provider"));
+    }
+
+    private static String slot(String userId, String provider) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256")
+            .digest(AiCredentialSlots.slotInput(userId, provider).getBytes(StandardCharsets.UTF_8));
         return Base64.encodeToString(digest, Base64.NO_WRAP | Base64.URL_SAFE | Base64.NO_PADDING);
+    }
+
+    private static byte[] aad(String userId, String provider) {
+        return AiCredentialSlots.slotInput(userId, provider).getBytes(StandardCharsets.UTF_8);
     }
 
     private static SecretKey masterKey() throws Exception {
@@ -58,18 +73,22 @@ public final class OpenRouterKeyPlugin extends Plugin {
     @PluginMethod
     public void set(PluginCall call) {
         String owner = userId(call);
+        String provider = provider(call);
         String value = call.getString("key");
-        if (owner == null || value == null || value.isEmpty()) { call.reject("Invalid credential request"); return; }
+        if (owner == null || provider == null || value == null || value.isEmpty()) {
+            call.reject("Invalid credential request");
+            return;
+        }
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, masterKey());
-            cipher.updateAAD(owner.getBytes(StandardCharsets.UTF_8));
+            cipher.updateAAD(aad(owner, provider));
             byte[] plaintext = value.getBytes(StandardCharsets.UTF_8);
             byte[] encrypted = cipher.doFinal(plaintext);
             Arrays.fill(plaintext, (byte) 0);
             String record = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":" +
                 Base64.encodeToString(encrypted, Base64.NO_WRAP);
-            if (!prefs().edit().putString(slot(owner), record).commit()) throw new IllegalStateException();
+            if (!prefs().edit().putString(slot(owner, provider), record).commit()) throw new IllegalStateException();
             call.resolve();
         } catch (Exception ignored) {
             call.reject("Could not save the key securely");
@@ -79,9 +98,13 @@ public final class OpenRouterKeyPlugin extends Plugin {
     @PluginMethod
     public void get(PluginCall call) {
         String owner = userId(call);
-        if (owner == null) { call.reject("Invalid credential request"); return; }
+        String provider = provider(call);
+        if (owner == null || provider == null) {
+            call.reject("Invalid credential request");
+            return;
+        }
         try {
-            String record = prefs().getString(slot(owner), null);
+            String record = prefs().getString(slot(owner, provider), null);
             JSObject out = new JSObject();
             if (record == null) {
                 out.put("key", JSObject.NULL);
@@ -91,7 +114,7 @@ public final class OpenRouterKeyPlugin extends Plugin {
                 Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
                 cipher.init(Cipher.DECRYPT_MODE, masterKey(),
                     new GCMParameterSpec(128, Base64.decode(parts[0], Base64.DEFAULT)));
-                cipher.updateAAD(owner.getBytes(StandardCharsets.UTF_8));
+                cipher.updateAAD(aad(owner, provider));
                 byte[] plaintext = cipher.doFinal(Base64.decode(parts[1], Base64.DEFAULT));
                 out.put("key", new String(plaintext, StandardCharsets.UTF_8));
                 Arrays.fill(plaintext, (byte) 0);
@@ -105,9 +128,13 @@ public final class OpenRouterKeyPlugin extends Plugin {
     @PluginMethod
     public void remove(PluginCall call) {
         String owner = userId(call);
-        if (owner == null) { call.reject("Invalid credential request"); return; }
+        String provider = provider(call);
+        if (owner == null || provider == null) {
+            call.reject("Invalid credential request");
+            return;
+        }
         try {
-            if (!prefs().edit().remove(slot(owner)).commit()) throw new IllegalStateException();
+            if (!prefs().edit().remove(slot(owner, provider)).commit()) throw new IllegalStateException();
             call.resolve();
         } catch (Exception ignored) {
             call.reject("Could not remove the saved key");

@@ -19,7 +19,10 @@ vi.mock("@capacitor/core", () => ({
 }));
 vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
-vi.mock("../services/posts", () => ({ publishReport: (...args: unknown[]) => publishReportMock(...args) }));
+vi.mock("../services/posts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/posts")>();
+  return { ...actual, publishReport: (...args: unknown[]) => publishReportMock(...args) };
+});
 vi.mock("../services/photo", () => photo);
 
 import { CreateReport } from "./CreateReport";

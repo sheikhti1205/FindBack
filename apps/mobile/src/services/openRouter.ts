@@ -1,6 +1,7 @@
 /** The only generative endpoint/model in the active app. Never accept a model from callers. */
-const COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
-const KEY_URL = "https://openrouter.ai/api/v1/key";
+import { computeContextBudget, DEFAULT_OUTPUT_CAP_TOKENS, resolveOutputCap } from "./ai/contextBudget";
+
+const COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";const KEY_URL = "https://openrouter.ai/api/v1/key";
 /** Fixed free route enforced at the transport boundary; callers cannot override it. */
 export const OPENROUTER_MODEL = "openrouter/free" as const;
 const MODEL = OPENROUTER_MODEL;
@@ -41,6 +42,36 @@ export class OpenRouterError extends Error {
     super(COPY[code]);
     this.name = "OpenRouterError";
   }
+}
+
+/**
+ * Optional verified capability hint for the output reservation (packet R1).
+ * When absent — or when the window stays unknown — the client keeps the
+ * legacy reservation, so current callers observe byte-identical payloads.
+ * Full budget-driven input caps remain a caller-contract decision for H2/A1.
+ */
+export type OpenRouterBudgetHint = {
+  readonly contextWindow?: number;
+  readonly reservedOutputTokens?: number;
+  readonly imageAllowanceTokens?: number;
+  readonly protocolOverheadTokens?: number;
+  readonly safetyMarginTokens?: number;
+};
+
+function resolveMaxTokens(budgetHint?: OpenRouterBudgetHint): number {
+  if (budgetHint === undefined) return DEFAULT_OUTPUT_CAP_TOKENS;
+  const reserved = budgetHint.reservedOutputTokens ?? DEFAULT_OUTPUT_CAP_TOKENS;
+  const budget = computeContextBudget({
+    verifiedContextWindow: budgetHint.contextWindow,
+    reservedOutput: reserved,
+    // A text-only send reserves no image allowance; image sends without a
+    // verified allowance stay on the legacy reservation instead of zeroing it.
+    imageAllowance: budgetHint.imageAllowanceTokens ?? 0,
+    protocolOverhead: budgetHint.protocolOverheadTokens ?? 0,
+    safetyMargin: budgetHint.safetyMarginTokens ?? 0,
+  });
+  if (budget.state !== "known") return DEFAULT_OUTPUT_CAP_TOKENS;
+  return resolveOutputCap({ maxOutputTokens: reserved });
 }
 
 function errorFromStatus(status: number, body: unknown): OpenRouterError {
@@ -174,13 +205,13 @@ async function withDeadline<T>(
 }
 
 export function createOpenRouterClient(getKey: () => Promise<string | null>, fetcher: typeof fetch = fetch) {
-  async function complete(content: string | unknown[], signal?: AbortSignal): Promise<string> {
+  async function complete(content: string | unknown[], signal?: AbortSignal, budgetHint?: OpenRouterBudgetHint): Promise<string> {
     const key = (await getKey())?.trim();
     if (!key) throw new OpenRouterError("MISSING_KEY");
     const { ok, status, data } = await withDeadline(fetcher, COMPLETIONS_URL, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: MODEL, stream: false, messages: [{ role: "user", content }], max_tokens: 600 }),
+      body: JSON.stringify({ model: MODEL, stream: false, messages: [{ role: "user", content }], max_tokens: resolveMaxTokens(budgetHint) }),
     }, signal, async (res) => ({ ok: res.ok, status: res.status, data: await readJsonBounded(res) }));
     if (!ok || (data && typeof data === "object" && "error" in data)) {
       throw errorFromStatus(status, data);
@@ -196,15 +227,15 @@ export function createOpenRouterClient(getKey: () => Promise<string | null>, fet
   }
 
   return {
-    text: async (prompt: string, options?: { signal?: AbortSignal }): Promise<string> =>
-      complete(checkedPrompt(prompt), options?.signal),
-    image: async (prompt: string, image: string, consent: boolean, options?: { signal?: AbortSignal }): Promise<string> => {
+    text: async (prompt: string, options?: { signal?: AbortSignal; budgetHint?: OpenRouterBudgetHint }): Promise<string> =>
+      complete(checkedPrompt(prompt), options?.signal, options?.budgetHint),
+    image: async (prompt: string, image: string, consent: boolean, options?: { signal?: AbortSignal; budgetHint?: OpenRouterBudgetHint }): Promise<string> => {
       if (!consent) throw new OpenRouterError("CONSENT_REQUIRED");
       const checked = checkedImageDataUrl(image);
       return complete([
         { type: "text", text: checkedPrompt(prompt) },
         { type: "image_url", image_url: { url: checked } },
-      ], options?.signal);
+      ], options?.signal, options?.budgetHint);
     },
     validateKey: async (rawKey: string, signal?: AbortSignal): Promise<{ remaining: number | null }> => {
       const key = rawKey.trim();

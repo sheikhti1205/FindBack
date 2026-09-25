@@ -445,4 +445,59 @@ describe("askAiHelp", () => {
     expect(clientMock.functions.invoke).not.toHaveBeenCalled();
     aiCredentials.clearSession();
   });
+
+  it("sends policy, knowledge and untrusted question layers inside the transport bound", async () => {
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
+    await aiCredentials.connect("u1", "example-user-key", { remember: false });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "Tap Report." } }] }), { status: 200 }));
+
+    const question = `How do I report a lost item? ${"with extra detail ".repeat(20)}`.slice(0, 500);
+    const res = await askAiHelp(question);
+    expect(res.source).toBe("llm");
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string) as {
+      messages: { role: string; content: string }[];
+    };
+    const prompt = body.messages[0]!.content;
+    expect(prompt).toContain("[system-policy version=");
+    expect(prompt).toContain("[knowledge version=");
+    const labelAt = prompt.indexOf("[untrusted user text");
+    expect(labelAt).toBeGreaterThan(prompt.indexOf("[knowledge version="));
+    expect(prompt.indexOf(question.slice(0, 60))).toBeGreaterThan(labelAt);
+    expect(prompt.length).toBeLessThanOrEqual(2400);
+    aiCredentials.clearSession();
+  });
+
+  it("never returns a SQL or private-contact answer from the model", async () => {
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
+    await aiCredentials.connect("u1", "example-user-key", { remember: false });
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "SELECT email, phone FROM profiles WHERE id = 1;" } }] }), { status: 200 }));
+    const sql = await askAiHelp("how do I search?");
+    expect(sql.source).toBe("fallback");
+    expect(sql.text.toUpperCase()).not.toContain("SELECT");
+    expect(sql.text.toLowerCase()).not.toContain("profiles");
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "The poster is jane.doe@example.com." } }] }), { status: 200 }));
+    const privateData = await askAiHelp("how do I comment?");
+    expect(privateData.source).toBe("fallback");
+    expect(privateData.text).not.toContain("@example.com");
+    expect(clientMock.functions.invoke).not.toHaveBeenCalled();
+    aiCredentials.clearSession();
+  });
+
+  it("keeps a long generated answer intact instead of silently cutting it at 1200 characters", async () => {
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
+    await aiCredentials.connect("u1", "example-user-key", { remember: false });
+    const tail = "the final line must survive the transport.";
+    const body = `${"Step by step: open the Report tab and add the details. ".repeat(40)}${tail}`;
+    expect(body.length).toBeGreaterThan(1200);
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: body } }] }), { status: 200 }));
+
+    const res = await askAiHelp("how do I report?");
+    expect(res.source).toBe("llm");
+    expect(res.text.length).toBeGreaterThan(1200);
+    expect(res.text.endsWith(tail)).toBe(true);
+    aiCredentials.clearSession();
+  });
 });

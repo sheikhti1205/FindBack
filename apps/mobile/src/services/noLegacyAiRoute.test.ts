@@ -4,9 +4,24 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * WB-02 client-side absence guard: the mobile app must make ZERO active calls to the
- * legacy `ai-help` Supabase Edge route and must carry no second (LLM_MODEL/LLM_BASE_URL)
- * or paid-model provider configuration.
+ * WB-02 client-side absence guard + C1 catalogue-era route guard: the mobile app must
+ * make ZERO active calls to the legacy `ai-help` Supabase Edge route and must carry no
+ * second (LLM_MODEL/LLM_BASE_URL) or unapproved-proxy route, no embedded/raw key, and no
+ * `VITE_*` key env.
+ *
+ * C1 change (deliberate, reviewed): the old blanket ban on vendor-qualified/paid model
+ * IDs (`openai/…`, `gpt-4`, …) in *fixtures* is REMOVED. The app now ships a dynamic
+ * OpenRouter catalogue (`services/ai/modelCatalog.ts`) where paid models are browsable
+ * data, gated at send time by `priceClass` + per-task paid consent (`modelPolicy.ts`
+ * over the frozen `isSelectionAuthorized`) — never by string-matching fixtures. Paid
+ * model ids therefore remain banned in SHIPPED (non-test) modules but are legal in
+ * `*.test.*` fixtures. If paid-model protection regresses, it regresses in policy
+ * tests, not here.
+ *
+ * Still banned: legacy `ai-help`/`functions/v1`, `LLM_MODEL`/`LLM_BASE_URL`, `sk-or-`
+ * literals outside tests, `VITE_OPENROUTER_API_KEY`, `api/v1/byok`, unapproved
+ * `/api/v1` base URLs/proxies (only `openrouter.ai` approved), and calling an
+ * OpenRouter-served model a "direct connection" (it is `Via OpenRouter`, never direct).
  *
  * Static + import-graph scan (CI-safe: no network, no build, no key, no subprocess).
  * Chosen over an import-graph-only check because a URL built from a string literal is
@@ -182,22 +197,26 @@ const SHIPPED_RULES: Array<{ id: string; re: RegExp }> = [
   { id: "raw OpenRouter key literal", re: /\bsk-or-[A-Za-z0-9]/ },
   { id: "VITE OpenRouter key env", re: /VITE_OPENROUTER_API_KEY|\bOPENROUTER_API_KEY\s*[:=]/ },
   { id: "byok provider endpoint", re: /api\/v1\/byok/ },
+  {
+    id: "unapproved API base URL/proxy",
+    re: /https?:\/\/(?!openrouter\.ai)[A-Za-z0-9.-]+\/api\/v1/,
+  },
+  {
+    id: "direct-connection labeling of OpenRouter model",
+    re: /direct(ly)?\s+connect/i,
+  },
 ];
 
-/** Rules that must hold in *every* source file, test fixtures included. */
+/**
+ * Rules that must hold in *every* source file, test fixtures included.
+ * Paid-model ids are intentionally NOT banned here since C1: catalogue/policy
+ * fixtures must be free to name paid models (gating lives in modelPolicy tests).
+ */
 const ALL_FILE_RULES: Array<{ id: string; re: RegExp }> = [
   { id: "legacy functions/v1/ai-help URL", re: /functions\/v1\/ai-help/ },
   { id: "ai-help function invocation", re: /\.invoke\(\s*["'`]ai-help["'`]/ },
   { id: "LLM_MODEL second route", re: /\bLLM_MODEL\b/ },
   { id: "LLM_BASE_URL second route", re: /\bLLM_BASE_URL\b/ },
-  {
-    id: "vendor-qualified paid model id",
-    re: /\b(?:openai|anthropic|google|meta-llama|deepseek|deepseek-chat|mistralai|mistral|perplexity|x-ai|cohere|microsoft|togethercomputer|ai21|qwen|moonshotai|z-ai)\//,
-  },
-  {
-    id: "bare paid model id",
-    re: /\bgpt-(?:3|4|5)|\bclaude-[0-9]|\bgemini-[0-9]|\bdeepseek-chat\b|\bdeepseek-v[0-9]|\bcommand-r|\bgrok-[0-9]|\bchatgpt-/,
-  },
   { id: "VITE OpenRouter key env", re: /VITE_OPENROUTER_API_KEY|\bOPENROUTER_API_KEY\s*[:=]/ },
   { id: "byok provider endpoint", re: /api\/v1\/byok/ },
 ];
@@ -274,7 +293,7 @@ describe("legacy AI route absence (WB-02 client guard)", () => {
     expect(shipped.some((f) => f.rel === "services/openRouter.ts")).toBe(true);
   });
 
-  it("ships no ai-help symbol, second LLM route, paid model id or key literal", () => {
+  it("ships no ai-help symbol, second LLM route, paid model id, key literal, unapproved base URL or direct-connection label", () => {
     expect(violations(shipped, SHIPPED_RULES)).toEqual([]);
   });
 
@@ -307,8 +326,25 @@ describe("legacy AI route absence (WB-02 client guard)", () => {
     expect(violations(shipped, [{ id: "non-free openrouter route", re: /openrouter\/(?!free\b)/ }])).toEqual([]);
   });
 
-  it("has no paid model id or second LLM route anywhere, tests included", () => {
-    expect(violations(files, ALL_FILE_RULES.filter((r) => r.id.includes("paid model") || r.id.startsWith("LLM_")))).toEqual([]);
+  it("has no second LLM route anywhere, tests included", () => {
+    expect(violations(files, ALL_FILE_RULES.filter((r) => r.id.startsWith("LLM_")))).toEqual([]);
+  });
+
+  it("allows paid-model ids in test fixtures (dynamic catalogue era)", () => {
+    // Paid-model gating lives in modelPolicy tests (priceClass + consent), not in
+    // string bans — so catalogue/policy fixtures must be free to name paid models.
+    expect(tests.some((f) => /\b(?:openai|anthropic|meta-llama)\//.test(f.code))).toBe(true);
+  });
+
+  it("new bans trigger on representative violation strings (and spare approved ones)", () => {
+    const baseUrl = SHIPPED_RULES.find((r) => r.id === "unapproved API base URL/proxy");
+    const directLabel = SHIPPED_RULES.find((r) => r.id === "direct-connection labeling of OpenRouter model");
+    expect(baseUrl).toBeDefined();
+    expect(directLabel).toBeDefined();
+    expect(baseUrl?.re.test("https://proxy.example.com/api/v1/chat")).toBe(true);
+    expect(baseUrl?.re.test("https://openrouter.ai/api/v1/models")).toBe(false);
+    expect(directLabel?.re.test("Direct connection to openai/gpt-4")).toBe(true);
+    expect(directLabel?.re.test("Generated via OpenRouter free model")).toBe(false);
   });
 
   it("resolves every relative import and keeps the main.tsx graph free of legacy markers", () => {

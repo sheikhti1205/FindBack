@@ -2,6 +2,7 @@ import { ApiError } from "./session";
 import { normalizeImage } from "./image";
 import { getSupabase } from "./supabaseClient";
 import { diag } from "./diag";
+import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
 
 export interface StoredUpload {
   id: string;
@@ -12,7 +13,7 @@ export interface StoredUpload {
   objectKey: string;
 }
 
-const IMAGES_BUCKET = "findback-images";
+export const IMAGES_BUCKET = "findback-images";
 
 function extensionFor(mimeType: string): string {
   if (mimeType === "image/png") return "png";
@@ -154,4 +155,75 @@ export async function removeStagedUpload(stored: StoredUpload, traceId?: string)
     removeMs,
     deleteMs,
   }, { traceId });
+}
+
+/** Per-upload progress for a batch: completed counts successes so far. */
+export interface UploadProgress {
+  completed: number;
+  total: number;
+}
+
+export interface UploadPhotosOptions {
+  onProgress?: (progress: UploadProgress) => void;
+  traceId?: string;
+}
+
+/**
+ * Remove every staged upload in best-effort order, never throwing: cleanup
+ * must not mask the original publish failure. Returns the cleanup errors (if
+ * any) so the caller can diag them.
+ */
+export async function removeStagedUploads(
+  staged: readonly StoredUpload[],
+  traceId?: string,
+): Promise<unknown[]> {
+  const failures: unknown[] = [];
+  for (const stored of staged) {
+    try {
+      await removeStagedUpload(stored, traceId);
+    } catch (err) {
+      failures.push(err);
+    }
+  }
+  if (failures.length > 0) {
+    diag("posts.upload.batch_cleanup_partial", {
+      attempted: staged.length,
+      failed: failures.length,
+    }, { traceId });
+  }
+  return failures;
+}
+
+/**
+ * Stage 0–5 report photos in input order, one independent upload each.
+ *
+ * The caller must only invoke the create-post RPC after this resolves, which
+ * is what makes a failed 3rd-of-5 unable to leave a ghost post: no post row
+ * exists until every image is staged. When any upload fails, exactly the
+ * objects staged by THIS attempt are removed (best-effort); the caller's
+ * local Files are untouched so the draft survives for retry.
+ */
+export async function uploadPhotos(
+  files: readonly File[],
+  options: UploadPhotosOptions = {},
+): Promise<StoredUpload[]> {
+  if (files.length > MAX_REPORT_PHOTOS) {
+    throw new PrepareError(
+      "REPORT_LIMIT",
+      `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. ` +
+        "The extra photo was not uploaded — remove one first and try again.",
+    );
+  }
+  const staged: StoredUpload[] = [];
+  try {
+    for (const file of files) {
+      const stored = await uploadImage(file, options.traceId);
+      staged.push(stored);
+      options.onProgress?.({ completed: staged.length, total: files.length });
+    }
+    return staged;
+  } catch (err) {
+    await removeStagedUploads(staged, options.traceId);
+    throw err;
+  }
 }

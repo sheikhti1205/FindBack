@@ -7,6 +7,7 @@ import type { PublicUser } from "@findback/shared";
 import { createOpenRouterClient, OpenRouterError } from "./openRouter";
 import { getConnectedOpenRouterKey } from "./aiCredentials";
 import { builtInHelp } from "./helpFaq";
+import { buildGroundedPrompt, groundAppAnswer } from "./ai/appKnowledge";
 
 /** Supabase signup with Confirm-email ON: account created, no session yet. */
 export interface RegisterResult {
@@ -310,11 +311,15 @@ export async function askAiHelp(
   if (q.length === 0 || q.length > 500) throw new ApiError("Enter a question of 1–500 characters.", 400);
   try {
     // No account identifiers, history, photos or report contents are forwarded.
-    const text = await createOpenRouterClient(getConnectedOpenRouterKey).text(
-      `Answer this FindBack app question briefly. If you do not know, say so. Do not claim to access reports or the database. Question: ${q}`,
+    // The question ships as untrusted data behind the policy and knowledge
+    // layers; the answer is screened before it is ever shown.
+    const answer = await createOpenRouterClient(getConnectedOpenRouterKey).text(
+      buildGroundedPrompt(q),
       { signal: opts?.signal },
     );
-    return { text: text.slice(0, 1200), source: "llm" };
+    const grounded = groundAppAnswer(answer);
+    if (!grounded.safe) return { text: grounded.reply, source: "fallback" };
+    return { text: grounded.text, source: "llm" };
   } catch (error) {
     if (opts?.signal?.aborted || (error instanceof OpenRouterError && error.code === "CANCELLED")) {
       const aborted = new Error("Cancelled");
