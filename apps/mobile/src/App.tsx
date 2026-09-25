@@ -18,7 +18,7 @@ import { Profile } from "./screens/Profile";
 import { About } from "./screens/About";
 import { MyPosts } from "./screens/MyPosts";
 import { Help } from "./screens/Help";
-import { OfflineAiCompact } from "./screens/OfflineAiCompact";
+import { AiConnection } from "./screens/AiConnection";
 
 export function App() {
   return (
@@ -62,7 +62,8 @@ export function App() {
               <Route path="/profile" element={<Profile />} />
               <Route path="/about" element={<About />} />
               <Route path="/help" element={<Help />} />
-              <Route path="/offline-ai" element={<OfflineAiCompact />} />
+              <Route path="/ai-connection" element={<AiConnection />} />
+              <Route path="/offline-ai" element={<Navigate to="/ai-connection" replace />} />
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />
           </Routes>

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { BottomSheet } from "./BottomSheet";
 import { announce } from "./LiveRegion";
 import {
@@ -7,10 +7,7 @@ import {
 } from "../services/assistant/assistantHandoff";
 import { RECOVERY_COPY, type RecoveryAction } from "../services/ai/errors";
 import type { AiErrorClass } from "../services/ai/types";
-import {
-  executeAssistantMessage,
-  type AssistantExecutionRuntime,
-} from "../services/assistant/assistantExecution";
+import { executeCloudAssistantMessage } from "../services/assistant/cloudAssistant";
 import {
   GUIDED_FLOWS,
   LOCATION_CHOICES,
@@ -161,6 +158,7 @@ function AssistantReadySummary({ snapshot }: { snapshot: GuidedSnapshot }) {
 export interface AssistantTranscriptEntry {
   readonly role: "user" | "assistant";
   readonly text: string;
+  readonly source?: "model" | "grounded";
 }
 
 export interface AssistantSheetProps {
@@ -170,11 +168,8 @@ export interface AssistantSheetProps {
   onPhotoChoice?: (choice: PhotoChoice) => void;
   onLocationChoice?: (choice: LocationChoice) => void;
   onRecoveryAction?: (action: RecoveryAction) => void;
-  /**
-   * Execution runtime. Defaults to grounded local routing with the server
-   * Help path for app questions (no model required).
-   */
-  runtime?: AssistantExecutionRuntime;
+  /** Test seam; production always uses the fixed OpenRouter free client. */
+  generate?: (prompt: string) => Promise<string>;
   /** Emitted on every snapshot change so outer flows can consume held results. */
   onSnapshot?: (snapshot: GuidedSnapshot) => void;
   /** Emitted with the frozen handoff when the enabled Review report action runs. */
@@ -188,7 +183,7 @@ export function AssistantSheet({
   onPhotoChoice,
   onLocationChoice,
   onRecoveryAction,
-  runtime,
+  generate,
   onSnapshot,
   onReviewReport,
 }: AssistantSheetProps) {
@@ -196,6 +191,17 @@ export function AssistantSheet({
   const [transcript, setTranscript] = useState<readonly AssistantTranscriptEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState("");
+  // Generation token: a cloud reply that resolves after the sheet closed (or a
+  // newer submit started) is stale and must never enter this transcript/snapshot.
+  const generation = useRef(0);
+
+  useEffect(() => {
+    // Closing invalidates any pending reply and releases the busy gate so a
+    // reopened sheet never sits stuck behind a dropped request.
+    if (!open) { generation.current++; setBusy(false); }
+  }, [open ]);
+
+  useEffect(() => () => { generation.current++; }, []);
 
   function update(next: GuidedSnapshot): void {
     setSnapshot(next);
@@ -212,6 +218,7 @@ export function AssistantSheet({
     const trimmed = text.trim();
     if (trimmed === "" || busy) return;
     if (snapshot !== null && snapshot.state === "recovering") return;
+    const gen = ++generation.current;
     const typedLocation =
       snapshot !== null &&
       snapshot.state === "awaitingLocation" &&
@@ -220,14 +227,15 @@ export function AssistantSheet({
     setTranscript((previous) => [...previous, { role: "user", text: trimmed }]);
     setBusy(true);
     try {
-      const result = await executeAssistantMessage(snapshot, trimmed, runtime ?? {});
+      const result = await executeCloudAssistantMessage(snapshot, trimmed, generate);
+      if (generation.current !== gen) return; // closed/superseded: drop the stale reply
       update(result.snapshot);
-      setTranscript((previous) => [...previous, { role: "assistant", text: result.reply }]);
+      setTranscript((previous) => [...previous, { role: "assistant", text: result.reply, source: result.replySource }]);
       if (typedLocation && result.snapshot.locationChoice === "typed") {
         onLocationChoice?.("typed");
       }
     } finally {
-      setBusy(false);
+      if (generation.current === gen) setBusy(false);
     }
   }
 
@@ -268,7 +276,6 @@ export function AssistantSheet({
   }
 
   const question = snapshot === null ? null : nextMissingQuestion(snapshot);
-  const localModelOn = runtime?.generate !== undefined;
   const handoff = snapshot === null ? null : buildAssistantReportHandoff(snapshot);
   const lastAssistantIndex = transcript.reduce(
     (found, entry, index) => (entry.role === "assistant" ? index : found),
@@ -288,9 +295,7 @@ export function AssistantSheet({
           listings, or answering questions about the app.
         </p>
         <p data-testid="assistant-source-note" className="text-xs text-on-surface-variant">
-          {localModelOn
-            ? "Using Qwen locally for this session."
-            : "Using built-in help — no on-device text model is running."}
+          AI uses available free models automatically when connected. Built-in guidance remains available without a key.
         </p>
         <div className="flex flex-wrap gap-2">
           {GUIDED_FLOWS.map((flow) => (
@@ -326,7 +331,7 @@ export function AssistantSheet({
                   className="flex flex-col gap-0.5 rounded-m3-sm border border-outline-variant px-3 py-2"
                 >
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant">
-                    {entry.role === "user" ? "You" : "Assistant"}
+                    {entry.role === "user" ? "You" : entry.source === "model" ? "AI-generated" : "Built-in guidance"}
                   </span>
                   <p
                     className="text-sm"

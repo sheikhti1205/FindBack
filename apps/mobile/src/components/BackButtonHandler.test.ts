@@ -21,7 +21,7 @@ describe("resolveBackAction", () => {
   });
 
   it("falls back to Home when history is exhausted on a non-home screen", () => {
-    expect(resolveBackAction({ ...base, pathname: "/offline-ai" })).toEqual({ type: "home" });
+    expect(resolveBackAction({ ...base, pathname: "/ai-connection" })).toEqual({ type: "home" });
     expect(resolveBackAction({ ...base, pathname: "/help" })).toEqual({ type: "home" });
   });
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { BackButton } from "../components/BackButton";
-import { getVlmBridge, type VlmCapabilities } from "../services/vlmPlugin";
+import { readBuildInfo, type BuildInfo } from "../services/buildInfo";
 import { APP_VERSION, BACKEND_SCHEMA_VERSION, CAPABILITIES_VERSION } from "../services/appCapabilities";
 
 function shortSha(sha: string | null | undefined): string {
@@ -11,27 +11,27 @@ function shortSha(sha: string | null | undefined): string {
 /**
  * Profile → About: build identity for release diagnosis. App version comes
  * from package.json; build SHA and versionCode come from the installed native
- * build when running on Android.
+ * build when available (readBuildInfo fails closed to {} on web).
  */
 export function About() {
-  const [caps, setCaps] = useState<VlmCapabilities | null>(null);
+  const [info, setInfo] = useState<BuildInfo | null>(null);
 
   useEffect(() => {
     let mounted = true;
-    getVlmBridge()
-      .getCapabilities()
-      .then((c) => {
-        if (mounted) setCaps(c);
+    readBuildInfo()
+      .then((value) => {
+        if (mounted) setInfo(value);
       })
       .catch(() => {
-        // Web adapter or unavailable bridge: static metadata still shows.
+        // Unreadable bridge: static metadata still shows with unknown identity.
+        if (mounted) setInfo(null);
       });
     return () => {
       mounted = false;
     };
   }, []);
 
-  const fullSha = caps?.buildGitSha ?? null;
+  const fullSha = info?.buildGitSha ?? null;
 
   return (
     <div className="flex flex-col gap-4 px-4 py-5">
@@ -54,7 +54,7 @@ export function About() {
         <div className="min-w-0">
           <dt className="text-xs text-on-surface-variant">Version code</dt>
           <dd className="min-w-0 break-words font-medium">
-            {typeof caps?.versionCode === "number" && caps.versionCode > 0 ? caps.versionCode : "unknown"}
+            {typeof info?.versionCode === "number" && info.versionCode > 0 ? info.versionCode : "unknown"}
           </dd>
         </div>
         <div className="min-w-0">
@@ -64,6 +64,14 @@ export function About() {
         <div className="min-w-0">
           <dt className="text-xs text-on-surface-variant">Help capability</dt>
           <dd className="min-w-0 break-words font-medium">{CAPABILITIES_VERSION}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs text-on-surface-variant">AI</dt>
+          <dd className="min-w-0 break-words font-medium">
+            Optional OpenRouter free-model features using your own key (Profile → AI Connection). With
+            your consent, a selected report photo is sent to OpenRouter for suggestions; answers vary
+            with free-model availability. Reports, search and other core features work without AI.
+          </dd>
         </div>
       </dl>
     </div>

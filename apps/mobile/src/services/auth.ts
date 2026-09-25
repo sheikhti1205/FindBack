@@ -4,6 +4,9 @@ import { ApiError, setToken } from "./session";
 import { BootTimeoutError, withTimeout } from "./timeout";
 import { recordBootEvent } from "./bootDiagnostics";
 import type { PublicUser } from "@findback/shared";
+import { createOpenRouterClient, OpenRouterError } from "./openRouter";
+import { getConnectedOpenRouterKey } from "./aiCredentials";
+import { builtInHelp } from "./helpFaq";
 
 /** Supabase signup with Confirm-email ON: account created, no session yet. */
 export interface RegisterResult {
@@ -303,22 +306,29 @@ export async function askAiHelp(
   text: string;
   source: "llm" | "fallback";
 }> {
-  const body: Record<string, unknown> = { question };
-  if (opts?.history?.length) body.history = opts.history.slice(-6);
-  if (opts?.context) body.context = opts.context;
-  const { data, error } = await getSupabase().functions.invoke("ai-help", {
-    body,
-    signal: opts?.signal,
-  });
-  if (error) {
-    if (opts?.signal?.aborted) {
+  const q = question.trim();
+  if (q.length === 0 || q.length > 500) throw new ApiError("Enter a question of 1–500 characters.", 400);
+  try {
+    // No account identifiers, history, photos or report contents are forwarded.
+    const text = await createOpenRouterClient(getConnectedOpenRouterKey).text(
+      `Answer this FindBack app question briefly. If you do not know, say so. Do not claim to access reports or the database. Question: ${q}`,
+      { signal: opts?.signal },
+    );
+    return { text: text.slice(0, 1200), source: "llm" };
+  } catch (error) {
+    if (opts?.signal?.aborted || (error instanceof OpenRouterError && error.code === "CANCELLED")) {
       const aborted = new Error("Cancelled");
       aborted.name = "AbortError";
       throw aborted;
     }
-    throw new ApiError(error.message || "AI Help is unavailable right now", 502);
+    const code = error instanceof OpenRouterError ? error.code : null;
+    const prefix = code === "DAILY_LIMIT"
+      ? "Your OpenRouter free allowance is exhausted. Built-in answer: "
+      : code === "PAYMENT_OR_POLICY_BLOCKED"
+        ? "OpenRouter blocked this free request (payment or policy); FindBack never uses paid models. Built-in answer: "
+        : "";
+    return { text: prefix + builtInHelp(q), source: "fallback" };
   }
-  return data as { text: string; source: "llm" | "fallback" };
 }
 
 export { ApiError, getToken } from "./session";

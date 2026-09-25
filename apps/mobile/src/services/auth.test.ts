@@ -12,6 +12,7 @@ import {
   verifyPendingEmailCode,
 } from "./auth";
 import { isLikelySecretKey, SupabaseConfigError, validateSupabaseConfig } from "./supabaseClient";
+import { aiCredentials } from "./aiCredentials";
 
 const { clientMock, singleMock, ilikeMock, limitMock, selectMock } = vi.hoisted(() => {
   const singleMock = vi.fn();
@@ -399,29 +400,49 @@ describe("checkUsername", () => {
 });
 
 describe("askAiHelp", () => {
-  it("invokes the ai-help Edge Function with the question", async () => {
-    clientMock.functions.invoke.mockResolvedValue({
-      data: { text: "Tap + Report.", source: "fallback" },
-      error: null,
-    });
-
+  it("answers without a key from built-in FAQ without calling any AI provider", async () => {
+    aiCredentials.clearSession();
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
     const res = await askAiHelp("how do I report a lost item?");
-
-    expect(clientMock.functions.invoke).toHaveBeenCalledWith("ai-help", {
-      body: { question: "how do I report a lost item?" },
-    });
-    expect(res).toEqual({ text: "Tap + Report.", source: "fallback" });
-  });
-
-  it("maps a function error to ApiError", async () => {
-    clientMock.functions.invoke.mockResolvedValue({ data: null, error: { message: "edge down" } });
-
-    await expect(askAiHelp("hi")).rejects.toThrow("edge down");
-  });
-
-  it("does not call the Node API", async () => {
-    clientMock.functions.invoke.mockResolvedValue({ data: { text: "ok", source: "llm" }, error: null });
-    await askAiHelp("hello");
+    expect(res.source).toBe("fallback");
+    expect(res.text.toLowerCase()).toContain("report");
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(clientMock.functions.invoke).not.toHaveBeenCalled();
+  });
+
+  it("uses the user's key and exactly openrouter/free; labels generated answers", async () => {
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
+    await aiCredentials.connect("u1", "example-user-key", { remember: false });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "Tap Report." } }] }), { status: 200 }));
+    const res = await askAiHelp("where do I report?");
+    expect(res).toEqual({ text: "Tap Report.", source: "llm" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(JSON.parse(init.body as string).model).toBe("openrouter/free");
+    expect(clientMock.functions.invoke).not.toHaveBeenCalled();
+    aiCredentials.clearSession();
+  });
+
+  it("falls back to a built-in answer after free allowance exhaustion", async () => {
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
+    await aiCredentials.connect("u1", "example-user-key", { remember: false });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: { code: 429, message: "daily limit reached" } }), { status: 429 }));
+    const res = await askAiHelp("how do I search?");
+    expect(res.source).toBe("fallback");
+    expect(res.text.toLowerCase()).toContain("search");
+    aiCredentials.clearSession();
+  });
+
+  it("falls back honestly on a 402 payment/policy block without any paid retry", async () => {
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
+    await aiCredentials.connect("u1", "example-user-key", { remember: false });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: { code: 402, message: "Payment required" } }), { status: 402 }));
+    const res = await askAiHelp("how do I search?");
+    expect(res.source).toBe("fallback");
+    expect(res.text).toContain("never uses paid models");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string).model).toBe("openrouter/free");
+    expect(clientMock.functions.invoke).not.toHaveBeenCalled();
+    aiCredentials.clearSession();
   });
 });

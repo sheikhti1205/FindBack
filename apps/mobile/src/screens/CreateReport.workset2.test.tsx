@@ -44,15 +44,9 @@ vi.mock("../components/LocationPicker", async (importOriginal) => {
   };
 });
 
-// Settle image-analysis readiness in microtasks so no async form update can
-// commit between arming the handoff trigger and the title change below.
-vi.mock("../services/models/imageAnalysisReadiness", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../services/models/imageAnalysisReadiness")>();
-  return {
-    ...actual,
-    readImageAnalysisReadiness: async () => ({ available: false, reason: "NO_MODEL" as const }),
-  };
-});
+// Native image-analysis readiness module was removed with the local-generative
+// prune; CreateReport now gates cloud suggestions on consent + connection, so no
+// readiness mock is needed here.
 
 import { CreateReport } from "./CreateReport";
 import { clearDraft, saveDraft } from "../services/reportDraft";

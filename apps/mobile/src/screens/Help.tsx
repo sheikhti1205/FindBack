@@ -32,7 +32,9 @@ const ACTION_ROUTES: Record<string, string> = {
   OPEN_SEARCH: "/search",
   OPEN_REPORT: "/report",
   OPEN_PROFILE: "/profile",
-  OPEN_OFFLINE_AI: "/offline-ai",
+  OPEN_AI_CONNECTION: "/ai-connection",
+  // Legacy id from before the OpenRouter pivot; the offline route now redirects.
+  OPEN_OFFLINE_AI: "/ai-connection",
   OPEN_VERIFY: "/verify",
 };
 
@@ -208,7 +210,7 @@ export function Help() {
         <div className="flex-1">
           <h1 className="text-base font-semibold leading-tight">Help &amp; FAQ</h1>
           <p className="text-xs text-on-surface-variant">
-            App-specific answers · answered by our server
+            AI answers use your OpenRouter key when connected · built-in answers otherwise
           </p>
         </div>
         <button
@@ -234,7 +236,7 @@ export function Help() {
               >
                 {m.role === "assistant" && (
                   <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-on-surface-variant">
-                    {m.source === "llm" ? "Cloud AI" : "Built-in answer"}
+                    {m.source === "llm" ? "Generated via OpenRouter free model" : "Built-in answer"}
                   </p>
                 )}
                 {m.role === "assistant" ? (
@@ -313,9 +315,10 @@ export function Help() {
       )}
 
       <p className="px-4 pb-1 text-[11px] text-on-surface-variant">
-        Your question is answered by FindBack&apos;s server and needs an internet connection;
-        photos are never attached automatically. Without a configured AI provider you get a
-        built-in answer — still via the server, not offline.
+        With your own OpenRouter key connected (Profile → AI Connection), answers are generated with
+        free models and need an internet connection; your question text is sent to OpenRouter and
+        answers may vary. Photos are never attached automatically. Without a connected key — or when
+        AI is unavailable — you get a built-in answer instead.
       </p>
 
       <form onSubmit={onSubmit} className="flex items-center gap-2 border-t border-outline-variant p-3">

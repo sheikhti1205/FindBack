@@ -18,7 +18,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 describe("Help product naming", () => {
-  it("uses Help & FAQ naming and preserves server behavior copy", () => {
+  it("uses Help & FAQ naming and honest OpenRouter/built-in copy", () => {
     render(
       <MemoryRouter>
         <Help />
@@ -28,6 +28,9 @@ describe("Help product naming", () => {
     expect(screen.getByLabelText("Ask the Help & FAQ")).toBeTruthy();
     expect(screen.getByText(/I am the FindBack Help & FAQ/)).toBeTruthy();
     expect(screen.queryByText(/Help Assistant/)).toBeNull();
-    expect(screen.getByText(/answered by FindBack's server/)).toBeTruthy();
+    expect(screen.getByText(/your OpenRouter key when connected/)).toBeTruthy();
+    expect(screen.getByText(/built-in answer instead/)).toBeTruthy();
+    expect(screen.queryByText(/answered by (our|FindBack's) server/)).toBeNull();
+    expect(screen.queryByText(/offline/i)).toBeNull();
   });
 });
