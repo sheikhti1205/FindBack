@@ -504,3 +504,37 @@ export function sendMonitoringTestSignal(): boolean {
   })();
   return true;
 }
+
+/**
+ * Checks whether the monitoring self-test UI should be enabled.
+ * Only returns true when VITE_MONITORING_SELFTEST is exactly "true".
+ */
+export function monitoringSelfTestEnabled(
+  env?: { VITE_MONITORING_SELFTEST?: string },
+): boolean {
+  return env?.VITE_MONITORING_SELFTEST === "true";
+}
+
+/**
+ * Async variant of the monitoring test signal that returns the Sentry event ID.
+ * Resolves to the event ID string when `captureMessage` returns one, or `null`
+ * when monitoring is uninitialized (no DSN) or the SDK throws.
+ * Reuses `buildMonitoringTestSignalEvent()` and `cachedDsn`.
+ */
+export async function sendMonitoringTestSignalAsync(): Promise<
+  string | null
+> {
+  if (!cachedDsn) return null;
+  const signal = buildMonitoringTestSignalEvent();
+  try {
+    const Sentry = await import("@sentry/capacitor");
+    const eventId = await Sentry.captureMessage(signal.message, {
+      level: signal.level,
+      tags: signal.tags,
+      extra: signal.extra,
+    });
+    return eventId ?? null;
+  } catch {
+    return null;
+  }
+}

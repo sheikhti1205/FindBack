@@ -3,6 +3,7 @@ import { useState } from "react";
 import { CheckCircle2, LogOut, ShieldQuestion, FileStack, KeyRound, Info } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
+import { MonitoringSelfTest } from "../components/MonitoringSelfTest";
 import { Segmented } from "../components/Segmented";
 import { useTheme, type Theme } from "../theme";
 
@@ -91,6 +92,8 @@ export function Profile() {
           ]}
         />
       </section>
+
+      <MonitoringSelfTest />
 
       <Button
         variant="outline"

@@ -74,6 +74,7 @@ jobs:
           VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
           VITE_SENTRY_ENVIRONMENT: ci
           VITE_SENTRY_TRACES_SAMPLE_RATE: "0.1"
+          VITE_MONITORING_SELFTEST: "true"
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
       - name: Assert Sentry DSN embedded in bundle

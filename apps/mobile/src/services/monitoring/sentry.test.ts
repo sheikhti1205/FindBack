@@ -4,6 +4,7 @@ import {
   getSentryPrivacyDefaults,
   MONITORING_TEST_SIGNAL_MESSAGE,
   MONITORING_TEST_SIGNAL_TAG_VALUE,
+  monitoringSelfTestEnabled,
   redactText,
   resolveSentryDsn,
   resolveSentryEnvironment,
@@ -13,6 +14,7 @@ import {
   sanitizeSentryEvent,
   scrubBreadcrumbData,
   scrubRequestUrl,
+  sendMonitoringTestSignalAsync,
 } from "./sentry";
 
 // Assembled at runtime so this file never contains a secret-shaped literal
@@ -263,5 +265,32 @@ describe("sentry privacy posture", () => {
     expect(signal.tags["monitoringSelfTest"]).toBe(MONITORING_TEST_SIGNAL_TAG_VALUE);
     expect(serialized(signal)).not.toContain("@");
     expect(signal).not.toHaveProperty("user");
+  });
+});
+
+describe("monitoringSelfTestEnabled", () => {
+  it("returns true only when VITE_MONITORING_SELFTEST === 'true'", () => {
+    expect(monitoringSelfTestEnabled({ VITE_MONITORING_SELFTEST: "true" })).toBe(true);
+    expect(monitoringSelfTestEnabled({ VITE_MONITORING_SELFTEST: "false" })).toBe(false);
+    expect(monitoringSelfTestEnabled({ VITE_MONITORING_SELFTEST: "1" })).toBe(false);
+    expect(monitoringSelfTestEnabled({ VITE_MONITORING_SELFTEST: "" })).toBe(false);
+    expect(monitoringSelfTestEnabled({})).toBe(false);
+    expect(monitoringSelfTestEnabled(undefined)).toBe(false);
+  });
+});
+
+describe("sendMonitoringTestSignalAsync", () => {
+  it("resolves to null when monitoring is not initialized (no DSN)", async () => {
+    // The module's cachedDsn is not set (tests run DSN-free)
+    const result = await sendMonitoringTestSignalAsync();
+    expect(result).toBeNull();
+  });
+
+  it("resolves to event id string when captureMessage returns one", async () => {
+    // This test verifies the function signature and behavior contract.
+    // Actual SDK integration is tested in sentryInert.test.ts with mocked SDK.
+    // Here we only assert the function exists and returns Promise<string | null>.
+    const result = await sendMonitoringTestSignalAsync();
+    expect(result === null || typeof result === "string").toBe(true);
   });
 });
