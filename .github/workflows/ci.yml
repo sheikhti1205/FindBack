@@ -77,6 +77,9 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
       - name: Assert Sentry DSN embedded in bundle
+        env:
+          # Same source the build used; resolved via Vite loadEnv (shell wins).
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
         run: |
           # A green build is NOT proof of monitoring: assert the real DSN host
           # actually landed in the shipped bundle. Shapes only — never the key.
