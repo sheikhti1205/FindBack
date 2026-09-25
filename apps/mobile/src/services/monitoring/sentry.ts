@@ -21,18 +21,36 @@ const WITHHELD = "[withheld-privacy]";
 // literal of its own.
 const OR_KEY_HEAD = ["sk", "or"].join("-") + "-";
 const SUPA_SECRET_HEAD = ["sb", "secret"].join("_") + "_";
+const SUPA_PUBLISHABLE_HEAD = ["sb", "publishable"].join("_") + "_";
+const GOOGLE_API_KEY_HEAD = "AIza";
+const GITHUB_PAT_HEAD = "ghp_";
+const GITHUB_OAUTH_HEAD = "gho_";
 
 const SECRET_PATTERNS: RegExp[] = [
   new RegExp(`${OR_KEY_HEAD}[A-Za-z0-9_.-]{8,}`, "g"),
   new RegExp(`${SUPA_SECRET_HEAD}[A-Za-z0-9_-]{8,}`, "g"),
+  new RegExp(`${SUPA_PUBLISHABLE_HEAD}[A-Za-z0-9_-]{8,}`, "g"),
+  new RegExp(`${GOOGLE_API_KEY_HEAD}[A-Za-z0-9_-]{20,}`, "g"),
+  new RegExp(`${GITHUB_PAT_HEAD}[A-Za-z0-9]{20,}`, "g"),
+  new RegExp(`${GITHUB_OAUTH_HEAD}[A-Za-z0-9]{20,}`, "g"),
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/g,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
   /data:image\/[a-zA-Z+]+;base64,[A-Za-z0-9+/=]+/g,
   /blob:\S+/g,
+  // postgres://user:pass@host/db — redact the password segment
+  /postgres:\/\/[^:]+:[^@]+@/g,
+  // Email addresses
+  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+  // E.164-ish phone numbers (+ followed by 10-15 digits, optional spaces/dashes)
+  /\+\d[\d\s-]{8,14}\d/g,
+  // High-entropy hex tokens (32+ hex chars)
+  /\b[0-9a-f]{32,}\b/g,
+  // High-entropy base64-ish tokens (43+ chars, alphanumeric + _ -)
+  /\b[A-Za-z0-9_-]{43,}\b/g,
 ];
 
 const WITHHELD_KEY =
-  /(photo|image|picture|audio|video|camera|location|latitude|longitude|\blat\b|\blng\b|\blon\b|coord|transcript|chat|conversation|history|credential|passphrase|password|secret|token|api[_-]?key|auth|prompt|response|completion|report|description|content|body|address|phone|email)/i;
+  /(photo|image|picture|audio|video|camera|location|latitude|longitude|\blat\b|\blng\b|\blon\b|coord|latlng|position|coordinates?|transcript|chat|conversation|history|credential|passphrase|password|secret|token|api[_-]?key|auth|prompt|response|completion|report|description|content|body|address|phone|email|userName|owner|deviceId|sessionId|ip)/i;
 
 /** Fixed label for the synthetic monitoring self-test signal (device proof). */
 export const MONITORING_TEST_SIGNAL_MESSAGE =
@@ -170,12 +188,22 @@ function deepCloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-const UNSAFE_SUBSTRINGS: string[] = [OR_KEY_HEAD, SUPA_SECRET_HEAD];
+const UNSAFE_SUBSTRINGS: string[] = [OR_KEY_HEAD, SUPA_SECRET_HEAD, SUPA_PUBLISHABLE_HEAD, GOOGLE_API_KEY_HEAD, GITHUB_PAT_HEAD, GITHUB_OAUTH_HEAD];
 const UNSAFE_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
   /data:image\/[a-zA-Z+]+;base64,/,
   /blob:\S+/,
+  // Broader than SECRET_PATTERNS: catch email that might survive redaction
+  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+  // Broader: catch query/fragment in URL-like fields (any ? or # in a value that looks like a URL)
+  /https?:\/\/[^?#\s]*[?#]/,
+  // Broader: catch high-entropy hex tokens (32+ chars)
+  /\b[0-9a-f]{32,}\b/,
+  // Broader: catch high-entropy base64-ish tokens (43+ chars)
+  /\b[A-Za-z0-9_-]{43,}\b/,
+  // Broader: catch credential-in-URL pattern (://user:pass@)
+  /:\/\/[^:]+:[^@]+@/,
 ];
 
 /**
@@ -268,13 +296,62 @@ export function sanitizeSentryEvent(
           if (typeof item["type"] === "string") {
             item["type"] = redactText(item["type"]);
           }
+          // M4: scrub exception[].module (code_file can carry query strings)
+          const module = item["module"];
+          if (isRecord(module)) {
+            for (const [key, value] of Object.entries(module)) {
+              if (typeof value === "string") {
+                // Strip query/fragment from code_file and similar path fields
+                if (key === "code_file" || key === "filename" || key === "abs_path") {
+                  module[key] = redactText(stripQueryAndFragment(value));
+                } else {
+                  module[key] = redactText(value);
+                }
+              }
+            }
+          }
         }
       }
       eachStackFrame(exception["values"], scrubStackFrame);
     }
     const threads = clean["threads"];
     if (isRecord(threads)) {
+      const threadValues = threads["values"];
+      if (Array.isArray(threadValues)) {
+        for (const thread of threadValues) {
+          if (!isRecord(thread)) continue;
+          if (typeof thread["name"] === "string") {
+            thread["name"] = redactText(thread["name"]);
+          }
+        }
+      }
       eachStackFrame(threads["values"], scrubStackFrame);
+    }
+    // M3: Handle transaction events — spans carry url.full, http.query, http.fragment
+    const spans = clean["spans"];
+    if (Array.isArray(spans)) {
+      for (const span of spans) {
+        if (!isRecord(span)) continue;
+        if (typeof span["description"] === "string") {
+          span["description"] = redactText(stripQueryAndFragment(span["description"]));
+        }
+        const data = span["data"];
+        if (isRecord(data)) {
+          for (const [key, value] of Object.entries(data)) {
+            if (typeof value === "string") {
+              // http.query and http.fragment are already just the query/fragment parts — redact entirely
+              // url.full is a full URL — strip query/fragment then redact
+              if (key === "http.query" || key === "http.fragment") {
+                data[key] = REDACTED;
+              } else if (key === "url.full") {
+                data[key] = redactText(stripQueryAndFragment(value));
+              } else {
+                data[key] = redactText(value);
+              }
+            }
+          }
+        }
+      }
     }
     const request = clean["request"];
     if (isRecord(request)) {
@@ -344,8 +421,14 @@ export function sanitizeSentryBreadcrumb(
     }
     if (isRecord(clean["data"])) {
       const data = scrubBreadcrumbData(clean["data"]);
-      if (typeof data["url"] === "string") {
-        data["url"] = scrubRequestUrl(data["url"] as string);
+      // B1: SDK navigation breadcrumbs use data.from / data.to with full URL (query + fragment)
+      // Also defensively strip query/fragment from ANY string value in breadcrumb data
+      // since query strings are never needed for crash triage.
+      for (const [key, value] of Object.entries(data)) {
+        if (typeof value === "string") {
+          // First redact secrets, then strip query/fragment
+          data[key] = stripQueryAndFragment(redactText(value));
+        }
       }
       clean["data"] = data;
     }
@@ -443,6 +526,11 @@ export function initMonitoring(): void {
           ...getSentryPrivacyDefaults(),
           beforeSend(event) {
             // Fail closed: unsafe input DISCARDS the event (null), never raw.
+            return sanitizeSentryEvent(event) as unknown as typeof event | null;
+          },
+          beforeSendTransaction(event) {
+            // M3: Transactions bypass beforeSend entirely; sanitize them too.
+            // Spans carry url.full, http.query, http.fragment — same leak class as B1.
             return sanitizeSentryEvent(event) as unknown as typeof event | null;
           },
           beforeBreadcrumb(crumb) {

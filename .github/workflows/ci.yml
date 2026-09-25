@@ -63,6 +63,27 @@ jobs:
           # any build when the DSN is missing, malformed or a placeholder, so a
           # green CI run can never ship an unmonitored APK.
           VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+      # M6: the CI debug APK must carry the SAME symbolicatable release identity the
+      # signed release uploads sourcemaps for. Without this the SDK falls back to a
+      # native-derived release (nativeRelease.id@version+build) that Sentry can never
+      # symbolicate, and CI-APK crashes land in that bucket silently. The run body
+      # below is BYTE-IDENTICAL to release.yml "Compute Sentry release identity" —
+      # do not edit one without the other, or the two paths drift.
+      - name: Compute Sentry release identity (S3 — keep byte-identical to release.yml)
+        run: |
+          VERSION=$(node -p "require('./apps/mobile/package.json').version")
+          SHA=$(git rev-parse --short=12 HEAD)
+          SENTRY_RELEASE="findback-mobile@${VERSION}+${SHA}"
+          # GITHUB_ENV applies to LATER steps only; export for the shape check
+          # in THIS shell, then publish for the build + upload steps below.
+          export SENTRY_RELEASE
+          echo "SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          # VITE_* values in GITHUB_ENV are embedded by the Vite build below, so
+          # the SDK `release` (via resolveSentryRelease, see
+          # apps/mobile/src/services/monitoring/release.ts) is derived from the
+          # exact same string passed to the sourcemap upload.
+          echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
       - name: Build mobile web dist (Capacitor webDir)
         run: npm run build -w @findback/mobile
         env:
@@ -87,6 +108,11 @@ jobs:
           HOST=$(node -e "import('./scripts/check-sentry-config.mjs').then(m=>{const r=m.checkEffectiveSentryDsn({mode:'production'});if(!r.ok){console.error('DSN '+r.reason);process.exit(1)}process.stdout.write(r.host)})")
           JS=$(ls apps/mobile/dist/assets/index-*.js | head -1)
           grep -q "$HOST" "$JS" || { echo "Sentry DSN host missing from built bundle"; exit 1; }
+          # M6: also assert the computed release identity reached the bundle, so a
+          # CI debug APK can never silently fall back to the native-derived release
+          # that Sentry cannot symbolicate. Mirrors release.yml's assertion.
+          [ -n "${SENTRY_RELEASE:-}" ] || { echo "SENTRY_RELEASE was not computed — the Compute step above must run first"; exit 1; }
+          grep -q "$SENTRY_RELEASE" "$JS" || { echo "Sentry release identity missing from built bundle"; exit 1; }
           echo "bundle carries Sentry DSN for host $HOST"
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
@@ -96,6 +122,25 @@ jobs:
         run: cd apps/mobile/android && ./gradlew :app:printVersionInfo
       - name: Strict APK scan (DEX/assets secrets, forbidden weights, JNI, 16 KiB)
         run: npm run scan:apk -- --strict
+      # L5: without this the owner cannot install the verification artifact at all.
+      # The monitoring self-test button is compiled into this APK (see
+      # VITE_MONITORING_SELFTEST above), so the one synthetic event the Sentry proof
+      # needs can only be sent from a build that is actually downloadable.
+      - name: Record debug APK checksum
+        run: |
+          # Printed BEFORE upload so the checksum exists even if upload-artifact fails.
+          # Hashes only — no key material, no DSN.
+          sha256sum apps/mobile/android/app/build/outputs/apk/debug/*.apk
+      - name: Upload debug APK (device monitoring proof)
+        uses: actions/upload-artifact@v4
+        with:
+          name: findback-debug-apk-${{ github.sha }}
+          path: apps/mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          # Modest: this is a verification artifact, not a release. Long enough for
+          # the owner to install it on a physical device, short enough that stale
+          # debug APKs do not accumulate in the artifact store.
+          retention-days: 14
 
   docker:
     name: Docker build & health check

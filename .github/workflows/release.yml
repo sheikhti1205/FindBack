@@ -179,7 +179,11 @@ jobs:
           # Any upload failure fails this job visibly: a release MUST NOT ship
           # with an SDK release that Sentry cannot symbolicate.
           echo "uploading $MAPS sourcemap(s) for release ${SENTRY_RELEASE} (org/project from job env)"
-          npx -y @sentry/cli@3 sourcemaps upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" --release "$SENTRY_RELEASE" apps/mobile/dist
+          # M5: EXACT pin, not a floating major. A `project:releases` token is in this
+          # step's environment, so the code npx fetches must not be able to change
+          # between two runs of the same commit. Verified to exist via
+          # `npm view @sentry/cli@3.8.0 version` (2026-09-26). Bump deliberately.
+          npx -y @sentry/cli@3.8.0 sourcemaps upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" --release "$SENTRY_RELEASE" apps/mobile/dist
       - name: Strip sourcemaps from distributed assets (S3)
         run: |
           find apps/mobile/dist -name '*.map' -delete
