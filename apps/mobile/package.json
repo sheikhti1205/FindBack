@@ -21,6 +21,8 @@
     "@capacitor/camera": "^8.2.4",
     "@capacitor/core": "^8.5.1",
     "@findback/shared": "*",
+    "@sentry/capacitor": "^4.4.0",
+    "@sentry/react": "^10.69.0",
     "@supabase/supabase-js": "2.116.0",
     "@tiptap/core": "^3.31.3",
     "@tiptap/react": "^3.31.3",

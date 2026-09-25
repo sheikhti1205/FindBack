@@ -25,6 +25,12 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       host: true,
     },
+    build: {
+      // Sourcemaps make Sentry stack traces readable. Upload them from CI
+      // with SENTRY_AUTH_TOKEN (a CI secret — never a VITE_* variable);
+      // the maps ship alongside the bundle until upload is wired.
+      sourcemap: true,
+    },
     define: {
       __SUPABASE_URL__: JSON.stringify(url),
       __SUPABASE_PUBLISHABLE_KEY__: JSON.stringify(publishableKey),
