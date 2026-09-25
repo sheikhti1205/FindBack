@@ -14,7 +14,7 @@ describe("RichTextEditor workset2 mobile layout", () => {
     const order = Array.from(root.children).map((el) => {
       if (el.tagName === "SPAN" && el.textContent === "Description") return "label";
       if (el.querySelector(".tiptap")) return "editor";
-      if (el.getAttribute("role") === "toolbar") return "toolbar";
+      if (el.querySelector('[role="toolbar"]') ?? el.getAttribute("role") === "toolbar") return "toolbar";
       if (el.getAttribute("role") === "status") return "count";
       return el.tagName;
     });

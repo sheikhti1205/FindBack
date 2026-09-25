@@ -107,8 +107,11 @@ body {
 
 .fb-markdown p { margin: 0 0 0.5rem; }
 .fb-markdown p:last-child { margin-bottom: 0; }
-.fb-markdown ul, .fb-markdown ol { margin: 0 0 0.5rem 1.25rem; padding: 0; }
+.fb-markdown ul, .fb-markdown ol { margin: 0 0 0.5rem; padding: 0; padding-inline-start: 1.5rem; }
+.fb-markdown ul { list-style-type: disc; }
+.fb-markdown ol { list-style-type: decimal; }
 .fb-markdown li { margin: 0.125rem 0; }
+.fb-markdown li::marker { color: var(--fb-on-surface-variant); }
 .fb-markdown blockquote { margin: 0 0 0.5rem; padding-left: 0.75rem; border-left: 3px solid var(--fb-outline-variant); color: var(--fb-on-surface-variant); }
 .fb-markdown code { font-family: ui-monospace, monospace; font-size: 0.85em; background: var(--fb-surface-container); padding: 0.1rem 0.3rem; border-radius: 4px; }
 .fb-markdown pre { margin: 0 0 0.5rem; padding: 0.5rem; background: var(--fb-surface-container); border-radius: 8px; }
@@ -116,4 +119,43 @@ body {
 .fb-markdown table { width: 100%; border-collapse: collapse; margin: 0 0 0.5rem; font-size: 0.85rem; }
 .fb-markdown th, .fb-markdown td { border: 1px solid var(--fb-outline-variant); padding: 0.35rem 0.5rem; text-align: left; }
 .fb-markdown a { text-decoration: underline; word-break: break-all; }
-.fb-markdown h3, .fb-markdown h4 { margin: 0.75rem 0 0.35rem; font-weight: 600; line-height: 1.3; }
+.fb-markdown a { color: #0b57d0; text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
+.dark .fb-markdown a { color: #a8c7fa; }
+.fb-markdown h2, .fb-markdown h3, .fb-markdown h4, .fb-markdown h5, .fb-markdown h6 { line-height: 1.3; }
+.fb-markdown h2.fb-h1 { margin: 0.85rem 0 0.4rem; font-size: 1.25rem; font-weight: 700; }
+.fb-markdown h3.fb-h2 { margin: 0.75rem 0 0.35rem; font-size: 1.1rem; font-weight: 600; }
+.fb-markdown h4.fb-h3 { margin: 0.65rem 0 0.3rem; font-size: 1rem; font-weight: 600; }
+.fb-markdown h5.fb-h4 { margin: 0.6rem 0 0.3rem; font-size: 0.95rem; font-weight: 600; }
+.fb-markdown h6.fb-h5 { margin: 0.55rem 0 0.25rem; font-size: 0.9rem; font-weight: 600; }
+.fb-markdown h6.fb-h6 { margin: 0.5rem 0 0.25rem; font-size: 0.85rem; font-weight: 600; }
+/* Fallback when a raw h-tag arrives without a class (e.g. older snapshots). */
+.fb-markdown h2:not([class]) { margin: 0.85rem 0 0.4rem; font-size: 1.25rem; font-weight: 700; }
+.fb-markdown h3:not([class]) { margin: 0.75rem 0 0.35rem; font-size: 1.1rem; font-weight: 600; }
+.fb-markdown h4:not([class]) { margin: 0.65rem 0 0.3rem; font-size: 1rem; font-weight: 600; }
+.fb-markdown h5:not([class]) { margin: 0.6rem 0 0.3rem; font-size: 0.95rem; font-weight: 600; }
+.fb-markdown h6:not([class]) { margin: 0.5rem 0 0.25rem; font-size: 0.85rem; font-weight: 600; }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .fb-markdown a { color: #a8c7fa; }
+}
+
+/* ED-01: scoped editor (`.tiptap`) typography so block formatting is visibly
+ * distinct while editing. Tailwind Preflight strips default h1-h3 sizes and
+ * list markers, so restore them here — scoped to `.tiptap` only. */
+.tiptap p { margin: 0 0 0.5rem; }
+.tiptap p:last-child { margin-bottom: 0; }
+.tiptap h1 { margin: 0.85rem 0 0.4rem; font-size: 1.5rem; line-height: 1.25; font-weight: 700; }
+.tiptap h2 { margin: 0.75rem 0 0.35rem; font-size: 1.25rem; line-height: 1.3; font-weight: 600; }
+.tiptap h3 { margin: 0.65rem 0 0.3rem; font-size: 1.1rem; line-height: 1.35; font-weight: 600; }
+.tiptap ul, .tiptap ol { margin: 0 0 0.5rem; padding: 0; padding-inline-start: 1.5rem; }
+.tiptap ul { list-style-type: disc; }
+.tiptap ol { list-style-type: decimal; }
+.tiptap li { margin: 0.125rem 0; }
+.tiptap li::marker { color: var(--fb-on-surface-variant); }
+.tiptap blockquote { margin: 0 0 0.5rem; padding: 0.25rem 0 0.25rem 0.75rem; border-left: 3px solid var(--fb-outline-variant); background: var(--fb-surface-container-low); color: var(--fb-on-surface-variant); border-radius: 0 8px 8px 0; }
+.tiptap a { color: #0b57d0; text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 2px; word-break: break-all; }
+.dark .tiptap a { color: #a8c7fa; }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .tiptap a { color: #a8c7fa; }
+}
+.tiptap ::selection { background: var(--fb-surface-container-high); }
+.tiptap:focus-visible { outline: 2px solid var(--fb-on-surface); outline-offset: 2px; }

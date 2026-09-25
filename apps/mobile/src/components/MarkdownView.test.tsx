@@ -41,12 +41,19 @@ describe("MarkdownView", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
-  it("remaps h1/h2 down the hierarchy", () => {
-    const { container } = render(<MarkdownView text={"# Title\n\n## Sub"} />);
+  it("shifts h1/h2/h3 down one level with three distinct styles", () => {
+    const { container } = render(<MarkdownView text={"# Title\n\n## Sub\n\n### Detail"} />);
     expect(container.querySelector("h1")).toBeNull();
-    expect(container.querySelector("h2")).toBeNull();
-    expect(container.querySelector("h3")).toBeTruthy();
-    expect(container.querySelector("h4")).toBeTruthy();
+    expect(container.querySelector("h2")?.textContent).toBe("Title");
+    expect(container.querySelector("h3")?.textContent).toBe("Sub");
+    expect(container.querySelector("h4")?.textContent).toBe("Detail");
+  });
+
+  it("demotes deeper h4–h6 headings instead of competing with the page", () => {
+    const { container } = render(<MarkdownView text={"#### Deep\n\n##### Deeper"} />);
+    expect(container.querySelector("h4")).toBeNull();
+    expect(container.querySelector("h5")?.textContent).toBe("Deep");
+    expect(container.querySelector("h6")?.textContent).toBe("Deeper");
   });
 
   it("wraps tables and code for horizontal scroll", () => {

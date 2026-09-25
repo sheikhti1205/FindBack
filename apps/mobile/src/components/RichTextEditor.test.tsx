@@ -122,20 +122,28 @@ describe("richTextEditor converters", () => {
 describe("RichTextEditor", () => {
   it("renders the v1 toolbar, placeholder text, and character count", () => {
     render(<RichTextEditor label="Description" value="" onChange={() => {}} placeholder="Describe the item" />);
-    for (const name of [
-      "Paragraph",
-      "Heading",
-      "Bullet list",
-      "Numbered list",
-      "Quote",
-      "Bold",
-      "Italic",
-      "Link",
-      "Undo",
-      "Redo",
-      "Clear formatting",
-    ]) {
+    // Front row: Body ▾ | Bold | Italic | List ▾ | Link | More ⋯ (ED-02/ED-06).
+    for (const name of ["Bold", "Italic", "Link"]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
+    }
+    expect(screen.getByRole("button", { name: /Block type/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "List" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "More" })).toBeTruthy();
+    // Block menu options.
+    fireEvent.click(screen.getByRole("button", { name: /Block type/i }));
+    for (const name of ["Body", "Heading 1", "Heading 2", "Heading 3"]) {
+      expect(screen.getByRole("menuitemradio", { name })).toBeTruthy();
+    }
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Body" }));
+    // List menu options.
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(screen.getByRole("menu", { name: "List" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Bullets" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Numbers" })).toBeTruthy();
+    // More menu options.
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    for (const name of ["Quote", "Clear all formatting", "Undo", "Redo"]) {
+      expect(screen.getByRole("menuitem", { name })).toBeTruthy();
     }
     expect(screen.getByText("Describe the item")).toBeTruthy();
     expect(screen.getByText("Description")).toBeTruthy();
@@ -223,9 +231,11 @@ describe("RichTextEditor", () => {
       ref.current?.commands.insertContent("hello");
     });
     expect(ref.current?.getText()).toContain("hello");
-    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Undo" }));
     expect(ref.current?.getText()).not.toContain("hello");
-    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Redo" }));
     expect(ref.current?.getText()).toContain("hello");
   });
 
@@ -236,7 +246,8 @@ describe("RichTextEditor", () => {
       ref.current?.commands.setContent(markdownToTiptap("**bold** and *italic*"));
       ref.current?.commands.selectAll();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Clear formatting" }));
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Clear all formatting" }));
     expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("bold and italic");
   });
 
@@ -246,7 +257,8 @@ describe("RichTextEditor", () => {
     act(() => {
       ref.current?.commands.insertContent("item");
     });
-    fireEvent.click(screen.getByRole("button", { name: "Numbered list" }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Numbers" }));
     expect(ref.current?.isActive("orderedList")).toBe(true);
     expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("1. item");
   });

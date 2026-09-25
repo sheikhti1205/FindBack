@@ -6,10 +6,11 @@ import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
-import { Bold, Heading2, Italic, Link2, List, ListOrdered, Pilcrow, Quote, Redo2, RemoveFormatting, Undo2 } from "lucide-react";
+import { Bold, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2 } from "lucide-react";
 import {
   fromMarkdown,
   isSafeRichTextHref,
+  measureDescription,
   toMarkdown,
   type InlineNode,
   type RichTextDocument,
@@ -25,13 +26,15 @@ interface LinkSelection {
   href: string;
 }
 
-function LinkSheet({ selection, onCancel, onSave }: {
+function LinkSheet({ selection, onCancel, onSave, onRemove }: {
   selection: LinkSelection;
   onCancel: () => void;
   onSave: (url: string) => string | null;
+  onRemove: () => void;
 }) {
   const id = useId();
   const sheetRef = useRef<HTMLDivElement>(null);
+  const editing = selection.href !== "";
   const [url, setUrl] = useState(selection.href || "https://");
   const [message, setMessage] = useState<string | null>(null);
   useFocusTrap(sheetRef, onCancel);
@@ -40,7 +43,7 @@ function LinkSheet({ selection, onCancel, onSave }: {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4" role="presentation">
       <div ref={sheetRef} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} className="w-full max-w-md space-y-4 rounded-m3-lg bg-surface p-5 shadow-xl">
-        <h2 id={`${id}-title`} className="text-lg font-semibold">{selection.href ? "Edit link" : "Add link"}</h2>
+        <h2 id={`${id}-title`} className="text-lg font-semibold">{editing ? "Edit link" : "Add link"}</h2>
         <label className="block text-sm" htmlFor={`${id}-text`}>Selected text</label>
         <input id={`${id}-text`} value={selection.text} readOnly className="w-full rounded-m3-xs border border-outline-variant bg-surface-container p-3" />
         <form onSubmit={(event) => {
@@ -52,8 +55,22 @@ function LinkSheet({ selection, onCancel, onSave }: {
           <input id={`${id}-url`} type="url" value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={message != null} aria-describedby={message ? `${id}-error` : undefined} className="w-full rounded-m3-xs border border-outline-variant p-3" />
           {message && <p id={`${id}-error`} role="alert" className="text-sm text-error">{message}</p>}
           <div className="mt-4 flex justify-end gap-2">
+            {editing && isSafeRichTextHref(selection.href) && (
+              <a
+                href={selection.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`Open link ${selection.href} in a new tab`}
+                className="mr-auto inline-flex min-h-[48px] min-w-[48px] items-center px-3 underline"
+              >
+                Open link
+              </a>
+            )}
             <button type="button" onClick={onCancel} className="min-h-[48px] min-w-[48px] px-3">Cancel</button>
-            <button type="submit" className="min-h-[48px] min-w-[48px] rounded-m3-xs bg-on-surface px-3 text-surface">{selection.href ? "Save link" : "Add link"}</button>
+            {editing && (
+              <button type="button" onClick={onRemove} aria-label="Remove link" className="min-h-[48px] min-w-[48px] rounded-m3-xs border border-outline-variant px-3">Remove link</button>
+            )}
+            <button type="submit" className="min-h-[48px] min-w-[48px] rounded-m3-xs bg-on-surface px-3 text-surface">{editing ? "Save link" : "Add link"}</button>
           </div>
         </form>
       </div>
@@ -241,6 +258,86 @@ function inlineToRuns(content: PMNode[] | undefined): InlineNode[] {
   return merged.length > 0 ? merged : [{ type: "InlineText", text: "" }];
 }
 
+/**
+ * Flatten one Tiptap list node to v1 codec items without losing text (ED-09).
+ * Each listItem's direct paragraphs join with a single space; nested lists
+ * recurse into sibling blocks appended after the parent list. Blank items
+ * (no text, no nested content) are skipped. Never throws.
+ */
+function listNodeToItems(node: PMNode): { items: InlineNode[][]; nested: RichTextDocument["blocks"] } {
+  const items: InlineNode[][] = [];
+  const nested: RichTextDocument["blocks"] = [];
+  try {
+    for (const item of node.content ?? []) {
+      if (typeof item !== "object" || item === null || item.type !== "listItem") continue;
+      const paraChunks: PMNode[][] = [];
+      for (const child of item.content ?? []) {
+        if (typeof child !== "object" || child === null || typeof child.type !== "string") continue;
+        if (child.type === "paragraph") {
+          paraChunks.push(child.content ?? []);
+        } else if (child.type === "bulletList" || child.type === "orderedList") {
+          const inner = listNodeToItems(child);
+          if (inner.items.length > 0) {
+            nested.push(
+              child.type === "bulletList"
+                ? { type: "BulletList", items: inner.items }
+                : { type: "OrderedList", start: child.attrs?.start ?? 1, items: inner.items },
+            );
+          }
+          nested.push(...inner.nested);
+        } else if (nodeText(child) !== "") {
+          paraChunks.push([{ type: "text", text: nodeText(child) }]);
+        }
+      }
+      const combined: PMNode[] = [];
+      paraChunks.forEach((chunk, index) => {
+        if (index > 0) combined.push({ type: "text", text: " " });
+        combined.push(...chunk);
+      });
+      const runs = inlineToRuns(combined);
+      if (runs.some((run) => run.text !== "")) items.push(runs);
+    }
+  } catch {
+    // Fall through with whatever was collected; caller still emits text.
+  }
+  return { items, nested };
+}
+
+/**
+ * Reports whether the given Tiptap doc JSON simplifies list structure when
+ * saved through the flat v1 codec (ED-09): any list item with more than one
+ * non-empty paragraph, any nested list, or any other text-bearing non-
+ * paragraph child. Pure and never throws; used for the user-visible notice.
+ */
+export function tiptapListsWereSimplified(json: unknown): boolean {
+  try {
+    if (typeof json !== "object" || json === null || !Array.isArray((json as { content?: unknown }).content)) return false;
+    const nodes = (json as { content: PMNode[] }).content;
+    for (const node of nodes) {
+      if (typeof node !== "object" || node === null) continue;
+      if (node.type !== "bulletList" && node.type !== "orderedList") continue;
+      for (const item of node.content ?? []) {
+        if (typeof item !== "object" || item === null || item.type !== "listItem") continue;
+        let textParagraphs = 0;
+        for (const child of item.content ?? []) {
+          if (typeof child !== "object" || child === null || typeof child.type !== "string") continue;
+          if (child.type === "paragraph") {
+            if (nodeText(child) !== "") textParagraphs += 1;
+          } else if (child.type === "bulletList" || child.type === "orderedList") {
+            return true;
+          } else if (nodeText(child) !== "") {
+            return true;
+          }
+        }
+        if (textParagraphs > 1) return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /** Tiptap doc JSON -> Markdown via the richText codec. Never throws. */
 export function tiptapToMarkdown(json: unknown): string {
   try {
@@ -261,27 +358,19 @@ export function tiptapToMarkdown(json: unknown): string {
           }
           break;
         case "bulletList": {
-          const items = (node.content ?? [])
-            .filter((item) => item.type === "listItem")
-            .map((item) =>
-              inlineToRuns(
-                (item.content ?? []).filter((child) => child.type === "paragraph").flatMap((child) => child.content ?? []),
-              ),
-            )
-            .filter((runs) => runs.some((run) => run.text !== ""));
+          // ED-09: the v1 codec is flat (one inline-run array per item), so a
+          // list item with several paragraphs is joined with a space (never
+          // concatenated word-to-word) and nested lists become following
+          // sibling blocks. Text is always preserved; nesting flattens.
+          const { items, nested } = listNodeToItems(node);
           if (items.length > 0) blocks.push({ type: "BulletList", items });
+          blocks.push(...nested);
           break;
         }
         case "orderedList": {
-          const items = (node.content ?? [])
-            .filter((item) => item.type === "listItem")
-            .map((item) =>
-              inlineToRuns(
-                (item.content ?? []).filter((child) => child.type === "paragraph").flatMap((child) => child.content ?? []),
-              ),
-            )
-            .filter((runs) => runs.some((run) => run.text !== ""));
+          const { items, nested } = listNodeToItems(node);
           if (items.length > 0) blocks.push({ type: "OrderedList", start: node.attrs?.start ?? 1, items });
+          blocks.push(...nested);
           break;
         }
         case "blockquote": {
@@ -316,28 +405,69 @@ export function tiptapToMarkdown(json: unknown): string {
  * Bold/Italic/Link marks. Markdown is the interchange format. Edits report to
  * the parent immediately so no keystroke is lost on submit or unmount, while
  * external value changes (draft restore, reset) replace the editor content.
+ *
+ * Toolbar (ED-02/ED-06): `Body ▾ | B | I | List ▾ | Link | More ⋯`.
+ * Only controls with real choices (block type, list, link) open popups.
+ *
+ * Selection safety (ED-04): a toolbar `pointerdown` captures the pending range
+ * before Android/WebView focus loss collapses the DOM selection; the stashed
+ * range additionally guards with a doc-identity + text check, is cleared on
+ * intentional editor pointer/keyboard navigation, external content
+ * replacement, and after every operation. A collapsed caret with no pending
+ * range only toggles the stored mark for future typing — never stale text.
  */
 export function RichTextEditor({ label, value, onChange, placeholder, editorRef, error, required, maxLength, inputId }: RichTextEditorProps) {
   const [empty, setEmpty] = useState(true);
-  const [charCount, setCharCount] = useState(0);
+  const [counts, setCounts] = useState({ stored: 0, visible: 0 });
   const [, refreshSelection] = useState(0);
   const [linkSelection, setLinkSelection] = useState<LinkSelection | null>(null);
+  const [openMenu, setOpenMenu] = useState<null | "block" | "list" | "more">(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [listNotice, setListNotice] = useState(false);
   const baseId = useId();
   const errorId = `${baseId}-error`;
   const countId = `${baseId}-count`;
+  const statusId = `${baseId}-status`;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const valueRef = useRef(value);
   valueRef.current = value;
-  // Last non-collapsed selection, stashed on selection updates so toolbar
-  // actions (ordinary button onClick handlers) can restore it after focus
-  // moves from the editor/WebView to a bottom-toolbar button (e.g. Android
-  // long-press popup focus loss collapses the visible DOM selection).
-  // Native Android selection/clipboard behavior is untouched; this only
-  // remembers ProseMirror offsets to re-apply formatting to the right range.
-  const savedRangeRef = useRef<{ from: number; to: number } | null>(null);
+  interface RangedSelection { from: number; to: number; doc: Editor["state"]["doc"]; text: string; }
+  // Last non-collapsed selection + the pending toolbar-capture range.
+  // Native Android selection/clipboard behavior is untouched; these only
+  // remember ProseMirror offsets to re-apply formatting to the right range.
+  const savedRangeRef = useRef<RangedSelection | null>(null);
+  const pendingToolbarRangeRef = useRef<RangedSelection | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const blockButtonRef = useRef<HTMLButtonElement>(null);
+  const listButtonRef = useRef<HTMLButtonElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const lastMenuButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const initialContent = useMemo(() => markdownToTiptap(value), []);
+
+  function snapshotRange(from: number, to: number, doc: Editor["state"]["doc"]): RangedSelection | null {
+    try {
+      return { from, to, doc, text: doc.textBetween(from, to) };
+    } catch {
+      return null;
+    }
+  }
+
+  function refreshCounts(ed: Editor) {
+    try {
+      const measured = measureDescription(tiptapToMarkdown(ed.getJSON()));
+      setCounts({ stored: measured.storedLength, visible: measured.visibleLength });
+    } catch {
+      const text = ed.getText().length;
+      setCounts({ stored: text, visible: text });
+    }
+    try {
+      setListNotice(tiptapListsWereSimplified(ed.getJSON()));
+    } catch {
+      setListNotice(false);
+    }
+  }
 
   const editor = useEditor(
     {
@@ -362,18 +492,21 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
       },
       onCreate: ({ editor: created }) => {
         setEmpty(created.isEmpty);
-        setCharCount(created.getText().length);
+        refreshCounts(created);
         if (editorRef) editorRef.current = created;
       },
       onUpdate: ({ editor: updated }) => {
         setEmpty(updated.isEmpty);
-        setCharCount(updated.getText().length);
+        refreshCounts(updated);
         const markdown = tiptapToMarkdown(updated.getJSON());
         if (markdown !== valueRef.current) onChangeRef.current(markdown);
       },
       onSelectionUpdate: ({ editor: updated }) => {
-        const { from, to, empty } = updated.state.selection;
-        if (!empty) savedRangeRef.current = { from, to };
+        const { from, to, empty: isEmpty } = updated.state.selection;
+        if (!isEmpty) {
+          const snapshot = snapshotRange(from, to, updated.state.doc);
+          if (snapshot) savedRangeRef.current = snapshot;
+        }
         refreshSelection((revision) => revision + 1);
       },
     },
@@ -385,9 +518,11 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     if (editorRef) editorRef.current = editor;
     if (tiptapToMarkdown(editor.getJSON()) !== value) {
       editor.commands.setContent(markdownToTiptap(value));
+      savedRangeRef.current = null;
+      pendingToolbarRangeRef.current = null;
     }
     setEmpty(editor.isEmpty);
-    setCharCount(editor.getText().length);
+    refreshCounts(editor);
   }, [editor, value]);
 
   useEffect(() => {
@@ -402,23 +537,145 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     else dom.removeAttribute("id");
   }, [editor, error, required, inputId, errorId, countId]);
 
-  function validSavedRange(): { from: number; to: number } | null {
-    if (!editor) return null;
-    const saved = savedRangeRef.current;
-    if (!saved) return null;
+  // Close menus on outside tap or Escape, restoring focus to the menu button.
+  useEffect(() => {
+    if (!openMenu) return;
+    function onDocPointerDown(event: PointerEvent) {
+      if (toolbarRef.current && !toolbarRef.current.contains(event.target as Node)) setOpenMenu(null);
+    }
+    function onDocKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenMenu(null);
+        lastMenuButtonRef.current?.focus();
+      }
+    }
+    document.addEventListener("pointerdown", onDocPointerDown);
+    document.addEventListener("keydown", onDocKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown);
+      document.removeEventListener("keydown", onDocKeyDown);
+    };
+  }, [openMenu]);
+
+  // Move focus into the open menu (checked item first) so keyboard and
+  // screen-reader users land on the current choice, not behind the button.
+  useEffect(() => {
+    if (!openMenu || !toolbarRef.current) return;
+    const menu = toolbarRef.current.querySelector('[role="menu"]');
+    const target =
+      menu?.querySelector('button[aria-checked="true"]:not([disabled])') ??
+      menu?.querySelector("button:not([disabled])");
+    (target as HTMLElement | null)?.focus();
+  }, [openMenu]);
+
+  /** Roving ArrowUp/Down (wrapping, skipping disabled), Home/End, Tab-close. */
+  function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const panel = event.currentTarget;
+    const items = Array.from(panel.querySelectorAll("button:not([disabled])")) as HTMLButtonElement[];
+    if (items.length === 0) return;
+    const active = document.activeElement as HTMLElement | null;
+    const index = active ? items.indexOf(active as HTMLButtonElement) : -1;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      items[(index + 1 + items.length) % items.length]?.focus();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      items[(index - 1 + items.length) % items.length]?.focus();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      items[0]?.focus();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      items[items.length - 1]?.focus();
+    } else if (event.key === "Tab") {
+      setOpenMenu(null);
+    }
+    // Escape is handled by the document listener (close + focus restore).
+  }
+
+  function rangeSnapshotValid(snapshot: RangedSelection | null): { from: number; to: number } | null {
+    if (!editor || !snapshot) return null;
+    // Doc-version guard: any intervening edit/replacement invalidates positions.
+    if (editor.state.doc !== snapshot.doc) return null;
     const max = editor.state.doc.content.size;
-    if (saved.from < 0 || saved.to > max || saved.from >= saved.to) return null;
-    return saved;
+    if (snapshot.from < 0 || snapshot.to > max || snapshot.from >= snapshot.to) return null;
+    try {
+      if (editor.state.doc.textBetween(snapshot.from, snapshot.to) !== snapshot.text) return null;
+    } catch {
+      return null;
+    }
+    return { from: snapshot.from, to: snapshot.to };
+  }
+
+  function validSavedRange(): { from: number; to: number } | null {
+    const valid = rangeSnapshotValid(savedRangeRef.current);
+    if (!valid) savedRangeRef.current = null;
+    return valid;
+  }
+
+  /** Capture the pending toolbar range BEFORE focus loss collapses the DOM
+   * selection (pointer/mouse/touch capture on the toolbar root). Never clears
+   * an already-captured pending range on failure. */
+  function captureToolbarRange() {
+    if (!editor) return;
+    const { from, to, empty: isEmpty } = editor.state.selection;
+    if (!isEmpty) {
+      const snapshot = snapshotRange(from, to, editor.state.doc);
+      if (snapshot) {
+        savedRangeRef.current = snapshot;
+        pendingToolbarRangeRef.current = snapshot;
+      }
+      return;
+    }
+    const saved = rangeSnapshotValid(savedRangeRef.current);
+    if (saved && savedRangeRef.current) {
+      pendingToolbarRangeRef.current = { ...savedRangeRef.current };
+    }
+  }
+
+  function takePendingRange(): { from: number; to: number } | null {
+    const pending = rangeSnapshotValid(pendingToolbarRangeRef.current);
+    pendingToolbarRangeRef.current = null;
+    return pending;
   }
 
   function resolveFormatRange(): { from: number; to: number } | null {
     if (!editor) return null;
-    const { from, to, empty } = editor.state.selection;
-    if (!empty) {
-      savedRangeRef.current = { from, to };
+    const pending = takePendingRange();
+    if (pending) return pending;
+    const { from, to, empty: isEmpty } = editor.state.selection;
+    if (!isEmpty) {
+      const snapshot = snapshotRange(from, to, editor.state.doc);
+      if (snapshot) savedRangeRef.current = snapshot;
       return { from, to };
     }
     return validSavedRange();
+  }
+
+  /** Intentional editor pointer/keyboard navigation invalidates the stash. */
+  function handleEditorIntentionalInteraction() {
+    savedRangeRef.current = null;
+    pendingToolbarRangeRef.current = null;
+  }
+
+  function finishOperation(message: string) {
+    savedRangeRef.current = null;
+    pendingToolbarRangeRef.current = null;
+    setStatus(message);
+  }
+
+  /** Restore a stashed/captured range so block commands hit the right block. */
+  function focusRangeOrCurrent(range: { from: number; to: number } | null) {
+    if (!editor) return;
+    if (range && editor.state.selection.empty) {
+      try {
+        editor.chain().focus().setTextSelection(range).run();
+        return;
+      } catch {
+        // Fall through to plain focus.
+      }
+    }
+    editor.commands.focus();
   }
 
   function toggleMarkWithSavedSelection(mark: "bold" | "italic") {
@@ -427,21 +684,95 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     if (range && editor.state.selection.empty) {
       if (mark === "bold") editor.chain().focus().setTextSelection(range).toggleBold().run();
       else editor.chain().focus().setTextSelection(range).toggleItalic().run();
-      return;
-    }
-    if (mark === "bold") editor.chain().focus().toggleBold().run();
+    } else if (mark === "bold") editor.chain().focus().toggleBold().run();
     else editor.chain().focus().toggleItalic().run();
+    finishOperation(mark === "bold" ? "Bold applied" : "Italic applied");
+  }
+
+  function applyBlock(kind: "body" | 1 | 2 | 3) {
+    if (!editor) return;
+    const range = resolveFormatRange();
+    focusRangeOrCurrent(range);
+    // setHeading (not toggle): re-choosing the current level keeps it (ED-02).
+    if (kind === "body") editor.chain().focus().setParagraph().run();
+    else editor.chain().focus().setHeading({ level: kind }).run();
+    setOpenMenu(null);
+    finishOperation(kind === "body" ? "Body style applied" : `Heading ${kind} applied`);
+  }
+
+  function applyList(kind: "bullet" | "ordered" | "remove") {
+    if (!editor) return;
+    const range = resolveFormatRange();
+    focusRangeOrCurrent(range);
+    if (kind === "bullet") editor.chain().focus().toggleBulletList().run();
+    else if (kind === "ordered") editor.chain().focus().toggleOrderedList().run();
+    else if (editor.isActive("bulletList")) editor.chain().focus().toggleBulletList().run();
+    else if (editor.isActive("orderedList")) editor.chain().focus().toggleOrderedList().run();
+    setOpenMenu(null);
+    finishOperation(kind === "remove" ? "List removed" : kind === "bullet" ? "Bullet list applied" : "Numbered list applied");
+  }
+
+  function applyQuote() {
+    if (!editor) return;
+    const range = resolveFormatRange();
+    focusRangeOrCurrent(range);
+    editor.chain().focus().toggleBlockquote().run();
+    setOpenMenu(null);
+    finishOperation("Quote applied");
+  }
+
+  function applyClearAll() {
+    if (!editor) return;
+    // Clear-all targets the selection when present, else the current block.
+    editor.chain().focus().clearNodes().unsetAllMarks().run();
+    setOpenMenu(null);
+    finishOperation("All formatting cleared");
+  }
+
+  function applyUndo() {
+    if (!editor) return;
+    editor.chain().focus().undo().run();
+    setOpenMenu(null);
+    finishOperation("Undone");
+  }
+
+  function applyRedo() {
+    if (!editor) return;
+    editor.chain().focus().redo().run();
+    setOpenMenu(null);
+    finishOperation("Redone");
   }
 
   function applyLink() {
     if (!editor) return;
     const { empty: collapsed } = editor.state.selection;
+    // Caret inside an existing link opens the edit dialog (ED-07) —
+    // never an instant destructive unset.
     if (collapsed && editor.isActive("link")) {
-      editor.chain().focus().unsetLink().run();
+      try {
+        editor.chain().focus().extendMarkRange("link").run();
+      } catch {
+        return;
+      }
+      const { from, to, empty: stillCollapsed } = editor.state.selection;
+      if (stillCollapsed) return;
+      let text: string;
+      try {
+        text = editor.state.doc.textBetween(from, to);
+      } catch {
+        return;
+      }
+      setLinkSelection({
+        from, to, text, doc: editor.state.doc,
+        href: (editor.getAttributes("link")["href"] as string | undefined) ?? "",
+      });
       return;
     }
     const range = resolveFormatRange();
-    if (!range) return;
+    if (!range) {
+      setStatus("Select text to add a link");
+      return;
+    }
     let text: string;
     try {
       text = editor.state.doc.textBetween(range.from, range.to);
@@ -458,13 +789,38 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     if (!editor || !linkSelection) return "Selection is no longer available.";
     if (!isSafeRichTextHref(href) || /\s/.test(href) || Array.from(href).some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return "Enter a safe HTTP(S) URL.";
     const { from, to, doc, text } = linkSelection;
-    if (editor.state.doc !== doc || editor.state.doc.textBetween(from, to) !== text) {
+    if (editor.state.doc !== doc) {
+      return "The selected text changed. Cancel and select it again.";
+    }
+    try {
+      if (editor.state.doc.textBetween(from, to) !== text) {
+        return "The selected text changed. Cancel and select it again.";
+      }
+    } catch {
       return "The selected text changed. Cancel and select it again.";
     }
     editor.chain().focus().setTextSelection({ from, to }).setLink({ href }).run();
     setLinkSelection(null);
+    finishOperation("Link saved");
     queueMicrotask(() => editor.commands.focus());
     return null;
+  }
+
+  function removeLink() {
+    if (!editor || !linkSelection) return;
+    const { from, to, doc, text } = linkSelection;
+    if (editor.state.doc === doc) {
+      try {
+        if (editor.state.doc.textBetween(from, to) === text) {
+          editor.chain().focus().setTextSelection({ from, to }).unsetLink().run();
+        }
+      } catch {
+        // Keep display text untouched when the range is stale.
+      }
+    }
+    setLinkSelection(null);
+    finishOperation("Link removed");
+    queueMicrotask(() => editor.commands.focus());
   }
 
   const canUndo = editor?.can().chain().focus().undo().run() ?? false;
@@ -476,24 +832,57 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     ? editor.state.selection.empty && !editor.isActive("link") && !validSavedRange()
     : true;
 
-  const tools = [
-    { label: "Paragraph", icon: Pilcrow, active: editor?.isActive("paragraph") ?? false, disabled: false, run: () => editor?.chain().focus().setParagraph().run() },
-    { label: "Heading", icon: Heading2, active: editor?.isActive("heading", { level: 2 }) ?? false, disabled: false, run: () => editor?.chain().focus().toggleHeading({ level: 2 }).run() },
-    { label: "Bold", icon: Bold, active: editor?.isActive("bold") ?? false, disabled: false, run: () => toggleMarkWithSavedSelection("bold") },
-    { label: "Italic", icon: Italic, active: editor?.isActive("italic") ?? false, disabled: false, run: () => toggleMarkWithSavedSelection("italic") },
-    { label: "Bullet list", icon: List, active: editor?.isActive("bulletList") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBulletList().run() },
-    { label: "Numbered list", icon: ListOrdered, active: editor?.isActive("orderedList") ?? false, disabled: false, run: () => editor?.chain().focus().toggleOrderedList().run() },
-    { label: "Quote", icon: Quote, active: editor?.isActive("blockquote") ?? false, disabled: false, run: () => editor?.chain().focus().toggleBlockquote().run() },
-    { label: "Link", icon: Link2, active: editor?.isActive("link") ?? false, disabled: linkDisabled, run: applyLink },
-    { label: "Clear formatting", icon: RemoveFormatting, active: false, disabled: false, run: () => editor?.chain().focus().clearNodes().unsetAllMarks().run() },
-    { label: "Undo", icon: Undo2, active: false, disabled: !canUndo, run: () => editor?.chain().focus().undo().run() },
-    { label: "Redo", icon: Redo2, active: false, disabled: !canRedo, run: () => editor?.chain().focus().redo().run() },
+  const currentBlock: "Body" | "Heading 1" | "Heading 2" | "Heading 3" =
+    editor?.isActive("heading", { level: 1 }) ? "Heading 1"
+    : editor?.isActive("heading", { level: 2 }) ? "Heading 2"
+    : editor?.isActive("heading", { level: 3 }) ? "Heading 3"
+    : "Body";
+  const bulletActive = editor?.isActive("bulletList") ?? false;
+  const orderedActive = editor?.isActive("orderedList") ?? false;
+  const quoteActive = editor?.isActive("blockquote") ?? false;
+  const boldActive = editor?.isActive("bold") ?? false;
+  const italicActive = editor?.isActive("italic") ?? false;
+  const linkActive = editor?.isActive("link") ?? false;
+
+  const toolButtonCls = (active: boolean) =>
+    `flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center gap-1 rounded-m3-xs px-2 text-on-surface-variant hover:bg-surface-container ${
+      active ? "bg-surface-container-high text-on-surface outline outline-1 outline-outline" : ""
+    }`;
+  const menuPanelCls =
+    "absolute left-0 top-full z-10 mt-1 max-h-[min(20rem,40vh)] w-64 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-m3-sm border border-outline-variant bg-surface p-1 shadow-xl";
+  const menuItemCls =
+    "flex min-h-[48px] w-full items-center gap-2 rounded-m3-xs px-3 text-left text-on-surface hover:bg-surface-container";
+
+  function toggleMenu(kind: "block" | "list" | "more", button: RefObject<HTMLButtonElement | null>) {
+    if (openMenu === kind) {
+      setOpenMenu(null);
+    } else {
+      lastMenuButtonRef.current = button.current;
+      setOpenMenu(kind);
+    }
+  }
+
+  const blockOptions: Array<{ name: "Body" | "Heading 1" | "Heading 2" | "Heading 3"; kind: "body" | 1 | 2 | 3; preview: { fontSize: string; fontWeight: number } }> = [
+    { name: "Body", kind: "body", preview: { fontSize: "1rem", fontWeight: 400 } },
+    { name: "Heading 1", kind: 1, preview: { fontSize: "1.5rem", fontWeight: 700 } },
+    { name: "Heading 2", kind: 2, preview: { fontSize: "1.25rem", fontWeight: 600 } },
+    { name: "Heading 3", kind: 3, preview: { fontSize: "1.1rem", fontWeight: 600 } },
   ];
+
+  const countText =
+    maxLength !== undefined
+      ? `${counts.stored} / ${maxLength} ${counts.stored === 1 ? "character" : "characters"}${counts.stored !== counts.visible ? ` (${counts.visible} visible)` : ""}`
+      : `${counts.stored} ${counts.stored === 1 ? "character" : "characters"}${counts.stored !== counts.visible ? ` (${counts.visible} visible)` : ""}`;
 
   return (
     <div className="flex flex-col gap-2">
       <span className="text-sm font-medium text-on-surface">{label}</span>
-      <div className="relative">
+      <div
+        className="relative"
+        onPointerDown={handleEditorIntentionalInteraction}
+        onTouchStart={handleEditorIntentionalInteraction}
+        onKeyDown={handleEditorIntentionalInteraction}
+      >
         <EditorContent editor={editor} />
         {(!editor || empty) && placeholder ? (
           <div aria-hidden className="pointer-events-none absolute inset-0 px-3.5 py-3 text-base text-on-surface-variant">
@@ -501,35 +890,221 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           </div>
         ) : null}
       </div>
-      <div role="toolbar" aria-label={`${label} formatting`} className="flex flex-nowrap gap-1 overflow-x-auto pb-1">
-        {tools.map(({ label: toolLabel, icon: Icon, active, disabled, run }) => (
+      <div ref={toolbarRef} className="relative">
+        <div
+          role="toolbar"
+          aria-label={`${label} formatting`}
+          className="flex flex-nowrap gap-1 overflow-x-auto pb-1"
+          onPointerDownCapture={captureToolbarRange}
+          onMouseDownCapture={captureToolbarRange}
+          onTouchStartCapture={captureToolbarRange}
+        >
           <button
-            key={toolLabel}
+            ref={blockButtonRef}
             type="button"
-            title={toolLabel}
-            aria-label={toolLabel}
-            aria-pressed={active}
-            disabled={!editor || disabled}
-            onClick={run}
-            className={`flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-m3-xs text-on-surface-variant hover:bg-surface-container ${
-              active ? "bg-surface-container-high text-on-surface" : ""
-            }`}
+            title={`Block type: ${currentBlock}`}
+            aria-label={`Block type: ${currentBlock}`}
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "block"}
+            disabled={!editor}
+            onClick={() => toggleMenu("block", blockButtonRef)}
+            className={toolButtonCls(currentBlock !== "Body")}
           >
-            <Icon size={17} aria-hidden />
+            <span aria-hidden>{currentBlock} ▾</span>
           </button>
-        ))}
+          <button
+            type="button"
+            title="Bold"
+            aria-label="Bold"
+            aria-pressed={boldActive}
+            disabled={!editor}
+            onClick={() => toggleMarkWithSavedSelection("bold")}
+            className={toolButtonCls(boldActive)}
+          >
+            <Bold size={17} aria-hidden />
+          </button>
+          <button
+            type="button"
+            title="Italic"
+            aria-label="Italic"
+            aria-pressed={italicActive}
+            disabled={!editor}
+            onClick={() => toggleMarkWithSavedSelection("italic")}
+            className={toolButtonCls(italicActive)}
+          >
+            <Italic size={17} aria-hidden />
+          </button>
+          <button
+            ref={listButtonRef}
+            type="button"
+            title="List"
+            aria-label="List"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "list"}
+            disabled={!editor}
+            onClick={() => toggleMenu("list", listButtonRef)}
+            className={toolButtonCls(bulletActive || orderedActive)}
+          >
+            <List size={17} aria-hidden />
+            <span aria-hidden className="text-xs">▾</span>
+          </button>
+          <button
+            type="button"
+            title={linkDisabled ? "Select text to add a link" : "Link"}
+            aria-label="Link"
+            aria-pressed={linkActive}
+            disabled={!editor || linkDisabled}
+            onClick={applyLink}
+            className={toolButtonCls(linkActive)}
+          >
+            <Link2 size={17} aria-hidden />
+          </button>
+          <button
+            ref={moreButtonRef}
+            type="button"
+            title="More"
+            aria-label="More"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "more"}
+            disabled={!editor}
+            onClick={() => toggleMenu("more", moreButtonRef)}
+            className={toolButtonCls(false)}
+          >
+            <span aria-hidden>⋯</span>
+            <span className="sr-only">More formatting options</span>
+          </button>
+        </div>
+        {openMenu === "block" && (
+          <div role="menu" aria-label="Block type" className={menuPanelCls} onKeyDown={handleMenuKeyDown}>
+            {blockOptions.map((option) => {
+              const checked = currentBlock === option.name;
+              return (
+                <button
+                  key={option.name}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={checked}
+                  aria-label={option.name}
+                  onClick={() => applyBlock(option.kind)}
+                  className={menuItemCls}
+                >
+                  <span aria-hidden className="w-5 shrink-0">{checked ? "✓" : ""}</span>
+                  <span style={option.preview}>{option.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {openMenu === "list" && (
+          <div role="menu" aria-label="List" className={menuPanelCls} onKeyDown={handleMenuKeyDown}>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={bulletActive}
+              aria-label="Bullets"
+              onClick={() => applyList("bullet")}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0">{bulletActive ? "✓" : ""}</span>
+              <List size={17} aria-hidden />
+              <span>Bullets</span>
+            </button>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={orderedActive}
+              aria-label="Numbers"
+              onClick={() => applyList("ordered")}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0">{orderedActive ? "✓" : ""}</span>
+              <ListOrdered size={17} aria-hidden />
+              <span>Numbers</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Remove list"
+              onClick={() => applyList("remove")}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <span>Remove list</span>
+            </button>
+          </div>
+        )}
+        {openMenu === "more" && (
+          <div role="menu" aria-label="More formatting options" className={menuPanelCls} onKeyDown={handleMenuKeyDown}>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Quote"
+              aria-pressed={quoteActive}
+              onClick={applyQuote}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0">{quoteActive ? "✓" : ""}</span>
+              <Quote size={17} aria-hidden />
+              <span>Quote</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Clear all formatting"
+              title="Removes block styles (heading, list, quote) and inline styles (bold, italic, link)"
+              onClick={applyClearAll}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <RemoveFormatting size={17} aria-hidden />
+              <span>Clear all formatting</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Undo"
+              disabled={!canUndo}
+              onClick={applyUndo}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <Undo2 size={17} aria-hidden />
+              <span>Undo</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Redo"
+              disabled={!canRedo}
+              onClick={applyRedo}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <Redo2 size={17} aria-hidden />
+              <span>Redo</span>
+            </button>
+          </div>
+        )}
       </div>
-      {linkSelection && <LinkSheet selection={linkSelection} onCancel={() => setLinkSelection(null)} onSave={saveLink} />}
+      {linkSelection && <LinkSheet selection={linkSelection} onCancel={() => setLinkSelection(null)} onSave={saveLink} onRemove={removeLink} />}
+      {listNotice ? (
+        <p role="status" aria-label="List simplification notice" className="text-xs text-on-surface-variant">
+          Nested or multi-part list items are saved as a simple flat list.
+        </p>
+      ) : null}
       {error ? (
         <p id={errorId} className="text-xs text-error" role="alert">
           {error}
         </p>
       ) : null}
       <span id={countId} role="status" aria-label="Character count" className="text-xs text-on-surface-variant">
-        {maxLength !== undefined
-          ? `${charCount} / ${maxLength} ${charCount === 1 ? "character" : "characters"}`
-          : `${charCount} ${charCount === 1 ? "character" : "characters"}`}
+        {countText}
       </span>
+      {status ? (
+        <span id={statusId} role="status" aria-label="Formatting status" className="text-xs text-on-surface-variant">
+          {status}
+        </span>
+      ) : null}
     </div>
   );
 }

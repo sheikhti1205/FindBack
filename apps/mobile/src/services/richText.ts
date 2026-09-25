@@ -425,6 +425,56 @@ function parseBracketLink(s: string, open: number): { node: InlineNode; text: st
   return { node: { type: "Link", href: dest, text }, text, next };
 }
 
+/** Plain visible text for a stored Markdown description. Never throws. */
+export function descriptionVisibleText(markdown: string): string {
+  try {
+    if (typeof markdown !== "string" || markdown.trim() === "") return "";
+    const doc = fromMarkdown(markdown);
+    const parts: string[] = [];
+    for (const block of doc.blocks) {
+      switch (block.type) {
+        case "Paragraph":
+        case "Heading":
+        case "Quote":
+          parts.push(block.runs.map((run) => run.text).join(""));
+          break;
+        case "BulletList":
+        case "OrderedList":
+          parts.push(block.items.map((item) => item.map((run) => run.text).join("")).join("\n"));
+          break;
+      }
+    }
+    return parts.join("\n\n");
+  } catch {
+    return typeof markdown === "string" ? markdown : "";
+  }
+}
+
+export interface DescriptionMeasure {
+  /** Trimmed stored Markdown (the validated/submitted value). */
+  trimmed: string;
+  /** Truthful billable length: trimmed stored Markdown characters. */
+  storedLength: number;
+  /** Human-readable length: trimmed visible characters without syntax. */
+  visibleLength: number;
+}
+
+/**
+ * Single source of truth for the 3000-character description contract (ED-05).
+ * Storage Markdown is the business rule (`DESCRIPTION_MAX`); visible length is
+ * shown as a hint so `**`, `##`, list prefixes, `>` and link destinations
+ * never surprise the user at publish time. Never throws.
+ */
+export function measureDescription(markdown: string): DescriptionMeasure {
+  try {
+    const trimmed = typeof markdown === "string" ? markdown.trim() : "";
+    const visible = descriptionVisibleText(trimmed).trim();
+    return { trimmed, storedLength: trimmed.length, visibleLength: visible.length };
+  } catch {
+    const trimmed = typeof markdown === "string" ? markdown.trim() : "";
+    return { trimmed, storedLength: trimmed.length, visibleLength: trimmed.length };
+  }
+}
 /** Parse GFM-ish Markdown into a document. Unknown constructs become paragraphs. Never throws. */
 export function fromMarkdown(md: unknown): RichTextDocument {
   try {
