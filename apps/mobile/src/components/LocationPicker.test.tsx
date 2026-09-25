@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { LocationPicker, type LocationValue } from "./LocationPicker";
 
@@ -64,6 +64,75 @@ vi.mock("./MapPickerSheet", () => ({
 }));
 
 afterEach(cleanup);
+// The geolocation API must never leak between tests: an installed stub is an
+// own navigator property and is removed again here.
+afterEach(() => {
+  delete (navigator as unknown as Record<string, unknown>).geolocation;
+});
+
+/** Captures the callbacks the component hands to navigator.geolocation. */
+interface GeoStub {
+  getCurrentPosition: ReturnType<typeof vi.fn>;
+  pending: Array<{
+    success: (position: {
+      coords: { latitude: number; longitude: number; accuracy?: number };
+    }) => void;
+    failure: (error: { code?: number }) => void;
+    options?: PositionOptions;
+  }>;
+  grant: (coords?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  }) => void;
+  reject: (code?: number) => void;
+}
+
+/**
+ * Installs a navigator.geolocation stub that never answers on its own, so a
+ * test decides exactly when a fix arrives or fails. Nothing is requested until
+ * the component is explicitly asked for it.
+ */
+function installGeolocation(): GeoStub {
+  const pending: GeoStub["pending"] = [];
+  const getCurrentPosition = vi.fn(
+    (
+      success: GeoStub["pending"][number]["success"],
+      failure: GeoStub["pending"][number]["failure"],
+      options?: PositionOptions,
+    ) => {
+      pending.push({ success, failure, options });
+    },
+  );
+  Object.defineProperty(navigator, "geolocation", {
+    configurable: true,
+    value: { getCurrentPosition },
+  });
+  return {
+    getCurrentPosition,
+    pending,
+    grant(coords = { latitude: 23.8103321, longitude: 90.4125189, accuracy: 42 }) {
+      const next = pending.shift();
+      if (!next) throw new Error("no location request in flight");
+      next.success({ coords });
+    },
+    reject(code = 1) {
+      const next = pending.shift();
+      if (!next) throw new Error("no location request in flight");
+      next.failure({ code });
+    },
+  };
+}
+
+const openSpy = vi.fn();
+
+beforeEach(() => {
+  openSpy.mockReset();
+  vi.stubGlobal("open", openSpy);
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function renderPicker(value: LocationValue) {
   const onChange = vi.fn();
@@ -227,5 +296,181 @@ describe("LocationPicker map wiring", () => {
     expect(findInMaps).toHaveProperty("disabled", false);
     fireEvent.click(findInMaps);
     expect(screen.queryByTestId("map-picker-stub")).toBeNull();
+  });
+});
+
+describe("LocationPicker one-time approximate location", () => {
+  function useMyLocation() {
+    return screen.getByRole("button", { name: /use my location once/i });
+  }
+
+  /**
+   * Parent that owns the value, the way CreateReport does: the readout can
+   * only show the imported pin if onChange actually feeds back.
+   */
+  function renderLive(initial: LocationValue) {
+    const onChange = vi.fn();
+    function Harness() {
+      const [value, setValue] = useState<LocationValue>(initial);
+      return (
+        <LocationPicker
+          value={value}
+          onChange={(next) => {
+            onChange(next);
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    return { onChange };
+  }
+
+  function locationInput(): HTMLInputElement {
+    return screen.getByPlaceholderText(/place, decimal coords/i) as HTMLInputElement;
+  }
+
+  it("never requests a location on mount, on re-render or when the map sheet opens", () => {
+    const geo = installGeolocation();
+    const { rerender } = renderPicker(emptyValue);
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+    rerender(<LocationPicker value={emptyValue} onChange={vi.fn()} />);
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /choose on map/i }));
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+  });
+
+  it("asks once per explicit tap, coarsely, and never re-prompts by itself after a denial", async () => {
+    const geo = installGeolocation();
+    const { onChange, rerender } = renderPicker(emptyValue);
+
+    fireEvent.click(useMyLocation());
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+    const options = geo.getCurrentPosition.mock.calls[0]?.[2];
+    expect(options?.enableHighAccuracy).toBe(false);
+    expect(options?.timeout).toBeGreaterThan(0);
+
+    // A double tap must not produce a second system prompt.
+    fireEvent.click(useMyLocation());
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+    // Neither must a re-render.
+    rerender(<LocationPicker value={emptyValue} onChange={vi.fn()} />);
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+
+    geo.reject(1);
+    expect(await screen.findByText(/permission is denied/i)).toBeTruthy();
+
+    // After a denial nothing may prompt again on its own: re-render, close the
+    // sheet and reopen it — the request count stays at one.
+    rerender(<LocationPicker value={emptyValue} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /choose on map/i }));
+    fireEvent.click(screen.getByRole("button", { name: "stub-close" }));
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("denied gets its own actionable state and attaches no coordinates", async () => {
+    const geo = installGeolocation();
+    const { onChange } = renderPicker(emptyValue);
+    fireEvent.click(useMyLocation());
+    geo.reject(1);
+
+    expect(await screen.findByText(/permission is denied/i)).toBeTruthy();
+    expect(screen.queryByText(/location services are off/i)).toBeNull();
+    expect(screen.queryByText(/within 8 seconds/i)).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(locationInput().value).toBe("");
+    expect(document.querySelector('iframe[title="Map"]')).toBeNull();
+  });
+
+  it("disabled location services get their own actionable state and attach no coordinates", async () => {
+    const geo = installGeolocation();
+    const { onChange } = renderPicker(emptyValue);
+    fireEvent.click(useMyLocation());
+    geo.reject(2);
+
+    expect(await screen.findByText(/location services are off/i)).toBeTruthy();
+    expect(screen.queryByText(/permission is denied/i)).toBeNull();
+    expect(screen.queryByText(/within 8 seconds/i)).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a timeout gets its own actionable state and attaches no coordinates", async () => {
+    const geo = installGeolocation();
+    const { onChange } = renderPicker(emptyValue);
+    fireEvent.click(useMyLocation());
+    geo.reject(3);
+
+    expect(await screen.findByText(/within 8 seconds/i)).toBeTruthy();
+    expect(screen.queryByText(/permission is denied/i)).toBeNull();
+    expect(screen.queryByText(/location services are off/i)).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a granted coarse fix is attached as an approximate ~100 m pin", async () => {
+    const geo = installGeolocation();
+    // Stateful harness: the readout renders from the parent-owned value, so the
+    // parent has to apply the emitted change for it to appear.
+    const { onChange } = renderLive(emptyValue);
+    fireEvent.click(useMyLocation());
+    geo.grant();
+
+    expect(await screen.findByText("23.810, 90.413")).toBeTruthy();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      label: "Pinned location",
+      latitude: 23.81,
+      longitude: 90.413,
+      precision: "APPROXIMATE",
+      preciseLatitude: 23.810332,
+      preciseLongitude: 90.412519,
+    });
+  });
+
+  it("a low-accuracy fix gets its own state and attaches nothing until confirmed", async () => {
+    const geo = installGeolocation();
+    const { onChange } = renderPicker(emptyValue);
+    fireEvent.click(useMyLocation());
+    geo.grant({ latitude: 23.8103321, longitude: 90.4125189, accuracy: 4200 });
+
+    const notice = await screen.findByTestId("low-accuracy-notice");
+    expect(notice.textContent).toMatch(/accurate to about ~4\.2 km/i);
+    expect(screen.getByRole("button", { name: /use this location anyway/i })).toBeTruthy();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(document.querySelector('iframe[title="Map"]')).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /use this location anyway/i }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ latitude: 23.81, longitude: 90.413, precision: "APPROXIMATE" }),
+    );
+  });
+});
+
+describe("LocationPicker in-app preview vs external map app", () => {
+  it("keeps the in-app preview closed until it is deliberately opened", () => {
+    renderPicker(approxValue);
+    expect(document.querySelector('iframe[title="Map"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /preview map in app/i }));
+    expect(document.querySelector('iframe[title="Map"]')).not.toBeNull();
+  });
+
+  it("the external handoff opens Maps without the in-app preview or the picker sheet", async () => {
+    const { onChange } = renderPicker(approxValue);
+    fireEvent.click(screen.getByRole("button", { name: /open in maps/i }));
+
+    await vi.waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
+    expect(String(openSpy.mock.calls[0]?.[0])).toContain("google.com/maps");
+    expect(document.querySelector('iframe[title="Map"]')).toBeNull();
+    expect(screen.queryByTestId("map-picker-stub")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("opening the in-app picker never hands off to the external map app", async () => {
+    renderPicker(approxValue);
+    fireEvent.click(screen.getByRole("button", { name: /choose on map/i }));
+    expect(screen.getByTestId("map-picker-stub")).toBeTruthy();
+    expect(document.querySelector('iframe[title="Map"]')).toBeNull();
+    await vi.waitFor(() => expect(openSpy).not.toHaveBeenCalled());
   });
 });

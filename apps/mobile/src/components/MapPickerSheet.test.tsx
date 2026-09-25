@@ -68,10 +68,61 @@ function moveEnd(index: number, lat: number, lng: number): void {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  delete (navigator as unknown as Record<string, unknown>).geolocation;
   behavior.throwOnConstruct = false;
   behavior.reportUnsupported = false;
   behavior.instances.length = 0;
 });
+
+/** Captures the callbacks the sheet hands to navigator.geolocation. */
+interface GeoStub {
+  getCurrentPosition: ReturnType<typeof vi.fn>;
+  pending: Array<{
+    success: (position: {
+      coords: { latitude: number; longitude: number; accuracy?: number };
+    }) => void;
+    failure: (error: { code?: number }) => void;
+    options?: PositionOptions;
+  }>;
+  grant: (coords?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  }) => void;
+  reject: (code?: number) => void;
+}
+
+/** Nothing is requested until the sheet is explicitly asked for it. */
+function installGeolocation(): GeoStub {
+  const pending: GeoStub["pending"] = [];
+  const getCurrentPosition = vi.fn(
+    (
+      success: GeoStub["pending"][number]["success"],
+      failure: GeoStub["pending"][number]["failure"],
+      options?: PositionOptions,
+    ) => {
+      pending.push({ success, failure, options });
+    },
+  );
+  Object.defineProperty(navigator, "geolocation", {
+    configurable: true,
+    value: { getCurrentPosition },
+  });
+  return {
+    getCurrentPosition,
+    pending,
+    grant(coords = { latitude: 23.8103321, longitude: 90.4125189, accuracy: 42 }) {
+      const next = pending.shift();
+      if (!next) throw new Error("no location request in flight");
+      next.success({ coords });
+    },
+    reject(code = 1) {
+      const next = pending.shift();
+      if (!next) throw new Error("no location request in flight");
+      next.failure({ code });
+    },
+  };
+}
 
 const pinned: LocationValue = {
   label: "Pinned location",
@@ -218,5 +269,105 @@ describe("MapPickerSheet", () => {
     expect(
       await screen.findByText(/exact pin and will be shown publicly/i),
     ).toBeTruthy();
+  });
+});
+
+describe("MapPickerSheet one-time approximate location", () => {
+  function useMyLocation() {
+    return screen.getByRole("button", { name: /use my location once/i });
+  }
+
+  function confirmButton(): HTMLElement {
+    return screen.getByRole("button", { name: "Confirm location" });
+  }
+
+  it("never prompts by itself — not on mount, not after the map is ready", async () => {
+    const geo = installGeolocation();
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
+    await screen.findByTestId("map-picker-map");
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+    // A re-render of the open sheet must not prompt either.
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+  });
+
+  it("asks once per explicit tap, coarsely, and never re-prompts after a denial", async () => {
+    const geo = installGeolocation();
+    const onConfirm = vi.fn();
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
+    await screen.findByTestId("map-picker-map");
+
+    fireEvent.click(useMyLocation());
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+    expect(geo.getCurrentPosition.mock.calls[0]?.[2]?.enableHighAccuracy).toBe(false);
+
+    fireEvent.click(useMyLocation());
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+
+    geo.reject(1);
+    expect(await screen.findByText(/permission is denied/i)).toBeTruthy();
+    expect(screen.queryByText(/location services are off/i)).toBeNull();
+    expect(screen.queryByText(/within 8 seconds/i)).toBeNull();
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    // Re-rendering after a denial must not prompt again.
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives services-off and timeout their own copy instead of one generic error", async () => {
+    const geo = installGeolocation();
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
+    await screen.findByTestId("map-picker-map");
+    fireEvent.click(useMyLocation());
+    geo.reject(2);
+    expect(await screen.findByText(/location services are off/i)).toBeTruthy();
+    expect(screen.queryByText(/permission is denied/i)).toBeNull();
+    cleanup();
+
+    const geo2 = installGeolocation();
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
+    await screen.findByTestId("map-picker-map");
+    fireEvent.click(useMyLocation());
+    geo2.reject(3);
+    expect(await screen.findByText(/within 8 seconds/i)).toBeTruthy();
+    expect(screen.queryByText(/permission is denied/i)).toBeNull();
+    expect(screen.queryByText(/location services are off/i)).toBeNull();
+  });
+
+  it("recentres the preview on a granted coarse fix without auto-confirming", async () => {
+    const geo = installGeolocation();
+    const onConfirm = vi.fn();
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
+    await screen.findByTestId("map-picker-map");
+    fireEvent.click(useMyLocation());
+    geo.grant({ latitude: 23.8103321, longitude: 90.4125189, accuracy: 42 });
+
+    expect(await screen.findByText("23.810, 90.413")).toBeTruthy();
+    expect(confirmButton()).toHaveProperty("disabled", false);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("does not snap to a low-accuracy fix until it is confirmed explicitly", async () => {
+    const geo = installGeolocation();
+    const onConfirm = vi.fn();
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
+    await screen.findByTestId("map-picker-map");
+    fireEvent.click(useMyLocation());
+    geo.grant({ latitude: 23.8103321, longitude: 90.4125189, accuracy: 4200 });
+
+    const notice = await screen.findByTestId("low-accuracy-notice");
+    expect(notice.textContent).toMatch(/accurate to about ~4\.2 km/i);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(screen.queryByText("23.810, 90.413")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /use this location anyway/i }));
+    expect(await screen.findByText("23.810, 90.413")).toBeTruthy();
+    expect(onConfirm).not.toHaveBeenCalled();
+    fireEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ precision: "APPROXIMATE", latitude: 23.81, longitude: 90.413 }),
+    );
   });
 });

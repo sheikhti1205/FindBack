@@ -7,6 +7,12 @@ import { Button } from "./Button";
 import { announce } from "./LiveRegion";
 import type { LocationValue } from "./LocationPicker";
 import {
+  formatAccuracy,
+  isLowAccuracy,
+  locationFailureMessage,
+  requestOneTimeLocation,
+} from "./locationPermission";
+import {
   resolveMapSource,
   type MapSourceOverride,
 } from "../services/location/mapSource";
@@ -96,6 +102,9 @@ export function MapPickerSheet({
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [gpsPreview, setGpsPreview] = useState<MapCenter | null>(null);
+  // A coarse fix too imprecise to snap to — held for an explicit opt-in.
+  const [pendingFix, setPendingFix] = useState<MapCenter | null>(null);
+  const [pendingAccuracy, setPendingAccuracy] = useState<number | null>(null);
 
   const [mapSource] = useState(() => resolveMapSource(mapSourceOverride));
   const [searchConfig] = useState(() => resolveNominatimConfig(nominatimOverride));
@@ -134,6 +143,8 @@ export function MapPickerSheet({
     setSearchError(null);
     setResults([]);
     setGeoError(null);
+    setPendingFix(null);
+    setPendingAccuracy(null);
     setGpsPreview(null);
 
     async function init(): Promise<void> {
@@ -235,31 +246,44 @@ export function MapPickerSheet({
     mapSource.styleUrl,
   ]);
 
+  /** Snaps the preview to a fix. Never confirms — the user still confirms. */
+  function snapPreviewTo(fix: MapCenter): void {
+    setGpsPreview(fix);
+    setPendingFix(null);
+    setPendingAccuracy(null);
+    setDraft(fix);
+    mapRef.current?.jumpTo({ center: [fix.lng, fix.lat], zoom: PIN_ZOOM });
+    announce("Preview recentered on your location. Confirm to use it.");
+  }
+
+  /**
+   * Explicit, one-shot, coarse request. Concurrent taps collapse into one
+   * platform prompt; a fix coarser than the ~100 m pin is held for opt-in.
+   */
   function useCurrentLocation(): void {
-    if (!("geolocation" in navigator)) {
-      setGeoError("Location is not supported in this browser — type a place instead.");
-      return;
-    }
     setLocating(true);
     setGeoError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const fix: MapCenter = {
-          lat: Number(pos.coords.latitude.toFixed(6)),
-          lng: Number(pos.coords.longitude.toFixed(6)),
-        };
-        setGpsPreview(fix);
-        setDraft(fix);
-        mapRef.current?.jumpTo({ center: [fix.lng, fix.lat], zoom: PIN_ZOOM });
-        announce("Preview recentered on your location. Confirm to use it.");
-        setLocating(false);
-      },
-      () => {
-        setGeoError("Could not get your location — type an approximate place instead.");
-        setLocating(false);
-      },
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
-    );
+    setPendingFix(null);
+    setPendingAccuracy(null);
+    void requestOneTimeLocation().then((outcome) => {
+      setLocating(false);
+      if (outcome.status !== "granted") {
+        setGeoError(locationFailureMessage(outcome.status));
+        return;
+      }
+      const fix: MapCenter = { lat: outcome.latitude, lng: outcome.longitude };
+      if (isLowAccuracy(outcome.accuracyMeters)) {
+        setPendingFix(fix);
+        setPendingAccuracy(outcome.accuracyMeters);
+        return;
+      }
+      snapPreviewTo(fix);
+    });
+  }
+
+  function acceptPendingFix(): void {
+    if (!pendingFix) return;
+    snapPreviewTo(pendingFix);
   }
 
   async function handleSearchSubmit(event: FormEvent): Promise<void> {
@@ -455,6 +479,21 @@ export function MapPickerSheet({
             </span>
           )}
         </div>
+        {pendingFix ? (
+          <div
+            data-testid="low-accuracy-notice"
+            className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-outline-variant bg-surface-container px-3 py-2"
+          >
+            <p className="text-xs text-on-surface-variant">
+              This location is only accurate to about{" "}
+              {pendingAccuracy != null ? formatAccuracy(pendingAccuracy) : "a few km"}.
+              Nothing was saved — confirm if you still want to use it.
+            </p>
+            <Button type="button" variant="outline" size="md" onClick={acceptPendingFix}>
+              Use this location anyway
+            </Button>
+          </div>
+        ) : null}
         {geoError ? <p className="text-xs text-error">{geoError}</p> : null}
         {gpsPreview ? (
           <p className="text-xs text-on-surface-variant">

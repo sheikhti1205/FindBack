@@ -8,7 +8,8 @@
  * NOT TESTED LIVE.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDeepSeekAdapter } from "./deepseek";
+import { readFile } from "node:fs/promises";
+import { DIRECT_KEY_POLICY, createDeepSeekAdapter, directKeyEntitlement } from "./deepseek";
 import type { NormalizedRequest, StreamEvent } from "../providerContract";
 
 const COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
@@ -829,6 +830,27 @@ describe("deepseek hygiene", () => {
     expect(dump).not.toContain("SECRET-PROMPT-CONTENT");
     expect(dump).not.toContain("SECRET-SUMMARY-CONTENT");
     expect(dump).not.toContain(TEST_KEY);
+  });
+});
+
+describe("deepseek direct-key policy (O1 documented-blocked)", () => {
+  it("records the direct client-side key policy as blocked with reason, source and date", () => {
+    expect(DIRECT_KEY_POLICY.status).toBe("blocked");
+    expect(DIRECT_KEY_POLICY.reason.trim().length).toBeGreaterThan(0);
+    expect(DIRECT_KEY_POLICY.sourceUrl.startsWith("https://")).toBe(true);
+    expect(DIRECT_KEY_POLICY.retrievedAt.trim().length).toBeGreaterThan(0);
+  });
+
+  it("reports the direct-key entitlement as blocked for callers/UI", () => {
+    expect(directKeyEntitlement()).toBe("blocked");
+  });
+
+  it("keeps the wire module free of proxy, embedded-key and base-URL-override routes", async () => {
+    const source = await readFile(new URL("./deepseek.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/proxyUrl|baseUrl/i);
+    expect(source).not.toMatch(/localhost|127\.0\.0\.1|0\.0\.0\.0/);
+    expect(source).not.toMatch(/sk-[A-Za-z0-9]/);
+    expect(source).toMatch(/export const DEEPSEEK_API_ORIGIN/);
   });
 });
 

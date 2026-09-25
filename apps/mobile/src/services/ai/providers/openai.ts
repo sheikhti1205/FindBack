@@ -42,6 +42,40 @@ const MODELS_URL = `${OPENAI_API_BASE_URL}/models`;
 /** Retries belong to the coordinator; every event here is attempt 1. */
 const ATTEMPT = 1 as const;
 
+/**
+ * Owner decision 2026-09-25: direct client-side keys for OpenAI are officially
+ * BLOCKED, not merely untested. OpenAI's authentication docs state: "Remember
+ * that your API key is a secret. Don't share it with others or expose it in
+ * any client-side code such as browsers or apps."
+ * (https://platform.openai.com/docs/api-reference/authentication, verified
+ * live 2026-09-25 — see temp-Com/P2.run.log.) No approved direct mobile key
+ * route exists, so callers/UI must show this provider as blocked.
+ *
+ * The wire/streaming implementation below stays intact for possible reuse
+ * through a future approved route — but it must never be mistaken for a
+ * working direct connection: no proxy, no embedded developer key, no
+ * base-URL override.
+ */
+export type DirectKeyPolicy = {
+  readonly status: "blocked";
+  readonly reason: string;
+  readonly sourceUrl: string;
+  readonly retrievedAt: string;
+};
+
+export const DIRECT_KEY_POLICY: DirectKeyPolicy = {
+  status: "blocked",
+  reason:
+    "OpenAI forbids exposing API keys in client-side code such as browsers or apps; no approved direct mobile key route exists.",
+  sourceUrl: "https://platform.openai.com/docs/api-reference/authentication",
+  retrievedAt: "2026-09-25",
+};
+
+/** Entitlement for callers/UI: this provider is blocked, never connected. */
+export function directKeyEntitlement(): "blocked" {
+  return DIRECT_KEY_POLICY.status;
+}
+
 /** Official vision guide: "Image count: Up to 1,500 images per request". */
 export const OPENAI_MAX_IMAGES_PER_CALL = 1500;
 

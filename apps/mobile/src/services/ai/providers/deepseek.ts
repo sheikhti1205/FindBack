@@ -44,6 +44,39 @@ export const DEEPSEEK_API_ORIGIN = "https://api.deepseek.com";
 export const DEEPSEEK_COMPLETIONS_URL = `${DEEPSEEK_API_ORIGIN}/chat/completions`;
 export const DEEPSEEK_MODELS_URL = `${DEEPSEEK_API_ORIGIN}/models`;
 
+/**
+ * Owner decision 2026-09-25: direct client-side keys for DeepSeek are
+ * officially BLOCKED, not merely untested. The API docs
+ * (https://api-docs.deepseek.com/, reviewed 2026-09-25 — see
+ * temp-Com/P-deepseek.log.md row 7) publish no browser/CORS statement and no
+ * safe direct mobile or browser key route, so a direct connection must not be
+ * offered. Callers/UI must show this provider as blocked.
+ *
+ * The wire/streaming implementation below stays intact for possible reuse
+ * through a future approved route — but it must never be mistaken for a
+ * working direct connection: no proxy, no embedded developer key, no
+ * base-URL override.
+ */
+export type DirectKeyPolicy = {
+  readonly status: "blocked";
+  readonly reason: string;
+  readonly sourceUrl: string;
+  readonly retrievedAt: string;
+};
+
+export const DIRECT_KEY_POLICY: DirectKeyPolicy = {
+  status: "blocked",
+  reason:
+    "DeepSeek documents no safe direct client-side key route; no official browser or mobile key guidance exists.",
+  sourceUrl: "https://api-docs.deepseek.com/",
+  retrievedAt: "2026-09-25",
+};
+
+/** Entitlement for callers/UI: this provider is blocked, never connected. */
+export function directKeyEntitlement(): "blocked" {
+  return DIRECT_KEY_POLICY.status;
+}
+
 /** Documented `max_tokens` ceiling (384K = 393216). */
 const DEEPSEEK_MAX_OUTPUT_TOKENS = 393216;
 /** Documented "Max images per request" (Vision > Limits). */

@@ -9,11 +9,14 @@
  * provider behaviour is therefore `NOT TESTED LIVE` for this packet.
  */
 import { describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import type { ChatCheckpoint, NormalizedRequest, StreamEvent } from "../providerContract";
 import {
+  DIRECT_KEY_POLICY,
   OPENAI_API_BASE_URL,
   OpenAiAdapterError,
   createOpenAiAdapter,
+  directKeyEntitlement,
   type OpenAiAdapterDeps,
 } from "./openai";
 
@@ -767,5 +770,26 @@ describe("openai adapter — listModels", () => {
     expect(failure).toBeInstanceOf(OpenAiAdapterError);
     expect((failure as OpenAiAdapterError).code).toBe("authentication_failed");
     expect((failure as OpenAiAdapterError).retryable).toBe(false);
+  });
+});
+
+describe("openai adapter — direct-key policy (O1 documented-blocked)", () => {
+  it("records the direct client-side key policy as blocked with reason, source and date", () => {
+    expect(DIRECT_KEY_POLICY.status).toBe("blocked");
+    expect(DIRECT_KEY_POLICY.reason.trim().length).toBeGreaterThan(0);
+    expect(DIRECT_KEY_POLICY.sourceUrl.startsWith("https://")).toBe(true);
+    expect(DIRECT_KEY_POLICY.retrievedAt.trim().length).toBeGreaterThan(0);
+  });
+
+  it("reports the direct-key entitlement as blocked for callers/UI", () => {
+    expect(directKeyEntitlement()).toBe("blocked");
+  });
+
+  it("keeps the wire module free of proxy, embedded-key and base-URL-override routes", async () => {
+    const source = await readFile(new URL("./openai.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/proxyUrl|baseUrl/i);
+    expect(source).not.toMatch(/localhost|127\.0\.0\.1|0\.0\.0\.0/);
+    expect(source).not.toMatch(/sk-[A-Za-z0-9]/);
+    expect(source).toMatch(/export const OPENAI_API_BASE_URL/);
   });
 });

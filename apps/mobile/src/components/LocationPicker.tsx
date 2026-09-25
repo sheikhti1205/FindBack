@@ -11,6 +11,12 @@ import {
   resolveShortLink,
   roundToApproximate,
 } from "../utils/location";
+import {
+  formatAccuracy,
+  isLowAccuracy,
+  locationFailureMessage,
+  requestOneTimeLocation,
+} from "./locationPermission";
 
 export interface LocationValue {
   label: string;
@@ -40,6 +46,10 @@ interface LocationPickerProps {
 export function LocationPicker({ value, onChange, maxLength }: LocationPickerProps) {
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  // A coarse fix too imprecise to publish on its own — held until confirmed.
+  const [pendingFix, setPendingFix] = useState<{ lat: number; lng: number; accuracy: number | null } | null>(null);
+  // The embedded preview is a deliberate step, never an automatic load.
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
@@ -74,6 +84,7 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
     );
     setApprox(value.precision !== "EXACT");
     setGeoError(null);
+    setPendingFix(null);
     setParseError(null);
   }, [value]);
 
@@ -105,27 +116,45 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
     emit({ label, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE", preciseLatitude: lat, preciseLongitude: lng });
   }
 
-  function useCurrentLocation() {
-    if (!("geolocation" in navigator)) {
-      setGeoError("Location is not supported in this browser — type a place instead.");
-      return;
-    }
+  async function useCurrentLocation() {
     setLocating(true);
     setGeoError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = Number(pos.coords.latitude.toFixed(6));
-        const lng = Number(pos.coords.longitude.toFixed(6));
-        setCoords(value.label || "Pinned location", lat, lng, "APPROXIMATE");
-        announce("Approximate location imported (~100 m).");
+    setPendingFix(null);
+
+    const outcome = await requestOneTimeLocation();
+    if (outcome.status === "granted") {
+      if (isLowAccuracy(outcome.accuracyMeters)) {
+        // Coarser than the published ~100 m pin: hold it for an explicit
+        // opt-in instead of attaching a misleading pin.
+        setPendingFix({
+          lat: outcome.latitude,
+          lng: outcome.longitude,
+          accuracy: outcome.accuracyMeters,
+        });
         setLocating(false);
-      },
-      () => {
-        setGeoError("Could not get your location — type an approximate place instead.");
-        setLocating(false);
-      },
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
+        return;
+      }
+      setCoords(value.label || "Pinned location", outcome.latitude, outcome.longitude, "APPROXIMATE");
+      announce("Approximate location imported (~100 m).");
+      setLocating(false);
+      return;
+    }
+
+    setGeoError(locationFailureMessage(outcome.status));
+    setLocating(false);
+  }
+
+  function acceptPendingFix() {
+    if (!pendingFix) return;
+    setPendingFix(null);
+    setGeoError(null);
+    setCoords(
+      value.label || "Pinned location",
+      pendingFix.lat,
+      pendingFix.lng,
+      "APPROXIMATE",
     );
+    announce("Approximate location imported.");
   }
 
   function handleInput(raw: string) {
@@ -285,12 +314,36 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
         </div>
       )}
 
+      {pendingFix && (
+        <div
+          data-testid="low-accuracy-notice"
+          className="flex flex-wrap items-center gap-3 rounded-m3-sm border border-outline-variant bg-surface-container px-3 py-2"
+        >
+          <p className="text-xs text-on-surface">
+            This location is only accurate to about{" "}
+            {pendingFix.accuracy != null ? formatAccuracy(pendingFix.accuracy) : "a few km"}
+            . Nothing was saved — confirm if you still want to use it.
+          </p>
+          <Button type="button" variant="outline" size="md" onClick={acceptPendingFix}>
+            Use this location anyway
+          </Button>
+        </div>
+      )}
+
       {(geoError || parseError) && (
         <p className="text-xs text-error">{geoError ?? parseError}</p>
       )}
       <p className="text-xs text-on-surface-variant">{FIND_IN_MAPS_HELP} Paste the coordinates or link back here.</p>
 
-      <MapEmbed lat={value.latitude} lng={value.longitude} label={value.label} />
+      {hasCoords && !previewOpen && (
+        <Button type="button" variant="outline" size="md" onClick={() => setPreviewOpen(true)}>
+          <MapPin size={16} aria-hidden />
+          Preview map in app
+        </Button>
+      )}
+      {hasCoords && previewOpen && (
+        <MapEmbed lat={value.latitude} lng={value.longitude} label={value.label} />
+      )}
 
       <MapPickerSheet
         open={mapOpen}

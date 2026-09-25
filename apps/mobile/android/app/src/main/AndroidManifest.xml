@@ -65,6 +65,22 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+      One-time coarse location for "Use my location once" (report pin).
+      Both entries are required: Capacitor's BridgeWebChromeClient requests
+      ACCESS_COARSE_LOCATION + ACCESS_FINE_LOCATION together and only falls
+      back to COARSE-only on API 31+ (bridge code). This app targets
+      minSdk 24, so dropping ACCESS_FINE_LOCATION would deny geolocation
+      outright on API 24-30. The WebView options are coarse
+      (enableHighAccuracy: false), so no precise fix is requested in JS.
+    -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!--
+      Microphone for on-device dictation (V1 SpeechInput bridge). Required in
+      the manifest: Capacitor's Bridge.validatePermissions rejects the saved
+      permission call when a @Permission string is not manifest-declared, so
+      the @PermissionCallback would never run without this entry.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 </manifest>
