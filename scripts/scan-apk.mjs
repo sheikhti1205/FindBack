@@ -17,14 +17,17 @@ const forbidden = entries.filter((e) => /\.(litertlm|tflite)$/i.test(e) && e !==
 if (forbidden.length) { console.error(`scan-apk: forbidden model asset(s): ${forbidden.join(", ")}`); process.exit(1); }
 if (strict) {
   if (!entries.includes(useAsset)) { console.error(`scan-apk: required USE asset missing: ${useAsset}`); process.exit(1); }
-  for (const abi of ["arm64-v8a", "x86_64"]) {
-    if (!entries.some((e) => e.startsWith(`lib/${abi}/liblitertlm`))) { console.error(`scan-apk: ${abi} litertlm JNI missing`); process.exit(1); }
-  }
+  // The retired local generative runtime must never come back into the APK.
+  const litert = entries.filter((e) => /liblitert/i.test(e));
+  if (litert.length) { console.error(`scan-apk: retired litertlm JNI present: ${litert.join(", ")}`); process.exit(1); }
+  // The retained non-generative similarity bridge must actually ship.
+  const embedJni = "lib/arm64-v8a/libmediapipe_tasks_jni.so";
+  if (!entries.includes(embedJni)) { console.error(`scan-apk: embedding JNI missing: ${embedJni}`); process.exit(1); }
 }
 
 const secretPrefix = ["sb", "secret"].join("_") + "_";
 const serviceRoleName = ["SUPABASE", "SERVICE", "ROLE", "KEY"].join("_");
-const SECRETS = [new RegExp(`${secretPrefix}[A-Za-z0-9_-]+`), new RegExp(serviceRoleName), /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/];
+const SECRETS = [new RegExp(`${secretPrefix}[A-Za-z0-9_-]+`), new RegExp(serviceRoleName), /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/, /sk-or-v1-[A-Za-z0-9]{32,}/];
 const scanEntries = entries.filter((e) => /^classes\d*\.dex$/.test(e) || e.startsWith("assets/") || e.startsWith("res/raw/"));
 const secretHits = [];
 for (const entry of scanEntries) {
