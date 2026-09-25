@@ -33,6 +33,12 @@
   --fb-outline-variant: #c9c9c2;
   --fb-error: #ba1a1a;
   --fb-on-error: #ffffff;
+  /* U2 hybrid visual rollout: restrained tint for the occasional status card
+   * (Variant A green-tint / Variant B cool-neutral — one card per screen max).
+   * Large surfaces stay grayscale in light AND dark. */
+  --fb-tint-bg: #edf3ec;
+  --fb-tint-ink: #2e5b34;
+  --fb-tint-line: #c9d8ca;
   color-scheme: light;
 }
 
@@ -47,6 +53,10 @@
   --fb-outline-variant: #494944;
   --fb-error: #ffb4ab;
   --fb-on-error: #690005;
+  /* U2: dark-mode tint — charcoal-compatible, still grayscale surroundings. */
+  --fb-tint-bg: #1c2620;
+  --fb-tint-ink: #b9d4bd;
+  --fb-tint-line: #3d5244;
   color-scheme: dark;
 }
 
@@ -62,6 +72,9 @@
     --fb-outline-variant: #494944;
     --fb-error: #ffb4ab;
     --fb-on-error: #690005;
+    --fb-tint-bg: #1c2620;
+    --fb-tint-ink: #b9d4bd;
+    --fb-tint-line: #3d5244;
     color-scheme: dark;
   }
 }
@@ -159,3 +172,123 @@ body {
 }
 .tiptap ::selection { background: var(--fb-surface-container-high); }
 .tiptap:focus-visible { outline: 2px solid var(--fb-on-surface); outline-offset: 2px; }
+
+/* U2 hybrid visual rollout (Home Variant A editorial / Search Variant B compact).
+ * Large surfaces stay grayscale; colour only on links/buttons/meaningful status. */
+
+/* Editorial kicker: uppercase eyebrow above the serif headline (Variant A). */
+.fb-kicker {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fb-on-surface-variant);
+}
+
+/* Editorial headline: serif display for photo-led cards (Variant A). */
+.fb-editorial-title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.3125rem;
+  line-height: 1.25;
+  font-weight: 400;
+  letter-spacing: 0;
+  overflow-wrap: break-word;
+}
+
+/* Restrained tinted status card — at most one per screen, both themes. */
+.fb-tint-card {
+  background: var(--fb-tint-bg);
+  color: var(--fb-tint-ink);
+  border: 1px solid var(--fb-tint-line);
+  border-radius: 12px;
+}
+
+/* Fixed-aspect image frame: reserves space BEFORE the photo loads so there is
+ * no layout jump between loading → loaded → failed states. Grayscale wash. */
+.fb-img-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--fb-outline-variant);
+  background: var(--fb-surface-container);
+}
+.fb-img-frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* Grayscale loading wash (pulse disabled under reduced-motion by the global rule). */
+.fb-img-frame[data-state="loading"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(128, 128, 128, 0.25) 50%, transparent 70%);
+  animation: fb-img-sweep 1.4s ease-in-out infinite;
+}
+@keyframes fb-img-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+/* Failed / no-image placeholder: dashed, labelled, same reserved box. */
+.fb-img-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--fb-on-surface-variant);
+  background: var(--fb-surface-container-low);
+  border: 1px dashed var(--fb-outline);
+  border-radius: 8px;
+}
+
+/* Compact 64px thumbnail used by Variant B rows (fixed box, no shift). */
+.fb-thumb {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--fb-outline-variant);
+  background: var(--fb-surface-container);
+}
+.fb-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.fb-thumb[data-state="loading"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(128, 128, 128, 0.25) 50%, transparent 70%);
+  animation: fb-img-sweep 1.4s ease-in-out infinite;
+}
+.fb-thumb-none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  flex: none;
+  border-radius: 8px;
+  border: 1px dashed var(--fb-outline);
+  background: var(--fb-surface-container-low);
+  color: var(--fb-on-surface-variant);
+  font-size: 0.625rem;
+  text-align: center;
+  padding: 0.25rem;
+}

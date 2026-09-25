@@ -58,6 +58,17 @@ jobs:
         run: node scripts/fetch-use-model.mjs
       - name: Build mobile web dist (Capacitor webDir)
         run: npm run build -w @findback/mobile
+        env:
+          # Sentry is MANDATORY in installable APKs (S1). Required GitHub Actions
+          # VARIABLES (repo Settings → Secrets and variables → Actions → Variables):
+          # VITE_SENTRY_DSN (real https DSN), SENTRY_ORG, SENTRY_PROJECT.
+          # SENTRY_AUTH_TOKEN stays a CI secret for the future sourcemap upload (S3) —
+          # never a VITE_* var, never in repo files. Unit tests / vite dev stay DSN-free.
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+          VITE_SENTRY_ENVIRONMENT: ci
+          VITE_SENTRY_TRACES_SAMPLE_RATE: "0.1"
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Android JVM tests + debug APK

@@ -8,9 +8,13 @@
 # passes.
 #
 # Required repo configuration:
-#   Variables: VITE_SUPABASE_URL
+#   Variables: VITE_SUPABASE_URL, VITE_SENTRY_DSN (real https DSN — Sentry is
+#              MANDATORY in installable builds), SENTRY_ORG, SENTRY_PROJECT
+#              (plain identifier strings for the future sourcemap upload step)
 #   Secrets:   VITE_SUPABASE_PUBLISHABLE_KEY (secret — not a Variable — so its
-#              value is masked in logs), ANDROID_KEYSTORE_BASE64,
+#              value is masked in logs), SENTRY_AUTH_TOKEN (CI secret for the
+#              future sourcemap upload — never a VITE_* var, never in repo files),
+#              ANDROID_KEYSTORE_BASE64,
 #              ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
 #   Environment `release` (protection rules configured in repo settings).
 
@@ -91,6 +95,16 @@ jobs:
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      # Sentry is MANDATORY in signed installable builds (S1). VITE_SENTRY_DSN and the
+      # org/project identifiers come from repo Actions VARIABLES (never hardcoded);
+      # SENTRY_AUTH_TOKEN stays a CI secret for the future sourcemap upload (S3) and
+      # must never appear in repo files. The strict release preflight
+      # (scripts/check-release-config.mjs) fails closed without a real DSN.
+      VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+      VITE_SENTRY_ENVIRONMENT: production
+      VITE_SENTRY_TRACES_SAMPLE_RATE: "0.1"
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -110,10 +124,29 @@ jobs:
         run: npm run build -w @findback/shared
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
+      - name: Compute Sentry release identity (S3)
+        run: |
+          VERSION=$(node -p "require('./apps/mobile/package.json').version")
+          SHA=$(git rev-parse --short=12 HEAD)
+          SENTRY_RELEASE="findback-mobile@${VERSION}+${SHA}"
+          # GITHUB_ENV applies to LATER steps only; export for the shape check
+          # in THIS shell, then publish for the build + upload steps below.
+          export SENTRY_RELEASE
+          echo "SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          # VITE_* values in GITHUB_ENV are embedded by the Vite build below, so
+          # the SDK `release` (via resolveSentryRelease, see
+          # apps/mobile/src/services/monitoring/release.ts) is derived from the
+          # exact same string passed to the sourcemap upload.
+          echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
       - name: Build mobile web dist (Capacitor webDir)
         run: npm run build -w @findback/mobile
         env:
           CI: true
+          # S3 companion: opt in to hidden-sourcemap emission for this build ONLY.
+          # Local builds omit it and emit no .map files at all. (S1 owns the rest
+          # of this step's env; coordinator confirmation noted in S3.log.md.)
+          SENTRY_UPLOAD_SOURCEMAPS: "true"
       - name: Assert baked client config (no placeholders, no secrets)
         run: |
           JS=$(ls apps/mobile/dist/assets/index-*.js | head -1)
@@ -123,6 +156,32 @@ jobs:
           if grep -q 'supabase\.co[^"]*","-"' "$JS"; then echo "placeholder key baked into bundle"; exit 1; fi
           # Only counts/shapes are echoed — never key material.
           echo "bundle config assertion passed ($(basename "$JS"))"
+      - name: Upload sourcemaps to Sentry (S3)
+        env:
+          # Secrets-only auth: the token is owner-held in repo Settings → Secrets
+          # and variables → Actions → Secrets, never in repo files, never VITE_*.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "${SENTRY_AUTH_TOKEN:-}" ] || { echo "SENTRY_AUTH_TOKEN secret is empty — add it in repo Settings → Secrets and variables → Actions → Secrets (owner action)"; exit 1; }
+          [ -n "${SENTRY_ORG:-}" ] || { echo "SENTRY_ORG variable is empty — add it in repo Settings → Variables"; exit 1; }
+          [ -n "${SENTRY_PROJECT:-}" ] || { echo "SENTRY_PROJECT variable is empty — add it in repo Settings → Variables"; exit 1; }
+          [ -n "${SENTRY_RELEASE:-}" ] || { echo "SENTRY_RELEASE was not computed — the Compute step above must run first"; exit 1; }
+          MAPS=$(find apps/mobile/dist -name '*.map' | wc -l)
+          [ "$MAPS" -gt 0 ] || { echo "no .map files in apps/mobile/dist — the build must run with SENTRY_UPLOAD_SOURCEMAPS=true"; exit 1; }
+          # Any upload failure fails this job visibly: a release MUST NOT ship
+          # with an SDK release that Sentry cannot symbolicate.
+          echo "uploading $MAPS sourcemap(s) for release ${SENTRY_RELEASE} (org/project from job env)"
+          npx -y @sentry/cli@3 sourcemaps upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" --release "$SENTRY_RELEASE" apps/mobile/dist
+      - name: Strip sourcemaps from distributed assets (S3)
+        run: |
+          find apps/mobile/dist -name '*.map' -delete
+          REMAINING=$(find apps/mobile/dist -name '*.map' | wc -l)
+          [ "$REMAINING" -eq 0 ] || { echo "$REMAINING .map file(s) remain after strip — refusing to package"; exit 1; }
+          if grep -rIl 'sourceMappingURL' apps/mobile/dist/assets/ 2>/dev/null | grep -q .; then
+            echo "sourceMappingURL reference remains in shipped bundle — refusing to package"; exit 1;
+          fi
+          echo "sourcemap strip verified: no .map files, no sourceMappingURL references in dist"
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Restore release keystore

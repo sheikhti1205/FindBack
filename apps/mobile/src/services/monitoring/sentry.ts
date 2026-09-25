@@ -10,6 +10,7 @@
  * - The Sentry SDK is loaded with a dynamic import inside `initMonitoring`
  *   so unit tests and DSN-less runs never touch native code.
  */
+import { resolveSentryRelease } from "./release";
 
 export const SENTRY_DEFAULT_TRACES_SAMPLE_RATE = 0.1;
 const REDACTED = "[redacted]";
@@ -27,9 +28,16 @@ const SECRET_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/g,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
   /data:image\/[a-zA-Z+]+;base64,[A-Za-z0-9+/=]+/g,
+  /blob:\S+/g,
 ];
 
-const WITHHELD_KEY = /(photo|image|audio|video|location|latitude|longitude|transcript|chat|conversation|credential|passphrase)/i;
+const WITHHELD_KEY =
+  /(photo|image|picture|audio|video|camera|location|latitude|longitude|\blat\b|\blng\b|\blon\b|coord|transcript|chat|conversation|history|credential|passphrase|password|secret|token|api[_-]?key|auth|prompt|response|completion|report|description|content|body|address|phone|email)/i;
+
+/** Fixed label for the synthetic monitoring self-test signal (device proof). */
+export const MONITORING_TEST_SIGNAL_MESSAGE =
+  "FindBack monitoring test signal (synthetic self-test)";
+export const MONITORING_TEST_SIGNAL_TAG_VALUE = "findback-monitoring-self-test";
 
 export function resolveSentryDsn(raw: string | undefined | null): string | null {
   if (!raw) return null;
@@ -131,6 +139,247 @@ export function scrubBreadcrumbData(
   return out;
 }
 
+/**
+ * Privacy posture asserted by tests: no default PII, no session replay.
+ * Spread into `Sentry.init` so the posture cannot drift silently.
+ */
+export function getSentryPrivacyDefaults(): {
+  sendDefaultPii: false;
+  replaysSessionSampleRate: 0;
+  replaysOnErrorSampleRate: 0;
+} {
+  return {
+    sendDefaultPii: false,
+    replaysSessionSampleRate: 0,
+    replaysOnErrorSampleRate: 0,
+  };
+}
+
+/** Cut `?query` and `#fragment` (tokens, coordinates) from any path/URL. */
+export function stripQueryAndFragment(value: string): string {
+  const cut = value.search(/[?#]/);
+  return cut === -1 ? value : value.slice(0, cut);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** JSON deep clone. Throws on circular/unserializable input (fail closed). */
+function deepCloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+const UNSAFE_SUBSTRINGS: string[] = [OR_KEY_HEAD, SUPA_SECRET_HEAD];
+const UNSAFE_PATTERNS: RegExp[] = [
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
+  /data:image\/[a-zA-Z+]+;base64,/,
+  /blob:\S+/,
+];
+
+/**
+ * Post-scrub tripwire: true when a protected shape survived sanitization.
+ * Callers must DISCARD the event/breadcrumb (return null), never forward raw.
+ */
+function containsUnsafeValue(serialized: string): boolean {
+  for (const head of UNSAFE_SUBSTRINGS) {
+    if (head && serialized.includes(head)) return true;
+  }
+  for (const pattern of UNSAFE_PATTERNS) {
+    pattern.lastIndex = 0;
+    if (pattern.test(serialized)) return true;
+  }
+  return false;
+}
+
+/** Scrub one stack frame: strip query/fragment from paths, redact strings. */
+function scrubStackFrame(frame: Record<string, unknown>): void {
+  for (const key of ["filename", "abs_path"]) {
+    const raw = frame[key];
+    if (typeof raw === "string") {
+      frame[key] = redactText(stripQueryAndFragment(raw));
+    }
+  }
+  for (const [key, value] of Object.entries(frame)) {
+    if (key === "filename" || key === "abs_path") continue;
+    if (typeof value === "string") frame[key] = redactText(value);
+  }
+}
+
+/** Visit every stack frame in exception/thread `values` lists. */
+function eachStackFrame(
+  values: unknown,
+  visit: (frame: Record<string, unknown>) => void,
+): void {
+  if (!Array.isArray(values)) return;
+  for (const item of values) {
+    if (!isRecord(item)) continue;
+    const stacktrace = item["stacktrace"];
+    if (!isRecord(stacktrace)) continue;
+    const frames = stacktrace["frames"];
+    if (!Array.isArray(frames)) continue;
+    for (const frame of frames) {
+      if (isRecord(frame)) visit(frame);
+    }
+  }
+}
+
+/**
+ * Fail-closed event sanitizer used by `beforeSend`. Returns a scrubbed clone,
+ * or `null` when the input is not an object, sanitization throws, or a
+ * protected shape survives scrubbing. `null` tells Sentry to DISCARD the
+ * event — the original is never forwarded.
+ */
+export function sanitizeSentryEvent(
+  event: unknown,
+): Record<string, unknown> | null {
+  try {
+    if (!isRecord(event)) return null;
+    const clean = deepCloneJson(event);
+    if (typeof clean["message"] === "string") {
+      clean["message"] = redactText(clean["message"]);
+    }
+    const logentry = clean["logentry"];
+    if (isRecord(logentry)) {
+      for (const key of ["message", "formatted"]) {
+        if (typeof logentry[key] === "string") {
+          logentry[key] = redactText(logentry[key] as string);
+        }
+      }
+    }
+    if (typeof clean["transaction"] === "string") {
+      clean["transaction"] = redactText(
+        stripQueryAndFragment(clean["transaction"] as string),
+      );
+    }
+    if (typeof clean["release"] === "string") {
+      clean["release"] = redactText(clean["release"] as string);
+    }
+    const exception = clean["exception"];
+    if (isRecord(exception)) {
+      const values = exception["values"];
+      if (Array.isArray(values)) {
+        for (const item of values) {
+          if (!isRecord(item)) continue;
+          if (typeof item["value"] === "string") {
+            item["value"] = redactText(item["value"]);
+          }
+          if (typeof item["type"] === "string") {
+            item["type"] = redactText(item["type"]);
+          }
+        }
+      }
+      eachStackFrame(exception["values"], scrubStackFrame);
+    }
+    const threads = clean["threads"];
+    if (isRecord(threads)) {
+      eachStackFrame(threads["values"], scrubStackFrame);
+    }
+    const request = clean["request"];
+    if (isRecord(request)) {
+      if (typeof request["url"] === "string") {
+        request["url"] = scrubRequestUrl(request["url"]);
+      }
+      // Bodies, headers, cookies and raw query strings never leave the device.
+      delete request["headers"];
+      delete request["cookies"];
+      delete request["query_string"];
+      delete request["data"];
+      if (typeof request["method"] === "string") {
+        request["method"] = redactText(request["method"] as string);
+      }
+    }
+    // Identity is never attached.
+    delete clean["user"];
+    const tags = clean["tags"];
+    if (isRecord(tags)) {
+      for (const [key, value] of Object.entries(tags)) {
+        if (typeof value === "string") {
+          tags[key] = redactText(stripQueryAndFragment(value));
+        }
+      }
+    }
+    if (isRecord(clean["contexts"])) {
+      clean["contexts"] = scrubValue(clean["contexts"]);
+    }
+    if (isRecord(clean["extra"])) {
+      clean["extra"] = scrubBreadcrumbData(clean["extra"]);
+    }
+    if (Array.isArray(clean["breadcrumbs"])) {
+      const kept: Record<string, unknown>[] = [];
+      for (const crumb of clean["breadcrumbs"]) {
+        const sanitized = sanitizeSentryBreadcrumb(crumb);
+        if (sanitized) kept.push(sanitized);
+      }
+      clean["breadcrumbs"] = kept;
+    }
+    if (containsUnsafeValue(JSON.stringify(clean))) return null;
+    return clean;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fail-closed breadcrumb sanitizer used by `beforeBreadcrumb` and event
+ * scrubbing. Returns a scrubbed clone, or `null` when the input is not an
+ * object, sanitization throws, or a protected shape survives. `null` DROPS
+ * the breadcrumb — it is never forwarded raw.
+ */
+export function sanitizeSentryBreadcrumb(
+  crumb: unknown,
+): Record<string, unknown> | null {
+  try {
+    if (!isRecord(crumb)) return null;
+    const clean = deepCloneJson(crumb);
+    if (typeof clean["message"] === "string") {
+      clean["message"] = redactText(clean["message"]);
+    }
+    if (typeof clean["category"] === "string") {
+      clean["category"] = redactText(clean["category"] as string);
+    }
+    if (typeof clean["type"] === "string") {
+      clean["type"] = redactText(clean["type"] as string);
+    }
+    if (isRecord(clean["data"])) {
+      const data = scrubBreadcrumbData(clean["data"]);
+      if (typeof data["url"] === "string") {
+        data["url"] = scrubRequestUrl(data["url"] as string);
+      }
+      clean["data"] = data;
+    }
+    if (containsUnsafeValue(JSON.stringify(clean))) return null;
+    return clean;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the synthetic self-test payload: fixed message + fixed tag, no user
+ * data. Used by `sendMonitoringTestSignal` for the one-event device proof.
+ */
+export function buildMonitoringTestSignalEvent(): {
+  message: string;
+  level: "info";
+  tags: Record<string, string>;
+  extra: Record<string, string | boolean>;
+} {
+  return {
+    message: MONITORING_TEST_SIGNAL_MESSAGE,
+    level: "info",
+    tags: {
+      monitoringSelfTest: MONITORING_TEST_SIGNAL_TAG_VALUE,
+      synthetic: "true",
+    },
+    extra: {
+      synthetic: true,
+      source: "monitoring-self-test",
+    },
+  };
+}
+
 function readEnv(key: string): string | undefined {
   try {
     const value = (import.meta.env[key] as string | undefined) ?? undefined;
@@ -184,75 +433,23 @@ export function initMonitoring(): void {
         {
           dsn,
           environment,
+          // Release identity (S3): same findback-mobile@version+sha string the
+          // release workflow passes to the sourcemap upload, so Sentry can
+          // symbolicate. Undefined when not baked (dev/test) — SDK default.
+          release: resolveSentryRelease({ VITE_SENTRY_RELEASE: readEnv("VITE_SENTRY_RELEASE") }) ?? undefined,
           tracesSampleRate,
           tracePropagationTargets,
-          // Privacy posture: no identity, no replay integration, no bodies.
-          sendDefaultPii: false,
+          // Privacy posture: no identity, no replay, no bodies.
+          ...getSentryPrivacyDefaults(),
           beforeSend(event) {
-            try {
-              if (typeof event.message === "string") {
-                event.message = redactText(event.message);
-              }
-              const exceptions = event.exception?.values;
-              if (exceptions) {
-                for (const item of exceptions) {
-                  if (typeof item.value === "string") {
-                    item.value = redactText(item.value);
-                  }
-                }
-              }
-              if (event.request?.url) {
-                event.request.url = scrubRequestUrl(event.request.url);
-              }
-              if (event.request) {
-                delete event.request.headers;
-                delete event.request.cookies;
-              }
-              if (event.breadcrumbs) {
-                for (const crumb of event.breadcrumbs) {
-                  if (typeof crumb.message === "string") {
-                    crumb.message = redactText(crumb.message);
-                  }
-                  if (crumb.data) {
-                    const data = scrubBreadcrumbData(
-                      crumb.data as Record<string, unknown>,
-                    );
-                    if (typeof data["url"] === "string") {
-                      data["url"] = scrubRequestUrl(data["url"]);
-                    }
-                    crumb.data = data;
-                  }
-                }
-              }
-              if (event.extra && typeof event.extra === "object") {
-                event.extra = scrubBreadcrumbData(
-                  event.extra as Record<string, unknown>,
-                );
-              }
-              delete event.user;
-            } catch {
-              // Scrubbing must never drop the report itself.
-            }
-            return event;
+            // Fail closed: unsafe input DISCARDS the event (null), never raw.
+            return sanitizeSentryEvent(event) as unknown as typeof event | null;
           },
           beforeBreadcrumb(crumb) {
-            try {
-              if (typeof crumb.message === "string") {
-                crumb.message = redactText(crumb.message);
-              }
-              if (crumb.data) {
-                const data = scrubBreadcrumbData(
-                  crumb.data as Record<string, unknown>,
-                );
-                if (typeof data["url"] === "string") {
-                  data["url"] = scrubRequestUrl(data["url"]);
-                }
-                crumb.data = data;
-              }
-            } catch {
-              // Keep the breadcrumb rather than lose context.
-            }
-            return crumb;
+            // Fail closed: unsafe input DROPS the breadcrumb (null).
+            return sanitizeSentryBreadcrumb(crumb) as unknown as
+              | typeof crumb
+              | null;
           },
         },
         SentryReact.init,
@@ -286,16 +483,21 @@ export function reportErrorToMonitoring(
 }
 
 /**
- * Controlled verification signal. Captures a clearly-labelled test message
- * (no user data) so one controlled event can be confirmed in Sentry, e.g.
- * from the installed APK. Returns false when monitoring is off.
+ * Controlled verification signal. Captures a clearly-labelled synthetic test
+ * message (fixed tag, no user data) so one controlled event can be confirmed
+ * in Sentry, e.g. from the installed APK. Returns false when monitoring is off.
  */
 export function sendMonitoringTestSignal(): boolean {
   if (!cachedDsn) return false;
+  const signal = buildMonitoringTestSignalEvent();
   void (async () => {
     try {
       const Sentry = await import("@sentry/capacitor");
-      Sentry.captureMessage("FindBack monitoring test signal", "info");
+      Sentry.captureMessage(signal.message, {
+        level: signal.level,
+        tags: signal.tags,
+        extra: signal.extra,
+      });
     } catch {
       // Ignore: verification is best-effort outside release builds.
     }

@@ -68,24 +68,15 @@ export function SearchScreen() {
   }, [tapCount]);
 
   return (
-    <div className="flex h-full flex-col gap-4">
-      <header className="px-4 pt-5">
-        <h1 className="text-xl font-semibold tracking-tight">Search &amp; filter</h1>
-        <p className="text-xs text-on-surface-variant">{total} results</p>
+    <div className="flex h-full flex-col gap-3">
+      <header className="px-3 pt-4">
+        <h1 className="text-lg font-semibold tracking-tight">Search &amp; filter</h1>
+        <p className="text-xs text-on-surface-variant" role="status">
+          {total} result{total === 1 ? "" : "s"}
+        </p>
       </header>
 
-      <div className="flex flex-col gap-3 px-4">
-        <Segmented<TypeFilter>
-          ariaLabel="Post type"
-          value={type}
-          onChange={setType}
-          options={[
-            { value: "ALL", label: "All" },
-            { value: "LOST", label: "Lost" },
-            { value: "FOUND", label: "Found" },
-          ]}
-        />
-
+      <section aria-label="Search filters" className="flex flex-col gap-2 px-3">
         <label className="relative block">
           <Search
             size={16}
@@ -102,7 +93,18 @@ export function SearchScreen() {
           />
         </label>
 
-        <div className="grid grid-cols-2 gap-3">
+        <Segmented<TypeFilter>
+          ariaLabel="Post type"
+          value={type}
+          onChange={setType}
+          options={[
+            { value: "ALL", label: "All" },
+            { value: "LOST", label: "Lost" },
+            { value: "FOUND", label: "Found" },
+          ]}
+        />
+
+        <div className="grid grid-cols-2 gap-2">
           <CategoryField value={category} onChange={setCategory} />
           <SelectField
             label="Status"
@@ -120,7 +122,7 @@ export function SearchScreen() {
             { value: "oldest", label: "Oldest first" },
           ]}
         />
-      </div>
+      </section>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <PostList
@@ -132,6 +134,7 @@ export function SearchScreen() {
           hasMore={hasMore}
           onLoadMore={loadMore}
           onRetry={refresh}
+          density="compact"
           emptyTitle="No matches"
           emptySubtitle="Try different filters or a broader search."
         />

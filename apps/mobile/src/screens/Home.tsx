@@ -180,6 +180,7 @@ export function Home() {
           hasMore={hasMore}
           onLoadMore={loadMore}
           onRetry={refresh}
+          density="editorial"
           emptyTitle={appliedQuery ? "No matches" : "Nothing here yet"}
           emptySubtitle={
             appliedQuery

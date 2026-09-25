@@ -10,6 +10,7 @@
 //
 // Prints only lengths/shapes — never key material.
 
+import { checkEffectiveSentryDsn } from "./check-sentry-config.mjs";
 const PLACEHOLDER_RE = /^(-|x{2,}|your[-_].*|.*placeholder.*|changeme|example.*|.*example|test|dummy|null|undefined)$/i;
 
 function fail(message) {
@@ -53,6 +54,13 @@ try {
 }
 if (!/\.supabase\.(co|in)$/.test(host)) fail(`Supabase host outside *.supabase.co/in (got ${host})`);
 
+// Sentry DSN is mandatory for installable builds. Resolved with Vite's own
+// loadEnv against apps/mobile — the SAME source `vite build` embeds into
+// import.meta.env (shell exports win over apps/mobile/.env* files). Shapes
+// only in logs, never key material.
+const sentry = checkEffectiveSentryDsn({ mode: "production" });
+if (!sentry.ok) fail(`VITE_SENTRY_DSN ${sentry.reason} (signed builds require a real https DSN)`);
+
 const controller = new AbortController();
 const timer = setTimeout(() => controller.abort(), 15000);
 let res;
@@ -71,3 +79,6 @@ try {
 if (res.status !== 200) fail(`/auth/v1/health returned ${res.status}; refusing to ship against this project`);
 
 console.log(`check-release-config: PASS (host=${host} key_len=${key.length})`);
+console.log(
+  `check-release-config: Sentry DSN present (host=${sentry.host} project=${sentry.projectId} key_len=${sentry.keyLen})`,
+);

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { motion } from "framer-motion";
+import { MotionConfig, motion } from "framer-motion";
 import { Link } from "react-router";
 
 interface PostCardProps {
@@ -10,18 +10,21 @@ interface PostCardProps {
 
 export function PostCard({ children, to, index = 0 }: PostCardProps) {
   return (
-    <motion.article
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22, delay: Math.min(index * 0.03, 0.3) }}
-    >
-      <Link
-        to={to}
-        className="flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
+    // U2: honor the OS reduced-motion setting for the entry animation.
+    <MotionConfig reducedMotion="user">
+      <motion.article
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22, delay: Math.min(index * 0.03, 0.3) }}
       >
-        {children}
-      </Link>
-    </motion.article>
+        <Link
+          to={to}
+          className="flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
+        >
+          {children}
+        </Link>
+      </motion.article>
+    </MotionConfig>
   );
 }
 

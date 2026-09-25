@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { PostItem } from "@findback/shared";
 import { FileQuestion } from "lucide-react";
 import { PostCard } from "./PostCard";
-import { PostCardContent } from "./PostCardContent";
+import { PostCardContent, type PostCardLayout } from "./PostCardContent";
 import { EmptyState, Spinner } from "./PostCard";
 
 interface PostListProps {
@@ -16,6 +16,9 @@ interface PostListProps {
   onRetry?: () => Promise<void>;
   emptyTitle?: string;
   emptySubtitle?: string;
+  /** U2 hybrid rollout: `editorial` (Home Variant A, airy photo-led cards) or
+   *  `compact` (Search Variant B, dense rows). Omitted = pre-U2 rendering. */
+  density?: "editorial" | "compact";
 }
 
 export function PostList({
@@ -29,6 +32,7 @@ export function PostList({
   onRetry,
   emptyTitle = "Nothing here yet",
   emptySubtitle = "Be the first to post a lost or found item.",
+  density,
 }: PostListProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -72,8 +76,18 @@ export function PostList({
     return <EmptyState icon={<FileQuestion size={28} />} title={emptyTitle} subtitle={emptySubtitle} />;
   }
 
+  // U2: density maps to card layout; omitted density keeps pre-U2 rendering
+  // so rollout-external screens (e.g. MyPosts) are pixel-identical.
+  const layout: PostCardLayout = density === "compact" ? "compact" : density === "editorial" ? "editorial" : "classic";
+  const listClass =
+    density === "compact"
+      ? "flex flex-col gap-2 px-3"
+      : density === "editorial"
+        ? "flex flex-col gap-4 px-4"
+        : "flex flex-col gap-3 px-4";
+
   return (
-    <div className="flex flex-col gap-3 px-4">
+    <div className={listClass}>
       {refreshing && items.length > 0 && (
         <p role="status" className="py-1 text-center text-xs text-on-surface-variant">
           Refreshing…
@@ -93,7 +107,7 @@ export function PostList({
       )}
       {items.map((post, i) => (
         <PostCard key={post.id} to={`/posts/${post.id}`} index={i}>
-          <PostCardContent post={post} />
+          <PostCardContent post={post} layout={layout} />
         </PostCard>
       ))}
       <div ref={sentinelRef} aria-hidden />

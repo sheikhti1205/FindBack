@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { Shell, assistantSearchNavigationTarget, shouldShowAssistantFab } from "./Shell";
+import { Shell } from "./Shell";
 import { resetBackInterceptors } from "./backNavigation";
-import { applySearchFields, startFlow } from "../services/assistant/guidedAssistantController";
 
 afterEach(() => { cleanup(); resetBackInterceptors(); document.body.style.overflow = ""; });
 
@@ -20,21 +19,24 @@ function renderShell(entry = "/") {
   );
 }
 
-describe("Shell assistant entry", () => {
-  it("opens the assistant on a tab screen and closes it without requiring a local model", () => {
+describe("Shell tabs (no global assistant)", () => {
+  it("renders exactly four tabs and no floating assistant entry", () => {
     renderShell();
-    fireEvent.click(screen.getByRole("button", { name: "Open assistant" }));
-    expect(screen.getByTestId("assistant-greeting")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(screen.queryByTestId("assistant-greeting")).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(nav).getAllByRole("link").map((t) => t.textContent)).toEqual([
+      "Home",
+      "Search",
+      "Report",
+      "Profile",
+    ]);
+    // Owner decision 2026-09-26: the global floating AI button is removed.
+    expect(screen.queryByTestId("assistant-entry")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open assistant" })).toBeNull();
   });
 
-  it("hides the assistant on AI connection and routes ready search filters to ordinary search", () => {
+  it("hides the bottom nav on AI connection and shows no assistant UI", () => {
     renderShell("/ai-connection");
+    expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
     expect(screen.queryByTestId("assistant-entry")).toBeNull();
-    expect(shouldShowAssistantFab("/ai-connection")).toBe(false);
-    const ready = applySearchFields(startFlow("search"), { query: "keys" });
-    expect(assistantSearchNavigationTarget(ready)).toBe("/search?q=keys");
-    expect(assistantSearchNavigationTarget(startFlow("search"))).toBeNull();
   });
 });
