@@ -154,8 +154,14 @@ jobs:
           grep -c 'sb_publishable_' "$JS" | grep -qE '^[1-9]' || { echo "publishable key missing from bundle"; exit 1; }
           # …and the "-" placeholder from run 35531815290 must never recur.
           if grep -q 'supabase\.co[^"]*","-"' "$JS"; then echo "placeholder key baked into bundle"; exit 1; fi
+          # Sentry is MANDATORY in installable builds: assert the real DSN host
+          # (and the baked release identity) actually landed in the shipped bundle,
+          # so a green build can never ship unmonitored. Shapes only, never the key.
+          DSN_HOST=$(node -e "import('./scripts/check-sentry-config.mjs').then(m=>{const r=m.checkEffectiveSentryDsn({mode:'production'});if(!r.ok){console.error('DSN '+r.reason);process.exit(1)}process.stdout.write(r.host)})")
+          grep -q "$DSN_HOST" "$JS" || { echo "Sentry DSN host missing from built bundle"; exit 1; }
+          grep -q "$SENTRY_RELEASE" "$JS" || { echo "Sentry release identity missing from built bundle"; exit 1; }
           # Only counts/shapes are echoed — never key material.
-          echo "bundle config assertion passed ($(basename "$JS"))"
+          echo "bundle config assertion passed ($(basename "$JS"); sentry host $DSN_HOST; release $SENTRY_RELEASE)"
       - name: Upload sourcemaps to Sentry (S3)
         env:
           # Secrets-only auth: the token is owner-held in repo Settings → Secrets

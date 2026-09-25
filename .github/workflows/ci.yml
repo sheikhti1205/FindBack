@@ -56,6 +56,13 @@ jobs:
       - run: npm ci
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
+      - name: Strict Sentry DSN preflight (installable build)
+        run: node scripts/check-sentry-config.mjs
+        env:
+          # Sentry is MANDATORY in installable APKs: this fails the job before
+          # any build when the DSN is missing, malformed or a placeholder, so a
+          # green CI run can never ship an unmonitored APK.
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
       - name: Build mobile web dist (Capacitor webDir)
         run: npm run build -w @findback/mobile
         env:
@@ -69,6 +76,14 @@ jobs:
           VITE_SENTRY_TRACES_SAMPLE_RATE: "0.1"
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+      - name: Assert Sentry DSN embedded in bundle
+        run: |
+          # A green build is NOT proof of monitoring: assert the real DSN host
+          # actually landed in the shipped bundle. Shapes only — never the key.
+          HOST=$(node -e "import('./scripts/check-sentry-config.mjs').then(m=>{const r=m.checkEffectiveSentryDsn({mode:'production'});if(!r.ok){console.error('DSN '+r.reason);process.exit(1)}process.stdout.write(r.host)})")
+          JS=$(ls apps/mobile/dist/assets/index-*.js | head -1)
+          grep -q "$HOST" "$JS" || { echo "Sentry DSN host missing from built bundle"; exit 1; }
+          echo "bundle carries Sentry DSN for host $HOST"
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Android JVM tests + debug APK
