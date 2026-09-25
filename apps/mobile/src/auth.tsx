@@ -28,6 +28,7 @@ import {
 import { getSupabase } from "./services/supabaseClient";
 import { connectRealtime, disconnectRealtime } from "./services/realtime";
 import { clearUserScopedLocalState } from "./services/userScopedState";
+import { aiCredentials } from "./services/aiCredentials";
 
 export type RegisterOutcome =
   | { status: "authenticated"; user: PublicUser }
@@ -104,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = getSupabase().auth.onAuthStateChange((event, session) => {
         setToken(session?.access_token ?? null);
         if (event === "SIGNED_OUT") {
+          aiCredentials.clearSession();
           disconnectRealtime();
           clearUserScopedLocalState();
           setUserState(null);
@@ -132,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onSignedOut(() => {
+        aiCredentials.clearSession();
         disconnectRealtime();
         clearUserScopedLocalState();
         setUserState(null);
@@ -196,6 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* best effort: local state is cleared regardless */
     }
     clearAllAuth();
+    aiCredentials.clearSession();
     setPendingEmailState(null);
     disconnectRealtime();
     clearUserScopedLocalState();

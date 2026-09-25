@@ -8,6 +8,7 @@ import { TextField } from "../components/Fields";
 import { Segmented } from "../components/Segmented";
 import { CategoryField } from "../components/CategoryField";
 import { RichTextEditor, tiptapToMarkdown } from "../components/RichTextEditor";
+import { measureDescription } from "../services/richText";
 import type { Editor } from "@tiptap/react";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
@@ -16,7 +17,7 @@ import { announce } from "../components/LiveRegion";
 import { publishReport } from "../services/posts";
 import { clearDraft, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
-import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, toNativeImageUri, type PickedPhoto } from "../services/photo";
+import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
 import { dropStashedPhoto, getStashedPhoto, stashPhotoFile } from "../services/photoStore";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
@@ -26,10 +27,6 @@ import {
   subscribeStagedAssistantReportHandoff,
   takeStagedAssistantReportHandoff,
 } from "../services/assistant/assistantReportNavigation";
-import {
-  readImageAnalysisReadiness,
-  type ImageAnalysisReadiness,
-} from "../services/models/imageAnalysisReadiness";
 
 const inputCls =
   "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
@@ -121,10 +118,6 @@ export function CreateReport() {
   // the commit-to-passive-effect gap for synchronous external handoffs.
   useLayoutEffect(() => {
     formSnapshotRef.current = { type, title, description, category, eventDate, location };
-  });
-  const [imageReadiness, setImageReadiness] = useState<ImageAnalysisReadiness>({
-    available: false,
-    reason: "CHECKING",
   });
 
   // Restore the uploadable File for a draft whose photo came from the native
@@ -259,17 +252,7 @@ export function CreateReport() {
     });
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void readImageAnalysisReadiness().then((readiness) => {
-      if (!cancelled) setImageReadiness(readiness);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [pickedPhoto]);
-
-  // Preserve the draft across in-app navigation (Help, map helper, model setup).
+  // Preserve the draft across in-app navigation (Help and map helper).
   useEffect(() => {
     saveDraft({
       type,
@@ -375,6 +358,11 @@ export function CreateReport() {
   }
 
   function applyVlmSuggestion(patch: Partial<VlmAnalysis>) {
+    const replacesExisting =
+      (!!title.trim() && !!patch.suggestedTitle && patch.suggestedTitle !== title) ||
+      (!!description.trim() && !!patch.suggestedDescription && patch.suggestedDescription !== description) ||
+      (!!category && !!patch.suggestedCategory && patch.suggestedCategory !== category);
+    if (replacesExisting && !window.confirm("Replace the existing title, description or category with these reviewed AI suggestions?")) return;
     if (patch.suggestedTitle !== undefined) setTitle(patch.suggestedTitle ?? "");
     if (patch.suggestedDescription !== undefined) {
       descriptionLiveRef.current = patch.suggestedDescription ?? "";
@@ -411,7 +399,11 @@ export function CreateReport() {
       descriptionLiveRef.current = liveDescription;
       setDescription(liveDescription);
     }
-    const trimmedDescription = liveDescription.trim();
+    const trimmedDescription = measureDescription(liveDescription).trimmed;
+    // ED-05 contract: the business rule stays stored-Markdown length
+    // (DESCRIPTION_MAX against the submitted string), shared with the editor
+    // counter through measureDescription so `**`, `##`, list prefixes, `>`
+    // and link destinations never surprise the user at publish time.
     const trimmedYoutube = youtubeUrl.trim();
     const trimmedLocationLabel = location.label.trim();
     const errs = {
@@ -706,40 +698,7 @@ export function CreateReport() {
         )}
       </section>
 
-      {/* Local VLM report assistant — only on Android with native camera */}
-      {isNativeCameraAvailable() && pickedPhoto && toNativeImageUri(pickedPhoto) && (
-        <VlmSuggestions
-          imageUri={toNativeImageUri(pickedPhoto)!}
-          onApply={applyVlmSuggestion}
-          userContext={{ title, description }}
-          readiness={imageReadiness}
-        />
-      )}
-      {isNativeCameraAvailable() && pickedPhoto && !toNativeImageUri(pickedPhoto) && (
-        <Button
-          type="button"
-          variant="outline"
-          size="md"
-          onClick={() => {
-            saveDraft({
-              type,
-              title,
-              description,
-              category,
-              eventDate,
-              location,
-              youtubeUrl,
-              photoId,
-              photoNativeUri: pickedPhoto?.nativeUri ?? null,
-              photoWebPath: pickedPhoto?.webPath ?? previewUrl,
-              photoFormat: pickedPhoto?.format ?? null,
-            });
-            navigate("/offline-ai");
-          }}
-        >
-          Download model
-        </Button>
-      )}
+      {selectedFile && <VlmSuggestions file={selectedFile} onApply={applyVlmSuggestion} />}
 
       {/* Optional external YouTube media */}
       <label className="block">
