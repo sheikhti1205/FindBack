@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, type FocusEvent, type RefObject } from "react";
-import { motion, useDragControls } from "framer-motion";
+import { AnimatePresence, motion, useDragControls } from "framer-motion";
 import { X } from "lucide-react";
 import { registerBackInterceptor } from "./backNavigation";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { backdropTransition, sheetTransition } from "./uiMotion";
 
 export type BottomSheetHeight = "medium" | "large" | "full";
 
@@ -50,18 +51,22 @@ export function BottomSheet({
   closeLabel = "Close",
   children,
 }: BottomSheetProps) {
-  if (!open) return null;
   return (
-    <BottomSheetDialog
-      onClose={onClose}
-      title={title}
-      description={description}
-      height={height}
-      dismissible={dismissible}
-      closeLabel={closeLabel}
-    >
-      {children}
-    </BottomSheetDialog>
+    <AnimatePresence>
+      {open ? (
+        <BottomSheetDialog
+          key="bottom-sheet"
+          onClose={onClose}
+          title={title}
+          description={description}
+          height={height}
+          dismissible={dismissible}
+          closeLabel={closeLabel}
+        >
+          {children}
+        </BottomSheetDialog>
+      ) : null}
+    </AnimatePresence>
   );
 }
 
@@ -124,11 +129,16 @@ function BottomSheetDialog({
 
   return (
     <div className="fixed inset-0 z-50">
-      <div
+      <motion.div
         data-testid="bottom-sheet-backdrop"
         aria-hidden="true"
         onClick={requestClose}
-        className="absolute inset-0 bg-black/50"
+        className="absolute inset-0"
+        style={{ background: "var(--scrim)" }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={backdropTransition}
       />
       <motion.div
         ref={sheetRef}
@@ -156,9 +166,10 @@ function BottomSheetDialog({
         }}
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
-        transition={{ type: "tween", duration: 0.25, ease: "easeOut" }}
-        style={{ maxHeight: MAX_HEIGHT[height] }}
-        className="absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-md flex-col rounded-t-m3-xl bg-surface pb-[env(safe-area-inset-bottom)] text-on-surface shadow-lg"
+        exit={{ y: "100%" }}
+        transition={sheetTransition}
+        style={{ maxHeight: MAX_HEIGHT[height], boxShadow: "var(--shadow-md)" }}
+        className="absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-md flex-col rounded-t-m3-xl bg-surface pb-[env(safe-area-inset-bottom)] text-on-surface"
       >
         <div
           data-testid="bottom-sheet-handle"

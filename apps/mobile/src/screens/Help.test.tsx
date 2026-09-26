@@ -24,7 +24,9 @@ describe("Help product naming", () => {
         <Help />
       </MemoryRouter>,
     );
-    expect(screen.getByRole("heading", { name: "Help & FAQ" })).toBeTruthy();
+    // M2 G23: the header is the Assistant with a model-picker affordance.
+    expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /choose model/i })).toBeTruthy();
     expect(screen.getByLabelText("Ask the Help & FAQ")).toBeTruthy();
     expect(screen.getByText(/I am the FindBack Help & FAQ/)).toBeTruthy();
     expect(screen.queryByText(/Help Assistant/)).toBeNull();

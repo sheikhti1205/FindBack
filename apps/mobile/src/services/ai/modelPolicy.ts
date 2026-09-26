@@ -17,6 +17,7 @@ import {
   type AiSelection,
   type ModelRecord,
   type PaidConsent,
+  type ProviderId,
   type TaskScope,
 } from "./providerContract";
 
@@ -133,4 +134,142 @@ export function resolveSelection(input: ResolveSelectionInput): PolicyResolveRes
   const authorized = isSelectionAuthorized(selection, record, input.fingerprintOf(record), input.task);
   if (!authorized) return { ok: false, error: "consent-invalid", selection: fallback };
   return { ok: true, selection, record };
+}
+
+/**
+ * Model-level fallback router (G11 companion to the coordinator's
+ * same-adapter bounded retries — the coordinator itself is NEVER given a
+ * second adapter; this router picks ONE alternative selection and the caller
+ * starts a fresh, rebudgeted send for it).
+ *
+ * Hard gates (any violation ⇒ no fallback, explicit reason, caller keeps
+ * working with the current model):
+ * - free-only mode never transitions into paid/variable, and unknown prices
+ *   are never consentable in any mode;
+ * - with approved photos, only same-provider vision-capable candidates qualify
+ *   (no silent cross-provider photo routing, never a vision→text downgrade);
+ * - blocked-entitlement and credential-less providers are skipped;
+ * - paid candidates require the caller's consent to authorize for the task.
+ *
+ * The router moves SELECTION ONLY: it carries no text, deltas, or partial
+ * output. An interrupted partial stream is marked incomplete by the caller
+ * and never spliced into the next attempt's context.
+ */
+export type FallbackPlanInput = {
+  readonly accountId: string;
+  readonly catalog: readonly ModelRecord[];
+  readonly task: TaskScope;
+  readonly currentModelId: string;
+  readonly approvedImageIds: readonly string[];
+  readonly mode: AiSelection["mode"];
+  readonly paidConsent?: PaidConsent;
+  readonly fingerprintOf: (record: ModelRecord) => string;
+  readonly hasCredential: (provider: ProviderId) => boolean;
+  readonly excludeModelIds?: readonly string[];
+};
+
+export type FallbackPlanResult =
+  | {
+      readonly ok: true;
+      readonly selection: AiSelection;
+      readonly record: ModelRecord;
+      readonly sameProvider: boolean;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: "no-compatible-fallback" | "photo-provider-pinned" | "current-unknown";
+      readonly selection: AiSelection;
+    };
+
+function supportsImages(record: ModelRecord): boolean {
+  return record.input.includes("image");
+}
+
+export function planModelFallback(input: FallbackPlanInput): FallbackPlanResult {
+  const fallback = defaultSelection(input.accountId);
+  const current = findRecord(input.catalog, input.currentModelId);
+  if (current === undefined) return { ok: false, reason: "current-unknown", selection: fallback };
+  const excluded = new Set(input.excludeModelIds ?? []);
+  const needsVision = input.approvedImageIds.length > 0 || input.task === "image-question";
+
+  const priceGate = (record: ModelRecord): boolean => {
+    if (record.priceClass === "unknown") return false;
+    if (input.mode === "free-only") return record.priceClass === "free";
+    if (record.priceClass === "free") return true;
+    const consent = input.paidConsent;
+    if (consent === undefined) return false;
+    const candidate: AiSelection = {
+      accountId: input.accountId,
+      provider: record.provider,
+      modelId: record.id,
+      mode: "paid-explicit",
+      paidConsent: consent,
+    };
+    return isSelectionAuthorized(candidate, record, input.fingerprintOf(record), input.task);
+  };
+
+  const eligible = input.catalog.filter(
+    (record) =>
+      record.id !== input.currentModelId &&
+      !excluded.has(record.id) &&
+      record.entitlement !== "blocked" &&
+      input.hasCredential(record.provider) &&
+      (!needsVision || supportsImages(record)) &&
+      priceGate(record),
+  );
+  if (eligible.length > 0) {
+    const sameProvider = eligible.filter((record) => record.provider === current.provider);
+    const ordered = [...sameProvider, ...eligible.filter((record) => record.provider !== current.provider)];
+    // Photos pin the provider: cross-provider alternatives exist but must not
+    // be taken silently (caller re-consents or stops). Without photos the
+    // ordered list may cross providers for a free, authorized route.
+    const withPhotos = input.approvedImageIds.length > 0;
+    const pick = withPhotos ? ordered.find((record) => record.provider === current.provider) : ordered[0];
+    if (pick === undefined) {
+      return { ok: false, reason: "photo-provider-pinned", selection: fallback };
+    }
+    const paid = pick.priceClass !== "free";
+    // Paid picks reuse the caller's consent verbatim (priceGate already proved
+    // it authorizes THIS model+fingerprint+task); consent is never minted here.
+    const consent = input.paidConsent;
+    if (paid && consent === undefined) return { ok: false, reason: "no-compatible-fallback", selection: fallback };
+    return {
+      ok: true,
+      selection:
+        paid && consent !== undefined
+          ? {
+              accountId: input.accountId,
+              provider: pick.provider,
+              modelId: pick.id,
+              mode: "paid-explicit" as const,
+              paidConsent: consent,
+            }
+          : {
+              accountId: input.accountId,
+              provider: pick.provider,
+              modelId: pick.id,
+              mode: "free-only" as const,
+            },
+      record: pick,
+      sameProvider: pick.provider === current.provider,
+    };
+  }
+
+  // Distinguish "photos pin us here" from "nothing compatible at all": a
+  // cross-provider vision route exists but is withheld pending explicit
+  // photo-destination consent.
+  if (input.approvedImageIds.length > 0) {
+    const crossProviderVision = input.catalog.some(
+      (record) =>
+        record.id !== input.currentModelId &&
+        !excluded.has(record.id) &&
+        record.provider !== current.provider &&
+        record.entitlement !== "blocked" &&
+        input.hasCredential(record.provider) &&
+        supportsImages(record) &&
+        priceGate(record),
+    );
+    if (crossProviderVision) return { ok: false, reason: "photo-provider-pinned", selection: fallback };
+  }
+  return { ok: false, reason: "no-compatible-fallback", selection: fallback };
 }

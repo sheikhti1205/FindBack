@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BottomSheet } from "./BottomSheet";
 import { consumeBackIntercept, resetBackInterceptors } from "./backNavigation";
 
@@ -59,7 +59,7 @@ describe("BottomSheet", () => {
     expect(screen.getByTestId("bottom-sheet").getAttribute("data-height")).toBe("large");
   });
 
-  it("closes on backdrop tap and restores scroll on unmount", () => {
+  it("closes on backdrop tap and restores scroll after the exit animation", async () => {
     const onClose = vi.fn();
     const { rerender } = render(
       <BottomSheet open onClose={onClose} title="Details">
@@ -74,7 +74,7 @@ describe("BottomSheet", () => {
         body
       </BottomSheet>,
     );
-    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.body.style.overflow).toBe("");
   });
 
@@ -123,7 +123,7 @@ describe("BottomSheet", () => {
     expect(screen.getByTestId("bottom-sheet").contains(document.activeElement)).toBe(true);
   });
 
-  it("returns focus to the launcher on close", () => {
+  it("returns focus to the launcher after the exit animation", async () => {
     const opener = document.createElement("button");
     opener.textContent = "Opener";
     document.body.appendChild(opener);
@@ -141,7 +141,7 @@ describe("BottomSheet", () => {
         <button>Action</button>
       </BottomSheet>,
     );
-    expect(document.activeElement).toBe(opener);
+    await waitFor(() => expect(document.activeElement).toBe(opener));
     opener.remove();
   });
 
@@ -192,6 +192,61 @@ describe("BottomSheet", () => {
     input.scrollIntoView = vi.fn();
     fireEvent.focus(input);
     expect(input.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+  });
+
+  it("plays an exit animation instead of unmounting synchronously", async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <BottomSheet open onClose={onClose} title="Details">
+        body
+      </BottomSheet>,
+    );
+    expect(screen.getByRole("dialog", { name: "Details" })).toBeTruthy();
+
+    rerender(
+      <BottomSheet open={false} onClose={onClose} title="Details">
+        body
+      </BottomSheet>,
+    );
+    // Exit animation keeps the sheet + backdrop mounted for a beat …
+    expect(screen.getByRole("dialog", { name: "Details" })).toBeTruthy();
+    expect(screen.getByTestId("bottom-sheet-backdrop")).toBeTruthy();
+    // … then the sheet unmounts and releases the scroll lock.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), {
+      timeout: 3000,
+    });
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("fades the backdrop out on exit", async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <BottomSheet open onClose={onClose} title="Details">
+        body
+      </BottomSheet>,
+    );
+    const backdrop = screen.getByTestId("bottom-sheet-backdrop");
+    // Enter fade completes first (fully opaque while open) …
+    await waitFor(() => expect(backdrop.style.opacity).toBe("1"), {
+      timeout: 3000,
+    });
+
+    rerender(
+      <BottomSheet open={false} onClose={onClose} title="Details">
+        body
+      </BottomSheet>,
+    );
+    // … then the exit fade drops opacity below 1 …
+    const exiting = screen.getByTestId("bottom-sheet-backdrop");
+    await waitFor(
+      () => expect(Number(exiting.style.opacity || "1")).toBeLessThan(1),
+      { timeout: 3000 },
+    );
+    // … and the backdrop unmounts once the exit finishes.
+    await waitFor(
+      () => expect(screen.queryByTestId("bottom-sheet-backdrop")).toBeNull(),
+      { timeout: 3000 },
+    );
   });
 
   it("supports non-dismissible mode for critical ops", () => {

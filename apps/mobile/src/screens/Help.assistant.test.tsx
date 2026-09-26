@@ -106,7 +106,7 @@ function send(text: string) {
 describe("Help full-screen assistant", () => {
   it("renders transcript, composer, history entry and keeps product copy", () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    expect(screen.getByRole("heading", { name: "Help & FAQ" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
     expect(screen.getByTestId("chat-transcript")).toBeTruthy();
     expect(screen.getByTestId("chat-composer")).toBeTruthy();
     expect(screen.getByRole("button", { name: /chat history/i })).toBeTruthy();
@@ -176,6 +176,9 @@ describe("Help full-screen assistant", () => {
       expect(items.length).toBe(2);
     });
     fireEvent.click(screen.getByRole("button", { name: /Continue .*first question/i }));
+    // The sheet now plays an exit animation (A-owned BottomSheet): wait for
+    // the close instead of asserting synchronously.
+    await waitFor(() => expect(screen.queryByTestId("history-sheet")).toBeNull());
     expect(screen.getByText("first question")).toBeTruthy();
   });
 

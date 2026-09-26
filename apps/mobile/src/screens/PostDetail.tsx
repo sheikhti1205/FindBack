@@ -34,6 +34,62 @@ import {
   onRealtime,
 } from "../services/realtime";
 
+interface GalleryImage {
+  fileUrl: string;
+}
+
+/**
+ * Ordered 1..5 photo gallery. A single photo keeps the legacy rendering;
+ * multiple photos get a main view + an explicit thumbnail strip (48dp
+ * targets, no motion). Read-only: no reorder/remove here.
+ */
+function PostGallery({ postId, title, images }: { postId: string; title: string; images: GalleryImage[] }) {
+  const [selected, setSelected] = useState(0);
+  useEffect(() => {
+    setSelected(0);
+  }, [postId]);
+  if (images.length === 0) return null;
+  if (images.length === 1) {
+    return (
+      <img
+        src={images[0]!.fileUrl}
+        alt={`Photo for ${title}`}
+        className="max-h-72 w-full rounded-m3-md border border-outline-variant object-contain"
+      />
+    );
+  }
+  const safeSelected = Math.min(selected, images.length - 1);
+  const current = images[safeSelected]!;
+  return (
+    <figure className="flex flex-col gap-2">
+      <img
+        src={current.fileUrl}
+        alt={`Photo ${safeSelected + 1} of ${images.length} for ${title}`}
+        className="max-h-72 w-full rounded-m3-md border border-outline-variant object-contain"
+      />
+      <figcaption className="text-xs text-on-surface-variant" role="status">
+        Photo {safeSelected + 1} of {images.length}
+      </figcaption>
+      <div role="group" aria-label="Report photos" className="flex gap-2 overflow-x-auto pb-1">
+        {images.map((img, i) => (
+          <button
+            key={`${img.fileUrl}#${i}`}
+            type="button"
+            onClick={() => setSelected(i)}
+            aria-label={`Show photo ${i + 1}`}
+            aria-pressed={i === safeSelected}
+            className={`flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-sm border p-1 ${
+              i === safeSelected ? "border-on-surface" : "border-outline-variant"
+            }`}
+          >
+            <img src={img.fileUrl} alt="" aria-hidden className="h-12 w-12 rounded-m3-xs object-cover" />
+          </button>
+        ))}
+      </div>
+    </figure>
+  );
+}
+
 export function PostDetail() {
   const { id = "" } = useParams();
   const { user } = useAuth();
@@ -231,7 +287,9 @@ export function PostDetail() {
         setError(friendlyError(e).message);
       }
     } finally {
-      if (mutationActive === "reaction") setMutationActive(null);
+      // Functional clear: the closure holds the pre-mutation value, so a
+      // direct comparison would never reset and lock the owner controls.
+      setMutationActive((cur) => (cur === "reaction" ? null : cur));
     }
   }
 
@@ -256,7 +314,8 @@ export function PostDetail() {
         setError(friendlyError(e).message);
       }
     } finally {
-      if (mutationActive === "rating") setMutationActive(null);
+      // Functional clear (see toggleReaction): never leave controls stuck.
+      setMutationActive((cur) => (cur === "rating" ? null : cur));
     }
   }
 
@@ -288,6 +347,16 @@ export function PostDetail() {
   }
 
   async function onChangeStatus(status: PostStatus) {
+    // Recovered/Closed are terminal for the searcher: confirm explicitly.
+    // All other transitions stay direct. No new statuses are introduced.
+    if ((status === "RECOVERED" || status === "CLOSED") && current.status !== status) {
+      const ok = window.confirm(
+        status === "RECOVERED"
+          ? "Mark this report as recovered? It will leave the open search."
+          : "Close this report? It will leave the open search.",
+      );
+      if (!ok) return;
+    }
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++statusSeq.current;
     setMutationActive("status");
@@ -304,11 +373,13 @@ export function PostDetail() {
         setError(friendlyError(err).message);
       }
     } finally {
-      if (mutationActive === "status") setMutationActive(null);
+      // Functional clear (see toggleReaction): the owner control must unlock
+      // so a confirmed Recovered/Closed can be followed by another change.
+      setMutationActive((cur) => (cur === "status" ? null : cur));
     }
   }
 
-  const image = post.attachments.find((a) => a.mimeType.startsWith("image/"));
+  const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
 
   // Owner status control is disabled while any mutation is active
   const ownerControlsDisabled = mutationActive !== null;
@@ -328,9 +399,7 @@ export function PostDetail() {
       )}
 
       <article className="flex flex-col gap-4 px-4">
-        {image && (
-          <img src={image.fileUrl} alt={`Photo for ${post.title}`} className="max-h-72 w-full rounded-m3-md border border-outline-variant object-contain" />
-        )}
+        <PostGallery postId={post.id} title={post.title} images={images} />
 
         <div>
           <h1 className="break-words text-2xl font-semibold leading-tight tracking-tight">{post.title}</h1>

@@ -26,7 +26,8 @@ describe("ChatTranscript", () => {
     expect(log.getAttribute("role")).toBe("log");
     expect(log.getAttribute("aria-live")).toBe("polite");
     expect(screen.getByText("How do I report?")).toBeTruthy();
-    expect(screen.getByText("Generated via OpenRouter free model")).toBeTruthy();
+    // M2 G08: without provider/model provenance the label stays generic.
+    expect(screen.getByText("AI answer")).toBeTruthy();
     expect(screen.getByText("Built-in answer")).toBeTruthy();
   });
 
@@ -74,8 +75,7 @@ describe("ChatTranscript", () => {
     expect(onAction).toHaveBeenCalledWith("OPEN_SEARCH");
   });
 
-  it("keeps a bottom anchor so long streamed responses do not break scroll", () => {
-    const messages = Array.from({ length: 60 }, (_, i) => ({
+  it("keeps a bottom anchor so long streamed responses do not break scroll", () => {    const messages = Array.from({ length: 60 }, (_, i) => ({
       id: `a${i}`,
       role: "assistant" as const,
       text: `Response chunk ${i} `.repeat(20),
@@ -95,5 +95,48 @@ describe("ChatTranscript", () => {
     const scroller = screen.getByTestId("chat-transcript");
     expect(scroller.className).toMatch(/bg-surface|surface-container/);
     expect(container.innerHTML).not.toMatch(/text-(red|green|blue|amber|emerald)-/);
+  });
+});
+
+describe("ChatTranscript M2", () => {
+  it("renders an in-flight partial reply with its own label", () => {
+    render(
+      <ChatTranscript
+        messages={[{ id: "u1", role: "user", text: "hi" }]}
+        partialText="Hello wo"
+        partialLabel="AI answer"
+      />,
+    );
+    const partial = screen.getByTestId("chat-partial");
+    expect(partial.textContent).toContain("Hello wo");
+    expect(partial.textContent).toContain("AI answer");
+  });
+
+  it("hides the partial bubble when there is no in-flight text", () => {
+    render(<ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />);
+    expect(screen.queryByTestId("chat-partial")).toBeNull();
+  });
+
+  it("prefers the actual provider/model label and falls back to generic AI", () => {
+    const { rerender } = render(
+      <ChatTranscript
+        messages={[
+          {
+            id: "a1",
+            role: "assistant",
+            text: "hi",
+            source: "llm",
+            sourceDetail: "openrouter · llama-3.2",
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("openrouter · llama-3.2")).toBeTruthy();
+    rerender(
+      <ChatTranscript
+        messages={[{ id: "a1", role: "assistant", text: "hi", source: "llm" }]}
+      />,
+    );
+    expect(screen.getByText("AI answer")).toBeTruthy();
   });
 });

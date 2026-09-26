@@ -19,7 +19,7 @@ const BADGE_COPY: Record<PriceClass, string> = {
   variable: "Variable price",
 };
 
-function priceLineCopy(line: PriceLine): string {
+export function priceLineCopy(line: PriceLine): string {
   if (line.unit === "token") {
     const perMillion = formatPerMillionTokens(line.amountDecimal);
     if (perMillion !== null) return `$${perMillion} USD per 1M ${line.dimension} tokens`;
@@ -70,7 +70,11 @@ export function ModelCatalogSheet({
                   {model.contextTokens !== undefined ? `Up to ${model.contextTokens} context tokens` : "Context window unknown"}
                   {" · "}
                   {supportsVision(model) ? "Accepts images" : "Text only"}
-                  {model.entitlement === "blocked" ? " · Not usable on this account" : ""}
+                  {model.entitlement === "blocked"
+                    ? " · Not usable on this account"
+                    : model.entitlement === "verified"
+                      ? " · Verified on this account"
+                      : " · Not yet tested on this account"}
                 </p>
                 {model.prices.length > 0 ? (
                   <ul className="flex flex-col gap-0.5">

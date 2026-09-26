@@ -131,6 +131,20 @@ function ClassicContent({ post }: { post: PostItem }) {
   );
 }
 
+function imageCount(post: PostItem): number {
+  return post.attachments.filter((a) => a.mimeType.startsWith("image/")).length;
+}
+
+function PhotoCount({ post }: { post: PostItem }) {
+  const n = imageCount(post);
+  if (n === 0) return null;
+  return (
+    <p data-testid="photo-count" className="text-xs text-on-surface-variant">
+      {n} {n === 1 ? "photo" : "photos"}
+    </p>
+  );
+}
+
 /** Variant A editorial: kicker, large photo first, serif headline. */
 function EditorialContent({ post }: { post: PostItem }) {
   const image = post.attachments.find((a) => a.mimeType.startsWith("image/"));
@@ -157,6 +171,7 @@ function EditorialContent({ post }: { post: PostItem }) {
 
       <h3 className="fb-editorial-title break-words">{post.title}</h3>
       <p className="text-xs text-on-surface-variant">{byline}</p>
+      <PhotoCount post={post} />
       {excerpt && (
         <p className="line-clamp-3 break-words text-sm leading-relaxed text-on-surface-variant">
           {excerpt}
@@ -198,6 +213,11 @@ function CompactContent({ post }: { post: PostItem }) {
           {STATUS_LABELS[post.status]}
         </p>
         <p className="mt-0.5 truncate text-[11px] text-on-surface-variant">{meta}</p>
+        {imageCount(post) > 0 && (
+          <p data-testid="photo-count" className="mt-0.5 text-[11px] text-on-surface-variant">
+            {imageCount(post)} {imageCount(post) === 1 ? "photo" : "photos"}
+          </p>
+        )}
       </div>
     </div>
   );

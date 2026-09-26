@@ -2,11 +2,10 @@
 /**
  * Cross-platform Android APK build for the Supabase-native app (Block 10K).
  *
- * Usage:
- *   VITE_SUPABASE_URL=https://<ref>.supabase.co \
- *   VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_... \
- *   VITE_SENTRY_DSN=https://<key>@<host>/<project-id> \
- *   npm run apk
+ * Usage: set VITE_SENTRY_DSN for installable builds and either export
+ * VITE_SUPABASE_URL/VITE_SUPABASE_PUBLISHABLE_KEY or use the canonical
+ * SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY in the ignored root .env.
+ * Then run `npm run apk`.
  *
  * Only the public Supabase URL + publishable key are baked into the bundle. No
  * API base URL is needed — the app talks exclusively to hosted Supabase (Auth /
@@ -21,20 +20,19 @@
  */
 import { spawnSync } from "node:child_process";
 import { checkEffectiveSentryDsn } from "./check-sentry-config.mjs";
+import { effectiveSupabaseConfig } from "./check-mobile-build-config.mjs";
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-if (!supabaseUrl || !publishableKey) {
-  console.error(
-    "build-apk: set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (publishable key only).",
-  );
+let config;
+try {
+  config = effectiveSupabaseConfig();
+} catch {
+  console.error("build-apk: refusing to build — valid VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY required (shell or root .env).");
   process.exit(1);
 }
-if (/service_role|sb_secret_/i.test(publishableKey)) {
-  console.error("build-apk: refusing to build — that looks like a secret key, not a publishable key.");
-  process.exit(1);
-}
+// Pass the exact validated values to all subprocesses; Vite's root envDir and
+// the Android asset gate then compare against the same effective config.
+process.env.VITE_SUPABASE_URL = config.url;
+process.env.VITE_SUPABASE_PUBLISHABLE_KEY = config.key;
 
 // Sentry is mandatory for installable builds. Resolved with Vite's own
 // loadEnv against apps/mobile (the SAME source vite build embeds into
@@ -57,7 +55,7 @@ const npm = (args) => {
   if (result.status !== 0) process.exit(result.status ?? 1);
 };
 
-console.log(`build-apk: Supabase = ${supabaseUrl}`);
+console.log(`build-apk: Supabase host = ${config.host}`);
 console.log(`build-apk: Sentry = ${sentry.host} project=${sentry.projectId}`);
 npm(["run", "build", "-w", "packages/shared"]);
 npm(["run", "build", "-w", "apps/mobile"]);

@@ -1,5 +1,6 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { defineConfig, loadEnv } from "vite";
 
@@ -10,10 +11,10 @@ export function resolveSupabaseBuildEnv(
   mode: string,
   envDir = resolve(import.meta.dirname, "../.."),
 ) {
-  const env = loadEnv(mode, envDir, "VITE_");
+  const env = loadEnv(mode, envDir, "");
   return {
-    publishableKey: env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
-    url: env.VITE_SUPABASE_URL ?? "",
+    publishableKey: env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() || env.SUPABASE_PUBLISHABLE_KEY || "",
+    url: env.VITE_SUPABASE_URL?.trim() || env.SUPABASE_URL || "",
   };
 }
 
@@ -32,8 +33,22 @@ export function resolveSourcemapMode(env: {
   return env.SENTRY_UPLOAD_SOURCEMAPS === "true" ? "hidden" : false;
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
+  if (command === "build") {
+    // Direct `vite build` must not bypass the same fail-closed gate used by
+    // npm scripts, CI, and Gradle. Tests and `vite dev` remain DSN-free.
+    const preflight = spawnSync(process.execPath,
+      [resolve(import.meta.dirname, "../../scripts/check-mobile-build-config.mjs"), "--preflight"],
+      { stdio: "inherit", env: process.env });
+    if (preflight.status !== 0) throw new Error("Supabase build configuration preflight failed");
+  }
   const { publishableKey, url } = resolveSupabaseBuildEnv(mode);
+  if (command === "build") {
+    // Derive the VITE_* names in the build environment from the canonical
+    // local SUPABASE_* values; import.meta.env and define then agree.
+    process.env.VITE_SUPABASE_URL = url;
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY = publishableKey;
+  }
   const sourcemap = resolveSourcemapMode(process.env);
   // Explicit local behavior (S3): say which mode we are in so a missing upload
   // token can never be mistaken for an upload — maps simply do not exist.

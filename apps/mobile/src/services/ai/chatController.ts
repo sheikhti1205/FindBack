@@ -23,15 +23,18 @@
 import { assembleRequest, buildWireLayers } from "./requestAssembler";
 import type { AssemblerInput, VersionedText, WireLayer } from "./requestAssembler";
 import { coordinate } from "./requestCoordinator";
-import { isChatCheckpoint } from "./providerContract";
+import { isChatCheckpoint, isSelectionAuthorized } from "./providerContract";
 import type {
   AiSelection,
   ChatCheckpoint,
   ChatTurn,
+  ModelRecord,
   NormalizedRequest,
   ProviderAdapter,
+  ProviderId,
   TaskScope,
 } from "./providerContract";
+import { resolveSelection } from "./modelPolicy";
 import { computeContextBudget, resolveOutputCap } from "./contextBudget";
 import type { ContextBudgetInput } from "./contextBudget";
 import {
@@ -59,6 +62,41 @@ export class ControllerError extends Error {
   }
 }
 
+/**
+ * Clip bound for surfaced error text. Provider messages are untrusted data:
+ * they may echo user input or credential-like strings, so they are clipped
+ * and scrubbed before reaching state.
+ */
+const ERROR_CLIP_CHARS = 300;
+
+const KEY_LIKE_PATTERNS: readonly RegExp[] = [
+  /sk-[A-Za-z0-9\-_]+/g,
+  /bearer\s+[^\s]+/gi,
+  /api[_-]?key\s*[:=]\s*[^\s]+/gi,
+  /data:[^\s]+/gi,
+];
+
+/**
+ * Scrub a raw error message for UI state: redact key-like material, strip
+ * caller-supplied secrets (e.g. the prompt text a provider echoed back), and
+ * clip. Never pass prompt text, keys, or query content through unscanned.
+ */
+export function sanitizeControllerError(message: string, secrets: readonly string[] = []): string {
+  let out = message;
+  for (const secret of secrets) {
+    const trimmed = secret.trim();
+    if (trimmed.length >= 3 && out.includes(trimmed)) {
+      out = out.split(trimmed).join("[redacted-input]");
+    }
+  }
+  for (const pattern of KEY_LIKE_PATTERNS) {
+    pattern.lastIndex = 0;
+    out = out.replace(pattern, "[redacted-key]");
+  }
+  if (out.length > ERROR_CLIP_CHARS) out = out.slice(0, ERROR_CLIP_CHARS) + "…";
+  return out;
+}
+
 /** UI-facing compaction state: data (copy strings), never markup. */
 export type CompactionNotice = {
   summarized: boolean;
@@ -69,8 +107,24 @@ export type CompactionNotice = {
 
 export type ControllerPhase = "idle" | "sending" | "streaming" | "complete" | "failed" | "cancelled";
 
+/**
+ * UI-facing controller state (frozen M1 contract, owned by C, consumed by B).
+ *
+ * - `partialText` is the accumulated in-flight delta only: it is reset on
+ *   every send, grows while `streaming`, and is NEVER persisted (only the
+ *   final answer is appended to the store on `complete`). A cancelled or
+ *   failed send persists nothing, including its partial text.
+ * - `attempt` mirrors the coordinator's 1-based attempt for the in-flight
+ *   request (`0` when idle, before the first event).
+ * - `provider`/`modelId` echo the selection EFFECTIVE for the in-flight (or
+ *   last) request — a per-request override, never the constructor default.
+ */
 export type ControllerState = {
   phase: ControllerPhase;
+  partialText: string;
+  attempt: number;
+  provider: ProviderId;
+  modelId: string;
   summarized: boolean;
   notice: CompactionNotice | null;
   lastError?: string;
@@ -88,6 +142,13 @@ export type ControllerOptions = {
   budget: ContextBudgetInput;
   keepRecentCount?: number;
   summaryProvider?: SummaryProvider;
+  /**
+   * Catalogue used to validate per-request selection overrides via
+   * `resolveSelection`. Absent (legacy callers) ⇒ only the minimal gates
+   * (account match, paid-explicit carries consent) apply.
+   */
+  catalog?: readonly ModelRecord[];
+  fingerprintOf?: (record: ModelRecord) => string;
 };
 
 export type BuildOptions = {
@@ -97,6 +158,19 @@ export type BuildOptions = {
   authorizedResultIds?: readonly string[];
   maxOutputTokens?: number;
   task?: TaskScope;
+};
+
+/**
+ * Per-request send options (frozen M1 contract). `selection`/`adapter`
+ * override the constructor binding for ONE send: the override is validated
+ * via `resolveSelection`/`isSelectionAuthorized` (unknown/blocked/unconsented
+ * ⇒ `ControllerError`, no send), the in-flight attempt is cancelled, and
+ * context is rebuilt + rebudgeted for the new window. Absent ⇒ the
+ * constructor binding is used (legacy behavior).
+ */
+export type SendOptions = BuildOptions & {
+  selection?: AiSelection;
+  adapter?: ProviderAdapter;
 };
 
 export type BuiltContext = {
@@ -147,8 +221,17 @@ export class ChatController {
   private readonly budget: ContextBudgetInput;
   private readonly keepRecentCount: number;
   private readonly summaryProvider?: SummaryProvider;
-  private state: ControllerState = { phase: "idle", summarized: false, notice: null };
+  private readonly catalog?: readonly ModelRecord[];
+  private readonly fingerprintOf?: (record: ModelRecord) => string;
+  private state: ControllerState;
   private readonly listeners = new Set<(state: ControllerState) => void>();
+  /**
+   * Stale-turn guard: incremented on every send and every cancel. Stream
+   * events captured under an older generation are ignored (late chunks after
+   * cancel or after a superseding send never reach state or the store).
+   */
+  private generation = 0;
+  private inFlightAbort: AbortController | null = null;
 
   constructor(options: ControllerOptions) {
     this.store = options.store;
@@ -159,13 +242,43 @@ export class ChatController {
     this.budget = options.budget;
     this.keepRecentCount = options.keepRecentCount ?? 6;
     this.summaryProvider = options.summaryProvider;
+    this.catalog = options.catalog;
+    this.fingerprintOf = options.fingerprintOf;
+    this.state = {
+      phase: "idle",
+      partialText: "",
+      attempt: 0,
+      provider: options.selection.provider,
+      modelId: options.selection.modelId,
+      summarized: false,
+      notice: null,
+    };
   }
 
+  /**
+   * Subscribe to state snapshots. No replay: the listener receives only
+   * emissions after subscribing — call `getState()` first for the initial
+   * paint. Returns an unsubscribe function; call it on unmount.
+   */
   subscribe(listener: (state: ControllerState) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  /**
+   * Abort the in-flight send, if any. Late chunks arriving after cancel are
+   * ignored; no partial turn is persisted. No-op when idle.
+   */
+  cancel(): void {
+    if (this.inFlightAbort === null) return;
+    this.generation += 1;
+    this.inFlightAbort.abort();
+    this.inFlightAbort = null;
+    if (this.state.phase === "sending" || this.state.phase === "streaming") {
+      this.update({ phase: "cancelled", lastError: "Send was cancelled." });
+    }
   }
 
   getState(): ControllerState {
@@ -188,8 +301,13 @@ export class ChatController {
     this.update({ phase: "idle" });
   }
 
-  buildOutgoingContext(chatId: string, currentText: string, options: BuildOptions = {}): BuiltContext {
-    const accountId = this.selection.accountId;
+  buildOutgoingContext(
+    chatId: string,
+    currentText: string,
+    options: BuildOptions & { selection?: AiSelection } = {},
+  ): BuiltContext {
+    const selection = options.selection ?? this.selection;
+    const accountId = selection.accountId;
     let turns: ChatTurn[];
     let storedCheckpoint: ChatCheckpoint | undefined;
     let transient = false;
@@ -297,7 +415,7 @@ export class ChatController {
     }
 
     const assemblerInput: AssemblerInput = {
-      selection: this.selection,
+      selection,
       task: options.task ?? "general",
       systemPolicy,
       knowledge,
@@ -349,52 +467,190 @@ export class ChatController {
     });
   }
 
-  async send(chatId: string, text: string, options: BuildOptions = {}): Promise<SendResult> {
-    this.update({ phase: "sending", lastError: undefined });
+  /**
+   * Resolve the selection + adapter effective for one send. An override is
+   * validated via `resolveSelection`/`isSelectionAuthorized` against the
+   * controller catalogue: unknown models, blocked routes, unconsented paid
+   * models, and consent mismatches (changed price, wrong task) throw
+   * `ControllerError` and NOTHING is sent. The provider must also match the
+   * catalogue record — a display-label typo never silently switches provider.
+   */
+  private resolveEffective(input: {
+    selection?: AiSelection;
+    adapter?: ProviderAdapter;
+    task?: TaskScope;
+  }): { selection: AiSelection; adapter: ProviderAdapter } {
+    const adapter = input.adapter ?? this.adapter;
+    if (input.selection === undefined) return { selection: this.selection, adapter };
+    const requested = input.selection;
+    if (requested.accountId !== this.selection.accountId) {
+      throw new ControllerError("account-mismatch", "Selection belongs to another account.");
+    }
+    const task = input.task ?? "general";
+    if (this.catalog !== undefined) {
+      const fingerprintOf = this.fingerprintOf ?? ((): string => "");
+      const resolved = resolveSelection({
+        accountId: requested.accountId,
+        catalog: this.catalog,
+        task,
+        desiredModelId: requested.modelId,
+        mode: requested.mode,
+        ...(requested.paidConsent === undefined ? {} : { paidConsent: requested.paidConsent }),
+        fingerprintOf,
+      });
+      if (!resolved.ok) {
+        if (resolved.error === "consent-required") {
+          throw new ControllerError(
+            "needs-user-action",
+            "That model may cost money. Review its price and confirm explicit consent first. Your draft is kept.",
+          );
+        }
+        if (resolved.error === "consent-invalid") {
+          throw new ControllerError(
+            "needs-user-action",
+            "Saved consent no longer matches the current price or task. Review and confirm again. Your draft is kept.",
+          );
+        }
+        if (resolved.error === "blocked-model") {
+          throw new ControllerError(
+            "send-failed",
+            "That provider route is blocked on this device. Your draft is kept.",
+          );
+        }
+        throw new ControllerError(
+          "send-failed",
+          "That model is not in the loaded catalogue. Your draft is kept; pick a listed model.",
+        );
+      }
+      if (resolved.selection.provider !== requested.provider) {
+        throw new ControllerError(
+          "send-failed",
+          "Selection provider does not match the catalogue record. Your draft is kept.",
+        );
+      }
+      if (!isSelectionAuthorized(resolved.selection, resolved.record, fingerprintOf(resolved.record), task)) {
+        throw new ControllerError(
+          "needs-user-action",
+          "Selection is not authorized for this task. Review consent and try again. Your draft is kept.",
+        );
+      }
+      return { selection: resolved.selection, adapter };
+    }
+    // No catalogue (legacy callers): minimal gates only.
+    if (requested.mode === "paid-explicit" && requested.paidConsent === undefined) {
+      throw new ControllerError(
+        "needs-user-action",
+        "That model may cost money. Review its price and confirm explicit consent first. Your draft is kept.",
+      );
+    }
+    return { selection: requested, adapter };
+  }
+
+  async send(chatId: string, text: string, options: SendOptions = {}): Promise<SendResult> {
+    let effective: { selection: AiSelection; adapter: ProviderAdapter };
+    try {
+      effective = this.resolveEffective(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Selection rejected.";
+      this.update({
+        phase: "failed",
+        partialText: "",
+        attempt: 0,
+        lastError: sanitizeControllerError(message),
+      });
+      throw error;
+    }
+
+    // A new send supersedes any in-flight attempt: abort it and invalidate
+    // its generation so late chunks can never land in state or the store.
+    this.inFlightAbort?.abort();
+    this.generation += 1;
+    const generation = this.generation;
+    const linked = new AbortController();
+    if (options.signal !== undefined) {
+      if (options.signal.aborted) linked.abort();
+      else options.signal.addEventListener("abort", () => linked.abort(), { once: true });
+    }
+    this.inFlightAbort = linked;
+
+    this.update({
+      phase: "sending",
+      partialText: "",
+      attempt: 0,
+      provider: effective.selection.provider,
+      modelId: effective.selection.modelId,
+      lastError: undefined,
+    });
     let built: BuiltContext;
     try {
-      built = this.buildOutgoingContext(chatId, text, options);
+      built = this.buildOutgoingContext(chatId, text, {
+        ...options,
+        selection: effective.selection,
+        signal: linked.signal,
+      });
     } catch (error) {
+      if (generation !== this.generation) throw new ControllerError("cancelled", "Superseded by a newer send.");
       const message = error instanceof Error ? error.message : "Context build failed.";
-      this.update({ phase: "failed", lastError: message });
+      this.update({ phase: "failed", lastError: sanitizeControllerError(message, [text]) });
       throw error;
     }
 
     let answer = "";
+    let attempt = 0;
     let stopReason: "complete" | "cancelled" | "error" = "complete";
     let lastErrorMessage = "";
     try {
-      for await (const event of coordinate(built.request, { adapter: this.adapter })) {
+      for await (const event of coordinate(built.request, { adapter: effective.adapter })) {
+        // Stale turn or abort: ignore everything late, including text that
+        // arrives after cancel. Never accumulate hallucinated output.
+        if (generation !== this.generation || linked.signal.aborted) {
+          stopReason = "cancelled";
+          break;
+        }
         if (event.kind === "text") {
           answer += event.delta;
-          this.update({ phase: "streaming" });
+          attempt = event.attempt;
+          this.update({
+            phase: "streaming",
+            partialText: answer,
+            attempt,
+            provider: effective.selection.provider,
+            modelId: effective.selection.modelId,
+          });
         } else if (event.kind === "error") {
           lastErrorMessage = event.message;
+          attempt = event.attempt;
         } else if (event.kind === "done") {
           stopReason = event.stopReason;
+          attempt = event.attempt;
         }
       }
     } catch (error) {
+      if (generation !== this.generation) throw new ControllerError("cancelled", "Superseded by a newer send.");
       const message = error instanceof Error ? error.message : "Send failed.";
-      this.update({ phase: "failed", lastError: message });
+      this.update({ phase: "failed", lastError: sanitizeControllerError(message, [text]) });
       throw error;
     }
 
+    if (generation !== this.generation) {
+      // Superseded (cancel() or a newer send already set the state).
+      throw new ControllerError("cancelled", "Send was cancelled; transcript and checkpoint unchanged.");
+    }
+    this.inFlightAbort = null;
+
     if (stopReason === "cancelled" || built.request.signal.aborted) {
-      this.update({ phase: "cancelled", lastError: "Send was cancelled." });
-      throw new ControllerError(
-        "cancelled",
-        "Send was cancelled; transcript and checkpoint unchanged.",
-      );
+      this.update({ phase: "cancelled", partialText: "", lastError: "Send was cancelled." });
+      throw new ControllerError("cancelled", "Send was cancelled; transcript and checkpoint unchanged.");
     }
     if (stopReason === "error") {
-      this.update({ phase: "failed", lastError: lastErrorMessage });
-      throw new ControllerError("send-failed", lastErrorMessage || "Provider reported an error.");
+      const message = lastErrorMessage || "Provider reported an error.";
+      this.update({ phase: "failed", partialText: "", lastError: sanitizeControllerError(message, [text]) });
+      throw new ControllerError("send-failed", sanitizeControllerError(message, [text]));
     }
 
     if (!built.transient) {
       try {
-        const accountId = this.selection.accountId;
+        const accountId = effective.selection.accountId;
         this.store.appendTurn(accountId, chatId, { role: "user", text });
         if (answer.trim() !== "") {
           this.store.appendTurn(accountId, chatId, { role: "assistant", text: answer });
@@ -408,12 +664,18 @@ export class ChatController {
           // History off: the send already succeeded transiently.
         } else {
           const message = error instanceof Error ? error.message : "Persist failed.";
-          this.update({ phase: "failed", lastError: message });
+          this.update({ phase: "failed", lastError: sanitizeControllerError(message, [text]) });
           throw error;
         }
       }
     }
-    this.update({ phase: "complete" });
+    this.update({
+      phase: "complete",
+      partialText: answer,
+      attempt,
+      provider: effective.selection.provider,
+      modelId: effective.selection.modelId,
+    });
     return { request: built.request, layers: built.layers, answer, notice: built.notice };
   }
 }

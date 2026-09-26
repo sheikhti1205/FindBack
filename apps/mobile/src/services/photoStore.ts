@@ -1,17 +1,153 @@
+import type { PickedPhoto } from "./photo";
+import { storage } from "./storage";
+
 /**
- * In-session store for picked photo Files.
+ * Photo File store: in-memory Files for the live session + a durable
+ * per-account descriptor registry (services/storage boundary, mockable).
  *
  * A `File` from the web file input only has a `blob:` URL, which dies with the
  * component. The report composer survives navigation to Offline AI / Help, so
  * the File must outlive the screen while staying out of the serialized draft
- * (Files are not JSON). Drafts keep a `photoId`; the File lives here.
+ * (Files are not JSON). Drafts keep ordered photo ids; the Files live here.
+ *
+ * Durability across process death (G15): small Files persist their bytes as
+ * data URLs alongside metadata; larger Files persist metadata-only and
+ * rehydrate via their native URI (`photoToFile`) where one exists. Entries
+ * with neither bytes nor a native ref are orphans and are pruned on restore.
  */
-const files = new Map<string, File>();
-let seq = 0;
 
-export function stashPhotoFile(file: File): string {
+export interface StashedPhotoMeta {
+  picked: PickedPhoto | null;
+}
+
+export interface StoredPhotoDescriptor {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  nativeUri?: string | null;
+  webPath?: string | null;
+  format?: string | null;
+  /** Byte payload for small files only (metadata-only when absent). */
+  dataUrl?: string;
+  savedAt: number;
+}
+
+const PHOTOS_KEY_PREFIX = "findback:reportPhotos:v1:";
+const PHOTOS_ACCOUNT_INDEX_KEY = "findback:reportPhotoAccounts:v1";
+const DEFAULT_ACCOUNT = "default";
+
+/** Files at or under this size persist their bytes; larger persist metadata-only. */
+export const MAX_DURABLE_PHOTO_BYTES = 1_500_000;
+
+const files = new Map<string, File>();
+const metas = new Map<string, StashedPhotoMeta>();
+let seq = 0;
+/** Latest-writer-wins token so overlapping persists cannot resurrect removals. */
+let persistSeq = 0;
+
+function photosKey(accountId?: string | null): string {
+  return `${PHOTOS_KEY_PREFIX}${accountId ?? DEFAULT_ACCOUNT}`;
+}
+
+function readAccountIndex(): string[] {
+  try {
+    const raw = storage.getItem(PHOTOS_ACCOUNT_INDEX_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function trackAccount(accountId?: string | null): void {
+  try {
+    const key = accountId ?? DEFAULT_ACCOUNT;
+    const index = readAccountIndex();
+    if (!index.includes(key)) {
+      storage.setItem(PHOTOS_ACCOUNT_INDEX_KEY, JSON.stringify([...index, key]));
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+function readRegistry(accountId?: string | null): StoredPhotoDescriptor[] {
+  const raw = storage.getItem(photosKey(accountId));
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (v): v is StoredPhotoDescriptor => !!v && typeof (v as StoredPhotoDescriptor).id === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeRegistry(accountId: string | null | undefined, entries: StoredPhotoDescriptor[]): void {
+  const key = photosKey(accountId);
+  try {
+    storage.setItem(key, JSON.stringify(entries));
+    trackAccount(accountId);
+  } catch {
+    // Quota or blocked storage: retry metadata-only (bytes dropped, native
+    // refs kept), so ordering/refs still survive even when bytes cannot.
+    try {
+      const slim = entries.map(({ dataUrl: _dropped, ...rest }) => rest);
+      storage.setItem(key, JSON.stringify(slim));
+      trackAccount(accountId);
+    } catch {
+      /* storage unusable: session memory still works */
+    }
+  }
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") resolve(reader.result);
+        else reject(new Error("unreadable file"));
+      };
+      reader.onerror = () => reject(reader.error ?? new Error("unreadable file"));
+      reader.readAsDataURL(file);
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error("unreadable file"));
+    }
+  });
+}
+
+function dataUrlToFile(dataUrl: string, name: string, type: string): File {
+  const comma = dataUrl.indexOf(",");
+  if (!dataUrl.startsWith("data:") || comma < 0) throw new Error("bad data URL");
+  const binary = atob(dataUrl.slice(comma + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], name, { type: type || "application/octet-stream" });
+}
+
+function pickedFor(id: string, entry?: StoredPhotoDescriptor): PickedPhoto | null {
+  const meta = metas.get(id)?.picked;
+  if (meta) return meta;
+  const nativeUri = entry?.nativeUri ?? null;
+  if (nativeUri && !nativeUri.startsWith("blob:")) {
+    return {
+      nativeUri,
+      webPath: entry?.webPath && !entry.webPath.startsWith("blob:") ? entry.webPath : nativeUri,
+      format: entry?.format ?? "jpg",
+    };
+  }
+  return null;
+}
+
+export function stashPhotoFile(file: File, opts?: { picked?: PickedPhoto | null }): string {
   const id = `photo-${Date.now()}-${seq++}`;
   files.set(id, file);
+  metas.set(id, { picked: opts?.picked ?? null });
   return id;
 }
 
@@ -20,11 +156,135 @@ export function getStashedPhoto(id: string | null | undefined): File | null {
   return files.get(id) ?? null;
 }
 
-export function dropStashedPhoto(id: string | null | undefined): void {
-  if (id) files.delete(id);
+export function getStashedPhotoMeta(id: string | null | undefined): StashedPhotoMeta | null {
+  if (!id) return null;
+  return metas.get(id) ?? null;
 }
 
-/** Drop every stashed File (e.g. on sign-out). */
-export function clearPhotoStore(): void {
+export function dropStashedPhoto(id: string | null | undefined, accountId?: string | null): void {
+  if (!id) return;
+  files.delete(id);
+  metas.delete(id);
+  // Prune the descriptor now so a crash before the next persist cannot
+  // resurrect a removed photo; the persist effect rewrites the rest.
+  try {
+    writeRegistry(accountId, readRegistry(accountId).filter((e) => e.id !== id));
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Persist every stashed File's descriptor (+ bytes for small files) to the
+ * account registry. Registry mirrors memory authoritatively: ids no longer
+ * stashed are dropped. Latest call wins (stale overlapping persists abort
+ * before writing so a removal cannot be resurrected by a slow earlier call).
+ */
+export async function persistStashedPhotos(accountId?: string | null): Promise<void> {
+  const mySeq = ++persistSeq;
+  const entries: StoredPhotoDescriptor[] = [];
+  for (const [id, file] of files) {
+    const picked = metas.get(id)?.picked;
+    const entry: StoredPhotoDescriptor = {
+      id,
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      nativeUri: picked?.nativeUri ?? null,
+      webPath: picked?.webPath ?? null,
+      format: picked?.format ?? null,
+      savedAt: Date.now(),
+    };
+    if (file.size <= MAX_DURABLE_PHOTO_BYTES) {
+      try {
+        entry.dataUrl = await fileToDataUrl(file);
+      } catch {
+        /* metadata-only */
+      }
+    }
+    if (mySeq !== persistSeq) return;
+    entries.push(entry);
+  }
+  if (mySeq !== persistSeq) return;
+  writeRegistry(accountId, entries);
+}
+
+/**
+ * Restore stashed Files after process death. Returns the ids that now hold
+ * usable Files (rehydrated from bytes or never lost), in registry order.
+ * Native-ref-only entries are kept as pending restores (see
+ * pendingNativePhotoIds); entries with neither bytes nor a native ref are
+ * orphans and are pruned.
+ */
+export async function restoreStashedPhotos(accountId?: string | null): Promise<string[]> {
+  const registry = readRegistry(accountId);
+  const kept: StoredPhotoDescriptor[] = [];
+  const restored: string[] = [];
+  for (const entry of registry) {
+    if (files.has(entry.id)) {
+      kept.push(entry);
+      restored.push(entry.id);
+      continue;
+    }
+    if (entry.dataUrl) {
+      try {
+        const file = dataUrlToFile(entry.dataUrl, entry.name, entry.type);
+        files.set(entry.id, file);
+        if (!metas.has(entry.id)) metas.set(entry.id, { picked: pickedFor(entry.id, entry) });
+        kept.push(entry);
+        restored.push(entry.id);
+        continue;
+      } catch {
+        /* fall through: native ref or orphan */
+      }
+    }
+    if (entry.nativeUri && !entry.nativeUri.startsWith("blob:")) {
+      kept.push(entry);
+      if (!metas.has(entry.id)) metas.set(entry.id, { picked: pickedFor(entry.id, entry) });
+      continue;
+    }
+    // Orphan: no bytes, no native ref — drop it.
+  }
+  writeRegistry(accountId, kept);
+  return restored;
+}
+
+/** Registry ids with a native ref but no usable File (photoToFile can revive). */
+export function pendingNativePhotoIds(accountId?: string | null): string[] {
+  return readRegistry(accountId)
+    .filter((e) => !files.has(e.id) && !!e.nativeUri && !e.nativeUri.startsWith("blob:"))
+    .map((e) => e.id);
+}
+
+/** Registry descriptor for an id (order/refs audit without the bytes). */
+export function getPhotoDescriptor(
+  id: string | null | undefined,
+  accountId?: string | null,
+): StoredPhotoDescriptor | null {
+  if (!id) return null;
+  return readRegistry(accountId).find((e) => e.id === id) ?? null;
+}
+
+/** Drop every stashed File (e.g. on sign-out): memory + all stored registries. */
+export function clearPhotoStore(accountId?: string | null): void {
   files.clear();
+  metas.clear();
+  try {
+    if (accountId === undefined) {
+      for (const key of readAccountIndex()) {
+        storage.removeItem(`${PHOTOS_KEY_PREFIX}${key}`);
+      }
+      storage.removeItem(PHOTOS_ACCOUNT_INDEX_KEY);
+      storage.removeItem(photosKey(null));
+    } else {
+      storage.removeItem(photosKey(accountId));
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Drop every stored photo registry (sign-out path; coordinator wires the call). */
+export function clearAllStoredPhotos(): void {
+  clearPhotoStore(undefined);
 }

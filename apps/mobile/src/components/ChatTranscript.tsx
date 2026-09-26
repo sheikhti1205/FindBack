@@ -15,6 +15,11 @@ export interface TranscriptMessage {
   text: string;
   /** Omitted when unknown (e.g. restored turns carry no provenance). No badge then. */
   source?: TranscriptSource;
+  /**
+   * Actual provenance when known (e.g. "openrouter · llama-3.2"). Rendered
+   * verbatim instead of the generic label; never fabricated.
+   */
+  sourceDetail?: string | null;
   failed?: boolean;
   actions?: TranscriptAction[];
   /** Count of attached photos on this turn; renders an honest caption. */
@@ -33,12 +38,19 @@ export interface ChatTranscriptProps {
   error?: string | null;
   onRetry?: () => void;
   onAction?: (id: string) => void;
+  /** In-flight streamed text (throttled upstream); null/empty hides the bubble. */
+  partialText?: string | null;
+  /** Provenance for the partial bubble; defaults to the generic AI label. */
+  partialLabel?: string | null;
 }
 
-function sourceLabel(source: TranscriptSource): string {
-  return source === "llm" || source === "model"
-    ? "Generated via OpenRouter free model"
-    : "Built-in answer";
+/**
+ * G08 fix: a stored turn that only says "llm" no longer claims a specific
+ * provider — the label is the actual provenance when known, else generic AI.
+ */
+function sourceLabel(source: TranscriptSource, detail?: string | null): string {
+  if (detail !== undefined && detail !== null && detail.trim() !== "") return detail;
+  return source === "llm" || source === "model" ? "AI answer" : "Built-in answer";
 }
 
 /**
@@ -56,6 +68,8 @@ export function ChatTranscript({
   error = null,
   onRetry,
   onAction,
+  partialText = null,
+  partialLabel = null,
 }: ChatTranscriptProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -76,14 +90,14 @@ export function ChatTranscript({
   }
 
   useEffect(() => {
-    if (messages.length === 0) return;
+    if (messages.length === 0 && (partialText === null || partialText === "")) return;
     if (nearBottom()) {
       scrollToLatest();
-    } else if (messages[messages.length - 1]?.role === "assistant") {
+    } else if (messages[messages.length - 1]?.role === "assistant" || (partialText !== null && partialText !== "")) {
       setShowNewResponse(true);
     }
-    // Intentionally keyed on messages only: scroll follows content, not chrome.
-  }, [messages]);
+    // Keyed on content: scroll follows messages AND the throttled partial.
+  }, [messages, partialText]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -110,7 +124,7 @@ export function ChatTranscript({
             >
               {m.role === "assistant" && m.source !== undefined && (
                 <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-on-surface-variant">
-                  {sourceLabel(m.source)}
+                  {sourceLabel(m.source, m.sourceDetail)}
                 </p>
               )}
               {m.role === "assistant" ? (
@@ -150,6 +164,19 @@ export function ChatTranscript({
             </div>
           </div>
         ))}
+        {partialText !== null && partialText !== "" && (
+          <div className="flex justify-start">
+            <div
+              data-testid="chat-partial"
+              className="max-w-[85%] rounded-m3-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5 text-sm leading-relaxed"
+            >
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-on-surface-variant">
+                {partialLabel !== null && partialLabel !== "" ? partialLabel : "AI answer"}
+              </p>
+              <MarkdownView text={partialText} />
+            </div>
+          </div>
+        )}
         {busy && (
           <div className="flex items-center gap-2 text-xs text-on-surface-variant">
             <span

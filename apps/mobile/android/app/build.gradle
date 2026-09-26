@@ -119,6 +119,17 @@ tasks.register("fetchUseModel", Exec) {
 }
 tasks.named("preBuild").configure { dependsOn("fetchUseModel") }
 
+// A direct Gradle package of stale Capacitor assets cannot bypass the web
+// build gate. This checks the actual staged JS against the effective public
+// config; missing or mismatched values stop APK/AAB packaging. JVM-only tests
+// and other Gradle tasks do not require an installable-build environment.
+tasks.register("verifyBundledClientConfig", Exec) {
+    commandLine "node", new File(repoRoot, "scripts/check-mobile-build-config.mjs").absolutePath,
+        "--assets", new File(projectDir, "src/main/assets/public/assets").absolutePath
+}
+tasks.matching { it.name in ["packageDebug", "packageRelease", "packageDebugBundle", "packageReleaseBundle"] }
+    .configureEach { dependsOn("verifyBundledClientConfig") }
+
 // CI assertion aid: logs the versionName/versionCode the APK will carry.
 tasks.register("printVersionInfo") {
     doLast {

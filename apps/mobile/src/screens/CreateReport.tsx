@@ -16,10 +16,17 @@ import { VlmSuggestions } from "../components/VlmSuggestions";
 import { announce } from "../components/LiveRegion";
 import { MAX_REPORT_PHOTOS, publishReport, publishReportWithPhotos } from "../services/posts";
 import { clearDraft, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
-import type { ReportDraft } from "../services/reportDraft";
+import type { ReportDraft, ReportPhotoRef } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
 import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
-import { dropStashedPhoto, getStashedPhoto, stashPhotoFile } from "../services/photoStore";
+import {
+  dropStashedPhoto,
+  getStashedPhoto,
+  getStashedPhotoMeta,
+  persistStashedPhotos,
+  restoreStashedPhotos,
+  stashPhotoFile,
+} from "../services/photoStore";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
 import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
@@ -58,34 +65,73 @@ function isValidCalendarDate(isoDate: string): boolean {
   );
 }
 
-/** Session carry for report photos 2..5 (photo 1 persists via reportDraft.photoId). */
-let carriedPhotoIds: string[] = [];
-
-/** A draft whose first photo came from native capture but has no stashed File yet. */
+/** A draft photo came from native capture but has no stashed File yet. */
 function canCreateObjectUrl(): boolean {
   return typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
 }
-function findPendingNativeRestore(): { id: string; picked: PickedPhoto } | null {
-  const draft = loadDraft();
-  if (!draft?.photoId) return null;
-  if (getStashedPhoto(draft.photoId)) return null;
-  const uri = draft.photoNativeUri;
+
+/** Ordered photo ids for a draft: the durable list, else the legacy first-photo field. */
+function draftPhotoIds(draft: ReportDraft | null): string[] {
+  if (draft?.photoIds?.length) return draft.photoIds;
+  return draft?.photoId ? [draft.photoId] : [];
+}
+
+/** Ref lookup for a photo id: the durable per-photo ref, else legacy first-photo fields. */
+function draftPhotoRef(draft: ReportDraft | null, id: string): ReportPhotoRef | null {
+  const ref = draft?.photoRefs?.find((r) => r.id === id);
+  if (ref) return ref;
+  if (draft?.photoId === id) {
+    return {
+      id,
+      nativeUri: draft.photoNativeUri,
+      webPath: draft.photoWebPath,
+      format: draft.photoFormat,
+    };
+  }
+  return null;
+}
+
+/** Native picked value for a durable ref (null when there is no native URI). */
+function refToPicked(ref: ReportPhotoRef | null): PickedPhoto | null {
+  const uri = ref?.nativeUri;
   if (!uri || uri.startsWith("blob:")) return null;
-  const web = draft.photoWebPath;
+  const web = ref?.webPath;
   return {
-    id: draft.photoId,
-    picked: {
-      nativeUri: uri,
-      webPath: web && !web.startsWith("blob:") ? web : uri,
-      format: draft.photoFormat ?? "jpg",
-    },
+    nativeUri: uri,
+    webPath: web && !web.startsWith("blob:") ? web : uri,
+    format: ref?.format ?? "jpg",
   };
+}
+
+/** Draft photos with a native ref but no stashed File (revivable via photoToFile). */
+function findPendingNativeRestores(
+  draft: ReportDraft | null,
+): { id: string; picked: PickedPhoto }[] {
+  const pending: { id: string; picked: PickedPhoto }[] = [];
+  for (const id of draftPhotoIds(draft)) {
+    if (getStashedPhoto(id)) continue;
+    const ref = draftPhotoRef(draft, id);
+    const uri = ref?.nativeUri;
+    if (!uri || uri.startsWith("blob:")) continue;
+    const web = ref?.webPath;
+    pending.push({
+      id,
+      picked: {
+        nativeUri: uri,
+        webPath: web && !web.startsWith("blob:") ? web : uri,
+        format: ref?.format ?? "jpg",
+      },
+    });
+  }
+  return pending;
 }
 
 export function CreateReport() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [initialDraft] = useState(loadDraft);
+  // Per-account draft: each signed-in account restores only its own report.
+  const accountId = user?.id ?? null;
+  const [initialDraft] = useState(() => loadDraft(accountId));
   const [type, setType] = useState<PostType>(initialDraft?.type ?? "LOST");
   const [title, setTitle] = useState(initialDraft?.title ?? "");
   const [description, setDescription] = useState(initialDraft?.description ?? "");
@@ -99,7 +145,7 @@ export function CreateReport() {
     },
   );
   const [youtubeUrl, setYoutubeUrl] = useState(initialDraft?.youtubeUrl ?? "");
-  /** Ordered report photos (0–5). Photo 1 persists via reportDraft.photoId; the rest ride a session stash below. */
+  /** Ordered report photos (0–5), restored from the durable per-account draft. */
   interface ReportPhoto {
     id: string;
     file: File;
@@ -108,43 +154,30 @@ export function CreateReport() {
   }
   function initialPhotos(draft: ReportDraft | null): ReportPhoto[] {
     const restored: ReportPhoto[] = [];
-    if (draft?.photoId) {
-      const stashed = getStashedPhoto(draft.photoId);
-      if (stashed) {
-        const web = draft.photoWebPath;
-        const preview =
-          web && !web.startsWith("blob:") ? web : canCreateObjectUrl() ? URL.createObjectURL(stashed) : "";
-        const nativeUri = draft.photoNativeUri;
-        restored.push({
-          id: draft.photoId,
-          file: stashed,
-          previewUrl: preview,
-          picked:
-            nativeUri && !nativeUri.startsWith("blob:")
-              ? {
-                  nativeUri,
-                  webPath: web && !web.startsWith("blob:") ? web : nativeUri,
-                  format: draft.photoFormat ?? "jpg",
-                }
-              : null,
-        });
-      }
-    }
-    // Extras belong to this draft session only when the first id still matches.
-    if (draft?.photoId && carriedPhotoIds[0] === draft.photoId) {
-      for (const id of carriedPhotoIds.slice(1)) {
-        const file = getStashedPhoto(id);
-        if (file && !restored.some((p) => p.id === id)) {
-          restored.push({
-            id,
-            file,
-            previewUrl: canCreateObjectUrl() ? URL.createObjectURL(file) : "",
-            picked: null,
-          });
-        }
-      }
-    } else {
-      carriedPhotoIds = draft?.photoId ? [draft.photoId] : [];
+    for (const id of draftPhotoIds(draft).slice(0, MAX_REPORT_PHOTOS)) {
+      const stashed = getStashedPhoto(id);
+      if (!stashed || restored.some((p) => p.id === id)) continue;
+      const ref = draftPhotoRef(draft, id);
+      const web = ref?.webPath;
+      const nativeUri = ref?.nativeUri;
+      restored.push({
+        id,
+        file: stashed,
+        previewUrl:
+          web && !web.startsWith("blob:")
+            ? web
+            : canCreateObjectUrl()
+              ? URL.createObjectURL(stashed)
+              : "",
+        picked:
+          nativeUri && !nativeUri.startsWith("blob:")
+            ? {
+                nativeUri,
+                webPath: web && !web.startsWith("blob:") ? web : nativeUri,
+                format: ref?.format ?? "jpg",
+              }
+            : (getStashedPhotoMeta(id)?.picked ?? null),
+      });
     }
     return restored;
   }
@@ -176,41 +209,60 @@ export function CreateReport() {
     formSnapshotRef.current = { type, title, description, category, eventDate, location };
   });
 
-  // Restore the uploadable File for a draft whose first photo came from the
-  // native camera/gallery, where only a native URI survives in the draft.
-  const initialNativeRestore = useRef<{ id: string; picked: PickedPhoto } | null>(
-    findPendingNativeRestore(),
-  );
+  // Durable mount restore: rehydrate persisted photo bytes (small files),
+  // then revive native-capture refs (all 5 slots) via photoToFile, then merge
+  // everything into state in draft order. Never touches the editor instance.
   useEffect(() => {
-    const pending = initialNativeRestore.current;
-    if (!pending) return;
     let cancelled = false;
-    void photoToFile(pending.picked)
-      .then((file) => {
-        if (cancelled) return;
-        setPhotos((prev) => {
-          if (prev.some((p) => p.id === pending.id)) return prev;
-          const web = pending.picked.webPath;
-          return [
-            ...prev,
-            {
-              id: pending.id,
-              file,
-              previewUrl:
-                web && !web.startsWith("blob:")
-                  ? web
-                  : canCreateObjectUrl()
-                    ? URL.createObjectURL(file)
-                    : "",
-              picked: pending.picked,
-            },
-          ];
-        });
-      })
-      .catch(() => undefined);
+    void (async () => {
+      try {
+        await restoreStashedPhotos(accountId);
+      } catch {
+        /* session memory still works */
+      }
+      if (cancelled) return;
+      const fresh = loadDraft(accountId);
+      const pendings = findPendingNativeRestores(fresh ?? initialDraft);
+      const converted = new Map<string, { file: File; picked: PickedPhoto }>();
+      for (const pending of pendings) {
+        try {
+          const file = await photoToFile(pending.picked);
+          if (cancelled) return;
+          converted.set(pending.id, { file, picked: pending.picked });
+        } catch {
+          /* that slot stays unrestored; the draft text is unaffected */
+        }
+      }
+      if (cancelled) return;
+      setPhotos((prev) => {
+        const next = [...prev];
+        for (const id of draftPhotoIds(fresh ?? initialDraft).slice(0, MAX_REPORT_PHOTOS)) {
+          if (next.some((p) => p.id === id)) continue;
+          const conv = converted.get(id);
+          const file = conv?.file ?? getStashedPhoto(id);
+          if (!file) continue;
+          const ref = draftPhotoRef(fresh ?? initialDraft, id);
+          const picked = conv?.picked ?? refToPicked(ref) ?? getStashedPhotoMeta(id)?.picked ?? null;
+          const web = picked?.webPath;
+          next.push({
+            id,
+            file,
+            previewUrl:
+              web && !web.startsWith("blob:")
+                ? web
+                : canCreateObjectUrl()
+                  ? URL.createObjectURL(file)
+                  : "",
+            picked,
+          });
+        }
+        return next.length === prev.length ? prev : next;
+      });
+    })();
     return () => {
       cancelled = true;
     };
+    // Mount-only: accountId is fixed for the signed-in session mount.
   }, []);
 
   function applyAssistantHandoff(handoff: AssistantReportHandoff): void {
@@ -328,29 +380,49 @@ export function CreateReport() {
     });
   }, []);
 
-  // Preserve the draft across in-app navigation (Help and map helper).
-  // Photo 1 rides reportDraft.photoId; photos 2..5 ride the session carry.
+  // Preserve the draft across in-app navigation (Help and map helper) AND
+  // process death: cheap JSON metadata on every form/photo change (per
+  // account), photo bytes via the separate photo effect below. Legacy
+  // first-photo fields are still written for older readers.
   useEffect(() => {
     const first = photos[0] ?? null;
-    saveDraft({
-      type,
-      title,
-      description,
-      category,
-      eventDate,
-      location,
-      youtubeUrl,
-      photoId: first?.id ?? null,
-      photoNativeUri: first?.picked?.nativeUri ?? null,
-      photoWebPath: first?.picked?.webPath ?? first?.previewUrl ?? null,
-      photoFormat: first?.picked?.format ?? null,
-    });
-    carriedPhotoIds = photos.map((p) => p.id);
-  }, [type, title, description, category, eventDate, location, youtubeUrl, photos]);
+    saveDraft(
+      {
+        type,
+        title,
+        description,
+        category,
+        eventDate,
+        location,
+        youtubeUrl,
+        photoId: first?.id ?? null,
+        photoNativeUri: first?.picked?.nativeUri ?? null,
+        photoWebPath: first?.picked?.webPath ?? first?.previewUrl ?? null,
+        photoFormat: first?.picked?.format ?? null,
+        photoIds: photos.map((p) => p.id),
+        photoRefs: photos.map((p) => ({
+          id: p.id,
+          name: p.file.name,
+          type: p.file.type,
+          size: p.file.size,
+          nativeUri: p.picked?.nativeUri ?? null,
+          webPath: p.picked?.webPath ?? null,
+          format: p.picked?.format ?? null,
+        })),
+      },
+      accountId,
+    );
+  }, [type, title, description, category, eventDate, location, youtubeUrl, photos, accountId]);
+
+  // Photo bytes follow the photo set only (not every keystroke): the registry
+  // mirrors memory authoritatively, so removals are pruned on write.
+  useEffect(() => {
+    void persistStashedPhotos(accountId).catch(() => undefined);
+  }, [photos, accountId]);
 
   // Blob lifecycle (W6 #16): revoke preview URLs on unmount but KEEP stashed Files.
-  // Remount recreates object URLs from the stashed Files (photo 1 via the
-  // draft, the rest via the session carry).
+  // Remount recreates object URLs from the stashed Files (all 5 slots via the
+  // durable draft + photo registry).
   const photosRef = useRef(photos);
   photosRef.current = photos;
   useEffect(() => {
@@ -365,7 +437,7 @@ export function CreateReport() {
     const current = { type, title, description, category, eventDate, location, youtubeUrl };
     if (!draftIsMeaningful(current) && photos.length === 0) return;
     if (!window.confirm("Discard this report and clear the selected photo?")) return;
-    clearDraft();
+    clearDraft(accountId);
     setType("LOST");
     setTitle("");
     descriptionLiveRef.current = "";
@@ -400,7 +472,7 @@ export function CreateReport() {
       );
       return;
     }
-    const id = stashPhotoFile(file);
+    const id = stashPhotoFile(file, { picked: photo ?? null });
     const preview =
       photo?.nativeUri && !photo.nativeUri.startsWith("blob:")
         ? photo.webPath
@@ -424,7 +496,7 @@ export function CreateReport() {
     setPhotos((prev) => {
       const target = prev.find((p) => p.id === id);
       if (target?.previewUrl.startsWith("blob:")) URL.revokeObjectURL(target.previewUrl);
-      dropStashedPhoto(id);
+      dropStashedPhoto(id, accountId);
       return prev.filter((p) => p.id !== id);
     });
     setPhotoLimitNotice(null);
@@ -445,7 +517,7 @@ export function CreateReport() {
   function clearPhotos(): void {
     for (const p of photosRef.current) {
       if (p.previewUrl.startsWith("blob:")) URL.revokeObjectURL(p.previewUrl);
-      dropStashedPhoto(p.id);
+      dropStashedPhoto(p.id, accountId);
     }
     setPhotos([]);
     setPhotoLimitNotice(null);
@@ -584,7 +656,7 @@ export function CreateReport() {
       diag("report.publish.success", {
         postId,
       }, { traceId: traceIdRef.current ?? undefined });
-      clearDraft();
+      clearDraft(accountId);
       clearPhotos();
       announce("Report published.");
       navigate(`/posts/${postId}`, { replace: true });

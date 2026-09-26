@@ -1,5 +1,9 @@
-import { useId, type ChangeEvent, type FormEvent } from "react";
-import { ImagePlus, SendHorizonal, X } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { Camera, ImagePlus, Maximize2, Mic, Minimize2, SendHorizonal, X } from "lucide-react";
+import { speechInput } from "../services/speechInput";
+
+/** Facade boundary for dictation: mock this prop in tests; real device pending. */
+export type ComposerSpeech = typeof speechInput;
 
 export interface ComposerImageSelection {
   id: string;
@@ -18,6 +22,10 @@ export interface ChatComposerProps {
   disabled?: boolean;
   inputLabel?: string;
   placeholder?: string;
+  /**
+   * Deprecated: M2 budgets in the controller instead of truncating. Kept for
+   * prop compatibility and deliberately NOT rendered as maxlength.
+   */
   maxLength?: number;
   selections?: readonly ComposerImageSelection[];
   maxSelections?: number;
@@ -27,13 +35,18 @@ export interface ChatComposerProps {
   capacityNotice?: string | null;
   /** DOM id for the text field (skip links, focus management). */
   inputId?: string;
+  /** Dictation facade (permission/listening/result/cancel). Defaults to the real facade. */
+  speech?: ComposerSpeech;
 }
 
+type MicState = "idle" | "starting" | "listening";
+
 /**
- * Chat composer: text input plus up-to-ten image selection previews.
- * Controlled and IME-friendly (plain value/onChange, submit on form action so
- * Android IME Done just sends). Grayscale surfaces; the send control carries
- * the only strong fill.
+ * Chat composer: auto-growing textarea (1→6 lines, then internal scroll) plus
+ * up-to-ten image selection previews. Controlled and IME-friendly (plain
+ * value/onChange; Enter inserts a newline and never submits mid-composition —
+ * sending happens through the form action / send button). Grayscale surfaces;
+ * the send control carries the only strong fill.
  */
 export function ChatComposer({
   value,
@@ -44,16 +57,165 @@ export function ChatComposer({
   disabled = false,
   inputLabel = "Ask the Help & FAQ",
   placeholder = "Ask about reporting, recovering, searching…",
-  maxLength = 500,
   selections = [],
   maxSelections = 10,
   onRemoveSelection,
   onAddFiles,
   capacityNotice = null,
   inputId,
+  speech,
 }: ChatComposerProps) {
   const fileInputId = useId();
-  const sendDisabled = disabled || busy || value.trim() === "";
+  const cameraInputId = useId();
+  const fieldRef = useRef<HTMLTextAreaElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [micState, setMicState] = useState<MicState>("idle");
+  const [micNotice, setMicNotice] = useState<string | null>(null);
+  const baseDraft = useRef("");
+  const micStateRef = useRef<MicState>("idle");
+  const handles = useRef<Array<{ remove(): Promise<void> }>>([]);
+
+  // G10 fix: photo-only drafts send — text is required only when no photos.
+  const sendDisabled = disabled || busy || (value.trim() === "" && selections.length === 0);
+
+  function setMic(next: MicState) {
+    micStateRef.current = next;
+    setMicState(next);
+  }
+
+  // Auto-grow 1→6 lines (12 expanded), then internal scroll. Never shrinks to
+  // zero height in runtimes without layout (scrollHeight 0 → skip).
+  useEffect(() => {
+    const el = fieldRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    if (el.scrollHeight <= 0) return;
+    const lineHeight = 24;
+    const max = (expanded ? 12 : 6) * lineHeight;
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  }, [value, expanded]);
+
+  async function clearMicHandles() {
+    const pending = handles.current;
+    handles.current = [];
+    for (const h of pending) {
+      try {
+        await h.remove();
+      } catch {
+        // Listener teardown is best-effort; the mic UI already moved on.
+      }
+    }
+  }
+
+  // Unmount mid-dictation: cancel the native session so no late result lands
+  // in a dead composer.
+  useEffect(
+    () => () => {
+      if (micStateRef.current !== "idle") {
+        const facade = speech ?? speechInput;
+        void facade.cancel().catch(() => {});
+        for (const h of handles.current) {
+          void h.remove().catch(() => {});
+        }
+        handles.current = [];
+      }
+    },
+    [speech],
+  );
+
+  async function startDictation() {
+    if (disabled || busy || micStateRef.current !== "idle") return;
+    const facade = speech ?? speechInput;
+    baseDraft.current = value;
+    setMicNotice(null);
+    setMic("starting");
+    try {
+      await facade.isAvailable();
+    } catch (e) {
+      setMicNotice(e instanceof Error ? e.message : "Dictation is only available in the Android app.");
+      setMic("idle");
+      return;
+    }
+    try {
+      let permission = await facade.checkPermission();
+      if (permission.state !== "granted") permission = await facade.requestPermission();
+      if (permission.state !== "granted") {
+        setMicNotice("Microphone permission is required for dictation.");
+        setMic("idle");
+        return;
+      }
+    } catch {
+      setMicNotice("Microphone permission is required for dictation.");
+      setMic("idle");
+      return;
+    }
+    try {
+      handles.current.push(
+        await facade.addListener("speechResult", (payload) => {
+          if (payload.isFinal) {
+            const base = baseDraft.current;
+            const next = base === "" ? payload.text : `${base} ${payload.text}`;
+            baseDraft.current = next;
+            onChange(next);
+          } else {
+            setMicNotice(`Listening… ${payload.text}`);
+          }
+        }),
+      );
+      handles.current.push(
+        await facade.addListener("speechState", (payload) => {
+          if (
+            payload.state === "stopped" ||
+            payload.state === "finished" ||
+            payload.state === "cancelled" ||
+            payload.state === "error"
+          ) {
+            setMic("idle");
+          }
+        }),
+      );
+      handles.current.push(
+        await facade.addListener("speechError", (payload) => {
+          setMicNotice(payload.message);
+          setMic("idle");
+        }),
+      );
+      await facade.start({ preferOnDevice: true });
+      setMic("listening");
+      setMicNotice("Listening…");
+    } catch (e) {
+      await clearMicHandles();
+      setMicNotice(e instanceof Error ? e.message : "Speech recognition failed.");
+      setMic("idle");
+    }
+  }
+
+  async function stopDictation() {
+    if (micStateRef.current !== "listening") return;
+    const facade = speech ?? speechInput;
+    try {
+      await facade.stop();
+    } catch (e) {
+      setMicNotice(e instanceof Error ? e.message : "Speech recognition failed.");
+    } finally {
+      await clearMicHandles();
+      setMic("idle");
+    }
+  }
+
+  async function cancelDictation() {
+    const facade = speech ?? speechInput;
+    try {
+      await facade.cancel();
+    } catch {
+      // Cancelling is best-effort; the draft restore below still applies.
+    } finally {
+      await clearMicHandles();
+      onChange(baseDraft.current);
+      setMicNotice(null);
+      setMic("idle");
+    }
+  }
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -67,6 +229,8 @@ export function ChatComposer({
     e.target.value = "";
     if (files.length > 0) onAddFiles?.(files);
   }
+
+  const listening = micState !== "idle";
 
   return (
     <form
@@ -130,7 +294,7 @@ export function ChatComposer({
               data-testid="chat-add-photos"
               className="flex min-h-[48px] min-w-[48px] cursor-pointer items-center justify-center rounded-full border border-outline-variant text-on-surface-variant hover:bg-surface-container"
             >
-              <span className="sr-only">Add photos (up to {maxSelections})</span>
+              <span className="sr-only">Add photos from gallery (up to {maxSelections})</span>
               <ImagePlus size={20} aria-hidden />
             </label>
             <input
@@ -143,20 +307,83 @@ export function ChatComposer({
               onChange={onFiles}
               className="sr-only"
             />
+            <label
+              htmlFor={cameraInputId}
+              data-testid="chat-take-photo"
+              className="flex min-h-[48px] min-w-[48px] cursor-pointer items-center justify-center rounded-full border border-outline-variant text-on-surface-variant hover:bg-surface-container"
+            >
+              <span className="sr-only">Take a photo</span>
+              <Camera size={20} aria-hidden />
+            </label>
+            <input
+              id={cameraInputId}
+              data-testid="chat-camera-input"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              disabled={disabled || busy}
+              onChange={onFiles}
+              className="sr-only"
+            />
           </>
         )}
-        <input
+        {listening ? (
+          <>
+            <button
+              type="button"
+              data-testid="chat-mic-stop"
+              onClick={() => void stopDictation()}
+              aria-label="Stop dictation"
+              className="flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-full border border-outline text-on-surface"
+            >
+              <Mic size={20} aria-hidden />
+            </button>
+            <button
+              type="button"
+              data-testid="chat-mic-cancel"
+              onClick={() => void cancelDictation()}
+              aria-label="Cancel dictation"
+              className="flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-full border border-outline-variant text-on-surface-variant"
+            >
+              <X size={20} aria-hidden />
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            data-testid="chat-mic"
+            onClick={() => void startDictation()}
+            aria-label="Dictate"
+            disabled={disabled || busy}
+            className="flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-full border border-outline-variant text-on-surface-variant hover:bg-surface-container disabled:opacity-60"
+          >
+            <Mic size={20} aria-hidden />
+          </button>
+        )}
+        <textarea
+          ref={fieldRef}
           id={inputId}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           aria-label={inputLabel}
-          maxLength={maxLength}
           disabled={disabled || busy}
-          enterKeyHint="send"
+          enterKeyHint="enter"
           autoComplete="off"
-          className="w-full rounded-full border border-outline-variant bg-surface px-4 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none disabled:opacity-60"
+          rows={1}
+          className={`w-full rounded-m3-md border border-outline-variant bg-surface px-4 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none disabled:opacity-60 ${
+            expanded ? "max-h-[40dvh]" : "max-h-[9rem]"
+          } overflow-y-auto`}
         />
+        <button
+          type="button"
+          data-testid="chat-expand"
+          onClick={() => setExpanded((v) => !v)}
+          aria-label={expanded ? "Minimize composer" : "Expand composer"}
+          className="flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-full border border-outline-variant text-on-surface-variant hover:bg-surface-container"
+        >
+          {expanded ? <Minimize2 size={20} aria-hidden /> : <Maximize2 size={20} aria-hidden />}
+        </button>
         {busy && onStop !== undefined ? (
           <button
             type="button"
@@ -179,6 +406,11 @@ export function ChatComposer({
           </button>
         )}
       </div>
+      {micNotice !== null && micNotice !== "" && (
+        <p data-testid="chat-mic-status" role="status" className="text-[11px] text-on-surface-variant">
+          {micNotice}
+        </p>
+      )}
     </form>
   );
 }

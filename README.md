@@ -51,16 +51,20 @@ npm run typecheck
 npm run lint
 npm run build
 
-# Android APK (from repo root) — public Supabase values only, no API URL
-VITE_SUPABASE_URL=https://<ref>.supabase.co \
-VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_... \
+# Android APK (from repo root): canonical root .env contains SUPABASE_URL
+# and SUPABASE_PUBLISHABLE_KEY; export a real VITE_SENTRY_DSN as well.
 npm run apk
 # → apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Mobile builds read two public, bundle-safe Supabase values: `VITE_SUPABASE_URL`
-and `VITE_SUPABASE_PUBLISHABLE_KEY` (publishable key only; the secret key is never
-bundled). The app talks **only** to hosted Supabase — Auth, the Data API (feed,
+Mobile builds derive `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`
+from the canonical `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` in the ignored
+root `.env` (or accept explicit nonempty `VITE_*` exports). Only the publishable
+key can be bundled; a secret key fails the build. CI reads the public URL from
+the `VITE_SUPABASE_URL` repository variable and the publishable key from the
+`VITE_SUPABASE_PUBLISHABLE_KEY` repository secret. Both CI and local APK builds
+check the effective values before building and check the JavaScript and final
+APK against the expected values before distributing it. The app talks **only** to hosted Supabase — Auth, the Data API (feed,
 posts, comments, reactions, ratings), Realtime (private broadcast channels) and
 Storage (on-device-normalized image uploads) — plus OpenRouter for the optional
 AI features described below. The Node Express API remains in the repo as a

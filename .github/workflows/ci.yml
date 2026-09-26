@@ -34,11 +34,17 @@ jobs:
         run: npm run build -w @findback/mobile
         env:
           CI: true
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
 
   android:
     name: Android build & JVM tests
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
     steps:
       # Full history: versionCode derives from `git rev-list --count HEAD`;
       # a depth-1 checkout would silently yield count=1 (see build.gradle guard).
@@ -56,6 +62,8 @@ jobs:
       - run: npm ci
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
+      - name: Strict Supabase preflight (installable build)
+        run: node scripts/check-mobile-build-config.mjs --preflight
       - name: Strict Sentry DSN preflight (installable build)
         run: node scripts/check-sentry-config.mjs
         env:
@@ -98,22 +106,16 @@ jobs:
           VITE_MONITORING_SELFTEST: "true"
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-      - name: Assert Sentry DSN embedded in bundle
-        env:
-          # Same source the build used; resolved via Vite loadEnv (shell wins).
-          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+      - name: Assert Supabase and Sentry embedded in bundle
         run: |
-          # A green build is NOT proof of monitoring: assert the real DSN host
-          # actually landed in the shipped bundle. Shapes only — never the key.
-          HOST=$(node -e "import('./scripts/check-sentry-config.mjs').then(m=>{const r=m.checkEffectiveSentryDsn({mode:'production'});if(!r.ok){console.error('DSN '+r.reason);process.exit(1)}process.stdout.write(r.host)})")
+          node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
           JS=$(ls apps/mobile/dist/assets/index-*.js | head -1)
-          grep -q "$HOST" "$JS" || { echo "Sentry DSN host missing from built bundle"; exit 1; }
           # M6: also assert the computed release identity reached the bundle, so a
           # CI debug APK can never silently fall back to the native-derived release
           # that Sentry cannot symbolicate. Mirrors release.yml's assertion.
           [ -n "${SENTRY_RELEASE:-}" ] || { echo "SENTRY_RELEASE was not computed — the Compute step above must run first"; exit 1; }
           grep -q "$SENTRY_RELEASE" "$JS" || { echo "Sentry release identity missing from built bundle"; exit 1; }
-          echo "bundle carries Sentry DSN for host $HOST"
+          echo "bundle carries required client config and Sentry release identity"
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Android JVM tests + debug APK
@@ -122,6 +124,8 @@ jobs:
         run: cd apps/mobile/android && ./gradlew :app:printVersionInfo
       - name: Strict APK scan (DEX/assets secrets, forbidden weights, JNI, 16 KiB)
         run: npm run scan:apk -- --strict
+      - name: Verify Supabase and Sentry in packaged debug APK
+        run: node scripts/check-mobile-build-config.mjs --apk apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
       # L5: without this the owner cannot install the verification artifact at all.
       # The monitoring self-test button is compiled into this APK (see
       # VITE_MONITORING_SELFTEST above), so the one synthetic event the Sentry proof

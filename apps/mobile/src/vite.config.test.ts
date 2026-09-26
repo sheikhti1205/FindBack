@@ -12,6 +12,14 @@ afterEach(async () => {
 });
 
 describe("resolveSupabaseBuildEnv", () => {
+  it("derives the public build values from the canonical root Supabase env", async () => {
+    envDir = await mkdtemp(join(tmpdir(), "findback-vite-env-"));
+    await writeFile(join(envDir, ".env.production"),
+      "SUPABASE_URL=https://canonical.supabase.co\nSUPABASE_PUBLISHABLE_KEY=sb_publishable_canonical\nVITE_SUPABASE_URL=\nVITE_SUPABASE_PUBLISHABLE_KEY=\n");
+    expect(resolveSupabaseBuildEnv("production", envDir)).toEqual({
+      url: "https://canonical.supabase.co", publishableKey: "sb_publishable_canonical",
+    });
+  });
   it("loads public Supabase values from the production env file", async () => {
     envDir = await mkdtemp(join(tmpdir(), "findback-vite-env-"));
     await writeFile(

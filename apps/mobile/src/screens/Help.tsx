@@ -3,14 +3,16 @@ import { useLocation, useNavigate } from "react-router";
 import { Bot, History } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
+import { BottomSheet } from "../components/BottomSheet";
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatTranscript, type TranscriptMessage, type TranscriptSource } from "../components/ChatTranscript";
 import { HistorySheet, type HistoryChatSummary } from "../components/HistorySheet";
+import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
 import { announce } from "../components/LiveRegion";
-import { ChatController, ControllerError } from "../services/ai/chatController";
+import { ChatController, ControllerError, sanitizeControllerError, type ControllerState } from "../services/ai/chatController";
 import { ChatStore } from "../services/ai/chatStore";
 import { defaultSelection } from "../services/ai/modelPolicy";
-import { getCurrentKnowledge, getSystemPolicy } from "../services/ai/appKnowledge";
+import { getCurrentKnowledge, getSystemPolicy, isGeneralNonAppQuestion } from "../services/ai/appKnowledge";
 import type { ChatTurn, ProviderAdapter } from "../services/ai/providerContract";
 import { getConnectedOpenRouterKey } from "../services/aiCredentials";
 import { createOpenRouterAdapter } from "../services/ai/providers/openrouter";
@@ -52,6 +54,20 @@ import {
   stageAssistantReportHandoff,
 } from "../services/assistant/assistantReportNavigation";
 import { mapAssistantSearchFilters } from "../services/assistant/searchFilterMapping";
+
+/**
+ * Photo-only sends still need exactly one current message (the assembler's
+ * standing rule: currentText must be present exactly once). This disclosed
+ * default is persisted verbatim as the user turn, so the transcript shows
+ * exactly what was sent — never a silent substitution.
+ */
+const PHOTO_ONLY_PROMPT =
+  "Please look at the attached photo(s) and tell me anything useful for my FindBack report.";
+
+interface AttemptEntry {
+  n: number;
+  status: "sending" | "retrying" | "complete" | "failed";
+}
 
 interface ActionChip {
   id: string;
@@ -195,6 +211,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const navigate = useNavigate();
   const accountId = user?.id ?? "local";
 
+  // G22: volatile loopback until the platform protected adapter (H2/C) lands —
+  // then pass it here (new ChatStore(adapter)). No persistence is invented here.
   const store = useMemo(() => deps?.createStore?.() ?? new ChatStore(), [deps]);
   const controller = useMemo(
     () =>
@@ -228,8 +246,18 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const [guided, setGuided] = useState<GuidedSnapshot | null>(null);
   const [guidedTranscript, setGuidedTranscript] = useState<readonly GuidedEntry[]>([]);
   const [guidedBusy, setGuidedBusy] = useState(false);
+  // M2 request-state UI: controller phase (subscribe/getState), throttled
+  // partial text, and per-question attempt history. No fabricated steps.
+  const [controllerPhase, setControllerPhase] = useState<ControllerState["phase"]>("idle");
+  const [partial, setPartial] = useState<{ id: string; text: string; label: string } | null>(null);
+  const [attempts, setAttempts] = useState<readonly AttemptEntry[]>([]);
+  const [modelOpen, setModelOpen] = useState(false);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
   const generation = useRef(0);
+  const sendGenRef = useRef<number | null>(null);
+  const attemptRef = useRef(0);
+  const partialTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inflightRef = useRef("");
   const sourceByTurn = useRef(new Map<string, TranscriptSource>());
@@ -276,6 +304,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   }, [store, accountId]);
 
   // Report/Search deep-link: prefill the composer once, never auto-send.
+  // G02 fix: the full prompt is passed through — budgeting lives in the
+  // controller, never a silent slice(0, 500) here.
   useEffect(() => {
     if (prefillConsumed.current) return;
     prefillConsumed.current = true;
@@ -283,7 +313,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     if (incoming === null || typeof incoming.assistantPrompt !== "string") return;
     const prompt = incoming.assistantPrompt.trim();
     if (prompt === "") return;
-    setInput(prompt.slice(0, 500));
+    setInput(prompt);
     const source =
       incoming.assistantSource === "report"
         ? "Report"
@@ -296,6 +326,47 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         : `Assistant opened from ${source} with your message ready.`,
     );
   }, []);
+
+  // Controller subscription: once per chat, cleaned up on switch/unmount.
+  // getState() paints immediately (subscribe never replays); a stale
+  // generation guard drops late snapshots, and partial text is throttled to
+  // one render per 120ms with stable message IDs. ControllerState carries
+  // the delivered C contract (phase/partialText/attempt/provider/modelId).
+  useEffect(() => {
+    setPartial(null);
+    if (partialTimer.current !== null) {
+      clearTimeout(partialTimer.current);
+      partialTimer.current = null;
+    }
+    setControllerPhase(controller.getState().phase);
+    const unsubscribe = controller.subscribe((snapshot) => {
+      const gen = generation.current;
+      // Stale-generation guard: snapshots from a superseded or stopped send
+      // (sendGenRef pins the live one) never touch partial or phase UI.
+      if (sendGenRef.current === null || gen !== sendGenRef.current) return;
+      setControllerPhase(snapshot.phase);
+      if (snapshot.phase === "streaming" && snapshot.partialText !== "") {
+        const label =
+          snapshot.modelId !== "" ? `${snapshot.provider} · ${snapshot.modelId}` : "AI answer";
+        const text = snapshot.partialText;
+        if (partialTimer.current !== null) clearTimeout(partialTimer.current);
+        partialTimer.current = setTimeout(() => {
+          partialTimer.current = null;
+          if (generation.current !== gen) return; // superseded while throttled
+          setPartial({ id: `partial-${gen}`, text, label });
+        }, 120);
+      } else if (snapshot.partialText === "") {
+        setPartial((prev) => (prev !== null && prev.id === `partial-${gen}` ? null : prev));
+      }
+    });
+    return () => {
+      unsubscribe();
+      if (partialTimer.current !== null) {
+        clearTimeout(partialTimer.current);
+        partialTimer.current = null;
+      }
+    };
+  }, [controller, activeChatId]);
 
   // Revoke preview object URLs when they leave the tray.
   useEffect(
@@ -422,10 +493,22 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     return "ephemeral";
   }
 
-  async function sendFreeChat(text: string) {
-    const question = text.trim();
-    if (question === "" || busy) return;
+  async function sendFreeChat(text: string, opts: { isRetry?: boolean } = {}) {
+    const rawText = text.trim();
+    const hasImages = tray.items.length > 0;
+    // Photo-only drafts send (G10): text is required only when no photos.
+    // Empty text with photos uses the disclosed PHOTO_ONLY_PROMPT (persisted
+    // verbatim, never silent) because the assembler requires exactly one
+    // current message.
+    if ((rawText === "" && !hasImages) || busy) return;
+    const question = rawText === "" ? PHOTO_ONLY_PROMPT : rawText;
     const gen = ++generation.current;
+    sendGenRef.current = gen;
+    const attemptN = ++attemptRef.current;
+    setAttempts((prev) =>
+      opts.isRetry ? [...prev, { n: attemptN, status: "retrying" }] : [{ n: attemptN, status: "sending" }],
+    );
+    setPartial(null);
     abortRef.current?.abort();
     const controllerAbort = new AbortController();
     abortRef.current = controllerAbort;
@@ -435,6 +518,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setSendError(null);
     setCancelled(false);
     setBusy(true);
+    setControllerPhase("sending");
     const historyOn = store.isHistoryEnabled(accountId);
     let chatId = activeChatId;
     let wasEmpty = false;
@@ -462,7 +546,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     const titleFreshChat = () => {
       // Fresh chats take their title from the first user message so history
       // stays scannable. Best effort: a rename failure never blocks the chat.
-      if (historyOn && wasEmpty && chatId !== null) {
+      if (historyOn && wasEmpty && chatId !== null && question !== "") {
         try {
           store.renameChat(accountId, chatId, question.slice(0, 40));
         } catch {
@@ -493,6 +577,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         finishFallback(persistFallback(chatId, historyOn, question), builtInHelp(question));
         return;
       }
+      // TODO(C): pass the send-time selection + adapter here once the
+      // controller supports per-request selection (G12) — today the static
+      // construction-time binding applies. Never reuse a stale controller.
       const result = await controller.send(chatId ?? `transient-${gen}`, question, {
         approvedImageIds: toApprovedImageIds(tray.items),
         signal: controllerAbort.signal,
@@ -518,19 +605,41 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       }
       clearTray();
       inflightRef.current = "";
+      setPartial(null);
+      setAttempts((prev) =>
+        prev.length === 0 ? prev : [...prev.slice(0, -1), { n: attemptN, status: "complete" }],
+      );
       announce("Response received.");
     } catch (e) {
       if (generation.current !== gen) return;
       if (controllerAbort.signal.aborted || (e instanceof Error && e.name === "AbortError")) return;
       if (e instanceof ControllerError && e.code === "cancelled") return;
-      // Provider failure: fall back to a built-in answer AND keep an honest
-      // error banner with Retry. The transcript is never left with a hole.
+      const message = e instanceof Error ? e.message : "Sorry, I could not answer right now.";
+      // Sanitized (C-owned scrubber): provider text may echo input or
+      // key-like material, so it is scrubbed against the question and clipped.
+      const safeMessage = sanitizeControllerError(message, [question]);
+      setPartial(null);
+      setAttempts((prev) => [...prev, { n: attemptN, status: "failed" }]);
+      if (isGeneralNonAppQuestion(question)) {
+        // G07 fix: general-chat failures NEVER get an FAQ substitution — the
+        // draft and the tray photos are preserved for Retry.
+        setInput(question);
+        setFailedSend({ text: question });
+        setSendError(safeMessage);
+        announce("Send failed. Your message and photos were kept — you can retry.");
+        return;
+      }
+      // App-help intent only: a labelled built-in answer AND an honest error
+      // banner with Retry. The transcript is never left with a hole.
       finishFallback(persistFallback(chatId, historyOn, question), builtInHelp(question));
       setFailedSend({ text: question });
-      setSendError(e instanceof Error ? e.message : "Sorry, I could not answer right now.");
+      setSendError(safeMessage);
       announce("Send failed. A built-in answer was added and you can retry.");
     } finally {
-      if (generation.current === gen) setBusy(false);
+      if (generation.current === gen) {
+        setBusy(false);
+        setControllerPhase(controller.getState().phase);
+      }
     }
   }
 
@@ -538,8 +647,16 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     abortRef.current?.abort();
     abortRef.current = null;
     generation.current += 1;
+    // Pin the guard: late controller chunks from the stopped send are dropped.
+    sendGenRef.current = null;
+    if (partialTimer.current !== null) {
+      clearTimeout(partialTimer.current);
+      partialTimer.current = null;
+    }
+    setPartial(null);
     setBusy(false);
     setCancelled(true);
+    setControllerPhase("cancelled");
     // Nothing was persisted, nothing was lost: the draft goes back.
     setInput(inflightRef.current);
     inflightRef.current = "";
@@ -560,13 +677,16 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       if (nowLast?.role === "user" && nowLast.text === pending.text) next.pop();
       return next;
     });
-    void sendFreeChat(pending.text);
+    // The tray was preserved on general-chat failures, so attached photos ride
+    // along again; app-intent failures cleared it, matching prior behaviour.
+    void sendFreeChat(pending.text, { isRetry: true });
   }
 
   function clearChat() {
     abortRef.current?.abort();
     abortRef.current = null;
     generation.current += 1;
+    sendGenRef.current = null;
     inflightRef.current = "";
     setBusy(false);
     setInput("");
@@ -574,6 +694,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setSendError(null);
     setCancelled(false);
     setEphemeral([]);
+    setPartial(null);
+    setAttempts([]);
     announce("Chat view cleared.");
   }
 
@@ -692,6 +814,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setSendError(null);
     setCancelled(false);
     setNotice(null);
+    setAttempts([]);
     setHistoryQuery("");
     setHistoryOpen(false);
     refreshHistory();
@@ -709,6 +832,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setFailedSend(null);
     setSendError(null);
     setCancelled(false);
+    setAttempts([]);
     refreshTurns(chatId);
     setHistoryOpen(false);
     announce("Chat opened.");
@@ -811,6 +935,43 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const guidedHandoff = guided === null ? null : buildAssistantReportHandoff(guided);
   const composerBusy = busy || guidedBusy;
 
+  // Real request-state row: controller phase + attempt history only — never
+  // fabricated reasoning steps.
+  const requestRow: string | null = (() => {
+    if (busy) {
+      const phaseCopy =
+        controllerPhase === "streaming"
+          ? (partial === null ? "Waiting for first response" : "Streaming")
+          : controllerPhase === "sending"
+            ? "Sending"
+            : "Preparing";
+      const current = attempts.at(-1);
+      const earlier = attempts.slice(0, -1);
+      const history =
+        earlier.length === 0
+          ? ""
+          : ` · earlier: ${earlier.map((a) => `attempt ${a.n} ${a.status}`).join(", ")}`;
+      return `${phaseCopy}${current ? ` (attempt ${current.n}${current.status === "retrying" ? " · retrying" : ""})` : ""}${history}`;
+    }
+    if (sendError !== null) {
+      const current = attempts.at(-1);
+      const photos = tray.items.length > 0 ? " and photos" : "";
+      return `Failed${current ? ` (attempt ${current.n})` : ""} — Retry keeps your message${photos}.`;
+    }
+    if (cancelled) return "Cancelled.";
+    return null;
+  })();
+
+  function handleSelectModel(modelId: string) {
+    // TODO(C): bind this choice to the catalogue fetch + send-time selection
+    // once C delivers the account-scoped selection binding. Until then the
+    // choice is remembered for the header and announced, never fabricated
+    // into a send.
+    setSelectedModelId(modelId);
+    setModelOpen(false);
+    announce(`Model ${modelId} selected for new sends.`);
+  }
+
   function stopComposer() {
     if (guidedBusy) {
       generation.current += 1;
@@ -833,11 +994,20 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         <BackButton fallbackTo="/profile" label="Back to profile" />
         <Bot size={20} aria-hidden />
         <div className="flex-1">
-          <h1 className="text-base font-semibold leading-tight">Help &amp; FAQ</h1>
+          <h1 className="text-base font-semibold leading-tight">Assistant</h1>
           <p className="text-xs text-on-surface-variant">
             AI answers use your OpenRouter key when connected · built-in answers otherwise
+            {selectedModelId !== null ? ` · Model: ${selectedModelId}` : ""}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setModelOpen(true)}
+          aria-label="Choose model"
+          className="flex min-h-[48px] items-center rounded-m3-xs border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
+        >
+          Model
+        </button>
         <button
           type="button"
           onClick={() => setHistoryOpen(true)}
@@ -863,6 +1033,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           notice={notice}
           error={sendError}
           onRetry={failedSend === null ? undefined : retryLast}
+          partialText={partial?.text ?? null}
+          partialLabel={partial?.label ?? null}
           onAction={(id) => {
             const target = ACTION_ROUTES[id];
             if (target !== undefined) navigate(target);
@@ -1012,6 +1184,16 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           AI is unavailable — you get a built-in answer instead.
         </p>
 
+        {requestRow !== null && (
+          <p
+            data-testid="chat-request-state"
+            role="status"
+            className="bg-surface px-4 pb-1 text-[11px] text-on-surface-variant"
+          >
+            {requestRow}
+          </p>
+        )}
+
         {cancelled && (
           <p
             data-testid="chat-cancelled"
@@ -1057,6 +1239,24 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         historyEnabled={store.isHistoryEnabled(accountId)}
         onToggleHistory={toggleHistory}
       />
+      <BottomSheet
+        open={modelOpen}
+        onClose={() => setModelOpen(false)}
+        title="Choose model"
+        description="Pick the model for new sends."
+      >
+        <div data-testid="model-picker" className="flex flex-col gap-3">
+          <ModelCatalogSheet
+            models={[]}
+            selectedId={selectedModelId}
+            onSelect={handleSelectModel}
+          />
+          <p className="text-[11px] text-on-surface-variant">
+            The synced model catalogue is pending controller work — no models are listed yet, and
+            nothing here changes your current send path.
+          </p>
+        </div>
+      </BottomSheet>
     </div>
   );
 }
