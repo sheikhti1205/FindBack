@@ -48,7 +48,7 @@ function seedBasics(): void {
     photoNativeUri: null,
     photoWebPath: null,
     photoFormat: null,
-  });
+  }, "u1");
 }
 
 function pickFile(file: File): void {
@@ -82,9 +82,9 @@ describe("CreateReport editor preservation (ED-05 guard)", () => {
     // Add two photos: the editor instance must stay the exact same DOM node
     // (a remount would drop cursor/selection).
     pickFile(new File(["one"], "one.jpg", { type: "image/jpeg" }));
-    await screen.findByRole("img", { name: /attachment preview 1/i });
+    await screen.findByRole("img", { name: /photo 1 of/i });
     pickFile(new File(["two"], "two.jpg", { type: "image/jpeg" }));
-    await screen.findByRole("img", { name: /attachment preview 2/i });
+    await screen.findByRole("img", { name: /photo 2 of/i });
     expect(screen.getByRole("toolbar", { name: /description formatting/i })).toBe(toolbar);
 
     // Reorder + remove: still the same editor node.
@@ -92,7 +92,7 @@ describe("CreateReport editor preservation (ED-05 guard)", () => {
     expect(screen.getByRole("toolbar", { name: /description formatting/i })).toBe(toolbar);
     fireEvent.click(screen.getByRole("button", { name: /remove photo 1/i }));
     await waitFor(() =>
-      expect(screen.queryByRole("img", { name: /attachment preview 2/i })).toBeNull(),
+      expect(screen.queryByRole("img", { name: /photo 2 of/i })).toBeNull(),
     );
     expect(screen.getByRole("toolbar", { name: /description formatting/i })).toBe(toolbar);
   });

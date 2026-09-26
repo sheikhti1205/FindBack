@@ -1,4 +1,4 @@
-import { CATEGORIES } from "@findback/shared";
+import { CATEGORIES, CATEGORY_CATALOG, isReleasedCategory } from "@findback/shared";
 import { createOpenRouterClient, OpenRouterError } from "./openRouter";
 import { getConnectedOpenRouterKey } from "./aiCredentials";
 import { normalizeImage } from "./image";
@@ -6,7 +6,7 @@ import { parseVlmOutput, type VlmAnalysis } from "./vlmParser";
 
 interface PhotoDeps {
   encode(file: File): Promise<string>;
-  send(prompt: string, image: string, consent: boolean): Promise<string>;
+  send(prompt: string, image: string, consent: boolean, options?: { signal?: AbortSignal }): Promise<string>;
 }
 
 async function encodePhoto(file: File): Promise<string> {
@@ -27,15 +27,28 @@ Return one JSON object with ALL of these fields: objectName (string|null), sugge
 Allowed suggestedCategory: ${JSON.stringify(CATEGORIES)}. Mark uncertain details in uncertainFields. Never invent identifying text.`;
 
 /** Suggestions only. Form application is an independent, confirmed UI action. */
-export async function analyzeReportPhoto(file: File, consent: boolean, deps?: PhotoDeps): Promise<VlmAnalysis> {
+export async function analyzeReportPhoto(
+  file: File,
+  consent: boolean,
+  options?: { signal?: AbortSignal; deps?: PhotoDeps }
+): Promise<VlmAnalysis> {
   if (!consent) throw new OpenRouterError("CONSENT_REQUIRED");
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8_000_000) {
     throw new OpenRouterError("INVALID_IMAGE");
   }
-  const image = await (deps?.encode ?? encodePhoto)(file);
-  const text = await (deps?.send ?? ((prompt, data, confirmed) =>
-    createOpenRouterClient(getConnectedOpenRouterKey).image(prompt, data, confirmed)))(PROMPT, image, consent);
-  const parsed = parseVlmOutput(text, CATEGORIES);
+  const image = await (options?.deps?.encode ?? encodePhoto)(file);
+  const text = await (options?.deps?.send ?? ((
+    prompt: string,
+    data: string,
+    confirmed: boolean,
+    opts?: { signal?: AbortSignal }
+  ) => createOpenRouterClient(getConnectedOpenRouterKey).image(prompt, data, confirmed, opts)))(PROMPT, image, consent, options);
+  const parsed = parseVlmOutput(text, CATEGORY_CATALOG.map((option) => option.canonical));
   if (parsed === null) throw new OpenRouterError("UNUSABLE_RESPONSE");
+  // Keep the useful text if the model suggests a known but unreleased category.
+  // Never return that category as a form-applicable suggestion.
+  if (parsed.suggestedCategory && !isReleasedCategory(parsed.suggestedCategory)) {
+    return { ...parsed, suggestedCategory: null, categoryUnavailable: true };
+  }
   return parsed;
 }

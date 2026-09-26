@@ -5,6 +5,7 @@ export interface PickedPhoto {
   nativeUri: string;
   webPath: string;
   format: string;
+  id: string;
 }
 
 export function isNativeCameraAvailable(): boolean {
@@ -29,7 +30,7 @@ export async function takePhoto(): Promise<PickedPhoto | null> {
     const nativeUri = result.uri ?? result.webPath ?? "";
     const webPath = result.webPath ?? result.uri ?? "";
     const format = result.metadata?.format ?? "jpg";
-    return { nativeUri, webPath, format };
+    return { nativeUri, webPath, format, id: crypto.randomUUID() };
   } catch (err) {
     if (isCancellation(err)) return null;
     throw err;
@@ -47,7 +48,7 @@ export async function chooseFromGallery(): Promise<PickedPhoto | null> {
     const nativeUri = photo.uri ?? photo.webPath ?? "";
     const webPath = photo.webPath ?? photo.uri ?? "";
     const format = photo.metadata?.format ?? "jpg";
-    return { nativeUri, webPath, format };
+    return { nativeUri, webPath, format, id: crypto.randomUUID() };
   } catch (err) {
     if (isCancellation(err)) return null;
     throw err;
@@ -72,4 +73,42 @@ export function toNativeImageUri(photo: PickedPhoto | null): string | null {
   const uri = photo.nativeUri?.trim();
   if (!uri || isBlobUri(uri)) return null;
   return uri;
+}
+
+function toPickedPhoto(photo: { uri?: string; webPath?: string; metadata?: { format?: string }; type: MediaType }): PickedPhoto {
+  const nativeUri = photo.uri ?? photo.webPath ?? "";
+  const webPath = photo.webPath ?? photo.uri ?? "";
+  const format = photo.metadata?.format ?? "jpg";
+  return { nativeUri, webPath, format, id: crypto.randomUUID() };
+}
+
+/**
+ * Pick multiple photos for a report, respecting remaining capacity (max 5 total).
+ * Enforces the 5-photo cap in application code since native picker limit may be ignored.
+ */
+export async function chooseReportPhotos(remaining: number): Promise<PickedPhoto[]> {
+  const capacity = Math.max(0, Math.min(5, Math.floor(remaining)));
+  if (!capacity) return [];
+  try {
+    const { results } = await Camera.chooseFromGallery({
+      mediaType: MediaTypeSelection.Photo,
+      allowMultipleSelection: true,
+      limit: capacity,
+      includeMetadata: true,
+    });
+    return results
+      .filter((x) => x.type === MediaType.Photo)
+      .map(toPickedPhoto);
+  } catch (err) {
+    if (isCancellation(err)) return [];
+    throw err;
+  }
+}
+
+/**
+ * Capture a single photo for a report using the camera.
+ * Preserves existing cancellation semantics from takePhoto.
+ */
+export async function captureReportPhoto(): Promise<PickedPhoto | null> {
+  return takePhoto();
 }

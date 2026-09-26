@@ -30,6 +30,7 @@ import { clearDraft, saveDraft } from "../services/reportDraft";
 import { clearPhotoStore } from "../services/photoStore";
 import { todayInputValue } from "../utils/dates";
 
+import { chooseCategory } from "../test-utils/reportCategory";
 function seedDescription(description: string): void {
   saveDraft({
     type: "LOST",
@@ -43,7 +44,7 @@ function seedDescription(description: string): void {
     photoNativeUri: null,
     photoWebPath: null,
     photoFormat: null,
-  });
+  }, "u1");
 }
 
 function pickFile(file: File) {
@@ -73,7 +74,7 @@ describe("CreateReport", () => {
       render(<CreateReport />);
       const takePhotoBtn = await screen.findByRole("button", { name: /take photo/i });
       expect(takePhotoBtn).toBeTruthy();
-      expect(screen.getByRole("button", { name: /choose from gallery/i })).toBeTruthy();
+      expect(screen.getByRole("button", { name: /choose up to \d+ photos/i })).toBeTruthy();
       expect(document.querySelector('input[type="file"]')).toBeNull();
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
@@ -131,7 +132,7 @@ describe("CreateReport", () => {
     seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     const file = new File(["abc"], "p.jpg", { type: "image/jpeg" });
     pickFile(file);
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
@@ -143,11 +144,11 @@ describe("CreateReport", () => {
     seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     await screen.findByText(/could not publish/i);
-    expect(screen.getByRole("img", { name: /attachment preview/i })).toBeTruthy();
+    expect(screen.getByRole("img", { name: /photo 1 of/i })).toBeTruthy();
   });
 
   it("allows manual category selection without AI", async () => {
@@ -155,7 +156,7 @@ describe("CreateReport", () => {
     seedDescription("house keys on a blue lanyard");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost keys" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Keys" } });
+    await chooseCategory("Keys");
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ category: "Keys" }), null, expect.any(String)));
   });
@@ -165,7 +166,7 @@ describe("CreateReport", () => {
     seedDescription("a black phone lost near the library");
     const { unmount } = render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     const file = new File(["abc"], "p.jpg", { type: "image/jpeg" });
     pickFile(file);
     await screen.findByRole("button", { name: /remove photo/i });
@@ -173,7 +174,7 @@ describe("CreateReport", () => {
     // Simulate leaving to Offline AI and coming back.
     unmount();
     render(<CreateReport />);
-    expect(screen.getByRole("img", { name: /attachment preview/i })).toBeTruthy();
+    expect(screen.getByRole("img", { name: /photo 1 of/i })).toBeTruthy();
 
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     await waitFor(() =>
@@ -199,14 +200,43 @@ describe("CreateReport", () => {
     }
   });
 
+  it("never adds a sixth photo when native captures resolve together", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockImplementation(async () => ({ nativeUri: "file:///photo", webPath: "file:///photo", format: "jpg", id: crypto.randomUUID() }));
+    photo.photoToFile.mockImplementation(async (picked: { id: string }) =>
+      new File([picked.id], `${picked.id}.jpg`, { type: "image/jpeg" }),
+    );
+    try {
+      render(<CreateReport />);
+      const capture = await screen.findByRole("button", { name: /take photo/i });
+      for (let i = 0; i < 6; i++) fireEvent.click(capture);
+      await waitFor(() => expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5));
+      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5);
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+      photo.takePhoto.mockReset();
+      photo.photoToFile.mockReset();
+    }
+  });
+
   it("requires a date before publishing", async () => {
     publishReportMock.mockResolvedValue("p1");
-    seedDescription("a black phone lost near the library");
+    saveDraft({
+      type: "LOST",
+      title: "",
+      description: "a black phone lost near the library",
+      category: "",
+      eventDate: "",
+      location: { label: "", latitude: null, longitude: null },
+      youtubeUrl: "",
+      photoId: null,
+      photoNativeUri: null,
+      photoWebPath: null,
+      photoFormat: null,
+    }, "u1");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
-    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
-    fireEvent.change(dateInput, { target: { value: "" } });
+    await chooseCategory("Electronics");
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/choose a date/i)).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();
@@ -242,7 +272,7 @@ describe("CreateReport", () => {
     seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Ab" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/title must be at least 3 characters/i)).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();
@@ -254,7 +284,7 @@ describe("CreateReport", () => {
     render(<CreateReport />);
     const longTitle = "A".repeat(121);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: longTitle } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/title must be at most 120 characters/i)).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();
@@ -265,7 +295,7 @@ describe("CreateReport", () => {
     seedDescription("short");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/description must be at least 10 characters/i)).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();
@@ -277,7 +307,7 @@ describe("CreateReport", () => {
     seedDescription(longDesc);
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/description must be at most 3000 characters/i)).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();
@@ -288,7 +318,7 @@ describe("CreateReport", () => {
     seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     const longLocation = "A".repeat(201);
     const locationInput = screen.getByLabelText(/approximate location/i) as HTMLInputElement;
     fireEvent.change(locationInput, { target: { value: longLocation } });
@@ -334,10 +364,34 @@ describe("CreateReport", () => {
       photoNativeUri: null,
       photoWebPath: null,
       photoFormat: null,
-    });
+    }, "u1");
     render(<CreateReport />);
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText(/choose a valid date/i)).toBeTruthy();
+    expect(publishReportMock).not.toHaveBeenCalled();
+  });
+
+  it("never publishes a staged category restored from an old draft", async () => {
+    publishReportMock.mockResolvedValue("p1");
+    const { saveDraft } = await import("../services/reportDraft");
+    saveDraft({
+      type: "LOST",
+      title: "Lost phone",
+      description: "a black phone lost near the library",
+      // Persisted JSON may carry a staged value from a newer/staged client.
+      category: "Phones & Tablets" as never,
+      eventDate: todayInputValue(),
+      location: { label: "", latitude: null, longitude: null },
+      youtubeUrl: "",
+      photoId: null,
+      photoNativeUri: null,
+      photoWebPath: null,
+      photoFormat: null,
+    }, "u1");
+    render(<CreateReport />);
+    // The staged value is dropped, so the form asks for a live category.
+    fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
+    expect(await screen.findByText("Choose a category.")).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
@@ -353,7 +407,7 @@ describe("CreateReport", () => {
 
     // Remount should recreate blob URL from stashed File
     render(<CreateReport />);
-    expect(screen.getByRole("img", { name: /attachment preview/i })).toBeTruthy();
+    expect(screen.getByRole("img", { name: /photo 1 of/i })).toBeTruthy();
     expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
   });
 
@@ -394,7 +448,7 @@ describe("CreateReport", () => {
     seedDescription("a black phone lost near the library");
     render(<CreateReport />);
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost phone" } });
-    fireEvent.change(screen.getByLabelText(/category/i), { target: { value: "Electronics" } });
+    await chooseCategory("Electronics");
     pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
     await screen.findByRole("button", { name: /remove photo/i });
 

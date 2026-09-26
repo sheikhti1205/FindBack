@@ -48,7 +48,7 @@ describe("CreateReport blob URL GC (G15)", () => {
       photoNativeUri: null,
       photoWebPath: null,
       photoFormat: null,
-    });
+    }, "u1");
     (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => "blob:preview");
     (URL as unknown as Record<string, unknown>).revokeObjectURL = vi.fn();
   });
@@ -62,11 +62,11 @@ describe("CreateReport blob URL GC (G15)", () => {
   it("revokes the blob URL when a photo is removed", async () => {
     render(<CreateReport />);
     pickFile(new File(["one"], "one.jpg", { type: "image/jpeg" }));
-    await screen.findByRole("img", { name: /attachment preview 1/i });
+    await screen.findByRole("img", { name: /photo 1 of/i });
 
     fireEvent.click(screen.getByRole("button", { name: /remove photo 1/i }));
     await waitFor(() =>
-      expect(screen.queryByRole("img", { name: /attachment preview 1/i })).toBeNull(),
+      expect(screen.queryByRole("img", { name: /photo 1 of/i })).toBeNull(),
     );
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
   });

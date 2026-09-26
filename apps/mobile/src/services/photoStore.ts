@@ -18,6 +18,7 @@ import { storage } from "./storage";
 
 export interface StashedPhotoMeta {
   picked: PickedPhoto | null;
+  accountId?: string | null;
 }
 
 export interface StoredPhotoDescriptor {
@@ -44,7 +45,14 @@ const files = new Map<string, File>();
 const metas = new Map<string, StashedPhotoMeta>();
 let seq = 0;
 /** Latest-writer-wins token so overlapping persists cannot resurrect removals. */
-let persistSeq = 0;
+const persistSeq = new Map<string, number>();
+
+function invalidatePersist(accountId?: string | null): number {
+  const key = photosKey(accountId);
+  const next = (persistSeq.get(key) ?? 0) + 1;
+  persistSeq.set(key, next);
+  return next;
+}
 
 function photosKey(accountId?: string | null): string {
   return `${PHOTOS_KEY_PREFIX}${accountId ?? DEFAULT_ACCOUNT}`;
@@ -139,15 +147,16 @@ function pickedFor(id: string, entry?: StoredPhotoDescriptor): PickedPhoto | nul
       nativeUri,
       webPath: entry?.webPath && !entry.webPath.startsWith("blob:") ? entry.webPath : nativeUri,
       format: entry?.format ?? "jpg",
+      id: crypto.randomUUID(),
     };
   }
   return null;
 }
 
-export function stashPhotoFile(file: File, opts?: { picked?: PickedPhoto | null }): string {
+export function stashPhotoFile(file: File, opts?: { picked?: PickedPhoto | null; accountId?: string | null }): string {
   const id = `photo-${Date.now()}-${seq++}`;
   files.set(id, file);
-  metas.set(id, { picked: opts?.picked ?? null });
+  metas.set(id, { picked: opts?.picked ?? null, accountId: opts?.accountId ?? null });
   return id;
 }
 
@@ -163,6 +172,8 @@ export function getStashedPhotoMeta(id: string | null | undefined): StashedPhoto
 
 export function dropStashedPhoto(id: string | null | undefined, accountId?: string | null): void {
   if (!id) return;
+  if (accountId !== undefined && metas.get(id)?.accountId && metas.get(id)?.accountId !== accountId) return;
+  invalidatePersist(accountId);
   files.delete(id);
   metas.delete(id);
   // Prune the descriptor now so a crash before the next persist cannot
@@ -181,10 +192,15 @@ export function dropStashedPhoto(id: string | null | undefined, accountId?: stri
  * before writing so a removal cannot be resurrected by a slow earlier call).
  */
 export async function persistStashedPhotos(accountId?: string | null): Promise<void> {
-  const mySeq = ++persistSeq;
+  const mySeq = invalidatePersist(accountId);
+  const key = photosKey(accountId);
   const entries: StoredPhotoDescriptor[] = [];
   for (const [id, file] of files) {
-    const picked = metas.get(id)?.picked;
+    const meta = metas.get(id);
+    if (meta?.accountId && meta.accountId !== accountId) continue;
+    // An unowned legacy session file is claimed by its first persisting account.
+    if (accountId && meta && !meta.accountId) meta.accountId = accountId;
+    const picked = meta?.picked;
     const entry: StoredPhotoDescriptor = {
       id,
       name: file.name,
@@ -202,10 +218,10 @@ export async function persistStashedPhotos(accountId?: string | null): Promise<v
         /* metadata-only */
       }
     }
-    if (mySeq !== persistSeq) return;
+    if (mySeq !== persistSeq.get(key)) return;
     entries.push(entry);
   }
-  if (mySeq !== persistSeq) return;
+  if (mySeq !== persistSeq.get(key)) return;
   writeRegistry(accountId, entries);
 }
 
@@ -217,11 +233,12 @@ export async function persistStashedPhotos(accountId?: string | null): Promise<v
  * orphans and are pruned.
  */
 export async function restoreStashedPhotos(accountId?: string | null): Promise<string[]> {
+  const mySeq = persistSeq.get(photosKey(accountId)) ?? 0;
   const registry = readRegistry(accountId);
   const kept: StoredPhotoDescriptor[] = [];
   const restored: string[] = [];
   for (const entry of registry) {
-    if (files.has(entry.id)) {
+    if (files.has(entry.id) && (!metas.get(entry.id)?.accountId || metas.get(entry.id)?.accountId === accountId)) {
       kept.push(entry);
       restored.push(entry.id);
       continue;
@@ -230,7 +247,7 @@ export async function restoreStashedPhotos(accountId?: string | null): Promise<s
       try {
         const file = dataUrlToFile(entry.dataUrl, entry.name, entry.type);
         files.set(entry.id, file);
-        if (!metas.has(entry.id)) metas.set(entry.id, { picked: pickedFor(entry.id, entry) });
+        if (!metas.has(entry.id)) metas.set(entry.id, { picked: pickedFor(entry.id, entry), accountId });
         kept.push(entry);
         restored.push(entry.id);
         continue;
@@ -240,11 +257,12 @@ export async function restoreStashedPhotos(accountId?: string | null): Promise<s
     }
     if (entry.nativeUri && !entry.nativeUri.startsWith("blob:")) {
       kept.push(entry);
-      if (!metas.has(entry.id)) metas.set(entry.id, { picked: pickedFor(entry.id, entry) });
+      if (!metas.has(entry.id)) metas.set(entry.id, { picked: pickedFor(entry.id, entry), accountId });
       continue;
     }
     // Orphan: no bytes, no native ref — drop it.
   }
+  if (mySeq !== (persistSeq.get(photosKey(accountId)) ?? 0)) return [];
   writeRegistry(accountId, kept);
   return restored;
 }
@@ -267,8 +285,19 @@ export function getPhotoDescriptor(
 
 /** Drop every stashed File (e.g. on sign-out): memory + all stored registries. */
 export function clearPhotoStore(accountId?: string | null): void {
-  files.clear();
-  metas.clear();
+  invalidatePersist(accountId);
+  if (accountId === undefined) {
+    for (const [key, seq] of persistSeq) persistSeq.set(key, seq + 1);
+    files.clear();
+    metas.clear();
+  } else {
+    for (const [id, meta] of metas) {
+      if (meta.accountId === accountId) {
+        files.delete(id);
+        metas.delete(id);
+      }
+    }
+  }
   try {
     if (accountId === undefined) {
       for (const key of readAccountIndex()) {

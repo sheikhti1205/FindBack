@@ -90,7 +90,7 @@ describe("CreateReport immediate submit", () => {
       photoNativeUri: null,
       photoWebPath: null,
       photoFormat: null,
-    });
+    }, "u1");
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
     expect(capturedOnChange).not.toBeNull();

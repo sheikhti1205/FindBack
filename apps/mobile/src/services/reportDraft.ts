@@ -20,6 +20,8 @@ export interface ReportPhotoRef {
 /** In-app report draft: survives navigation (Help, map helper, model setup)
  *  AND process death (per-account localStorage layer, see below). */
 export interface ReportDraft {
+  /** A create request may have committed; do not retry until reconciled. */
+  publishOutcome?: "uncertain";
   type: PostType;
   title: string;
   description: string;
@@ -91,17 +93,16 @@ function untrackAccount(accountId?: string | null): void {
 }
 
 function readStoredDraft(accountId?: string | null): ReportDraft | null {
-  // Account key first, then the legacy device-default key (drafts saved
-  // before per-account scoping stay visible to this device's owner).
-  const keys = [draftKey(accountId)];
-  if ((accountId ?? DEFAULT_ACCOUNT) !== DEFAULT_ACCOUNT) keys.push(draftKey(null));
-  for (const key of keys) {
+  // The legacy device-default draft has no owner: never expose it to an
+  // authenticated account merely because that account was first to sign in.
+  for (const key of [draftKey(accountId)]) {
     const raw = storage.getItem(key);
     if (!raw) continue;
     try {
       const parsed = JSON.parse(raw) as Partial<ReportDraft>;
       if (!parsed || typeof parsed !== "object") continue;
       return {
+        publishOutcome: parsed.publishOutcome === "uncertain" ? "uncertain" : undefined,
         type: parsed.type ?? "LOST",
         title: typeof parsed.title === "string" ? parsed.title : "",
         description: typeof parsed.description === "string" ? parsed.description : "",
@@ -134,10 +135,18 @@ function readStoredDraft(accountId?: string | null): ReportDraft | null {
   return null;
 }
 
-let draft: ReportDraft | null = null;
+const drafts = new Map<string, ReportDraft>();
+const generations = new Map<string, number>();
 
-export function saveDraft(d: ReportDraft, accountId?: string | null): void {
-  draft = cloneDraft(d);
+/** A form captures this epoch; an old form cannot save after its publish clears. */
+export function draftGeneration(accountId?: string | null): number {
+  return generations.get(draftKey(accountId)) ?? 0;
+}
+
+export function saveDraft(d: ReportDraft, accountId?: string | null, generation?: number): void {
+  if (generation !== undefined && generation !== draftGeneration(accountId)) return;
+  const draft = cloneDraft(d);
+  drafts.set(draftKey(accountId), draft);
   try {
     storage.setItem(draftKey(accountId), JSON.stringify(draft));
     trackAccount(accountId);
@@ -147,6 +156,7 @@ export function saveDraft(d: ReportDraft, accountId?: string | null): void {
 }
 
 export function loadDraft(accountId?: string | null): ReportDraft | null {
+  const draft = drafts.get(draftKey(accountId));
   if (draft) return cloneDraft(draft);
   const stored = readStoredDraft(accountId);
   return stored ? cloneDraft(stored) : null;
@@ -160,7 +170,8 @@ export function clearDraft(accountId?: string | null): void {
     clearAllStoredDrafts();
     return;
   }
-  draft = null;
+  drafts.delete(draftKey(accountId));
+  generations.set(draftKey(accountId), draftGeneration(accountId) + 1);
   try {
     storage.removeItem(draftKey(accountId));
     untrackAccount(accountId);
@@ -171,12 +182,17 @@ export function clearDraft(accountId?: string | null): void {
 
 /** Drop every stored draft (sign-out path; coordinator wires the call). */
 export function clearAllStoredDrafts(): void {
-  draft = null;
+  for (const key of new Set([...drafts.keys(), ...generations.keys()])) {
+    generations.set(key, (generations.get(key) ?? 0) + 1);
+  }
+  drafts.clear();
   try {
     for (const key of readAccountIndex()) {
+      generations.set(`${DRAFT_KEY_PREFIX}${key}`, draftGeneration(key) + 1);
       storage.removeItem(`${DRAFT_KEY_PREFIX}${key}`);
     }
     storage.removeItem(DRAFT_ACCOUNT_INDEX_KEY);
+    generations.set(draftKey(null), draftGeneration(null) + 1);
     storage.removeItem(draftKey(null));
   } catch {
     /* best-effort */

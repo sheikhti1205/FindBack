@@ -61,6 +61,7 @@ import {
 import { applyReportFields, chooseLocation, choosePhoto, startFlow } from "../services/assistant/guidedAssistantController";
 import { buildAssistantReportHandoff } from "../services/assistant/assistantHandoff";
 
+import { categoryValue } from "../test-utils/reportCategory";
 function readyHandoff() {
   let snapshot = startFlow("lost");
   snapshot = applyReportFields(snapshot, {
@@ -108,7 +109,7 @@ describe("CreateReport workset2 handoff intake", () => {
     stageAssistantReportHandoff(readyHandoff());
     render(<CreateReport />);
     await waitFor(() => expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("Assistant keys"));
-    expect((screen.getByLabelText(/category/i) as HTMLSelectElement).value).toBe("Keys");
+    expect(categoryValue()).toBe("Keys");
     expect(screen.getByText(/assistant suggestions/i)).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();
   });
@@ -126,11 +127,11 @@ describe("CreateReport workset2 handoff intake", () => {
       photoNativeUri: null,
       photoWebPath: null,
       photoFormat: null,
-    });
+    }, "u1");
     stageAssistantReportHandoff(readyHandoff());
     render(<CreateReport />);
     await waitFor(() => expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("My kept title"));
-    expect((screen.getByLabelText(/category/i) as HTMLSelectElement).value).toBe("Electronics");
+    expect(categoryValue()).toBe("Electronics");
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
@@ -138,7 +139,7 @@ describe("CreateReport workset2 handoff intake", () => {
     stageAssistantReportHandoff(readyHandoff());
     render(<CreateReport />);
     await screen.findByText(/assistant suggestions/i);
-    expect(screen.getByText(/photo \(optional\)/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /^photos$/i })).toBeTruthy();
     expect(screen.getByLabelText(/approximate location/i)).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();
   });
@@ -156,7 +157,7 @@ describe("CreateReport workset2 handoff intake", () => {
       photoNativeUri: null,
       photoWebPath: null,
       photoFormat: null,
-    });
+    }, "u1");
     stageAssistantReportHandoff(readyHandoff());
     render(<CreateReport />);
     await screen.findByText(/kept your details/i);
@@ -181,7 +182,7 @@ describe("CreateReport workset2 handoff intake", () => {
       photoNativeUri: null,
       photoWebPath: null,
       photoFormat: null,
-    });
+    }, "u1");
     stageAssistantReportHandoff(readyHandoff());
     render(<CreateReport />);
     await screen.findByText(/kept your details/i);
@@ -204,11 +205,11 @@ describe("CreateReport workset2 handoff intake", () => {
       photoNativeUri: null,
       photoWebPath: null,
       photoFormat: null,
-    });
+    }, "u1");
     stageAssistantReportHandoff(readyHandoff());
     render(<CreateReport />);
     await waitFor(() => expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("Assistant keys"));
-    expect((screen.getByLabelText(/category/i) as HTMLSelectElement).value).toBe("Electronics");
+    expect(categoryValue()).toBe("Electronics");
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
@@ -228,7 +229,7 @@ describe("CreateReport workset2 handoff intake", () => {
         photoNativeUri: null,
         photoWebPath: null,
         photoFormat: null,
-      });
+      }, "u1");
       render(<CreateReport />);
       const titleInput = (await screen.findByLabelText(/what did you lose/i)) as HTMLInputElement;
       expect(titleInput.value).toBe("My kept title");

@@ -49,6 +49,37 @@ describe("durable per-account report draft (G15)", () => {
     vi.resetModules();
   });
 
+  it("never serves account B's in-memory draft to account A", async () => {
+    const { draft } = await freshModules();
+    draft.saveDraft({ ...seedText([]), title: "Alice's camera" }, "alice");
+    draft.saveDraft({ ...seedText([]), title: "Bob's bag" }, "bob");
+
+    expect(draft.loadDraft("alice")?.title).toBe("Alice's camera");
+    expect(draft.loadDraft("bob")?.title).toBe("Bob's bag");
+    expect(draft.loadDraft("charlie")).toBeNull();
+  });
+
+  it("does not show an unattributed legacy draft to a newly signed-in account", async () => {
+    const first = await freshModules();
+    first.draft.saveDraft({ ...seedText([]), title: "Old device draft" });
+    const second = await freshModules();
+
+    expect(second.draft.loadDraft("another-user")).toBeNull();
+    expect(second.draft.loadDraft()?.title).toBe("Old device draft");
+  });
+
+  it("rejects an autosave from the generation retired by confirmed publication", async () => {
+    const { draft } = await freshModules();
+    const generation = draft.draftGeneration("u1");
+    draft.saveDraft(seedText([]), "u1", generation);
+    draft.clearDraft("u1");
+
+    draft.saveDraft(seedText([]), "u1", generation);
+    expect(draft.loadDraft("u1")).toBeNull();
+    draft.saveDraft({ ...seedText([]), title: "New report" }, "u1", draft.draftGeneration("u1"));
+    expect(draft.loadDraft("u1")?.title).toBe("New report");
+  });
+
   it("5-photo kill/restart restores ids + order + bytes + text", async () => {
     const first = await freshModules();
     const ids: string[] = [];
@@ -108,7 +139,7 @@ describe("durable per-account report draft (G15)", () => {
   it("native refs survive without bytes as pending restores (not orphans)", async () => {
     const first = await freshModules();
     const id = first.photos.stashPhotoFile(tinyFile("tiny.jpg", "x"), {
-      picked: { nativeUri: "content://media/1", webPath: "content://media/1", format: "jpg" },
+      picked: { nativeUri: "content://media/1", webPath: "content://media/1", format: "jpg", id: "test-id" },
     });
     first.draft.saveDraft(seedText([id]), "u1");
     await first.photos.persistStashedPhotos("u1");

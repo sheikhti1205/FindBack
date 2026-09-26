@@ -24,13 +24,13 @@ describe("photo source", () => {
   it("keeps the native content:// URI and the webPath separate", async () => {
     camera.takePhoto.mockResolvedValue(photo);
     const picked = await takePhoto();
-    expect(picked).toEqual({ nativeUri: "content://media/external/images/1", webPath: "http://localhost/_capacitor_file_/1.jpg", format: "jpg" });
+    expect(picked).toEqual({ nativeUri: "content://media/external/images/1", webPath: "http://localhost/_capacitor_file_/1.jpg", format: "jpg", id: picked!.id });
     expect(picked!.nativeUri.startsWith("file://")).toBe(false);
   });
 
   it("falls back to webPath when the platform omits a native URI", async () => {
     camera.chooseFromGallery.mockResolvedValue({ results: [{ ...photo, uri: undefined }] });
-    await expect(chooseFromGallery()).resolves.toMatchObject({ nativeUri: "http://localhost/_capacitor_file_/1.jpg" });
+    await expect(chooseFromGallery()).resolves.toMatchObject({ nativeUri: "http://localhost/_capacitor_file_/1.jpg", id: expect.any(String) });
   });
 
   it("ignores video results and returns null when the user cancels", async () => {
@@ -44,7 +44,7 @@ describe("photo source", () => {
     const blob = new Blob(["bytes"], { type: "image/jpeg" });
     const fetchMock = vi.fn().mockResolvedValue({ blob: () => Promise.resolve(blob) });
     vi.stubGlobal("fetch", fetchMock);
-    const file = await photoToFile({ nativeUri: "content://x", webPath: "http://localhost/x.jpg", format: "jpg" }, "x.jpg");
+    const file = await photoToFile({ nativeUri: "content://x", webPath: "http://localhost/x.jpg", format: "jpg", id: "test-id" }, "x.jpg");
     expect(fetchMock).toHaveBeenCalledWith("http://localhost/x.jpg");
     expect(file).toBeInstanceOf(File);
     expect(file.name).toBe("x.jpg");

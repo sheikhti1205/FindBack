@@ -1,7 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { ImageUp, X } from "lucide-react";
-import { extractYouTubeId, type Category, type PostType } from "@findback/shared";
+import { extractYouTubeId, isReleasedCategory, type Category, type PostType } from "@findback/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
@@ -15,12 +14,18 @@ import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { VlmSuggestions } from "../components/VlmSuggestions";
 import { announce } from "../components/LiveRegion";
 import { MAX_REPORT_PHOTOS, publishReport, publishReportWithPhotos } from "../services/posts";
-import { clearDraft, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
+import { clearDraft, draftGeneration, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
 import type { ReportDraft, ReportPhotoRef } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
-import { isNativeCameraAvailable, takePhoto, chooseFromGallery, photoToFile, type PickedPhoto } from "../services/photo";
+import { isNativeCameraAvailable, takePhoto, chooseReportPhotos, photoToFile, type PickedPhoto } from "../services/photo";
+import { ReportDatePicker } from "../components/ReportDatePicker";
+import { ReportMediaPicker } from "../components/ReportMediaPicker";
+import { PhotoLightbox } from "../components/PhotoLightbox";
+import { createHashRegistry, formatBatchNotice, processReportBatch } from "../services/media/reportBatch";
+import { computeSha256Hex } from "../services/media/dedupe";
 import {
   dropStashedPhoto,
+  clearPhotoStore,
   getStashedPhoto,
   getStashedPhotoMeta,
   persistStashedPhotos,
@@ -30,6 +35,7 @@ import {
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
 import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
+import { PublishOutcomeUncertainError } from "../services/publishOutcome";
 import { isAssistantReportHandoff, type AssistantReportHandoff } from "../services/assistant/assistantHandoff";
 import {
   subscribeStagedAssistantReportHandoff,
@@ -70,6 +76,11 @@ function canCreateObjectUrl(): boolean {
   return typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
 }
 
+/** Keeps only categories that are live for submission; staged/unknown ones are dropped. */
+function releasedCategoryOrEmpty(value: string | null | undefined): Category | "" {
+  return value && isReleasedCategory(value) ? (value as Category) : "";
+}
+
 /** Ordered photo ids for a draft: the durable list, else the legacy first-photo field. */
 function draftPhotoIds(draft: ReportDraft | null): string[] {
   if (draft?.photoIds?.length) return draft.photoIds;
@@ -100,6 +111,7 @@ function refToPicked(ref: ReportPhotoRef | null): PickedPhoto | null {
     nativeUri: uri,
     webPath: web && !web.startsWith("blob:") ? web : uri,
     format: ref?.format ?? "jpg",
+    id: crypto.randomUUID(),
   };
 }
 
@@ -120,6 +132,7 @@ function findPendingNativeRestores(
         nativeUri: uri,
         webPath: web && !web.startsWith("blob:") ? web : uri,
         format: ref?.format ?? "jpg",
+        id: crypto.randomUUID(),
       },
     });
   }
@@ -128,14 +141,24 @@ function findPendingNativeRestores(
 
 export function CreateReport() {
   const { user } = useAuth();
+  // A mounted route can outlive an auth change. Unmount its entire form/editor
+  // before the new account can see or autosave any of the previous owner's state.
+  return <ReportForm key={user?.id ?? "signed-out"} />;
+}
+
+function ReportForm() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   // Per-account draft: each signed-in account restores only its own report.
   const accountId = user?.id ?? null;
+  const renderGeneration = draftGeneration(accountId);
   const [initialDraft] = useState(() => loadDraft(accountId));
   const [type, setType] = useState<PostType>(initialDraft?.type ?? "LOST");
   const [title, setTitle] = useState(initialDraft?.title ?? "");
   const [description, setDescription] = useState(initialDraft?.description ?? "");
-  const [category, setCategory] = useState<Category | "">(initialDraft?.category ?? "");
+  const [category, setCategory] = useState<Category | "">(
+    releasedCategoryOrEmpty(initialDraft?.category),
+  );
   const [eventDate, setEventDate] = useState(initialDraft?.eventDate ?? todayInputValue());
   const [location, setLocation] = useState<LocationValue>(
     initialDraft?.location ?? {
@@ -151,6 +174,8 @@ export function CreateReport() {
     file: File;
     previewUrl: string;
     picked: PickedPhoto | null;
+    /** SHA-256 of raw bytes, used for exact duplicate detection. */
+    hash?: string;
   }
   function initialPhotos(draft: ReportDraft | null): ReportPhoto[] {
     const restored: ReportPhoto[] = [];
@@ -160,21 +185,22 @@ export function CreateReport() {
       const ref = draftPhotoRef(draft, id);
       const web = ref?.webPath;
       const nativeUri = ref?.nativeUri;
-      restored.push({
+restored.push({
         id,
         file: stashed,
         previewUrl:
           web && !web.startsWith("blob:")
             ? web
             : canCreateObjectUrl()
-              ? URL.createObjectURL(stashed)
-              : "",
+            ? URL.createObjectURL(stashed)
+            : "",
         picked:
           nativeUri && !nativeUri.startsWith("blob:")
             ? {
                 nativeUri,
                 webPath: web && !web.startsWith("blob:") ? web : nativeUri,
                 format: ref?.format ?? "jpg",
+                id: crypto.randomUUID(),
               }
             : (getStashedPhotoMeta(id)?.picked ?? null),
       });
@@ -182,7 +208,18 @@ export function CreateReport() {
     return restored;
   }
   const [photos, setPhotos] = useState<ReportPhoto[]>(() => initialPhotos(initialDraft));
+  const [editorResetKey, setEditorResetKey] = useState(0);
+  const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null);
+  const hashRegistryRef = useRef(createHashRegistry());
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Serializes overlapping picker work (R-073): a second action queues behind
+  // the first instead of racing the shared hash registry or the 5-photo cap.
+  const pickQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const enqueuePick = (task: () => Promise<void>): void => {
+    pickQueueRef.current = pickQueueRef.current.then(task, task).catch(() => {});
+  };
   const [busy, setBusy] = useState(false);
+  const [uncertain, setUncertain] = useState(initialDraft?.publishOutcome === "uncertain");
   const [error, setError] = useState<string | null>(null);
   const [photoLimitNotice, setPhotoLimitNotice] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{
@@ -214,27 +251,29 @@ export function CreateReport() {
   // everything into state in draft order. Never touches the editor instance.
   useEffect(() => {
     let cancelled = false;
+    const generation = renderGeneration;
     void (async () => {
       try {
         await restoreStashedPhotos(accountId);
       } catch {
         /* session memory still works */
       }
-      if (cancelled) return;
+      if (cancelled || generation !== draftGeneration(accountId)) return;
       const fresh = loadDraft(accountId);
       const pendings = findPendingNativeRestores(fresh ?? initialDraft);
       const converted = new Map<string, { file: File; picked: PickedPhoto }>();
       for (const pending of pendings) {
         try {
           const file = await photoToFile(pending.picked);
-          if (cancelled) return;
+          if (cancelled || generation !== draftGeneration(accountId)) return;
           converted.set(pending.id, { file, picked: pending.picked });
         } catch {
           /* that slot stays unrestored; the draft text is unaffected */
         }
       }
-      if (cancelled) return;
+      if (cancelled || generation !== draftGeneration(accountId)) return;
       setPhotos((prev) => {
+        if (generation !== draftGeneration(accountId)) return prev;
         const next = [...prev];
         for (const id of draftPhotoIds(fresh ?? initialDraft).slice(0, MAX_REPORT_PHOTOS)) {
           if (next.some((p) => p.id === id)) continue;
@@ -296,13 +335,16 @@ export function CreateReport() {
         conflicts.push({ field: "description", label: "Description", incoming: handoff.patch.description });
       }
     }
-    if (handoff.patch.category !== undefined && handoff.patch.category !== current.category) {
+    const incomingCategory = releasedCategoryOrEmpty(handoff.patch.category);
+    if (handoff.patch.category !== undefined && incomingCategory && incomingCategory !== current.category) {
       if (current.category === "") {
-        setCategory(handoff.patch.category);
+        setCategory(incomingCategory);
         added.push("Category");
       } else {
-        conflicts.push({ field: "category", label: "Category", incoming: handoff.patch.category });
+        conflicts.push({ field: "category", label: "Category", incoming: incomingCategory });
       }
+    } else if (handoff.patch.category !== undefined && !incomingCategory) {
+      announce("That category isn't available yet, so it was left out. Choose one manually.");
     }
     if (handoff.patch.eventDate !== undefined && handoff.patch.eventDate !== current.eventDate) {
       const isDefaultDate = initialDraft?.eventDate === undefined && current.eventDate === todayInputValue();
@@ -353,7 +395,7 @@ export function CreateReport() {
       else if (conflict.field === "description") {
         descriptionLiveRef.current = conflict.incoming;
         setDescription(conflict.incoming);
-      } else if (conflict.field === "category") setCategory(conflict.incoming as Category);
+      } else if (conflict.field === "category") setCategory(releasedCategoryOrEmpty(conflict.incoming));
       else if (conflict.field === "eventDate") setEventDate(conflict.incoming);
       else if (conflict.field === "location") {
         const current = formSnapshotRef.current.location;
@@ -388,6 +430,7 @@ export function CreateReport() {
     const first = photos[0] ?? null;
     saveDraft(
       {
+        publishOutcome: uncertain ? "uncertain" : undefined,
         type,
         title,
         description,
@@ -411,8 +454,9 @@ export function CreateReport() {
         })),
       },
       accountId,
+      renderGeneration,
     );
-  }, [type, title, description, category, eventDate, location, youtubeUrl, photos, accountId]);
+  }, [type, title, description, category, eventDate, location, youtubeUrl, photos, accountId, renderGeneration, uncertain]);
 
   // Photo bytes follow the photo set only (not every keystroke): the registry
   // mirrors memory authoritatively, so removals are pruned on write.
@@ -425,6 +469,15 @@ export function CreateReport() {
   // durable draft + photo registry).
   const photosRef = useRef(photos);
   photosRef.current = photos;
+  const mediaPickerPhotos = useMemo(
+    () =>
+      photos.map((p) => ({
+        id: p.id,
+        webPath: p.previewUrl,
+        format: p.picked?.format,
+      })),
+    [photos],
+  );
   useEffect(() => {
     return () => {
       for (const p of photosRef.current) {
@@ -448,6 +501,7 @@ export function CreateReport() {
     setYoutubeUrl("");
     clearPhotos();
     setAssistantHandoff(null);
+    setUncertain(false);
     setHandoffConflicts([]);
     setHandoffAdded([]);
     announce("Report draft discarded.");
@@ -465,21 +519,14 @@ export function CreateReport() {
       setError("That photo is too large. Choose an image under 8 MB.");
       return;
     }
-    if (photos.length >= MAX_REPORT_PHOTOS) {
+    if (photosRef.current.length >= MAX_REPORT_PHOTOS) {
       setPhotoLimitNotice(
         `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. ` +
           "This photo was not added — remove one first.",
       );
       return;
     }
-    const id = stashPhotoFile(file, { picked: photo ?? null });
-    const preview =
-      photo?.nativeUri && !photo.nativeUri.startsWith("blob:")
-        ? photo.webPath
-        : canCreateObjectUrl()
-          ? URL.createObjectURL(file)
-          : "";
-    setPhotos((prev) => [...prev, { id, file, previewUrl: preview, picked: photo ?? null }]);
+    acceptPickedPhoto(file, photo ?? null);
     setError(null);
     setPhotoLimitNotice(null);
     // Diag: picker result
@@ -488,30 +535,171 @@ export function CreateReport() {
       bytes: file.size,
       source: photo?.nativeUri ? "native" : "web",
       hasNativeUri: !!photo?.nativeUri,
-      photoCount: photos.length + 1,
+      photoCount: photosRef.current.length,
     }, { traceId: traceIdRef.current ?? undefined });
   }
 
-  function removePhoto(id: string): void {
-    setPhotos((prev) => {
-      const target = prev.find((p) => p.id === id);
-      if (target?.previewUrl.startsWith("blob:")) URL.revokeObjectURL(target.previewUrl);
-      dropStashedPhoto(id, accountId);
-      return prev.filter((p) => p.id !== id);
+  function acceptPickedPhoto(file: File, photo: PickedPhoto | null, hash?: string): string {
+    const id = stashPhotoFile(file, { picked: photo ?? null, accountId });
+    const preview =
+      photo?.nativeUri && !photo.nativeUri.startsWith("blob:")
+        ? photo.webPath
+        : canCreateObjectUrl()
+          ? URL.createObjectURL(file)
+          : "";
+    const next = [...photosRef.current, { id, file, previewUrl: preview, picked: photo ?? null, hash }];
+    // Update the ref synchronously too: queued async work and publish read the
+    // ref, not the render-time state, so they must not observe a stale list.
+    photosRef.current = next;
+    setPhotos(next);
+    return id;
+  }
+
+  /**
+   * Add a whole gallery batch in selection order using exact-byte duplicate
+   * detection. One unreadable item never discards the others (R-065, R-068,
+   * R-071, R-081).
+   */
+  function onPickBatch(picked: PickedPhoto[]): void {
+    setError(null);
+    enqueuePick(async () => {
+      const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
+      if (remaining <= 0) {
+        setPhotoLimitNotice(
+          `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. Remove one first.`,
+        );
+        return;
+      }
+      // Capacity is recomputed when the queued task actually runs, so a second
+      // overlapping action can never race past the 5-photo cap (R-073).
+      const result = await processReportBatch(
+        picked,
+        photosRef.current.length,
+        hashRegistryRef.current,
+        (photo, file, hash) => acceptPickedPhoto(file, photo, hash),
+      );
+      setPhotoLimitNotice(result.notice || null);
+      diag("report.picker.batch", {
+        picked: picked.length,
+        accepted: result.accepted.length,
+        duplicates: result.duplicates.length,
+        unreadable: result.unreadable.length,
+        overflow: result.overflow.length,
+      }, { traceId: traceIdRef.current ?? undefined });
     });
+  }
+
+  /** Web file-input path: same duplicate/limit semantics as the native batch. */
+  function onPickFiles(files: FileList | null): void {
+    if (!files || files.length === 0) return;
+    const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
+    const list = Array.from(files);
+    const overflow = list.length > remaining;
+    const accepted = list.slice(0, Math.max(0, remaining));
+    if (accepted.length === 0) {
+      setPhotoLimitNotice(
+        `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. Remove one first.`,
+      );
+      return;
+    }
+    setError(null);
+    let unreadable = 0;
+    const pending: Array<{ id: string; file: File }> = [];
+    for (const file of accepted) {
+      if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+        setError("That file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.");
+        unreadable += 1;
+        continue;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        setError("That photo is too large. Choose an image under 8 MB.");
+        unreadable += 1;
+        continue;
+      }
+      // Add optimistically so a fast "pick then publish" never drops the
+      // photo; the digest check below removes exact duplicates afterwards.
+      const id = acceptPickedPhoto(file, null);
+      pending.push({ id, file });
+    }
+    if (unreadable > 0 || overflow) {
+      setPhotoLimitNotice(
+        formatBatchNotice(0, 0, unreadable, overflow ? list.length - accepted.length : 0) || null,
+      );
+    }
+    enqueuePick(async () => {
+      let duplicates = 0;
+      for (const { id, file } of pending) {
+        let digest: string;
+        try {
+          digest = await computeSha256Hex(file);
+        } catch {
+          continue;
+        }
+        // The photo may have been removed while the digest was computing; a
+        // removed photo must not claim its bytes in the registry, or a later
+        // reselect of the same file would be wrongly rejected (R-072).
+        if (!photosRef.current.some((p) => p.id === id)) continue;
+        if (hashRegistryRef.current.has(digest)) {
+          duplicates += 1;
+          removePhoto(id);
+          continue;
+        }
+        hashRegistryRef.current.add(digest);
+        photosRef.current = photosRef.current.map((p) => (p.id === id ? { ...p, hash: digest } : p));
+        setPhotos(photosRef.current);
+      }
+      if (duplicates > 0) {
+        setPhotoLimitNotice(formatBatchNotice(0, duplicates, 0, 0));
+      }
+    });
+  }
+
+  async function onAddGallery(): Promise<void> {
+    const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
+    if (remaining <= 0) return;
+    if (!isNativeCameraAvailable()) {
+      fileInputRef.current?.click();
+      return;
+    }
+    try {
+      const picked = await chooseReportPhotos(remaining);
+      if (picked.length === 0) return;
+      onPickBatch(picked);
+    } catch (err) {
+      setError(friendlyError(err).message);
+    }
+  }
+
+  function onAddCamera(): void {
+    if (!isNativeCameraAvailable()) {
+      fileInputRef.current?.click();
+      return;
+    }
+    void capturePhoto(takePhoto);
+  }
+
+  function removePhoto(id: string): void {
+    const target = photosRef.current.find((p) => p.id === id);
+    if (target?.hash) hashRegistryRef.current.delete(target.hash);
+    if (target?.previewUrl.startsWith("blob:")) URL.revokeObjectURL(target.previewUrl);
+    dropStashedPhoto(id, accountId);
+    photosRef.current = photosRef.current.filter((p) => p.id !== id);
+    setPhotos(photosRef.current);
+    setPreviewPhotoId((current) => (current === id ? null : current));
     setPhotoLimitNotice(null);
   }
 
-  function movePhoto(index: number, direction: -1 | 1): void {
-    setPhotos((prev) => {
-      const next = [...prev];
-      const swapWith = index + direction;
-      if (index < 0 || index >= next.length || swapWith < 0 || swapWith >= next.length) return prev;
-      const [moved] = next.splice(index, 1);
-      if (!moved) return prev;
-      next.splice(swapWith, 0, moved);
-      return next;
-    });
+  function movePhotoById(id: string, direction: "earlier" | "later"): void {
+    const index = photosRef.current.findIndex((p) => p.id === id);
+    if (index === -1) return;
+    const swapWith = index + (direction === "earlier" ? -1 : 1);
+    if (swapWith < 0 || swapWith >= photosRef.current.length) return;
+    const next = [...photosRef.current];
+    const [moved] = next.splice(index, 1);
+    if (!moved) return;
+    next.splice(swapWith, 0, moved);
+    photosRef.current = next;
+    setPhotos(next);
   }
 
   function clearPhotos(): void {
@@ -519,7 +707,10 @@ export function CreateReport() {
       if (p.previewUrl.startsWith("blob:")) URL.revokeObjectURL(p.previewUrl);
       dropStashedPhoto(p.id, accountId);
     }
+    hashRegistryRef.current = createHashRegistry();
+    photosRef.current = [];
     setPhotos([]);
+    setPreviewPhotoId(null);
     setPhotoLimitNotice(null);
   }
 
@@ -547,12 +738,14 @@ export function CreateReport() {
       descriptionLiveRef.current = patch.suggestedDescription ?? "";
       setDescription(patch.suggestedDescription ?? "");
     }
-    if (patch.suggestedCategory !== undefined && patch.suggestedCategory !== null) setCategory(patch.suggestedCategory);
+    if (patch.suggestedCategory && isReleasedCategory(patch.suggestedCategory)) {
+      setCategory(patch.suggestedCategory as Category);
+    }
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (submitting.current) return;
+    if (submitting.current || uncertain) return;
     // Start a new trace for this publish action
     traceIdRef.current = startActionTrace();
     clearAmbientTrace();
@@ -600,7 +793,11 @@ export function CreateReport() {
           : trimmedDescription.length > DESCRIPTION_MAX
             ? `Description must be at most ${DESCRIPTION_MAX} characters.`
             : undefined,
-      category: category ? undefined : "Choose a category.",
+      category: !category
+        ? "Choose a category."
+        : !isReleasedCategory(category)
+          ? "Choose one of the available categories."
+          : undefined,
       eventDate: !eventDate
         ? "Choose a date."
         : !isValidCalendarDate(eventDate)
@@ -621,7 +818,10 @@ export function CreateReport() {
     if (errs.title || errs.description || errs.category || errs.eventDate || errs.locationLabel || errs.youtubeUrl || !category) return;
     submitting.current = true;
     setBusy(true);
-    const reportFiles = photos.map((p) => p.file);
+    // Let any queued duplicate-detection finish before we snapshot the files,
+    // so identical bytes cannot slip into the same publish (R-068).
+    await pickQueueRef.current.catch(() => {});
+    const reportFiles = photosRef.current.map((p) => p.file);
     // Diag: publish start
     diag("report.publish.start", {
       type,
@@ -658,6 +858,22 @@ export function CreateReport() {
       }, { traceId: traceIdRef.current ?? undefined });
       clearDraft(accountId);
       clearPhotos();
+      clearPhotoStore(accountId);
+      setType("LOST");
+      setTitle("");
+      descriptionLiveRef.current = "";
+      descriptionEditorRef.current = null;
+      setDescription("");
+      setCategory("");
+      setEventDate(todayInputValue());
+      setLocation({ label: "", latitude: null, longitude: null });
+      setYoutubeUrl("");
+      setFieldErrors({});
+      setAssistantHandoff(null);
+      setUncertain(false);
+      setHandoffConflicts([]);
+      setHandoffAdded([]);
+      setEditorResetKey((key) => key + 1);
       announce("Report published.");
       navigate(`/posts/${postId}`, { replace: true });
     } catch (err) {
@@ -666,7 +882,12 @@ export function CreateReport() {
         message: friendlyError(err).message,
         code: err instanceof Error ? (err as { code?: string }).code ?? "unknown" : "unknown",
       }, { traceId: traceIdRef.current ?? undefined });
-      setError(friendlyError(err).message);
+      if (err instanceof PublishOutcomeUncertainError) {
+        setUncertain(true);
+        setError(err.message);
+      } else {
+        setError(friendlyError(err).message);
+      }
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -686,6 +907,13 @@ export function CreateReport() {
         <p className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
           {error}
         </p>
+      )}
+
+      {uncertain && (
+        <div role="status" className="rounded-m3-sm border border-outline-variant px-3 py-2 text-sm">
+          This report may already be published. Your draft is kept; publishing again is paused.
+          <Button type="button" variant="text" size="md" onClick={() => navigate("/my")}>Check My Reports</Button>
+        </div>
       )}
 
       <Segmented<PostType>
@@ -769,6 +997,7 @@ export function CreateReport() {
       )}
 
       <RichTextEditor
+        key={editorResetKey}
         label="Description"
         value={description}
         onChange={(v) => {
@@ -792,31 +1021,26 @@ export function CreateReport() {
         error={fieldErrors.category}
       />
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium">
+      <div className="block">
+        <span id="report-event-date-label" className="mb-1 block text-sm font-medium">
           {type === "LOST" ? "Date lost" : "Date found"}
         </span>
-        <input
-          type="date"
+        <ReportDatePicker
           value={eventDate}
-          max={todayInputValue()}
-          onChange={(e) => {
-            setEventDate(e.target.value);
+          expected={type}
+          aria-describedby="report-event-date-label"
+          error={fieldErrors.eventDate}
+          onChange={(next) => {
+            setEventDate(next);
             if (fieldErrors.eventDate) setFieldErrors((f) => ({ ...f, eventDate: undefined }));
           }}
-          className={inputCls}
-          required
         />
-        {fieldErrors.eventDate ? (
-          <span className="mt-1 block text-xs text-error">{fieldErrors.eventDate}</span>
-        ) : (
-          isFutureDate(eventDate) && (
-            <span className="mt-1 block text-xs text-error">
-              The date can't be in the future.
-            </span>
-          )
+        {!fieldErrors.eventDate && isFutureDate(eventDate) && (
+          <span className="mt-1 block text-xs text-error">
+            The date can't be in the future.
+          </span>
         )}
-      </label>
+      </div>
 
       <LocationPicker value={location} onChange={setLocation} maxLength={LOCATION_LABEL_MAX} />
       {fieldErrors.locationLabel && (
@@ -825,109 +1049,43 @@ export function CreateReport() {
 
       {/* Photo (optional) */}
       <section className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-3">
-        <p className="text-sm font-medium">Photo (optional)</p>
-        <p className="text-xs text-on-surface-variant">
-          Up to {MAX_REPORT_PHOTOS} photos, published in the order shown.
-        </p>
-        {photos.length > 0 && (
-          <ol className="flex flex-col gap-3">
-            {photos.map((item, index) => (
-              <li key={item.id} className="flex flex-col gap-2">
-                <div className="relative">
-                  <img src={item.previewUrl} alt={`Attachment preview ${index + 1}`} className="max-h-56 w-full rounded-m3-sm border border-outline-variant object-cover" />
-                  <button
-                    type="button"
-                    aria-label={`Remove photo ${index + 1}`}
-                    onClick={() => removePhoto(item.id)}
-                    className="absolute right-2 top-2 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-surface/90 text-on-surface shadow"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-on-surface-variant">
-                    Photo {index + 1} of {photos.length}
-                  </span>
-                  {/* P5: a single photo has no order to change — reorder
-                    controls render only when 2+ photos exist, so one-image
-                    cards never show two disabled Move buttons. */}
-                  {photos.length > 1 && (
-                    <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="md"
-                        disabled={index === 0}
-                        aria-label={`Move photo ${index + 1} earlier`}
-                        onClick={() => movePhoto(index, -1)}
-                      >
-                        Move earlier
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="md"
-                        disabled={index === photos.length - 1}
-                        aria-label={`Move photo ${index + 1} later`}
-                        onClick={() => movePhoto(index, 1)}
-                      >
-                        Move later
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
+        <ReportMediaPicker
+          photos={mediaPickerPhotos}
+          disabled={submitting.current || uncertain}
+          onAddCamera={onAddCamera}
+          onAddGallery={() => void onAddGallery()}
+          onRemove={removePhoto}
+          onMove={movePhotoById}
+          onPreview={setPreviewPhotoId}
+        />
         {photoLimitNotice && (
           <p className="text-xs text-error" role="status">
             {photoLimitNotice}
           </p>
         )}
-        {photos.length >= MAX_REPORT_PHOTOS ? (
-          <p className="text-xs text-on-surface-variant" role="status">
-            {MAX_REPORT_PHOTOS} of {MAX_REPORT_PHOTOS} photos — remove one to add a different photo.
-          </p>
-        ) : (
-          <>
-            {isNativeCameraAvailable() && (
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="md"
-                  onClick={() => void capturePhoto(takePhoto)}
-                >
-                  <ImageUp size={18} aria-hidden />
-                  Take photo
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="md"
-                  onClick={() => void capturePhoto(chooseFromGallery)}
-                >
-                  <ImageUp size={18} aria-hidden />
-                  Choose from gallery
-                </Button>
-              </div>
-            )}
-            {!isNativeCameraAvailable() && (
-              <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-m3-sm border border-dashed border-outline px-4 text-center text-sm text-on-surface-variant hover:bg-surface-container">
-                <ImageUp size={22} aria-hidden />
-                {photos.length === 0 ? "Tap to choose an image" : "Add another photo"}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  className="sr-only"
-                  onChange={(e) => onPickImage(e.target.files?.[0])}
-                />
-              </label>
-            )}
-          </>
+        {!isNativeCameraAvailable() && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="sr-only"
+            onChange={(e) => {
+              onPickFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
         )}
       </section>
+
+      {previewPhotoId && (
+        <PhotoLightbox
+          photo={photos.find((p) => p.id === previewPhotoId) ?? null}
+          index={photos.findIndex((p) => p.id === previewPhotoId)}
+          total={photos.length}
+          onClose={() => setPreviewPhotoId(null)}
+        />
+      )}
 
       {photos.length > 0 && <VlmSuggestions file={photos[0]!.file} onApply={applyVlmSuggestion} />}
 
@@ -954,7 +1112,7 @@ export function CreateReport() {
         <YouTubeEmbed url={youtubeUrl.trim()} />
       )}
 
-      <Button type="submit" size="lg" loading={busy}>
+      <Button type="submit" size="lg" loading={busy} disabled={uncertain}>
         Publish {type === "LOST" ? "lost" : "found"} report
       </Button>
       <Button type="button" variant="text" size="md" onClick={discardDraft}>

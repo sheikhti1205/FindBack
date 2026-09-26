@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import type { RefObject } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { RefObject, RefCallback } from "react";
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
@@ -11,23 +11,77 @@ const FOCUSABLE_SELECTOR =
  * - Wraps Tab / Shift+Tab at the edges.
  * - Calls onClose on Escape.
  * - Restores focus to the element that was focused before mount on unmount.
+ *   The caller can set `previouslyFocusedRef.current` to the trigger element
+ *   before enabling the trap. If not set, the hook captures the current focus
+ *   when the trap becomes enabled.
+ *
+ * Usage:
+ *   const ref = useRef<HTMLDivElement>(null);
+ *   const setRef = useFocusTrap(ref, onClose, isOpen);
+ *   return <div ref={setRef} ...>...</div>;
+ *
+ * Or for backward compatibility (non-portal usage):
+ *   const ref = useRef<HTMLDivElement>(null);
+ *   useFocusTrap(ref, onClose, isOpen);
+ *   return <div ref={ref} ...>...</div>;
  */
 export function useFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
   onClose: () => void,
-): void {
-  const previouslyFocused = useRef<HTMLElement | null>(null);
-  // Keep the latest callback without re-running the effect, so inline arrow
-  // handlers from the caller cannot cause focus to be stolen on every render.
+  enabled = true,
+  previouslyFocusedRef?: RefObject<HTMLElement | null>,
+): RefCallback<HTMLElement | null> {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const [container, setContainer] = useState<HTMLElement | null>(null);
+  const enabledRef = useRef(false);
+  enabledRef.current = enabled;
+  // Internal ref to store previously focused element when caller doesn't provide one
+  const internalPreviouslyFocusedRef = useRef<HTMLElement | null>(null);
+
+  // Track the container element via a callback ref so we can re-run the effect
+  // when the element becomes available (e.g. when a portal mounts).
+  const setContainerRef: RefCallback<HTMLElement | null> = (el) => {
+    containerRef.current = el;
+    setContainer(el);
+  };
+
+  // Also sync container from containerRef.current for backward compatibility
+  // when the caller uses the plain ref directly on the element.
+  useEffect(() => {
+    if (containerRef.current && containerRef.current !== container) {
+      setContainer(containerRef.current);
+    }
+  }, [containerRef, container]);
+
+  // Capture the previously focused element when the trap becomes enabled.
+  // Use caller's ref if provided, otherwise use internal ref.
+  useEffect(() => {
+    if (enabled && !enabledRef.current) {
+      // Trap just became enabled - capture current focus
+      const previouslyFocused =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (previouslyFocusedRef) {
+        if (previouslyFocusedRef.current === null) {
+          previouslyFocusedRef.current = previouslyFocused;
+        }
+      } else {
+        internalPreviouslyFocusedRef.current = previouslyFocused;
+      }
+    }
+    enabledRef.current = enabled;
+  }, [enabled, previouslyFocusedRef]);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    if (!enabled || !container) return;
 
-    previouslyFocused.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Capture previously focused element if not already captured
+    const previousRef = previouslyFocusedRef ?? internalPreviouslyFocusedRef;
+    if (previousRef.current === null) {
+      const previouslyFocused =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      previousRef.current = previouslyFocused;
+    }
 
     const getFocusable = (): HTMLElement[] =>
       Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
@@ -73,8 +127,12 @@ export function useFocusTrap(
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      const previous = previouslyFocused.current;
+      // Use caller's ref if provided, otherwise use internal ref
+      const previous = previouslyFocusedRef?.current ?? internalPreviouslyFocusedRef.current;
       if (previous && document.contains(previous)) previous.focus();
     };
-  }, [containerRef]);
+  }, [container, enabled, previouslyFocusedRef]);
+
+  // Return the callback ref so the caller can use it instead of the plain ref
+  return setContainerRef;
 }

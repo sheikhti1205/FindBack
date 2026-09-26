@@ -245,6 +245,25 @@ describe("publishReportWithPhotos", () => {
     expect(uploadsDeleteEqMock).toHaveBeenCalledTimes(2);
   });
 
+  it("a lost create response preserves potentially committed photo bytes for reconciliation", async () => {
+    rpcMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(publishReportWithPhotos(input, [photo("p1.jpg"), photo("p2.jpg")]))
+      .rejects.toThrow(/publication.*uncertain/i);
+
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(removeMock).not.toHaveBeenCalled();
+    expect(uploadsDeleteEqMock).not.toHaveBeenCalled();
+  });
+
+  it("a missing post id does not confirm publication or delete staged media", async () => {
+    rpcMock.mockResolvedValue({ data: null, error: null });
+
+    await expect(publishReportWithPhotos(input, [photo("p1.jpg")]))
+      .rejects.toThrow(/publication.*uncertain/i);
+    expect(removeMock).not.toHaveBeenCalled();
+  });
+
   it("0 photos uses the legacy single-key path with a null key (old readers unaffected)", async () => {
     const id = await publishReportWithPhotos(input, []);
 

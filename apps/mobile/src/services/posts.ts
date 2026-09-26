@@ -20,6 +20,7 @@ import {
 } from "./postsUpload";
 import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
 import { diag } from "./diag";
+import { PublishOutcomeUncertainError } from "./publishOutcome";
 
 export { createPost, createPostMulti } from "./postsCreate";
 export type { CreatePostInput, CreatePostMultiInput } from "./postsCreate";
@@ -426,7 +427,7 @@ export async function publishReport(input: CreatePostInput, photo: File | null, 
   try {
     return await createPost({ ...input, attachmentKey: stored.id }, traceId);
   } catch (err) {
-    await removeStagedUpload(stored, traceId);
+    if (!(err instanceof PublishOutcomeUncertainError)) await removeStagedUpload(stored, traceId);
     throw err;
   }
 }
@@ -478,7 +479,7 @@ export async function publishReportWithPhotos(
     }, { traceId: options.traceId });
     return postId;
   } catch (err) {
-    await removeStagedUploads(staged, options.traceId);
+    if (!(err instanceof PublishOutcomeUncertainError)) await removeStagedUploads(staged, options.traceId);
     throw err;
   }
 }

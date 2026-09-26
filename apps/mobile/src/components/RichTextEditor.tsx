@@ -4,9 +4,10 @@ import type { JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { createPortal } from "react-dom";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
-import { Bold, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2 } from "lucide-react";
+import { Bold, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2, Expand, X } from "lucide-react";
 import {
   fromMarkdown,
   isSafeRichTextHref,
@@ -15,6 +16,15 @@ import {
   type InlineNode,
   type RichTextDocument,
 } from "../services/richText";
+import {
+  useFloating,
+  autoUpdate,
+  offset,
+  flip,
+  shift,
+  size,
+  FloatingPortal,
+} from "@floating-ui/react";
 
 export const RICH_TEXT_DEBOUNCE_MS = 300;
 
@@ -37,44 +47,207 @@ function LinkSheet({ selection, onCancel, onSave, onRemove }: {
   const editing = selection.href !== "";
   const [url, setUrl] = useState(selection.href || "https://");
   const [message, setMessage] = useState<string | null>(null);
+  const [isImeOpen, setIsImeOpen] = useState(false);
+
   useFocusTrap(sheetRef, onCancel);
   useModalBack(true, onCancel);
 
+  // Detect IME/keyboard open state using visualViewport
+  useEffect(() => {
+    const handleResize = () => {
+      const viewport = window.visualViewport;
+      if (viewport) {
+        const heightRatio = viewport.height / window.innerHeight;
+        setIsImeOpen(heightRatio < 0.75);
+      }
+    };
+    window.visualViewport?.addEventListener("resize", handleResize);
+    window.visualViewport?.addEventListener("scroll", handleResize);
+    handleResize();
+    return () => {
+      window.visualViewport?.removeEventListener("resize", handleResize);
+      window.visualViewport?.removeEventListener("scroll", handleResize);
+    };
+  }, []);
+
+  const { refs, floatingStyles } = useFloating({
+    open: true,
+    onOpenChange: onCancel,
+    placement: isImeOpen ? "bottom" : "top",
+    middleware: [
+      offset(8),
+      flip({
+        crossAxis: "alignment",
+        fallbackAxisSideDirection: isImeOpen ? "none" : "start",
+        padding: 8,
+      }),
+      shift({ padding: 8, crossAxis: true }),
+      size({
+        apply({ availableHeight, elements }: { availableHeight: number; elements: { floating: HTMLElement } }) {
+          const maxHeight = Math.max(0, availableHeight - 16);
+          elements.floating.style.maxHeight = `${maxHeight}px`;
+          elements.floating.style.overflowY = "auto";
+        },
+      }),
+    ],
+    whileElementsMounted: autoUpdate,
+  });
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4" role="presentation">
-      <div ref={sheetRef} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} className="w-full max-w-md space-y-4 rounded-m3-lg bg-surface p-5 shadow-xl">
-        <h2 id={`${id}-title`} className="text-lg font-semibold">{editing ? "Edit link" : "Add link"}</h2>
-        <label className="block text-sm" htmlFor={`${id}-text`}>Selected text</label>
-        <input id={`${id}-text`} value={selection.text} readOnly className="w-full rounded-m3-xs border border-outline-variant bg-surface-container p-3" />
-        <form onSubmit={(event) => {
-          event.preventDefault();
-          const error = onSave(url.trim());
-          if (error) setMessage(error);
-        }}>
-          <label htmlFor={`${id}-url`} className="block text-sm">URL</label>
-          <input id={`${id}-url`} type="url" value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={message != null} aria-describedby={message ? `${id}-error` : undefined} className="w-full rounded-m3-xs border border-outline-variant p-3" />
-          {message && <p id={`${id}-error`} role="alert" className="text-sm text-error">{message}</p>}
-          <div className="mt-4 flex justify-end gap-2">
-            {editing && isSafeRichTextHref(selection.href) && (
-              <a
-                href={selection.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`Open link ${selection.href} in a new tab`}
-                className="mr-auto inline-flex min-h-[48px] min-w-[48px] items-center px-3 underline"
-              >
-                Open link
-              </a>
-            )}
-            <button type="button" onClick={onCancel} className="min-h-[48px] min-w-[48px] px-3">Cancel</button>
-            {editing && (
-              <button type="button" onClick={onRemove} aria-label="Remove link" className="min-h-[48px] min-w-[48px] rounded-m3-xs border border-outline-variant px-3">Remove link</button>
-            )}
-            <button type="submit" className="min-h-[48px] min-w-[48px] rounded-m3-xs bg-on-surface px-3 text-surface">{editing ? "Save link" : "Add link"}</button>
-          </div>
-        </form>
+    <FloatingPortal>
+      <div
+        ref={(el) => {
+          refs.setFloating(el);
+          sheetRef.current = el;
+        }}
+        style={floatingStyles}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`${id}-title`}
+        className="z-50 w-full max-w-md rounded-m3-lg bg-surface shadow-xl"
+        tabIndex={-1}
+      >
+        <div className="space-y-4 p-5">
+          <h2 id={`${id}-title`} className="text-lg font-semibold">{editing ? "Edit link" : "Add link"}</h2>
+          <label className="block text-sm" htmlFor={`${id}-text`}>Selected text</label>
+          <input id={`${id}-text`} value={selection.text} readOnly className="w-full rounded-m3-xs border border-outline-variant bg-surface-container p-3" />
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            const error = onSave(url.trim());
+            if (error) setMessage(error);
+          }}>
+            <label htmlFor={`${id}-url`} className="block text-sm">URL</label>
+            <input id={`${id}-url`} type="url" value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={message != null} aria-describedby={message ? `${id}-error` : undefined} className="w-full rounded-m3-xs border border-outline-variant p-3" />
+            {message && <p id={`${id}-error`} role="alert" className="text-sm text-error">{message}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              {editing && isSafeRichTextHref(selection.href) && (
+                <a
+                  href={selection.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open link ${selection.href} in a new tab`}
+                  className="mr-auto inline-flex min-h-[48px] min-w-[48px] items-center px-3 underline"
+                >
+                  Open link
+                </a>
+              )}
+              <button type="button" onClick={onCancel} className="min-h-[48px] min-w-[48px] px-3">Cancel</button>
+              {editing && (
+                <button type="button" onClick={onRemove} aria-label="Remove link" className="min-h-[48px] min-w-[48px] rounded-m3-xs border border-outline-variant px-3">Remove link</button>
+              )}
+              <button type="submit" className="min-h-[48px] min-w-[48px] rounded-m3-xs bg-on-surface px-3 text-surface">{editing ? "Save link" : "Add link"}</button>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
+    </FloatingPortal>
+  );
+}
+
+interface FloatingMenuProps {
+  open: boolean;
+  onClose: () => void;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  children: React.ReactNode;
+  label: string;
+  placement?: "top" | "bottom";
+}
+
+function FloatingMenu({ open, onClose, triggerRef, children, label, placement = "top" }: FloatingMenuProps) {
+  const floatingRef = useRef<HTMLDivElement>(null);
+  const { refs, floatingStyles } = useFloating({
+    open,
+    onOpenChange: onClose,
+    placement,
+    middleware: [
+      offset(4),
+      flip({
+        crossAxis: "alignment",
+        fallbackAxisSideDirection: "start",
+        padding: 8,
+      }),
+      shift({ padding: 8, crossAxis: true }),
+      size({
+        apply({ availableHeight, elements }: { availableHeight: number; elements: { floating: HTMLElement } }) {
+          const maxHeight = Math.max(0, availableHeight - 16);
+          elements.floating.style.maxHeight = `${maxHeight}px`;
+          elements.floating.style.overflowY = "auto";
+        },
+      }),
+    ],
+    whileElementsMounted: autoUpdate,
+  });
+
+  // Auto-focus the selected/first menu item when menu opens - using ref callback for synchronous focus
+  const setFloatingRef = (el: HTMLDivElement | null) => {
+    refs.setFloating(el);
+    floatingRef.current = el;
+    if (el && open) {
+      // Focus synchronously when element is mounted
+      const checkedItem = el.querySelector('[role="menuitemradio"][aria-checked="true"]') as HTMLElement;
+      const firstItem = el.querySelector('[role="menuitem"], [role="menuitemradio"]') as HTMLElement;
+      const target = checkedItem || firstItem;
+      if (target) {
+        target.focus();
+      }
+    }
+  };
+
+  // Handle keyboard navigation within the menu
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const menu = event.currentTarget;
+    const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"], [role="menuitemradio"]'));
+    const enabledItems = items.filter(item => !item.disabled);
+    const activeIndex = enabledItems.findIndex(item => item === document.activeElement);
+
+    if (activeIndex === -1) return;
+
+    let nextIndex = activeIndex;
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        nextIndex = (activeIndex + 1) % enabledItems.length;
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        nextIndex = (activeIndex - 1 + enabledItems.length) % enabledItems.length;
+        break;
+      case "Home":
+        event.preventDefault();
+        nextIndex = 0;
+        break;
+      case "End":
+        event.preventDefault();
+        nextIndex = enabledItems.length - 1;
+        break;
+      case "Escape":
+        event.preventDefault();
+        onClose();
+        triggerRef.current?.focus();
+        return;
+      default:
+        return;
+    }
+
+    enabledItems[nextIndex]?.focus();
+  };
+
+  if (!open) return null;
+
+  return (
+    <FloatingPortal>
+      <div
+        ref={setFloatingRef}
+        style={floatingStyles}
+        role="menu"
+        aria-label={label}
+        className="z-50 max-w-[calc(100vw-2rem)] w-64 max-h-[min(20rem,40vh)] overflow-y-auto rounded-m3-sm border border-outline-variant bg-surface p-1 shadow-xl"
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
+      >
+        {children}
+      </div>
+    </FloatingPortal>
   );
 }
 
@@ -424,6 +597,26 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   const [openMenu, setOpenMenu] = useState<null | "block" | "list" | "more">(null);
   const [status, setStatus] = useState<string | null>(null);
   const [listNotice, setListNotice] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const overlayPreviouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const expandButtonRef = useRef<HTMLButtonElement>(null);
+  const setOverlayRef = useFocusTrap(overlayRef, () => setIsExpanded(false), isExpanded, overlayPreviouslyFocusedRef);
+  useModalBack(isExpanded, () => setIsExpanded(false));
+
+  // Restore focus to expand button when overlay closes
+  useEffect(() => {
+    if (!isExpanded && overlayPreviouslyFocusedRef.current) {
+      const previous = overlayPreviouslyFocusedRef.current;
+      overlayPreviouslyFocusedRef.current = null;
+      if (document.contains(previous)) {
+        previous.focus();
+      } else if (expandButtonRef.current) {
+        // Fallback: focus the expand button if the previous element is no longer in the document
+        expandButtonRef.current.focus();
+      }
+    }
+  }, [isExpanded]);
   const baseId = useId();
   const errorId = `${baseId}-error`;
   const countId = `${baseId}-count`;
@@ -487,7 +680,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
       editorProps: {
         attributes: {
           "aria-label": label,
-          class: `tiptap min-h-[120px] rounded-m3-sm border bg-surface px-3.5 py-3 text-base focus:border-on-surface focus:outline-none ${error ? "border-error" : "border-outline-variant"}`,
+          class: `tiptap min-h-[120px] rounded-m3-sm border bg-surface px-3.5 py-3 text-base focus:border-on-surface focus:outline-none overflow-y-auto overscroll-contain ${error ? "border-error" : "border-outline-variant"}`,
         },
       },
       onCreate: ({ editor: created }) => {
@@ -848,8 +1041,6 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     `flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center gap-1 rounded-m3-xs px-2 text-on-surface-variant hover:bg-surface-container ${
       active ? "bg-surface-container-high text-on-surface outline outline-1 outline-outline" : ""
     }`;
-  const menuPanelCls =
-    "absolute left-0 top-full z-10 mt-1 max-h-[min(20rem,40vh)] w-64 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-m3-sm border border-outline-variant bg-surface p-1 shadow-xl";
   const menuItemCls =
     "flex min-h-[48px] w-full items-center gap-2 rounded-m3-xs px-3 text-left text-on-surface hover:bg-surface-container";
 
@@ -883,22 +1074,23 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
         onTouchStart={handleEditorIntentionalInteraction}
         onKeyDown={handleEditorIntentionalInteraction}
       >
-        <EditorContent editor={editor} />
-        {(!editor || empty) && placeholder ? (
+        {!isExpanded && <EditorContent editor={editor} />}
+        {(!editor || empty) && placeholder && !isExpanded ? (
           <div aria-hidden className="pointer-events-none absolute inset-0 px-3.5 py-3 text-base text-on-surface-variant">
             {placeholder}
           </div>
         ) : null}
       </div>
-      <div ref={toolbarRef} className="relative">
-        <div
-          role="toolbar"
-          aria-label={`${label} formatting`}
-          className="flex flex-nowrap gap-1 overflow-x-auto pb-1"
-          onPointerDownCapture={captureToolbarRange}
-          onMouseDownCapture={captureToolbarRange}
-          onTouchStartCapture={captureToolbarRange}
-        >
+      {!isExpanded && (
+        <div ref={toolbarRef} className="relative">
+          <div
+            role="toolbar"
+            aria-label={`${label} formatting`}
+            className="flex flex-nowrap gap-1 overflow-x-auto pb-1"
+            onPointerDownCapture={captureToolbarRange}
+            onMouseDownCapture={captureToolbarRange}
+            onTouchStartCapture={captureToolbarRange}
+          >
           <button
             ref={blockButtonRef}
             type="button"
@@ -973,9 +1165,32 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
             <span aria-hidden>⋯</span>
             <span className="sr-only">More formatting options</span>
           </button>
+          <button
+            ref={expandButtonRef}
+            type="button"
+            title="Expand description editor"
+            aria-label="Expand description editor"
+            disabled={!editor}
+            onClick={() => {
+              // Capture focus before expanding so we can restore it on close
+              const activeEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+              overlayPreviouslyFocusedRef.current = activeEl;
+              setIsExpanded(true);
+            }}
+            className={toolButtonCls(false)}
+          >
+            <Expand size={17} aria-hidden />
+            <span className="sr-only">Expand description editor</span>
+          </button>
         </div>
-        {openMenu === "block" && (
-          <div role="menu" aria-label="Block type" className={menuPanelCls} onKeyDown={handleMenuKeyDown}>
+        <FloatingMenu
+          open={openMenu === "block"}
+          onClose={() => setOpenMenu(null)}
+          triggerRef={blockButtonRef}
+          label="Block type"
+          placement="top"
+        >
+          <div onKeyDown={handleMenuKeyDown}>
             {blockOptions.map((option) => {
               const checked = currentBlock === option.name;
               return (
@@ -994,9 +1209,15 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               );
             })}
           </div>
-        )}
-        {openMenu === "list" && (
-          <div role="menu" aria-label="List" className={menuPanelCls} onKeyDown={handleMenuKeyDown}>
+        </FloatingMenu>
+        <FloatingMenu
+          open={openMenu === "list"}
+          onClose={() => setOpenMenu(null)}
+          triggerRef={listButtonRef}
+          label="List"
+          placement="top"
+        >
+          <div onKeyDown={handleMenuKeyDown}>
             <button
               type="button"
               role="menuitemradio"
@@ -1032,9 +1253,15 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               <span>Remove list</span>
             </button>
           </div>
-        )}
-        {openMenu === "more" && (
-          <div role="menu" aria-label="More formatting options" className={menuPanelCls} onKeyDown={handleMenuKeyDown}>
+        </FloatingMenu>
+        <FloatingMenu
+          open={openMenu === "more"}
+          onClose={() => setOpenMenu(null)}
+          triggerRef={moreButtonRef}
+          label="More formatting options"
+          placement="top"
+        >
+          <div onKeyDown={handleMenuKeyDown}>
             <button
               type="button"
               role="menuitem"
@@ -1084,8 +1311,9 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               <span>Redo</span>
             </button>
           </div>
-        )}
+        </FloatingMenu>
       </div>
+      )}
       {linkSelection && <LinkSheet selection={linkSelection} onCancel={() => setLinkSelection(null)} onSave={saveLink} onRemove={removeLink} />}
       {listNotice ? (
         <p role="status" aria-label="List simplification notice" className="text-xs text-on-surface-variant">
@@ -1105,6 +1333,261 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           {status}
         </span>
       ) : null}
+      {isExpanded && createPortal(
+        <div
+          ref={setOverlayRef}
+          id="report-editor-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="report-editor-overlay-title"
+          className="fixed inset-0 z-50 flex flex-col bg-surface"
+          style={{
+            height: "var(--fb-visible-height, 100vh)",
+            top: "var(--fb-visible-top, 0)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <header className="flex items-center justify-between px-4 py-3 border-b border-outline-variant flex-shrink-0">
+            <button
+              type="button"
+              aria-label="Close full-screen editor"
+              onClick={() => setIsExpanded(false)}
+              className="min-h-[48px] min-w-[48px] flex items-center justify-center"
+            >
+              <X size={20} aria-hidden />
+            </button>
+            <h2 id="report-editor-overlay-title" className="text-lg font-semibold">Description</h2>
+            <button
+              type="button"
+              title="Done"
+              aria-label="Done"
+              onClick={() => setIsExpanded(false)}
+              className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-m3-xs bg-on-surface px-3 text-surface"
+            >
+              Done
+            </button>
+          </header>
+          <div className="flex-1 overflow-auto" onPointerDown={handleEditorIntentionalInteraction} onTouchStart={handleEditorIntentionalInteraction} onKeyDown={handleEditorIntentionalInteraction}>
+            <EditorContent editor={editor} />
+          </div>
+          <div ref={toolbarRef} className="relative flex-shrink-0">
+            <div
+              role="toolbar"
+              aria-label={`${label} formatting`}
+              className="flex flex-nowrap gap-1 overflow-x-auto pb-1 px-4"
+              onPointerDownCapture={captureToolbarRange}
+              onMouseDownCapture={captureToolbarRange}
+              onTouchStartCapture={captureToolbarRange}
+            >
+              <button
+                ref={blockButtonRef}
+                type="button"
+                title={`Block type: ${currentBlock}`}
+                aria-label={`Block type: ${currentBlock}`}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "block"}
+                disabled={!editor}
+                onClick={() => toggleMenu("block", blockButtonRef)}
+                className={toolButtonCls(currentBlock !== "Body")}
+              >
+                <span aria-hidden>{currentBlock} ▾</span>
+              </button>
+              <button
+                type="button"
+                title="Bold"
+                aria-label="Bold"
+                aria-pressed={boldActive}
+                disabled={!editor}
+                onClick={() => toggleMarkWithSavedSelection("bold")}
+                className={toolButtonCls(boldActive)}
+              >
+                <Bold size={17} aria-hidden />
+              </button>
+              <button
+                type="button"
+                title="Italic"
+                aria-label="Italic"
+                aria-pressed={italicActive}
+                disabled={!editor}
+                onClick={() => toggleMarkWithSavedSelection("italic")}
+                className={toolButtonCls(italicActive)}
+              >
+                <Italic size={17} aria-hidden />
+              </button>
+              <button
+                ref={listButtonRef}
+                type="button"
+                title="List"
+                aria-label="List"
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "list"}
+                disabled={!editor}
+                onClick={() => toggleMenu("list", listButtonRef)}
+                className={toolButtonCls(bulletActive || orderedActive)}
+              >
+                <List size={17} aria-hidden />
+                <span aria-hidden className="text-xs">▾</span>
+              </button>
+              <button
+                type="button"
+                title={linkDisabled ? "Select text to add a link" : "Link"}
+                aria-label="Link"
+                aria-pressed={linkActive}
+                disabled={!editor || linkDisabled}
+                onClick={applyLink}
+                className={toolButtonCls(linkActive)}
+              >
+                <Link2 size={17} aria-hidden />
+              </button>
+              <button
+                ref={moreButtonRef}
+                type="button"
+                title="More"
+                aria-label="More"
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "more"}
+                disabled={!editor}
+                onClick={() => toggleMenu("more", moreButtonRef)}
+                className={toolButtonCls(false)}
+              >
+                <span aria-hidden>⋯</span>
+                <span className="sr-only">More formatting options</span>
+              </button>
+            </div>
+            <FloatingMenu
+              open={openMenu === "block"}
+              onClose={() => setOpenMenu(null)}
+              triggerRef={blockButtonRef}
+              label="Block type"
+              placement="top"
+            >
+              <div onKeyDown={handleMenuKeyDown}>
+                {blockOptions.map((option) => {
+                  const checked = currentBlock === option.name;
+                  return (
+                    <button
+                      key={option.name}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={checked}
+                      aria-label={option.name}
+                      onClick={() => applyBlock(option.kind)}
+                      className={menuItemCls}
+                    >
+                      <span aria-hidden className="w-5 shrink-0">{checked ? "✓" : ""}</span>
+                      <span style={option.preview}>{option.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </FloatingMenu>
+            <FloatingMenu
+              open={openMenu === "list"}
+              onClose={() => setOpenMenu(null)}
+              triggerRef={listButtonRef}
+              label="List"
+              placement="top"
+            >
+              <div onKeyDown={handleMenuKeyDown}>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={bulletActive}
+                  aria-label="Bullets"
+                  onClick={() => applyList("bullet")}
+                  className={menuItemCls}
+                >
+                  <span aria-hidden className="w-5 shrink-0">{bulletActive ? "✓" : ""}</span>
+                  <List size={17} aria-hidden />
+                  <span>Bullets</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={orderedActive}
+                  aria-label="Numbers"
+                  onClick={() => applyList("ordered")}
+                  className={menuItemCls}
+                >
+                  <span aria-hidden className="w-5 shrink-0">{orderedActive ? "✓" : ""}</span>
+                  <ListOrdered size={17} aria-hidden />
+                  <span>Numbers</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-label="Remove list"
+                  onClick={() => applyList("remove")}
+                  className={menuItemCls}
+                >
+                  <span aria-hidden className="w-5 shrink-0" />
+                  <span>Remove list</span>
+                </button>
+              </div>
+            </FloatingMenu>
+            <FloatingMenu
+              open={openMenu === "more"}
+              onClose={() => setOpenMenu(null)}
+              triggerRef={moreButtonRef}
+              label="More formatting options"
+              placement="top"
+            >
+              <div onKeyDown={handleMenuKeyDown}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-label="Quote"
+                  aria-pressed={quoteActive}
+                  onClick={applyQuote}
+                  className={menuItemCls}
+                >
+                  <span aria-hidden className="w-5 shrink-0">{quoteActive ? "✓" : ""}</span>
+                  <Quote size={17} aria-hidden />
+                  <span>Quote</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-label="Clear all formatting"
+                  title="Removes block styles (heading, list, quote) and inline styles (bold, italic, link)"
+                  onClick={applyClearAll}
+                  className={menuItemCls}
+                >
+                  <span aria-hidden className="w-5 shrink-0" />
+                  <RemoveFormatting size={17} aria-hidden />
+                  <span>Clear all formatting</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-label="Undo"
+                  disabled={!canUndo}
+                  onClick={applyUndo}
+                  className={menuItemCls}
+                >
+                  <span aria-hidden className="w-5 shrink-0" />
+                  <Undo2 size={17} aria-hidden />
+                  <span>Undo</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-label="Redo"
+                  disabled={!canRedo}
+                  onClick={applyRedo}
+                  className={menuItemCls}
+                >
+                  <span aria-hidden className="w-5 shrink-0" />
+                  <Redo2 size={17} aria-hidden />
+                  <span>Redo</span>
+                </button>
+              </div>
+            </FloatingMenu>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

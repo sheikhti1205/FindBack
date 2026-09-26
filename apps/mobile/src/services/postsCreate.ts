@@ -2,6 +2,35 @@ import type { Category, PostType } from "@findback/shared";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 import { diag } from "./diag";
+import { PublishOutcomeUncertainError } from "./publishOutcome";
+
+async function createRpc(name: string, args: Record<string, unknown>, traceId?: string): Promise<string> {
+  const start = Date.now();
+  let result: Awaited<ReturnType<ReturnType<typeof getSupabase>["rpc"]>>;
+  try {
+    result = await getSupabase().rpc(name, args);
+  } catch {
+    throw new PublishOutcomeUncertainError();
+  }
+  if (result.error) {
+    diag("posts.create.rpc.error", {
+      rpc: name,
+      code: result.error.code,
+      message: result.error.message,
+      ms: Date.now() - start,
+    }, { traceId });
+    // PostgREST/transport errors without a SQL code cannot establish that the
+    // server rejected the transaction. Never delete bytes or retry blindly.
+    if (!result.error.code || result.error.code.startsWith("PGRST")) {
+      throw new PublishOutcomeUncertainError();
+    }
+    throw new ApiError(result.error.message, result.error.code === "42501" ? 403 : 400);
+  }
+  if (typeof result.data !== "string" || !result.data.trim()) {
+    throw new PublishOutcomeUncertainError();
+  }
+  return result.data;
+}
 
 export interface CreatePostInput {
   type: PostType;
@@ -26,7 +55,7 @@ export const MAX_ATTACHMENT_KEYS = 5;
 
 export async function createPost(input: CreatePostInput, traceId?: string): Promise<string> {
   const start = Date.now();
-  const { data, error } = await getSupabase().rpc("findback_create_post_client", {
+  const id = await createRpc("findback_create_post_client", {
     p_type: input.type,
     p_title: input.title,
     p_description: input.description,
@@ -38,22 +67,12 @@ export async function createPost(input: CreatePostInput, traceId?: string): Prom
     p_youtube_url: input.youtubeUrl ?? null,
     p_attachment_key: input.attachmentKey ?? null,
   });
-  const ms = Date.now() - start;
-  if (error) {
-    diag("posts.create.rpc.error", {
-      rpc: "findback_create_post_client",
-      code: error.code,
-      message: error.message,
-      ms,
-    }, { traceId });
-    throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
-  }
   diag("posts.create.rpc.success", {
     rpc: "findback_create_post_client",
-    ms,
+    ms: Date.now() - start,
     hasAttachmentKey: !!input.attachmentKey,
   }, { traceId });
-  return String(data);
+  return id;
 }
 
 /**
@@ -74,7 +93,7 @@ export async function createPostMulti(input: CreatePostMultiInput, traceId?: str
     throw new ApiError("Attachment key must not be empty", 400);
   }
   const start = Date.now();
-  const { data, error } = await getSupabase().rpc("findback_create_post_client_multi", {
+  const id = await createRpc("findback_create_post_client_multi", {
     p_type: input.type,
     p_title: input.title,
     p_description: input.description,
@@ -86,20 +105,10 @@ export async function createPostMulti(input: CreatePostMultiInput, traceId?: str
     p_location_label: input.locationLabel ?? null,
     p_youtube_url: input.youtubeUrl ?? null,
   });
-  const ms = Date.now() - start;
-  if (error) {
-    diag("posts.create.rpc.error", {
-      rpc: "findback_create_post_client_multi",
-      code: error.code,
-      message: error.message,
-      ms,
-    }, { traceId });
-    throw new ApiError(error.message, error.code === "42501" ? 403 : 400);
-  }
   diag("posts.create.rpc.success", {
     rpc: "findback_create_post_client_multi",
-    ms,
+    ms: Date.now() - start,
     attachmentCount: keys.length,
   }, { traceId });
-  return String(data);
+  return id;
 }

@@ -1,10 +1,11 @@
-import type { Category } from "@findback/shared";
 import { diag } from "./diag";
 
 /** Result of parsing structured VLM output. */
 export interface VlmAnalysis {
   objectName: string | null;
-  suggestedCategory: Category | null;
+  suggestedCategory: string | null;
+  /** The proposed category was not released, so only text suggestions may be used. */
+  categoryUnavailable?: boolean;
   colors: string[];
   visibleBrand: string | null;
   visibleText: string[];
@@ -165,7 +166,7 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
-export function parseVlmOutput(raw: string, allowedCategories: readonly Category[]): VlmAnalysis | null {
+export function parseVlmOutput(raw: string, allowedCategories: readonly string[]): VlmAnalysis | null {
   const trimmed = String(raw).trim();
   const withoutFence = stripCodeFence(trimmed);
   const jsonText = extractFirstJsonObject(withoutFence);
@@ -234,7 +235,7 @@ export function parseVlmOutput(raw: string, allowedCategories: readonly Category
 
   const suggestedCategory = obj.suggestedCategory;
   if (suggestedCategory !== null) {
-    if (typeof suggestedCategory !== "string" || !allowedCategories.includes(suggestedCategory as Category)) {
+    if (typeof suggestedCategory !== "string" || !allowedCategories.includes(suggestedCategory)) {
       diag("vlm.parser.invalid_category", { category: String(suggestedCategory), inputLength: raw.length }, {});
       return null;
     }
@@ -242,7 +243,7 @@ export function parseVlmOutput(raw: string, allowedCategories: readonly Category
 
   const result = {
     objectName: sanitizeString(obj.objectName, MAX_OBJECT_NAME),
-    suggestedCategory: (suggestedCategory as Category) ?? null,
+    suggestedCategory: suggestedCategory ?? null,
     colors: sanitizeArray(obj.colors, MAX_COLORS, MAX_ARRAY_ITEM),
     visibleBrand: sanitizeString(obj.visibleBrand, MAX_VISIBLE_BRAND),
     visibleText: sanitizeArray(obj.visibleText, MAX_VISIBLE_TEXT, MAX_ARRAY_ITEM),

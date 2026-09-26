@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { categoryValue, chooseCategory } from "../test-utils/reportCategory";
 
 const { fetchFeedMock } = vi.hoisted(() => ({ fetchFeedMock: vi.fn() }));
 
@@ -62,8 +63,8 @@ describe("SearchScreen filter sheet (G14)", () => {
     await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("button", { name: /^filters/i }));
-    const category = await screen.findByLabelText("Category");
-    fireEvent.change(category, { target: { value: "Electronics" } });
+    await screen.findByLabelText("Category");
+    await chooseCategory("Electronics");
 
     // Chip appears; URL carries the filter (existing :18-35 semantics).
     expect(await screen.findByRole("button", { name: /remove category filter/i })).toBeTruthy();
@@ -113,7 +114,7 @@ describe("SearchScreen filter sheet (G14)", () => {
 
     // The sheet still reflects the deep-linked values when opened.
     fireEvent.click(screen.getByRole("button", { name: /^filters/i }));
-    expect((await screen.findByLabelText("Category") as HTMLSelectElement).value).toBe("Electronics");
+    expect(categoryValue()).toBe("Electronics");
     expect((screen.getByLabelText("Status") as HTMLSelectElement).value).toBe("OPEN");
     expect((screen.getByLabelText("Sort") as HTMLSelectElement).value).toBe("oldest");
   });
