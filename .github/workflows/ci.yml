@@ -150,10 +150,26 @@ jobs:
     name: Docker build & health check
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
     steps:
       - uses: actions/checkout@v5
       - name: Build image
-        run: docker build -t findback:ci .
+        run: |
+          test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
+          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY -t findback:ci .
+      - name: Verify Supabase URL in packaged web shell
+        run: |
+          docker run --rm --env VITE_SUPABASE_URL --entrypoint node findback:ci -e '
+            const fs = require("node:fs");
+            const dir = "/app/apps/mobile/dist/assets";
+            const js = fs.readdirSync(dir).filter((name) => name.endsWith(".js"));
+            if (!js.length || !js.some((name) => fs.readFileSync(`${dir}/${name}`, "utf8").includes(process.env.VITE_SUPABASE_URL))) {
+              throw new Error("Supabase URL missing from Docker web shell");
+            }
+            console.log("Docker web shell carries Supabase URL");
+          '
       - name: Run container
         run: docker run -d --name findback-ci -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:ci
       - name: Wait for health

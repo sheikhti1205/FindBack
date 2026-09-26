@@ -40,3 +40,36 @@ describe("Shell tabs (no global assistant)", () => {
     expect(screen.queryByTestId("assistant-entry")).toBeNull();
   });
 });
+
+describe("Shell P1 viewport (screenshots 08/11/12)", () => {
+  function renderShellAt(entry: string) {
+    return render(
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes><Route element={<Shell />}>
+          <Route index element={<p>Home screen</p>} />
+          <Route path="/search" element={<p>Search screen</p>} />
+          <Route path="/help" element={<p>Assistant screen</p>} />
+          <Route path="/ai-connection" element={<p>AI connection</p>} />
+        </Route></Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("owns one app viewport with no phantom bottom padding on /help", () => {
+    renderShellAt("/help");
+    // Full-screen Assistant takes the whole viewport: no tab bar, no tab pad.
+    expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
+    const viewport = document.querySelector(".fb-app-viewport");
+    expect(viewport).toBeTruthy();
+    const main = screen.getByRole("main");
+    expect(main.className).not.toMatch(/pb-20/);
+    expect(main.className).toMatch(/min-h-0/);
+    expect(main.className).toMatch(/flex-1/);
+  });
+
+  it("keeps the bottom nav in normal flex flow, not a fixed overlay", () => {
+    renderShellAt("/");
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(nav.className).not.toMatch(/fixed/);
+  });
+});

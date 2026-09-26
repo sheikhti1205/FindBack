@@ -30,7 +30,9 @@ describe("Help product naming", () => {
     expect(screen.getByLabelText("Ask the Help & FAQ")).toBeTruthy();
     expect(screen.getByText(/I am the FindBack Help & FAQ/)).toBeTruthy();
     expect(screen.queryByText(/Help Assistant/)).toBeNull();
-    expect(screen.getByText(/your OpenRouter key when connected/)).toBeTruthy();
+    // P1: the header carries the short honest mode note; the full consent
+    // copy below keeps the detailed wording on first use.
+    expect(screen.getByText(/OpenRouter when connected/)).toBeTruthy();
     expect(screen.getByText(/built-in answer instead/)).toBeTruthy();
     expect(screen.queryByText(/answered by (our|FindBack's) server/)).toBeNull();
     expect(screen.queryByText(/offline/i)).toBeNull();

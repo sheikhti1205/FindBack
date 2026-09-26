@@ -140,3 +140,23 @@ describe("ChatTranscript M2", () => {
     expect(screen.getByText("AI answer")).toBeTruthy();
   });
 });
+
+describe("ChatTranscript P1 layout (screenshots 10/12)", () => {
+  it("keeps provenance labels at readable size (Standard AA, no 10px metadata)", () => {
+    render(
+      <ChatTranscript
+        messages={[{ id: "a1", role: "assistant", text: "hi", source: "llm" }]}
+      />,
+    );
+    const label = screen.getByText("AI answer");
+    expect(label.className).not.toMatch(/text-\[10px\]/);
+  });
+
+  it("owns the transcript scroll inside a bounded flex column", () => {
+    render(<ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />);
+    const scroller = screen.getByTestId("chat-transcript");
+    expect(scroller.className).toMatch(/overflow-y-auto/);
+    expect(scroller.className).toMatch(/min-h-0/);
+    expect(scroller.className).toMatch(/flex-1/);
+  });
+});

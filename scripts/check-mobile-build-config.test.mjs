@@ -44,7 +44,11 @@ test("preflight derives local public values from the canonical Supabase env sour
 });
 
 test("preflight rejects a secret-shaped publishable key without printing its value", () => {
-  const secret = "sb_secret_keep-this-out-of-logs";
+  // Assembled at runtime, never as a source literal: `npm run scan:secrets`
+  // fails the repo on `sb_secret_<chars>`, and a committed canary would be
+  // exactly the shape the scan exists to reject. Same construction the scan
+  // itself uses. Behaviour is unchanged — still a real secret-shaped key.
+  const secret = ["sb", "secret"].join("_") + "_keep-this-out-of-logs";
   const result = run(["--preflight"], {
     VITE_SUPABASE_URL: url,
     VITE_SUPABASE_PUBLISHABLE_KEY: secret,

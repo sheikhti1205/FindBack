@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Bot, History } from "lucide-react";
+import { History, MoreVertical } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { BottomSheet } from "../components/BottomSheet";
@@ -11,9 +11,9 @@ import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
 import { announce } from "../components/LiveRegion";
 import { ChatController, ControllerError, sanitizeControllerError, type ControllerState } from "../services/ai/chatController";
 import { ChatStore } from "../services/ai/chatStore";
-import { defaultSelection } from "../services/ai/modelPolicy";
+import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, defaultSelection } from "../services/ai/modelPolicy";
 import { getCurrentKnowledge, getSystemPolicy, isGeneralNonAppQuestion } from "../services/ai/appKnowledge";
-import type { ChatTurn, ProviderAdapter } from "../services/ai/providerContract";
+import type { ChatTurn, ModelRecord, ProviderAdapter } from "../services/ai/providerContract";
 import { getConnectedOpenRouterKey } from "../services/aiCredentials";
 import { createOpenRouterAdapter } from "../services/ai/providers/openrouter";
 import { builtInHelp } from "../services/helpFaq";
@@ -79,6 +79,52 @@ const SUGGESTIONS = [
   "How do I mark an item recovered?",
   "What details should I include?",
   "How do I search and filter?",
+];
+
+/**
+ * P1: first-use consent copy. Shown in full on an empty conversation;
+ * once chatting it collapses behind an accessible disclosure so the
+ * transcript keeps the viewport (screenshot 10). Photos stay opt-in:
+ * nothing here auto-attaches — each photo is chosen per send.
+ */
+const PRIVACY_COPY =
+  "With your own OpenRouter key connected (Profile → AI Connection), answers are generated with free models and need an internet connection; your question text is sent to OpenRouter and answers may vary. Photos are never attached automatically. Without a connected key — or when AI is unavailable — you get a built-in answer instead.";
+
+/**
+ * P4b minimal catalogue: the single pinned free route only, so the picker no
+ * longer renders the `models={[]}` placeholder. The WB-02 client guard bans
+ * any other `openrouter/...` route literal in shipped code, so a second row
+ * must wait for the authenticated catalogue fetch (follow-up packet) — until
+ * then the choice drives the controller's send-time selection via the
+ * construction-time binding below. Price states and paid consent likewise
+ * remain for the follow-up packet.
+ */
+const HELP_MODEL_CATALOG: readonly ModelRecord[] = [
+  {
+    provider: DEFAULT_PROVIDER,
+    id: DEFAULT_MODEL_ID,
+    input: ["text"],
+    output: ["text"],
+    prices: [
+      {
+        amountDecimal: "0",
+        currency: "USD",
+        unit: "token",
+        dimension: "input",
+        sourceField: "pricing.prompt",
+      },
+      {
+        amountDecimal: "0",
+        currency: "USD",
+        unit: "token",
+        dimension: "output",
+        sourceField: "pricing.completion",
+      },
+    ],
+    priceClass: "free",
+    retrievedAt: "2026-09-26T00:00:00.000Z",
+    entitlement: "untested",
+  },
 ];
 
 /** Routes the Help Assistant may deep-link to. Anything else is ignored. */
@@ -211,6 +257,18 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const navigate = useNavigate();
   const accountId = user?.id ?? "local";
 
+  // P4b: chosen catalogue row drives the send-time selection. The controller
+  // still takes its selection at construction time, so the binding is rebuilt
+  // whenever the choice changes (never a stale controller, never header-only).
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const selection = useMemo(
+    () => ({
+      ...defaultSelection(accountId),
+      provider: "openrouter" as const,
+      modelId: selectedModelId ?? defaultSelection(accountId).modelId,
+    }),
+    [accountId, selectedModelId],
+  );
   // G22: volatile loopback until the platform protected adapter (H2/C) lands —
   // then pass it here (new ChatStore(adapter)). No persistence is invented here.
   const store = useMemo(() => deps?.createStore?.() ?? new ChatStore(), [deps]);
@@ -218,14 +276,14 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     () =>
       new ChatController({
         store,
-        selection: defaultSelection(accountId),
+        selection,
         adapter:
           deps?.createAdapter?.() ?? createOpenRouterAdapter({ getApiKey: getConnectedOpenRouterKey }),
         systemPolicy: getSystemPolicy(),
         knowledge: getCurrentKnowledge(),
         budget: {},
       }),
-    [store, accountId, deps],
+    [store, selection, deps],
   );
 
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -252,7 +310,11 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const [partial, setPartial] = useState<{ id: string; text: string; label: string } | null>(null);
   const [attempts, setAttempts] = useState<readonly AttemptEntry[]>([]);
   const [modelOpen, setModelOpen] = useState(false);
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  // P1: overflow menu (Clear view lives here, never in the crowded header)
+  // and the ongoing-chat privacy disclosure.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuConfirmClear, setMenuConfirmClear] = useState(false);
+  const [disclosureOpen, setDisclosureOpen] = useState(false);
 
   const generation = useRef(0);
   const sendGenRef = useRef<number | null>(null);
@@ -284,6 +346,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     let alive = true;
     setEphemeral([]);
     setFailedSend(null);
+    setSelectedModelId(null);
+    setModelOpen(false);
     setSendError(null);
     setCancelled(false);
     setNotice(null);
@@ -630,8 +694,29 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         return;
       }
       // App-help intent only: a labelled built-in answer AND an honest error
-      // banner with Retry. The transcript is never left with a hole.
-      finishFallback(persistFallback(chatId, historyOn, question), builtInHelp(question));
+      // banner with Retry. The fallback stays ephemeral — never persisted —
+      // so a later retry replaces this attempt instead of duplicating a
+      // saved fallback alongside the provider answer (screenshots 10/12).
+      // Tray photos are preserved for the retry; the transcript never holes.
+      const appHelpReply = builtInHelp(question);
+      setEphemeral((prev) => {
+        const next = [...prev];
+        const last = next.at(-1);
+        const secondLast = next.at(-2);
+        if (
+          last?.role === "assistant" &&
+          secondLast?.role === "user" &&
+          secondLast.text === question
+        ) {
+          next.pop();
+          next.pop();
+        }
+        return [
+          ...next,
+          { id: `e-user-${gen}`, role: "user", text: question },
+          { id: `e-assistant-${gen}`, role: "assistant", text: appHelpReply, source: "fallback" },
+        ];
+      });
       setFailedSend({ text: question });
       setSendError(safeMessage);
       announce("Send failed. A built-in answer was added and you can retry.");
@@ -931,6 +1016,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     return [...stored, ...ephemeral];
   })();
 
+  // P1: starter suggestions and guided shortcuts only start an EMPTY
+  // conversation — once chatting the transcript owns the space.
+  const isEmptyConversation = freeMessages.length <= 1;
   const guidedQuestion = guided === null ? null : nextMissingQuestion(guided);
   const guidedHandoff = guided === null ? null : buildAssistantReportHandoff(guided);
   const composerBusy = busy || guidedBusy;
@@ -963,10 +1051,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   })();
 
   function handleSelectModel(modelId: string) {
-    // TODO(C): bind this choice to the catalogue fetch + send-time selection
-    // once C delivers the account-scoped selection binding. Until then the
-    // choice is remembered for the header and announced, never fabricated
-    // into a send.
+    // P4b: the choice rebuilds the controller binding above, so new sends
+    // carry this model ID — never a header-only label. Authenticated catalogue
+    // fetch + paid consent remain for a follow-up packet.
     setSelectedModelId(modelId);
     setModelOpen(false);
     announce(`Model ${modelId} selected for new sends.`);
@@ -983,49 +1070,66 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   }
 
   return (
-    <div className="flex min-h-full flex-col bg-surface text-on-surface">
+    <div className="flex h-full min-h-0 flex-col bg-surface text-on-surface">
       <a
         href="#help-composer-input"
         className="sr-only focus:not-sr-only focus:block focus:bg-surface-container focus:px-4 focus:py-2 focus:text-sm focus:text-on-surface"
       >
         Skip to composer
       </a>
-      <header className="flex items-center gap-2 border-b border-outline-variant bg-surface px-4 py-3">
-        <BackButton fallbackTo="/profile" label="Back to profile" />
-        <Bot size={20} aria-hidden />
-        <div className="flex-1">
-          <h1 className="text-base font-semibold leading-tight">Assistant</h1>
-          <p className="text-xs text-on-surface-variant">
-            AI answers use your OpenRouter key when connected · built-in answers otherwise
-            {selectedModelId !== null ? ` · Model: ${selectedModelId}` : ""}
-          </p>
+      {/* P1: compact two-row 360dp header. Row 1: back + truncating title +
+        fixed-size history/overflow. Row 2: short connection note + live
+        model chip. No Clear button here — it lives in HistorySheet (saved
+        chats, confirmed) and the overflow menu (view-only clear). */}
+      <header className="shrink-0 border-b border-outline-variant bg-surface px-3 py-2">
+        <div className="flex min-w-0 items-center gap-1">
+          <BackButton fallbackTo="/profile" label="Back to profile" />
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-base font-semibold leading-tight">Assistant</h1>
+          </div>
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Open chat history"
+            className="flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-m3-xs text-on-surface hover:bg-surface-container"
+          >
+            <History size={20} aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMenuConfirmClear(false);
+              setMenuOpen(true);
+            }}
+            aria-label="More options"
+            className="flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-m3-xs text-on-surface hover:bg-surface-container"
+          >
+            <MoreVertical size={20} aria-hidden />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setModelOpen(true)}
-          aria-label="Choose model"
-          className="flex min-h-[48px] items-center rounded-m3-xs border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
+        <div
+          data-testid="assistant-header-subrow"
+          className="flex min-w-0 items-center justify-between gap-2 pl-12"
         >
-          Model
-        </button>
-        <button
-          type="button"
-          onClick={() => setHistoryOpen(true)}
-          aria-label="Open chat history"
-          className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs text-on-surface hover:bg-surface-container"
-        >
-          <History size={20} aria-hidden />
-        </button>
-        <button
-          type="button"
-          onClick={clearChat}
-          className="min-h-[48px] rounded-m3-xs px-3 text-xs font-medium text-on-surface-variant hover:bg-surface-container"
-        >
-          Clear chat
-        </button>
+          <span
+            className="min-w-0 flex-1 truncate text-xs text-on-surface-variant"
+            title="OpenRouter when connected · built-in otherwise"
+          >
+            OpenRouter when connected · built-in otherwise
+          </span>
+          <button
+            type="button"
+            onClick={() => setModelOpen(true)}
+            aria-label={`Choose model, currently ${selectedModelId ?? "Free default"}`}
+            title={selectedModelId ?? "Free default"}
+            className="min-h-[48px] max-w-[48%] shrink-0 truncate rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
+          >
+            {selectedModelId ?? "Free default"}
+          </button>
+        </div>
       </header>
 
-      <main aria-label="Help conversation" className="flex min-h-0 flex-1 flex-col">
+      <main aria-label="Help conversation" className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <ChatTranscript
           messages={freeMessages}
           busy={busy}
@@ -1045,7 +1149,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           <section
             data-testid="guided-panel"
             aria-label="Guided help"
-            className="flex flex-col gap-3 border-t border-outline-variant bg-surface-container-low px-4 py-4"
+            className="flex shrink-0 flex-col gap-3 border-t border-outline-variant bg-surface-container-low px-4 py-4"
           >
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold text-on-surface">{SHORTCUT_LABELS[guided.flow]}</p>
@@ -1069,7 +1173,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
                     key={`${entry.role}-${index}`}
                     className="flex flex-col gap-0.5 rounded-m3-sm border border-outline-variant bg-surface px-3 py-2"
                   >
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
                       {entry.role === "user"
                         ? "You"
                         : entry.source === "model"
@@ -1146,8 +1250,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           </section>
         )}
 
-        {guided === null && freeMessages.length < 4 && (
-          <div className="flex flex-wrap gap-2 bg-surface px-4 pb-2">
+        {guided === null && isEmptyConversation && (
+          <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
             {SUGGESTIONS.map((s) => (
               <button
                 key={s}
@@ -1161,8 +1265,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           </div>
         )}
 
-        {guided === null && (
-          <div className="flex flex-wrap gap-2 bg-surface px-4 pb-2">
+        {guided === null && isEmptyConversation && (
+          <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
             {(GUIDED_FLOWS.filter((f) => f !== "ask") as GuidedFlow[]).map((flow) => (
               <button
                 key={flow}
@@ -1177,18 +1281,32 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           </div>
         )}
 
-        <p className="bg-surface px-4 pb-1 text-[11px] text-on-surface-variant">
-          With your own OpenRouter key connected (Profile → AI Connection), answers are generated with
-          free models and need an internet connection; your question text is sent to OpenRouter and
-          answers may vary. Photos are never attached automatically. Without a connected key — or when
-          AI is unavailable — you get a built-in answer instead.
-        </p>
+        {guided === null &&
+          (isEmptyConversation ? (
+            <p className="shrink-0 bg-surface px-4 pb-1 text-xs text-on-surface-variant">
+              {PRIVACY_COPY}
+            </p>
+          ) : (
+            <div className="shrink-0 bg-surface px-4 pb-1">
+              <button
+                type="button"
+                aria-expanded={disclosureOpen}
+                onClick={() => setDisclosureOpen((v) => !v)}
+                className="flex min-h-[48px] items-center text-xs font-medium text-on-surface-variant underline"
+              >
+                How your data is used
+              </button>
+              {disclosureOpen && (
+                <p className="pb-1 text-xs text-on-surface-variant">{PRIVACY_COPY}</p>
+              )}
+            </div>
+          ))}
 
         {requestRow !== null && (
           <p
             data-testid="chat-request-state"
             role="status"
-            className="bg-surface px-4 pb-1 text-[11px] text-on-surface-variant"
+            className="shrink-0 bg-surface px-4 pb-1 text-xs text-on-surface-variant"
           >
             {requestRow}
           </p>
@@ -1198,12 +1316,15 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           <p
             data-testid="chat-cancelled"
             role="status"
-            className="bg-surface px-4 pb-1 text-[11px] text-on-surface-variant"
+            className="shrink-0 bg-surface px-4 pb-1 text-xs text-on-surface-variant"
           >
             Send stopped. Your message was kept in the composer.
           </p>
         )}
 
+        {/* ChatComposer is owned by the composer worker — wrapped shrink-0 so
+          the bounded column never squeezes it; its internals are untouched. */}
+        <div className="shrink-0">
         <ChatComposer
           value={input}
           onChange={setInput}
@@ -1222,6 +1343,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           capacityNotice={trayNotice}
           maxSelections={MAX_CHAT_SELECTIONS}
         />
+        </div>
       </main>
 
       <HistorySheet
@@ -1239,6 +1361,44 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         historyEnabled={store.isHistoryEnabled(accountId)}
         onToggleHistory={toggleHistory}
       />
+      {/* P1: overflow menu reusing the shared BottomSheet primitive — the
+        view-only Clear lives here (two-step confirm), never in the header.
+        Saved chats (with confirmed Clear all) stay in HistorySheet. */}
+      <BottomSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        title="Assistant options"
+        description="View options for this screen. Saved chats stay in Chat history."
+      >
+        <div className="flex flex-col gap-3">
+          {menuConfirmClear ? (
+            <div className="flex items-center gap-2">
+              <p className="flex-1 text-xs text-on-surface-variant">
+                Clear the messages on this screen? Saved chats are kept.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  clearChat();
+                  setMenuConfirmClear(false);
+                  setMenuOpen(false);
+                }}
+                className="min-h-[48px] rounded-full bg-on-surface px-4 text-xs font-semibold text-surface"
+              >
+                Confirm clear view
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setMenuConfirmClear(true)}
+              className="flex min-h-[48px] items-center text-xs font-medium text-on-surface underline"
+            >
+              Clear chat view
+            </button>
+          )}
+        </div>
+      </BottomSheet>
       <BottomSheet
         open={modelOpen}
         onClose={() => setModelOpen(false)}
@@ -1247,13 +1407,14 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       >
         <div data-testid="model-picker" className="flex flex-col gap-3">
           <ModelCatalogSheet
-            models={[]}
+            models={[...HELP_MODEL_CATALOG]}
             selectedId={selectedModelId}
             onSelect={handleSelectModel}
+            retrievedAt={HELP_MODEL_CATALOG[0]?.retrievedAt ?? null}
           />
           <p className="text-[11px] text-on-surface-variant">
-            The synced model catalogue is pending controller work — no models are listed yet, and
-            nothing here changes your current send path.
+            Showing the cached free model. Your choice applies to new sends;
+            the synced catalogue with prices and paid consent follows.
           </p>
         </div>
       </BottomSheet>

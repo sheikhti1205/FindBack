@@ -848,26 +848,33 @@ export function CreateReport() {
                   <span className="text-xs text-on-surface-variant">
                     Photo {index + 1} of {photos.length}
                   </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="md"
-                    disabled={index === 0}
-                    aria-label={`Move photo ${index + 1} earlier`}
-                    onClick={() => movePhoto(index, -1)}
-                  >
-                    Move earlier
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="md"
-                    disabled={index === photos.length - 1}
-                    aria-label={`Move photo ${index + 1} later`}
-                    onClick={() => movePhoto(index, 1)}
-                  >
-                    Move later
-                  </Button>
+                  {/* P5: a single photo has no order to change — reorder
+                    controls render only when 2+ photos exist, so one-image
+                    cards never show two disabled Move buttons. */}
+                  {photos.length > 1 && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="md"
+                        disabled={index === 0}
+                        aria-label={`Move photo ${index + 1} earlier`}
+                        onClick={() => movePhoto(index, -1)}
+                      >
+                        Move earlier
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="md"
+                        disabled={index === photos.length - 1}
+                        aria-label={`Move photo ${index + 1} later`}
+                        onClick={() => movePhoto(index, 1)}
+                      >
+                        Move later
+                      </Button>
+                    </>
+                  )}
                 </div>
               </li>
             ))}

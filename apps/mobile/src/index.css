@@ -116,6 +116,20 @@ html,
 body,
 #root {
   height: 100%;
+  /* P1: scroll-lock scopes to .fb-app-viewport (Shell routes only) — auth,
+   * splash and verify live OUTSIDE Shell and keep document scrolling. */
+}
+
+/* P1: exactly one app-level viewport/safe-area owner. The Capacitor config
+ * has no StatusBar/SystemBars inset plugin, so this CSS env() fallback is
+ * the SOLE inset provider — never also apply native insets on top of it. */
+.fb-app-viewport {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
 }
 
 body {

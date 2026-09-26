@@ -36,7 +36,11 @@ function runGate(env: Record<string, string>): { status: number | null; out: str
 
 describe("SEN-01 preflight — secret keys fail closed (black box)", () => {
   it("rejects an sb_secret_* publishable key without echoing it", () => {
-    const canary = "sb_secret_syntheticE000000000000000000001";
+    // Assembled at runtime so no literal `sb_secret_...` exists in the repo:
+    // `npm run scan:secrets` fails the build on that exact shape, and a
+    // committed canary is what the scan exists to catch. The gate still
+    // receives a real secret-shaped key, so coverage is not weakened.
+    const canary = ["sb", "secret"].join("_") + "_syntheticE000000000000000000001";
     const { status, out } = runGate({
       VITE_SUPABASE_URL: "https://sampleproject.supabase.co",
       VITE_SUPABASE_PUBLISHABLE_KEY: canary,

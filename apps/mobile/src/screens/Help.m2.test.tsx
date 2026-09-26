@@ -196,4 +196,33 @@ describe("Help M2 chat UI", () => {
     await screen.findByText("Image noted.");
     expect(seen[0]?.length).toBe(1);
   });
+
+  it("P4b: cached free row exists and selecting it drives the send-time adapter model ID", async () => {
+    // WB-02 guard bans any second openrouter/... route literal in shipped
+    // code, so the minimal catalogue is the single pinned free row; a
+    // non-default-row proof must wait for the authenticated-catalogue packet.
+    const seen: unknown[] = [];
+    const spy: ProviderAdapter = {
+      ...cannedAdapter("Model-bound hello."),
+      complete: async function* (request): AsyncIterable<StreamEvent> {
+        seen.push(request);
+        yield { kind: "text", attempt: 1, delta: "Model-bound hello." };
+        yield { kind: "done", attempt: 1, stopReason: "complete" };
+      },
+    };
+    renderHelp({ createAdapter: () => spy, getKey: async () => "test-key" });
+    fireEvent.click(screen.getByRole("button", { name: /choose model/i }));
+    // Placeholder models={[]} renders zero rows — this must be gone.
+    const selects = await screen.findAllByRole("button", { name: /^select$/i });
+    expect(selects).toHaveLength(1);
+    fireEvent.click(selects[0]!);
+    const header = screen.getByRole("button", { name: /choose model/i });
+    const chosen = (header.textContent ?? "").trim();
+    expect(chosen).not.toBe("");
+    expect(chosen).not.toMatch(/^free default$/i);
+    send("Hello model?");
+    await screen.findByText("Model-bound hello.");
+    expect(seen.length).toBe(1);
+    expect(JSON.stringify(seen[0] ?? {})).toContain(chosen);
+  });
 });

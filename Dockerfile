@@ -12,6 +12,18 @@ RUN npm ci --ignore-scripts
 COPY packages/shared packages/shared
 COPY services/api services/api
 COPY apps/mobile apps/mobile
+# apps/mobile/vite.config.ts runs scripts/check-mobile-build-config.mjs
+# (which imports scripts/check-sentry-config.mjs) as a fail-closed preflight
+# on every `vite build`. Without these the build stage dies with
+# "Cannot find module /app/scripts/check-mobile-build-config.mjs".
+COPY scripts scripts
+# Fail-closed preflight still requires a real Supabase URL + publishable key.
+# CI must pass them as --build-arg; unset/placeholder values keep failing the
+# build on purpose. No defaults are baked in here.
+ARG VITE_SUPABASE_URL=""
+ARG VITE_SUPABASE_PUBLISHABLE_KEY=""
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
 COPY docs/specs/model-library/catalogue.v1.json docs/specs/model-library/catalogue.v1.json
 RUN npm run build -w @findback/shared \
  && npm run build -w @findback/api \

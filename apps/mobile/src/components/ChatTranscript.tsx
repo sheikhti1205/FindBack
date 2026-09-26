@@ -123,7 +123,7 @@ export function ChatTranscript({
               }`}
             >
               {m.role === "assistant" && m.source !== undefined && (
-                <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-on-surface-variant">
+                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
                   {sourceLabel(m.source, m.sourceDetail)}
                 </p>
               )}
@@ -170,7 +170,7 @@ export function ChatTranscript({
               data-testid="chat-partial"
               className="max-w-[85%] rounded-m3-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5 text-sm leading-relaxed"
             >
-              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-on-surface-variant">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
                 {partialLabel !== null && partialLabel !== "" ? partialLabel : "AI answer"}
               </p>
               <MarkdownView text={partialText} />
@@ -198,7 +198,7 @@ export function ChatTranscript({
           </div>
         )}
         {notice !== null && notice !== "" && (
-          <p data-testid="chat-notice" className="text-[11px] text-on-surface-variant">
+          <p data-testid="chat-notice" className="text-xs text-on-surface-variant">
             {notice}
           </p>
         )}

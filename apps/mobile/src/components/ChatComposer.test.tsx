@@ -217,3 +217,47 @@ describe("ChatComposer M2", () => {
     expect(onAddFiles).toHaveBeenCalledWith([file]);
   });
 });
+
+describe("ChatComposer 360dp two-row layout (screenshot 11)", () => {
+  it("keeps the textarea alone in a full-width first row with no icon siblings", () => {
+    render(<ChatComposer value="hello" onChange={vi.fn()} onSend={vi.fn()} onAddFiles={vi.fn()} />);
+    const field = screen.getByLabelText("Ask the Help & FAQ") as HTMLTextAreaElement;
+    const row = field.parentElement as HTMLElement;
+    // The text field must own its row: intrinsic width competition with 48dp
+    // icon buttons is exactly what squeezed it on a 360dp screen.
+    expect(row.className).toMatch(/flex/);
+    expect([...row.children].filter((child) => child !== field)).toHaveLength(0);
+    expect(row.querySelectorAll("button, label, input").length).toBe(0);
+    expect(field.className).toMatch(/\bw-full\b/);
+    expect(field.className).toMatch(/\bmin-w-0\b/);
+    // Every control lives in a separate second row.
+    const controls = screen.getByTestId("chat-controls");
+    expect(controls).not.toBe(row);
+    expect(row.contains(controls)).toBe(false);
+    for (const id of ["chat-send", "chat-mic", "chat-expand", "chat-add-photos"]) {
+      expect(controls.querySelector(`[data-testid="${id}"]`)).toBeTruthy();
+    }
+    expect(controls.contains(field)).toBe(false);
+  });
+
+  it("opens one accessible Add menu offering Camera and Gallery", () => {
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} onAddFiles={vi.fn()} />);
+    const add = screen.getByTestId("chat-add-photos");
+    expect(add.tagName).toBe("BUTTON");
+    expect(screen.queryByTestId("chat-add-menu")).toBeNull();
+    fireEvent.click(add);
+    const menu = screen.getByTestId("chat-add-menu");
+    expect(["dialog", "menu", "group"]).toContain(menu.getAttribute("role"));
+    expect(menu.getAttribute("aria-label") ?? menu.getAttribute("aria-labelledby")).toBeTruthy();
+    const camera = screen.getByTestId("chat-take-photo");
+    const gallery = screen.getByTestId("chat-gallery");
+    expect(camera.textContent).toMatch(/photo|camera/i);
+    expect(gallery.textContent).toMatch(/gallery/i);
+    // Shared inputs survive behind the menu so onAddFiles keeps working.
+    expect(screen.getByTestId("chat-camera-input")).toBeTruthy();
+    expect(screen.getByTestId("chat-file-input")).toBeTruthy();
+    fireEvent.click(camera);
+    expect(screen.queryByTestId("chat-add-menu")).toBeNull();
+    expect(screen.getByTestId("chat-camera-input")).toBeTruthy();
+  });
+});

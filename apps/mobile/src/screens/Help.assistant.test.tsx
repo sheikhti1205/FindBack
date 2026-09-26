@@ -265,3 +265,71 @@ describe("Help full-screen assistant", () => {
     expect(scroller.className).toMatch(/bg-surface|surface-container/);
   });
 });
+
+describe("Help P1 header/layout (screenshots 10/11/12)", () => {
+  it("uses a compact two-row header with history + overflow and no header Clear", async () => {
+    renderHelp({ createAdapter: () => cannedAdapter("ok") });
+    const header = screen.getByRole("banner");
+    expect(header.className).toMatch(/shrink-0/);
+    // Title truncates instead of squeezing; actions stay fixed-size.
+    expect(screen.getByRole("heading", { name: "Assistant" }).className).toMatch(/truncate/);
+    // Clear lives in HistorySheet/overflow, never as a crowded header button.
+    expect(screen.queryByRole("button", { name: /^clear chat/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /chat history/i })).toBeTruthy();
+    const overflow = screen.getByRole("button", { name: /more options/i });
+    expect(overflow.className).toMatch(/min-h-\[48px\]/);
+    // Second row carries connection status + the live model chip.
+    expect(screen.getByTestId("assistant-header-subrow")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /choose model/i })).toBeTruthy();
+    fireEvent.click(overflow);
+    await screen.findByText("Assistant options");
+    expect(screen.getByRole("button", { name: /clear chat view/i })).toBeTruthy();
+  });
+
+  it("shows starter suggestions only on an empty conversation", async () => {
+    renderHelp({ createAdapter: () => cannedAdapter("ok"), getKey: async () => "test-key" });
+    expect(screen.getByRole("button", { name: "How do I report a lost item?" })).toBeTruthy();
+    send("How do I report?");
+    await screen.findByText("ok");
+    expect(screen.queryByRole("button", { name: "How do I report a lost item?" })).toBeNull();
+    expect(screen.queryByTestId("guided-shortcut-search")).toBeNull();
+  });
+
+  it("collapses the privacy paragraph into an accessible disclosure once chatting", async () => {
+    renderHelp({ createAdapter: () => cannedAdapter("ok"), getKey: async () => "test-key" });
+    // First use: the full consent copy is visible up front.
+    expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy();
+    send("How do I report?");
+    await screen.findByText("ok");
+    // Ongoing chat: a short disclosure replaces the permanent paragraph.
+    expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
+    const disclosure = screen.getByRole("button", { name: /how your data is used/i });
+    expect(disclosure.className).toMatch(/min-h-\[48px\]/);
+    fireEvent.click(disclosure);
+    expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy();
+  });
+
+  it("P2 red: app-help fail-then-retry does not duplicate persisted fallback turns", async () => {
+    // App-help failure persists user + built-in fallback, then offers Retry.
+    // Retry must replace that saved fallback attempt, not append a second
+    // user+assistant pair (screenshots 10/12 duplicate).
+    let calls = 0;
+    const fail = failingAdapter();
+    const ok = cannedAdapter("Use the Search tab.");
+    const flaky: ProviderAdapter = {
+      ...fail,
+      complete: (request) => {
+        calls += 1;
+        return (calls === 1 ? fail : ok).complete(request);
+      },
+    };
+    renderHelp({ getKey: async () => "test-key", createAdapter: () => flaky });
+    send("How do I search?");
+    await screen.findByTestId("chat-error");
+    fireEvent.click(screen.getByTestId("chat-retry"));
+    await screen.findByText("Use the Search tab.");
+    expect(screen.queryByTestId("chat-error")).toBeNull();
+    // One logical reply: the user question persisted exactly once.
+    expect(screen.getAllByText("How do I search?").length).toBe(1);
+  });
+});

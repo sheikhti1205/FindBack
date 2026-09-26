@@ -103,6 +103,17 @@ describe("CreateReport multi-image", () => {
     expect(publishReportWithPhotosMock).not.toHaveBeenCalled();
   });
 
+  it("P5 red: a single photo shows no reorder controls", async () => {
+    seedBasics();
+    render(<CreateReport />);
+    fillTitleCategory("Lost phone");
+    pickFile(new File(["one"], "one.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("img", { name: /attachment preview 1/i });
+
+    expect(screen.queryByRole("button", { name: /move photo 1 earlier/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /move photo 1 later/i })).toBeNull();
+  });
+
   it("two photos publish in displayed order via the multi path", async () => {
     seedBasics();
     render(<CreateReport />);

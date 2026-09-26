@@ -30,11 +30,17 @@ const HIDE_NAV = ["/help", "/posts/", "/ai-connection"];
 export function Shell() {
   const { pathname } = useLocation();
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
+  // P1: Home/Search/Help own an internal scroller; every other route scrolls
+  // the bounded route container. Either way the document never scrolls, so
+  // scrolled content stays below the status bar and /help takes the full
+  // viewport with no phantom tab padding (screenshots 08/11/12).
+  const ownsInternalScroll =
+    pathname === "/" || pathname === "/search" || pathname.startsWith("/help");
 
   return (
     <TabTapProvider>
-      <div className="mx-auto flex min-h-full max-w-md flex-col bg-surface text-on-surface pt-[env(safe-area-inset-top)]">
-        <main className="flex-1 pb-20">
+      <div className="fb-app-viewport mx-auto flex w-full max-w-md flex-col bg-surface text-on-surface">
+        <main className={`min-h-0 flex-1 ${ownsInternalScroll ? "overflow-hidden" : "overflow-y-auto"}`}>
           <Outlet />
         </main>
         {showNav && <BottomNav />}
@@ -51,7 +57,7 @@ function BottomNav() {
   return (
     <nav
       aria-label="Primary"
-      className="fixed inset-x-0 bottom-0 z-20 mx-auto max-w-md border-t border-outline-variant bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
+      className="shrink-0 border-t border-outline-variant bg-surface"
     >
       <div className="grid grid-cols-4">
         {NAV.map(({ to, label, icon: Icon, end, extraActive }) => (
@@ -75,7 +81,7 @@ function BottomNav() {
             }}
             className={({ isActive }) => {
               const selected = isActive || extraActive?.includes(pathname);
-              return `flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-[11px] ${
+              return `flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-xs ${
                 selected
                   ? "font-semibold text-on-surface"
                   : "text-on-surface-variant"
