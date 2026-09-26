@@ -207,7 +207,8 @@ function CompactContent({ post }: { post: PostItem }) {
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <h3 className="break-words text-sm font-bold leading-snug">{post.title}</h3>
+        {/* P6: compact Search title wraps readably to exactly two lines. */}
+        <h3 className="line-clamp-2 break-words text-sm font-bold leading-snug">{post.title}</h3>
         <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-on-surface-variant">
           {post.type === "LOST" ? "Lost" : "Found"} · {post.category} ·{" "}
           {STATUS_LABELS[post.status]}

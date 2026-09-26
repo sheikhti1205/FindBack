@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRef } from "react";
+import { Profiler, createRef } from "react";
 import { PullToRefresh, type PullToRefreshHandle } from "./PullToRefresh";
 
 // vitest runs without `globals`, so RTL's auto-cleanup never registers.
@@ -185,6 +185,55 @@ describe("PullToRefresh — nested horizontal scroller", () => {
     });
 
     expect(onRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("PullToRefresh — no state per touch move", () => {
+  it("commits at most twice per gesture; the visual pull is frame-driven, not setState-driven", async () => {
+    let commits = 0;
+    const { container } = render(
+      <Profiler
+        id="ptr-gesture"
+        onRender={() => {
+          commits += 1;
+        }}
+      >
+        <PullToRefresh onRefresh={pendingRefresh()}>
+          <div>feed</div>
+        </PullToRefresh>
+      </Profiler>,
+    );
+    const el = container.firstElementChild!;
+    commits = 0;
+
+    // Ten separate frames of finger movement, like real touch delivery.
+    act(() => {
+      fireEvent.touchStart(el, { touches: [pt(20, 20)] });
+    });
+    for (let n = 1; n <= 10; n += 1) {
+      act(() => {
+        fireEvent.touchMove(el, { touches: [pt(20, 20 + n * 10)] });
+      });
+    }
+    // Let any scheduled frame callbacks run.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    // Gesture start only — never one React commit per move event.
+    expect(commits).toBeLessThanOrEqual(2);
+    // …yet the visual indicator still tracks the finger through the DOM.
+    const indicator = screen.getByRole("status");
+    expect(Number.parseFloat((indicator as HTMLElement).style.height)).toBeGreaterThan(0);
+
+    // Below-threshold release: no refresh, indicator snaps back.
+    act(() => {
+      fireEvent.touchEnd(el);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
 

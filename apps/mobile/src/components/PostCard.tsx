@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { MotionConfig, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { Link } from "react-router";
 
 interface PostCardProps {
@@ -8,23 +8,41 @@ interface PostCardProps {
   index?: number;
 }
 
+/**
+ * P6: entrance animation is capped to the first visible cards. A long
+ * paginated feed must not animate every card (one Motion per row, staggered
+ * delays deep into the list). Reduced motion stays owned by the single
+ * app-root `<MotionConfig reducedMotion="user">` — never nested here.
+ */
+export const POST_CARD_ANIMATED_COUNT = 4;
+
 export function PostCard({ children, to, index = 0 }: PostCardProps) {
+  const animated = index < POST_CARD_ANIMATED_COUNT;
+  const body = (
+    <Link
+      to={to}
+      className="flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
+    >
+      {children}
+    </Link>
+  );
+  if (!animated) {
+    return (
+      <article data-testid="post-card" data-animated="false">
+        {body}
+      </article>
+    );
+  }
   return (
-    // U2: honor the OS reduced-motion setting for the entry animation.
-    <MotionConfig reducedMotion="user">
-      <motion.article
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.22, delay: Math.min(index * 0.03, 0.3) }}
-      >
-        <Link
-          to={to}
-          className="flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
-        >
-          {children}
-        </Link>
-      </motion.article>
-    </MotionConfig>
+    <motion.article
+      data-testid="post-card"
+      data-animated="true"
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, delay: Math.min(index * 0.03, 0.12) }}
+    >
+      {body}
+    </motion.article>
   );
 }
 

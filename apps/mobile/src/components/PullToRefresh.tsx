@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -45,13 +46,18 @@ type PullDirection = "none" | "vertical" | "horizontal";
  * - a cancelled gesture leaves no stale pull distance behind
  * - no map gesture conflict (horizontal swipe locks out)
  * - respects prefers-reduced-motion
+ * - P6: the finger-tracked visual is NEVER React state. Touch moves write a
+ *   ref and paint the indicator through one rAF callback; React commits only
+ *   at gesture start (indicator mount), release (unmount/refresh) and
+ *   refresh settle. No setState — and no layout-height animation — runs per
+ *   touch move.
  *
  * The component IS the scroll container; the parent can read scrollTop and
  * scroll to top through the forwarded handle.
  */
 export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>(
   function PullToRefresh({ onRefresh, disabled, className, children }, ref) {
-    const [pullDistance, setPullDistance] = useState(0);
+    const [pulling, setPulling] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [refreshError, setRefreshError] = useState<string | null>(null);
     const touchRef = useRef({
@@ -65,6 +71,13 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
     // same release, so the decision must not depend on a re-render.
     const refreshingRef = useRef(false);
     const releaseConsumedRef = useRef(false);
+    // P6: finger-tracked visual state. Never in React state — painted by rAF.
+    const pullRef = useRef(0);
+    const rafRef = useRef<number | null>(null);
+    const indicatorRef = useRef<HTMLDivElement | null>(null);
+    const labelRef = useRef<HTMLSpanElement | null>(null);
+    const labelTextRef = useRef<HTMLSpanElement | null>(null);
+    const iconRef = useRef<SVGSVGElement | null>(null);
 
     const THRESHOLD = 64;
     const MAX_PULL = 100;
@@ -86,12 +99,47 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       },
     }));
 
+    const cancelPaint = useCallback(() => {
+      if (rafRef.current !== null) {
+        if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    }, []);
+
+    // P6: the ONLY visual writer for the pull indicator. Reads refs, mutates
+    // the mounted indicator DOM directly, commits nothing to React.
+    const paintVisual = useCallback(() => {
+      rafRef.current = null;
+      const box = indicatorRef.current;
+      if (!box) return;
+      const active = refreshingRef.current;
+      const distance = active ? THRESHOLD : pullRef.current;
+      const progress = active ? 1 : Math.min(distance / THRESHOLD, 1);
+      box.style.height = `${distance}px`;
+      const label = active ? "Refreshing feed" : distance >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
+      labelRef.current?.setAttribute("aria-label", label);
+      if (labelTextRef.current) labelTextRef.current.textContent = active ? "Refreshing…" : distance >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
+      if (iconRef.current && !reducedMotion) iconRef.current.style.transform = `rotate(${progress * 360}deg)`;
+    }, [reducedMotion]);
+
+    const schedulePaint = useCallback(() => {
+      if (rafRef.current !== null) return;
+      if (typeof requestAnimationFrame === "function") {
+        rafRef.current = requestAnimationFrame(paintVisual);
+      } else {
+        paintVisual();
+      }
+    }, [paintVisual]);
+
+    useEffect(() => cancelPaint, [cancelPaint]);
+
     const runRefresh = useCallback(async () => {
       if (refreshingRef.current) return;
       refreshingRef.current = true;
       setRefreshError(null);
       setRefreshing(true);
-      setPullDistance(THRESHOLD);
+      pullRef.current = THRESHOLD;
+      schedulePaint();
       try {
         await onRefresh();
       } catch (err) {
@@ -100,10 +148,12 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
         setRefreshError(friendlyError(err).message);
       } finally {
         refreshingRef.current = false;
+        cancelPaint();
+        pullRef.current = 0;
         setRefreshing(false);
-        setPullDistance(0);
+        setPulling(false);
       }
-    }, [onRefresh]);
+    }, [onRefresh, cancelPaint, schedulePaint]);
 
     const handleTouchStart = useCallback(
       (e: React.TouchEvent) => {
@@ -115,7 +165,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
         const t = e.touches[0]!;
         touchRef.current = { startY: t.clientY, startX: t.clientX, direction: "none", active: true };
         // No pull distance may leak in from an earlier (e.g. cancelled) gesture.
-        setPullDistance(0);
+        pullRef.current = 0;
       },
       [disabled, refreshing],
     );
@@ -135,11 +185,14 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
           // this is never a vertical pull, whatever the opener looked like.
           t.active = false;
           t.direction = "horizontal";
-          setPullDistance(0);
+          pullRef.current = 0;
           return;
         }
         if (absDy > absDx && absDy > 10) {
           t.direction = "vertical";
+          // Gesture start: the single React commit of the whole pull.
+          // Everything after this is ref + rAF paint, never setState.
+          setPulling(true);
         } else {
           // Ambiguous jitter: wait for a decisive move instead of guessing.
           return;
@@ -148,16 +201,18 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       if (t.direction !== "vertical") return;
 
       if (dy <= 0) {
-        setPullDistance(0);
+        pullRef.current = 0;
+        schedulePaint();
         return;
       }
 
       const dampened = Math.min(dy * RESISTANCE, MAX_PULL);
-      setPullDistance(dampened);
+      pullRef.current = dampened;
+      schedulePaint();
 
       // Prevent scroll while pulling down
       if (dampened > 0) e.preventDefault();
-    }, []);
+    }, [schedulePaint]);
 
     const handleTouchEnd = useCallback(() => {
       // One release = one decision, even if the browser delivers it twice
@@ -172,16 +227,24 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
         // A refresh is already running (the parent disables the control for
         // exactly that reason): snap back, never stack a second one. Keep our
         // own indicator up while our refresh is still in flight.
-        if (!refreshingRef.current) setPullDistance(0);
+        if (!refreshingRef.current) {
+          cancelPaint();
+          pullRef.current = 0;
+          setPulling(false);
+        }
         return;
       }
 
-      if (pullDistance >= THRESHOLD) {
+      // Release: the single state transition of the gesture end. The release
+      // decision reads the ref — never a lagging state closure.
+      cancelPaint();
+      if (pullRef.current >= THRESHOLD) {
         void runRefresh();
       } else {
-        setPullDistance(0);
+        pullRef.current = 0;
+        setPulling(false);
       }
-    }, [disabled, pullDistance, runRefresh]);
+    }, [disabled, runRefresh, cancelPaint]);
 
     const handleTouchCancel = useCallback(() => {
       const t = touchRef.current;
@@ -189,16 +252,21 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       t.direction = "none";
       // The browser took the gesture over: it must not count as a release.
       releaseConsumedRef.current = true;
-      if (!refreshingRef.current) setPullDistance(0);
-    }, []);
+      cancelPaint();
+      pullRef.current = 0;
+      if (!refreshingRef.current) setPulling(false);
+    }, [cancelPaint]);
 
     const handleRetry = useCallback(() => {
       if (disabled) return;
       void runRefresh();
     }, [disabled, runRefresh]);
 
-    const showIndicator = pullDistance > 0 || refreshing;
-    const progress = refreshing ? 1 : Math.min(pullDistance / THRESHOLD, 1);
+    // P6: the indicator mounts once per gesture and unmounts at release;
+    // its height/label/rotation are painted by rAF (see paintVisual), never
+    // by React state. No height transition: the visual tracks the finger
+    // exactly per frame instead of animating layout height behind it.
+    const showIndicator = pulling || refreshing;
 
     return (
       <div
@@ -211,29 +279,20 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       >
         {showIndicator && (
           <div
-            className="flex items-center justify-center overflow-hidden transition-[height]"
-            style={{
-              // Reduced motion removes the animated expansion, not the
-              // indicator itself: the user must still see pull/release/refresh.
-              height: pullDistance,
-              transitionDuration: reducedMotion ? "0ms" : "200ms",
-            }}
+            ref={indicatorRef}
+            className="flex items-center justify-center overflow-hidden"
+            style={{ height: 0 }}
             aria-live="polite"
             role="status"
           >
             <span
+              ref={labelRef}
               className="inline-flex items-center gap-1.5 text-xs text-on-surface-variant"
-              aria-label={
-                refreshing
-                  ? "Refreshing feed"
-                  : pullDistance >= THRESHOLD
-                    ? "Release to refresh"
-                    : "Pull to refresh"
-              }
+              aria-label={refreshing ? "Refreshing feed" : "Pull to refresh"}
             >
               <svg
+                ref={iconRef}
                 className={`h-4 w-4 ${refreshing && !reducedMotion ? "animate-spin" : ""}`}
-                style={reducedMotion ? undefined : { transform: `rotate(${progress * 360}deg)` }}
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -242,11 +301,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
               >
                 <path d="M21 12a9 9 0 11-6.219-8.56" />
               </svg>
-              {refreshing
-                ? "Refreshing…"
-                : pullDistance >= THRESHOLD
-                  ? "Release to refresh"
-                  : "Pull to refresh"}
+              <span ref={labelTextRef}>{refreshing ? "Refreshing…" : "Pull to refresh"}</span>
             </span>
           </div>
         )}

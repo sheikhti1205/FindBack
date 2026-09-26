@@ -104,6 +104,12 @@ describe("PostCardContent compact (Search Variant B)", () => {
     render(<PostCardContent post={post()} layout="compact" />);
     expect(screen.getByText("No photo")).toBeTruthy();
   });
+
+  it("P6: compact title clamps to two lines so long titles wrap readably", () => {
+    render(<PostCardContent post={imagePost()} layout="compact" />);
+    const title = screen.getByRole("heading", { name: "Black over-ear headphones" });
+    expect(title.className).toMatch(/line-clamp-2/);
+  });
 });
 
 describe("PostCardContent classic default", () => {
