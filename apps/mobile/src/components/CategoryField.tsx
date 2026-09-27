@@ -40,6 +40,36 @@ export function CategoryField({ value, onChange, error }: CategoryFieldProps) {
     setQuery("");
   }
 
+  const matchCount = results.filter((option) => isReleasedCategory(option.canonical)).length;
+
+  const searchField = (
+    <div className="relative">
+      <Search
+        aria-hidden="true"
+        size={16}
+        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant"
+      />
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search categories"
+        aria-label="Search categories"
+        className="min-h-[48px] w-full rounded-m3-sm border border-outline-variant bg-surface pl-9 pr-10 text-base"
+      />
+      {query && (
+        <button
+          type="button"
+          onClick={() => setQuery("")}
+          aria-label="Clear category search"
+          className="absolute right-1 top-1/2 flex min-h-[48px] min-w-[48px] -translate-y-1/2 items-center justify-center"
+        >
+          <X aria-hidden="true" size={16} />
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-2">
       <span className="text-sm font-medium text-on-surface">Category</span>
@@ -72,49 +102,39 @@ export function CategoryField({ value, onChange, error }: CategoryFieldProps) {
         onClose={() => setOpen(false)}
         title="Choose a category"
         description="Pick the group that best matches the item."
+        header={searchField}
+        contentScrollable={false}
       >
-        <div className="flex flex-col gap-3 pb-2">
-          <div className="relative">
-            <Search
-              aria-hidden="true"
-              size={16}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant"
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search categories"
-              aria-label="Search categories"
-              className="min-h-[48px] w-full rounded-m3-sm border border-outline-variant bg-surface pl-9 pr-10 text-base"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                aria-label="Clear category search"
-                className="absolute right-1 top-1/2 flex min-h-[48px] min-w-[48px] -translate-y-1/2 items-center justify-center"
-              >
-                <X aria-hidden="true" size={16} />
-              </button>
-            )}
+        {grouped.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-6 text-center">
+            <p className="text-sm text-on-surface">No categories match “{query}”.</p>
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              className="min-h-[48px] rounded-m3-sm border border-outline-variant px-4 text-sm"
+            >
+              Show all categories
+            </button>
           </div>
-
-          {grouped.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-6 text-center">
-              <p className="text-sm text-on-surface">No categories match “{query}”.</p>
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                className="min-h-[48px] rounded-m3-sm border border-outline-variant px-4 text-sm"
+        ) : (
+          <div
+            data-testid="category-results"
+            className="h-full min-h-0 overflow-y-auto overscroll-contain pb-2"
+          >
+            {query && (
+              <p aria-live="polite" className="px-1 pb-1 text-xs text-on-surface-variant">
+                {matchCount === 1 ? "1 category" : `${matchCount} categories`}
+              </p>
+            )}
+            {grouped.map(({ group, options }, groupIndex) => (
+              <section
+                key={group}
+                aria-label={group}
+                className={`flex flex-col gap-1 ${
+                  groupIndex > 0 ? "mt-2 border-t border-outline-variant/50 pt-2" : ""
+                }`}
               >
-                Show all categories
-              </button>
-            </div>
-          ) : (
-            grouped.map(({ group, options }) => (
-              <section key={group} className="flex flex-col gap-1">
-                <h3 className="px-1 text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
+                <h3 className="px-1 py-1 text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
                   {group}
                 </h3>
                 {options.map((option) => {
@@ -130,12 +150,12 @@ export function CategoryField({ value, onChange, error }: CategoryFieldProps) {
                       title={released ? option.examples : UNRELEASED_HINT}
                       onClick={() => commit(option.canonical)}
                       className={`flex min-h-[48px] w-full items-center justify-between gap-3 rounded-m3-xs px-3 py-2 text-left text-base ${
-                        released ? "hover:bg-surface-container" : "opacity-50"
-                      }`}
+                        selected ? "bg-surface-container" : ""
+                      } ${released ? "hover:bg-surface-container" : "opacity-50"}`}
                     >
-                      <span className="flex flex-col">
-                        <span className="text-on-surface">{option.canonical}</span>
-                        <span className="text-xs text-on-surface-variant">
+                      <span className="flex min-w-0 flex-col">
+                        <span className="font-medium text-on-surface">{option.canonical}</span>
+                        <span className="truncate text-xs text-on-surface-variant">
                           {released ? option.examples : UNRELEASED_HINT}
                         </span>
                       </span>
@@ -145,9 +165,9 @@ export function CategoryField({ value, onChange, error }: CategoryFieldProps) {
                   );
                 })}
               </section>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </BottomSheet>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent, type Ref, type TouchEvent } from "react";
 import {
   Calendar,
   CalendarGrid,
@@ -41,6 +41,13 @@ function parseISO(value: string): CalendarDate | null {
   }
 }
 
+/** Horizontal travel (px) that counts as a month swipe on the calendar grid. */
+const SWIPE_THRESHOLD_PX = 40;
+/** Horizontal travel must dominate vertical travel by this factor. */
+const SWIPE_DOMINANCE = 1.3;
+/** Day selections arriving within this window after a swipe are accidental. */
+const SWIPE_SUPPRESS_MS = 400;
+
 function isFutureDate(date: CalendarDate | CalendarDateTime | ZonedDateTime): boolean {
   // The server rejects event_date > (now() at time zone 'utc')::date, so the
   // client must cap on the SAME UTC day or it can offer a doomed date.
@@ -69,8 +76,52 @@ export function ReportDatePicker({
   );
 
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const prevMonthRef = useRef<HTMLButtonElement>(null);
+  const nextMonthRef = useRef<HTMLButtonElement>(null);
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressDaySelectUntilRef = useRef(0);
 
   const maxDate = today("UTC");
+
+  /**
+   * Horizontal month swipe on the calendar grid only. One confirmed gesture
+   * fires a single prev/next transaction through the real header buttons, so
+   * keyboard controls, focus, maxValue capping and onChange semantics are
+   * preserved (a swipe toward a forbidden future month hits the disabled
+   * button and is a no-op). Never calls preventDefault: vertical movement
+   * still belongs to the sheet drag/scroll, and taps still select days.
+   */
+  const handleGridTouchStart = (event: TouchEvent) => {
+    const touch = event.touches[0];
+    swipeStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  };
+
+  const handleGridTouchEnd = (event: TouchEvent) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) <= SWIPE_THRESHOLD_PX || Math.abs(dx) <= SWIPE_DOMINANCE * Math.abs(dy)) {
+      return;
+    }
+    // Swiping left advances forward; flip for RTL layouts.
+    const rtl = typeof document !== "undefined" && document.dir === "rtl";
+    const forward = dx < 0 !== rtl;
+    const target = forward ? nextMonthRef.current : prevMonthRef.current;
+    if (!target || target.disabled) return;
+    // The swipe's own touchend can synthesize a click on the cell under the
+    // finger; ignore day selections that arrive in its immediate wake.
+    suppressDaySelectUntilRef.current = Date.now() + SWIPE_SUPPRESS_MS;
+    target.click();
+  };
+
+  const handleCalendarChange = (next: CalendarDate | null) => {
+    if (Date.now() < suppressDaySelectUntilRef.current) return;
+    setDisplayedValue(next);
+  };
 
   const openSheet = () => {
     setDisplayedValue(value ? parseISO(value) : null);
@@ -160,7 +211,7 @@ export function ReportDatePicker({
         <Calendar
           id={calendarId}
           value={displayedValue}
-          onChange={setDisplayedValue}
+          onChange={handleCalendarChange}
           maxValue={maxDate}
           isDateUnavailable={isFutureDate}
           selectionMode="single"
@@ -169,6 +220,7 @@ export function ReportDatePicker({
         >
           <header className="flex items-center justify-between gap-2 mb-2">
             <AriaButton
+              ref={prevMonthRef as Ref<HTMLButtonElement>}
               slot="previous"
               className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-sm text-on-surface-variant hover:bg-surface-container transition-colors"
               aria-label="Previous month"
@@ -177,6 +229,7 @@ export function ReportDatePicker({
             </AriaButton>
             <CalendarHeading className="flex-1 text-center text-base font-semibold text-on-surface" />
             <AriaButton
+              ref={nextMonthRef as Ref<HTMLButtonElement>}
               slot="next"
               className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-sm text-on-surface-variant hover:bg-surface-container transition-colors"
               aria-label="Next month"
@@ -185,6 +238,11 @@ export function ReportDatePicker({
             </AriaButton>
           </header>
 
+          <div
+            data-testid="calendar-swipe-zone"
+            onTouchStart={handleGridTouchStart}
+            onTouchEnd={handleGridTouchEnd}
+          >
           <CalendarGrid className="w-full">
             <CalendarGridHeader className="mb-1">
               {(day) => (
@@ -224,6 +282,7 @@ export function ReportDatePicker({
               )}
             </CalendarGridBody>
           </CalendarGrid>
+          </div>
 
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-outline-variant">
             <Button

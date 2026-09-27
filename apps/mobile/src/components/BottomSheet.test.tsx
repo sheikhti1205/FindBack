@@ -50,6 +50,27 @@ describe("BottomSheet", () => {
     expect(dialog.style.maxHeight).toBe(maxHeight);
   });
 
+  it("renders no fixed header and a scrolling content region by default", () => {
+    render(
+      <BottomSheet open onClose={vi.fn()} title="Details">
+        body
+      </BottomSheet>,
+    );
+    expect(screen.queryByTestId("bottom-sheet-header")).toBeNull();
+    expect(screen.getByTestId("bottom-sheet-content").style.overflowY).toBe("auto");
+  });
+
+  it("pins header content above a non-scrolling content region when requested", () => {
+    render(
+      <BottomSheet open onClose={vi.fn()} title="Details" header={<input aria-label="Search" />} contentScrollable={false}>
+        body
+      </BottomSheet>,
+    );
+    const header = screen.getByTestId("bottom-sheet-header");
+    expect(header.contains(screen.getByLabelText("Search"))).toBe(true);
+    expect(screen.getByTestId("bottom-sheet-content").style.overflowY).toBe("hidden");
+  });
+
   it("defaults to the large height", () => {
     render(
       <BottomSheet open onClose={vi.fn()} title="Details">

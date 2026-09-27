@@ -502,6 +502,86 @@ describe("ReportDatePicker", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  function swipe(zone: HTMLElement, fromX: number, toX: number, fromY = 300, toY = 302) {
+    fireEvent.touchStart(zone, { touches: [{ clientX: fromX, clientY: fromY }] });
+    fireEvent.touchEnd(zone, { changedTouches: [{ clientX: toX, clientY: toY }] });
+  }
+
+  async function openSheet(value: string) {
+    render(<ReportDatePicker value={value} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    return screen.getByTestId("calendar-swipe-zone");
+  }
+
+  it("swiping left on the grid advances one month without committing", async () => {
+    // August 2026 is a past month, so the forward swipe has somewhere to go.
+    const zone = await openSheet("2026-08-15");
+    swipe(zone, 220, 100);
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /September 2026/i })).toBeTruthy();
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("swiping right on the grid goes back one month", async () => {
+    const zone = await openSheet("2026-09-26");
+    swipe(zone, 100, 220);
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /August 2026/i })).toBeTruthy();
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a vertical drag on the grid does not change the month", async () => {
+    const zone = await openSheet("2026-09-26");
+    fireEvent.touchStart(zone, { touches: [{ clientX: 150, clientY: 100 }] });
+    fireEvent.touchEnd(zone, { changedTouches: [{ clientX: 155, clientY: 260 }] });
+    expect(screen.getByRole("heading", { name: /September 2026/i })).toBeTruthy();
+  });
+
+  it("a short drag on the grid does not change the month", async () => {
+    const zone = await openSheet("2026-09-26");
+    swipe(zone, 150, 130);
+    expect(screen.getByRole("heading", { name: /September 2026/i })).toBeTruthy();
+  });
+
+  it("swiping toward a forbidden future month is a no-op", async () => {
+    // Viewing the current UTC month: the header next button is disabled by
+    // maxValue, so a forward swipe must leave the visible month untouched.
+    const zone = await openSheet(todayInputValue());
+    const before = screen.getByRole("dialog").querySelector("header h2")?.textContent;
+    expect((screen.getByRole("button", { name: /next month/i }) as HTMLButtonElement).disabled).toBe(true);
+    swipe(zone, 220, 100);
+    expect(screen.getByRole("dialog").querySelector("header h2")?.textContent).toBe(before);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a day tapped in the wake of a swipe is not selected", async () => {
+    const zone = await openSheet("2026-09-26");
+    swipe(zone, 100, 220);
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /August 2026/i })).toBeTruthy();
+    });
+    // The swipe's own touchend can synthesize a click on the cell under the
+    // finger; it must not move the pending selection.
+    fireEvent.click(screen.getByRole("button", { name: /Thursday, August 20, 2026/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("2026-09-26");
+  });
+
+  it("a day tapped without a preceding swipe still selects", async () => {
+    await openSheet("2026-09-26");
+    fireEvent.click(screen.getByRole("button", { name: /previous month/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /August 2026/i })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Thursday, August 20, 2026/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+    expect(onChange).toHaveBeenCalledWith("2026-08-20");
+  });
+
   it("opens an empty calendar on the server UTC month when local time is in the next month", async () => {
     vi.stubEnv("TZ", "Pacific/Kiritimati");
     setLocalTimeZone("Pacific/Kiritimati");

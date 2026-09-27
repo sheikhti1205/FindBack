@@ -16,6 +16,18 @@ export interface BottomSheetProps {
   /** False for critical ops: hides Close, ignores backdrop/Escape/drag/back. */
   dismissible?: boolean;
   closeLabel?: string;
+  /**
+   * Fixed slot rendered between the title row and the scrollable content.
+   * Stays visible while content scrolls (e.g. a search field). Absent by
+   * default so existing consumers are unaffected.
+   */
+  header?: React.ReactNode;
+  /**
+   * When false the outer content container does not scroll; the child owns
+   * its own scroll region (used with `header` so only results scroll).
+   * Defaults to true to preserve every existing consumer.
+   */
+  contentScrollable?: boolean;
   children: React.ReactNode;
 }
 
@@ -49,6 +61,8 @@ export function BottomSheet({
   height = "large",
   dismissible = true,
   closeLabel = "Close",
+  header,
+  contentScrollable = true,
   children,
 }: BottomSheetProps) {
   return (
@@ -62,6 +76,8 @@ export function BottomSheet({
           height={height}
           dismissible={dismissible}
           closeLabel={closeLabel}
+          header={header}
+          contentScrollable={contentScrollable}
         >
           {children}
         </BottomSheetDialog>
@@ -77,6 +93,8 @@ function BottomSheetDialog({
   height = "large",
   dismissible,
   closeLabel,
+  header,
+  contentScrollable = true,
   children,
 }: Omit<BottomSheetProps, "open">) {
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -206,10 +224,15 @@ function BottomSheetDialog({
             </button>
           ) : null}
         </div>
+        {header ? (
+          <div data-testid="bottom-sheet-header" className="shrink-0 px-4 pb-2">
+            {header}
+          </div>
+        ) : null}
         <div
           data-testid="bottom-sheet-content"
           onFocus={handleContentFocus}
-          style={{ overflowY: "auto" }}
+          style={{ overflowY: contentScrollable ? "auto" : "hidden" }}
           className="min-h-0 flex-1 px-4 pb-4"
         >
           {children}

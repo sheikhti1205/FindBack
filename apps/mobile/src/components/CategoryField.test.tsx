@@ -114,6 +114,39 @@ describe("CategoryField (P3 searchable grouped sheet)", () => {
     expect((search as HTMLInputElement).value).toBe("");
   });
 
+  it("keeps search in a fixed header outside the scrolling results", () => {
+    render(<CategoryField value="" onChange={() => {}} />);
+    fireEvent.click(categoryTrigger());
+    const header = screen.getByTestId("bottom-sheet-header");
+    expect(header.contains(screen.getByPlaceholderText(/search categories/i))).toBe(true);
+    // The outer sheet content must not scroll; only the results region does.
+    expect(screen.getByTestId("bottom-sheet-content").style.overflowY).toBe("hidden");
+    const results = screen.getByTestId("category-results");
+    expect(results.className).toMatch(/overflow-y-auto/);
+  });
+
+  it("announces the result count while filtering", () => {
+    render(<CategoryField value="" onChange={() => {}} />);
+    fireEvent.click(categoryTrigger());
+    fireEvent.change(screen.getByPlaceholderText(/search categories/i), {
+      target: { value: "spectacles" },
+    });
+    expect(screen.getByText(/1 category/)).toBeTruthy();
+  });
+
+  it("separates groups with dividers and tints the selected row", () => {
+    const { container } = render(<CategoryField value="Keys" onChange={() => {}} />);
+    fireEvent.click(categoryTrigger());
+    const sections = container.querySelectorAll("section[aria-label]");
+    expect(sections.length).toBeGreaterThan(1);
+    const second = sections[1];
+    expect(second).toBeTruthy();
+    expect(second?.className).toMatch(/border-t/);
+    const selected = screen.getByRole("button", { name: "Keys" });
+    expect(selected.className).toMatch(/bg-surface-container/);
+    expect(selected.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("marks the trigger invalid and announces the error", () => {
     render(<CategoryField value="" onChange={() => {}} error="Choose a category" />);
     expect(screen.getByRole("alert").textContent).toBe("Choose a category");
