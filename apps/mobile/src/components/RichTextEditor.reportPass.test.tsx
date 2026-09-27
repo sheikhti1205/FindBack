@@ -104,10 +104,34 @@ describe("RichTextEditor report pass — Expand/Collapse full-screen overlay", (
     // Open a menu in overlay
     fireEvent.click(screen.getByRole("button", { name: /Block type/i }));
     expect(screen.getByRole("menu", { name: "Block type" })).toBeTruthy();
-    // First Escape: closes menu
+    // First Escape: closes ONLY the menu — the overlay beneath must survive,
+    // with focus returned to the menu launcher.
     fireEvent.keyDown(document, { key: "Escape" }); // Simulate Android Back
     expect(screen.queryByRole("menu", { name: "Block type" })).toBeNull();
+    expect(document.getElementById("report-editor-overlay")).not.toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Block type/i }));
     // Second Escape: closes overlay
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.getElementById("report-editor-overlay")).toBeNull();
+  });
+
+  it("Escape closes the link dialog first, never the overlay beneath it", () => {
+    const ref = createRef<Editor | null>();
+    render(
+      <RichTextEditor label="Description" value="see map here" onChange={() => {}} editorRef={ref} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Expand description editor/i }));
+    expect(document.getElementById("report-editor-overlay")).not.toBeNull();
+    act(() => {
+      ref.current?.commands.setTextSelection({ from: 5, to: 8 });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
+    expect(screen.getByRole("dialog", { name: /Add link/i })).toBeTruthy();
+    // First Escape: dialog goes, overlay stays with its content intact.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: /Add link/i })).toBeNull();
+    expect(document.getElementById("report-editor-overlay")).not.toBeNull();
+    // Second Escape: overlay goes.
     fireEvent.keyDown(document, { key: "Escape" });
     expect(document.getElementById("report-editor-overlay")).toBeNull();
   });
@@ -213,9 +237,12 @@ describe("RichTextEditor report pass — collision-safe formatting menus (Floati
 
   it("Escape/Back/outside click closes one layer at a time", () => {
     render(<RichTextEditor label="Description" value="hello" onChange={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /Expand description editor/i }));
     fireEvent.click(screen.getByRole("button", { name: /Block type/i }));
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu", { name: "Block type" })).toBeNull();
+    // The overlay beneath survives this Escape; only the menu closed.
+    expect(document.getElementById("report-editor-overlay")).not.toBeNull();
   });
 });
 

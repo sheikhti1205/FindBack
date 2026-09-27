@@ -17,8 +17,9 @@ export interface ReportTurnResolution {
 }
 
 const CATEGORY_ALIASES: ReadonlyArray<{ aliases: readonly string[]; category: Category }> = [
-  // Specific Tech entries come first: resolveAssistantCategory returns the
-  // first match, so these must precede the broad Electronics fallback.
+  // Specific Tech entries precede the broad Electronics fallback so single
+  // matches read naturally; multi-matches resolve to ambiguous (never
+  // first-wins), so ordering never silently decides a category.
   {
     aliases: [
       "phone",
@@ -166,21 +167,46 @@ function aliasMatchesToken(alias: string, token: string): boolean {
   return false;
 }
 
-export function resolveAssistantCategory(text: string): Category | undefined {
+/**
+ * Every category the text matches, in alias-table order. Most inputs match
+ * zero or one; inputs matching two or more ("notebook" is both a laptop and a
+ * paper notebook, "phone charger" spans Phones and Electronics) are
+ * AMBIGUOUS and must trigger a clarification, never a confident assignment.
+ */
+export function assistantCategoryCandidates(text: string): Category[] {
+  const found: Category[] = [];
+  const push = (category: Category) => {
+    if (!((CATEGORIES as readonly string[]).includes(category))) return;
+    if (!found.includes(category)) found.push(category);
+  };
   const lower = ` ${text.toLowerCase()} `;
-  if (lower.includes(" cell phone ")) return "Phones & Tablets";
-  if (lower.includes(" id card ")) return "Documents & IDs";
+  if (lower.includes(" cell phone ")) push("Phones & Tablets");
+  if (lower.includes(" id card ")) push("Documents & IDs");
   const tokens = tokensOf(text);
   for (const entry of CATEGORY_ALIASES) {
-    if (!(CATEGORIES as readonly string[]).includes(entry.category)) continue;
     for (const alias of entry.aliases) {
       if (alias.includes(" ")) continue;
       for (const token of tokens) {
-        if (aliasMatchesToken(alias, token)) return entry.category;
+        if (aliasMatchesToken(alias, token)) {
+          push(entry.category);
+          break;
+        }
       }
     }
   }
-  return undefined;
+  return found;
+}
+
+/** True when the text matches two or more categories and needs a follow-up question. */
+export function isAssistantCategoryAmbiguous(text: string): boolean {
+  return assistantCategoryCandidates(text).length > 1;
+}
+
+export function resolveAssistantCategory(text: string): Category | undefined {
+  const candidates = assistantCategoryCandidates(text);
+  // Exactly one confident match resolves; zero or AMBIGUOUS (2+) resolve to
+  // nothing so every caller falls back to asking instead of misfiling.
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 function isGreeting(message: string): boolean {

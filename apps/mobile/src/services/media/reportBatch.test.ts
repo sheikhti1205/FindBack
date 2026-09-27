@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { processReportBatch, createHashRegistry } from "./reportBatch";
 
+// jsdom has no image decoder: reject normalization so the batch exercises the
+// no-decoder fallback instead of hanging on a never-settling <img> decode.
+const normalizeImageMock = vi.hoisted(() => vi.fn());
+vi.mock("../image", () => ({ normalizeImage: normalizeImageMock }));
+
 interface MockPhotoResult {
   photo: {
     id: string;
@@ -29,6 +34,8 @@ const originalFetch = global.fetch;
 beforeEach(() => {
   vi.useFakeTimers();
   global.fetch = vi.fn();
+  normalizeImageMock.mockReset();
+  normalizeImageMock.mockRejectedValue(new Error("no decoder in this environment"));
 });
 
 afterEach(() => {

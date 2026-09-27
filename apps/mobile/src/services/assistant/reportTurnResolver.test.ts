@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { startFlow } from "./guidedAssistantController";
-import { resolveAssistantCategory, resolveReportTurn } from "./reportTurnResolver";
+import { assistantCategoryCandidates, isAssistantCategoryAmbiguous, resolveAssistantCategory, resolveReportTurn } from "./reportTurnResolver";
 
 describe("resolveAssistantCategory", () => {
   it("maps phone to Phones & Tablets", () => {
@@ -26,6 +26,26 @@ describe("resolveAssistantCategory", () => {
   });
   it("returns undefined for unknown bj", () => {
     expect(resolveAssistantCategory("bj")).toBeUndefined();
+  });
+  it("leaves an unqualified notebook ambiguous instead of guessing Computers", () => {
+    expect(resolveAssistantCategory("I lost my notebook")).toBeUndefined();
+    expect(isAssistantCategoryAmbiguous("I lost my notebook")).toBe(true);
+    expect(assistantCategoryCandidates("I lost my notebook")).toEqual([
+      "Computers & Accessories",
+      "Books & Stationery",
+    ]);
+  });
+  it("leaves phone charger ambiguous instead of committing Phones", () => {
+    expect(resolveAssistantCategory("I lost my phone charger")).toBeUndefined();
+    expect(isAssistantCategoryAmbiguous("I lost my phone charger")).toBe(true);
+  });
+  it("leaves camera bag ambiguous instead of committing Cameras", () => {
+    expect(resolveAssistantCategory("I found a camera bag")).toBeUndefined();
+    expect(isAssistantCategoryAmbiguous("I found a camera bag")).toBe(true);
+  });
+  it("keeps an unambiguous match confident", () => {
+    expect(isAssistantCategoryAmbiguous("I lost my phone")).toBe(false);
+    expect(assistantCategoryCandidates("I lost my phone")).toEqual(["Phones & Tablets"]);
   });
 });
 

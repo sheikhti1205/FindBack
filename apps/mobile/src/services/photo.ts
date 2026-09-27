@@ -59,6 +59,49 @@ export async function chooseFromGallery(): Promise<PickedPhoto | null> {
   }
 }
 
+/** Final upload limit enforced against the normalized derivative, not the original. */
+export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+/**
+ * Decode safety bound for the ORIGINAL file. A 12 MB camera original can
+ * normalize down to ~1 MB and must be accepted; an unbounded original risks
+ * OOM during decode, so genuinely huge inputs are still rejected up front.
+ */
+export const MAX_ORIGINAL_BYTES = 48 * 1024 * 1024;
+
+export const TOO_LARGE_TO_PROCESS = "That photo is too large to process on this device. Choose a smaller image.";
+export const TOO_LARGE_FOR_UPLOAD = "That photo is too large. Choose an image under 8 MB.";
+
+/**
+ * Shared normalize-first contract for native AND web picks: decode and
+ * normalize (1920px longest edge, EXIF-oriented, re-encoded; animated GIFs
+ * pass through untouched), then enforce the upload limit against the
+ * RESULTING derivative. When this environment cannot decode (no canvas /
+ * bitmap support, e.g. tests), the original bytes are kept and the upload
+ * limit still applies to them — so a large-but-decodable original is only
+ * ever rejected for its original size above MAX_ORIGINAL_BYTES.
+ */
+export async function normalizeForUpload(source: File): Promise<File> {
+  if (source.size > MAX_ORIGINAL_BYTES) throw new Error(TOO_LARGE_TO_PROCESS);
+  try {
+    const normalized = await normalizeImage(source);
+    const out = new File([normalized.blob], withExtension(source.name, normalized.mimeType), {
+      type: normalized.mimeType,
+    });
+    if (out.size > MAX_UPLOAD_BYTES) throw new Error(TOO_LARGE_FOR_UPLOAD);
+    return out;
+  } catch (err) {
+    if (err instanceof Error && (err.message === TOO_LARGE_FOR_UPLOAD || err.message === TOO_LARGE_TO_PROCESS)) throw err;
+    if (source.size > MAX_UPLOAD_BYTES) throw new Error(TOO_LARGE_FOR_UPLOAD);
+    return source;
+  }
+}
+
+function withExtension(name: string, mimeType: string): string {
+  const base = name.replace(/\.[a-z0-9]+$/i, "");
+  const ext = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : mimeType === "image/gif" ? "gif" : "jpg";
+  return `${base || "photo"}.${ext}`;
+}
+
 export async function photoToFile(photo: PickedPhoto, name?: string): Promise<File> {
   const response = await fetch(photo.webPath);
   if (!response.ok) throw new Error("Could not read the selected photo");
@@ -71,9 +114,10 @@ export async function photoToFile(photo: PickedPhoto, name?: string): Promise<Fi
     try {
       const source = new File([blob], name ?? `photo.${kind}`, { type: `image/${kind}` });
       const converted = await normalizeImage(source);
-      if (converted.blob.size > 8 * 1024 * 1024) throw new Error("Converted photo exceeds the 8 MB upload limit");
+      if (converted.blob.size > MAX_UPLOAD_BYTES) throw new Error(TOO_LARGE_FOR_UPLOAD);
       return new File([converted.blob], "photo.jpg", { type: "image/jpeg" });
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.message === TOO_LARGE_FOR_UPLOAD) throw err;
       throw new Error("This HEIC/HEIF photo could not be decoded on this device. Export it as JPEG and try again.");
     }
   }
@@ -82,9 +126,8 @@ export async function photoToFile(photo: PickedPhoto, name?: string): Promise<Fi
     : kind === "gif" || kind === "gif-animated" ? "image/gif" : null;
   if (!mime) throw new Error("Unsupported or unreadable photo. Choose a JPEG, PNG, WebP, or GIF image.");
   const payload = still ? blob.slice(0, still.stillEnd, mime) : blob;
-  if (payload.size > 8 * 1024 * 1024) throw new Error("That photo is too large. Choose an image under 8 MB.");
   const extension = mime === "image/jpeg" ? "jpg" : mime.slice(6);
-  return new File([payload], name ?? `photo.${extension}`, { type: mime });
+  return normalizeForUpload(new File([payload], name ?? `photo.${extension}`, { type: mime }));
 }
 
 function blobBytes(blob: Blob): Promise<ArrayBuffer> {

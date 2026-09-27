@@ -7,6 +7,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { createPortal } from "react-dom";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
+import { isTopModalLayer, useModalLayer } from "../hooks/modalLayers";
 import { Bold, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2, Expand, X } from "lucide-react";
 import {
   fromMarkdown,
@@ -50,7 +51,11 @@ function LinkSheet({ selection, triggerRef, onCancel, onSave, onRemove }: {
   const [message, setMessage] = useState<string | null>(null);
   const [isImeOpen, setIsImeOpen] = useState(false);
 
-  useFocusTrap(sheetRef, onCancel);
+  // The trap's callback ref (not the plain ref): FloatingPortal mounts its
+  // children after the parent's passive effects, so the compat sync would
+  // never see the element and the dialog would silently lose its Escape
+  // handling, focus trap and top-layer registration.
+  const setTrapRef = useFocusTrap(sheetRef, onCancel);
   useModalBack(true, onCancel);
 
   // Detect IME/keyboard open state using visualViewport
@@ -103,7 +108,7 @@ function LinkSheet({ selection, triggerRef, onCancel, onSave, onRemove }: {
       <div
         ref={(el) => {
           refs.setFloating(el);
-          sheetRef.current = el;
+          setTrapRef(el);
         }}
         style={floatingStyles}
         role="dialog"
@@ -775,6 +780,10 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }, [isExpanded]);
 
   // Close menus on outside tap or Escape, restoring focus to the menu button.
+  // The open menu registers on the modal Escape stack above the fullscreen
+  // overlay trap, so one Escape closes only the menu — never the overlay
+  // beneath it. (The link dialog uses useFocusTrap, which stacks the same way.)
+  const menuLayerId = useModalLayer(openMenu !== null);
   useEffect(() => {
     if (!openMenu) return;
     function onDocPointerDown(event: PointerEvent) {
@@ -783,6 +792,8 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     }
     function onDocKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        if (!isTopModalLayer(menuLayerId)) return;
+        event.preventDefault();
         setOpenMenu(null);
         lastMenuButtonRef.current?.focus();
       }
@@ -793,7 +804,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
       document.removeEventListener("pointerdown", onDocPointerDown);
       document.removeEventListener("keydown", onDocKeyDown);
     };
-  }, [openMenu]);
+  }, [openMenu, menuLayerId]);
 
   // Move focus into the open menu (checked item first) so keyboard and
   // screen-reader users land on the current choice, not behind the button.

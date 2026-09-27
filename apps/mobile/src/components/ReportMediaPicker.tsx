@@ -1,4 +1,36 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+
+/**
+ * Narrow-report layout switch: below ~420px two 152px tiles no longer fit,
+ * and the square grid degrades into a tall single column of large photos.
+ * Narrow screens get compact rows (56px thumb + meta + full-width 48px
+ * action row) so five-photo management stays short. Visible icons may
+ * shrink; the 48px minimum hit areas never do.
+ */
+const NARROW_QUERY = "(max-width: 420px)";
+
+function useNarrowTiles(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(NARROW_QUERY);
+    const update = () => setNarrow(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
+
+function formatLabel(format?: string): string {
+  const normalized = (format ?? "").trim().toLowerCase();
+  if (normalized === "jpg" || normalized === "jpeg") return "JPEG";
+  if (normalized === "png") return "PNG";
+  if (normalized === "webp") return "WEBP";
+  if (normalized === "gif") return "GIF";
+  if (normalized === "heic" || normalized === "heif") return "HEIC";
+  return normalized ? normalized.toUpperCase() : "PHOTO";
+}
 
 /** Minimal structural view of a selected photo; PickedPhoto satisfies it. */
 export interface ReportMediaPhoto {
@@ -86,6 +118,7 @@ export function ReportMediaPicker({
   const remaining = useMemo(() => MAX_PHOTOS - photos.length, [photos.length]);
   const atLimit = photos.length >= MAX_PHOTOS;
   const showReorder = photos.length > 1;
+  const narrow = useNarrowTiles();
 
   const handleCameraClick = useCallback(() => {
     if (!disabled && !atLimit) onAddCamera();
@@ -149,19 +182,33 @@ export function ReportMediaPicker({
         <p style={styles.limitNotice}>Maximum of 5 photos reached</p>
       )}
 
-      <div style={styles.grid} role="list" aria-label="Selected photos">
+      <div style={narrow ? styles.rows : styles.grid} role="list" aria-label="Selected photos">
         {photos.map((photo, index) => (
-          <PhotoTile
-            key={photo.id}
-            photo={photo}
-            index={index}
-            total={photos.length}
-            onRemove={handleRemove}
-            onMove={handleMove}
-            onPreview={handlePreview}
-            showReorder={showReorder}
-            disabled={disabled}
-          />
+          narrow ? (
+            <CompactPhotoRow
+              key={photo.id}
+              photo={photo}
+              index={index}
+              total={photos.length}
+              onRemove={handleRemove}
+              onMove={handleMove}
+              onPreview={handlePreview}
+              showReorder={showReorder}
+              disabled={disabled}
+            />
+          ) : (
+            <PhotoTile
+              key={photo.id}
+              photo={photo}
+              index={index}
+              total={photos.length}
+              onRemove={handleRemove}
+              onMove={handleMove}
+              onPreview={handlePreview}
+              showReorder={showReorder}
+              disabled={disabled}
+            />
+          )
         ))}
       </div>
 
@@ -181,6 +228,85 @@ interface PhotoTileProps {
   onPreview: (id: string) => void;
   showReorder: boolean;
   disabled: boolean;
+}
+
+/**
+ * Narrow-screen row: 56px thumbnail + "Photo N of M · FORMAT · Primary"
+ * meta, then one full-width row of 48px actions. Same handlers, labels and
+ * hit areas as the square tile — roughly a third of the height.
+ */
+function CompactPhotoRow({
+  photo,
+  index,
+  total,
+  onRemove,
+  onMove,
+  onPreview,
+  showReorder,
+  disabled,
+}: PhotoTileProps) {
+  const isFirst = index === 0;
+  const isLast = index === total - 1;
+  const meta = `${formatLabel(photo.format)}${index === 0 ? " · Primary" : ""}${photo.motionPhoto ? " · Motion still" : ""}`;
+  return (
+    <div style={styles.row} role="listitem">
+      <div style={styles.rowTop}>
+        <button
+          type="button"
+          style={styles.rowThumb}
+          onClick={() => onPreview(photo.id)}
+          disabled={disabled}
+          aria-label={`View photo ${index + 1} of ${total} full size`}
+        >
+          <img
+            src={photo.webPath}
+            alt={`Photo ${index + 1} of ${total}`}
+            style={styles.tileImage}
+          />
+        </button>
+        <div style={styles.rowMeta}>
+          <span style={styles.rowTitle}>Photo {index + 1} of {total}</span>
+          <span style={styles.rowSubtitle}>{meta}</span>
+        </div>
+      </div>
+      <div style={styles.rowActions}>
+        {showReorder && (
+          <>
+            <button
+              type="button"
+              style={{ ...styles.rowAction, ...(isFirst ? styles.controlButtonDisabled : {}) }}
+              onClick={() => onMove(photo.id, "earlier")}
+              disabled={disabled || isFirst}
+              aria-label={`Move photo ${index + 1} earlier`}
+              aria-disabled={disabled || isFirst}
+            >
+              <ChevronLeftIcon size={20} />
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.rowAction, ...(isLast ? styles.controlButtonDisabled : {}) }}
+              onClick={() => onMove(photo.id, "later")}
+              disabled={disabled || isLast}
+              aria-label={`Move photo ${index + 1} later`}
+              aria-disabled={disabled || isLast}
+            >
+              <ChevronRightIcon size={20} />
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          style={styles.rowAction}
+          onClick={() => onRemove(photo.id)}
+          disabled={disabled}
+          aria-label={`Remove photo ${index + 1}`}
+          aria-disabled={disabled}
+        >
+          <TrashIcon size={20} />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function PhotoTile({
@@ -311,6 +437,66 @@ const styles: Record<string, React.CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(152px, 1fr))",
     gap: 12,
+  },
+  rows: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  row: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: "var(--fb-surface-container-low)",
+  },
+  rowTop: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+  },
+  rowThumb: {
+    width: 56,
+    height: 56,
+    flexShrink: 0,
+    borderRadius: 8,
+    overflow: "hidden",
+    border: "none",
+    padding: 0,
+    cursor: "pointer",
+    backgroundColor: "var(--fb-surface-container)",
+  },
+  rowMeta: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+    minWidth: 0,
+  },
+  rowTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: "var(--fb-on-surface)",
+  },
+  rowSubtitle: {
+    fontSize: 12,
+    color: "var(--fb-on-surface-variant)",
+  },
+  rowActions: {
+    display: "flex",
+    gap: 8,
+  },
+  rowAction: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flex: 1,
+    minHeight: 48,
+    border: "none",
+    borderRadius: 6,
+    backgroundColor: "var(--fb-surface-container)",
+    color: "var(--fb-on-surface)",
+    cursor: "pointer",
   },
   tile: {
     display: "flex",

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject, RefCallback } from "react";
+import { isTopModalLayer, popModalLayer, pushModalLayer } from "./modalLayers";
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
@@ -33,6 +34,12 @@ export function useFocusTrap(
 ): RefCallback<HTMLElement | null> {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  // Stable layer identity for the modal Escape stack (one Escape closes only
+  // the topmost layer even when several traps listen on the document).
+  const layerIdRef = useRef<string | null>(null);
+  if (layerIdRef.current === null) {
+    layerIdRef.current = `focus-trap-${Math.random().toString(36).slice(2)}`;
+  }
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const enabledRef = useRef(false);
   enabledRef.current = enabled;
@@ -94,6 +101,9 @@ export function useFocusTrap(
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
+        // Only the topmost layer answers: a nested menu/dialog owns this
+        // Escape, and the layers below must stay open.
+        if (!isTopModalLayer(layerIdRef.current!)) return;
         event.preventDefault();
         onCloseRef.current();
         return;
@@ -122,10 +132,12 @@ export function useFocusTrap(
       }
     };
 
+    pushModalLayer(layerIdRef.current!);
     document.addEventListener("keydown", handleKeyDown);
     focusFirst();
 
     return () => {
+      popModalLayer(layerIdRef.current!);
       document.removeEventListener("keydown", handleKeyDown);
       // Use caller's ref if provided, otherwise use internal ref
       const previous = previouslyFocusedRef?.current ?? internalPreviouslyFocusedRef.current;

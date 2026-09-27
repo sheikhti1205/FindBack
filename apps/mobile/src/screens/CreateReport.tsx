@@ -17,7 +17,7 @@ import { MAX_REPORT_PHOTOS, publishReport, publishReportWithPhotos } from "../se
 import { clearDraft, draftGeneration, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
 import type { ReportDraft, ReportPhotoRef } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
-import { isNativeCameraAvailable, takePhoto, chooseReportPhotos, photoToFile, type PickedPhoto } from "../services/photo";
+import { isNativeCameraAvailable, takePhoto, chooseReportPhotos, normalizeForUpload, photoToFile, type PickedPhoto } from "../services/photo";
 import { ReportDatePicker } from "../components/ReportDatePicker";
 import { ReportMediaPicker } from "../components/ReportMediaPicker";
 import { PhotoLightbox } from "../components/PhotoLightbox";
@@ -29,6 +29,7 @@ import {
   getStashedPhoto,
   getStashedPhotoMeta,
   persistStashedPhotos,
+  restashPhotoFile,
   restoreStashedPhotos,
   stashPhotoFile,
 } from "../services/photoStore";
@@ -77,16 +78,15 @@ function canCreateObjectUrl(): boolean {
 }
 
 /**
- * Preview URL for a report photo. Converted originals (HEIC/HEIF → JPEG via
- * photoToFile) must preview the CONVERTED File bytes: the native picker
- * webPath can point at the original HEIC resource, which the WebView may be
- * unable to render even though a valid JPEG was produced. The original native
- * URI is retained separately on `picked` for recovery and provenance.
+ * Preview URL for a report photo. ALWAYS the validated File's object URL —
+ * never the picker's original URI. Picker format metadata is unreliable (an
+ * HEIC file mislabeled as JPG converts fine in photoToFile but would preview
+ * as a broken original), while the File bytes are exactly what was validated,
+ * hashed and will be published. The original native URI is retained
+ * separately on `picked` for recovery and provenance. Callers revoke blob
+ * URLs on remove/clear/unmount.
  */
-function previewUrlFor(file: File, picked: PickedPhoto | null): string {
-  const converted = /^(heic|heif)$/i.test((picked?.format ?? "").trim());
-  const web = picked?.webPath;
-  if (!converted && web && !web.startsWith("blob:")) return web;
+function previewUrlFor(file: File): string {
   return canCreateObjectUrl() ? URL.createObjectURL(file) : "";
 }
 
@@ -211,7 +211,7 @@ function ReportForm() {
       restored.push({
         id,
         file: stashed,
-        previewUrl: previewUrlFor(stashed, restoredPicked),
+        previewUrl: previewUrlFor(stashed),
         picked: restoredPicked,
       });
     }
@@ -305,26 +305,24 @@ function ReportForm() {
         if (getStashedPhoto(id)) continue;
         missing.add(id);
       }
-      const failed = draftIds.filter((id) => missing.has(id));
-      if (failed.length > 0) {
-        if (!isCancelled() && generation === draftGeneration(accountId)) {
-          setFailedPhotoIds(failed);
-          setPhotoRestoreError(true);
-        }
-        return;
-      }
+      // Mixed-success contract: every recovered slot is merged into state
+      // FIRST (converted Files are restashed under their ORIGINAL ids so
+      // draft references, ordering and persistence stay coherent), and only
+      // then are the failed slots reported. Removing an unavailable photo can
+      // therefore never drop a successfully converted sibling.
       const next = [...photosRef.current];
       for (const id of draftIds) {
         if (next.some((p) => p.id === id)) continue;
         const conv = converted.get(id);
         const file = conv?.file ?? getStashedPhoto(id);
         if (!file) continue;
+        if (conv) restashPhotoFile(id, conv.file, { picked: conv.picked, accountId });
         const ref = draftPhotoRef(initialDraft, id);
         const picked = conv?.picked ?? refToPicked(ref) ?? getStashedPhotoMeta(id)?.picked ?? null;
         next.push({
           id,
           file,
-          previewUrl: previewUrlFor(file, picked),
+          previewUrl: previewUrlFor(file),
           picked,
         });
       }
@@ -353,6 +351,12 @@ function ReportForm() {
       hashRegistryRef.current = registry;
       photosRef.current = unique;
       setPhotos(unique);
+      const failed = draftIds.filter((id) => missing.has(id) && !unique.some((p) => p.id === id));
+      if (failed.length > 0) {
+        setFailedPhotoIds(failed);
+        setPhotoRestoreError(true);
+        return;
+      }
       setPhotoRecoveryReady(true);
     } finally {
       recoveringRef.current = false;
@@ -558,8 +562,18 @@ function ReportForm() {
 
   // Photo bytes follow the photo set only (not every keystroke): the registry
   // mirrors memory authoritatively, so removals are pruned on write.
+  // Order-only changes (reorder) skip the byte snapshot: display order lives in
+  // the JSON draft autosave below, and accepted Files are immutable, so an
+  // unchanged id/size/name/type set means the bytes are already durable.
+  const persistedPhotoSigRef = useRef<string | null>(null);
   useEffect(() => {
     if (!photoRecoveryReady) return;
+    const sig = photos
+      .map((p) => `${p.id}:${p.file.size}:${p.file.name}:${p.file.type}`)
+      .sort()
+      .join("|");
+    if (persistedPhotoSigRef.current === sig) return;
+    persistedPhotoSigRef.current = sig;
     let cancelled = false;
     // Warning-only persist: a resolved non-durable report (bytes that cannot
     // survive process death) warns just like a real storage failure, without
@@ -594,7 +608,15 @@ function ReportForm() {
 
   function discardDraft() {
     const current = { type, title, description, category, eventDate, location, youtubeUrl };
-    if (!draftIsMeaningful(current) && photos.length === 0) return;
+    // draftIsMeaningful only inspects text: a photo-only draft (including one
+    // whose photos failed recovery) is still a draft the user must be able to
+    // discard, or the failed-recovery screen wedges with no way out. The live
+    // persisted photo list is consulted so pruned removals are honored.
+    const hasPhotos =
+      photos.length > 0 ||
+      failedPhotoIds.length > 0 ||
+      draftPhotoIds(loadDraft(accountId)).length > 0;
+    if (!draftIsMeaningful(current) && !hasPhotos) return;
     if (!window.confirm("Discard this report and clear the selected photo?")) return;
     clearDraft(accountId);
     setType("LOST");
@@ -620,7 +642,7 @@ function ReportForm() {
 
   function acceptPickedPhoto(file: File, photo: PickedPhoto | null, hash?: string): string {
     const id = stashPhotoFile(file, { picked: photo ?? null, accountId });
-    const preview = previewUrlFor(file, photo);
+    const preview = previewUrlFor(file);
     const next = [...photosRef.current, { id, file, previewUrl: preview, picked: photo ?? null, hash }];
     // Update the ref synchronously too: queued async work and publish read the
     // ref, not the render-time state, so they must not observe a stale list.
@@ -685,68 +707,68 @@ function ReportForm() {
     });
   }
 
-  /** Web file-input path: same duplicate/limit semantics as the native batch. */
+  /**
+   * Web file-input path: the SAME sequential contract as the native batch
+   * (processReportBatch). Files are validated in selection order and only
+   * successfully accepted files consume the five-photo capacity — an
+   * unreadable first file never starves a valid second one. A digest failure
+   * rejects the photo outright instead of accepting it hashless, which would
+   * silently break the exact-duplicate guarantee.
+   * Async-safe: the work runs on the pick queue, and publish awaits the queue
+   * before snapshotting, so a fast "pick then publish" never drops a photo.
+   */
   function onPickFiles(files: FileList | null): void {
     if (!files || files.length === 0) return;
-    const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
     const list = Array.from(files);
-    const overflow = list.length > remaining;
-    const accepted = list.slice(0, Math.max(0, remaining));
-    if (accepted.length === 0) {
-      setPhotoLimitNotice(
-        `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. Remove one first.`,
-      );
-      return;
-    }
     setError(null);
-    let unreadable = 0;
-    const pending: Array<{ id: string; file: File }> = [];
-    for (const file of accepted) {
-      if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-        setError("That file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.");
-        unreadable += 1;
-        continue;
-      }
-      if (file.size > MAX_IMAGE_BYTES) {
-        setError("That photo is too large. Choose an image under 8 MB.");
-        unreadable += 1;
-        continue;
-      }
-      // Add optimistically so a fast "pick then publish" never drops the
-      // photo; the digest check below removes exact duplicates afterwards.
-      const id = acceptPickedPhoto(file, null);
-      pending.push({ id, file });
-    }
-    if (unreadable > 0 || overflow) {
-      setPhotoLimitNotice(
-        formatBatchNotice(0, 0, unreadable, overflow ? list.length - accepted.length : 0) || null,
-      );
-    }
     enqueuePick(async () => {
+      await restorePromiseRef.current;
+      let accepted = 0;
       let duplicates = 0;
-      for (const { id, file } of pending) {
-        let digest: string;
-        try {
-          digest = await computeSha256Hex(file);
-        } catch {
+      let unreadable = 0;
+      let overflow = 0;
+      for (const file of list) {
+        if (MAX_REPORT_PHOTOS - photosRef.current.length <= 0) {
+          overflow += 1;
           continue;
         }
-        // The photo may have been removed while the digest was computing; a
-        // removed photo must not claim its bytes in the registry, or a later
-        // reselect of the same file would be wrongly rejected (R-072).
-        if (!photosRef.current.some((p) => p.id === id)) continue;
+        if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+          setError("That file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.");
+          unreadable += 1;
+          continue;
+        }
+        let payload: File;
+        try {
+          payload = await normalizeForUpload(file);
+        } catch (err) {
+          setError(friendlyError(err).message);
+          unreadable += 1;
+          continue;
+        }
+        let digest: string;
+        try {
+          digest = await computeSha256Hex(payload);
+        } catch {
+          setError("That photo could not be verified. Please try it again.");
+          unreadable += 1;
+          continue;
+        }
         if (hashRegistryRef.current.has(digest)) {
           duplicates += 1;
-          removePhoto(id);
           continue;
         }
         hashRegistryRef.current.add(digest);
-        photosRef.current = photosRef.current.map((p) => (p.id === id ? { ...p, hash: digest } : p));
-        setPhotos(photosRef.current);
+        acceptPickedPhoto(payload, null, digest);
+        accepted += 1;
       }
-      if (duplicates > 0) {
-        setPhotoLimitNotice(formatBatchNotice(0, duplicates, 0, 0));
-      }
+      setPhotoLimitNotice(formatBatchNotice(accepted, duplicates, unreadable, overflow) || null);
+      diag("report.picker.web", {
+        picked: list.length,
+        accepted,
+        duplicates,
+        unreadable,
+        overflow,
+      }, { traceId: traceIdRef.current ?? undefined });
     });
   }
 

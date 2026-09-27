@@ -8,6 +8,7 @@ const { photo } = vi.hoisted(() => ({
     takePhoto: vi.fn(),
     chooseFromGallery: vi.fn(),
     photoToFile: vi.fn(),
+    normalizeForUpload: vi.fn(async (file: File) => file),
     toNativeImageUri: vi.fn(),
   },
 }));

@@ -2,14 +2,23 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-const { publishReportMock, photo } = vi.hoisted(() => ({
+const { publishReportMock, publishReportWithPhotosMock, photo } = vi.hoisted(() => ({
   publishReportMock: vi.fn(),
+  publishReportWithPhotosMock: vi.fn(),
   photo: {
     isNativeCameraAvailable: vi.fn(() => false),
     takePhoto: vi.fn(),
     chooseFromGallery: vi.fn(),
     chooseReportPhotos: vi.fn(),
     photoToFile: vi.fn(),
+    // Production normalizeForUpload enforces the 8 MB upload limit against
+    // the derivative (or the original when no decoder exists, as here): the
+    // mock mirrors that fallback edge so the rejection path stays covered.
+    // The normalize-first acceptance path is unit-tested in photo.test.ts.
+    normalizeForUpload: vi.fn(async (file: File) => {
+      if (file.size > 8 * 1024 * 1024) throw new Error("That photo is too large. Choose an image under 8 MB.");
+      return file;
+    }),
     toNativeImageUri: vi.fn(),
   },
 }));
@@ -22,7 +31,11 @@ vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../services/posts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/posts")>();
-  return { ...actual, publishReport: (...args: unknown[]) => publishReportMock(...args) };
+  return {
+    ...actual,
+    publishReport: (...args: unknown[]) => publishReportMock(...args),
+    publishReportWithPhotos: (...args: unknown[]) => publishReportWithPhotosMock(...args),
+  };
 });
 vi.mock("../services/photo", () => photo);
 
@@ -58,6 +71,7 @@ function pickFile(file: File) {
 
 beforeEach(() => {
   publishReportMock.mockReset();
+  publishReportWithPhotosMock.mockReset();
   clearDraft();
   clearPhotoStore();
   (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => "blob:preview");
@@ -264,6 +278,105 @@ describe("CreateReport", () => {
     } finally {
       confirmSpy.mockRestore();
     }
+  });
+
+  it("keeps mixed-success conversions when the middle photo fails, then publishes the survivors", async () => {
+    publishReportWithPhotosMock.mockResolvedValue("p3");
+    saveDraft({
+      type: "LOST",
+      title: "Lost camera",
+      description: "a black camera lost near the library entrance",
+      category: "Cameras & Photography",
+      eventDate: todayInputValue(),
+      location: { label: "", latitude: null, longitude: null },
+      youtubeUrl: "",
+      photoId: "p1",
+      photoNativeUri: null,
+      photoWebPath: null,
+      photoFormat: null,
+      photoIds: ["p1", "p2", "p3"],
+      photoRefs: [
+        { id: "p1", nativeUri: "content://p1", webPath: "content://p1", format: "jpg" },
+        { id: "p2", nativeUri: "content://p2", webPath: "content://p2", format: "jpg" },
+        { id: "p3", nativeUri: "content://p3", webPath: "content://p3", format: "jpg" },
+      ],
+    }, "u1");
+    photo.photoToFile.mockImplementation((picked: { nativeUri: string }) => {
+      if (picked.nativeUri === "content://p2") return Promise.reject(new Error("revive failed"));
+      const tag = picked.nativeUri === "content://p1" ? "one" : "three";
+      return Promise.resolve(new File([`${tag}-bytes`], `${tag}.jpg`, { type: "image/jpeg" }));
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      render(<CreateReport />);
+      // Only the middle slot failed — and it is named, not a bare boolean.
+      await screen.findByText(/could not be recovered.*photo 2/i);
+      // The successful conversions are already committed, not dropped.
+      expect(screen.getByRole("img", { name: /photo 1 of 2/i })).toBeTruthy();
+      expect(screen.getByRole("img", { name: /photo 2 of 2/i })).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: /remove unavailable and continue/i }));
+      expect(confirmSpy).toHaveBeenCalled();
+      await waitFor(() =>
+        expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false),
+      );
+      // Survivors keep original ids and draft order; the failed slot is pruned.
+      await waitFor(() => expect(loadDraft("u1")?.photoIds).toEqual(["p1", "p3"]));
+
+      fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
+      await waitFor(() => expect(publishReportWithPhotosMock).toHaveBeenCalled());
+      const files = publishReportWithPhotosMock.mock.calls[0]![1] as File[];
+      expect(files).toHaveLength(2);
+      expect(await files[0]!.text()).toBe("one-bytes");
+      expect(await files[1]!.text()).toBe("three-bytes");
+    } finally {
+      confirmSpy.mockRestore();
+      photo.photoToFile.mockReset();
+    }
+  });
+
+  it("photo-only draft with an unavailable photo can still be discarded", async () => {
+    saveDraft({
+      type: "LOST",
+      title: "",
+      description: "",
+      category: "",
+      eventDate: todayInputValue(),
+      location: { label: "", latitude: null, longitude: null },
+      youtubeUrl: "",
+      photoId: "gone",
+      photoNativeUri: null,
+      photoWebPath: null,
+      photoFormat: null,
+      photoIds: ["gone"],
+    }, "u1");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      render(<CreateReport />);
+      await screen.findByText(/could not be recovered/i);
+      // No text at all: the old guard returned early and wedged the screen.
+      fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
+      expect(confirmSpy).toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByText(/could not be recovered/i)).toBeNull());
+      // The unavailable slot is gone; only the (pre-existing) empty draft
+      // shell remains, which loads as a blank form.
+      expect(loadDraft("u1")?.photoIds).toEqual([]);
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("a later unreadable web file never starves a valid one behind it", async () => {
+    seedDescription("a black phone lost near the library");
+    render(<CreateReport />);
+    const bad = new File(["nope"], "notes.txt", { type: "text/plain" });
+    const good = new File([new Uint8Array([255, 216, 255, 217])], "ok.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]');
+    if (!input) throw new Error("file input not found");
+    fireEvent.change(input, { target: { files: [bad, good] } });
+    // Sequential validation: the valid JPEG is accepted despite the bad first file.
+    await screen.findByRole("img", { name: /photo 1 of 1/i });
+    expect(screen.getByText(/unreadable/i)).toBeTruthy();
   });
 
   it("discard draft after a failed recovery leaves a working empty form", async () => {

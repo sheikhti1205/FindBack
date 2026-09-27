@@ -14,12 +14,24 @@ vi.mock("@capacitor/camera", () => ({
   CameraErrorCode: { TakePhotoCancelled: "OS-PLUG-CAMR-0006", ChooseMediaCancelled: "OS-PLUG-CAMR-0020" },
 }));
 
+// jsdom has no image decoder (createImageBitmap/canvas): the default mock
+// rejects so photoToFile exercises its no-decoder fallback path. Individual
+// tests override per-case to prove the normalize-first contract.
+const normalizeImageMock = vi.hoisted(() => vi.fn());
+vi.mock("./image", () => ({ normalizeImage: normalizeImageMock }));
+
 import { chooseFromGallery, isCancellation, photoToFile, takePhoto } from "./photo";
 import { detectMotionPhoto } from "./media/motionPhoto";
 
 const photo = { type: 0, uri: "content://media/external/images/1", webPath: "http://localhost/_capacitor_file_/1.jpg", saved: false, metadata: { format: "jpg" } };
 
-beforeEach(() => { camera.takePhoto.mockReset(); camera.chooseFromGallery.mockReset(); platform.native = true; });
+beforeEach(() => {
+  camera.takePhoto.mockReset();
+  camera.chooseFromGallery.mockReset();
+  platform.native = true;
+  normalizeImageMock.mockReset();
+  normalizeImageMock.mockRejectedValue(new Error("no decoder in this environment"));
+});
 
 describe("photo source", () => {
   it("keeps the native content:// URI and the webPath separate", async () => {
@@ -70,6 +82,41 @@ describe("photo source", () => {
     expect(still.size).toBe(jpeg.length);
     expect(still.type).toBe("image/jpeg");
     expect(picked.motionPhoto).toBe(true);
+  });
+
+  it("normalizes a large original before enforcing the upload limit", async () => {
+    // A 12 MB camera original that normalizes to a small derivative must be
+    // accepted: the 8 MB limit applies to the RESULT, not the original.
+    const original = new Uint8Array(12 * 1024 * 1024);
+    original[0] = 255; original[1] = 216; original[2] = 255; original[3] = 224;
+    const derivative = new Blob([new Uint8Array(900 * 1024)], { type: "image/jpeg" });
+    normalizeImageMock.mockResolvedValueOnce({ blob: derivative, mimeType: "image/jpeg", width: 1920, height: 1280 });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob([original], { type: "image/jpeg" })) }));
+    const file = await photoToFile({ nativeUri: "content://x", webPath: "http://localhost/big.jpg", format: "jpg", id: "big" });
+    expect(file.type).toBe("image/jpeg");
+    expect(file.size).toBe(900 * 1024);
+  });
+
+  it("rejects the derivative when it still exceeds the upload limit", async () => {
+    const original = new Uint8Array([255, 216, 255, 224, 0, 0]);
+    normalizeImageMock.mockResolvedValueOnce({
+      blob: new Blob([new Uint8Array(9 * 1024 * 1024)], { type: "image/jpeg" }),
+      mimeType: "image/jpeg",
+      width: 1920,
+      height: 1280,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob([original], { type: "image/jpeg" })) }));
+    await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/huge.jpg", format: "jpg", id: "huge" }))
+      .rejects.toThrow("under 8 MB");
+  });
+
+  it("rejects originals above the decode safety bound without decoding", async () => {
+    const original = new Uint8Array(49 * 1024 * 1024);
+    original[0] = 255; original[1] = 216; original[2] = 255; original[3] = 224;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob([original], { type: "image/jpeg" })) }));
+    await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/enormous.jpg", format: "jpg", id: "enormous" }))
+      .rejects.toThrow("too large to process");
+    expect(normalizeImageMock).not.toHaveBeenCalled();
   });
 
   it("does not infer motion from HEIC format or an unverified trailer", () => {

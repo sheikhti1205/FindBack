@@ -210,6 +210,30 @@ describe("ReportMediaPicker", () => {
     expect(screen.queryByText("Maximum of 5 photos reached")).toBeNull();
   });
 
+  it("uses compact rows with 48px actions on narrow screens", () => {
+    const original = window.matchMedia;
+    const stub = () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} });
+    Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: vi.fn(stub) });
+    try {
+      const props = getDefaultProps({ photos: [createMockPhoto("p1"), createMockPhoto("p2")] });
+      render(<ReportMediaPicker {...props} />);
+      // Compact meta instead of a large square tile.
+      expect(screen.getByText("Photo 1 of 2")).toBeTruthy();
+      expect(screen.getByText("JPEG · Primary")).toBeTruthy();
+      // Same handlers and labels; 48px hit areas preserved.
+      const earlier = screen.getByRole("button", { name: "Move photo 2 earlier" });
+      const remove = screen.getByRole("button", { name: "Remove photo 2" });
+      expect(parseFloat((earlier as HTMLButtonElement).style.minHeight)).toBeGreaterThanOrEqual(48);
+      expect(parseFloat((remove as HTMLButtonElement).style.minHeight)).toBeGreaterThanOrEqual(48);
+      fireEvent.click(earlier);
+      fireEvent.click(remove);
+      expect(props.onMove).toHaveBeenCalledWith("p2", "earlier");
+      expect(props.onRemove).toHaveBeenCalledWith("p2");
+    } finally {
+      Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value: original });
+    }
+  });
+
   it("does not import CreateReport", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require("fs");

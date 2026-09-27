@@ -167,6 +167,22 @@ export function stashPhotoFile(file: File, opts?: { picked?: PickedPhoto | null;
   return id;
 }
 
+/**
+ * Store (or replace) a File under an EXISTING id — e.g. a natively-revived
+ * conversion produced during draft recovery. New ids would break the draft's
+ * photoIds/photoRefs references, so recovery must restash under the original
+ * slot id to keep ordering, dedupe and persistence coherent.
+ */
+export function restashPhotoFile(id: string, file: File, opts?: { picked?: PickedPhoto | null; accountId?: string | null }): void {
+  files.set(id, file);
+  const prev = metas.get(id);
+  metas.set(id, {
+    picked: opts?.picked ?? prev?.picked ?? null,
+    accountId: opts?.accountId ?? prev?.accountId ?? null,
+  });
+  invalidatePersist(opts?.accountId);
+}
+
 export function getStashedPhoto(id: string | null | undefined): File | null {
   if (!id) return null;
   return files.get(id) ?? null;
