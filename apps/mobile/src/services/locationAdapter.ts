@@ -1,3 +1,5 @@
+import { Capacitor } from "@capacitor/core";
+import { Geolocation } from "@capacitor/geolocation";
 import {
   COARSE_LOCATION_OPTIONS,
   formatAccuracy,
@@ -6,6 +8,7 @@ import {
   requestOneTimeLocation,
   type LocationFailureReason,
 } from "../components/locationPermission";
+import { isDeviceLocationEnabled } from "./locationServices";
 
 class LocationRequestError extends Error {
   constructor(readonly reason: LocationFailureReason) {
@@ -118,11 +121,76 @@ export function accuracyBand(accuracyMeters: number | null): string {
 export { LOW_ACCURACY_METERS };
 
 /**
- * Production adapter backed by the existing navigator.geolocation and
- * locationPermission logic. A permission query must never obtain a fix:
- * WebView permission prompts are only allowed after an explicit user gesture.
+ * Maps a Capacitor Geolocation failure to the adapter's failure taxonomy.
+ * "Location unavailable" on Android means the providers cannot produce a
+ * fix — most commonly device Location services switched off — so it maps
+ * to "disabled" (services-off), never to a generic timeout.
+ */
+export function mapNativeGeolocationError(err: unknown): LocationFailureReason {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  const lower = message.toLowerCase();
+  if (lower.includes("denied") || lower.includes("not authorized") || lower.includes("permission")) {
+    return "denied";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out")) return "timeout";
+  if (
+    lower.includes("unavailable") ||
+    lower.includes("disabled") ||
+    lower.includes("location is off") ||
+    lower.includes("settings")
+  ) {
+    return "disabled";
+  }
+  return "unavailable";
+}
+
+/**
+ * Production adapter backed by the Android fused provider (Capacitor
+ * Geolocation) on native builds, and by the existing navigator.geolocation
+ * + locationPermission logic on web. A permission query must never obtain a
+ * fix: permission prompts are only allowed after an explicit user gesture
+ * (the "Use my location once" tap that calls getCurrentPosition).
  */
 export function createProductionLocationAdapter(): LocationAdapter {
+  if (Capacitor.isNativePlatform()) {
+    return {
+      async getCurrentPosition(options: PositionOptions) {
+        try {
+          const position = await Geolocation.getCurrentPosition({
+            enableHighAccuracy: options.enableHighAccuracy ?? false,
+            timeout: options.timeout ?? COARSE_LOCATION_OPTIONS.timeout ?? 8000,
+            maximumAge: 0,
+          });
+          return {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracyMeters: position.coords.accuracy ?? null,
+          };
+        } catch (err) {
+          throw new LocationRequestError(mapNativeGeolocationError(err));
+        }
+      },
+
+      async getPermission() {
+        try {
+          const status = await Geolocation.checkPermissions();
+          // checkPermissions is read-only; requesting happens inside
+          // getCurrentPosition after the user's tap.
+          if (status.coarseLocation === "denied" && status.location === "denied") return "denied";
+          if (status.coarseLocation === "granted" || status.location === "granted") return "granted";
+          return "prompt";
+        } catch {
+          return "prompt";
+        }
+      },
+
+      async servicesEnabled() {
+        // Device switch readable natively; null (unknown) falls back to
+        // attempting a fix, same as the web path.
+        return isDeviceLocationEnabled();
+      },
+    };
+  }
   return {
     async getCurrentPosition(_options: PositionOptions) {
       // The shared facade owns coarse options, timeout and double-tap collapse.

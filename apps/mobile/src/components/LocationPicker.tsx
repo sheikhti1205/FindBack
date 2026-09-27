@@ -22,6 +22,10 @@ import {
   type FixState,
   type LocationAdapter,
 } from "../services/locationAdapter";
+import {
+  isNativeLocationServicesAvailable,
+  requestEnableDeviceLocation,
+} from "../services/locationServices";
 
 function fixFailureMessage(kind: Exclude<FixState["kind"], "idle" | "requesting-permission" | "locating" | "fix">): string {
   return locationFailureMessage(kind === "services-off" ? "disabled" : kind);
@@ -59,6 +63,10 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   const fixGeneration = useRef(0);
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  // Which failure the message describes; services-off alone offers the
+  // native enable-location action (never for other failures).
+  const [geoErrorKind, setGeoErrorKind] = useState<FixState["kind"] | null>(null);
+  const [enablingServices, setEnablingServices] = useState(false);
   // A coarse fix too imprecise to publish on its own — held until confirmed.
   const [pendingFix, setPendingFix] = useState<{ lat: number; lng: number; accuracy: number | null } | null>(null);
   // The embedded preview is a deliberate step, never an automatic load.
@@ -99,6 +107,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
     setApprox(value.precision !== "EXACT");
     setLocating(false);
     setGeoError(null);
+    setGeoErrorKind(null);
     setPendingFix(null);
     setParseError(null);
   }, [value]);
@@ -136,6 +145,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   async function useCurrentLocation() {
     setLocating(true);
     setGeoError(null);
+    setGeoErrorKind(null);
     setPendingFix(null);
 
     const outcome = await requestFixWithGeneration(adapter, { generation: fixGeneration });
@@ -160,8 +170,27 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
 
     if (outcome.kind !== "locating" && outcome.kind !== "requesting-permission") {
       setGeoError(fixFailureMessage(outcome.kind));
+      setGeoErrorKind(outcome.kind);
     }
     setLocating(false);
+  }
+
+  /**
+   * User-controlled enable-location flow: presents Android's own dialog and
+   * retries the fix only when the switch is actually on. Dismissal keeps the
+   * typed-place / manual-map fallback — nothing is force-enabled.
+   */
+  async function enableServicesAndRetry() {
+    if (enablingServices) return;
+    setEnablingServices(true);
+    try {
+      const enabled = await requestEnableDeviceLocation();
+      if (enabled) {
+        await useCurrentLocation();
+      }
+    } finally {
+      setEnablingServices(false);
+    }
   }
 
   function acceptPendingFix() {
@@ -246,6 +275,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
     setSourceText(next.label);
     setParseError(null);
     setGeoError(null);
+    setGeoErrorKind(null);
     setCoords(
       next.label,
       next.preciseLatitude ?? next.latitude,
@@ -358,6 +388,19 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
 
       {(geoError || parseError) && (
         <p className="text-xs text-error">{geoError ?? parseError}</p>
+      )}
+      {geoErrorKind === "services-off" && isNativeLocationServicesAvailable() && (
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            size="md"
+            loading={enablingServices}
+            onClick={() => void enableServicesAndRetry()}
+          >
+            Turn on location
+          </Button>
+        </div>
       )}
       <p className="text-xs text-on-surface-variant">{FIND_IN_MAPS_HELP} Paste the coordinates or link back here.</p>
 
