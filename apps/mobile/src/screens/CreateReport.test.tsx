@@ -157,15 +157,17 @@ describe("CreateReport", () => {
     }
   });
 
-  it("retries photo-byte persistence without reselecting after a storage failure", async () => {
+  it("shows Saving photos until the retry's durable write confirms", async () => {
     // Every persist fails until the retry is armed: the warning is then
-    // deterministic regardless of how many mount-time writes occur. The
-    // failed write must never be recorded as durable, so arming the retry and
-    // clicking it writes the same photo set again and clears the warning.
+    // deterministic regardless of how many mount-time writes occur. The retry
+    // holds its write open so the test can observe the in-flight status: the
+    // warning must NOT clear on press — only "Saving photos…" shows — and it
+    // clears only after the durable write confirms.
     let fail = true;
-    const persist = vi.spyOn(photoStore, "persistStashedPhotos").mockImplementation(async () => {
-      if (fail) throw new Error("quota");
-      return { durable: true, warning: null };
+    let release: ((report: { durable: boolean; warning: null }) => void) | null = null;
+    const persist = vi.spyOn(photoStore, "persistStashedPhotos").mockImplementation(() => {
+      if (fail) return Promise.reject(new Error("quota"));
+      return new Promise((resolve) => { release = resolve; });
     });
     try {
       render(<CreateReport />);
@@ -174,9 +176,16 @@ describe("CreateReport", () => {
       const beforeRetry = persist.mock.calls.length;
       fail = false;
       fireEvent.click(screen.getByRole("button", { name: /retry saving photos/i }));
-      await waitFor(() => expect(screen.queryByText(/photos could not be saved/i)).toBeNull());
-      expect(persist.mock.calls.length).toBe(beforeRetry + 1);
+      // In flight: saving status shows, the failure warning stays hidden, and
+      // the session photo is untouched — nothing was cleared optimistically.
+      await screen.findByText(/saving photos/i);
+      expect(screen.queryByText(/photos could not be saved/i)).toBeNull();
       expect(screen.getByRole("button", { name: /remove photo/i })).toBeTruthy();
+      // The retry wrote the same photo set again without reselecting.
+      expect(persist.mock.calls.length).toBe(beforeRetry + 1);
+      release!({ durable: true, warning: null });
+      await waitFor(() => expect(screen.queryByText(/saving photos/i)).toBeNull());
+      expect(screen.queryByText(/photos could not be saved/i)).toBeNull();
     } finally {
       persist.mockRestore();
     }

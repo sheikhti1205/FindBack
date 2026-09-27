@@ -12,8 +12,39 @@
 export const MAX_EDGE = 1920;
 export const JPEG_QUALITY = 0.82;
 export const WEBP_QUALITY = 0.82;
+/**
+ * Decode pixel bound, mirroring the import pipeline's IMPORT_MAX_DECODE_PIXELS.
+ * A small compressed file can still describe enormous dimensions; decoding it
+ * at full resolution would OOM the renderer. Images over the bound are
+ * downsampled AT DECODE TIME (createImageBitmap resize) — never rejected for
+ * being high-resolution — with an actionable error only where the device
+ * cannot downsample safely.
+ */
+export const MAX_DECODE_PIXELS = 30_000_000;
+
+export const DECODE_TOO_LARGE =
+  "That photo's dimensions are too large to process safely on this device. Export a smaller version and try again.";
 
 const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
+
+/**
+ * Marks a decode failure as either a genuinely missing decoder
+ * ("unavailable" — the environment cannot decode at all, so verified
+ * original bytes may still be usable) or an attempted decode the decoder
+ * refused ("rejected" — the bytes are damaged or in an undecodable variant,
+ * so falling back to the original would only ship a corrupt file).
+ */
+export type DecodeFailureKind = "unavailable" | "rejected";
+
+export class DecodeError extends Error {
+  readonly kind: DecodeFailureKind;
+
+  constructor(kind: DecodeFailureKind, message: string) {
+    super(message);
+    this.name = "DecodeError";
+    this.kind = kind;
+  }
+}
 
 export interface DecodedImage {
   source: CanvasImageSource;
@@ -29,8 +60,14 @@ export interface NormalizedImage {
   height: number;
 }
 
+export interface DecodeOpts {
+  /** Decode-time downsample target (honored where the platform supports it). */
+  resizeWidth?: number;
+  resizeHeight?: number;
+}
+
 export interface ImageDeps {
-  decode(file: File): Promise<DecodedImage>;
+  decode(file: File, opts?: DecodeOpts): Promise<DecodedImage>;
   encode(
     source: CanvasImageSource,
     width: number,
@@ -67,15 +104,54 @@ export function outputTypeFor(
   return { mimeType: "image/jpeg", quality: JPEG_QUALITY };
 }
 
+export interface NormalizeOpts {
+  /** Override for the decode pixel bound (default MAX_DECODE_PIXELS). */
+  maxDecodePixels?: number;
+}
+
 export async function normalizeImage(
   file: File,
   deps: ImageDeps = browserDeps(),
+  opts?: NormalizeOpts,
 ): Promise<NormalizedImage> {
   if (!ALLOWED_MIME.includes(file.type)) {
     throw new Error("Unsupported image type");
   }
-  const decoded = await deps.decode(file);
+  const maxPixels = opts?.maxDecodePixels ?? MAX_DECODE_PIXELS;
+  // Inspect header dimensions BEFORE decoding: a few-MB file can describe
+  // tens of megapixels. Over-bound stills are downsampled at decode time
+  // (bounded memory, legitimate 50 MP photos accepted); over-bound GIFs
+  // cannot be downsampled without losing animation, so they fail fast with
+  // an actionable error instead of OOMing the renderer mid-decode.
+  // Unprobeable kinds (HEIC, truncated headers) skip pre-scaling and rely on
+  // the post-decode bound below.
+  const probed = await probeFileDimensions(file);
+  const animated = file.type === "image/gif";
+  if (probed && probed.width * probed.height > maxPixels) {
+    if (animated) throw new DecodeError("rejected", DECODE_TOO_LARGE);
+  }
+  const downsample = probed && !animated && probed.width * probed.height > maxPixels
+    ? scaleToPixels(probed.width, probed.height, maxPixels)
+    : null;
+  let decoded: DecodedImage;
   try {
+    decoded = downsample
+      ? await deps.decode(file, { resizeWidth: downsample.width, resizeHeight: downsample.height })
+      : await deps.decode(file);
+  } catch (err) {
+    // A decoder the platform actually attempted and refused means damaged or
+    // undecodable bytes — mark it so callers do not fall back to shipping the
+    // corrupt original. A genuinely missing decoder stays "unavailable".
+    if (err instanceof DecodeError) throw err;
+    throw new DecodeError("rejected", err instanceof Error ? err.message : "Could not decode the image");
+  }
+  try {
+    // Post-decode bound: platforms without decode-time resize still decode
+    // full-size — refuse the giant bitmap (releasing it first) instead of
+    // carrying hundreds of MB into canvas encode.
+    if (decoded.width * decoded.height > maxPixels) {
+      throw new DecodeError("rejected", DECODE_TOO_LARGE);
+    }
     if (file.type === "image/gif") {
       // Never round-trip an animation.
       return { blob: file, mimeType: "image/gif", width: decoded.width, height: decoded.height };
@@ -89,10 +165,47 @@ export async function normalizeImage(
   }
 }
 
-async function decodeImage(file: File): Promise<DecodedImage> {
+/** Largest dimensions within maxPixels preserving aspect ratio. */
+function scaleToPixels(width: number, height: number, maxPixels: number): { width: number; height: number } {
+  const scale = Math.sqrt(maxPixels / (width * height));
+  return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
+}
+
+/**
+ * Header-only dimension probe: reads a small leading slice, never the whole
+ * file. Returns null when the kind is unprobeable (HEIC/AVIF/TIFF) or the
+ * header is truncated — callers then decode without pre-scaling and enforce
+ * the post-decode bound instead.
+ */
+async function probeFileDimensions(file: File): Promise<{ width: number; height: number } | null> {
+  try {
+    const head = file.slice(0, 65536);
+    const buffer = typeof head.arrayBuffer === "function" ? await head.arrayBuffer() : null;
+    if (!buffer) return null;
+    const bytes = new Uint8Array(buffer);
+    const { sniffImage, probeDimensions } = await import("./media/importImage");
+    const kind = sniffImage(bytes);
+    if (!kind) return null;
+    return probeDimensions(bytes, kind);
+  } catch {
+    return null;
+  }
+}
+
+async function decodeImage(file: File, opts?: DecodeOpts): Promise<DecodedImage> {
   if (typeof createImageBitmap === "function") {
-    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const bitmap = await createImageBitmap(file, {
+      imageOrientation: "from-image",
+      ...(opts?.resizeWidth && opts?.resizeHeight
+        ? { resizeWidth: opts.resizeWidth, resizeHeight: opts.resizeHeight }
+        : null),
+    }).catch((err: unknown) => {
+      throw new DecodeError("rejected", err instanceof Error ? err.message : "Could not decode the image");
+    });
     return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() };
+  }
+  if (typeof Image === "undefined" || typeof URL?.createObjectURL !== "function") {
+    throw new DecodeError("unavailable", "Image decoding is not available in this environment");
   }
   return await new Promise<DecodedImage>((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -107,7 +220,7 @@ async function decodeImage(file: File): Promise<DecodedImage> {
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("Could not read the image"));
+      reject(new DecodeError("rejected", "Could not read the image"));
     };
     image.src = url;
   });

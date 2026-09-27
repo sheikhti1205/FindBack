@@ -18,9 +18,13 @@ vi.mock("@capacitor/camera", () => ({
 // rejects so photoToFile exercises its no-decoder fallback path. Individual
 // tests override per-case to prove the normalize-first contract.
 const normalizeImageMock = vi.hoisted(() => vi.fn());
-vi.mock("./image", () => ({ normalizeImage: normalizeImageMock }));
+vi.mock("./image", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./image")>();
+  return { ...actual, normalizeImage: normalizeImageMock };
+});
 
 import { chooseFromGallery, isCancellation, normalizeForUpload, photoToFile, takePhoto } from "./photo";
+import { DecodeError } from "./image";
 import { detectMotionPhoto } from "./media/motionPhoto";
 
 /** Minimal valid 1x1 JPEG header (SOI + SOF0 + EOI) for fallback probing. */
@@ -186,5 +190,14 @@ describe("photo source", () => {
     const valid = new File([VALID_JPEG], "photo.jpg", { type: "image/jpeg" });
     const out = await normalizeForUpload(valid);
     expect(out).toBe(valid);
+  });
+
+  it("refuses fallback when the available decoder attempted and rejected the file", async () => {
+    // Valid headers but damaged pixel data: the decoder tried and said no.
+    // Falling back to the original would only ship a corrupt file that fails
+    // at publish time, so the failure stays a failure with guidance.
+    normalizeImageMock.mockRejectedValueOnce(new DecodeError("rejected", "bad pixel data"));
+    const damaged = new File([VALID_JPEG], "photo.jpg", { type: "image/jpeg" });
+    await expect(normalizeForUpload(damaged)).rejects.toThrow("couldn't be decoded");
   });
 });

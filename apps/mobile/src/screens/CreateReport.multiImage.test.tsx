@@ -9,6 +9,7 @@ const { publishReportMock, publishReportWithPhotosMock, photo } = vi.hoisted(() 
     isNativeCameraAvailable: vi.fn(() => false),
     takePhoto: vi.fn(),
     chooseFromGallery: vi.fn(),
+    chooseReportPhotos: vi.fn(),
     photoToFile: vi.fn(),
     normalizeForUpload: vi.fn(async (file: File) => file),
     toNativeImageUri: vi.fn(),
@@ -305,5 +306,35 @@ describe("CreateReport multi-image", () => {
         expect.objectContaining({ traceId: expect.any(String) }),
       ),
     );
+  });
+
+  it("names each failed native selection by position without leaking native URIs", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    try {
+      seedBasics();
+      render(<CreateReport />);
+      const good = new File(["good-bytes"], "ok.jpg", { type: "image/jpeg" });
+      photo.chooseReportPhotos.mockResolvedValueOnce([
+        { nativeUri: "content://media/1", webPath: "content://media/1", format: "heic", id: "n1" },
+        { nativeUri: "content://media/2", webPath: "content://media/2", format: "jpg", id: "n2" },
+      ]);
+      // Marked exactly like photo.ts marks safe conversion failures.
+      const heicError = new Error(
+        "This HEIC/HEIF photo could not be decoded on this device. Export it as JPEG and try again.",
+      );
+      heicError.name = "PhotoImportError";
+      photo.photoToFile.mockRejectedValueOnce(heicError).mockResolvedValueOnce(good);
+      fireEvent.click(screen.getByRole("button", { name: /choose up to \d+ photos/i }));
+      // The failed first selection is named by position with its actionable
+      // reason, while the valid second photo still lands in the tray.
+      await screen.findByText(/photo 1:.*export it as jpeg/i);
+      await screen.findByRole("img", { name: /photo 1 of 1/i });
+      const failures = screen.getByRole("alert");
+      expect(failures.textContent).not.toMatch(/content:\/\/|file:\/\/|blob:/i);
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+      photo.chooseReportPhotos.mockReset();
+      photo.photoToFile.mockReset();
+    }
   });
 });

@@ -576,6 +576,10 @@ function ReportForm() {
   // a failed persist is never represented as a durable snapshot.
   const persistedPhotoSigRef = useRef<string | null>(null);
   const [photoSaveRetryKey, setPhotoSaveRetryKey] = useState(0);
+  // True while a photo-byte write is in flight. The failure warning clears
+  // only on a confirmed durable write — never optimistically when Retry is
+  // pressed — and a "Saving photos…" status covers the in-flight window.
+  const [photoSavePending, setPhotoSavePending] = useState(false);
   useEffect(() => {
     if (!photoRecoveryReady) return;
     const sig = photos
@@ -584,6 +588,7 @@ function ReportForm() {
       .join("|");
     if (persistedPhotoSigRef.current === sig) return;
     let cancelled = false;
+    setPhotoSavePending(true);
     // Warning-only persist: a resolved non-durable report (bytes that cannot
     // survive process death) warns just like a real storage failure, without
     // dropping the live session photos.
@@ -592,15 +597,17 @@ function ReportForm() {
         if (cancelled) return;
         const durable = report ? report.durable : false;
         setPhotoSaveWarning(!durable);
+        setPhotoSavePending(false);
         if (durable) persistedPhotoSigRef.current = sig;
       },
-      () => { if (!cancelled) setPhotoSaveWarning(true); },
+      () => { if (!cancelled) { setPhotoSaveWarning(true); setPhotoSavePending(false); } },
     );
     return () => { cancelled = true; };
   }, [photos, accountId, photoRecoveryReady, photoSaveRetryKey]);
 
   function retryPhotoSave(): void {
-    setPhotoSaveWarning(false);
+    // Deliberately NOT clearing the warning here: it clears only after the
+    // retry's durable write confirms. The pending status covers the gap.
     setPhotoSaveRetryKey((key) => key + 1);
   }
 
@@ -690,11 +697,15 @@ function ReportForm() {
       // Validate after native conversion (including motion-still extraction).
       // Run each item at current capacity: an invalid item must not consume a
       // slot or prevent later valid items in the same selection from arriving.
+      // Failures are labeled by selection position ("Photo 2") — never by
+      // native URIs, which must not leak into the interface.
       let accepted = 0;
       let duplicates = 0;
       let unreadable = 0;
       let overflow = 0;
-      for (const photo of picked) {
+      const failures: string[] = [];
+      for (const [selectionIndex, photo] of picked.entries()) {
+        const position = selectionIndex + 1;
         const result = await processReportBatch(
           [photo],
           photosRef.current.length,
@@ -703,19 +714,24 @@ function ReportForm() {
             if (!ACCEPTED_IMAGE_TYPES.includes(file.type) || file.size > MAX_IMAGE_BYTES) {
               hashRegistryRef.current.delete(hash);
               unreadable += 1;
-              setError(file.size > MAX_IMAGE_BYTES
-                ? "That photo is too large. Choose an image under 8 MB."
-                : "That file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.");
+              failures.push(`Photo ${position}: ${file.size > MAX_IMAGE_BYTES
+                ? "that photo is too large. Choose an image under 8 MB."
+                : "that file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo."}`);
               return;
             }
             acceptPickedPhoto(file, item, hash);
             accepted += 1;
           },
+          selectionIndex,
         );
         duplicates += result.duplicates.length;
         unreadable += result.unreadable.length;
         overflow += result.overflow.length;
+        for (const failed of result.unreadable) {
+          failures.push(`Photo ${failed.index + 1}: ${failed.reason}`);
+        }
       }
+      setPhotoFileErrors(failures);
       setPhotoLimitNotice(formatBatchNotice(accepted, duplicates, unreadable, overflow) || null);
       diag("report.picker.batch", {
         picked: picked.length,
@@ -1064,7 +1080,12 @@ function ReportForm() {
         </p>
       )}
 
-      {photoSaveWarning && photos.length > 0 && (
+      {photoSavePending && photos.length > 0 && (
+        <p className="rounded-m3-sm border border-outline-variant px-3 py-2 text-sm" role="status">
+          Saving photos…
+        </p>
+      )}
+      {photoSaveWarning && !photoSavePending && photos.length > 0 && (
         <div className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
           <p>
             Photos could not be saved for draft recovery. Your photos are still

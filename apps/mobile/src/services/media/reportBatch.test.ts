@@ -235,7 +235,44 @@ describe("reportBatch", () => {
       const result = await processReportBatch([photo], 0);
       expect(result.accepted.length).toBe(0);
       expect(result.unreadable.length).toBe(1);
-      expect(result.unreadable[0]?.reason).toBe("Could not read file");
+      expect(result.unreadable[0]?.reason).toBe("Could not read the selected photo");
+      expect(result.unreadable[0]?.index).toBe(0);
+    });
+
+    it("preserves the actionable HEIC failure and its selection position", async () => {
+      // A Xiaomi HEIC the decoder refuses must surface the export-as-JPEG
+      // guidance — not a generic "could not read" — labeled by position.
+      const heic = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 104, 101, 105, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      const { photo: photo1 } = createMockPhoto("p1", new Uint8Array([1, 2, 3]));
+      const heicPhoto = { id: "heic", nativeUri: "file:///mock/heic", webPath: "blob:mock/heic", format: "heic" };
+      const heicFile = new File([heic], "photo.heic", { type: "image/heic" });
+      const { photo: photo3 } = createMockPhoto("p3", new Uint8Array([7, 8, 9]));
+      const good1 = new File([new Uint8Array([255, 216]), new Uint8Array([255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0]), new Uint8Array([1, 2, 3]), new Uint8Array([255, 217])], "photo.jpg", { type: "image/jpg" });
+      const good3 = new File([new Uint8Array([255, 216]), new Uint8Array([255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0]), new Uint8Array([7, 8, 9]), new Uint8Array([255, 217])], "photo.jpg", { type: "image/jpg" });
+      const map = new Map<string, File>([
+        ["blob:mock/p1", good1],
+        ["blob:mock/heic", heicFile],
+        ["blob:mock/p3", good3],
+      ]);
+      setupFetchMock(map);
+
+      const result = await processReportBatch([photo1, heicPhoto, photo3], 0);
+      expect(result.accepted.length).toBe(2);
+      expect(result.unreadable.length).toBe(1);
+      expect(result.unreadable[0]?.index).toBe(1);
+      expect(result.unreadable[0]?.reason).toMatch(/export it as jpeg/i);
+      // No native paths leak into the surfaced reason.
+      expect(result.unreadable[0]?.reason).not.toMatch(/file:\/\/|content:\/\/|blob:/i);
+    });
+
+    it("offsets positions by the caller's index base", async () => {
+      const { photo } = createMockPhoto("p1", new Uint8Array([1, 2, 3]));
+      setupFetchMock(new Map<string, File>([[photo.webPath, new File(["x"], "p.jpg", { type: "image/jpeg" })]]));
+      global.fetch = vi.fn().mockRejectedValue(new Error("Network error")) as typeof fetch;
+
+      const result = await processReportBatch([photo], 0, undefined, undefined, 2);
+      expect(result.unreadable.length).toBe(1);
+      expect(result.unreadable[0]?.index).toBe(2);
     });
 
     it("hash computation failure produces unreadable", async () => {

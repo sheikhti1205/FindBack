@@ -1,10 +1,27 @@
 import { photoToFile, type PickedPhoto } from "../photo";
 import { computeSha256Hex, createHashRegistry, type PhotoHashRegistry } from "./dedupe";
 
+/**
+ * True for conversion failures photo.ts marks as safe to surface verbatim
+ * (PhotoImportError: authored, actionable, path-free literals). A name check
+ * rather than a class import keeps this working when screen tests mock the
+ * photo module: anything else stays generic so private native URIs never leak.
+ */
+function isSafeConversionError(err: unknown): err is Error {
+  return err instanceof Error && (err as { name?: string }).name === "PhotoImportError";
+}
+
 export { createHashRegistry } from "./dedupe";
 
 export interface UnreadablePhoto {
   photo: PickedPhoto;
+  /** Position of the failed selection within the input array (0-based). */
+  index: number;
+  /**
+   * The actual conversion failure for PhotoImportErrors (safe, actionable,
+   * path-free literals like the HEIC export guidance); a generic message for
+   * anything else so private native URIs never leak into the interface.
+   */
   reason: string;
 }
 
@@ -28,6 +45,12 @@ export async function processReportBatch(
   alreadySelectedCount: number,
   existingHashRegistry?: PhotoHashRegistry,
   onAccepted?: (photo: PickedPhoto, file: File, hash: string) => void,
+  /**
+   * Offset of pickedPhotos[0] within the user's original selection. The
+   * Report screen converts one native selection item at a time, so it passes
+   * the selection position here to keep failure labels ("Photo 2") truthful.
+   */
+  indexBase = 0,
 ): Promise<ReportBatchResult> {
   const capacity = Math.max(0, 5 - alreadySelectedCount);
   const registry = existingHashRegistry ?? createHashRegistry();
@@ -37,17 +60,22 @@ export async function processReportBatch(
   const overflow: PickedPhoto[] = [];
 
   // Process in selection order, respecting capacity
-  for (const photo of pickedPhotos) {
+  for (const [offset, photo] of pickedPhotos.entries()) {
     if (accepted.length >= capacity) {
       overflow.push(photo);
       continue;
     }
 
+    const index = indexBase + offset;
     let file: File;
     try {
       file = await photoToFile(photo);
-    } catch {
-      unreadable.push({ photo, reason: "Could not read file" });
+    } catch (err) {
+      unreadable.push({
+        photo,
+        index,
+        reason: isSafeConversionError(err) ? err.message : "Could not read the selected photo",
+      });
       continue;
     }
 
@@ -55,7 +83,7 @@ export async function processReportBatch(
     try {
       hash = await computeSha256Hex(file);
     } catch {
-      unreadable.push({ photo, reason: "Could not compute file hash" });
+      unreadable.push({ photo, index, reason: "Could not compute file hash" });
       continue;
     }
 
