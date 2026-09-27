@@ -121,13 +121,30 @@ function LinkSheet({ selection, triggerRef, onCancel, onSave, onRemove }: {
           <h2 id={`${id}-title`} className="text-lg font-semibold">{editing ? "Edit link" : "Add link"}</h2>
           <label className="block text-sm" htmlFor={`${id}-text`}>Selected text</label>
           <input id={`${id}-text`} value={selection.text} readOnly className="w-full rounded-m3-xs border border-outline-variant bg-surface-container p-3" />
-          <form onSubmit={(event) => {
-            event.preventDefault();
-            const error = onSave(url.trim());
-            if (error) setMessage(error);
-          }}>
+          {/* Deliberately NOT a <form>: this dialog renders inside ancestor
+            forms (e.g. the Report form) via FloatingPortal, and portal events
+            bubble through the React tree — an inner submit would propagate to
+            the outer form and could publish the report. Enter saves via the
+            input key handler instead. */}
+          <div>
             <label htmlFor={`${id}-url`} className="block text-sm">URL</label>
-            <input id={`${id}-url`} type="url" value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={message != null} aria-describedby={message ? `${id}-error` : undefined} className="w-full rounded-m3-xs border border-outline-variant p-3" />
+            <input
+              id={`${id}-url`}
+              type="url"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const error = onSave(url.trim());
+                  if (error) setMessage(error);
+                }
+              }}
+              aria-invalid={message != null}
+              aria-describedby={message ? `${id}-error` : undefined}
+              className="w-full rounded-m3-xs border border-outline-variant p-3"
+            />
             {message && <p id={`${id}-error`} role="alert" className="text-sm text-error">{message}</p>}
             <div className="mt-4 flex justify-end gap-2">
               {editing && isSafeRichTextHref(selection.href) && (
@@ -145,9 +162,18 @@ function LinkSheet({ selection, triggerRef, onCancel, onSave, onRemove }: {
               {editing && (
                 <button type="button" onClick={onRemove} aria-label="Remove link" className="min-h-[48px] min-w-[48px] rounded-m3-xs border border-outline-variant px-3">Remove link</button>
               )}
-              <button type="submit" className="min-h-[48px] min-w-[48px] rounded-m3-xs bg-on-surface px-3 text-surface">{editing ? "Save link" : "Add link"}</button>
+              <button
+                type="button"
+                onClick={() => {
+                  const error = onSave(url.trim());
+                  if (error) setMessage(error);
+                }}
+                className="min-h-[48px] min-w-[48px] rounded-m3-xs bg-on-surface px-3 text-surface"
+              >
+                {editing ? "Save link" : "Add link"}
+              </button>
             </div>
-          </form>
+          </div>
         </div>
       </div>
     </FloatingPortal>

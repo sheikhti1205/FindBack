@@ -16,9 +16,13 @@ interface MockPhotoResult {
   file: File;
 }
 
-// Helper to create a mock PickedPhoto with controllable file content
+// Helper to create a mock PickedPhoto with controllable file content.
+// Emits a verifiable minimal JPEG (SOI + SOF0 1x1 + payload + EOI): the
+// no-decoder fallback probes real headers, so headerless stubs are
+// (correctly) rejected as damaged. The payload keeps hashes distinct.
 function createMockPhoto(id: string, bytes: Uint8Array, format = "jpg"): MockPhotoResult {
-  const file = new File([new Uint8Array([255, 216, 255]), bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, new Uint8Array([255, 217])], `photo.${format}`, { type: `image/${format}` });
+  const sof0 = new Uint8Array([255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0]);
+  const file = new File([new Uint8Array([255, 216]), sof0, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, new Uint8Array([255, 217])], `photo.${format}`, { type: `image/${format}` });
   const photo = {
     id,
     nativeUri: `file:///mock/${id}`,

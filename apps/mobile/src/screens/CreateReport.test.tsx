@@ -157,6 +157,31 @@ describe("CreateReport", () => {
     }
   });
 
+  it("retries photo-byte persistence without reselecting after a storage failure", async () => {
+    // Every persist fails until the retry is armed: the warning is then
+    // deterministic regardless of how many mount-time writes occur. The
+    // failed write must never be recorded as durable, so arming the retry and
+    // clicking it writes the same photo set again and clears the warning.
+    let fail = true;
+    const persist = vi.spyOn(photoStore, "persistStashedPhotos").mockImplementation(async () => {
+      if (fail) throw new Error("quota");
+      return { durable: true, warning: null };
+    });
+    try {
+      render(<CreateReport />);
+      pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
+      await screen.findByRole("button", { name: /retry saving photos/i });
+      const beforeRetry = persist.mock.calls.length;
+      fail = false;
+      fireEvent.click(screen.getByRole("button", { name: /retry saving photos/i }));
+      await waitFor(() => expect(screen.queryByText(/photos could not be saved/i)).toBeNull());
+      expect(persist.mock.calls.length).toBe(beforeRetry + 1);
+      expect(screen.getByRole("button", { name: /remove photo/i })).toBeTruthy();
+    } finally {
+      persist.mockRestore();
+    }
+  });
+
   it("publishes with the selected photo on submit", async () => {
     publishReportMock.mockResolvedValue("p1");
     seedDescription("a black phone lost near the library");
@@ -377,6 +402,21 @@ describe("CreateReport", () => {
     // Sequential validation: the valid JPEG is accepted despite the bad first file.
     await screen.findByRole("img", { name: /photo 1 of 1/i });
     expect(screen.getByText(/unreadable/i)).toBeTruthy();
+  });
+
+  it("names each failed web file with its own reason", async () => {
+    seedDescription("a black phone lost near the library");
+    render(<CreateReport />);
+    const notImage = new File(["nope"], "notes.txt", { type: "text/plain" });
+    const tooBig = new File([new Uint8Array(9 * 1024 * 1024)], "huge.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]');
+    if (!input) throw new Error("file input not found");
+    fireEvent.change(input, { target: { files: [notImage, tooBig] } });
+    // Both filenames appear with their distinct reasons — not one generic
+    // message describing only the last failure.
+    await screen.findByText(/notes\.txt: that file isn't an image/i);
+    expect(screen.getByText(/huge\.jpg:.*under 8 mb/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull();
   });
 
   it("discard draft after a failed recovery leaves a working empty form", async () => {

@@ -20,8 +20,12 @@ vi.mock("@capacitor/camera", () => ({
 const normalizeImageMock = vi.hoisted(() => vi.fn());
 vi.mock("./image", () => ({ normalizeImage: normalizeImageMock }));
 
-import { chooseFromGallery, isCancellation, photoToFile, takePhoto } from "./photo";
+import { chooseFromGallery, isCancellation, normalizeForUpload, photoToFile, takePhoto } from "./photo";
 import { detectMotionPhoto } from "./media/motionPhoto";
+
+/** Minimal valid 1x1 JPEG header (SOI + SOF0 + EOI) for fallback probing. */
+const SOF0_1X1 = [255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0];
+const VALID_JPEG = new Uint8Array([255, 216, ...SOF0_1X1, 255, 217]);
 
 const photo = { type: 0, uri: "content://media/external/images/1", webPath: "http://localhost/_capacitor_file_/1.jpg", saved: false, metadata: { format: "jpg" } };
 
@@ -54,7 +58,7 @@ describe("photo source", () => {
   });
 
   it("builds the upload File from webPath, never base64", async () => {
-    const blob = new Blob([new Uint8Array([255, 216, 255, 217])], { type: "image/jpeg" });
+    const blob = new Blob([VALID_JPEG], { type: "image/jpeg" });
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) });
     vi.stubGlobal("fetch", fetchMock);
     const file = await photoToFile({ nativeUri: "content://x", webPath: "http://localhost/x.jpg", format: "jpg", id: "test-id" }, "x.jpg");
@@ -72,7 +76,7 @@ describe("photo source", () => {
   it("detects a motion clip from XMP plus its actual MP4 offset and keeps just the still", async () => {
     const mp4 = new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 109, 112, 52, 50, 0, 0, 0, 0]);
     const xmp = new TextEncoder().encode('GCamera:MicroVideo="1" GCamera:MicroVideoOffset="16"');
-    const jpeg = new Uint8Array([255, 216, 255, 225, 0, xmp.length + 2, ...xmp, 255, 217]);
+    const jpeg = new Uint8Array([255, 216, 255, 225, 0, xmp.length + 2, ...xmp, ...SOF0_1X1, 255, 217]);
     const combined = new Uint8Array(jpeg.length + mp4.length);
     combined.set(jpeg); combined.set(mp4, jpeg.length);
     expect(detectMotionPhoto(combined)).toEqual({ stillEnd: jpeg.length });
@@ -122,5 +126,65 @@ describe("photo source", () => {
   it("does not infer motion from HEIC format or an unverified trailer", () => {
     const bytes = new TextEncoder().encode('GCamera:MicroVideoOffset="16" but not a JPEG');
     expect(detectMotionPhoto(bytes)).toBeNull();
+  });
+
+  it("rejects a huge native blob by size before reading bytes or decoding", async () => {
+    // A 100 MB native image must die on its reported size: arrayBuffer must
+    // never be called and the decoder must never run. The fake Blob carries
+    // no allocation at all.
+    const arrayBuffer = vi.fn(() => { throw new Error("bytes must not be read"); });
+    const huge = { size: 100 * 1024 * 1024, arrayBuffer } as unknown as Blob;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(huge) }));
+    await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/huge.jpg", format: "jpg", id: "huge" }))
+      .rejects.toThrow("too large to process");
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(normalizeImageMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized HEIC before calling the decoder", async () => {
+    const arrayBuffer = vi.fn(() => { throw new Error("bytes must not be read"); });
+    const hugeHeic = { size: 60 * 1024 * 1024, arrayBuffer } as unknown as Blob;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(hugeHeic) }));
+    await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/big.heic", format: "heic", id: "heic-big" }))
+      .rejects.toThrow("too large to process");
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(normalizeImageMock).not.toHaveBeenCalled();
+  });
+
+  it("gives an actionable HEIC error when a small HEIC cannot be decoded", async () => {
+    // ftyp box with a heic brand; decoder unavailable in this environment.
+    const heic = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 104, 101, 105, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob([heic], { type: "image/heic" })) }));
+    await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/a.heic", format: "heic", id: "heic-small" }))
+      .rejects.toThrow("Export it as JPEG");
+  });
+
+  it("rejects renamed non-photos in the no-decoder fallback", async () => {
+    const spoof = new File(["this is not image data at all"], "photo.jpg", { type: "image/jpeg" });
+    await expect(normalizeForUpload(spoof)).rejects.toThrow("doesn't look like a photo file");
+    expect(normalizeImageMock).toHaveBeenCalled();
+  });
+
+  it("rejects a declared JPEG whose bytes are really a PNG", async () => {
+    // Minimal PNG: signature + IHDR with 1x1 dimensions + IEND.
+    const png = new Uint8Array([
+      137, 80, 78, 71, 13, 10, 26, 10,
+      0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 144, 119, 83, 222,
+      0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ]);
+    const mislabeled = new File([png], "photo.jpg", { type: "image/jpeg" });
+    await expect(normalizeForUpload(mislabeled)).rejects.toThrow("claims to be image/jpeg");
+  });
+
+  it("rejects a JPEG with a damaged header in the no-decoder fallback", async () => {
+    // SOI marker only: magic bytes claim JPEG but no SOF exists to verify.
+    const truncated = new File([new Uint8Array([255, 216, 255, 217])], "photo.jpg", { type: "image/jpeg" });
+    await expect(normalizeForUpload(truncated)).rejects.toThrow("header is damaged");
+  });
+
+  it("still accepts a verifiable image when no decoder exists", async () => {
+    const valid = new File([VALID_JPEG], "photo.jpg", { type: "image/jpeg" });
+    const out = await normalizeForUpload(valid);
+    expect(out).toBe(valid);
   });
 });

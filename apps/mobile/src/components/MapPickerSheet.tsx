@@ -303,8 +303,12 @@ export function MapPickerSheet({
     snapPreviewTo(pendingFix);
   }
 
-  async function handleSearchSubmit(event: FormEvent): Promise<void> {
-    event.preventDefault();
+  async function handleSearchSubmit(event?: FormEvent): Promise<void> {
+    // No nested <form> exists anymore (see below), but stop propagation
+    // defensively: this sheet renders inside the Report <form>, and a submit
+    // event reaching it would publish the report.
+    event?.preventDefault();
+    event?.stopPropagation();
     const now = Date.now();
     if (now - lastSubmitRef.current < SUBMIT_DEBOUNCE_MS) return;
     lastSubmitRef.current = now;
@@ -431,22 +435,29 @@ export function MapPickerSheet({
           {mapSource.attribution} · {mapSource.name}
         </p>
 
-        <form onSubmit={(event) => void handleSearchSubmit(event)} className="flex gap-2">
+        {/* Deliberately NOT a <form>: this sheet renders inside the Report
+          <form> (BottomSheet mounts in the component tree, not a portal), and
+          an inner submit would propagate to it and could publish the report.
+          Enter searches via the input key handler instead. */}
+        <div className="flex gap-2">
           <label className="min-w-0 flex-1">
             <span className="sr-only">Search for a place</span>
             <input
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void handleSearchSubmit(event);
+              }}
               placeholder="Search for a place"
               aria-label="Search for a place"
               maxLength={120}
               className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
             />
           </label>
-          <Button type="submit" variant="outline" size="md" loading={searching}>
+          <Button type="button" variant="outline" size="md" loading={searching} onClick={() => void handleSearchSubmit()}>
             Search
           </Button>
-        </form>
+        </div>
         <p className="text-xs text-on-surface-variant">
           Place results: {searchConfig.attribution}
         </p>

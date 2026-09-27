@@ -1,115 +1,103 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi, afterEach } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
-import { useRef } from "react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useRef, useState } from "react";
 import { useFocusTrap } from "./useFocusTrap";
 
-describe("useFocusTrap", () => {
-  afterEach(cleanup);
+afterEach(() => cleanup());
 
-  it("moves focus into the trap on mount", () => {
-    const onClose = vi.fn();
+function Outer({ children, onClose }: { children?: React.ReactNode; onClose?: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const setRef = useFocusTrap(ref, onClose ?? vi.fn(), true);
+  return (
+    <div ref={setRef} data-testid="outer" tabIndex={-1}>
+      <button type="button">Outer action</button>
+      {children}
+    </div>
+  );
+}
 
-    function Trap() {
-      const ref = useRef<HTMLDivElement>(null);
-      useFocusTrap(ref as React.RefObject<HTMLElement>, onClose);
+function Inner({ onClose }: { onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const setRef = useFocusTrap(ref, onClose, true);
+  return (
+    <div ref={setRef} role="dialog" aria-label="Inner dialog" tabIndex={-1}>
+      <button type="button">Inner first</button>
+      <button type="button">Inner second</button>
+    </div>
+  );
+}
+
+function Nested({ onOuterClose, onInnerClose }: { onOuterClose: () => void; onInnerClose: () => void }) {
+  // The inner dialog opens AFTER the outer layer mounts, exactly like the
+  // production sheets/menus/dialogs: push order then matches z-order, so the
+  // last-opened layer is topmost.
+  const [open, setOpen] = useState(false);
+  return (
+    <Outer onClose={onOuterClose}>
+      <button type="button" onClick={() => setOpen(true)}>Open inner</button>
+      {open ? <Inner onClose={() => { onInnerClose(); setOpen(false); }} /> : null}
+    </Outer>
+  );
+}
+
+function openInner(): void {
+  fireEvent.click(screen.getByRole("button", { name: "Open inner" }));
+  expect(screen.getByRole("dialog", { name: "Inner dialog" })).toBeTruthy();
+}
+
+describe("useFocusTrap nested layers", () => {
+  it("moves Tab into the topmost dialog instead of wrapping the covered editor", () => {
+    const onOuterClose = vi.fn();
+    const onInnerClose = vi.fn();
+    render(<Nested onOuterClose={onOuterClose} onInnerClose={onInnerClose} />);
+    openInner();
+    // Opening the dialog focuses its first control; move focus back out to
+    // the covered editor, then press Tab: the top dialog must reclaim it.
+    (screen.getByRole("button", { name: "Outer action" }) as HTMLElement).focus();
+    expect(document.activeElement?.textContent).toBe("Outer action");
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement?.textContent).toBe("Inner first");
+    expect(onOuterClose).not.toHaveBeenCalled();
+    expect(onInnerClose).not.toHaveBeenCalled();
+  });
+
+  it("wraps Shift+Tab inside the topmost dialog", () => {
+    render(<Nested onOuterClose={vi.fn()} onInnerClose={vi.fn()} />);
+    openInner();
+    (screen.getByRole("button", { name: "Inner first" }) as HTMLElement).focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement?.textContent).toBe("Inner second");
+  });
+
+  it("closes only the topmost layer on Escape", () => {
+    const onOuterClose = vi.fn();
+    const onInnerClose = vi.fn();
+    render(<Nested onOuterClose={onOuterClose} onInnerClose={onInnerClose} />);
+    openInner();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onInnerClose).toHaveBeenCalledTimes(1);
+    expect(onOuterClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Inner dialog" })).toBeNull();
+  });
+
+  it("restores focus to the trigger when the top dialog unmounts", () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
       return (
-        <div ref={ref} tabIndex={-1}>
-          <button>First</button>
-          <a href="#">Link</a>
-          <button>Last</button>
+        <div>
+          <button type="button" onClick={() => setOpen(true)}>Open dialog</button>
+          {open ? <Inner onClose={() => setOpen(false)} /> : null}
         </div>
       );
     }
-
-    render(<Trap />);
-    expect(document.activeElement).toBe(document.querySelector("button"));
-  });
-
-  it("Tab on the last focusable wraps to the first", () => {
-    const onClose = vi.fn();
-
-    function Trap() {
-      const ref = useRef<HTMLDivElement>(null);
-      useFocusTrap(ref as React.RefObject<HTMLElement>, onClose);
-      return (
-        <div ref={ref} tabIndex={-1}>
-          <button>First</button>
-          <a href="#">Link</a>
-          <button>Last</button>
-        </div>
-      );
-    }
-
-    const { container } = render(<Trap />);
-    const last = container.querySelectorAll("button")[1] as HTMLElement;
-    last.focus();
-
-    act(() => {
-      container.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
-    });
-    expect(document.activeElement).toBe(container.querySelector("button"));
-  });
-
-  it("Shift+Tab on the first wraps to the last", () => {
-    const onClose = vi.fn();
-
-    function Trap() {
-      const ref = useRef<HTMLDivElement>(null);
-      useFocusTrap(ref as React.RefObject<HTMLElement>, onClose);
-      return (
-        <div ref={ref} tabIndex={-1}>
-          <button>First</button>
-          <a href="#">Link</a>
-          <button>Last</button>
-        </div>
-      );
-    }
-
-    const { container } = render(<Trap />);
-    const first = container.querySelector("button") as HTMLElement;
-    first.focus();
-
-    act(() => {
-      container.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
-    });
-    const buttons = container.querySelectorAll("button");
-    expect(document.activeElement).toBe(buttons[buttons.length - 1]);
-  });
-
-  it("Escape calls onClose", () => {
-    const onClose = vi.fn();
-
-    function Trap() {
-      const ref = useRef<HTMLDivElement>(null);
-      useFocusTrap(ref as React.RefObject<HTMLElement>, onClose);
-      return <div ref={ref} tabIndex={-1}><button>First</button></div>;
-    }
-
-    const { container } = render(<Trap />);
-    act(() => {
-      container.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("restores focus to the opener on unmount", () => {
-    const onClose = vi.fn();
-
-    const opener = document.createElement("button");
-    opener.textContent = "Opener";
-    document.body.appendChild(opener);
-    opener.focus();
-
-    function Trap() {
-      const ref = useRef<HTMLDivElement>(null);
-      useFocusTrap(ref as React.RefObject<HTMLElement>, onClose);
-      return <div ref={ref} tabIndex={-1}><button>First</button></div>;
-    }
-
-    const { unmount } = render(<Trap />);
-    act(() => { unmount(); });
-    expect(document.activeElement).toBe(opener);
-    opener.remove();
+    render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "Open dialog" });
+    (trigger as HTMLElement).focus();
+    fireEvent.click(trigger);
+    expect(document.activeElement?.textContent).toBe("Inner first");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Inner dialog" })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 });

@@ -1,6 +1,6 @@
 import { Camera, MediaType, MediaTypeSelection, CameraErrorCode } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
-import { sniffImage } from "./media/importImage";
+import { probeDimensions, sniffImage } from "./media/importImage";
 import { detectMotionPhoto } from "./media/motionPhoto";
 import { normalizeImage } from "./image";
 
@@ -92,8 +92,64 @@ export async function normalizeForUpload(source: File): Promise<File> {
   } catch (err) {
     if (err instanceof Error && (err.message === TOO_LARGE_FOR_UPLOAD || err.message === TOO_LARGE_TO_PROCESS)) throw err;
     if (source.size > MAX_UPLOAD_BYTES) throw new Error(TOO_LARGE_FOR_UPLOAD);
+    // The decoder failed or is unavailable: do NOT trust the declared MIME
+    // type — verify the actual bytes before accepting the original. Magic
+    // bytes reject renamed non-photos, the declared-type cross-check rejects
+    // mislabeled files, and the header probe rejects truncated/corrupt
+    // images that would otherwise fail later at publishing time.
+    const bytes = new Uint8Array(await blobBytes(source));
+    const kind = sniffImage(bytes);
+    if (!kind) {
+      throw new Error(
+        `"${source.name}" doesn't look like a photo file. It may be corrupt or renamed — choose a JPEG, PNG, WebP, or GIF photo.`,
+      );
+    }
+    if (!FALLBACK_ACCEPTED_KINDS.has(kind)) {
+      throw new Error(
+        kind === "heic" || kind === "heif"
+          ? "This HEIC/HEIF photo could not be decoded on this device. Export it as JPEG and try again."
+          : `"${source.name}" looks like ${fallbackBaseKind(kind).toUpperCase()}, which isn't supported here. Choose a JPEG, PNG, WebP, or GIF photo.`,
+      );
+    }
+    const declaredBase = declaredImageBase(source.type);
+    if (declaredBase !== null && declaredBase !== fallbackBaseKind(kind)) {
+      throw new Error(
+        `"${source.name}" claims to be ${source.type} but its contents look like ${fallbackBaseKind(kind)}. Re-save the file and try again.`,
+      );
+    }
+    if (probeDimensions(bytes, kind) === null) {
+      throw new Error(
+        `"${source.name}" looks like ${fallbackBaseKind(kind)} but its header is damaged, so it can't be verified. Re-save the file and try again.`,
+      );
+    }
     return source;
   }
+}
+
+/** Accepted kinds for the no-decoder fallback, once their bytes check out. */
+const FALLBACK_ACCEPTED_KINDS: ReadonlySet<string> = new Set([
+  "jpeg",
+  "png",
+  "png-animated",
+  "gif",
+  "gif-animated",
+  "webp",
+  "webp-animated",
+]);
+
+function fallbackBaseKind(kind: string): string {
+  return kind.endsWith("-animated") ? kind.slice(0, -"-animated".length) : kind;
+}
+
+function declaredImageBase(mimeType: string): string | null {
+  const declared = mimeType.trim().toLowerCase();
+  if (!declared) return null;
+  if (declared === "image/jpeg" || declared === "image/jpg") return "jpeg";
+  if (declared === "image/png") return "png";
+  if (declared === "image/gif") return "gif";
+  if (declared === "image/webp") return "webp";
+  // application/octet-stream and unknown types: no claim to check against.
+  return null;
 }
 
 function withExtension(name: string, mimeType: string): string {
@@ -106,6 +162,10 @@ export async function photoToFile(photo: PickedPhoto, name?: string): Promise<Fi
   const response = await fetch(photo.webPath);
   if (!response.ok) throw new Error("Could not read the selected photo");
   const blob = await response.blob();
+  // Memory guard FIRST: reject huge natives (camera originals, Motion Photo
+  // containers, HEIC) by their reported size before materializing the full
+  // bytes or invoking any decoder. Applies to every kind, including HEIC.
+  if (blob.size > MAX_ORIGINAL_BYTES) throw new Error(TOO_LARGE_TO_PROCESS);
   const bytes = new Uint8Array(await blobBytes(blob));
   const kind = sniffImage(bytes);
   const still = kind === "jpeg" ? detectMotionPhoto(bytes) : null;

@@ -109,6 +109,11 @@ export function useFocusTrap(
         return;
       }
       if (event.key !== "Tab") return;
+      // Same contract as Escape: a covered layer must not fight the topmost
+      // dialog for focus. Only the topmost layer traps Tab; the layers below
+      // ignore it entirely (their handler would otherwise pull focus back
+      // into the underlying editor while the dialog is active).
+      if (!isTopModalLayer(layerIdRef.current!)) return;
 
       const focusable = getFocusable();
       if (focusable.length === 0) return;

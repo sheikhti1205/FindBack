@@ -211,7 +211,10 @@ describe("MapPickerSheet", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    fireEvent.submit(screen.getByLabelText("Search for a place").closest("form")!);
+    // The search control is deliberately NOT a nested <form> (it renders
+    // inside the Report form): both the Search button and Enter trigger it.
+    expect(screen.getByLabelText("Search for a place").closest("form")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     expect(await screen.findByText("Mirpur, Dhaka")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(1);
 

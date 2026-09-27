@@ -237,6 +237,10 @@ function ReportForm() {
   const [photoSaveWarning, setPhotoSaveWarning] = useState(false);
   const [photoRestoreError, setPhotoRestoreError] = useState(false);
   const [photoLimitNotice, setPhotoLimitNotice] = useState<string | null>(null);
+  // Per-file pick failures ("name: reason"), reset on every new pick. The old
+  // single generic message could only describe the last failure when several
+  // files failed for different reasons.
+  const [photoFileErrors, setPhotoFileErrors] = useState<string[]>([]);
   const [fieldErrors, setFieldErrors] = useState<{
     title?: string;
     description?: string;
@@ -565,7 +569,13 @@ function ReportForm() {
   // Order-only changes (reorder) skip the byte snapshot: display order lives in
   // the JSON draft autosave below, and accepted Files are immutable, so an
   // unchanged id/size/name/type set means the bytes are already durable.
+  //
+  // Durability contract: persistedPhotoSigRef marks only the signature whose
+  // write SUCCEEDED. A failed write leaves it untouched so the same photo set
+  // is retried automatically (manual Retry button or the next effect run) —
+  // a failed persist is never represented as a durable snapshot.
   const persistedPhotoSigRef = useRef<string | null>(null);
+  const [photoSaveRetryKey, setPhotoSaveRetryKey] = useState(0);
   useEffect(() => {
     if (!photoRecoveryReady) return;
     const sig = photos
@@ -573,17 +583,26 @@ function ReportForm() {
       .sort()
       .join("|");
     if (persistedPhotoSigRef.current === sig) return;
-    persistedPhotoSigRef.current = sig;
     let cancelled = false;
     // Warning-only persist: a resolved non-durable report (bytes that cannot
     // survive process death) warns just like a real storage failure, without
     // dropping the live session photos.
     void persistStashedPhotos(accountId).then(
-      (report) => { if (!cancelled) setPhotoSaveWarning(report ? !report.durable : false); },
+      (report) => {
+        if (cancelled) return;
+        const durable = report ? report.durable : false;
+        setPhotoSaveWarning(!durable);
+        if (durable) persistedPhotoSigRef.current = sig;
+      },
       () => { if (!cancelled) setPhotoSaveWarning(true); },
     );
     return () => { cancelled = true; };
-  }, [photos, accountId, photoRecoveryReady]);
+  }, [photos, accountId, photoRecoveryReady, photoSaveRetryKey]);
+
+  function retryPhotoSave(): void {
+    setPhotoSaveWarning(false);
+    setPhotoSaveRetryKey((key) => key + 1);
+  }
 
   // Blob lifecycle (W6 #16): revoke preview URLs on unmount but KEEP stashed Files.
   // Remount recreates object URLs from the stashed Files (all 5 slots via the
@@ -658,6 +677,7 @@ function ReportForm() {
    */
   function onPickBatch(picked: PickedPhoto[]): void {
     setError(null);
+    setPhotoFileErrors([]);
     enqueuePick(async () => {
       await restorePromiseRef.current;
       const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
@@ -721,19 +741,24 @@ function ReportForm() {
     if (!files || files.length === 0) return;
     const list = Array.from(files);
     setError(null);
+    setPhotoFileErrors([]);
     enqueuePick(async () => {
       await restorePromiseRef.current;
       let accepted = 0;
       let duplicates = 0;
       let unreadable = 0;
       let overflow = 0;
+      // Per-file failures: when several files fail for different reasons the
+      // user must see WHICH filename caused WHICH failure, not one generic
+      // message that only describes the last error.
+      const failures: string[] = [];
       for (const file of list) {
         if (MAX_REPORT_PHOTOS - photosRef.current.length <= 0) {
           overflow += 1;
           continue;
         }
         if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-          setError("That file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.");
+          failures.push(`${file.name}: that file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.`);
           unreadable += 1;
           continue;
         }
@@ -741,7 +766,7 @@ function ReportForm() {
         try {
           payload = await normalizeForUpload(file);
         } catch (err) {
-          setError(friendlyError(err).message);
+          failures.push(`${file.name}: ${friendlyError(err).message}`);
           unreadable += 1;
           continue;
         }
@@ -749,7 +774,7 @@ function ReportForm() {
         try {
           digest = await computeSha256Hex(payload);
         } catch {
-          setError("That photo could not be verified. Please try it again.");
+          failures.push(`${file.name}: that photo could not be verified. Please try it again.`);
           unreadable += 1;
           continue;
         }
@@ -761,6 +786,7 @@ function ReportForm() {
         acceptPickedPhoto(payload, null, digest);
         accepted += 1;
       }
+      setPhotoFileErrors(failures);
       setPhotoLimitNotice(formatBatchNotice(accepted, duplicates, unreadable, overflow) || null);
       diag("report.picker.web", {
         picked: list.length,
@@ -830,6 +856,7 @@ function ReportForm() {
     setPhotos([]);
     setPreviewPhotoId(null);
     setPhotoLimitNotice(null);
+    setPhotoFileErrors([]);
   }
 
   // Native capture/conversion rejects on real failures (cancellation returns
@@ -867,6 +894,10 @@ function ReportForm() {
   }
 
   async function onSubmit(e: React.FormEvent) {
+    // Defense-in-depth against nested interactive sheets (location search,
+    // link dialog): only a submit that originates from THIS form may publish.
+    // A submit event bubbled from any other control is ignored outright.
+    if (e.target !== e.currentTarget) return;
     e.preventDefault();
     if (submitting.current || uncertain || !photoRecoveryReady) return;
     // Start a new trace for this publish action
@@ -1034,9 +1065,17 @@ function ReportForm() {
       )}
 
       {photoSaveWarning && photos.length > 0 && (
-        <p className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
-          Photos could not be saved for draft recovery. Keep this page open or remove and reselect a photo to retry.
-        </p>
+        <div className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
+          <p>
+            Photos could not be saved for draft recovery. Your photos are still
+            here for this session — retry saving without reselecting anything.
+          </p>
+          <div className="mt-2">
+            <Button type="button" variant="outline" size="md" onClick={retryPhotoSave}>
+              Retry saving photos
+            </Button>
+          </div>
+        </div>
       )}
 
       {photoRestoreError && failedPhotoIds.length > 0 && (
@@ -1210,6 +1249,16 @@ function ReportForm() {
           <p className="text-xs text-error" role="status">
             {photoLimitNotice}
           </p>
+        )}
+        {photoFileErrors.length > 0 && (
+          <div className="text-xs text-error" role="alert">
+            <p>Some photos couldn&apos;t be added:</p>
+            <ul className="list-disc pl-5">
+              {photoFileErrors.map((message, index) => (
+                <li key={`${index}-${message}`}>{message}</li>
+              ))}
+            </ul>
+          </div>
         )}
         {!isNativeCameraAvailable() && (
           <input
