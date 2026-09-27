@@ -1,16 +1,13 @@
 import { CATEGORIES } from "./constants.js";
 
 /**
- * Additive category taxonomy (Report-perfection P3).
+ * Additive category taxonomy (Report-perfection P3), released in full.
  *
- * `CATEGORIES` remains the eight canonical strings the deployed server
- * validator accepts today. This module layers the proposed 25-option
- * taxonomy on top of it WITHOUT widening the released set, so the client can
- * never submit a category the server would reject (R-052/R-051).
- *
- * Release is gated by `RELEASED_CATEGORIES`; flipping the gate requires the
- * versioned, additive migration in supabase/migrations to have been applied
- * by the owner first.
+ * `CATEGORIES` holds all 25 canonical strings and the deployed server
+ * validator accepts the same 25 (migration
+ * 20260926000001_category_expansion.sql, applied). `RELEASED_CATEGORIES`
+ * therefore equals the full catalog; `PROPOSED_CATEGORIES` is empty and the
+ * staged-gate helpers below remain as a guard against unknown strings only.
  */
 
 export const CATEGORY_GROUPS = [

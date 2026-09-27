@@ -7,7 +7,7 @@ import { categoryTrigger, categoryValue } from "../test-utils/reportCategory";
 afterEach(cleanup);
 
 describe("CategoryField (P3 searchable grouped sheet)", () => {
-  it("exposes only the released canonical options for submission", () => {
+  it("exposes all 25 released canonical options for submission", () => {
     expect(CATEGORY_OPTIONS.map((o) => o.value)).toEqual([
       "Electronics",
       "Bags & Wallets",
@@ -17,6 +17,23 @@ describe("CategoryField (P3 searchable grouped sheet)", () => {
       "Clothing",
       "Accessories & Jewelry",
       "Other",
+      "Phones & Tablets",
+      "Computers & Accessories",
+      "Audio & Wearables",
+      "Cameras & Photography",
+      "Watches & Eyewear",
+      "Footwear",
+      "Personal Care",
+      "Tools & Equipment",
+      "Office Supplies",
+      "Umbrellas & Bottles",
+      "Household Items",
+      "Sports & Fitness",
+      "Toys & Games",
+      "Travel & Luggage",
+      "Vehicle Accessories",
+      "Medical & Health Items",
+      "Pet Accessories",
     ]);
   });
 
@@ -46,35 +63,45 @@ describe("CategoryField (P3 searchable grouped sheet)", () => {
     );
   });
 
-  it("disables staged categories and never commits them", () => {
+  it("commits a cutover category and closes the sheet", async () => {
     const onChange = vi.fn();
     render(<CategoryField value="" onChange={onChange} />);
     fireEvent.click(categoryTrigger());
-    const staged = screen.getByRole("button", { name: "Phones & Tablets" }) as HTMLButtonElement;
-    expect(staged.disabled).toBe(true);
-    fireEvent.click(staged);
-    expect(onChange).not.toHaveBeenCalled();
+    const option = screen.getByRole("button", { name: "Phones & Tablets" }) as HTMLButtonElement;
+    expect(option.disabled).toBe(false);
+    fireEvent.click(option);
+    expect(onChange).toHaveBeenCalledWith("Phones & Tablets");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: /choose a category/i })).toBeNull(),
+    );
   });
 
-  it("finds an unreleased category through a synonym but keeps it locked", () => {
-    render(<CategoryField value="" onChange={() => {}} />);
+  it("finds a cutover category through a synonym and commits it", () => {
+    const onChange = vi.fn();
+    render(<CategoryField value="" onChange={onChange} />);
     fireEvent.click(categoryTrigger());
     fireEvent.change(screen.getByPlaceholderText(/search categories/i), {
       target: { value: "spectacles" },
     });
     const match = screen.getByRole("button", { name: "Watches & Eyewear" }) as HTMLButtonElement;
-    expect(match.disabled).toBe(true);
+    expect(match.disabled).toBe(false);
+    fireEvent.click(match);
+    expect(onChange).toHaveBeenCalledWith("Watches & Eyewear");
   });
 
-  it.each(["phone", "laptop", "camera"])("offers a released Electronics option when searching %s", (query) => {
+  it.each([
+    ["phone", "Phones & Tablets"],
+    ["laptop", "Computers & Accessories"],
+    ["camera", "Cameras & Photography"],
+  ] as Array<[string, string]>)("offers the specific cutover option when searching %s", (query, expected) => {
     const onChange = vi.fn();
     render(<CategoryField value="" onChange={onChange} />);
     fireEvent.click(categoryTrigger());
     fireEvent.change(screen.getByPlaceholderText(/search categories/i), { target: { value: query } });
-    const option = screen.getByRole("button", { name: "Electronics" }) as HTMLButtonElement;
+    const option = screen.getByRole("button", { name: expected }) as HTMLButtonElement;
     expect(option.disabled).toBe(false);
     fireEvent.click(option);
-    expect(onChange).toHaveBeenCalledWith("Electronics");
+    expect(onChange).toHaveBeenCalledWith(expected);
   });
 
   it("clears the query and recovers from zero results", () => {

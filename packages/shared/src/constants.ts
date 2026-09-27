@@ -4,6 +4,12 @@ export type PostType = (typeof POST_TYPES)[number];
 export const POST_STATUSES = ["OPEN", "MATCHED", "RECOVERED", "CLOSED"] as const;
 export type PostStatus = (typeof POST_STATUSES)[number];
 
+/**
+ * Canonical category strings persisted to the database. The original eight
+ * stay first in their historical order; the 17 cutover additions follow in
+ * catalog group order. Released by migration
+ * 20260926000001_category_expansion.sql (applied).
+ */
 export const CATEGORIES = [
   "Electronics",
   "Bags & Wallets",
@@ -13,6 +19,23 @@ export const CATEGORIES = [
   "Clothing",
   "Accessories & Jewelry",
   "Other",
+  "Phones & Tablets",
+  "Computers & Accessories",
+  "Audio & Wearables",
+  "Cameras & Photography",
+  "Watches & Eyewear",
+  "Footwear",
+  "Personal Care",
+  "Tools & Equipment",
+  "Office Supplies",
+  "Umbrellas & Bottles",
+  "Household Items",
+  "Sports & Fitness",
+  "Toys & Games",
+  "Travel & Luggage",
+  "Vehicle Accessories",
+  "Medical & Health Items",
+  "Pet Accessories",
 ] as const;
 export type Category = (typeof CATEGORIES)[number];
 

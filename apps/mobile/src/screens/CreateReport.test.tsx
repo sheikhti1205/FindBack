@@ -557,15 +557,14 @@ describe("CreateReport", () => {
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
-  it("never publishes a staged category restored from an old draft", async () => {
+  it("publishes a cutover category restored from a draft", async () => {
     publishReportMock.mockResolvedValue("p1");
     const { saveDraft } = await import("../services/reportDraft");
     saveDraft({
       type: "LOST",
       title: "Lost phone",
       description: "a black phone lost near the library",
-      // Persisted JSON may carry a staged value from a newer/staged client.
-      category: "Phones & Tablets" as never,
+      category: "Phones & Tablets",
       eventDate: todayInputValue(),
       location: { label: "", latitude: null, longitude: null },
       youtubeUrl: "",
@@ -575,7 +574,33 @@ describe("CreateReport", () => {
       photoFormat: null,
     }, "u1");
     render(<CreateReport />);
-    // The staged value is dropped, so the form asks for a live category.
+    fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
+    await waitFor(() =>
+      expect(publishReportMock).toHaveBeenCalledWith(
+        expect.objectContaining({ category: "Phones & Tablets" }),
+        null,
+        expect.any(String),
+      ),
+    );
+  });
+
+  it("still drops an unknown category restored from a corrupt draft", async () => {
+    publishReportMock.mockResolvedValue("p1");
+    const { saveDraft } = await import("../services/reportDraft");
+    saveDraft({
+      type: "LOST",
+      title: "Lost phone",
+      description: "a black phone lost near the library",
+      category: "Spaceships" as never,
+      eventDate: todayInputValue(),
+      location: { label: "", latitude: null, longitude: null },
+      youtubeUrl: "",
+      photoId: null,
+      photoNativeUri: null,
+      photoWebPath: null,
+      photoFormat: null,
+    }, "u1");
+    render(<CreateReport />);
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     expect(await screen.findByText("Choose a category.")).toBeTruthy();
     expect(publishReportMock).not.toHaveBeenCalled();

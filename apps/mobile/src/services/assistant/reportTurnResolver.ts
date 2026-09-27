@@ -17,6 +17,8 @@ export interface ReportTurnResolution {
 }
 
 const CATEGORY_ALIASES: ReadonlyArray<{ aliases: readonly string[]; category: Category }> = [
+  // Specific Tech entries come first: resolveAssistantCategory returns the
+  // first match, so these must precede the broad Electronics fallback.
   {
     aliases: [
       "phone",
@@ -25,20 +27,64 @@ const CATEGORY_ALIASES: ReadonlyArray<{ aliases: readonly string[]; category: Ca
       "cellphone",
       "cell phone",
       "iphone",
-      "laptop",
       "tablet",
       "ipad",
-      "camera",
+      "android",
+    ],
+    category: "Phones & Tablets",
+  },
+  {
+    aliases: [
+      "laptop",
+      "notebook",
+      "computer",
+      "mouse",
+      "keyboard",
+      "monitor",
+    ],
+    category: "Computers & Accessories",
+  },
+  {
+    aliases: [
       "headphone",
       "earbud",
       "earphone",
+      "airpods",
+      "smartwatch",
+      "speaker",
+    ],
+    category: "Audio & Wearables",
+  },
+  {
+    aliases: ["camera", "lens", "gopro"],
+    category: "Cameras & Photography",
+  },
+  {
+    aliases: [
+      "watch",
+      "spectacle",
+      "glasses",
+      "eyeglass",
+      "sunglass",
+    ],
+    category: "Watches & Eyewear",
+  },
+  {
+    aliases: ["shoe", "sneaker", "sandal", "boot", "footwear"],
+    category: "Footwear",
+  },
+  {
+    aliases: ["suitcase", "trolley", "duffel", "luggage"],
+    category: "Travel & Luggage",
+  },
+  {
+    aliases: [
       "charger",
       "cable",
-      "speaker",
-      "computer",
-      "airpods",
       "electronics",
       "electronic",
+      "device",
+      "gadget",
     ],
     category: "Electronics",
   },
@@ -46,12 +92,10 @@ const CATEGORY_ALIASES: ReadonlyArray<{ aliases: readonly string[]; category: Ca
     aliases: [
       "backpack",
       "purse",
-      "suitcase",
       "handbag",
       "wallet",
       "bag",
       "tote",
-      "duffel",
     ],
     category: "Bags & Wallets",
   },
@@ -80,7 +124,6 @@ const CATEGORY_ALIASES: ReadonlyArray<{ aliases: readonly string[]; category: Ca
     aliases: [
       "shirt",
       "jacket",
-      "shoe",
       "dress",
       "cloth",
       "clothes",
@@ -97,13 +140,9 @@ const CATEGORY_ALIASES: ReadonlyArray<{ aliases: readonly string[]; category: Ca
   },
   {
     aliases: [
-      "watch",
       "ring",
       "jewelry",
       "jewellery",
-      "glasses",
-      "eyeglasses",
-      "sunglasses",
       "bracelet",
       "necklace",
       "earring",
@@ -129,7 +168,7 @@ function aliasMatchesToken(alias: string, token: string): boolean {
 
 export function resolveAssistantCategory(text: string): Category | undefined {
   const lower = ` ${text.toLowerCase()} `;
-  if (lower.includes(" cell phone ")) return "Electronics";
+  if (lower.includes(" cell phone ")) return "Phones & Tablets";
   if (lower.includes(" id card ")) return "Documents & IDs";
   const tokens = tokensOf(text);
   for (const entry of CATEGORY_ALIASES) {

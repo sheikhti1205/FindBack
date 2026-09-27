@@ -25,15 +25,36 @@ const ORIGINAL_EIGHT = [
 ];
 
 describe("category taxonomy (P3)", () => {
-  it("keeps the eight released canonical strings exactly", () => {
-    expect([...RELEASED_CATEGORIES]).toEqual(ORIGINAL_EIGHT);
+  it("releases all 25 canonical strings with the original eight first", () => {
+    expect([...RELEASED_CATEGORIES]).toEqual([
+      ...ORIGINAL_EIGHT,
+      "Phones & Tablets",
+      "Computers & Accessories",
+      "Audio & Wearables",
+      "Cameras & Photography",
+      "Watches & Eyewear",
+      "Footwear",
+      "Personal Care",
+      "Tools & Equipment",
+      "Office Supplies",
+      "Umbrellas & Bottles",
+      "Household Items",
+      "Sports & Fitness",
+      "Toys & Games",
+      "Travel & Luggage",
+      "Vehicle Accessories",
+      "Medical & Health Items",
+      "Pet Accessories",
+    ]);
   });
 
-  it("proposes 25 total canonical options split 8 released / 17 staged", () => {
+  it("holds 25 total canonical options with nothing left staged", () => {
     expect(CATEGORY_CATALOG).toHaveLength(25);
     expect(new Set(CATEGORY_CATALOG.map((o) => o.canonical)).size).toBe(25);
-    expect(PROPOSED_CATEGORIES).toHaveLength(17);
-    expect(PROPOSED_CATEGORIES.some((c) => RELEASED_CATEGORIES.includes(c))).toBe(false);
+    expect(PROPOSED_CATEGORIES).toHaveLength(0);
+    expect([...RELEASED_CATEGORIES].sort()).toEqual(
+      CATEGORY_CATALOG.map((o) => o.canonical).sort(),
+    );
   });
 
   it("places every option in a declared group and keeps Other in the fallback group", () => {
@@ -43,9 +64,10 @@ describe("category taxonomy (P3)", () => {
     expect(CATEGORY_CATALOG.find((o) => o.canonical === "Other")?.group).toBe("Other");
   });
 
-  it("never exposes an unreleased option as selectable", () => {
+  it("treats every catalog option as released and still rejects unknown strings", () => {
     expect(isReleasedCategory("Electronics")).toBe(true);
-    expect(isReleasedCategory("Phones & Tablets")).toBe(false);
+    expect(isReleasedCategory("Phones & Tablets")).toBe(true);
+    expect(isReleasedCategory("Pet Accessories")).toBe(true);
     expect(isReleasedCategory("not-a-category")).toBe(false);
   });
 

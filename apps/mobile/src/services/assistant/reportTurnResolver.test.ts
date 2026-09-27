@@ -3,8 +3,23 @@ import { startFlow } from "./guidedAssistantController";
 import { resolveAssistantCategory, resolveReportTurn } from "./reportTurnResolver";
 
 describe("resolveAssistantCategory", () => {
-  it("maps phone to Electronics", () => {
-    expect(resolveAssistantCategory("I lost my phone")).toBe("Electronics");
+  it("maps phone to Phones & Tablets", () => {
+    expect(resolveAssistantCategory("I lost my phone")).toBe("Phones & Tablets");
+  });
+  it("maps laptop to Computers & Accessories", () => {
+    expect(resolveAssistantCategory("I lost my laptop")).toBe("Computers & Accessories");
+  });
+  it("maps camera to Cameras & Photography", () => {
+    expect(resolveAssistantCategory("I found a camera")).toBe("Cameras & Photography");
+  });
+  it("maps headphones to Audio & Wearables", () => {
+    expect(resolveAssistantCategory("I lost my headphones")).toBe("Audio & Wearables");
+  });
+  it("maps shoes to Footwear", () => {
+    expect(resolveAssistantCategory("I lost my shoes")).toBe("Footwear");
+  });
+  it("keeps charger on broad Electronics", () => {
+    expect(resolveAssistantCategory("I lost my charger")).toBe("Electronics");
   });
   it("maps keychain to Keys", () => {
     expect(resolveAssistantCategory("I lost my keychain")).toBe("Keys");
@@ -22,7 +37,7 @@ describe("resolveReportTurn", () => {
       "I lost my black phone near Central library on 2026-09-01",
     );
     expect(resolved.kind).toBe("SLOT_VALUE");
-    expect(resolved.fields?.category).toBe("Electronics");
+    expect(resolved.fields?.category).toBe("Phones & Tablets");
     expect(resolved.fields?.dateText).toBe("2026-09-01");
     expect(resolved.fields?.locationNote).toBe("Central library");
   });

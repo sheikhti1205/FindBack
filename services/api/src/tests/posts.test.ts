@@ -126,6 +126,43 @@ describe("posts + feed", () => {
       .expect(200);
   });
 
+  it("rejects an invalid category on update instead of persisting it", async () => {
+    const agent = await registerAgent();
+    const created = await request(app)
+      .post("/posts")
+      .set("Authorization", `Bearer ${agent.token}`)
+      .send(validPost())
+      .expect(201);
+    const id = (created.body as PostItem).id;
+
+    const res = await request(app)
+      .patch(`/posts/${id}`)
+      .set("Authorization", `Bearer ${agent.token}`)
+      .send({ category: "Spaceships" })
+      .expect(400);
+    expect(res.body.error).toBe("Validation failed");
+
+    const detail = await request(app).get(`/posts/${id}`).expect(200);
+    expect((detail.body as PostItem).category).toBe("Books & Stationery");
+  });
+
+  it("accepts a cutover category on update", async () => {
+    const agent = await registerAgent();
+    const created = await request(app)
+      .post("/posts")
+      .set("Authorization", `Bearer ${agent.token}`)
+      .send(validPost())
+      .expect(201);
+    const id = (created.body as PostItem).id;
+
+    const res = await request(app)
+      .patch(`/posts/${id}`)
+      .set("Authorization", `Bearer ${agent.token}`)
+      .send({ category: "Phones & Tablets" })
+      .expect(200);
+    expect((res.body as PostItem).category).toBe("Phones & Tablets");
+  });
+
   it("lists my posts", async () => {
     const agent = await registerAgent();
     await request(app)

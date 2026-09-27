@@ -58,19 +58,18 @@ describe("OpenRouter photo suggestions", () => {
     await expect(promise).rejects.toMatchObject({ name: "AbortError" });
   });
 
-  it("keeps useful text while dropping an unreleased category from the model", async () => {
-    const unreleasedResult = {
+  it("passes a released cutover category from the model straight through", async () => {
+    const cutoverResult = {
       ...result,
-      suggestedCategory: "Phones & Tablets", // not in RELEASED_CATEGORIES
+      suggestedCategory: "Phones & Tablets", // released by the category cutover
     };
-    const send = vi.fn(async () => JSON.stringify(unreleasedResult));
+    const send = vi.fn(async () => JSON.stringify(cutoverResult));
     const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
     const file = new File(["jpeg"], "item.jpg", { type: "image/jpeg" });
     await expect(analyzeReportPhoto(file, true, { deps: { encode, send } })).resolves.toMatchObject({
       suggestedTitle: "Black umbrella",
       suggestedDescription: "A black umbrella with a wooden handle.",
-      suggestedCategory: null,
-      categoryUnavailable: true,
+      suggestedCategory: "Phones & Tablets",
     });
   });
 

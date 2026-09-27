@@ -1,4 +1,4 @@
-import { CATEGORIES, CATEGORY_CATALOG, isReleasedCategory } from "@findback/shared";
+import { CATEGORIES, CATEGORY_CATALOG } from "@findback/shared";
 import { createOpenRouterClient, OpenRouterError } from "./openRouter";
 import { getConnectedOpenRouterKey } from "./aiCredentials";
 import { normalizeImage } from "./image";
@@ -45,10 +45,8 @@ export async function analyzeReportPhoto(
   ) => createOpenRouterClient(getConnectedOpenRouterKey).image(prompt, data, confirmed, opts)))(PROMPT, image, consent, options);
   const parsed = parseVlmOutput(text, CATEGORY_CATALOG.map((option) => option.canonical));
   if (parsed === null) throw new OpenRouterError("UNUSABLE_RESPONSE");
-  // Keep the useful text if the model suggests a known but unreleased category.
-  // Never return that category as a form-applicable suggestion.
-  if (parsed.suggestedCategory && !isReleasedCategory(parsed.suggestedCategory)) {
-    return { ...parsed, suggestedCategory: null, categoryUnavailable: true };
-  }
+  // Every catalog category is released (migration 20260926000001 applied),
+  // and parseVlmOutput already constrains suggestions to the catalog, so a
+  // parsed category is always form-applicable. Unknown strings never parse.
   return parsed;
 }

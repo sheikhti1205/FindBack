@@ -6,7 +6,7 @@ import {
   type PostType,
   type UpdatePostInput,
 } from "@findback/shared";
-import { createPostSchema, feedQuerySchema } from "@findback/shared";
+import { createPostSchema, feedQuerySchema, updatePostSchema } from "@findback/shared";
 import { getStore } from "../db/index.js";
 import { AppError, newId, nowIso } from "./helpers.js";
 import { emitGateway } from "../realtime/gateway.js";
@@ -145,7 +145,9 @@ export async function createPost(userId: string, raw: unknown): Promise<PostItem
 export async function updatePost(userId: string, postId: string, raw: unknown): Promise<PostItem> {
   const post = await ensurePostExists(postId);
   if (String(post.user_id) !== userId) throw new AppError(403, "You can only edit your own posts");
-  const patch = raw as UpdatePostInput;
+  // Validate untrusted input (category included): unknown or staged values
+  // are rejected with 400 instead of being cast straight into storage.
+  const patch = updatePostSchema.parse(raw);
   const fields: Record<string, SqlValue> = {};
   const mapping: (keyof UpdatePostInput)[] = [
     "type",
