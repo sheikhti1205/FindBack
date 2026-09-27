@@ -227,6 +227,7 @@ export function ReportDatePicker({
 
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-outline-variant">
             <Button
+              type="button"
               variant="text"
               size="md"
               onClick={() => {
@@ -240,11 +241,11 @@ export function ReportDatePicker({
               Today
             </Button>
             <div className="flex gap-2">
-              <Button variant="outline" size="md" onClick={handleCancel}>
+              <Button type="button" variant="outline" size="md" onClick={handleCancel}>
                 <X size={16} aria-hidden className="mr-1" />
                 Cancel
               </Button>
-              <Button variant="primary" size="md" onClick={handleConfirm} disabled={!displayedValue || isFutureDate(displayedValue)}>
+              <Button type="button" variant="primary" size="md" onClick={handleConfirm} disabled={!displayedValue || isFutureDate(displayedValue)}>
                 <Check size={16} aria-hidden className="mr-1" />
                 Confirm
               </Button>

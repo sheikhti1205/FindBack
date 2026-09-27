@@ -9,7 +9,12 @@ interface VlmSuggestionsProps {
   currentTitle: string;
   currentDescription: string;
   currentCategory: Category | "";
-  onApply: (patch: Partial<VlmAnalysis>) => void;
+  /**
+   * Applies one reviewed field. Must return true only when the patch actually
+   * landed — a declined parent confirm resolves to false so the suggestion
+   * stays visible instead of disappearing as though Apply succeeded.
+   */
+  onApply: (patch: Partial<VlmAnalysis>) => boolean;
 }
 
 const STANDARD_ERROR = "Couldn't draft text from this photo. You can retry or continue writing manually.";
@@ -125,8 +130,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
 
   function handleApplyTitle() {
     if (!suggestion) return;
-    onApply({ suggestedTitle: editedTitle });
-    resolveField("title");
+    if (onApply({ suggestedTitle: editedTitle })) resolveField("title");
   }
 
   function handleKeepTitle() {
@@ -136,8 +140,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
 
   function handleApplyDescription() {
     if (!suggestion) return;
-    onApply({ suggestedDescription: editedDescription });
-    resolveField("description");
+    if (onApply({ suggestedDescription: editedDescription })) resolveField("description");
   }
 
   function handleKeepDescription() {
@@ -151,8 +154,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
       setError("Choose one of the available categories, or keep your current one.");
       return;
     }
-    onApply({ suggestedCategory: editedCategory as Category });
-    resolveField("category");
+    if (onApply({ suggestedCategory: editedCategory as Category })) resolveField("category");
   }
 
   function handleKeepCategory() {

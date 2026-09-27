@@ -208,6 +208,111 @@ describe("CreateReport", () => {
     expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("names the failed slot and recovers it on retry", async () => {
+    seedDescription("a black phone lost near the library");
+    saveDraft({
+      ...loadDraft("u1")!,
+      title: "Lost phone",
+      category: "Electronics",
+      photoId: "r1",
+      photoIds: ["r1"],
+      photoRefs: [{ id: "r1", nativeUri: "content://photo", webPath: "content://photo", format: "jpg" }],
+    }, "u1");
+    const converted = new File(["jpeg-bytes"], "photo.jpg", { type: "image/jpeg" });
+    photo.photoToFile.mockRejectedValueOnce(new Error("revive failed"));
+    photo.photoToFile.mockResolvedValueOnce(converted);
+    try {
+      render(<CreateReport />);
+      // The failure names the slot instead of a bare boolean.
+      await screen.findByText(/could not be recovered.*photo 1/i);
+      expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
+
+      fireEvent.click(screen.getByRole("button", { name: /retry recovery/i }));
+      await waitFor(() =>
+        expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false),
+      );
+      expect(screen.queryByText(/could not be recovered/i)).toBeNull();
+      expect(screen.getByRole("img", { name: /photo 1 of/i })).toBeTruthy();
+    } finally {
+      photo.photoToFile.mockReset();
+    }
+  });
+
+  it("removes unavailable photos with confirmation and keeps the draft text", async () => {
+    seedDescription("a black phone lost near the library");
+    saveDraft({
+      ...loadDraft("u1")!,
+      title: "Lost phone",
+      category: "Electronics",
+      photoId: "gone",
+      photoIds: ["gone"],
+    }, "u1");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      render(<CreateReport />);
+      await screen.findByText(/could not be recovered.*photo 1/i);
+
+      fireEvent.click(screen.getByRole("button", { name: /remove unavailable and continue/i }));
+      expect(confirmSpy).toHaveBeenCalled();
+      await waitFor(() =>
+        expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false),
+      );
+      // Pruned from the persisted draft; the text survives for the new attempt.
+      await waitFor(() => expect(loadDraft("u1")?.photoIds).toEqual([]));
+      expect(loadDraft("u1")?.title).toBe("Lost phone");
+      expect(screen.queryByText(/could not be recovered/i)).toBeNull();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("discard draft after a failed recovery leaves a working empty form", async () => {
+    seedDescription("a black phone lost near the library");
+    saveDraft({
+      ...loadDraft("u1")!,
+      title: "Lost phone",
+      category: "Electronics",
+      photoId: "gone",
+      photoIds: ["gone"],
+    }, "u1");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      render(<CreateReport />);
+      await screen.findByText(/could not be recovered/i);
+      expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
+
+      fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
+      await waitFor(() => expect(screen.queryByText(/could not be recovered/i)).toBeNull());
+      // Recovery gate resolved: a completely new report can be started.
+      expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("");
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("previews converted bytes instead of the original HEIC picker URL", async () => {
+    seedDescription("a black phone lost near the library");
+    saveDraft({
+      ...loadDraft("u1")!,
+      title: "Lost phone",
+      category: "Electronics",
+      photoId: "h1",
+      photoIds: ["h1"],
+      photoRefs: [{ id: "h1", nativeUri: "content://heic-photo", webPath: "content://heic-photo", format: "heic" }],
+    }, "u1");
+    photo.photoToFile.mockResolvedValueOnce(new File(["jpeg-bytes"], "photo.jpg", { type: "image/jpeg" }));
+    try {
+      render(<CreateReport />);
+      const img = await screen.findByRole("img", { name: /photo 1 of/i });
+      // The WebView may not render HEIC: the thumbnail must be the converted
+      // JPEG object URL, never the original HEIC resource.
+      expect(img.getAttribute("src")).toBe("blob:preview");
+    } finally {
+      photo.photoToFile.mockReset();
+    }
+  });
+
   it("allows manual category selection without AI", async () => {
     publishReportMock.mockResolvedValue("p1");
     seedDescription("house keys on a blue lanyard");

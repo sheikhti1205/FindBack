@@ -21,7 +21,7 @@ describe("consented OpenRouter image suggestions", () => {
   it("never sends a selected photo until explicit consent, then requires review before applying", async () => {
     analyze.mockResolvedValueOnce({ suggestedTitle: "Blue wallet", suggestedDescription: "A blue wallet.", suggestedCategory: null, uncertainFields: [] });
     const file = new File(["jpeg"], "wallet.jpg", { type: "image/jpeg" });
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
     expandPanel();
     expect(analyze).not.toHaveBeenCalled();
@@ -41,7 +41,7 @@ describe("consented OpenRouter image suggestions", () => {
     let resolveFirst!: (value: unknown) => void;
     analyze.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
     const first = new File(["jpeg"], "first.jpg", { type: "image/jpeg" });
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     const view = render(<MemoryRouter><VlmSuggestions file={first} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
     expandPanel();
     fireEvent.click(screen.getByLabelText(CONSENT_LABEL));

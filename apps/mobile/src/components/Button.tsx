@@ -22,12 +22,17 @@ export function Button({
   className = "",
   children,
   disabled,
+  // A bare <button> inside a <form> submits it. Default to type="button" so
+  // sheet/dialog controls never submit a parent form; pass type="submit"
+  // explicitly for real submit actions.
+  type = "button",
   ...rest
 }: ButtonProps) {
   const sizeCls =
     size === "lg" ? "min-h-[52px] px-6 text-base" : "min-h-[48px] px-5 text-sm";
   return (
     <button
+      type={type}
       className={`inline-flex items-center justify-center gap-2 rounded-m3-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${VARIANTS[variant]} ${sizeCls} ${className}`}
       disabled={disabled || loading}
       aria-busy={loading || undefined}

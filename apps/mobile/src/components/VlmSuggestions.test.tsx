@@ -63,7 +63,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       uncertainFields: [],
     });
     const file = makeFile("wallet.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -85,7 +85,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       uncertainFields: [],
     });
     const first = makeFile("first.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     const { rerender } = render(<MemoryRouter><VlmSuggestions file={first} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -108,7 +108,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     let resolveAnalyze: (value: unknown) => void;
     analyze.mockImplementationOnce(() => new Promise((resolve) => { resolveAnalyze = resolve; }));
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -137,7 +137,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       uncertainFields: [],
     });
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -161,6 +161,31 @@ describe("VlmSuggestions — Draft description from photo", () => {
     expect(screen.getByRole("button", { name: "Keep category" })).toBeTruthy();
   });
 
+  it("keeps the suggestion visible when the parent declines the replacement", async () => {
+    analyze.mockResolvedValueOnce({
+      suggestedTitle: "AI Title",
+      suggestedDescription: "AI Description",
+      suggestedCategory: "Electronics",
+      uncertainFields: [],
+    });
+    const file = makeFile("photo.jpg", "image/jpeg");
+    // The parent shows a confirm dialog and the user declines: onApply
+    // returns false, so the suggestion must stay instead of resolving away.
+    const apply = vi.fn(() => false);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="Kept title" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
+
+    expandPanel();
+    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+    await waitFor(() => expect(screen.getByText("Your title")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply title" }));
+    expect(apply).toHaveBeenCalledWith({ suggestedTitle: "AI Title" });
+    // Declined: the suggested title is still on screen for a later decision.
+    expect(screen.getByRole("button", { name: "Apply title" })).toBeTruthy();
+    expect((screen.getByLabelText("Suggested title") as HTMLInputElement).value).toBe("AI Title");
+  });
+
   it("compares AI fields with the live report values, including edits made after analysis", async () => {
     analyze.mockResolvedValueOnce({
       suggestedTitle: "AI Title",
@@ -169,7 +194,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       uncertainFields: [],
     });
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     const { rerender } = render(
       <MemoryRouter><VlmSuggestions file={file} currentTitle="Saved title" currentDescription="Saved description" currentCategory="Bags & Wallets" onApply={apply} /></MemoryRouter>,
     );
@@ -201,7 +226,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       uncertainFields: [],
     });
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -225,7 +250,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       uncertainFields: [],
     });
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -243,7 +268,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
   it("failure shows exact copy and keeps fields/photos intact", async () => {
     analyze.mockRejectedValueOnce(new Error("OpenRouter took too long to respond. Please try again."));
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -262,7 +287,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       Object.assign(new Error("Connect your OpenRouter API key to use AI."), { code: "MISSING_KEY" }),
     );
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -276,7 +301,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
   it("timeout classification - bounded timeout, no indefinite spinner", async () => {
     analyze.mockRejectedValueOnce(new Error("OpenRouter took too long to respond. Please try again."));
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -297,7 +322,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       uncertainFields: [],
     });
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -316,7 +341,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     let resolveFirst: (value: unknown) => void;
     analyze.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
     const first = makeFile("first.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     const { rerender } = render(<MemoryRouter><VlmSuggestions file={first} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
@@ -348,7 +373,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       uncertainFields: [],
     });
     const file = makeFile("photo.jpg", "image/jpeg");
-    const apply = vi.fn();
+    const apply = vi.fn(() => true);
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();

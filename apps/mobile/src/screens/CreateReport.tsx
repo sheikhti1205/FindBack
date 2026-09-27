@@ -76,6 +76,20 @@ function canCreateObjectUrl(): boolean {
   return typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
 }
 
+/**
+ * Preview URL for a report photo. Converted originals (HEIC/HEIF → JPEG via
+ * photoToFile) must preview the CONVERTED File bytes: the native picker
+ * webPath can point at the original HEIC resource, which the WebView may be
+ * unable to render even though a valid JPEG was produced. The original native
+ * URI is retained separately on `picked` for recovery and provenance.
+ */
+function previewUrlFor(file: File, picked: PickedPhoto | null): string {
+  const converted = /^(heic|heif)$/i.test((picked?.format ?? "").trim());
+  const web = picked?.webPath;
+  if (!converted && web && !web.startsWith("blob:")) return web;
+  return canCreateObjectUrl() ? URL.createObjectURL(file) : "";
+}
+
 /** Keeps only categories that are live for submission; staged/unknown ones are dropped. */
 function releasedCategoryOrEmpty(value: string | null | undefined): Category | "" {
   return value && isReleasedCategory(value) ? (value as Category) : "";
@@ -184,26 +198,21 @@ function ReportForm() {
       const stashed = getStashedPhoto(id);
       if (!stashed || restored.some((p) => p.id === id)) continue;
       const ref = draftPhotoRef(draft, id);
-      const web = ref?.webPath;
       const nativeUri = ref?.nativeUri;
+      const restoredPicked =
+        nativeUri && !nativeUri.startsWith("blob:")
+          ? {
+              nativeUri,
+              webPath: ref?.webPath && !ref.webPath.startsWith("blob:") ? ref.webPath : nativeUri,
+              format: ref?.format ?? "jpg",
+              id: crypto.randomUUID(),
+            }
+          : (getStashedPhotoMeta(id)?.picked ?? null);
       restored.push({
         id,
         file: stashed,
-        previewUrl:
-          web && !web.startsWith("blob:")
-            ? web
-            : canCreateObjectUrl()
-            ? URL.createObjectURL(stashed)
-            : "",
-        picked:
-          nativeUri && !nativeUri.startsWith("blob:")
-            ? {
-                nativeUri,
-                webPath: web && !web.startsWith("blob:") ? web : nativeUri,
-                format: ref?.format ?? "jpg",
-                id: crypto.randomUUID(),
-              }
-            : (getStashedPhotoMeta(id)?.picked ?? null),
+        previewUrl: previewUrlFor(stashed, restoredPicked),
+        picked: restoredPicked,
       });
     }
     return restored;
@@ -255,32 +264,53 @@ function ReportForm() {
   // Durable mount restore: rehydrate persisted photo bytes,
   // then revive native-capture refs (all 5 slots) via photoToFile, then merge
   // everything into state in draft order. Never touches the editor instance.
-  useEffect(() => {
-    let cancelled = false;
+  // Unrecoverable slots are NAMED (failedPhotoIds) instead of a bare boolean:
+  // publish stays blocked until the user retries or explicitly removes the
+  // unavailable photos, so a report can never silently publish with missing
+  // attachments and the screen can never wedge in a non-publishable state.
+  const [failedPhotoIds, setFailedPhotoIds] = useState<string[]>([]);
+  const recoveringRef = useRef(false);
+
+  async function recoverPhotos(isCancelled: () => boolean): Promise<void> {
+    if (recoveringRef.current) return;
+    recoveringRef.current = true;
     const generation = renderGeneration;
-    restorePromiseRef.current = (async () => {
+    try {
+      setPhotoRestoreError(false);
+      setFailedPhotoIds([]);
+      const draftIds = draftPhotoIds(initialDraft).slice(0, MAX_REPORT_PHOTOS);
+      const missing = new Set<string>();
       try {
         await restoreStashedPhotos(accountId);
       } catch {
-        if (!cancelled && generation === draftGeneration(accountId)) setPhotoRestoreError(true);
-        return;
+        for (const id of draftIds) missing.add(id);
       }
-      if (cancelled || generation !== draftGeneration(accountId)) return;
+      if (isCancelled() || generation !== draftGeneration(accountId)) return;
       const pendings = findPendingNativeRestores(initialDraft);
       const converted = new Map<string, { file: File; picked: PickedPhoto }>();
       for (const pending of pendings) {
         try {
           const file = await photoToFile(pending.picked);
-          if (cancelled || generation !== draftGeneration(accountId)) return;
+          if (isCancelled() || generation !== draftGeneration(accountId)) return;
           converted.set(pending.id, { file, picked: pending.picked });
         } catch {
-          /* that slot stays unrestored; the draft text is unaffected */
+          // Native revive failed: named below; the draft text is unaffected.
+          missing.add(pending.id);
         }
       }
-      if (cancelled || generation !== draftGeneration(accountId)) return;
-      const draftIds = draftPhotoIds(initialDraft).slice(0, MAX_REPORT_PHOTOS);
-      if (draftIds.some((id) => !photosRef.current.some((p) => p.id === id) && !converted.has(id) && !getStashedPhoto(id))) {
-        setPhotoRestoreError(true);
+      if (isCancelled() || generation !== draftGeneration(accountId)) return;
+      for (const id of draftIds) {
+        if (photosRef.current.some((p) => p.id === id)) continue;
+        if (converted.has(id)) continue;
+        if (getStashedPhoto(id)) continue;
+        missing.add(id);
+      }
+      const failed = draftIds.filter((id) => missing.has(id));
+      if (failed.length > 0) {
+        if (!isCancelled() && generation === draftGeneration(accountId)) {
+          setFailedPhotoIds(failed);
+          setPhotoRestoreError(true);
+        }
         return;
       }
       const next = [...photosRef.current];
@@ -291,16 +321,10 @@ function ReportForm() {
         if (!file) continue;
         const ref = draftPhotoRef(initialDraft, id);
         const picked = conv?.picked ?? refToPicked(ref) ?? getStashedPhotoMeta(id)?.picked ?? null;
-        const web = picked?.webPath;
         next.push({
           id,
           file,
-          previewUrl:
-            web && !web.startsWith("blob:")
-              ? web
-              : canCreateObjectUrl()
-                ? URL.createObjectURL(file)
-                : "",
+          previewUrl: previewUrlFor(file, picked),
           picked,
         });
       }
@@ -324,18 +348,57 @@ function ReportForm() {
           unique.push(item);
         }
       }
-      if (cancelled || generation !== draftGeneration(accountId)) return;
+      if (isCancelled() || generation !== draftGeneration(accountId)) return;
       for (const id of duplicateIds) dropStashedPhoto(id, accountId);
       hashRegistryRef.current = registry;
       photosRef.current = unique;
       setPhotos(unique);
       setPhotoRecoveryReady(true);
-    })();
+    } finally {
+      recoveringRef.current = false;
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    restorePromiseRef.current = recoverPhotos(() => cancelled);
     return () => {
       cancelled = true;
     };
     // Mount-only: accountId is fixed for the signed-in session mount.
   }, []);
+
+  /** Manual retry after a failed recovery: re-gates publish until it settles. */
+  function retryPhotoRecovery(): void {
+    setPhotoRecoveryReady(false);
+    restorePromiseRef.current = recoverPhotos(() => false);
+  }
+
+  /**
+   * Explicit, confirmed prune of the named unrecoverable slots. Draft text and
+   * recovered photos are untouched; the autosave effect then persists the
+   * pruned photo list, so the dead-end can never recur for these ids.
+   */
+  function removeUnavailablePhotos(): void {
+    if (failedPhotoIds.length === 0) return;
+    const labels = failedPhotoLabels(failedPhotoIds);
+    if (!window.confirm(`Remove ${labels} and continue with the recovered photos? Your title, description, date and location are kept.`)) return;
+    for (const id of failedPhotoIds) dropStashedPhoto(id, accountId);
+    setFailedPhotoIds([]);
+    setPhotoRestoreError(false);
+    setPhotoRecoveryReady(true);
+    announce("Unavailable photos removed. Recovered photos kept.");
+  }
+
+  /** Human labels ("Photo 2") for failed slots in draft order. */
+  function failedPhotoLabels(ids: string[]): string {
+    const order = draftPhotoIds(initialDraft).slice(0, MAX_REPORT_PHOTOS);
+    const labels = ids.map((id) => {
+      const position = order.indexOf(id);
+      return position === -1 ? "a photo" : `Photo ${position + 1}`;
+    });
+    return labels.length === 1 ? labels[0]! : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+  }
 
   function applyAssistantHandoff(handoff: AssistantReportHandoff): void {
     if (!isAssistantReportHandoff(handoff)) return;
@@ -543,6 +606,11 @@ function ReportForm() {
     setLocation({ label: "", latitude: null, longitude: null });
     setYoutubeUrl("");
     clearPhotos();
+    // A failed recovery must never wedge the screen: discarding resolves the
+    // recovery gate so a completely new report can be started immediately.
+    setFailedPhotoIds([]);
+    setPhotoRestoreError(false);
+    setPhotoRecoveryReady(true);
     setAssistantHandoff(null);
     setUncertain(false);
     setHandoffConflicts([]);
@@ -552,12 +620,7 @@ function ReportForm() {
 
   function acceptPickedPhoto(file: File, photo: PickedPhoto | null, hash?: string): string {
     const id = stashPhotoFile(file, { picked: photo ?? null, accountId });
-    const preview =
-      photo?.nativeUri && !photo.nativeUri.startsWith("blob:")
-        ? photo.webPath
-        : canCreateObjectUrl()
-          ? URL.createObjectURL(file)
-          : "";
+    const preview = previewUrlFor(file, photo);
     const next = [...photosRef.current, { id, file, previewUrl: preview, picked: photo ?? null, hash }];
     // Update the ref synchronously too: queued async work and publish read the
     // ref, not the render-time state, so they must not observe a stale list.
@@ -759,12 +822,17 @@ function ReportForm() {
     }
   }
 
-  function applyVlmSuggestion(patch: Partial<VlmAnalysis>) {
+  /**
+   * Applies one reviewed AI field. Returns true only when the patch actually
+   * landed: a declined replacement confirm leaves the suggestion visible
+   * instead of resolving it away (the child resolves per the outcome).
+   */
+  function applyVlmSuggestion(patch: Partial<VlmAnalysis>): boolean {
     const replacesExisting =
       (!!title.trim() && !!patch.suggestedTitle && patch.suggestedTitle !== title) ||
       (!!description.trim() && !!patch.suggestedDescription && patch.suggestedDescription !== description) ||
       (!!category && !!patch.suggestedCategory && patch.suggestedCategory !== category);
-    if (replacesExisting && !window.confirm("Replace the existing title, description or category with these reviewed AI suggestions?")) return;
+    if (replacesExisting && !window.confirm("Replace the existing title, description or category with these reviewed AI suggestions?")) return false;
     if (patch.suggestedTitle !== undefined) setTitle(patch.suggestedTitle ?? "");
     if (patch.suggestedDescription !== undefined) {
       descriptionLiveRef.current = patch.suggestedDescription ?? "";
@@ -773,6 +841,7 @@ function ReportForm() {
     if (patch.suggestedCategory && isReleasedCategory(patch.suggestedCategory)) {
       setCategory(patch.suggestedCategory as Category);
     }
+    return true;
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -948,10 +1017,22 @@ function ReportForm() {
         </p>
       )}
 
-      {photoRestoreError && (
-        <p className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
-          Saved photos could not be recovered. Your draft is kept; reopen this page to retry before publishing.
-        </p>
+      {photoRestoreError && failedPhotoIds.length > 0 && (
+        <div className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
+          <p>
+            Saved photos could not be recovered ({failedPhotoLabels(failedPhotoIds)}). Your title,
+            description, date, location and recovered photos are kept — nothing publishes until you
+            retry or remove the unavailable photos.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="md" onClick={retryPhotoRecovery}>
+              Retry recovery
+            </Button>
+            <Button type="button" variant="text" size="md" onClick={removeUnavailablePhotos}>
+              Remove unavailable and continue
+            </Button>
+          </div>
+        </div>
       )}
 
       {uncertain && (

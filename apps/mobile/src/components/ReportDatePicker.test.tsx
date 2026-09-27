@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { FormEvent } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ReportDatePicker } from "./ReportDatePicker";
@@ -471,6 +472,34 @@ describe("ReportDatePicker", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("never submits a parent form when Today, Cancel or Confirm are pressed", async () => {
+    const onSubmit = vi.fn((e: FormEvent) => e.preventDefault());
+    const handleChange = vi.fn();
+    render(
+      <form onSubmit={onSubmit}>
+        <ReportDatePicker value="2026-09-25" onChange={handleChange} />
+      </form>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    // Every sheet control must be a plain button: inside a parent <form> a
+    // missing type would submit the whole report on Today/Cancel/Confirm.
+    for (const name of [/^today$/i, /^cancel$/i, /^confirm$/i]) {
+      expect(screen.getByRole("button", { name }).getAttribute("type")).toBe("button");
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: /^today$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(handleChange).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("opens an empty calendar on the server UTC month when local time is in the next month", async () => {
