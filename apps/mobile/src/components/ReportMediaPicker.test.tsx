@@ -46,13 +46,30 @@ describe("ReportMediaPicker", () => {
     expect(galleryBtn).toBeTruthy();
   });
 
-  it("buttons have minimum 48px hitbox", () => {
-    const props = getDefaultProps();
+  it("add and per-photo actions have at least 48px hit targets without losing their actions", () => {
+    const props = getDefaultProps({ photos: [createMockPhoto("p1"), createMockPhoto("p2")] });
     render(<ReportMediaPicker {...props} />);
     const cameraBtn = screen.getByRole("button", { name: "Take photo" });
-    const galleryBtn = screen.getByRole("button", { name: "Choose up to 5 photos" });
-    expect(cameraBtn).toBeTruthy();
-    expect(galleryBtn).toBeTruthy();
+    const galleryBtn = screen.getByRole("button", { name: "Choose up to 3 photos" });
+    const earlierBtn = screen.getByRole("button", { name: "Move photo 2 earlier" });
+    const laterBtn = screen.getByRole("button", { name: "Move photo 1 later" });
+    const removeBtn = screen.getByRole("button", { name: "Remove photo 2" });
+    for (const button of [cameraBtn, galleryBtn, earlierBtn, laterBtn, removeBtn]) {
+      expect(parseFloat((button as HTMLButtonElement).style.width)).toBeGreaterThanOrEqual(48);
+      expect(parseFloat((button as HTMLButtonElement).style.height)).toBeGreaterThanOrEqual(48);
+    }
+    fireEvent.click(laterBtn);
+    fireEvent.click(removeBtn);
+    expect(props.onMove).toHaveBeenCalledWith("p1", "later");
+    expect(props.onRemove).toHaveBeenCalledWith("p2");
+  });
+
+  it("uses theme surfaces and readable theme ink for photo actions and labels", () => {
+    render(<ReportMediaPicker {...getDefaultProps({ photos: Array.from({ length: 5 }, (_, i) => createMockPhoto(`p${i}`)) })} />);
+    expect(screen.getByRole("button", { name: "Take photo" }).style.backgroundColor).toBe("var(--fb-surface-container)");
+    expect(screen.getByRole("button", { name: "Move photo 1 later" }).style.color).toBe("var(--fb-on-surface)");
+    expect(screen.getByRole("button", { name: "View photo 1 of 5 full size" }).style.backgroundColor).toBe("var(--fb-surface-container-low)");
+    expect(screen.getByText("Maximum of 5 photos reached").style.color).toBe("var(--fb-error)");
   });
 
   it("disables add buttons at 5/5", () => {
@@ -128,14 +145,14 @@ describe("ReportMediaPicker", () => {
     expect(screen.getByText("Photo 2 of 2")).toBeTruthy();
   });
 
-  it("shows HEIC/motion disclosure when HEIC photos present", () => {
-    const props = getDefaultProps({ photos: [createMockPhoto("p1", "heic"), createMockPhoto("p2", "jpg")] });
+  it("shows motion disclosure only for flagged motion photos, regardless of format", () => {
+    const props = getDefaultProps({ photos: [{ ...createMockPhoto("p1", "jpg"), motionPhoto: true }, createMockPhoto("p2", "heic")] });
     render(<ReportMediaPicker {...props} />);
     expect(screen.getByText("Motion photo: still image will be posted; motion clip is not included")).toBeTruthy();
   });
 
-  it("does not show disclosure when no HEIC photos", () => {
-    const props = getDefaultProps({ photos: [createMockPhoto("p1", "jpg"), createMockPhoto("p2", "png")] });
+  it("does not show motion disclosure for unflagged HEIC photos", () => {
+    const props = getDefaultProps({ photos: [createMockPhoto("p1", "heic"), createMockPhoto("p2", "png")] });
     render(<ReportMediaPicker {...props} />);
     expect(screen.queryByText("Motion photo: still image will be posted; motion clip is not included")).toBeNull();
   });

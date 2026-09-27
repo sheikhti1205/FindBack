@@ -1,5 +1,6 @@
 import type { PickedPhoto } from "./photo";
 import { storage } from "./storage";
+import { clearAllPhotoBytes, clearPhotoBytes, readPhotoBytes, writePhotoBytes } from "./photoBytes";
 
 /**
  * Photo File store: in-memory Files for the live session + a durable
@@ -10,10 +11,16 @@ import { storage } from "./storage";
  * the File must outlive the screen while staying out of the serialized draft
  * (Files are not JSON). Drafts keep ordered photo ids; the Files live here.
  *
- * Durability across process death (G15): small Files persist their bytes as
- * data URLs alongside metadata; larger Files persist metadata-only and
- * rehydrate via their native URI (`photoToFile`) where one exists. Entries
- * with neither bytes nor a native ref are orphans and are pruned on restore.
+ * Durability across process death (G15): IndexedDB holds full-size Files;
+ * small Files fall back to data URLs where IndexedDB is unavailable. Native
+ * URI references can also be revived via photoToFile on a later session.
+ *
+ * Persist is warning-only: when bytes cannot be stored durably (no IndexedDB
+ * and a File too large for the data-URL fallback, with no native ref), the
+ * registry is still written metadata-only and the call resolves with
+ * `{ durable: false, warning }` instead of throwing — so restore can prune
+ * those orphans and the UI can warn without losing the live session Files.
+ * Only real storage failures (IndexedDB write or descriptor write) reject.
  */
 
 export interface StashedPhotoMeta {
@@ -38,7 +45,7 @@ const PHOTOS_KEY_PREFIX = "findback:reportPhotos:v1:";
 const PHOTOS_ACCOUNT_INDEX_KEY = "findback:reportPhotoAccounts:v1";
 const DEFAULT_ACCOUNT = "default";
 
-/** Files at or under this size persist their bytes; larger persist metadata-only. */
+/** Data-URL fallback limit when IndexedDB is unavailable. */
 export const MAX_DURABLE_PHOTO_BYTES = 1_500_000;
 
 const files = new Map<string, File>();
@@ -108,7 +115,7 @@ function writeRegistry(accountId: string | null | undefined, entries: StoredPhot
       storage.setItem(key, JSON.stringify(slim));
       trackAccount(accountId);
     } catch {
-      /* storage unusable: session memory still works */
+      throw new Error("Photo draft metadata could not be saved");
     }
   }
 }
@@ -176,6 +183,11 @@ export function dropStashedPhoto(id: string | null | undefined, accountId?: stri
   invalidatePersist(accountId);
   files.delete(id);
   metas.delete(id);
+  if (typeof indexedDB !== "undefined") {
+    void writePhotoBytes(accountId ?? DEFAULT_ACCOUNT, Array.from(files)
+      .filter(([key]) => { const owner = metas.get(key)?.accountId; return !owner || owner === accountId; })
+      .map(([key, file]) => ({ id: key, file }))).catch(() => undefined);
+  }
   // Prune the descriptor now so a crash before the next persist cannot
   // resurrect a removed photo; the persist effect rewrites the rest.
   try {
@@ -186,12 +198,28 @@ export function dropStashedPhoto(id: string | null | undefined, accountId?: stri
 }
 
 /**
+ * Outcome of {@link persistStashedPhotos}. `durable` is false when at least
+ * one stashed File could not be stored durably (no IndexedDB, too large for
+ * the data-URL fallback, no native ref to revive it). The registry is still
+ * written and the live Files are untouched — callers must surface `warning`
+ * instead of treating the photos as safely stored.
+ */
+export interface StashedPhotosPersistReport {
+  durable: boolean;
+  warning: string | null;
+}
+
+/**
  * Persist every stashed File's descriptor (+ bytes for small files) to the
  * account registry. Registry mirrors memory authoritatively: ids no longer
  * stashed are dropped. Latest call wins (stale overlapping persists abort
  * before writing so a removal cannot be resurrected by a slow earlier call).
+ *
+ * Warning-only contract: non-durable entries resolve with `durable: false`
+ * (restore prunes them as orphans); only IndexedDB/descriptor write failures
+ * reject.
  */
-export async function persistStashedPhotos(accountId?: string | null): Promise<void> {
+export async function persistStashedPhotos(accountId?: string | null): Promise<StashedPhotosPersistReport> {
   const mySeq = invalidatePersist(accountId);
   const key = photosKey(accountId);
   const entries: StoredPhotoDescriptor[] = [];
@@ -211,18 +239,31 @@ export async function persistStashedPhotos(accountId?: string | null): Promise<v
       format: picked?.format ?? null,
       savedAt: Date.now(),
     };
-    if (file.size <= MAX_DURABLE_PHOTO_BYTES) {
+    if (typeof indexedDB === "undefined" && file.size <= MAX_DURABLE_PHOTO_BYTES) {
       try {
         entry.dataUrl = await fileToDataUrl(file);
       } catch {
         /* metadata-only */
       }
     }
-    if (mySeq !== persistSeq.get(key)) return;
+    // Superseded by a newer persist/drop: report durable so this stale call
+    // neither warns nor resurrects removals; the latest call reports the truth.
+    if (mySeq !== persistSeq.get(key)) return { durable: true, warning: null };
     entries.push(entry);
   }
-  if (mySeq !== persistSeq.get(key)) return;
+  if (mySeq !== persistSeq.get(key)) return { durable: true, warning: null };
+  if (typeof indexedDB !== "undefined") {
+    await writePhotoBytes(accountId ?? DEFAULT_ACCOUNT, entries.map((entry) => ({ id: entry.id, file: files.get(entry.id)! })));
+    if (mySeq !== persistSeq.get(key)) return { durable: true, warning: null };
+  }
   writeRegistry(accountId, entries);
+  if (typeof indexedDB === "undefined" && entries.some((entry) => !entry.dataUrl && !entry.nativeUri)) {
+    return {
+      durable: false,
+      warning: "Persistent photo storage is unavailable; keep this page open to retain the selected photos",
+    };
+  }
+  return { durable: true, warning: null };
 }
 
 /**
@@ -242,6 +283,17 @@ export async function restoreStashedPhotos(accountId?: string | null): Promise<s
       kept.push(entry);
       restored.push(entry.id);
       continue;
+    }
+    if (typeof indexedDB !== "undefined") {
+      const stored = await readPhotoBytes(accountId ?? DEFAULT_ACCOUNT, entry.id);
+      if (mySeq !== (persistSeq.get(photosKey(accountId)) ?? 0)) return [];
+      if (stored) {
+        files.set(entry.id, stored);
+        metas.set(entry.id, { picked: pickedFor(entry.id, entry), accountId });
+        kept.push(entry);
+        restored.push(entry.id);
+        continue;
+      }
     }
     if (entry.dataUrl) {
       try {
@@ -310,6 +362,10 @@ export function clearPhotoStore(accountId?: string | null): void {
     }
   } catch {
     /* best-effort */
+  }
+  if (typeof indexedDB !== "undefined") {
+    if (accountId === undefined) void clearAllPhotoBytes().catch(() => undefined);
+    else void clearPhotoBytes(accountId ?? DEFAULT_ACCOUNT).catch(() => undefined);
   }
 }
 

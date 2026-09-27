@@ -5,7 +5,7 @@ import { storage } from "./storage";
 /**
  * Durable per-photo ref for the report draft: the ordered photo ids plus the
  * rehydration refs for each slot. JSON-safe — the File bytes themselves live
- * in services/photoStore (persisted separately, small files only).
+ * in services/photoStore (persisted separately in IndexedDB).
  */
 export interface ReportPhotoRef {
   id: string;
@@ -15,6 +15,7 @@ export interface ReportPhotoRef {
   nativeUri?: string | null;
   webPath?: string | null;
   format?: string | null;
+  motionPhoto?: boolean;
 }
 
 /** In-app report draft: survives navigation (Help, map helper, model setup)

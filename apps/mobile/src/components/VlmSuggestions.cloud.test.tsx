@@ -22,7 +22,7 @@ describe("consented OpenRouter image suggestions", () => {
     analyze.mockResolvedValueOnce({ suggestedTitle: "Blue wallet", suggestedDescription: "A blue wallet.", suggestedCategory: null, uncertainFields: [] });
     const file = new File(["jpeg"], "wallet.jpg", { type: "image/jpeg" });
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
     expandPanel();
     expect(analyze).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Suggest title & description" }) as HTMLButtonElement).disabled).toBe(true);
@@ -42,13 +42,13 @@ describe("consented OpenRouter image suggestions", () => {
     analyze.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
     const first = new File(["jpeg"], "first.jpg", { type: "image/jpeg" });
     const apply = vi.fn();
-    const view = render(<MemoryRouter><VlmSuggestions file={first} onApply={apply} /></MemoryRouter>);
+    const view = render(<MemoryRouter><VlmSuggestions file={first} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
     expandPanel();
     fireEvent.click(screen.getByLabelText(CONSENT_LABEL));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
     const second = new File(["png"], "second.png", { type: "image/png" });
-    view.rerender(<MemoryRouter><VlmSuggestions file={second} onApply={apply} /></MemoryRouter>);
+    view.rerender(<MemoryRouter><VlmSuggestions file={second} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
     resolveFirst({ suggestedTitle: "Stale title", suggestedDescription: "Stale.", suggestedCategory: null, uncertainFields: [] });
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));

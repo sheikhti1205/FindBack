@@ -10,8 +10,12 @@ import {
   formatAccuracy,
   isLowAccuracy,
   locationFailureMessage,
-  requestOneTimeLocation,
 } from "./locationPermission";
+import {
+  createProductionLocationAdapter,
+  requestFixWithGeneration,
+  type LocationAdapter,
+} from "../services/locationAdapter";
 import {
   resolveMapSource,
   type MapSourceOverride,
@@ -52,6 +56,7 @@ export interface MapPickerSheetProps {
   mapSourceOverride?: MapSourceOverride;
   /** Search-endpoint seam (the future controlled proxy plugs in here). */
   nominatimOverride?: NominatimSearchOverride;
+  locationAdapter?: LocationAdapter;
 }
 
 type MapPhase = "starting" | "ready" | "unsupported" | "error";
@@ -78,7 +83,12 @@ export function MapPickerSheet({
   initialSearchResult,
   mapSourceOverride,
   nominatimOverride,
+  locationAdapter,
 }: MapPickerSheetProps) {
+  const [defaultAdapter] = useState(createProductionLocationAdapter);
+  const adapter = locationAdapter ?? defaultAdapter;
+  const fixGeneration = useRef(0);
+  useEffect(() => () => { fixGeneration.current += 1; }, []);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const searchThrottlerRef = useRef<NominatimThrottler | null>(null);
@@ -142,6 +152,7 @@ export function MapPickerSheet({
     setSearchInput("");
     setSearchError(null);
     setResults([]);
+    setLocating(false);
     setGeoError(null);
     setPendingFix(null);
     setPendingAccuracy(null);
@@ -215,6 +226,8 @@ export function MapPickerSheet({
         if (cancelled) return;
         const center = next.getCenter();
         if (Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
+          fixGeneration.current += 1;
+          setLocating(false);
           setDraft({ lat: center.lat, lng: center.lng });
         }
       });
@@ -233,6 +246,7 @@ export function MapPickerSheet({
     void init();
     return () => {
       cancelled = true;
+      fixGeneration.current += 1;
       mapRef.current?.remove();
       mapRef.current = null;
     };
@@ -265,16 +279,19 @@ export function MapPickerSheet({
     setGeoError(null);
     setPendingFix(null);
     setPendingAccuracy(null);
-    void requestOneTimeLocation().then((outcome) => {
+    void requestFixWithGeneration(adapter, { generation: fixGeneration }).then((outcome) => {
+      if (outcome.kind === "idle") return;
       setLocating(false);
-      if (outcome.status !== "granted") {
-        setGeoError(locationFailureMessage(outcome.status));
+      if (outcome.kind !== "fix") {
+        if (outcome.kind !== "locating" && outcome.kind !== "requesting-permission") {
+          setGeoError(locationFailureMessage(outcome.kind === "services-off" ? "disabled" : outcome.kind));
+        }
         return;
       }
-      const fix: MapCenter = { lat: outcome.latitude, lng: outcome.longitude };
-      if (isLowAccuracy(outcome.accuracyMeters)) {
+      const fix: MapCenter = { lat: outcome.lat, lng: outcome.lng };
+      if (isLowAccuracy(outcome.accuracy)) {
         setPendingFix(fix);
-        setPendingAccuracy(outcome.accuracyMeters);
+        setPendingAccuracy(outcome.accuracy);
         return;
       }
       snapPreviewTo(fix);
@@ -320,6 +337,8 @@ export function MapPickerSheet({
   }
 
   function pickResult(place: PlaceResult): void {
+    fixGeneration.current += 1;
+    setLocating(false);
     const center: MapCenter = { lat: place.latitude, lng: place.longitude };
     setDraft(center);
     setDraftLabel(place.displayName);

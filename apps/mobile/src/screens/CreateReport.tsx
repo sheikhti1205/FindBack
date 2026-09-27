@@ -112,6 +112,7 @@ function refToPicked(ref: ReportPhotoRef | null): PickedPhoto | null {
     webPath: web && !web.startsWith("blob:") ? web : uri,
     format: ref?.format ?? "jpg",
     id: crypto.randomUUID(),
+    motionPhoto: ref?.motionPhoto,
   };
 }
 
@@ -185,7 +186,7 @@ function ReportForm() {
       const ref = draftPhotoRef(draft, id);
       const web = ref?.webPath;
       const nativeUri = ref?.nativeUri;
-restored.push({
+      restored.push({
         id,
         file: stashed,
         previewUrl:
@@ -208,6 +209,9 @@ restored.push({
     return restored;
   }
   const [photos, setPhotos] = useState<ReportPhoto[]>(() => initialPhotos(initialDraft));
+  const photosRef = useRef(photos);
+  const [photoRecoveryReady, setPhotoRecoveryReady] = useState(() => draftPhotoIds(initialDraft).length === 0);
+  const restorePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const [editorResetKey, setEditorResetKey] = useState(0);
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null);
   const hashRegistryRef = useRef(createHashRegistry());
@@ -221,6 +225,8 @@ restored.push({
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(initialDraft?.publishOutcome === "uncertain");
   const [error, setError] = useState<string | null>(null);
+  const [photoSaveWarning, setPhotoSaveWarning] = useState(false);
+  const [photoRestoreError, setPhotoRestoreError] = useState(false);
   const [photoLimitNotice, setPhotoLimitNotice] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{
     title?: string;
@@ -246,21 +252,21 @@ restored.push({
     formSnapshotRef.current = { type, title, description, category, eventDate, location };
   });
 
-  // Durable mount restore: rehydrate persisted photo bytes (small files),
+  // Durable mount restore: rehydrate persisted photo bytes,
   // then revive native-capture refs (all 5 slots) via photoToFile, then merge
   // everything into state in draft order. Never touches the editor instance.
   useEffect(() => {
     let cancelled = false;
     const generation = renderGeneration;
-    void (async () => {
+    restorePromiseRef.current = (async () => {
       try {
         await restoreStashedPhotos(accountId);
       } catch {
-        /* session memory still works */
+        if (!cancelled && generation === draftGeneration(accountId)) setPhotoRestoreError(true);
+        return;
       }
       if (cancelled || generation !== draftGeneration(accountId)) return;
-      const fresh = loadDraft(accountId);
-      const pendings = findPendingNativeRestores(fresh ?? initialDraft);
+      const pendings = findPendingNativeRestores(initialDraft);
       const converted = new Map<string, { file: File; picked: PickedPhoto }>();
       for (const pending of pendings) {
         try {
@@ -272,31 +278,58 @@ restored.push({
         }
       }
       if (cancelled || generation !== draftGeneration(accountId)) return;
-      setPhotos((prev) => {
-        if (generation !== draftGeneration(accountId)) return prev;
-        const next = [...prev];
-        for (const id of draftPhotoIds(fresh ?? initialDraft).slice(0, MAX_REPORT_PHOTOS)) {
-          if (next.some((p) => p.id === id)) continue;
-          const conv = converted.get(id);
-          const file = conv?.file ?? getStashedPhoto(id);
-          if (!file) continue;
-          const ref = draftPhotoRef(fresh ?? initialDraft, id);
-          const picked = conv?.picked ?? refToPicked(ref) ?? getStashedPhotoMeta(id)?.picked ?? null;
-          const web = picked?.webPath;
-          next.push({
-            id,
-            file,
-            previewUrl:
-              web && !web.startsWith("blob:")
-                ? web
-                : canCreateObjectUrl()
-                  ? URL.createObjectURL(file)
-                  : "",
-            picked,
-          });
+      const draftIds = draftPhotoIds(initialDraft).slice(0, MAX_REPORT_PHOTOS);
+      if (draftIds.some((id) => !photosRef.current.some((p) => p.id === id) && !converted.has(id) && !getStashedPhoto(id))) {
+        setPhotoRestoreError(true);
+        return;
+      }
+      const next = [...photosRef.current];
+      for (const id of draftIds) {
+        if (next.some((p) => p.id === id)) continue;
+        const conv = converted.get(id);
+        const file = conv?.file ?? getStashedPhoto(id);
+        if (!file) continue;
+        const ref = draftPhotoRef(initialDraft, id);
+        const picked = conv?.picked ?? refToPicked(ref) ?? getStashedPhotoMeta(id)?.picked ?? null;
+        const web = picked?.webPath;
+        next.push({
+          id,
+          file,
+          previewUrl:
+            web && !web.startsWith("blob:")
+              ? web
+              : canCreateObjectUrl()
+                ? URL.createObjectURL(file)
+                : "",
+          picked,
+        });
+      }
+      const registry = createHashRegistry();
+      const unique: ReportPhoto[] = [];
+      const duplicateIds: string[] = [];
+      for (const item of next) {
+        if (!draftIds.includes(item.id)) {
+          unique.push(item);
+          continue;
         }
-        return next.length === prev.length ? prev : next;
-      });
+        try {
+          const hash = await computeSha256Hex(item.file);
+          if (registry.has(hash)) {
+            duplicateIds.push(item.id);
+            continue;
+          }
+          registry.add(hash);
+          unique.push({ ...item, hash });
+        } catch {
+          unique.push(item);
+        }
+      }
+      if (cancelled || generation !== draftGeneration(accountId)) return;
+      for (const id of duplicateIds) dropStashedPhoto(id, accountId);
+      hashRegistryRef.current = registry;
+      photosRef.current = unique;
+      setPhotos(unique);
+      setPhotoRecoveryReady(true);
     })();
     return () => {
       cancelled = true;
@@ -427,6 +460,7 @@ restored.push({
   // account), photo bytes via the separate photo effect below. Legacy
   // first-photo fields are still written for older readers.
   useEffect(() => {
+    if (!photoRecoveryReady) return;
     const first = photos[0] ?? null;
     saveDraft(
       {
@@ -451,30 +485,39 @@ restored.push({
           nativeUri: p.picked?.nativeUri ?? null,
           webPath: p.picked?.webPath ?? null,
           format: p.picked?.format ?? null,
+          motionPhoto: p.picked?.motionPhoto,
         })),
       },
       accountId,
       renderGeneration,
     );
-  }, [type, title, description, category, eventDate, location, youtubeUrl, photos, accountId, renderGeneration, uncertain]);
+  }, [type, title, description, category, eventDate, location, youtubeUrl, photos, accountId, renderGeneration, uncertain, photoRecoveryReady]);
 
   // Photo bytes follow the photo set only (not every keystroke): the registry
   // mirrors memory authoritatively, so removals are pruned on write.
   useEffect(() => {
-    void persistStashedPhotos(accountId).catch(() => undefined);
-  }, [photos, accountId]);
+    if (!photoRecoveryReady) return;
+    let cancelled = false;
+    // Warning-only persist: a resolved non-durable report (bytes that cannot
+    // survive process death) warns just like a real storage failure, without
+    // dropping the live session photos.
+    void persistStashedPhotos(accountId).then(
+      (report) => { if (!cancelled) setPhotoSaveWarning(report ? !report.durable : false); },
+      () => { if (!cancelled) setPhotoSaveWarning(true); },
+    );
+    return () => { cancelled = true; };
+  }, [photos, accountId, photoRecoveryReady]);
 
   // Blob lifecycle (W6 #16): revoke preview URLs on unmount but KEEP stashed Files.
   // Remount recreates object URLs from the stashed Files (all 5 slots via the
   // durable draft + photo registry).
-  const photosRef = useRef(photos);
-  photosRef.current = photos;
   const mediaPickerPhotos = useMemo(
     () =>
       photos.map((p) => ({
         id: p.id,
         webPath: p.previewUrl,
         format: p.picked?.format,
+        motionPhoto: p.picked?.motionPhoto,
       })),
     [photos],
   );
@@ -507,38 +550,6 @@ restored.push({
     announce("Report draft discarded.");
   }
 
-  function onPickImage(file: File | undefined, photo?: PickedPhoto) {
-    if (!file) return;
-    // The accept attribute is advisory; reject doomed uploads with a clear
-    // reason instead of failing at publish time.
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      setError("That file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.");
-      return;
-    }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setError("That photo is too large. Choose an image under 8 MB.");
-      return;
-    }
-    if (photosRef.current.length >= MAX_REPORT_PHOTOS) {
-      setPhotoLimitNotice(
-        `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. ` +
-          "This photo was not added — remove one first.",
-      );
-      return;
-    }
-    acceptPickedPhoto(file, photo ?? null);
-    setError(null);
-    setPhotoLimitNotice(null);
-    // Diag: picker result
-    diag("report.picker.result", {
-      mime: file.type,
-      bytes: file.size,
-      source: photo?.nativeUri ? "native" : "web",
-      hasNativeUri: !!photo?.nativeUri,
-      photoCount: photosRef.current.length,
-    }, { traceId: traceIdRef.current ?? undefined });
-  }
-
   function acceptPickedPhoto(file: File, photo: PickedPhoto | null, hash?: string): string {
     const id = stashPhotoFile(file, { picked: photo ?? null, accountId });
     const preview =
@@ -563,6 +574,7 @@ restored.push({
   function onPickBatch(picked: PickedPhoto[]): void {
     setError(null);
     enqueuePick(async () => {
+      await restorePromiseRef.current;
       const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
       if (remaining <= 0) {
         setPhotoLimitNotice(
@@ -570,21 +582,42 @@ restored.push({
         );
         return;
       }
-      // Capacity is recomputed when the queued task actually runs, so a second
-      // overlapping action can never race past the 5-photo cap (R-073).
-      const result = await processReportBatch(
-        picked,
-        photosRef.current.length,
-        hashRegistryRef.current,
-        (photo, file, hash) => acceptPickedPhoto(file, photo, hash),
-      );
-      setPhotoLimitNotice(result.notice || null);
+      // Validate after native conversion (including motion-still extraction).
+      // Run each item at current capacity: an invalid item must not consume a
+      // slot or prevent later valid items in the same selection from arriving.
+      let accepted = 0;
+      let duplicates = 0;
+      let unreadable = 0;
+      let overflow = 0;
+      for (const photo of picked) {
+        const result = await processReportBatch(
+          [photo],
+          photosRef.current.length,
+          hashRegistryRef.current,
+          (item, file, hash) => {
+            if (!ACCEPTED_IMAGE_TYPES.includes(file.type) || file.size > MAX_IMAGE_BYTES) {
+              hashRegistryRef.current.delete(hash);
+              unreadable += 1;
+              setError(file.size > MAX_IMAGE_BYTES
+                ? "That photo is too large. Choose an image under 8 MB."
+                : "That file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.");
+              return;
+            }
+            acceptPickedPhoto(file, item, hash);
+            accepted += 1;
+          },
+        );
+        duplicates += result.duplicates.length;
+        unreadable += result.unreadable.length;
+        overflow += result.overflow.length;
+      }
+      setPhotoLimitNotice(formatBatchNotice(accepted, duplicates, unreadable, overflow) || null);
       diag("report.picker.batch", {
         picked: picked.length,
-        accepted: result.accepted.length,
-        duplicates: result.duplicates.length,
-        unreadable: result.unreadable.length,
-        overflow: result.overflow.length,
+        accepted,
+        duplicates,
+        unreadable,
+        overflow,
       }, { traceId: traceIdRef.current ?? undefined });
     });
   }
@@ -720,8 +753,7 @@ restored.push({
     try {
       const picked = await pick();
       if (!picked) return;
-      const file = await photoToFile(picked);
-      onPickImage(file, picked);
+      onPickBatch([picked]);
     } catch (err) {
       setError(friendlyError(err).message);
     }
@@ -745,7 +777,7 @@ restored.push({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (submitting.current || uncertain) return;
+    if (submitting.current || uncertain || !photoRecoveryReady) return;
     // Start a new trace for this publish action
     traceIdRef.current = startActionTrace();
     clearAmbientTrace();
@@ -821,6 +853,7 @@ restored.push({
     // Let any queued duplicate-detection finish before we snapshot the files,
     // so identical bytes cannot slip into the same publish (R-068).
     await pickQueueRef.current.catch(() => {});
+    await restorePromiseRef.current;
     const reportFiles = photosRef.current.map((p) => p.file);
     // Diag: publish start
     diag("report.publish.start", {
@@ -906,6 +939,18 @@ restored.push({
       {error && (
         <p className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
           {error}
+        </p>
+      )}
+
+      {photoSaveWarning && photos.length > 0 && (
+        <p className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
+          Photos could not be saved for draft recovery. Keep this page open or remove and reselect a photo to retry.
+        </p>
+      )}
+
+      {photoRestoreError && (
+        <p className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
+          Saved photos could not be recovered. Your draft is kept; reopen this page to retry before publishing.
         </p>
       )}
 
@@ -1051,7 +1096,7 @@ restored.push({
       <section className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-3">
         <ReportMediaPicker
           photos={mediaPickerPhotos}
-          disabled={submitting.current || uncertain}
+          disabled={submitting.current || uncertain || !photoRecoveryReady}
           onAddCamera={onAddCamera}
           onAddGallery={() => void onAddGallery()}
           onRemove={removePhoto}
@@ -1087,7 +1132,15 @@ restored.push({
         />
       )}
 
-      {photos.length > 0 && <VlmSuggestions file={photos[0]!.file} onApply={applyVlmSuggestion} />}
+      {photos.length > 0 && (
+        <VlmSuggestions
+          file={photos[0]!.file}
+          currentTitle={title}
+          currentDescription={description}
+          currentCategory={category}
+          onApply={applyVlmSuggestion}
+        />
+      )}
 
       {/* Optional external YouTube media */}
       <label className="block">
@@ -1112,7 +1165,7 @@ restored.push({
         <YouTubeEmbed url={youtubeUrl.trim()} />
       )}
 
-      <Button type="submit" size="lg" loading={busy} disabled={uncertain}>
+      <Button type="submit" size="lg" loading={busy} disabled={uncertain || !photoRecoveryReady}>
         Publish {type === "LOST" ? "lost" : "found"} report
       </Button>
       <Button type="button" variant="text" size="md" onClick={discardDraft}>

@@ -1,9 +1,17 @@
-
 import {
+  COARSE_LOCATION_OPTIONS,
   formatAccuracy,
   isLowAccuracy,
   LOW_ACCURACY_METERS,
+  requestOneTimeLocation,
+  type LocationFailureReason,
 } from "../components/locationPermission";
+
+class LocationRequestError extends Error {
+  constructor(readonly reason: LocationFailureReason) {
+    super(reason);
+  }
+}
 
 /**
  * Adapter interface for location providers. The production implementation
@@ -111,26 +119,16 @@ export { LOW_ACCURACY_METERS };
 
 /**
  * Production adapter backed by the existing navigator.geolocation and
- * locationPermission logic. Reuses requestOneTimeLocation and the
- * permission classification without duplicating request logic.
+ * locationPermission logic. A permission query must never obtain a fix:
+ * WebView permission prompts are only allowed after an explicit user gesture.
  */
 export function createProductionLocationAdapter(): LocationAdapter {
-  // Dynamic import to avoid circular deps and allow tests to mock
-  let locationPermissionModule: typeof import("../components/locationPermission") | null = null;
-
-  async function getModule() {
-    if (!locationPermissionModule) {
-      locationPermissionModule = await import("../components/locationPermission");
-    }
-    return locationPermissionModule;
-  }
-
   return {
     async getCurrentPosition(_options: PositionOptions) {
-      const { requestOneTimeLocation } = await getModule();
-      const outcome = await requestOneTimeLocation(navigator.geolocation ?? undefined);
+      // The shared facade owns coarse options, timeout and double-tap collapse.
+      const outcome = await requestOneTimeLocation();
       if (outcome.status !== "granted") {
-        throw new Error(`Location request failed: ${outcome.status}`);
+        throw new LocationRequestError(outcome.status);
       }
       return {
         latitude: outcome.latitude,
@@ -140,18 +138,17 @@ export function createProductionLocationAdapter(): LocationAdapter {
     },
 
     async getPermission() {
-      const { requestOneTimeLocation } = await getModule();
-      // Use a zero-timeout probe to check permission without waiting for a fix.
-      // The existing requestOneTimeLocation will return denied/unsupported/etc.
-      // We interpret the outcome as a permission signal.
-      try {
-        const outcome = await requestOneTimeLocation(navigator.geolocation ?? undefined);
-        if (outcome.status === "granted") return "granted";
-        if (outcome.status === "denied") return "denied";
-        if (outcome.status === "unsupported") return "unknown";
-        return "prompt";
-      } catch {
+      if (typeof navigator === "undefined" || !navigator.geolocation?.getCurrentPosition) {
         return "unknown";
+      }
+      // Permissions.query is read-only. Unsupported APIs / WebViews may still
+      // allow a one-shot location request, so defer to the user's tap.
+      if (!navigator.permissions?.query) return "prompt";
+      try {
+        const status = await navigator.permissions.query({ name: "geolocation" });
+        return status.state;
+      } catch {
+        return "prompt";
       }
     },
 
@@ -203,8 +200,9 @@ export async function requestFixWithGeneration(
 ): Promise<FixState> {
   const { timeoutMs = 8000, positionOptions, onStateChange, generation: externalGeneration } = opts;
 
-  let internalGeneration = 0;
-  let currentGeneration = 0;
+  const currentGeneration = typeof externalGeneration === "function"
+    ? externalGeneration()
+    : (externalGeneration?.current ?? 0);
 
   function getGeneration(): number {
     if (externalGeneration) {
@@ -212,7 +210,7 @@ export async function requestFixWithGeneration(
         ? externalGeneration()
         : externalGeneration.current;
     }
-    return internalGeneration;
+    return currentGeneration;
   }
 
   function emit(state: FixState) {
@@ -221,21 +219,20 @@ export async function requestFixWithGeneration(
     }
   }
 
-  function nextGeneration() {
-    internalGeneration += 1;
-    currentGeneration = getGeneration();
-  }
-
   function checkGeneration(): boolean {
     return currentGeneration === getGeneration();
   }
 
   // Start: requesting permission
-  nextGeneration();
   emit({ kind: "requesting-permission" });
 
   // Check permission first
-  const permission = await adapter.getPermission();
+  let permission: Awaited<ReturnType<LocationAdapter["getPermission"]>>;
+  try {
+    permission = await adapter.getPermission();
+  } catch {
+    permission = "prompt";
+  }
   if (!checkGeneration()) return { kind: "idle" } as FixState;
   if (permission === "denied") {
     const state: FixState = { kind: "denied", message: FIX_MICROCOPY.denied };
@@ -250,7 +247,12 @@ export async function requestFixWithGeneration(
 
   // Check services if available
   if (adapter.servicesEnabled) {
-    const servicesOn = await adapter.servicesEnabled();
+    let servicesOn: boolean | null;
+    try {
+      servicesOn = await adapter.servicesEnabled();
+    } catch {
+      servicesOn = null;
+    }
     if (!checkGeneration()) return { kind: "idle" } as FixState;
     if (servicesOn === false) {
       const state: FixState = { kind: "services-off", message: FIX_MICROCOPY["services-off"] };
@@ -260,13 +262,12 @@ export async function requestFixWithGeneration(
   }
 
   // Locating phase
-  nextGeneration();
   const startedAt = Date.now();
   emit({ kind: "locating", startedAt });
 
   try {
     const positionPromise = adapter.getCurrentPosition(
-      positionOptions ?? { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: 0 },
+      positionOptions ?? COARSE_LOCATION_OPTIONS,
     );
 
     // Race with timeout. The timer is always cleared so a settled request
@@ -302,8 +303,9 @@ export async function requestFixWithGeneration(
       return { kind: "idle" } as FixState;
     }
 
-    const isTimeout = err instanceof Error && err.message === "timeout";
-    const kind = isTimeout ? "timeout" : "unavailable";
+    const kind = err instanceof LocationRequestError
+      ? err.reason === "disabled" ? "services-off" : err.reason
+      : err instanceof Error && err.message === "timeout" ? "timeout" : "unavailable";
     const state: FixState = { kind, message: FIX_MICROCOPY[kind] };
     emit(state);
     return state;

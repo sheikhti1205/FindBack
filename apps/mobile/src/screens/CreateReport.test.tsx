@@ -8,6 +8,7 @@ const { publishReportMock, photo } = vi.hoisted(() => ({
     isNativeCameraAvailable: vi.fn(() => false),
     takePhoto: vi.fn(),
     chooseFromGallery: vi.fn(),
+    chooseReportPhotos: vi.fn(),
     photoToFile: vi.fn(),
     toNativeImageUri: vi.fn(),
   },
@@ -27,8 +28,10 @@ vi.mock("../services/photo", () => photo);
 
 import { CreateReport } from "./CreateReport";
 import { clearDraft, saveDraft } from "../services/reportDraft";
-import { clearPhotoStore } from "../services/photoStore";
+import { clearPhotoStore, stashPhotoFile } from "../services/photoStore";
+import { loadDraft } from "../services/reportDraft";
 import { todayInputValue } from "../utils/dates";
+import * as photoStore from "../services/photoStore";
 
 import { chooseCategory } from "../test-utils/reportCategory";
 function seedDescription(description: string): void {
@@ -127,6 +130,19 @@ describe("CreateReport", () => {
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
+  it("keeps a selected photo visible and warns when draft-byte storage fails", async () => {
+    const persist = vi.spyOn(photoStore, "persistStashedPhotos").mockRejectedValue(new Error("quota"));
+    try {
+      render(<CreateReport />);
+      pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
+      await screen.findByRole("button", { name: /remove photo/i });
+      await screen.findByText(/photos could not be saved for draft recovery/i);
+      expect(screen.getByRole("img", { name: /photo 1 of/i })).toBeTruthy();
+    } finally {
+      persist.mockRestore();
+    }
+  });
+
   it("publishes with the selected photo on submit", async () => {
     publishReportMock.mockResolvedValue("p1");
     seedDescription("a black phone lost near the library");
@@ -149,6 +165,47 @@ describe("CreateReport", () => {
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     await screen.findByText(/could not publish/i);
     expect(screen.getByRole("img", { name: /photo 1 of/i })).toBeTruthy();
+  });
+
+  it("blocks publishing while saved photo bytes are still being recovered", async () => {
+    let finishRecovery!: () => void;
+    const recovery = new Promise<string[]>((resolve) => { finishRecovery = () => resolve([]); });
+    const restore = vi.spyOn(photoStore, "restoreStashedPhotos").mockReturnValue(recovery);
+    seedDescription("a black phone lost near the library");
+    saveDraft({ ...loadDraft("u1")!, title: "Lost phone", category: "Electronics", photoId: "pending", photoIds: ["pending"] }, "u1");
+    try {
+      render(<CreateReport />);
+      expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
+      expect(publishReportMock).not.toHaveBeenCalled();
+    } finally {
+      finishRecovery();
+      restore.mockRestore();
+    }
+  });
+
+  it("keeps draft photo references and blocks publish when recovery fails", async () => {
+    const restore = vi.spyOn(photoStore, "restoreStashedPhotos").mockRejectedValue(new Error("IDB unavailable"));
+    seedDescription("a black phone lost near the library");
+    saveDraft({ ...loadDraft("u1")!, title: "Lost phone", category: "Electronics", photoId: "pending", photoIds: ["pending"] }, "u1");
+    try {
+      render(<CreateReport />);
+      await screen.findByText(/saved photos could not be recovered/i);
+      expect(loadDraft("u1")?.photoIds).toEqual(["pending"]);
+      expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
+      expect(publishReportMock).not.toHaveBeenCalled();
+    } finally {
+      restore.mockRestore();
+    }
+  });
+
+  it("does not silently publish a draft whose saved photo bytes are missing", async () => {
+    seedDescription("a black phone lost near the library");
+    saveDraft({ ...loadDraft("u1")!, title: "Lost phone", category: "Electronics", photoId: "missing", photoIds: ["missing"] }, "u1");
+    render(<CreateReport />);
+    await screen.findByText(/saved photos could not be recovered/i);
+    expect(loadDraft("u1")?.photoIds).toEqual(["missing"]);
+    expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("allows manual category selection without AI", async () => {
@@ -175,6 +232,8 @@ describe("CreateReport", () => {
     unmount();
     render(<CreateReport />);
     expect(screen.getByRole("img", { name: /photo 1 of/i })).toBeTruthy();
+
+    await waitFor(() => expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false));
 
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
     await waitFor(() =>
@@ -210,8 +269,135 @@ describe("CreateReport", () => {
       render(<CreateReport />);
       const capture = await screen.findByRole("button", { name: /take photo/i });
       for (let i = 0; i < 6; i++) fireEvent.click(capture);
-      await waitFor(() => expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5));
+      // Six serialized captures (conversion + hash + render each) exceed the
+      // default 1s waitFor budget under full-suite worker load.
+      await waitFor(
+        () => expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5),
+        { timeout: 5000 },
+      );
       expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5);
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+      photo.takePhoto.mockReset();
+      photo.photoToFile.mockReset();
+    }
+  });
+
+  it("rejects an exact-byte duplicate between two native camera captures", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockImplementation(async () => ({ nativeUri: "file:///photo", webPath: "file:///photo", format: "jpg", id: crypto.randomUUID() }));
+    photo.photoToFile.mockImplementation(async () => new File(["same-still"], "capture.jpg", { type: "image/jpeg" }));
+    try {
+      render(<CreateReport />);
+      const capture = await screen.findByRole("button", { name: /take photo/i });
+      fireEvent.click(capture);
+      await screen.findByRole("button", { name: /remove photo/i });
+      fireEvent.click(capture);
+      await screen.findByText(/already selected/i);
+      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+      photo.takePhoto.mockReset();
+      photo.photoToFile.mockReset();
+    }
+  });
+
+  it("rejects an oversized native capture before it can be published", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockResolvedValue({ nativeUri: "file:///large", webPath: "file:///large", format: "jpg", id: "large" });
+    photo.photoToFile.mockResolvedValue(new File([new Uint8Array(8 * 1024 * 1024 + 1)], "large.jpg", { type: "image/jpeg" }));
+    try {
+      render(<CreateReport />);
+      fireEvent.click(screen.getByRole("button", { name: /take photo/i }));
+      await screen.findByText(/too large/i);
+      expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull();
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+      photo.takePhoto.mockReset();
+      photo.photoToFile.mockReset();
+    }
+  });
+
+  it("does not let an invalid gallery item consume one of the five photo slots", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.chooseReportPhotos.mockResolvedValue(Array.from({ length: 6 }, (_, i) => ({
+      nativeUri: `file:///photo-${i}`, webPath: `file:///photo-${i}`, format: "jpg", id: `${i}`,
+    })));
+    photo.photoToFile.mockImplementation(async (picked: { id: string }) => new File(
+      [picked.id === "0" ? new Uint8Array(8 * 1024 * 1024 + 1) : picked.id],
+      `${picked.id}.jpg`, { type: "image/jpeg" },
+    ));
+    try {
+      render(<CreateReport />);
+      fireEvent.click(screen.getByRole("button", { name: /choose up to/i }));
+      // The oversized first item is rejected with an alert and must not
+      // consume one of the five slots...
+      await screen.findByText(/that photo is too large/i, undefined, { timeout: 5000 });
+      // ...while all five valid items still fill the lane. The six-item batch
+      // (native conversion + SHA-256 + re-render per item) exceeds the default
+      // 1s waitFor budget under full-suite worker load, so allow headroom.
+      await waitFor(
+        () => expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5),
+        { timeout: 5000 },
+      );
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+      photo.chooseReportPhotos.mockReset();
+      photo.photoToFile.mockReset();
+    }
+  });
+
+  it("rejects a camera capture matching a previously chosen gallery photo", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.chooseReportPhotos.mockResolvedValue([{ nativeUri: "file:///gallery", webPath: "file:///gallery", format: "jpg", id: "gallery" }]);
+    photo.takePhoto.mockResolvedValue({ nativeUri: "file:///camera", webPath: "file:///camera", format: "jpg", id: "camera" });
+    photo.photoToFile.mockImplementation(async () => new File(["same"], "photo.jpg", { type: "image/jpeg" }));
+    try {
+      render(<CreateReport />);
+      fireEvent.click(await screen.findByRole("button", { name: /choose up to/i }));
+      await screen.findByRole("button", { name: /remove photo/i });
+      fireEvent.click(screen.getByRole("button", { name: /take photo/i }));
+      await screen.findByText(/already selected/i);
+      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+      photo.takePhoto.mockReset();
+      photo.photoToFile.mockReset();
+      photo.chooseReportPhotos.mockReset();
+    }
+  });
+
+  it("rejects a native capture matching a web-selected photo while hashing is queued", async () => {
+    photo.takePhoto.mockResolvedValue({ nativeUri: "file:///camera", webPath: "file:///camera", format: "jpg", id: "camera" });
+    photo.photoToFile.mockResolvedValue(new File(["same"], "capture.jpg", { type: "image/jpeg" }));
+    try {
+      render(<CreateReport />);
+      pickFile(new File(["same"], "gallery.jpg", { type: "image/jpeg" }));
+      photo.isNativeCameraAvailable.mockReturnValue(true);
+      fireEvent.click(screen.getByRole("button", { name: /take photo/i }));
+      await screen.findByText(/already selected/i);
+      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
+    } finally {
+      photo.isNativeCameraAvailable.mockReturnValue(false);
+      photo.takePhoto.mockReset();
+      photo.photoToFile.mockReset();
+    }
+  });
+
+  it("rejects a camera capture matching a restored draft photo", async () => {
+    photo.isNativeCameraAvailable.mockReturnValue(true);
+    photo.takePhoto.mockResolvedValue({ nativeUri: "file:///camera", webPath: "file:///camera", format: "jpg", id: "camera" });
+    photo.photoToFile.mockResolvedValue(new File(["same"], "capture.jpg", { type: "image/jpeg" }));
+    const id = stashPhotoFile(new File(["same"], "draft.jpg", { type: "image/jpeg" }), { accountId: "u1" });
+    seedDescription("the restored photo");
+    saveDraft({ ...loadDraft("u1")!, photoId: id, photoIds: [id] }, "u1");
+    try {
+      render(<CreateReport />);
+      await screen.findByRole("button", { name: /remove photo/i });
+      await waitFor(() => expect(screen.getByRole("button", { name: /take photo/i }).getAttribute("aria-disabled")).toBe("false"));
+      fireEvent.click(screen.getByRole("button", { name: /take photo/i }));
+      await screen.findByText(/already selected/i);
+      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
       photo.takePhoto.mockReset();

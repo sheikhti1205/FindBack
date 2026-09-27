@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MapPickerSheet } from "./MapPickerSheet";
 import type { LocationValue } from "./LocationPicker";
+import type { LocationAdapter } from "../services/locationAdapter";
 
 vi.mock("./LiveRegion", () => ({ announce: vi.fn() }));
 
@@ -273,6 +274,46 @@ describe("MapPickerSheet", () => {
 });
 
 describe("MapPickerSheet one-time approximate location", () => {
+  it("ignores an adapter fix arriving after the sheet closes and reopens", async () => {
+    let resolveFix!: (fix: { latitude: number; longitude: number; accuracyMeters: number }) => void;
+    const adapter: LocationAdapter = {
+      getPermission: async () => "granted",
+      getCurrentPosition: () => new Promise((resolve) => { resolveFix = resolve; }),
+    };
+    const onConfirm = vi.fn();
+    const props = { onClose: vi.fn(), value: empty, onConfirm, locationAdapter: adapter };
+    const { rerender } = render(<MapPickerSheet {...props} open />);
+    await screen.findByTestId("map-picker-map");
+    fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
+    await waitFor(() => expect(resolveFix).toBeTypeOf("function"));
+    rerender(<MapPickerSheet {...props} open={false} />);
+    rerender(<MapPickerSheet {...props} open />);
+    expect(screen.getByRole("button", { name: /use my location once/i })).toHaveProperty("disabled", false);
+    resolveFix({ latitude: 23.810332, longitude: 90.412518, accuracyMeters: 42 });
+    await screen.findByTestId("map-picker-map");
+    expect(screen.queryByText("23.810, 90.413")).toBeNull();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("keeps a manually panned pin when an earlier GPS request finishes", async () => {
+    let resolveFix!: (fix: { latitude: number; longitude: number; accuracyMeters: number }) => void;
+    const adapter: LocationAdapter = {
+      getPermission: async () => "granted",
+      getCurrentPosition: () => new Promise((resolve) => { resolveFix = resolve; }),
+    };
+    const onConfirm = vi.fn();
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} locationAdapter={adapter} />);
+    await screen.findByTestId("map-picker-map");
+    fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
+    await waitFor(() => expect(resolveFix).toBeTypeOf("function"));
+    moveEnd(0, 24.123, 91.123);
+    resolveFix({ latitude: 23.810332, longitude: 90.412518, accuracyMeters: 42 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText("24.123, 91.123")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ latitude: 24.123, longitude: 91.123 }));
+  });
+
   function useMyLocation() {
     return screen.getByRole("button", { name: /use my location once/i });
   }
@@ -298,7 +339,7 @@ describe("MapPickerSheet one-time approximate location", () => {
     await screen.findByTestId("map-picker-map");
 
     fireEvent.click(useMyLocation());
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     expect(geo.getCurrentPosition.mock.calls[0]?.[2]?.enableHighAccuracy).toBe(false);
 
     fireEvent.click(useMyLocation());
@@ -320,6 +361,7 @@ describe("MapPickerSheet one-time approximate location", () => {
     render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
     await screen.findByTestId("map-picker-map");
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.reject(2);
     expect(await screen.findByText(/location services are off/i)).toBeTruthy();
     expect(screen.queryByText(/permission is denied/i)).toBeNull();
@@ -329,6 +371,7 @@ describe("MapPickerSheet one-time approximate location", () => {
     render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
     await screen.findByTestId("map-picker-map");
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo2.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo2.reject(3);
     expect(await screen.findByText(/within 8 seconds/i)).toBeTruthy();
     expect(screen.queryByText(/permission is denied/i)).toBeNull();
@@ -341,6 +384,7 @@ describe("MapPickerSheet one-time approximate location", () => {
     render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
     await screen.findByTestId("map-picker-map");
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.grant({ latitude: 23.8103321, longitude: 90.4125189, accuracy: 42 });
 
     expect(await screen.findByText("23.810, 90.413")).toBeTruthy();
@@ -354,6 +398,7 @@ describe("MapPickerSheet one-time approximate location", () => {
     render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
     await screen.findByTestId("map-picker-map");
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.grant({ latitude: 23.8103321, longitude: 90.4125189, accuracy: 4200 });
 
     const notice = await screen.findByTestId("low-accuracy-notice");

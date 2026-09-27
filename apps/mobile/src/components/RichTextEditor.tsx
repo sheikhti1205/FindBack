@@ -36,8 +36,9 @@ interface LinkSelection {
   href: string;
 }
 
-function LinkSheet({ selection, onCancel, onSave, onRemove }: {
+function LinkSheet({ selection, triggerRef, onCancel, onSave, onRemove }: {
   selection: LinkSelection;
+  triggerRef: RefObject<HTMLButtonElement | null>;
   onCancel: () => void;
   onSave: (url: string) => string | null;
   onRemove: () => void;
@@ -92,6 +93,10 @@ function LinkSheet({ selection, onCancel, onSave, onRemove }: {
     ],
     whileElementsMounted: autoUpdate,
   });
+
+  useEffect(() => {
+    refs.setReference(triggerRef.current);
+  }, [refs, triggerRef]);
 
   return (
     <FloatingPortal>
@@ -177,6 +182,10 @@ function FloatingMenu({ open, onClose, triggerRef, children, label, placement = 
     ],
     whileElementsMounted: autoUpdate,
   });
+
+  useEffect(() => {
+    if (open) refs.setReference(triggerRef.current);
+  }, [open, refs, triggerRef]);
 
   // Auto-focus the selected/first menu item when menu opens - using ref callback for synchronous focus
   const setFloatingRef = (el: HTMLDivElement | null) => {
@@ -635,6 +644,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   const blockButtonRef = useRef<HTMLButtonElement>(null);
   const listButtonRef = useRef<HTMLButtonElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const linkButtonRef = useRef<HTMLButtonElement>(null);
   const lastMenuButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const initialContent = useMemo(() => markdownToTiptap(value), []);
@@ -680,7 +690,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
       editorProps: {
         attributes: {
           "aria-label": label,
-          class: `tiptap min-h-[120px] rounded-m3-sm border bg-surface px-3.5 py-3 text-base focus:border-on-surface focus:outline-none overflow-y-auto overscroll-contain ${error ? "border-error" : "border-outline-variant"}`,
+           class: `tiptap min-h-[120px] max-h-[240px] rounded-m3-sm border bg-surface px-3.5 py-3 text-base focus:border-on-surface focus:outline-none overflow-y-auto overscroll-contain ${error ? "border-error" : "border-outline-variant"}`,
         },
       },
       onCreate: ({ editor: created }) => {
@@ -730,11 +740,46 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     else dom.removeAttribute("id");
   }, [editor, error, required, inputId, errorId, countId]);
 
+  useEffect(() => {
+    const dom = editor?.view.dom as HTMLElement | undefined;
+    if (!dom) return;
+    // A single Tiptap instance moves between the inline field and the overlay.
+    // Remove the inline height cap while expanded; the flex parent owns scrolling.
+    dom.classList.toggle("max-h-[240px]", !isExpanded);
+    dom.classList.toggle("min-h-[120px]", !isExpanded);
+    dom.classList.toggle("h-full", isExpanded);
+    return () => {
+      dom.classList.remove("h-full");
+      dom.classList.add("max-h-[240px]", "min-h-[120px]");
+    };
+  }, [editor, isExpanded]);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    const viewport = window.visualViewport;
+    const update = () => {
+      overlay.style.setProperty("--fb-visible-height", `${Math.max(1, viewport?.height ?? window.innerHeight)}px`);
+      overlay.style.setProperty("--fb-visible-top", `${viewport?.offsetTop ?? 0}px`);
+    };
+    update();
+    viewport?.addEventListener("resize", update);
+    viewport?.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      viewport?.removeEventListener("resize", update);
+      viewport?.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [isExpanded]);
+
   // Close menus on outside tap or Escape, restoring focus to the menu button.
   useEffect(() => {
     if (!openMenu) return;
     function onDocPointerDown(event: PointerEvent) {
-      if (toolbarRef.current && !toolbarRef.current.contains(event.target as Node)) setOpenMenu(null);
+      if (toolbarRef.current && !toolbarRef.current.contains(event.target as Node) &&
+          !(event.target as Element).closest('[role="menu"]')) setOpenMenu(null);
     }
     function onDocKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -1141,6 +1186,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
             <span aria-hidden className="text-xs">▾</span>
           </button>
           <button
+            ref={linkButtonRef}
             type="button"
             title={linkDisabled ? "Select text to add a link" : "Link"}
             aria-label="Link"
@@ -1314,7 +1360,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
         </FloatingMenu>
       </div>
       )}
-      {linkSelection && <LinkSheet selection={linkSelection} onCancel={() => setLinkSelection(null)} onSave={saveLink} onRemove={removeLink} />}
+      {linkSelection && <LinkSheet selection={linkSelection} triggerRef={linkButtonRef} onCancel={() => setLinkSelection(null)} onSave={saveLink} onRemove={removeLink} />}
       {listNotice ? (
         <p role="status" aria-label="List simplification notice" className="text-xs text-on-surface-variant">
           Nested or multi-part list items are saved as a simple flat list.
@@ -1368,7 +1414,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               Done
             </button>
           </header>
-          <div className="flex-1 overflow-auto" onPointerDown={handleEditorIntentionalInteraction} onTouchStart={handleEditorIntentionalInteraction} onKeyDown={handleEditorIntentionalInteraction}>
+           <div className="min-h-0 flex-1 overflow-auto" onPointerDown={handleEditorIntentionalInteraction} onTouchStart={handleEditorIntentionalInteraction} onKeyDown={handleEditorIntentionalInteraction}>
             <EditorContent editor={editor} />
           </div>
           <div ref={toolbarRef} className="relative flex-shrink-0">
@@ -1430,6 +1476,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
                 <span aria-hidden className="text-xs">▾</span>
               </button>
               <button
+                ref={linkButtonRef}
                 type="button"
                 title={linkDisabled ? "Select text to add a link" : "Link"}
                 aria-label="Link"

@@ -1,15 +1,12 @@
 export function todayInputValue(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  // Report dates are capped by the server's UTC calendar day.
+  return new Date().toISOString().slice(0, 10);
 }
 
 /** True when an ISO date (yyyy-mm-dd) is in the future. */
 export function isFutureDate(isoDate: string): boolean {
   if (!isoDate) return false;
-  const d = new Date(`${isoDate}T00:00:00`);
+  const d = new Date(`${isoDate}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return false;
   return d.getTime() > Date.now();
 }

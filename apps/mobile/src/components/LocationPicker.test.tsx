@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { LocationPicker, type LocationValue } from "./LocationPicker";
+import type { LocationAdapter } from "../services/locationAdapter";
 
 vi.mock("./LiveRegion", () => ({ announce: vi.fn() }));
 
@@ -300,6 +301,41 @@ describe("LocationPicker map wiring", () => {
 });
 
 describe("LocationPicker one-time approximate location", () => {
+  it("discards a late adapter fix after an external report reset", async () => {
+    let resolveFix!: (fix: { latitude: number; longitude: number; accuracyMeters: number }) => void;
+    const adapter: LocationAdapter = {
+      getPermission: async () => "granted",
+      getCurrentPosition: () => new Promise((resolve) => { resolveFix = resolve; }),
+    };
+    const onChange = vi.fn();
+    const { rerender } = render(<LocationPicker value={emptyValue} onChange={onChange} locationAdapter={adapter} />);
+    fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
+    await waitFor(() => expect(resolveFix).toBeTypeOf("function"));
+    rerender(<LocationPicker value={{ ...emptyValue, label: "Reset report" }} onChange={onChange} locationAdapter={adapter} />);
+    expect(screen.getByRole("button", { name: /use my location once/i })).toHaveProperty("disabled", false);
+    resolveFix({ latitude: 23.810332, longitude: 90.412518, accuracyMeters: 42 });
+    await waitFor(() => expect(screen.getByPlaceholderText(/place, decimal coords/i)).toHaveProperty("value", "Reset report"));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a manually typed place when an older fix arrives", async () => {
+    let resolveFix!: (fix: { latitude: number; longitude: number; accuracyMeters: number }) => void;
+    const adapter: LocationAdapter = {
+      getPermission: async () => "granted",
+      getCurrentPosition: () => new Promise((resolve) => { resolveFix = resolve; }),
+    };
+    const onChange = vi.fn();
+    render(<LocationPicker value={emptyValue} onChange={onChange} locationAdapter={adapter} />);
+    fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
+    await waitFor(() => expect(resolveFix).toBeTypeOf("function"));
+    fireEvent.change(screen.getByPlaceholderText(/place, decimal coords/i), { target: { value: "My place" } });
+    resolveFix({ latitude: 23.810332, longitude: 90.412518, accuracyMeters: 42 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => expect(screen.getByPlaceholderText(/place, decimal coords/i)).toHaveProperty("value", "My place"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ label: "My place", latitude: null }));
+  });
+
   function useMyLocation() {
     return screen.getByRole("button", { name: /use my location once/i });
   }
@@ -345,7 +381,7 @@ describe("LocationPicker one-time approximate location", () => {
     const { onChange, rerender } = renderPicker(emptyValue);
 
     fireEvent.click(useMyLocation());
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     const options = geo.getCurrentPosition.mock.calls[0]?.[2];
     expect(options?.enableHighAccuracy).toBe(false);
     expect(options?.timeout).toBeGreaterThan(0);
@@ -373,6 +409,7 @@ describe("LocationPicker one-time approximate location", () => {
     const geo = installGeolocation();
     const { onChange } = renderPicker(emptyValue);
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.reject(1);
 
     expect(await screen.findByText(/permission is denied/i)).toBeTruthy();
@@ -387,6 +424,7 @@ describe("LocationPicker one-time approximate location", () => {
     const geo = installGeolocation();
     const { onChange } = renderPicker(emptyValue);
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.reject(2);
 
     expect(await screen.findByText(/location services are off/i)).toBeTruthy();
@@ -399,6 +437,7 @@ describe("LocationPicker one-time approximate location", () => {
     const geo = installGeolocation();
     const { onChange } = renderPicker(emptyValue);
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.reject(3);
 
     expect(await screen.findByText(/within 8 seconds/i)).toBeTruthy();
@@ -413,6 +452,7 @@ describe("LocationPicker one-time approximate location", () => {
     // parent has to apply the emitted change for it to appear.
     const { onChange } = renderLive(emptyValue);
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.grant();
 
     expect(await screen.findByText("23.810, 90.413")).toBeTruthy();
@@ -431,6 +471,7 @@ describe("LocationPicker one-time approximate location", () => {
     const geo = installGeolocation();
     const { onChange } = renderPicker(emptyValue);
     fireEvent.click(useMyLocation());
+    await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.grant({ latitude: 23.8103321, longitude: 90.4125189, accuracy: 4200 });
 
     const notice = await screen.findByTestId("low-accuracy-notice");

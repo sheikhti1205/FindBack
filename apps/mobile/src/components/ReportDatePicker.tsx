@@ -6,6 +6,7 @@ import {
   CalendarHeaderCell,
   CalendarCell,
   CalendarGridBody,
+  CalendarHeading,
   Button as AriaButton,
 } from "react-aria-components";
 import { parseDate, CalendarDate, CalendarDateTime, ZonedDateTime, today, getLocalTimeZone } from "@internationalized/date";
@@ -72,12 +73,7 @@ export function ReportDatePicker({
   const maxDate = today("UTC");
 
   const openSheet = () => {
-    if (value) {
-      const parsed = parseISO(value);
-      if (parsed) {
-        setDisplayedValue(parsed);
-      }
-    }
+    setDisplayedValue(value ? parseISO(value) : null);
     setIsOpen(true);
   };
 
@@ -171,20 +167,23 @@ export function ReportDatePicker({
           autoFocus
           className="w-full"
         >
-          <AriaButton
-            slot="previous"
-            className="p-2 rounded-m3-sm text-on-surface-variant hover:bg-surface-container transition-colors"
-            aria-label="Previous month"
-          >
-            <ChevronLeft size={24} aria-hidden />
-          </AriaButton>
-          <AriaButton
-            slot="next"
-            className="p-2 rounded-m3-sm text-on-surface-variant hover:bg-surface-container transition-colors"
-            aria-label="Next month"
-          >
-            <ChevronRight size={24} aria-hidden />
-          </AriaButton>
+          <header className="flex items-center justify-between gap-2 mb-2">
+            <AriaButton
+              slot="previous"
+              className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-sm text-on-surface-variant hover:bg-surface-container transition-colors"
+              aria-label="Previous month"
+            >
+              <ChevronLeft size={24} aria-hidden />
+            </AriaButton>
+            <CalendarHeading className="flex-1 text-center text-base font-semibold text-on-surface" />
+            <AriaButton
+              slot="next"
+              className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-sm text-on-surface-variant hover:bg-surface-container transition-colors"
+              aria-label="Next month"
+            >
+              <ChevronRight size={24} aria-hidden />
+            </AriaButton>
+          </header>
 
           <CalendarGrid className="w-full">
             <CalendarGridHeader className="mb-1">

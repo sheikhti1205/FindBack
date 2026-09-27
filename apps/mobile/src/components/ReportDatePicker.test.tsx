@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ReportDatePicker } from "./ReportDatePicker";
+import { todayInputValue } from "../utils/dates";
+import { resetLocalTimeZone, setLocalTimeZone } from "@internationalized/date";
 
 afterEach(() => {
   cleanup();
@@ -62,6 +64,22 @@ describe("ReportDatePicker", () => {
     });
   });
 
+  it("shows the displayed month and year as a visible accessible heading while navigating", async () => {
+    render(<ReportDatePicker value="2024-02-29" onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    const february = screen.getByRole("heading", { name: /February 2024/i });
+    // React Aria announces the month through a visually hidden heading and
+    // hides the visible copy from assistive tech to avoid double announcement.
+    expect(screen.getByRole("dialog").querySelector("header h2")?.textContent).toBe(february.textContent);
+    fireEvent.click(screen.getByRole("button", { name: /previous month/i }));
+    await waitFor(() => {
+      const january = screen.getByRole("heading", { name: /January 2024/i });
+      expect(screen.getByRole("dialog").querySelector("header h2")?.textContent).toBe(january.textContent);
+    });
+  });
+
   it("commits value on Confirm click", async () => {
     render(<ReportDatePicker value="2026-09-26" onChange={onChange} />);
     const trigger = screen.getByRole("button", { name: /date of event/i });
@@ -88,6 +106,20 @@ describe("ReportDatePicker", () => {
     const cancelButton = screen.getByRole("button", { name: /cancel/i });
     fireEvent.click(cancelButton);
 
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("discards an unconfirmed selection when an empty date picker is reopened", async () => {
+    render(<ReportDatePicker value="" onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /^today$/i }));
+    expect((screen.getByRole("button", { name: /confirm/i }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    expect((screen.getByRole("button", { name: /confirm/i }) as HTMLButtonElement).disabled).toBe(true);
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -151,8 +183,17 @@ describe("ReportDatePicker", () => {
       expect(screen.getByRole("dialog")).toBeTruthy();
     });
 
-    // Future dates in current month (Sep 27-30) should be disabled
-    const futureCell = screen.getByRole("button", { name: /Sunday, September 27, 2026/i });
+    // Tomorrow (UTC) must be disabled regardless of when the suite runs.
+    const tomorrow = new Date(`${todayInputValue()}T00:00:00Z`);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const label = tomorrow.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+    const futureCell = screen.getByRole("button", { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") });
     expect(futureCell.getAttribute("aria-disabled")).toBe("true");
   });
 
@@ -168,8 +209,19 @@ describe("ReportDatePicker", () => {
     const todayButton = screen.getByRole("button", { name: /^today$/i });
     fireEvent.click(todayButton);
 
-    // The calendar should show today (Sep 26 UTC) as selected
-    const todayCell = screen.getByRole("button", { name: /Saturday, September 26, 2026 selected/ });
+    // The calendar should show today (UTC) as selected
+    const todayIso = todayInputValue();
+    const todayLabel = new Date(`${todayIso}T00:00:00Z`).toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+    const todayCell = screen.getByRole(
+      "button",
+      { name: new RegExp(`${todayLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} selected`, "i") },
+    );
     expect(todayCell.getAttribute("data-selected")).toBe("true");
     // Confirm should be enabled since today (UTC) is not a future date
     const confirmButton = screen.getByRole("button", { name: /confirm/i });
@@ -269,7 +321,16 @@ describe("ReportDatePicker", () => {
     });
 
     // Future dates in current month should be disabled
-    const futureCell = screen.getByRole("button", { name: /Sunday, September 27, 2026/i });
+    const tomorrow = new Date(`${todayInputValue()}T00:00:00Z`);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const label = tomorrow.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+    const futureCell = screen.getByRole("button", { name: new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") });
     expect(futureCell.getAttribute("aria-disabled")).toBe("true");
 
     // Confirm button should be disabled when no valid date is selected
@@ -409,6 +470,28 @@ describe("ReportDatePicker", () => {
       ).toBe("true");
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("opens an empty calendar on the server UTC month when local time is in the next month", async () => {
+    vi.stubEnv("TZ", "Pacific/Kiritimati");
+    setLocalTimeZone("Pacific/Kiritimati");
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-09-30T23:30:00Z"));
+    try {
+      expect(todayInputValue()).toBe("2026-09-30");
+      render(<ReportDatePicker value="" onChange={onChange} />);
+      fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+      expect(screen.getByRole("heading", { name: /September 2026/i })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /^today$/i }));
+      fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+      expect(onChange).toHaveBeenCalledWith("2026-09-30");
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      resetLocalTimeZone();
     }
   });
 });

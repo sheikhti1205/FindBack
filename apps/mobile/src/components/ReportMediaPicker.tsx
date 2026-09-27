@@ -5,6 +5,7 @@ export interface ReportMediaPhoto {
   id: string;
   webPath: string;
   format?: string;
+  motionPhoto?: boolean;
 }
 
 export interface ReportMediaPickerProps {
@@ -164,7 +165,7 @@ export function ReportMediaPicker({
         ))}
       </div>
 
-      {photos.some((p) => p.format === "heic" || p.format === "heif") && (
+      {photos.some((p) => p.motionPhoto) && (
         <MotionDisclosure />
       )}
     </div>
@@ -278,7 +279,7 @@ const styles: Record<string, React.CSSProperties> = {
   headerCount: {
     fontSize: 16,
     fontWeight: 500,
-    color: "#666",
+    color: "var(--fb-on-surface-variant)",
   },
   headerActions: {
     display: "flex",
@@ -292,8 +293,8 @@ const styles: Record<string, React.CSSProperties> = {
     height: 48,
     border: "none",
     borderRadius: 8,
-    backgroundColor: "#f0f0f0",
-    color: "#333",
+    backgroundColor: "var(--fb-surface-container)",
+    color: "var(--fb-on-surface)",
     cursor: "pointer",
     transition: "background-color 0.15s",
   },
@@ -304,11 +305,11 @@ const styles: Record<string, React.CSSProperties> = {
   limitNotice: {
     margin: 0,
     fontSize: 14,
-    color: "#d32f2f",
+    color: "var(--fb-error)",
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(88px, 112px))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(152px, 1fr))",
     gap: 12,
   },
   tile: {
@@ -322,7 +323,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     overflow: "hidden",
     border: "none",
-    backgroundColor: "#f5f5f5",
+    backgroundColor: "var(--fb-surface-container-low)",
     cursor: "pointer",
     padding: 0,
   },
@@ -336,10 +337,10 @@ const styles: Record<string, React.CSSProperties> = {
     bottom: 4,
     left: 4,
     padding: "2px 6px",
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: 500,
-    color: "#fff",
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    color: "var(--fb-surface)",
+    backgroundColor: "var(--fb-on-surface)",
     borderRadius: 4,
   },
   tileControls: {
@@ -352,12 +353,12 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    width: 36,
-    height: 36,
+    width: 48,
+    height: 48,
     border: "none",
     borderRadius: 6,
-    backgroundColor: "#f0f0f0",
-    color: "#333",
+    backgroundColor: "var(--fb-surface-container)",
+    color: "var(--fb-on-surface)",
     cursor: "pointer",
     transition: "background-color 0.15s",
   },
@@ -368,7 +369,7 @@ const styles: Record<string, React.CSSProperties> = {
   motionDisclosure: {
     margin: 0,
     fontSize: 12,
-    color: "#666",
+    color: "var(--fb-on-surface-variant)",
     fontStyle: "italic",
   },
 };

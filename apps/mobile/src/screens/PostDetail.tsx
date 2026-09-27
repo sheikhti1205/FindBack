@@ -43,11 +43,8 @@ interface GalleryImage {
  * multiple photos get a main view + an explicit thumbnail strip (48dp
  * targets, no motion). Read-only: no reorder/remove here.
  */
-function PostGallery({ postId, title, images }: { postId: string; title: string; images: GalleryImage[] }) {
+function PostGallery({ title, images }: { title: string; images: GalleryImage[] }) {
   const [selected, setSelected] = useState(0);
-  useEffect(() => {
-    setSelected(0);
-  }, [postId]);
   if (images.length === 0) return null;
   if (images.length === 1) {
     return (
@@ -399,7 +396,10 @@ export function PostDetail() {
       )}
 
       <article className="flex flex-col gap-4 px-4">
-        <PostGallery postId={post.id} title={post.title} images={images} />
+        {/* key remounts the gallery per post: selection resets without a
+            reset effect, so a thumbnail click can never be clobbered by a
+            still-pending passive effect after the gallery first paints. */}
+        <PostGallery key={post.id} title={post.title} images={images} />
 
         <div>
           <h1 className="break-words text-2xl font-semibold leading-tight tracking-tight">{post.title}</h1>

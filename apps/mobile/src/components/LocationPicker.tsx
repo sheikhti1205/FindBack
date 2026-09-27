@@ -15,8 +15,17 @@ import {
   formatAccuracy,
   isLowAccuracy,
   locationFailureMessage,
-  requestOneTimeLocation,
 } from "./locationPermission";
+import {
+  createProductionLocationAdapter,
+  requestFixWithGeneration,
+  type FixState,
+  type LocationAdapter,
+} from "../services/locationAdapter";
+
+function fixFailureMessage(kind: Exclude<FixState["kind"], "idle" | "requesting-permission" | "locating" | "fix">): string {
+  return locationFailureMessage(kind === "services-off" ? "disabled" : kind);
+}
 
 export interface LocationValue {
   label: string;
@@ -36,6 +45,7 @@ interface LocationPickerProps {
   value: LocationValue;
   onChange: (value: LocationValue) => void;
   maxLength?: number;
+  locationAdapter?: LocationAdapter;
 }
 
 /**
@@ -43,7 +53,10 @@ interface LocationPickerProps {
  * optional + graceful fallback) plus a free-text place label, decimal
  * coordinates, or a Google Maps link. No tracking.
  */
-export function LocationPicker({ value, onChange, maxLength }: LocationPickerProps) {
+export function LocationPicker({ value, onChange, maxLength, locationAdapter }: LocationPickerProps) {
+  const [defaultAdapter] = useState(createProductionLocationAdapter);
+  const adapter = locationAdapter ?? defaultAdapter;
+  const fixGeneration = useRef(0);
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   // A coarse fix too imprecise to publish on its own — held until confirmed.
@@ -73,6 +86,7 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
 
   useEffect(() => {
     if (value === emittedRef.current) return;
+    fixGeneration.current += 1;
     emittedRef.current = value;
     setSourceText(value.label);
     setPrecise(
@@ -83,10 +97,13 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
           : null,
     );
     setApprox(value.precision !== "EXACT");
+    setLocating(false);
     setGeoError(null);
     setPendingFix(null);
     setParseError(null);
   }, [value]);
+
+  useEffect(() => () => { fixGeneration.current += 1; }, []);
 
   function emit(next: LocationValue) {
     emittedRef.current = next;
@@ -121,26 +138,29 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
     setGeoError(null);
     setPendingFix(null);
 
-    const outcome = await requestOneTimeLocation();
-    if (outcome.status === "granted") {
-      if (isLowAccuracy(outcome.accuracyMeters)) {
+    const outcome = await requestFixWithGeneration(adapter, { generation: fixGeneration });
+    if (outcome.kind === "idle") return;
+    if (outcome.kind === "fix") {
+      if (isLowAccuracy(outcome.accuracy)) {
         // Coarser than the published ~100 m pin: hold it for an explicit
         // opt-in instead of attaching a misleading pin.
         setPendingFix({
-          lat: outcome.latitude,
-          lng: outcome.longitude,
-          accuracy: outcome.accuracyMeters,
+          lat: outcome.lat,
+          lng: outcome.lng,
+          accuracy: outcome.accuracy,
         });
         setLocating(false);
         return;
       }
-      setCoords(value.label || "Pinned location", outcome.latitude, outcome.longitude, "APPROXIMATE");
+      setCoords(value.label || "Pinned location", outcome.lat, outcome.lng, "APPROXIMATE");
       announce("Approximate location imported (~100 m).");
       setLocating(false);
       return;
     }
 
-    setGeoError(locationFailureMessage(outcome.status));
+    if (outcome.kind !== "locating" && outcome.kind !== "requesting-permission") {
+      setGeoError(fixFailureMessage(outcome.kind));
+    }
     setLocating(false);
   }
 
@@ -158,6 +178,9 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
   }
 
   function handleInput(raw: string) {
+    fixGeneration.current += 1;
+    setLocating(false);
+    setPendingFix(null);
     setSourceText(raw);
     const parsed = parseLocationInput(raw);
     setParseError(parsed.error);
@@ -214,6 +237,9 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
   }
 
   function handleMapConfirm(next: LocationValue) {
+    fixGeneration.current += 1;
+    setLocating(false);
+    setPendingFix(null);
     // The sheet already commits through the same approximate-by-default path;
     // re-enter via setCoords so precise/approx state stays in sync, and show
     // the confirmed label in the text field.
@@ -350,6 +376,7 @@ export function LocationPicker({ value, onChange, maxLength }: LocationPickerPro
         onClose={() => setMapOpen(false)}
         value={value}
         onConfirm={handleMapConfirm}
+        locationAdapter={adapter}
       />
     </div>
   );

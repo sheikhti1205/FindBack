@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FixState, LocationAdapter } from "./locationAdapter";
 import {
   FIX_MICROCOPY,
@@ -318,6 +319,53 @@ describe("requestFixWithGeneration with fake adapter", () => {
 });
 
 describe("createProductionLocationAdapter", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (navigator as unknown as Record<string, unknown>).geolocation;
+    delete (navigator as unknown as Record<string, unknown>).permissions;
+  });
+
+  it("queries permission without requesting coordinates or a prompt", async () => {
+    const getCurrentPosition = vi.fn();
+    Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
+    const query = vi.fn().mockResolvedValue({ state: "prompt" });
+    Object.defineProperty(navigator, "permissions", { configurable: true, value: { query } });
+
+    expect(await createProductionLocationAdapter().getPermission()).toBe("prompt");
+    expect(query).toHaveBeenCalledWith({ name: "geolocation" });
+    expect(getCurrentPosition).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke geolocation when read-only permission status is denied", async () => {
+    const getCurrentPosition = vi.fn();
+    Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
+    Object.defineProperty(navigator, "permissions", {
+      configurable: true,
+      value: { query: vi.fn().mockResolvedValue({ state: "denied" }) },
+    });
+    const result = await requestFixWithGeneration(createProductionLocationAdapter());
+    expect(result.kind).toBe("denied");
+    expect(getCurrentPosition).not.toHaveBeenCalled();
+  });
+
+  it("allows a gesture to try a fix when Permissions API is unavailable", async () => {
+    const getCurrentPosition = vi.fn((_: unknown, fail: (error: { code: number }) => void) => fail({ code: 1 }));
+    Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
+    expect(await createProductionLocationAdapter().getPermission()).toBe("prompt");
+    expect(getCurrentPosition).not.toHaveBeenCalled();
+    const result = await requestFixWithGeneration(createProductionLocationAdapter());
+    expect(result.kind).toBe("denied");
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves platform service-off and timeout failures", async () => {
+    for (const [code, kind] of [[2, "services-off"], [3, "timeout"]] as const) {
+      const getCurrentPosition = vi.fn((_: unknown, fail: (error: { code: number }) => void) => fail({ code }));
+      Object.defineProperty(navigator, "geolocation", { configurable: true, value: { getCurrentPosition } });
+      expect((await requestFixWithGeneration(createProductionLocationAdapter())).kind).toBe(kind);
+    }
+  });
+
   it("returns an object matching LocationAdapter interface", () => {
     const adapter = createProductionLocationAdapter();
     expect(typeof adapter.getCurrentPosition).toBe("function");

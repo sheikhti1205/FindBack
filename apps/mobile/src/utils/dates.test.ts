@@ -1,7 +1,45 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatEventDate, isFutureDate, timeAgo, todayInputValue } from "../utils/dates";
 
 describe("dates util", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to the server UTC day even when the local day is yesterday", () => {
+    vi.stubEnv("TZ", "Pacific/Honolulu");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T01:00:00Z"));
+
+    expect(todayInputValue()).toBe("2026-09-26");
+  });
+
+  it("accepts UTC today even when the local day is yesterday", () => {
+    vi.stubEnv("TZ", "Pacific/Honolulu");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T01:00:00Z"));
+
+    expect(isFutureDate("2026-09-26")).toBe(false);
+  });
+
+  it("defaults to the server UTC day even when the local day is tomorrow", () => {
+    vi.stubEnv("TZ", "Pacific/Kiritimati");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-25T23:30:00Z"));
+
+    expect(todayInputValue()).toBe("2026-09-25");
+  });
+
+  it("rejects UTC tomorrow even when the local day is already tomorrow", () => {
+    vi.stubEnv("TZ", "Pacific/Kiritimati");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-25T23:30:00Z"));
+
+    expect(isFutureDate("2026-09-26")).toBe(true);
+    expect(isFutureDate("2026-09-25")).toBe(false);
+  });
+
   it("formats an event date", () => {
     const out = formatEventDate("2026-09-09");
     expect(out).toMatch(/Sep/);

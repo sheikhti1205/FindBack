@@ -13,7 +13,7 @@ interface MockPhotoResult {
 
 // Helper to create a mock PickedPhoto with controllable file content
 function createMockPhoto(id: string, bytes: Uint8Array, format = "jpg"): MockPhotoResult {
-  const file = new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], `photo.${format}`, { type: `image/${format}` });
+  const file = new File([new Uint8Array([255, 216, 255]), bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, new Uint8Array([255, 217])], `photo.${format}`, { type: `image/${format}` });
   const photo = {
     id,
     nativeUri: `file:///mock/${id}`,

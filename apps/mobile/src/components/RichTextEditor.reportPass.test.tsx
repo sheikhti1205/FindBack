@@ -14,6 +14,7 @@ describe("RichTextEditor report pass — bounded inline growth", () => {
     expect(editorEl).toBeTruthy();
     // Initial min-height ~120px (4-5 lines) via CSS class
     expect(editorEl.className).toMatch(/min-h-\[120px\]/);
+    expect(editorEl.className).toMatch(/max-h-\[240px\]/);
     // Internal scrolling when content exceeds max-height via CSS classes
     expect(editorEl.className).toMatch(/overflow-y-auto/);
     expect(editorEl.className).toMatch(/overscroll-contain/);
@@ -134,6 +135,32 @@ describe("RichTextEditor report pass — formatting rail keyboard visibility", (
     // Verify the overlay uses CSS custom properties for visualViewport
     expect(overlay?.style.height).toContain("var(--fb-visible-height");
     expect(overlay?.style.top).toContain("var(--fb-visible-top");
+  });
+
+  it("updates the overlay on visual viewport resize and scroll and releases the listeners on close", () => {
+    const original = window.visualViewport;
+    const viewport = new EventTarget() as VisualViewport;
+    Object.defineProperties(viewport, {
+      height: { value: 430, writable: true },
+      offsetTop: { value: 24, writable: true },
+    });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+    try {
+      render(<RichTextEditor label="Description" value="hello" onChange={() => {}} />);
+      fireEvent.click(screen.getByRole("button", { name: /Expand description editor/i }));
+      const overlay = document.getElementById("report-editor-overlay")!;
+      expect(overlay.style.getPropertyValue("--fb-visible-height")).toBe("430px");
+      expect(overlay.style.getPropertyValue("--fb-visible-top")).toBe("24px");
+      Object.assign(viewport, { height: 310, offsetTop: 44 });
+      act(() => viewport.dispatchEvent(new Event("resize")));
+      expect(overlay.style.getPropertyValue("--fb-visible-height")).toBe("310px");
+      act(() => viewport.dispatchEvent(new Event("scroll")));
+      expect(overlay.style.getPropertyValue("--fb-visible-top")).toBe("44px");
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      expect(document.getElementById("report-editor-overlay")).toBeNull();
+    } finally {
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: original });
+    }
   });
 });
 

@@ -6,6 +6,9 @@ import { Button } from "./Button";
 
 interface VlmSuggestionsProps {
   file: File | null;
+  currentTitle: string;
+  currentDescription: string;
+  currentCategory: Category | "";
   onApply: (patch: Partial<VlmAnalysis>) => void;
 }
 
@@ -23,7 +26,7 @@ const UNRESOLVED: Record<FieldKey, boolean> = {
 };
 
 /** User-selected photo analysis: explicit cloud consent, then explicit report review. */
-export function VlmSuggestions({ file, onApply }: VlmSuggestionsProps) {
+export function VlmSuggestions({ file, currentTitle, currentDescription, currentCategory, onApply }: VlmSuggestionsProps) {
   const [expanded, setExpanded] = useState(false);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -245,7 +248,7 @@ export function VlmSuggestions({ file, onApply }: VlmSuggestionsProps) {
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2 text-sm">
                     <span className="font-medium w-32">Your title</span>
-                    <span className="flex-1 text-on-surface-variant">{suggestion.suggestedTitle ?? "(empty)"}</span>
+                    <span className="flex-1 text-on-surface-variant">{currentTitle || "(empty)"}</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <span className="font-medium w-32">Suggested title</span>
@@ -269,7 +272,7 @@ export function VlmSuggestions({ file, onApply }: VlmSuggestionsProps) {
                 <div className="flex flex-col gap-1">
                   <div className="flex items-start gap-2 text-sm">
                     <span className="font-medium w-32">Your description</span>
-                    <span className="flex-1 text-on-surface-variant">{suggestion.suggestedDescription ?? "(empty)"}</span>
+                    <span className="flex-1 text-on-surface-variant">{currentDescription || "(empty)"}</span>
                   </div>
                   <div className="flex items-start gap-2 text-sm">
                     <span className="font-medium w-32">Suggested description</span>
@@ -292,8 +295,8 @@ export function VlmSuggestions({ file, onApply }: VlmSuggestionsProps) {
               {!resolved.category && (
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2 text-sm">
-                    <span className="font-medium w-32">Category</span>
-                    <span className="flex-1 text-on-surface-variant">{suggestion.suggestedCategory ?? "(none)"}</span>
+                    <span className="font-medium w-32">Your category</span>
+                    <span className="flex-1 text-on-surface-variant">{currentCategory || "(none)"}</span>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <span className="font-medium w-32">Suggested category</span>

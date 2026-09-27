@@ -27,7 +27,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
 
   it("renders collapsed by default with section title and subtitle", () => {
     const file = makeFile("photo.jpg", "image/jpeg");
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={vi.fn()} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn()} /></MemoryRouter>);
 
     expect(screen.getByText("Draft description from photo")).toBeTruthy();
     expect(screen.getByText("Use one of your photos to suggest a title, description and category.")).toBeTruthy();
@@ -38,7 +38,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
 
   it("shows compact disabled callout when no usable photo", () => {
     const file = makeFile("photo.gif", "image/gif"); // unsupported
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={vi.fn()} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn()} /></MemoryRouter>);
 
     expandPanel();
     expect(screen.getByText("Add a photo to draft text")).toBeTruthy();
@@ -47,7 +47,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
 
   it("expands on click showing consent checkbox unchecked by default", () => {
     const file = makeFile("photo.jpg", "image/jpeg");
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={vi.fn()} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn()} /></MemoryRouter>);
 
     expandPanel();
     const checkbox = screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it.") as HTMLInputElement;
@@ -64,7 +64,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     });
     const file = makeFile("wallet.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     expect(analyze).not.toHaveBeenCalled();
@@ -86,7 +86,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     });
     const first = makeFile("first.jpg", "image/jpeg");
     const apply = vi.fn();
-    const { rerender } = render(<MemoryRouter><VlmSuggestions file={first} onApply={apply} /></MemoryRouter>);
+    const { rerender } = render(<MemoryRouter><VlmSuggestions file={first} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -95,7 +95,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
 
     // Change photo
     const second = makeFile("second.jpg", "image/jpeg");
-    rerender(<MemoryRouter><VlmSuggestions file={second} onApply={apply} /></MemoryRouter>);
+    rerender(<MemoryRouter><VlmSuggestions file={second} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     // Consent should be unchecked again - need to expand again after rerender
     expandPanel();
@@ -109,7 +109,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     analyze.mockImplementationOnce(() => new Promise((resolve) => { resolveAnalyze = resolve; }));
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -138,7 +138,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     });
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -146,11 +146,11 @@ describe("VlmSuggestions — Draft description from photo", () => {
     await waitFor(() => expect(screen.getByText("Your title")).toBeTruthy());
 
     expect(screen.getByText("Suggested title")).toBeTruthy();
-    expect(screen.getByText("AI Title")).toBeTruthy();
+    expect((screen.getByLabelText("Suggested title") as HTMLInputElement).value).toBe("AI Title");
     expect(screen.getByText("Your description")).toBeTruthy();
     expect(screen.getByText("Suggested description")).toBeTruthy();
-    expect(screen.getByText("Category")).toBeTruthy();
-    expect(screen.getByText("Electronics")).toBeTruthy();
+    expect(screen.getByText("Your category")).toBeTruthy();
+    expect((screen.getByLabelText("Suggested category") as HTMLInputElement).value).toBe("Electronics");
 
     // Per-field Apply/Keep buttons
     expect(screen.getByRole("button", { name: "Apply title" })).toBeTruthy();
@@ -159,6 +159,38 @@ describe("VlmSuggestions — Draft description from photo", () => {
     expect(screen.getByRole("button", { name: "Keep description" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Apply category" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Keep category" })).toBeTruthy();
+  });
+
+  it("compares AI fields with the live report values, including edits made after analysis", async () => {
+    analyze.mockResolvedValueOnce({
+      suggestedTitle: "AI Title",
+      suggestedDescription: "AI Description",
+      suggestedCategory: "Electronics",
+      uncertainFields: [],
+    });
+    const file = makeFile("photo.jpg", "image/jpeg");
+    const apply = vi.fn();
+    const { rerender } = render(
+      <MemoryRouter><VlmSuggestions file={file} currentTitle="Saved title" currentDescription="Saved description" currentCategory="Bags & Wallets" onApply={apply} /></MemoryRouter>,
+    );
+    expandPanel();
+    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+    await waitFor(() => expect(screen.getByText("Review suggestions from AI:")).toBeTruthy());
+
+    expect(screen.getByText("Saved title")).toBeTruthy();
+    expect(screen.getByText("Saved description")).toBeTruthy();
+    expect(screen.getByText("Bags & Wallets")).toBeTruthy();
+    rerender(
+      <MemoryRouter><VlmSuggestions file={file} currentTitle="Typed title" currentDescription="Typed description" currentCategory="Clothing" onApply={apply} /></MemoryRouter>,
+    );
+    expect(screen.getByText("Typed title")).toBeTruthy();
+    expect(screen.getByText("Typed description")).toBeTruthy();
+    expect(screen.getByText("Clothing")).toBeTruthy();
+    expect(screen.queryByText("Saved title")).toBeNull();
+    expect((screen.getByLabelText("Suggested title") as HTMLInputElement).value).toBe("AI Title");
+    fireEvent.click(screen.getByRole("button", { name: "Keep title" }));
+    expect(apply).not.toHaveBeenCalled();
   });
 
   it("applying title only changes title and keeps the other fields reviewable", async () => {
@@ -170,7 +202,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     });
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -194,7 +226,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     });
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -212,7 +244,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     analyze.mockRejectedValueOnce(new Error("OpenRouter took too long to respond. Please try again."));
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -231,7 +263,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     );
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -245,7 +277,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     analyze.mockRejectedValueOnce(new Error("OpenRouter took too long to respond. Please try again."));
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -266,7 +298,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     });
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -285,7 +317,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     analyze.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
     const first = makeFile("first.jpg", "image/jpeg");
     const apply = vi.fn();
-    const { rerender } = render(<MemoryRouter><VlmSuggestions file={first} onApply={apply} /></MemoryRouter>);
+    const { rerender } = render(<MemoryRouter><VlmSuggestions file={first} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
@@ -293,7 +325,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
 
     const second = makeFile("second.jpg", "image/jpeg");
-    rerender(<MemoryRouter><VlmSuggestions file={second} onApply={apply} /></MemoryRouter>);
+    rerender(<MemoryRouter><VlmSuggestions file={second} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     resolveFirst!({
       suggestedTitle: "Stale title",
@@ -317,7 +349,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     });
     const file = makeFile("photo.jpg", "image/jpeg");
     const apply = vi.fn();
-    render(<MemoryRouter><VlmSuggestions file={file} onApply={apply} /></MemoryRouter>);
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
     fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));

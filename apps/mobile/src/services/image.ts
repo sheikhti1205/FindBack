@@ -13,7 +13,7 @@ export const MAX_EDGE = 1920;
 export const JPEG_QUALITY = 0.82;
 export const WEBP_QUALITY = 0.82;
 
-const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
 
 export interface DecodedImage {
   source: CanvasImageSource;

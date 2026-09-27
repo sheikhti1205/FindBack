@@ -15,6 +15,7 @@ vi.mock("@capacitor/camera", () => ({
 }));
 
 import { chooseFromGallery, isCancellation, photoToFile, takePhoto } from "./photo";
+import { detectMotionPhoto } from "./media/motionPhoto";
 
 const photo = { type: 0, uri: "content://media/external/images/1", webPath: "http://localhost/_capacitor_file_/1.jpg", saved: false, metadata: { format: "jpg" } };
 
@@ -41,8 +42,8 @@ describe("photo source", () => {
   });
 
   it("builds the upload File from webPath, never base64", async () => {
-    const blob = new Blob(["bytes"], { type: "image/jpeg" });
-    const fetchMock = vi.fn().mockResolvedValue({ blob: () => Promise.resolve(blob) });
+    const blob = new Blob([new Uint8Array([255, 216, 255, 217])], { type: "image/jpeg" });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) });
     vi.stubGlobal("fetch", fetchMock);
     const file = await photoToFile({ nativeUri: "content://x", webPath: "http://localhost/x.jpg", format: "jpg", id: "test-id" }, "x.jpg");
     expect(fetchMock).toHaveBeenCalledWith("http://localhost/x.jpg");
@@ -54,5 +55,25 @@ describe("photo source", () => {
     expect(isCancellation({ code: "OS-PLUG-CAMR-0006" })).toBe(true);
     expect(isCancellation({ code: "OS-PLUG-CAMR-0020" })).toBe(true);
     expect(isCancellation(new Error("nope"))).toBe(false);
+  });
+
+  it("detects a motion clip from XMP plus its actual MP4 offset and keeps just the still", async () => {
+    const mp4 = new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 109, 112, 52, 50, 0, 0, 0, 0]);
+    const xmp = new TextEncoder().encode('GCamera:MicroVideo="1" GCamera:MicroVideoOffset="16"');
+    const jpeg = new Uint8Array([255, 216, 255, 225, 0, xmp.length + 2, ...xmp, 255, 217]);
+    const combined = new Uint8Array(jpeg.length + mp4.length);
+    combined.set(jpeg); combined.set(mp4, jpeg.length);
+    expect(detectMotionPhoto(combined)).toEqual({ stillEnd: jpeg.length });
+    const picked = { nativeUri: "content://x", webPath: "http://localhost/motion.jpg", format: "jpg", id: "one", motionPhoto: false };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob([combined], { type: "image/jpeg" })) }));
+    const still = await photoToFile(picked);
+    expect(still.size).toBe(jpeg.length);
+    expect(still.type).toBe("image/jpeg");
+    expect(picked.motionPhoto).toBe(true);
+  });
+
+  it("does not infer motion from HEIC format or an unverified trailer", () => {
+    const bytes = new TextEncoder().encode('GCamera:MicroVideoOffset="16" but not a JPEG');
+    expect(detectMotionPhoto(bytes)).toBeNull();
   });
 });
