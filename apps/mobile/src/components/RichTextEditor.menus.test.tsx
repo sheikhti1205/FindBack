@@ -9,6 +9,7 @@ import {
   tiptapListsWereSimplified,
   tiptapToMarkdown,
 } from "./RichTextEditor";
+import { settleSelectionRender } from "../test-utils/editorSelection";
 
 afterEach(cleanup);
 
@@ -64,6 +65,8 @@ describe("menu keyboard handling", () => {
     expect(document.activeElement).toBe(quote);
     // Undo/Redo are disabled in a fresh empty editor and must be skipped.
     expect((screen.getByRole("menuitem", { name: "Undo" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Paste as Markdown" }));
     fireEvent.keyDown(menu, { key: "ArrowDown" });
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Clear all formatting" }));
     fireEvent.keyDown(menu, { key: "ArrowDown" });
@@ -202,13 +205,14 @@ describe("ED-07 link Open preview", () => {
     expect(open.getAttribute("rel")).toContain("noopener");
   });
 
-  it("shows no Open link action when adding a fresh link", () => {
+  it("shows no Open link action when adding a fresh link", async () => {
     const ref = createRef<Editor | null>();
     render(<RichTextEditor label="Description" value="see map here" onChange={() => {}} editorRef={ref} />);
     act(() => {
       ref.current?.commands.setContent(markdownToTiptap("see map here"));
       ref.current?.commands.setTextSelection({ from: 5, to: 8 });
     });
+    await settleSelectionRender();
     fireEvent.click(screen.getByRole("button", { name: "Link" }));
     expect(screen.getByRole("dialog", { name: "Add link" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: /Open link/i })).toBeNull();

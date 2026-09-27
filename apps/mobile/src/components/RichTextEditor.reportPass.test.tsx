@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { createRef } from "react";
 import type { Editor } from "@tiptap/react";
 import { RichTextEditor, tiptapToMarkdown } from "./RichTextEditor";
+import { settleSelectionRender } from "../test-utils/editorSelection";
 
 afterEach(cleanup);
 
@@ -115,7 +116,7 @@ describe("RichTextEditor report pass — Expand/Collapse full-screen overlay", (
     expect(document.getElementById("report-editor-overlay")).toBeNull();
   });
 
-  it("Escape closes the link dialog first, never the overlay beneath it", () => {
+  it("Escape closes the link dialog first, never the overlay beneath it", async () => {
     const ref = createRef<Editor | null>();
     render(
       <RichTextEditor label="Description" value="see map here" onChange={() => {}} editorRef={ref} />,
@@ -125,6 +126,7 @@ describe("RichTextEditor report pass — Expand/Collapse full-screen overlay", (
     act(() => {
       ref.current?.commands.setTextSelection({ from: 5, to: 8 });
     });
+    await settleSelectionRender();
     fireEvent.click(screen.getByRole("button", { name: "Link" }));
     expect(screen.getByRole("dialog", { name: /Add link/i })).toBeTruthy();
     // First Escape: dialog goes, overlay stays with its content intact.
@@ -214,7 +216,7 @@ describe("RichTextEditor report pass — collision-safe formatting menus (Floati
     expect(menu.className).toMatch(/max-h-/);
   });
 
-  it("link dialog is portaled out of the editor subtree with reachable actions", () => {
+  it("link dialog is portaled out of the editor subtree with reachable actions", async () => {
     const ref = createRef<Editor | null>();
     const { container } = render(
       <RichTextEditor label="Description" value="see map here" onChange={() => {}} editorRef={ref} />,
@@ -222,6 +224,7 @@ describe("RichTextEditor report pass — collision-safe formatting menus (Floati
     act(() => {
       ref.current?.commands.setTextSelection({ from: 5, to: 8 });
     });
+    await settleSelectionRender();
     fireEvent.click(screen.getByRole("button", { name: "Link" }));
     const dialog = screen.getByRole("dialog", { name: /Add link/i });
     // Portaled out of the editor subtree so an ancestor clip/transform cannot hide it.

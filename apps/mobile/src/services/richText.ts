@@ -614,3 +614,38 @@ export function fromMarkdown(md: unknown): RichTextDocument {
     return emptyDocument();
   }
 }
+
+const MARKDOWN_LINE_RE = /^(#{1,3}\s|>\s?([- ])?|[-*+]\s|\d{1,3}[.)]\s|```)/;
+const MARKDOWN_INLINE_RE = /(\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/;
+
+/**
+ * Reports whether pasted plain text is recognizably Markdown (ChatGPT-style
+ * exports: headings, quotes, lists, fences, bold runs, safe links) rather
+ * than ordinary prose. Conservative by design: ambiguous literal asterisks
+ * stay literal. Multiline text needs at least two signals; a single line
+ * only counts as Markdown when it opens with a heading or carries a safe
+ * Markdown link. Never throws.
+ */
+export function looksLikeMarkdown(value: unknown): boolean {
+  try {
+    if (typeof value !== "string") return false;
+    const text = value.replace(/\r\n/g, "\n");
+    if (text.trim() === "") return false;
+    const lines = text.split("\n");
+    if (lines.length === 1) {
+      const line = lines[0]?.trim() ?? "";
+      if (/^#{1,3}\s+\S/.test(line)) return true;
+      return MARKDOWN_INLINE_RE.test(line) && /^\[.+\]\(https?:\/\/.+\)$/.test(line);
+    }
+    let signals = 0;
+    for (const raw of lines) {
+      const line = raw.replace(/^\s{0,3}/, "");
+      if (MARKDOWN_LINE_RE.test(line)) signals += 1;
+      else if (MARKDOWN_INLINE_RE.test(line)) signals += 1;
+      if (signals >= 2) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}

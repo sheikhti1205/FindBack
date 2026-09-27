@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   fromMarkdown,
   isSafeRichTextHref,
+  looksLikeMarkdown,
   toMarkdown,
   type RichTextDocument,
 } from "./richText";
@@ -328,5 +329,48 @@ describe("richText combined emphasis links", () => {
     expect(md).not.toMatch(/javascript:|data:/i);
     expect(md).toBe("**click***tap*");
     expect(roundTrip(fromMarkdown(md))).toEqual(fromMarkdown(md));
+  });
+});
+
+describe("looksLikeMarkdown clipboard detection", () => {
+  it("recognizes a ChatGPT-style export", () => {
+    const md = [
+      "# Lost Wallet",
+      "",
+      "Found near the **library entrance**.",
+      "",
+      "- Black leather",
+      "- No cash inside",
+      "",
+      "1. Photograph it",
+      "2. Post a report",
+      "",
+      "> Handle with care",
+      "",
+      "See [the guide](https://example.com/guide) for details.",
+    ].join("\n");
+    expect(looksLikeMarkdown(md)).toBe(true);
+  });
+
+  it("leaves ordinary prose alone", () => {
+    expect(looksLikeMarkdown("Pinkish wallet with a neko imprint, kinda worn out")).toBe(false);
+    expect(looksLikeMarkdown("Lost my keys near the station.\nPlease call if found.")).toBe(false);
+  });
+
+  it("leaves ambiguous literal asterisks literal", () => {
+    expect(looksLikeMarkdown("*hello*")).toBe(false);
+    expect(looksLikeMarkdown("2 * 3 = 6\nnot a list")).toBe(false);
+  });
+
+  it("accepts a lone heading or a lone Markdown link line", () => {
+    expect(looksLikeMarkdown("# Title")).toBe(true);
+    expect(looksLikeMarkdown("[guide](https://example.com/guide)")).toBe(true);
+  });
+
+  it("never throws on hostile input", () => {
+    expect(looksLikeMarkdown("")).toBe(false);
+    expect(looksLikeMarkdown(undefined)).toBe(false);
+    expect(looksLikeMarkdown(null)).toBe(false);
+    expect(looksLikeMarkdown(42)).toBe(false);
   });
 });

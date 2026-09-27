@@ -9,9 +9,11 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
 import { isTopModalLayer, useModalLayer } from "../hooks/modalLayers";
 import { Bold, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2, Expand, X } from "lucide-react";
+import { Slice } from "@tiptap/pm/model";
 import {
   fromMarkdown,
   isSafeRichTextHref,
+  looksLikeMarkdown,
   measureDescription,
   toMarkdown,
   type InlineNode,
@@ -671,6 +673,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   // remember ProseMirror offsets to re-apply formatting to the right range.
   const savedRangeRef = useRef<RangedSelection | null>(null);
   const pendingToolbarRangeRef = useRef<RangedSelection | null>(null);
+  const selectionRafRef = useRef(0);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const blockButtonRef = useRef<HTMLButtonElement>(null);
   const listButtonRef = useRef<HTMLButtonElement>(null);
@@ -723,6 +726,24 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           "aria-label": label,
            class: `tiptap min-h-[120px] max-h-[240px] rounded-m3-sm border bg-surface px-3.5 py-3 text-base focus:border-on-surface focus:outline-none overflow-y-auto overscroll-contain ${error ? "border-error" : "border-outline-variant"}`,
         },
+        handlePaste: (view, event) => {
+          // Priority 1: trustworthy rich clipboard keeps the native path
+          // (schema + safe-link allowlist apply as usual).
+          const clipboard = event.clipboardData;
+          if (!clipboard || clipboard.getData("text/html")) return false;
+          // Priority 2: recognizably-Markdown plain text (ChatGPT-style
+          // exports) parses into editor nodes over the selected range only.
+          // Ordinary prose and ambiguous asterisks stay literal.
+          const text = clipboard.getData("text/plain");
+          if (!looksLikeMarkdown(text)) return false;
+          try {
+            const doc = view.state.schema.nodeFromJSON(markdownToTiptap(text));
+            view.dispatch(view.state.tr.replaceSelection(new Slice(doc.content, 0, 0)));
+            return true;
+          } catch {
+            return false;
+          }
+        },
       },
       onCreate: ({ editor: created }) => {
         setEmpty(created.isEmpty);
@@ -741,7 +762,16 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           const snapshot = snapshotRange(from, to, updated.state.doc);
           if (snapshot) savedRangeRef.current = snapshot;
         }
-        refreshSelection((revision) => revision + 1);
+        // Long-press drag on Android fires selection updates every frame; a
+        // full editor re-render per tick janks and risks compositor churn, so
+        // toolbar-state renders coalesce on the animation frame. The range
+        // snapshot above stays synchronous so formatting never loses its target.
+        if (selectionRafRef.current === 0) {
+          selectionRafRef.current = requestAnimationFrame(() => {
+            selectionRafRef.current = 0;
+            if (!updated.isDestroyed) refreshSelection((revision) => revision + 1);
+          });
+        }
       },
     },
     [],
@@ -775,12 +805,14 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     const dom = editor?.view.dom as HTMLElement | undefined;
     if (!dom) return;
     // A single Tiptap instance moves between the inline field and the overlay.
-    // Remove the inline height cap while expanded; the flex parent owns scrolling.
+    // Remove the inline height cap while expanded; the flex parent owns the
+    // one scrolling region and ProseMirror grows with min-height so expanding
+    // content is never trapped inside a fixed-height box.
     dom.classList.toggle("max-h-[240px]", !isExpanded);
     dom.classList.toggle("min-h-[120px]", !isExpanded);
-    dom.classList.toggle("h-full", isExpanded);
+    dom.classList.toggle("min-h-full", isExpanded);
     return () => {
-      dom.classList.remove("h-full");
+      dom.classList.remove("min-h-full");
       dom.classList.add("max-h-[240px]", "min-h-[120px]");
     };
   }, [editor, isExpanded]);
@@ -1009,6 +1041,30 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     editor.chain().focus().undo().run();
     setOpenMenu(null);
     finishOperation("Undone");
+  }
+
+  /**
+   * Explicit "Paste as Markdown" for clipboards that arrive without usable
+   * metadata on Android: parses the clipboard span through the stored-
+   * description codec and inserts it at the selection, preserving caret and
+   * undo history. Genuine user gesture (menu tap) satisfies clipboard policy.
+   */
+  async function pasteClipboardAsMarkdown() {
+    if (!editor) return;
+    setOpenMenu(null);
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      setStatus("Clipboard is unavailable");
+      return;
+    }
+    if (text.trim() === "") {
+      setStatus("Clipboard is empty");
+      return;
+    }
+    editor.chain().focus().insertContent(markdownToTiptap(text)).run();
+    finishOperation("Pasted as Markdown");
   }
 
   function applyRedo() {
@@ -1360,6 +1416,17 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
             <button
               type="button"
               role="menuitem"
+              aria-label="Paste as Markdown"
+              title="Parse the clipboard as Markdown into formatted text"
+              onClick={() => void pasteClipboardAsMarkdown()}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <span>Paste as Markdown</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
               aria-label="Clear all formatting"
               title="Removes block styles (heading, list, quote) and inline styles (bold, italic, link)"
               onClick={applyClearAll}
@@ -1431,7 +1498,13 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
             flexDirection: "column",
           }}
         >
-          <header className="flex items-center justify-between px-4 py-3 border-b border-outline-variant flex-shrink-0">
+          <header
+            className="flex items-center justify-between px-4 py-3 border-b border-outline-variant flex-shrink-0"
+            // The overlay portal lives outside Shell's .fb-app-viewport, so it
+            // takes the same safe-area owner token directly (no double padding:
+            // shell insets never apply to this detached root).
+            style={{ paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))" }}
+          >
             <button
               type="button"
               aria-label="Close full-screen editor"
@@ -1451,7 +1524,11 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               Done
             </button>
           </header>
-           <div className="min-h-0 flex-1 overflow-auto" onPointerDown={handleEditorIntentionalInteraction} onTouchStart={handleEditorIntentionalInteraction} onKeyDown={handleEditorIntentionalInteraction}>
+           <div
+            data-testid="report-editor-scroller"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
+            onPointerDown={handleEditorIntentionalInteraction} onTouchStart={handleEditorIntentionalInteraction} onKeyDown={handleEditorIntentionalInteraction}>
             <EditorContent editor={editor} />
           </div>
           <div ref={toolbarRef} className="relative flex-shrink-0">
@@ -1618,56 +1695,67 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               placement="top"
             >
               <div onKeyDown={handleMenuKeyDown}>
-                <button
-                  type="button"
-                  role="menuitem"
-                  aria-label="Quote"
-                  aria-pressed={quoteActive}
-                  onClick={applyQuote}
-                  className={menuItemCls}
-                >
-                  <span aria-hidden className="w-5 shrink-0">{quoteActive ? "✓" : ""}</span>
-                  <Quote size={17} aria-hidden />
-                  <span>Quote</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  aria-label="Clear all formatting"
-                  title="Removes block styles (heading, list, quote) and inline styles (bold, italic, link)"
-                  onClick={applyClearAll}
-                  className={menuItemCls}
-                >
-                  <span aria-hidden className="w-5 shrink-0" />
-                  <RemoveFormatting size={17} aria-hidden />
-                  <span>Clear all formatting</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  aria-label="Undo"
-                  disabled={!canUndo}
-                  onClick={applyUndo}
-                  className={menuItemCls}
-                >
-                  <span aria-hidden className="w-5 shrink-0" />
-                  <Undo2 size={17} aria-hidden />
-                  <span>Undo</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  aria-label="Redo"
-                  disabled={!canRedo}
-                  onClick={applyRedo}
-                  className={menuItemCls}
-                >
-                  <span aria-hidden className="w-5 shrink-0" />
-                  <Redo2 size={17} aria-hidden />
-                  <span>Redo</span>
-                </button>
-              </div>
-            </FloatingMenu>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Quote"
+              aria-pressed={quoteActive}
+              onClick={applyQuote}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0">{quoteActive ? "✓" : ""}</span>
+              <Quote size={17} aria-hidden />
+              <span>Quote</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Paste as Markdown"
+              title="Parse the clipboard as Markdown into formatted text"
+              onClick={() => void pasteClipboardAsMarkdown()}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <span>Paste as Markdown</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Clear all formatting"
+              title="Removes block styles (heading, list, quote) and inline styles (bold, italic, link)"
+              onClick={applyClearAll}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <RemoveFormatting size={17} aria-hidden />
+              <span>Clear all formatting</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Undo"
+              disabled={!canUndo}
+              onClick={applyUndo}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <Undo2 size={17} aria-hidden />
+              <span>Undo</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Redo"
+              disabled={!canRedo}
+              onClick={applyRedo}
+              className={menuItemCls}
+            >
+              <span aria-hidden className="w-5 shrink-0" />
+              <Redo2 size={17} aria-hidden />
+              <span>Redo</span>
+            </button>
+          </div>
+        </FloatingMenu>
           </div>
         </div>,
         document.body

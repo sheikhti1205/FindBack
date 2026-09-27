@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { createRef } from "react";
 import type { Editor } from "@tiptap/react";
 import { RichTextEditor, markdownToTiptap, tiptapToMarkdown } from "./RichTextEditor";
+import { settleSelectionRender } from "../test-utils/editorSelection";
 
 afterEach(cleanup);
 
@@ -66,7 +67,7 @@ describe("RichTextEditor workset2 visual marks", () => {
     expect(markdownToTiptap(tiptapToMarkdown(ref.current?.getJSON())).content).toBeTruthy();
   });
 
-  it("links precisely the selected text through a cancellable sheet, never a browser prompt", () => {
+  it("links precisely the selected text through a cancellable sheet, never a browser prompt", async () => {
     const promptSpy = vi.spyOn(window, "prompt");
     try {
       const seen: string[] = [];
@@ -74,10 +75,12 @@ describe("RichTextEditor workset2 visual marks", () => {
       const { container } = render(
         <RichTextEditor label="Description" value="see map here" onChange={(md) => seen.push(md)} editorRef={ref} />,
       );
+      expect(ref.current).toBeTruthy();
       act(() => {
         ref.current?.commands.setContent(markdownToTiptap("see map here"));
         ref.current?.commands.setTextSelection({ from: 5, to: 8 });
       });
+      await settleSelectionRender();
        fireEvent.click(screen.getByRole("button", { name: "Link" }));
        expect(screen.getByRole("dialog", { name: "Add link" })).toBeTruthy();
        expect((screen.getByLabelText("Selected text") as HTMLInputElement).value).toBe("map");
@@ -96,20 +99,22 @@ describe("RichTextEditor workset2 visual marks", () => {
     }
   });
 
-  it("leaves the selected word unchanged when the link sheet is cancelled", () => {
+  it("leaves the selected word unchanged when the link sheet is cancelled", async () => {
     const ref = createRef<Editor | null>();
     render(<RichTextEditor label="Description" value="see map here" onChange={() => {}} editorRef={ref} />);
     act(() => ref.current?.commands.setTextSelection({ from: 5, to: 8 }));
+    await settleSelectionRender();
     fireEvent.click(screen.getByRole("button", { name: "Link" }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("see map here");
   });
 
-  it("disables Link at an unlinked caret and rejects unsafe URLs without changing marks", () => {
+  it("disables Link at an unlinked caret and rejects unsafe URLs without changing marks", async () => {
     const ref = createRef<Editor | null>();
     render(<RichTextEditor label="Description" value="see map here" onChange={() => {}} editorRef={ref} />);
     expect((screen.getByRole("button", { name: "Link" }) as HTMLButtonElement).disabled).toBe(true);
     act(() => ref.current?.commands.setTextSelection({ from: 5, to: 8 }));
+    await settleSelectionRender();
     fireEvent.click(screen.getByRole("button", { name: "Link" }));
     fireEvent.change(screen.getByLabelText("URL"), { target: { value: "javascript:alert(1)" } });
     fireEvent.click(screen.getByRole("button", { name: "Add link" }));
@@ -160,7 +165,7 @@ describe("RichTextEditor selection preservation (toolbar focus loss)", () => {
     expect(last).toBe("hello *world*");
   });
 
-  it("applies the link to the pre-dialog range even though focus moved to the toolbar/dialog", () => {
+  it("applies the link to the pre-dialog range even though focus moved to the toolbar/dialog", async () => {
     const seen: string[] = [];
     const ref = createRef<Editor | null>();
     render(
@@ -174,6 +179,7 @@ describe("RichTextEditor selection preservation (toolbar focus loss)", () => {
     act(() => {
       ref.current?.commands.setTextSelection({ from: 13, to: 13 });
     });
+    await settleSelectionRender();
     fireEvent.click(screen.getByRole("button", { name: "Link" }));
     expect(screen.getByRole("dialog", { name: "Add link" })).toBeTruthy();
     expect((screen.getByLabelText("Selected text") as HTMLInputElement).value).toBe("map");
