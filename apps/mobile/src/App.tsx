@@ -1,4 +1,5 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router";
+import { MotionConfig } from "framer-motion";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
 import { GuestOnly, RequireAuth } from "./components/Guards";
@@ -24,6 +25,10 @@ export function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
+        {/* Wave A: the OS reduced-motion setting degrades all Motion
+            transform/layout travel to instant centrally (opacity kept).
+            Imperative motion consults shouldReduceMotion() instead. */}
+        <MotionConfig reducedMotion="user">
         <HashRouter>
           <BackButtonHandler />
           <ErrorBoundary>
@@ -69,6 +74,7 @@ export function App() {
           </Routes>
           </ErrorBoundary>
         </HashRouter>
+        </MotionConfig>
       </AuthProvider>
     </ThemeProvider>
   );

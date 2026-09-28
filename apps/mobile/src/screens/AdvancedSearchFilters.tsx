@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { CATEGORIES, POST_STATUSES, type Category, type PostStatus } from "@findback/shared";
 import { SlidersHorizontal, X } from "lucide-react";
 import { BottomSheet } from "../components/BottomSheet";
@@ -8,7 +8,14 @@ import { CategoryField } from "../components/CategoryField";
 import { SelectField } from "../components/Fields";
 import { STATUS_OPTIONS, statusLabel } from "../components/Segmented";
 import { useUrlParam } from "../hooks/useUrlParam";
-import { motionDurations, pressFeedback } from "../components/uiMotion";
+import {
+  fadeVariants,
+  motionDurations,
+  motionEasings,
+  motionSprings,
+  pressFeedback,
+  scaleInVariants,
+} from "../components/uiMotion";
 
 /** Keep the legacy /search and Home filter URL contract identical. */
 export function useAdvancedSearchFilters() {
@@ -83,15 +90,23 @@ export function FiltersIconButton({
       className="relative flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container"
     >
       <SlidersHorizontal size={18} aria-hidden />
-      {activeCount > 0 && (
-        <span
-          aria-hidden="true"
-          data-testid="filters-active-count"
-          className="absolute right-0.5 top-0.5 flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full bg-on-surface px-1 text-[11px] font-semibold text-surface"
-        >
-          {activeCount}
-        </span>
-      )}
+      <AnimatePresence initial={false}>
+        {activeCount > 0 && (
+          <motion.span
+            key={`filters-badge-${activeCount}`}
+            aria-hidden="true"
+            data-testid="filters-active-count"
+            variants={scaleInVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+            className="absolute right-0.5 top-0.5 flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full bg-on-surface px-1 text-[11px] font-semibold text-surface"
+          >
+            {activeCount}
+          </motion.span>
+        )}
+      </AnimatePresence>
     </motion.button>
   );
 }
@@ -135,22 +150,36 @@ export function AdvancedSearchFilters({
       )}
 
       {active.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2" aria-label="Active filters">
-          {active.map(item => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={item.clear}
-              aria-label={`Remove ${item.key} filter`}
-              className="inline-flex min-h-[48px] items-center gap-1.5 rounded-full border border-outline-variant bg-surface-container px-3 text-sm text-on-surface"
-            >
-              {item.label}<X size={14} aria-hidden />
-            </button>
-          ))}
+        <motion.div
+          layout
+          transition={motionSprings.snappy}
+          className="flex flex-wrap items-center gap-2"
+          aria-label="Active filters"
+        >
+          <AnimatePresence initial={false}>
+            {active.map(item => (
+              <motion.button
+                key={item.key}
+                layout
+                type="button"
+                onClick={item.clear}
+                aria-label={`Remove ${item.key} filter`}
+                whileTap={pressFeedback.button}
+                variants={fadeVariants}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+                className="inline-flex min-h-[48px] items-center gap-1.5 rounded-full border border-outline-variant bg-surface-container px-3 text-sm text-on-surface"
+              >
+                {item.label}<X size={14} aria-hidden />
+              </motion.button>
+            ))}
+          </AnimatePresence>
           <button type="button" onClick={clearAll} className="inline-flex min-h-[48px] items-center rounded-full px-3 text-sm font-medium text-on-surface underline">
             Clear all filters
           </button>
-        </div>
+        </motion.div>
       )}
 
       <BottomSheet

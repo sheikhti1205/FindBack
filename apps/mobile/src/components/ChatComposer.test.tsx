@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitForElementToBeRemoved } from "@testing-library/react";
 import { ChatComposer } from "./ChatComposer";
 
 afterEach(cleanup);
@@ -203,8 +203,14 @@ describe("ChatComposer M2", () => {
     });
     render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} speech={speech as never} />);
     fireEvent.click(screen.getByTestId("chat-mic"));
+    // Denied check surfaces the animated pre-prompt first; continuing
+    // triggers the OS request, which is denied again → notice, no start.
+    expect(await screen.findByTestId("chat-mic-permission")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("chat-mic-permission-continue"));
     expect(await screen.findByTestId("chat-mic-status")).toBeTruthy();
-    expect(screen.getByTestId("chat-mic-status").textContent).toMatch(/microphone permission/i);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("chat-mic-status").textContent).toMatch(/microphone permission/i);
+    });
     expect(speech.start).not.toHaveBeenCalled();
   });
 
@@ -240,7 +246,7 @@ describe("ChatComposer 360dp two-row layout (screenshot 11)", () => {
     expect(controls.contains(field)).toBe(false);
   });
 
-  it("opens one accessible Add menu offering Camera and Gallery", () => {
+  it("opens one accessible Add menu offering Camera and Gallery", async () => {
     render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} onAddFiles={vi.fn()} />);
     const add = screen.getByTestId("chat-add-photos");
     expect(add.tagName).toBe("BUTTON");
@@ -257,7 +263,8 @@ describe("ChatComposer 360dp two-row layout (screenshot 11)", () => {
     expect(screen.getByTestId("chat-camera-input")).toBeTruthy();
     expect(screen.getByTestId("chat-file-input")).toBeTruthy();
     fireEvent.click(camera);
-    expect(screen.queryByTestId("chat-add-menu")).toBeNull();
+    // The menu plays its exit animation before unmounting.
+    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-add-menu"));
     expect(screen.getByTestId("chat-camera-input")).toBeTruthy();
   });
 });

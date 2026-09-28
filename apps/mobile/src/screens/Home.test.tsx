@@ -4,11 +4,12 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { categoryValue, chooseCategory } from "../test-utils/reportCategory";
 
-const { fetchFeedMock, handlers, onRealtimeMock } = vi.hoisted(() => {
+const { fetchFeedMock, handlers, onRealtimeMock, tabTapState } = vi.hoisted(() => {
   const handlers = new Map<string, Set<(payload: unknown) => void>>();
   return {
     fetchFeedMock: vi.fn(),
     handlers,
+    tabTapState: { tapCount: 0 },
     onRealtimeMock: vi.fn((event: string, handler: (payload: unknown) => void) => {
       if (!handlers.has(event)) handlers.set(event, new Set());
       handlers.get(event)!.add(handler);
@@ -20,7 +21,7 @@ const { fetchFeedMock, handlers, onRealtimeMock } = vi.hoisted(() => {
 vi.mock("../services/posts", () => ({ fetchFeed: fetchFeedMock }));
 vi.mock("../services/realtime", () => ({ onRealtime: onRealtimeMock }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
-vi.mock("../components/TabTap", () => ({ useTabTap: () => ({ tapCount: 0 }) }));
+vi.mock("../components/TabTap", () => ({ useTabTap: () => tabTapState }));
 vi.mock("../components/PostList", () => ({
   PostList: ({ items, error, emptySubtitle, onRetry }: { items: Array<{ id: string }>; error: string | null; emptySubtitle: string; onRetry: () => Promise<void> }) => (
     <div>
@@ -58,6 +59,7 @@ describe("Home realtime", () => {
     fetchFeedMock.mockReset();
     onRealtimeMock.mockClear();
     handlers.clear();
+    tabTapState.tapCount = 0;
     clearFeedCaches();
     fetchFeedMock.mockResolvedValue({
       items: ["a", "b", "c"].map((id) => ({ id, title: id })),
@@ -260,5 +262,168 @@ describe("Home realtime", () => {
     act(() => expect(consumeBackIntercept()).toBe(true));
     await waitFor(() => expect(screen.getByRole("button", { name: /^filters/i }).getAttribute("aria-expanded")).toBe("false"));
     expect(screen.getByTestId("location").textContent).toBe("/?q=wallet");
+  });
+
+  it("clear button appears while typing and clears the query, URL param, and feed filter", async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+    // Compact at rest: no clear affordance, no cancel.
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
+    await waitFor(
+      () => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ q: "wallet" }), undefined),
+      { timeout: 3000 },
+    );
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toContain("q=wallet"));
+
+    // Active field: clear + cancel affordances present.
+    expect(screen.getByRole("button", { name: "Clear search" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+
+    fetchFeedMock.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("");
+    await waitFor(
+      () => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ q: undefined }), undefined),
+      { timeout: 3000 },
+    );
+    await waitFor(() => expect(screen.getByTestId("location").textContent).not.toContain("q="));
+  });
+
+  it("cancel collapses the active field back to its compact state", async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
+    expect(await screen.findByRole("button", { name: "Cancel" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+  });
+
+  it("re-tapping the active Home tab scrolls smoothly and refreshes", async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    try {
+      const { rerender } = renderHome();
+      await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+      fetchFeedMock.mockClear();
+
+      tabTapState.tapCount = 1;
+      rerender(
+        <MemoryRouter initialEntries={["/"]}>
+          <Home />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  it("re-tapping the active Home tab scrolls instantly under reduced motion", async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      media: "(prefers-reduced-motion: reduce)",
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    }) as unknown as typeof window.matchMedia;
+    try {
+      const { rerender } = renderHome();
+      await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+      tabTapState.tapCount = 1;
+      rerender(
+        <MemoryRouter initialEntries={["/"]}>
+          <Home />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" }));
+    } finally {
+      window.matchMedia = originalMatchMedia;
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  it("restores the cached scroll position on return without refetching", async () => {
+    saveFeedCache(buildFeedCacheKey("home:feed", { type: "", sort: "newest" }), {
+      items: [{ id: "cached", title: "Cached result" }] as never,
+      total: 1,
+      cursor: null,
+      scrollTop: 200,
+    });
+    const { container } = renderHome();
+    expect(await screen.findByText("cached")).toBeTruthy();
+    expect(fetchFeedMock).not.toHaveBeenCalled();
+
+    const scroller = container.querySelector(".overflow-y-auto");
+    expect(scroller).toBeTruthy();
+    await waitFor(() => expect((scroller as HTMLElement).scrollTop).toBe(200));
+  });
+
+  it("shows the new-posts pill when scrolled and removes it cleanly on tap", async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    try {
+      const { container } = renderHome();
+      await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+      expect(screen.queryByText(/new post/i)).toBeNull();
+
+      const scroller = container.querySelector(".overflow-y-auto");
+      expect(scroller).toBeTruthy();
+      (scroller as HTMLElement).scrollTop = 100;
+
+      act(() =>
+        emit("feed:changed", { change: "INSERT", op: "INSERT", postId: "n1", postType: "LOST", title: "Lost wallet" }),
+      );
+      expect(await screen.findByText("1 new post")).toBeTruthy();
+
+      // A second insert updates the count label (no full re-render of rows).
+      act(() =>
+        emit("feed:changed", { change: "INSERT", op: "INSERT", postId: "n2", postType: "FOUND", title: "Found keys" }),
+      );
+      expect(await screen.findByText("2 new posts")).toBeTruthy();
+      expect(screen.getByText("a")).toBeTruthy();
+
+      fetchFeedMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: /tap to refresh/i }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+      await waitFor(() => expect(screen.queryByText(/new post/i)).toBeNull());
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  it("gives the toolbar separation once the feed scrolls", async () => {
+    const { container } = renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    const toolbar = screen.getByTestId("home-toolbar");
+    expect(toolbar.className).not.toContain("shadow-sm");
+
+    const scroller = container.querySelector(".overflow-y-auto");
+    expect(scroller).toBeTruthy();
+    (scroller as HTMLElement).scrollTop = 100;
+    fireEvent.scroll(scroller as HTMLElement);
+
+    await waitFor(() => expect(screen.getByTestId("home-toolbar").className).toContain("shadow-sm"));
   });
 });

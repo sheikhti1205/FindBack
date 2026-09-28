@@ -84,4 +84,16 @@ describe("AdvancedSearchFilters controlled + hideTrigger (Home search bar)", () 
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: /remove status filter/i })).toBeTruthy();
   });
+
+  it("updates the badge count when a chip is removed", async () => {
+    render(<Harness entry="/?category=Electronics&status=OPEN" />);
+    expect(await screen.findByRole("button", { name: /remove category filter/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /remove category filter/i }));
+
+    expect(await screen.findByRole("button", { name: "Filters, 1 active" })).toBeTruthy();
+    expect(screen.getByTestId("filters-active-count")).toHaveProperty("textContent", "1");
+    expect(screen.queryByRole("button", { name: /remove category filter/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /remove status filter/i })).toBeTruthy();
+  });
 });

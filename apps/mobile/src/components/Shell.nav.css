@@ -30,6 +30,12 @@
 /* Transform-only selected-icon emphasis (compositor thread). */
 .fb-nav-icon { flex: none; transition: transform 0.15s ease-out; }
 .fb-nav-link-active .fb-nav-icon { transform: scale(1.12); }
+/* Raw CSS transitions cannot see MotionConfig: honor the OS setting here so
+   the selected-icon emphasis collapses to instant under reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .fb-nav-icon { transition: none; }
+  .fb-nav-link-active .fb-nav-icon { transform: none; }
+}
 .fb-nav-label {
   min-width: 0; text-align: center; font-size: 0.75rem;
   line-height: 1.2; overflow: hidden; white-space: nowrap;

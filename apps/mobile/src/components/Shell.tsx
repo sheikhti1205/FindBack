@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation } from "react-router";
+import { Link, useLocation } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { Bell, ClipboardList, Home, Plus, UserRound } from "lucide-react";
 import { TabTapProvider, useTabTap } from "./TabTap";
 import { LiveRegion } from "./LiveRegion";
+import { RouteTransition } from "./RouteTransition";
 import { requestHistorySuppression } from "./backNavigation";
 import { fetchUnreadCount } from "../services/notifications";
-import { motionDurations, motionSprings, pressFeedback } from "./uiMotion";
+import {
+  fadeUpVariants,
+  motionDurations,
+  motionEasings,
+  motionSprings,
+  pressFeedback,
+} from "./uiMotion";
 import "./Shell.nav.css";
 
 /** Router link with framer press gestures (motion pass: always animated). */
@@ -32,9 +39,16 @@ export function Shell() {
     <TabTapProvider>
       <div className="fb-app-viewport mx-auto flex w-full max-w-md flex-col bg-surface text-on-surface">
         <main className={`min-h-0 flex-1 ${ownsInternalScroll ? "overflow-hidden" : "overflow-y-auto"}`}>
-          <Outlet />
+          <RouteTransition />
         </main>
-        {showNav && <BottomNav />}
+        {/* Wave A: route-driven nav hide/show slides+fades (short, transform/
+            opacity only) instead of an instant unmount. AnimatePresence keeps
+            the exiting nav in flow until its exit finishes, so route content
+            does not jump mid-animation; once exited the nav is unmounted and
+            therefore non-focusable / absent from the accessibility tree. */}
+        <AnimatePresence initial={false}>
+          {showNav && <BottomNav key="fb-bottom-nav" />}
+        </AnimatePresence>
         <LiveRegion />
       </div>
     </TabTapProvider>
@@ -97,7 +111,15 @@ function BottomNav() {
 
   const selectedPath = pathname === "/search" ? "/" : pathname;
   return (
-    <nav aria-label="Primary" className="fb-nav-slot shrink-0">
+    <motion.nav
+      aria-label="Primary"
+      className="fb-nav-slot shrink-0"
+      variants={fadeUpVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+      transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+    >
       <div className="fb-nav-row">
         <div className="fb-nav-pill">
           {NAV.map(({ to, label, icon: Icon }) => {
@@ -164,6 +186,6 @@ function BottomNav() {
           </Link>
         </motion.div>
       </div>
-    </nav>
+    </motion.nav>
   );
 }

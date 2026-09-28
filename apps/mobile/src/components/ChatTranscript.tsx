@@ -1,6 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowDown, Check, Copy } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
+import {
+  fadeUpVariants,
+  fadeVariants,
+  listItemVariants,
+  motionDurations,
+  motionEasings,
+  pressFeedback,
+  useShouldReduceMotion,
+} from "./uiMotion";
+
+/**
+ * How long the copy control stays in its confirmed (Check) state. This is a
+ * state-revert timing, not an animation duration — the swap itself uses the
+ * shared motion tokens.
+ */
+const COPY_CONFIRM_MS = 1500;
 
 export interface TranscriptAction {
   id: string;
@@ -57,6 +74,10 @@ function sourceLabel(source: TranscriptSource, detail?: string | null): string {
  * Scrollable conversation log. Grayscale surfaces; colour only on the send
  * control / links / meaningful status (handled by callers). Sticks to the
  * latest message and offers a "New response" pill when the user scrolled up.
+ *
+ * Motion: each turn enters once with a tiny rise/fade (restored history never
+ * replays the entrance), streamed tokens never animate — only the bubble does —
+ * and the busy row fades out cleanly as the finished answer arrives.
  */
 export function ChatTranscript({
   messages,
@@ -74,6 +95,21 @@ export function ChatTranscript({
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showNewResponse, setShowNewResponse] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reduceMotion = useShouldReduceMotion();
+  // Entrance suppression: the turns already on screen (restored history)
+  // render settled; only turns appended after mount rise in.
+  const entranceReady = useRef(false);
+  useEffect(() => {
+    entranceReady.current = true;
+  }, []);
+  useEffect(
+    () => () => {
+      if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+    },
+    [],
+  );
 
   function nearBottom(): boolean {
     const el = scrollRef.current;
@@ -81,9 +117,9 @@ export function ChatTranscript({
     return el.scrollHeight - el.scrollTop - el.clientHeight < 96;
   }
 
-  // Motion policy: animations always play — no reduced-motion gate here.
+  // Imperative scroll cannot see MotionConfig: honor the OS setting here.
   function scrollToLatest() {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth" });
     setShowNewResponse(false);
   }
 
@@ -97,6 +133,20 @@ export function ChatTranscript({
     // Keyed on content: scroll follows messages AND the throttled partial.
   }, [messages, partialText]);
 
+  async function copyAnswer(message: TranscriptMessage) {
+    const text = message.text;
+    try {
+      if (!navigator.clipboard?.writeText) return;
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard refused/unavailable: no confirmed state, no fake Check.
+      return;
+    }
+    setCopiedId(message.id);
+    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopiedId(null), COPY_CONFIRM_MS);
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -108,9 +158,13 @@ export function ChatTranscript({
         className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-surface px-4 py-4"
       >
         {messages.map((m) => (
-          <div
+          <motion.div
             key={m.id}
             data-testid="chat-message"
+            variants={listItemVariants}
+            initial={entranceReady.current ? "hidden" : false}
+            animate="visible"
+            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
@@ -125,6 +179,7 @@ export function ChatTranscript({
                   {sourceLabel(m.source, m.sourceDetail)}
                 </p>
               )}
+              {/* The bubble animates once; the tokens inside it never do. */}
               {m.role === "assistant" ? (
                 <MarkdownView text={m.text} />
               ) : (
@@ -138,101 +193,203 @@ export function ChatTranscript({
               {m.actions !== undefined && m.actions.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {m.actions.map((a) => (
-                    <button
+                    <motion.button
                       key={a.id}
                       type="button"
                       onClick={() => onAction?.(a.id)}
+                      whileTap={pressFeedback.button}
+                      transition={{ duration: motionDurations.instant }}
                       className="min-h-[48px] rounded-full border border-outline px-3 text-xs font-medium text-on-surface"
                     >
                       {a.label}
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
               )}
+              {m.role === "assistant" && (
+                <div className="mt-2 flex items-center gap-2">
+                  <motion.button
+                    type="button"
+                    data-testid={`chat-copy-${m.id}`}
+                    onClick={() => void copyAnswer(m)}
+                    whileTap={pressFeedback.iconButton}
+                    transition={{ duration: motionDurations.instant }}
+                    aria-label={copiedId === m.id ? "Copied" : "Copy answer"}
+                    className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full border border-outline-variant text-on-surface-variant hover:bg-surface-container"
+                  >
+                    {/* Overlapping grid cell so the icon swap never reflows. */}
+                    <span className="grid place-items-center">
+                      <AnimatePresence initial={false}>
+                        {copiedId === m.id ? (
+                          <motion.span
+                            key="copied"
+                            data-testid="chat-copy-icon-check"
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.9 }}
+                            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+                            className="grid [grid-area:1/1]"
+                            aria-hidden
+                          >
+                            <Check size={16} />
+                          </motion.span>
+                        ) : (
+                          <motion.span
+                            key="copy"
+                            data-testid="chat-copy-icon-copy"
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.9 }}
+                            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+                            className="grid [grid-area:1/1]"
+                            aria-hidden
+                          >
+                            <Copy size={16} />
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+                    </span>
+                  </motion.button>
+                  {copiedId === m.id && (
+                    <span role="status" className="text-xs text-on-surface-variant">
+                      Copied
+                    </span>
+                  )}
+                </div>
+              )}
               {m.failed === true && onRetry !== undefined && (
-                <button
+                <motion.button
                   type="button"
                   onClick={onRetry}
                   data-testid="chat-retry-inline"
+                  whileTap={pressFeedback.button}
+                  transition={{ duration: motionDurations.instant }}
                   className="mt-2 min-h-[48px] rounded-m3-xs px-3 text-xs font-semibold text-on-surface underline"
                 >
                   Retry
-                </button>
+                </motion.button>
               )}
             </div>
-          </div>
+          </motion.div>
         ))}
         {partialText !== null && partialText !== "" && (
-          <div className="flex justify-start">
-            <div
-              data-testid="chat-partial"
-              className="max-w-[85%] rounded-m3-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5 text-sm leading-relaxed"
-            >
+          <motion.div
+            data-testid="chat-partial"
+            variants={fadeVariants}
+            initial="hidden"
+            animate="visible"
+            transition={{ duration: motionDurations.fast }}
+            className="flex justify-start"
+          >
+            <div className="max-w-[85%] rounded-m3-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5 text-sm leading-relaxed">
               <p className="mb-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
                 {partialLabel !== null && partialLabel !== "" ? partialLabel : "AI answer"}
               </p>
+              {/* Streamed text grows here — never animated per token. */}
               <MarkdownView text={partialText} />
             </div>
-          </div>
+          </motion.div>
         )}
-        {busy && (
-          <div className="flex items-center gap-2 text-xs text-on-surface-variant">
-            <span
-              aria-hidden
-              className="h-3 w-3 animate-spin rounded-full border border-outline border-t-on-surface"
-            />
-            {busyLabel}
-            {onStop !== undefined && (
-              <button
-                type="button"
-                data-testid="chat-stop"
-                onClick={onStop}
-                aria-label={stopLabel}
-                className="min-h-[48px] rounded-m3-xs px-3 text-xs font-semibold text-on-surface underline"
-              >
-                Stop
-              </button>
-            )}
-          </div>
-        )}
+        <AnimatePresence initial={false}>
+          {busy && (
+            <motion.div
+              key="busy"
+              data-testid="chat-busy"
+              variants={fadeVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              transition={{ duration: motionDurations.fast }}
+              className="flex items-center gap-2 text-xs text-on-surface-variant"
+            >
+              <span
+                aria-hidden
+                className="h-3 w-3 animate-spin rounded-full border border-outline border-t-on-surface"
+              />
+              {busyLabel}
+              {onStop !== undefined && (
+                <motion.button
+                  type="button"
+                  data-testid="chat-stop"
+                  onClick={onStop}
+                  aria-label={stopLabel}
+                  whileTap={pressFeedback.button}
+                  transition={{ duration: motionDurations.instant }}
+                  className="min-h-[48px] rounded-m3-xs px-3 text-xs font-semibold text-on-surface underline"
+                >
+                  Stop
+                </motion.button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
         {notice !== null && notice !== "" && (
-          <p data-testid="chat-notice" className="text-xs text-on-surface-variant">
-            {notice}
-          </p>
-        )}
-        {error !== null && error !== "" && (
-          <div
-            data-testid="chat-error"
-            role="alert"
-            className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-outline-variant bg-surface-container-low px-3 py-2 text-xs text-on-surface"
+          <motion.p
+            data-testid="chat-notice"
+            variants={fadeUpVariants}
+            initial="hidden"
+            animate="visible"
+            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+            className="text-xs text-on-surface-variant"
           >
-            <span className="flex-1">{error}</span>
-            {onRetry !== undefined && (
-              <button
-                type="button"
-                data-testid="chat-retry"
-                onClick={onRetry}
-                className="min-h-[48px] rounded-m3-xs px-3 text-xs font-semibold text-on-surface underline"
-              >
-                Retry
-              </button>
-            )}
-          </div>
+            {notice}
+          </motion.p>
         )}
+        <AnimatePresence initial={false}>
+          {error !== null && error !== "" && (
+            <motion.div
+              key="error"
+              data-testid="chat-error"
+              role="alert"
+              variants={fadeUpVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+              className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-outline-variant bg-surface-container-low px-3 py-2 text-xs text-on-surface"
+            >
+              <span className="flex-1">{error}</span>
+              {onRetry !== undefined && (
+                <motion.button
+                  type="button"
+                  data-testid="chat-retry"
+                  onClick={onRetry}
+                  whileTap={pressFeedback.button}
+                  transition={{ duration: motionDurations.instant }}
+                  className="min-h-[48px] rounded-m3-xs px-3 text-xs font-semibold text-on-surface underline"
+                >
+                  Retry
+                </motion.button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
         <div ref={bottomRef} data-testid="chat-bottom" aria-hidden />
       </div>
-      {showNewResponse && (
-        <div className="flex justify-center bg-surface px-4 pb-2">
-          <button
-            type="button"
-            data-testid="chat-new-response"
-            onClick={scrollToLatest}
-            className="flex min-h-[48px] items-center gap-1 rounded-full border border-outline bg-surface px-4 text-xs font-semibold text-on-surface shadow"
+      <AnimatePresence initial={false}>
+        {showNewResponse && (
+          <motion.div
+            key="new-response"
+            variants={fadeUpVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+            className="flex justify-center bg-surface px-4 pb-2"
           >
-            <ArrowDown size={14} aria-hidden /> New response
-          </button>
-        </div>
-      )}
+            <motion.button
+              type="button"
+              data-testid="chat-new-response"
+              onClick={scrollToLatest}
+              whileTap={pressFeedback.button}
+              transition={{ duration: motionDurations.instant }}
+              className="flex min-h-[48px] items-center gap-1 rounded-full border border-outline bg-surface px-4 text-xs font-semibold text-on-surface shadow"
+            >
+              <ArrowDown size={14} aria-hidden /> New response
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
