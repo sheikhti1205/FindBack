@@ -170,6 +170,9 @@ describe("Shell P1 viewport (screenshots 08/11/12)", () => {
     expect(main.className).not.toMatch(/pb-20/);
     expect(main.className).toMatch(/min-h-0/);
     expect(main.className).toMatch(/flex-1/);
+    // Route stage: the positioning context for popLayout-exited routes, so
+    // exiting/entering route wrappers share one stage instead of stacking.
+    expect(main.className).toMatch(/relative/);
   });
 
   it("keeps the bottom nav in normal flex flow, not a fixed overlay", () => {

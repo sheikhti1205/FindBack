@@ -55,29 +55,6 @@ export function PostList({
     return () => observer.disconnect();
   }, [hasMore, loadingMore, onLoadMore, error]);
 
-  if (loading && items.length === 0) return <Spinner label="Loading posts…" />;
-
-  if (error && items.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-3 px-4 py-8">
-        <EmptyState icon={<FileQuestion size={28} />} title="Could not load" subtitle={error} />
-        {onRetry && (
-          <button
-            type="button"
-            onClick={() => void onRetry()}
-            className="min-h-[48px] rounded-m3-sm border border-outline-variant px-4 text-sm font-medium"
-          >
-            Try again
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  if (items.length === 0) {
-    return <EmptyState icon={<FileQuestion size={28} />} title={emptyTitle} subtitle={emptySubtitle} />;
-  }
-
   // U2: density maps to card layout; omitted density keeps pre-U2 rendering
   // so rollout-external screens (e.g. MyPosts) are pixel-identical.
   const layout: PostCardLayout = density === "compact" ? "compact" : density === "editorial" ? "editorial" : "classic";

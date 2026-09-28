@@ -29,8 +29,13 @@ function isDetail(path: string): boolean {
  *
  * Navigation itself is immediate (react-router swaps the outlet); motion
  * only accompanies it. The shell never unmounts — only this outlet wrapper
- * is keyed, so exit/enter overlap briefly (sync AnimatePresence) which also
- * lets shared `layoutId` elements (card → detail media) travel.
+ * is keyed. AnimatePresence `popLayout` pops the exiting wrapper out of
+ * normal flow (absolute, measured) so exiting and entering routes genuinely
+ * occupy the same route stage instead of stacking vertically as two block
+ * elements; the entering wrapper keeps `h-full min-h-0` so screens with
+ * `flex h-full flex-col` internal scrollers (Home/Search/Help) still
+ * resolve against a definite-height parent. popLayout stays compatible
+ * with the LayoutGroup shared `layoutId` elements (card → detail media).
  */
 export function resolveRouteVariants(
   from: string,
@@ -64,7 +69,7 @@ export function RouteTransition() {
 
   return (
     <LayoutGroup>
-      <AnimatePresence initial={false}>
+      <AnimatePresence initial={false} mode="popLayout">
         <motion.div
           key={location.pathname}
           variants={variants}
@@ -72,6 +77,7 @@ export function RouteTransition() {
           animate="visible"
           exit="exit"
           transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+          className="h-full min-h-0"
           data-testid="route-transition"
           data-route={location.pathname}
         >

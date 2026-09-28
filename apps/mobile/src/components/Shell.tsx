@@ -38,7 +38,7 @@ export function Shell() {
   return (
     <TabTapProvider>
       <div className="fb-app-viewport mx-auto flex w-full max-w-md flex-col bg-surface text-on-surface">
-        <main className={`min-h-0 flex-1 ${ownsInternalScroll ? "overflow-hidden" : "overflow-y-auto"}`}>
+        <main className={`relative min-h-0 flex-1 ${ownsInternalScroll ? "overflow-hidden" : "overflow-y-auto"}`}>
           <RouteTransition />
         </main>
         {/* Wave A: route-driven nav hide/show slides+fades (short, transform/

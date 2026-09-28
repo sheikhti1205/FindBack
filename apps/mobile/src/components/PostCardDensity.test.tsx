@@ -171,7 +171,7 @@ describe("PostList state transitions (Wave A)", () => {
     );
   }
 
-  it("loading → results: spinner gives way to content without losing it", () => {
+  it("loading → results: spinner crossfades instead of unmounting instantly", () => {
     const { rerender } = renderList({ loading: true });
     expect(screen.getByText(/loading posts/i)).toBeTruthy();
     rerender(
@@ -189,9 +189,12 @@ describe("PostList state transitions (Wave A)", () => {
     );
     // Navigation-equivalent immediacy: content is present right after the swap.
     expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
+    // The state machine owns the swap: the exiting spinner is still mounted
+    // for its exit animation instead of vanishing in the same commit.
+    expect(screen.queryByText(/loading posts/i)).toBeTruthy();
   });
 
-  it("error → content: retry state resolves into the feed", () => {
+  it("error → content: retry state crossfades into the feed", () => {
     const { rerender } = renderList({ error: "offline", onRetry: () => Promise.resolve() });
     expect(screen.getByText("Could not load")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
@@ -209,6 +212,29 @@ describe("PostList state transitions (Wave A)", () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
+    // Exiting error state lingers for its exit animation.
+    expect(screen.queryByText("Could not load")).toBeTruthy();
+  });
+
+  it("empty → content: empty state crossfades into the feed", () => {
+    const { rerender } = renderList({ emptyTitle: "No matches", emptySubtitle: "Try different filters." });
+    expect(screen.getByText("No matches")).toBeTruthy();
+    rerender(
+      <MemoryRouter>
+        <PostList
+          items={[imagePost()]}
+          loading={false}
+          loadingMore={false}
+          error={null}
+          hasMore={false}
+          onLoadMore={() => Promise.resolve()}
+          density="editorial"
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
+    // Exiting empty state lingers for its exit animation.
+    expect(screen.queryByText("No matches")).toBeTruthy();
   });
 
   it("empty state renders with the provided copy", () => {

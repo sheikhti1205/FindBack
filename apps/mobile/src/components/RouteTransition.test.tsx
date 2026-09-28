@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { fireEvent } from "@testing-library/react";
 import { MotionConfig } from "framer-motion";
@@ -63,6 +63,44 @@ describe("RouteTransition", () => {
     expect(screen.getByText(/Home screen/)).toBeTruthy();
     const wrappers = screen.getAllByTestId("route-transition");
     expect(wrappers.map((w) => w.getAttribute("data-route")).sort()).toEqual(["/", "/posts/p1"]);
+  });
+
+  it("stages exit/enter on the same route stage instead of stacking blocks", async () => {
+    // jsdom reports zero element sizes, which makes PopChild skip the pop;
+    // stub measured sizes so the real popLayout path executes.
+    const origGetComputedStyle = window.getComputedStyle.bind(window);
+    const spy = vi.spyOn(window, "getComputedStyle").mockImplementation(((el, pseudo) => {
+      const styles = origGetComputedStyle(el, pseudo);
+      return new Proxy(styles, {
+        get: (target, prop, receiver) => {
+          if (prop === "width") return "400px";
+          if (prop === "height") return "800px";
+          if (prop === "direction") return "ltr";
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    }) as typeof window.getComputedStyle);
+    try {
+      renderAt("/");
+      fireEvent.click(screen.getByRole("button", { name: "open detail" }));
+      const wrappers = screen.getAllByTestId("route-transition");
+      expect(wrappers).toHaveLength(2);
+      const exiting = wrappers.find((w) => w.getAttribute("data-route") === "/");
+      const entering = wrappers.find((w) => w.getAttribute("data-route") === "/posts/p1");
+      expect(exiting).toBeTruthy();
+      expect(entering).toBeTruthy();
+      // popLayout pops the exiting route out of normal flow (absolute via an
+      // injected [data-motion-pop-id] rule) so both routes share one stage.
+      await waitFor(() => expect(exiting!.hasAttribute("data-motion-pop-id")).toBe(true));
+      // The entering route keeps the full-height contract so screens with
+      // `flex h-full flex-col` internal scrollers (Home/Search/Help) still
+      // resolve against a definite-height parent.
+      expect(entering!.className).toMatch(/h-full/);
+      expect(entering!.className).toMatch(/min-h-0/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("keeps content rendered under forced reduced motion", () => {
