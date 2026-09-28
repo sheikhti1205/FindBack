@@ -2,9 +2,16 @@
  * Shared motion tokens (handover 04 motion policy, M2-motion, motion pass).
  *
  * Single source of truth for durations/springs/variants — no per-screen
- * hardcoded animation values. Animations always play: nothing here gates on
- * reduced motion. `shouldReduceMotion()` stays exported only because map
- * code (owned elsewhere) reads it; new code must not consult it.
+ * hardcoded animation values.
+ *
+ * Reduced motion (owner decision 2026-09-28): the OS setting is honored.
+ * `<MotionConfig reducedMotion="user">` at the app root is the single switch:
+ * Framer Motion then degrades transform/layout travel to instant while keeping
+ * opacity/color, so press feedback and fades still register but nothing
+ * travels. Imperative, non-Motion work (scrollTo/scrollIntoView, MapLibre
+ * camera, raw CSS transitions) cannot see MotionConfig — those call
+ * `useShouldReduceMotion()` (components) or `shouldReduceMotion()` (plain
+ * modules) and collapse their travel to instant.
  *
  * Duration budget (seconds): instant ~80–120ms state acknowledgement,
  * fast ~120–180ms chip/icon toggle, standard ~180–240ms notice/subpanel,
@@ -14,6 +21,8 @@
  * All variants below animate transform/opacity only (never layout, color, or
  * box-shadow) so every animation stays on the compositor thread.
  */
+
+import { useReducedMotion } from "framer-motion";
 
 export const motionDurations = {
   /** State acknowledgement (pressed/selected). */
@@ -112,16 +121,54 @@ export const pageVariants = {
   exit: { opacity: 0 },
 } as const;
 
+/** Drill-down: detail enters from the trailing edge, content settles. */
+export const pageForwardVariants = {
+  hidden: { opacity: 0, x: 16 },
+  visible: { opacity: 1, x: 0 },
+  exit: { opacity: 0, x: -12 },
+} as const;
+
+/** Back navigation: the reverse of `pageForwardVariants`. */
+export const pageBackwardVariants = {
+  hidden: { opacity: 0, x: -16 },
+  visible: { opacity: 1, x: 0 },
+  exit: { opacity: 0, x: 12 },
+} as const;
+
+/** Small rise/fade for appended list rows and inline notices. */
+export const listItemVariants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: 4 },
+} as const;
+
+/** Centered dialog/lightbox panel: slight scale + rise, never a slide. */
+export const dialogVariants = {
+  hidden: { opacity: 0, scale: 0.97, y: 8 },
+  visible: { opacity: 1, scale: 1, y: 0 },
+  exit: { opacity: 0, scale: 0.97, y: 8 },
+} as const;
+
 /**
  * True when the device prefers reduced motion. Never throws (SSR/jsdom
  * without matchMedia → false, i.e. full motion).
  *
- * Retained for map code (owned elsewhere) which reads it with its own
- * tests. Motion-pass code never consults it — animations always play.
+ * Imperative code (scrollTo, scrollIntoView, MapLibre camera, raw CSS
+ * transitions) reads this. Motion components do NOT: `<MotionConfig
+ * reducedMotion="user">` at the app root degrades them centrally.
  */
 export function shouldReduceMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
     return false;
   }
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * React hook form of {@link shouldReduceMotion} for components driving
+ * imperative animation (element.scrollTo, scrollIntoView, canvas/CSS work).
+ * Re-renders when the OS preference changes.
+ */
+export function useShouldReduceMotion(): boolean {
+  return useReducedMotion() ?? false;
 }

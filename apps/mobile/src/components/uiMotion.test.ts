@@ -3,11 +3,15 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   backdropTransition,
+  dialogVariants,
   fadeUpVariants,
   fadeVariants,
+  listItemVariants,
   motionDurations,
   motionEasings,
   motionSprings,
+  pageBackwardVariants,
+  pageForwardVariants,
   pageVariants,
   popoverVariants,
   scaleInVariants,
@@ -75,6 +79,10 @@ describe("uiMotion tokens (handover 04 motion policy)", () => {
     ["popover", popoverVariants],
     ["snackbar", snackbarVariants],
     ["page", pageVariants],
+    ["pageForward", pageForwardVariants],
+    ["pageBackward", pageBackwardVariants],
+    ["listItem", listItemVariants],
+    ["dialog", dialogVariants],
   ])("exposes a transform/opacity-only %s variant", (_name, variants) => {
     const allowed = new Set(["opacity", "x", "y", "scale", "scaleX", "scaleY"]);
     for (const state of Object.values(variants)) {
