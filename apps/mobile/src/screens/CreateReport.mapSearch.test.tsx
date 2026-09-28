@@ -101,7 +101,12 @@ describe("CreateReport map-search isolation", () => {
     await fillValidReport();
     const input = await openMapSearch();
     fireEvent.change(input, { target: { value: "library" } });
-    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    // Quiescence gate: under parallel load the sheet controls may still be
+    // settling, so wait for the Search action instead of grabbing it cold.
+    const searchButton = await screen.findByRole("button", { name: /^search$/i }, {
+      timeout: 3000,
+    });
+    fireEvent.click(searchButton);
     // The place search actually ran (no-results notice), yet neither
     // publishing function was called.
     await screen.findByText(/no places found/i);

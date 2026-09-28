@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
 import { isTopModalLayer, useModalLayer } from "../hooks/modalLayers";
-import { Bold, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2, Expand, X } from "lucide-react";
+import { Bold, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2, Expand, X, ClipboardPaste } from "lucide-react";
 import { Slice } from "@tiptap/pm/model";
 import {
   fromMarkdown,
@@ -28,6 +28,8 @@ import {
   size,
   FloatingPortal,
 } from "@floating-ui/react";
+import { motion } from "framer-motion";
+import { motionDurations, popoverVariants, pressFeedback } from "./uiMotion";
 
 export const RICH_TEXT_DEBOUNCE_MS = 300;
 
@@ -278,16 +280,24 @@ function FloatingMenu({ open, onClose, triggerRef, children, label, placement = 
 
   return (
     <FloatingPortal>
-      <div
-        ref={setFloatingRef}
-        style={floatingStyles}
-        role="menu"
-        aria-label={label}
-        className="z-50 max-w-[calc(100vw-2rem)] w-64 max-h-[min(20rem,40vh)] overflow-y-auto rounded-m3-sm border border-outline-variant bg-surface p-1 shadow-xl"
-        tabIndex={-1}
-        onKeyDown={handleKeyDown}
-      >
-        {children}
+      {/* Positioning shell only: floating-ui owns this element's transform for
+        anchoring, so the enter animation lives on the inner motion element
+        (transform/opacity only, anchored at the trigger edge). */}
+      <div ref={setFloatingRef} style={floatingStyles}>
+        <motion.div
+          role="menu"
+          aria-label={label}
+          className="z-50 max-w-[calc(100vw-2rem)] w-64 max-h-[min(20rem,40vh)] overflow-y-auto rounded-m3-sm border border-outline-variant bg-surface p-1 shadow-xl"
+          tabIndex={-1}
+          onKeyDown={handleKeyDown}
+          initial="hidden"
+          animate="visible"
+          variants={popoverVariants}
+          transition={{ duration: motionDurations.fast }}
+          style={{ transformOrigin: placement === "top" ? "bottom center" : "top center" }}
+        >
+          {children}
+        </motion.div>
       </div>
     </FloatingPortal>
   );
@@ -621,8 +631,8 @@ export function tiptapToMarkdown(json: unknown): string {
  * the parent immediately so no keystroke is lost on submit or unmount, while
  * external value changes (draft restore, reset) replace the editor content.
  *
- * Toolbar (ED-02/ED-06): `Body ▾ | B | I | List ▾ | Link | More ⋯`.
- * Only controls with real choices (block type, list, link) open popups.
+ * Toolbar: visible History, Text, Structure, and Insert groups; block type
+ * alone opens a choices popup. The rail scrolls horizontally on narrow screens.
  *
  * Selection safety (ED-04): a toolbar `pointerdown` captures the pending range
  * before Android/WebView focus loss collapses the DOM selection; the stashed
@@ -636,7 +646,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   const [counts, setCounts] = useState({ stored: 0, visible: 0 });
   const [, refreshSelection] = useState(0);
   const [linkSelection, setLinkSelection] = useState<LinkSelection | null>(null);
-  const [openMenu, setOpenMenu] = useState<null | "block" | "list" | "more">(null);
+  const [openMenu, setOpenMenu] = useState<null | "block">(null);
   const [status, setStatus] = useState<string | null>(null);
   const [listNotice, setListNotice] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -676,8 +686,6 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   const selectionRafRef = useRef(0);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const blockButtonRef = useRef<HTMLButtonElement>(null);
-  const listButtonRef = useRef<HTMLButtonElement>(null);
-  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const linkButtonRef = useRef<HTMLButtonElement>(null);
   const lastMenuButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -750,6 +758,11 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
         refreshCounts(created);
         if (editorRef) editorRef.current = created;
       },
+      onTransaction: ({ transaction }) => {
+        // Collapsed mark toggles only change storedMarks, not the document or
+        // selection. Refresh pressed styling even when status text is unchanged.
+        if (transaction.storedMarksSet) refreshSelection((revision) => revision + 1);
+      },
       onUpdate: ({ editor: updated }) => {
         setEmpty(updated.isEmpty);
         refreshCounts(updated);
@@ -811,8 +824,12 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     dom.classList.toggle("max-h-[240px]", !isExpanded);
     dom.classList.toggle("min-h-[120px]", !isExpanded);
     dom.classList.toggle("min-h-full", isExpanded);
+    dom.classList.toggle("overflow-y-auto", !isExpanded);
+    dom.classList.toggle("overflow-y-visible", isExpanded);
     return () => {
       dom.classList.remove("min-h-full");
+      dom.classList.remove("overflow-y-visible");
+      dom.classList.add("overflow-y-auto");
       dom.classList.add("max-h-[240px]", "min-h-[120px]");
     };
   }, [editor, isExpanded]);
@@ -1007,16 +1024,14 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     finishOperation(kind === "body" ? "Body style applied" : `Heading ${kind} applied`);
   }
 
-  function applyList(kind: "bullet" | "ordered" | "remove") {
+  function applyList(kind: "bullet" | "ordered") {
     if (!editor) return;
     const range = resolveFormatRange();
     focusRangeOrCurrent(range);
     if (kind === "bullet") editor.chain().focus().toggleBulletList().run();
-    else if (kind === "ordered") editor.chain().focus().toggleOrderedList().run();
-    else if (editor.isActive("bulletList")) editor.chain().focus().toggleBulletList().run();
-    else if (editor.isActive("orderedList")) editor.chain().focus().toggleOrderedList().run();
+    else editor.chain().focus().toggleOrderedList().run();
     setOpenMenu(null);
-    finishOperation(kind === "remove" ? "List removed" : kind === "bullet" ? "Bullet list applied" : "Numbered list applied");
+    finishOperation(kind === "bullet" ? "Bullet list toggled" : "Numbered list toggled");
   }
 
   function applyQuote() {
@@ -1051,6 +1066,8 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
    */
   async function pasteClipboardAsMarkdown() {
     if (!editor) return;
+    const range = resolveFormatRange();
+    const doc = editor.state.doc;
     setOpenMenu(null);
     let text = "";
     try {
@@ -1063,7 +1080,12 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
       setStatus("Clipboard is empty");
       return;
     }
-    editor.chain().focus().insertContent(markdownToTiptap(text)).run();
+    if (editor.state.doc !== doc) {
+      setStatus("The selected text changed. Select it again to paste.");
+      return;
+    }
+    if (range) editor.chain().focus().insertContentAt(range, markdownToTiptap(text)).run();
+    else editor.chain().focus().insertContent(markdownToTiptap(text)).run();
     finishOperation("Pasted as Markdown");
   }
 
@@ -1182,7 +1204,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   const menuItemCls =
     "flex min-h-[48px] w-full items-center gap-2 rounded-m3-xs px-3 text-left text-on-surface hover:bg-surface-container";
 
-  function toggleMenu(kind: "block" | "list" | "more", button: RefObject<HTMLButtonElement | null>) {
+  function toggleMenu(kind: "block", button: RefObject<HTMLButtonElement | null>) {
     if (openMenu === kind) {
       setOpenMenu(null);
     } else {
@@ -1197,6 +1219,78 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     { name: "Heading 2", kind: 2, preview: { fontSize: "1.25rem", fontWeight: 600 } },
     { name: "Heading 3", kind: 3, preview: { fontSize: "1.1rem", fontWeight: 600 } },
   ];
+
+  function renderFormattingRail(inline: boolean) {
+    // Rail buttons keep their stable slot (no layout animation) and confirm
+    // every press with a fast spring scale plus the active background.
+    const action = (name: string, Icon: typeof Bold, onClick: () => void, active = false, disabled = false) => (
+      <motion.button type="button" title={name} aria-label={name} aria-pressed={active}
+        disabled={!editor || disabled} onClick={onClick} className={toolButtonCls(active)}
+        whileTap={pressFeedback.rail} transition={{ duration: motionDurations.instant }}>
+        <Icon size={18} aria-hidden />
+      </motion.button>
+    );
+    return (
+      <div ref={toolbarRef} className="relative flex-shrink-0 border-t border-outline-variant bg-surface-container px-2 py-1 shadow-[0_-4px_16px_rgba(0,0,0,0.12)]"
+        style={inline ? undefined : { paddingBottom: "max(4px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))" }}>
+        <div role="toolbar" aria-label={`${label} formatting`}
+          className="flex flex-nowrap items-center gap-1 overflow-x-auto overscroll-x-contain py-1"
+          onPointerDownCapture={captureToolbarRange} onMouseDownCapture={captureToolbarRange} onTouchStartCapture={captureToolbarRange}>
+          <div role="group" aria-label="History" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
+            {action("Undo", Undo2, applyUndo, false, !canUndo)}
+            {action("Redo", Redo2, applyRedo, false, !canRedo)}
+          </div>
+          <div role="group" aria-label="Text" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
+            <motion.button ref={blockButtonRef} type="button" title={`Block type: ${currentBlock}`}
+              aria-label={`Block type: ${currentBlock}`} aria-haspopup="menu" aria-expanded={openMenu === "block"}
+              disabled={!editor} onClick={() => toggleMenu("block", blockButtonRef)}
+              className={toolButtonCls(currentBlock !== "Body")}
+              whileTap={pressFeedback.rail} transition={{ duration: motionDurations.instant }}>
+              <span aria-hidden className="whitespace-nowrap text-sm">{currentBlock} ▾</span>
+            </motion.button>
+            {action("Bold", Bold, () => toggleMarkWithSavedSelection("bold"), boldActive)}
+            {action("Italic", Italic, () => toggleMarkWithSavedSelection("italic"), italicActive)}
+          </div>
+          <div role="group" aria-label="Structure" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
+            {action("Bullets", List, () => applyList("bullet"), bulletActive)}
+            {action("Numbered", ListOrdered, () => applyList("ordered"), orderedActive)}
+            {action("Quote", Quote, applyQuote, quoteActive)}
+          </div>
+          <div role="group" aria-label="Insert" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
+            <motion.button ref={linkButtonRef} type="button" title={linkDisabled ? "Select text to add a link" : "Link"}
+              aria-label="Link" aria-pressed={linkActive} disabled={!editor || linkDisabled}
+              onClick={applyLink} className={toolButtonCls(linkActive)}
+              whileTap={pressFeedback.rail} transition={{ duration: motionDurations.instant }}><Link2 size={18} aria-hidden /></motion.button>
+            {action("Paste as Markdown", ClipboardPaste, () => void pasteClipboardAsMarkdown())}
+          </div>
+          <div role="group" aria-label="Other actions" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
+            {action("Clear all formatting", RemoveFormatting, applyClearAll)}
+            {inline && <motion.button ref={expandButtonRef} type="button" title="Expand description editor"
+              aria-label="Expand description editor" disabled={!editor} className={toolButtonCls(false)}
+              whileTap={pressFeedback.rail} transition={{ duration: motionDurations.instant }}
+              onClick={() => {
+                overlayPreviouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                setOpenMenu(null);
+                setIsExpanded(true);
+              }}><Expand size={18} aria-hidden /></motion.button>}
+          </div>
+        </div>
+        <FloatingMenu open={openMenu === "block"} onClose={() => setOpenMenu(null)}
+          triggerRef={blockButtonRef} label="Block type" placement="top">
+          <div onKeyDown={handleMenuKeyDown}>
+            {blockOptions.map((option) => {
+              const checked = currentBlock === option.name;
+              return <button key={option.name} type="button" role="menuitemradio" aria-checked={checked}
+                aria-label={option.name} onClick={() => applyBlock(option.kind)} className={menuItemCls}>
+                <span aria-hidden className="w-5 shrink-0">{checked ? "✓" : ""}</span>
+                <span style={option.preview}>{option.name}</span>
+              </button>;
+            })}
+          </div>
+        </FloatingMenu>
+      </div>
+    );
+  }
 
   const countText =
     maxLength !== undefined
@@ -1219,251 +1313,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           </div>
         ) : null}
       </div>
-      {!isExpanded && (
-        <div ref={toolbarRef} className="relative">
-          <div
-            role="toolbar"
-            aria-label={`${label} formatting`}
-            className="flex flex-nowrap gap-1 overflow-x-auto pb-1"
-            onPointerDownCapture={captureToolbarRange}
-            onMouseDownCapture={captureToolbarRange}
-            onTouchStartCapture={captureToolbarRange}
-          >
-          <button
-            ref={blockButtonRef}
-            type="button"
-            title={`Block type: ${currentBlock}`}
-            aria-label={`Block type: ${currentBlock}`}
-            aria-haspopup="menu"
-            aria-expanded={openMenu === "block"}
-            disabled={!editor}
-            onClick={() => toggleMenu("block", blockButtonRef)}
-            className={toolButtonCls(currentBlock !== "Body")}
-          >
-            <span aria-hidden>{currentBlock} ▾</span>
-          </button>
-          <button
-            type="button"
-            title="Bold"
-            aria-label="Bold"
-            aria-pressed={boldActive}
-            disabled={!editor}
-            onClick={() => toggleMarkWithSavedSelection("bold")}
-            className={toolButtonCls(boldActive)}
-          >
-            <Bold size={17} aria-hidden />
-          </button>
-          <button
-            type="button"
-            title="Italic"
-            aria-label="Italic"
-            aria-pressed={italicActive}
-            disabled={!editor}
-            onClick={() => toggleMarkWithSavedSelection("italic")}
-            className={toolButtonCls(italicActive)}
-          >
-            <Italic size={17} aria-hidden />
-          </button>
-          <button
-            ref={listButtonRef}
-            type="button"
-            title="List"
-            aria-label="List"
-            aria-haspopup="menu"
-            aria-expanded={openMenu === "list"}
-            disabled={!editor}
-            onClick={() => toggleMenu("list", listButtonRef)}
-            className={toolButtonCls(bulletActive || orderedActive)}
-          >
-            <List size={17} aria-hidden />
-            <span aria-hidden className="text-xs">▾</span>
-          </button>
-          <button
-            ref={linkButtonRef}
-            type="button"
-            title={linkDisabled ? "Select text to add a link" : "Link"}
-            aria-label="Link"
-            aria-pressed={linkActive}
-            disabled={!editor || linkDisabled}
-            onClick={applyLink}
-            className={toolButtonCls(linkActive)}
-          >
-            <Link2 size={17} aria-hidden />
-          </button>
-          <button
-            ref={moreButtonRef}
-            type="button"
-            title="More"
-            aria-label="More"
-            aria-haspopup="menu"
-            aria-expanded={openMenu === "more"}
-            disabled={!editor}
-            onClick={() => toggleMenu("more", moreButtonRef)}
-            className={toolButtonCls(false)}
-          >
-            <span aria-hidden>⋯</span>
-            <span className="sr-only">More formatting options</span>
-          </button>
-          <button
-            ref={expandButtonRef}
-            type="button"
-            title="Expand description editor"
-            aria-label="Expand description editor"
-            disabled={!editor}
-            onClick={() => {
-              // Capture focus before expanding so we can restore it on close
-              const activeEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-              overlayPreviouslyFocusedRef.current = activeEl;
-              setIsExpanded(true);
-            }}
-            className={toolButtonCls(false)}
-          >
-            <Expand size={17} aria-hidden />
-            <span className="sr-only">Expand description editor</span>
-          </button>
-        </div>
-        <FloatingMenu
-          open={openMenu === "block"}
-          onClose={() => setOpenMenu(null)}
-          triggerRef={blockButtonRef}
-          label="Block type"
-          placement="top"
-        >
-          <div onKeyDown={handleMenuKeyDown}>
-            {blockOptions.map((option) => {
-              const checked = currentBlock === option.name;
-              return (
-                <button
-                  key={option.name}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={checked}
-                  aria-label={option.name}
-                  onClick={() => applyBlock(option.kind)}
-                  className={menuItemCls}
-                >
-                  <span aria-hidden className="w-5 shrink-0">{checked ? "✓" : ""}</span>
-                  <span style={option.preview}>{option.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        </FloatingMenu>
-        <FloatingMenu
-          open={openMenu === "list"}
-          onClose={() => setOpenMenu(null)}
-          triggerRef={listButtonRef}
-          label="List"
-          placement="top"
-        >
-          <div onKeyDown={handleMenuKeyDown}>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={bulletActive}
-              aria-label="Bullets"
-              onClick={() => applyList("bullet")}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0">{bulletActive ? "✓" : ""}</span>
-              <List size={17} aria-hidden />
-              <span>Bullets</span>
-            </button>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={orderedActive}
-              aria-label="Numbers"
-              onClick={() => applyList("ordered")}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0">{orderedActive ? "✓" : ""}</span>
-              <ListOrdered size={17} aria-hidden />
-              <span>Numbers</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Remove list"
-              onClick={() => applyList("remove")}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <span>Remove list</span>
-            </button>
-          </div>
-        </FloatingMenu>
-        <FloatingMenu
-          open={openMenu === "more"}
-          onClose={() => setOpenMenu(null)}
-          triggerRef={moreButtonRef}
-          label="More formatting options"
-          placement="top"
-        >
-          <div onKeyDown={handleMenuKeyDown}>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Quote"
-              aria-pressed={quoteActive}
-              onClick={applyQuote}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0">{quoteActive ? "✓" : ""}</span>
-              <Quote size={17} aria-hidden />
-              <span>Quote</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Paste as Markdown"
-              title="Parse the clipboard as Markdown into formatted text"
-              onClick={() => void pasteClipboardAsMarkdown()}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <span>Paste as Markdown</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Clear all formatting"
-              title="Removes block styles (heading, list, quote) and inline styles (bold, italic, link)"
-              onClick={applyClearAll}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <RemoveFormatting size={17} aria-hidden />
-              <span>Clear all formatting</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Undo"
-              disabled={!canUndo}
-              onClick={applyUndo}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <Undo2 size={17} aria-hidden />
-              <span>Undo</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Redo"
-              disabled={!canRedo}
-              onClick={applyRedo}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <Redo2 size={17} aria-hidden />
-              <span>Redo</span>
-            </button>
-          </div>
-        </FloatingMenu>
-      </div>
-      )}
+      {!isExpanded && renderFormattingRail(true)}
       {linkSelection && <LinkSheet selection={linkSelection} triggerRef={linkButtonRef} onCancel={() => setLinkSelection(null)} onSave={saveLink} onRemove={removeLink} />}
       {listNotice ? (
         <p role="status" aria-label="List simplification notice" className="text-xs text-on-surface-variant">
@@ -1531,232 +1381,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
             onPointerDown={handleEditorIntentionalInteraction} onTouchStart={handleEditorIntentionalInteraction} onKeyDown={handleEditorIntentionalInteraction}>
             <EditorContent editor={editor} />
           </div>
-          <div ref={toolbarRef} className="relative flex-shrink-0">
-            <div
-              role="toolbar"
-              aria-label={`${label} formatting`}
-              className="flex flex-nowrap gap-1 overflow-x-auto pb-1 px-4"
-              onPointerDownCapture={captureToolbarRange}
-              onMouseDownCapture={captureToolbarRange}
-              onTouchStartCapture={captureToolbarRange}
-            >
-              <button
-                ref={blockButtonRef}
-                type="button"
-                title={`Block type: ${currentBlock}`}
-                aria-label={`Block type: ${currentBlock}`}
-                aria-haspopup="menu"
-                aria-expanded={openMenu === "block"}
-                disabled={!editor}
-                onClick={() => toggleMenu("block", blockButtonRef)}
-                className={toolButtonCls(currentBlock !== "Body")}
-              >
-                <span aria-hidden>{currentBlock} ▾</span>
-              </button>
-              <button
-                type="button"
-                title="Bold"
-                aria-label="Bold"
-                aria-pressed={boldActive}
-                disabled={!editor}
-                onClick={() => toggleMarkWithSavedSelection("bold")}
-                className={toolButtonCls(boldActive)}
-              >
-                <Bold size={17} aria-hidden />
-              </button>
-              <button
-                type="button"
-                title="Italic"
-                aria-label="Italic"
-                aria-pressed={italicActive}
-                disabled={!editor}
-                onClick={() => toggleMarkWithSavedSelection("italic")}
-                className={toolButtonCls(italicActive)}
-              >
-                <Italic size={17} aria-hidden />
-              </button>
-              <button
-                ref={listButtonRef}
-                type="button"
-                title="List"
-                aria-label="List"
-                aria-haspopup="menu"
-                aria-expanded={openMenu === "list"}
-                disabled={!editor}
-                onClick={() => toggleMenu("list", listButtonRef)}
-                className={toolButtonCls(bulletActive || orderedActive)}
-              >
-                <List size={17} aria-hidden />
-                <span aria-hidden className="text-xs">▾</span>
-              </button>
-              <button
-                ref={linkButtonRef}
-                type="button"
-                title={linkDisabled ? "Select text to add a link" : "Link"}
-                aria-label="Link"
-                aria-pressed={linkActive}
-                disabled={!editor || linkDisabled}
-                onClick={applyLink}
-                className={toolButtonCls(linkActive)}
-              >
-                <Link2 size={17} aria-hidden />
-              </button>
-              <button
-                ref={moreButtonRef}
-                type="button"
-                title="More"
-                aria-label="More"
-                aria-haspopup="menu"
-                aria-expanded={openMenu === "more"}
-                disabled={!editor}
-                onClick={() => toggleMenu("more", moreButtonRef)}
-                className={toolButtonCls(false)}
-              >
-                <span aria-hidden>⋯</span>
-                <span className="sr-only">More formatting options</span>
-              </button>
-            </div>
-            <FloatingMenu
-              open={openMenu === "block"}
-              onClose={() => setOpenMenu(null)}
-              triggerRef={blockButtonRef}
-              label="Block type"
-              placement="top"
-            >
-              <div onKeyDown={handleMenuKeyDown}>
-                {blockOptions.map((option) => {
-                  const checked = currentBlock === option.name;
-                  return (
-                    <button
-                      key={option.name}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={checked}
-                      aria-label={option.name}
-                      onClick={() => applyBlock(option.kind)}
-                      className={menuItemCls}
-                    >
-                      <span aria-hidden className="w-5 shrink-0">{checked ? "✓" : ""}</span>
-                      <span style={option.preview}>{option.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </FloatingMenu>
-            <FloatingMenu
-              open={openMenu === "list"}
-              onClose={() => setOpenMenu(null)}
-              triggerRef={listButtonRef}
-              label="List"
-              placement="top"
-            >
-              <div onKeyDown={handleMenuKeyDown}>
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={bulletActive}
-                  aria-label="Bullets"
-                  onClick={() => applyList("bullet")}
-                  className={menuItemCls}
-                >
-                  <span aria-hidden className="w-5 shrink-0">{bulletActive ? "✓" : ""}</span>
-                  <List size={17} aria-hidden />
-                  <span>Bullets</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={orderedActive}
-                  aria-label="Numbers"
-                  onClick={() => applyList("ordered")}
-                  className={menuItemCls}
-                >
-                  <span aria-hidden className="w-5 shrink-0">{orderedActive ? "✓" : ""}</span>
-                  <ListOrdered size={17} aria-hidden />
-                  <span>Numbers</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  aria-label="Remove list"
-                  onClick={() => applyList("remove")}
-                  className={menuItemCls}
-                >
-                  <span aria-hidden className="w-5 shrink-0" />
-                  <span>Remove list</span>
-                </button>
-              </div>
-            </FloatingMenu>
-            <FloatingMenu
-              open={openMenu === "more"}
-              onClose={() => setOpenMenu(null)}
-              triggerRef={moreButtonRef}
-              label="More formatting options"
-              placement="top"
-            >
-              <div onKeyDown={handleMenuKeyDown}>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Quote"
-              aria-pressed={quoteActive}
-              onClick={applyQuote}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0">{quoteActive ? "✓" : ""}</span>
-              <Quote size={17} aria-hidden />
-              <span>Quote</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Paste as Markdown"
-              title="Parse the clipboard as Markdown into formatted text"
-              onClick={() => void pasteClipboardAsMarkdown()}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <span>Paste as Markdown</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Clear all formatting"
-              title="Removes block styles (heading, list, quote) and inline styles (bold, italic, link)"
-              onClick={applyClearAll}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <RemoveFormatting size={17} aria-hidden />
-              <span>Clear all formatting</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Undo"
-              disabled={!canUndo}
-              onClick={applyUndo}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <Undo2 size={17} aria-hidden />
-              <span>Undo</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label="Redo"
-              disabled={!canRedo}
-              onClick={applyRedo}
-              className={menuItemCls}
-            >
-              <span aria-hidden className="w-5 shrink-0" />
-              <Redo2 size={17} aria-hidden />
-              <span>Redo</span>
-            </button>
-          </div>
-        </FloatingMenu>
-          </div>
+          {renderFormattingRail(false)}
         </div>,
         document.body
       )}

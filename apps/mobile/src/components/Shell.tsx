@@ -1,39 +1,30 @@
-import { NavLink, Outlet, useLocation } from "react-router";
-import { Home, PlusCircle, Search, UserRound } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, Outlet, useLocation } from "react-router";
+import { AnimatePresence, motion } from "framer-motion";
+import { Bell, ClipboardList, Home, Plus, UserRound } from "lucide-react";
 import { TabTapProvider, useTabTap } from "./TabTap";
 import { LiveRegion } from "./LiveRegion";
 import { requestHistorySuppression } from "./backNavigation";
+import { fetchUnreadCount } from "../services/notifications";
+import { motionDurations, motionSprings, pressFeedback } from "./uiMotion";
+import "./Shell.nav.css";
 
-const NAV: Array<{
-  to: string;
-  label: string;
-  icon: typeof Home;
-  end?: boolean;
-  /** Extra paths where this tab stays visually selected (e.g. /my under Profile). */
-  extraActive?: string[];
-}> = [
-  { to: "/", label: "Home", icon: Home, end: true },
-  { to: "/search", label: "Search", icon: Search },
-  { to: "/report", label: "Report", icon: PlusCircle },
-  { to: "/profile", label: "Profile", icon: UserRound, extraActive: ["/my"] },
-];
+/** Router link with framer press gestures (motion pass: always animated). */
+const MotionLink = motion.create(Link);
 
-/** Bottom navigation appears on tab screens only. */
+const NAV = [
+  { to: "/", label: "Home", icon: Home },
+  { to: "/my", label: "My Reports", icon: ClipboardList },
+  { to: "/profile", label: "Profile", icon: UserRound },
+  { to: "/notifications", label: "Notifications", icon: Bell },
+] as const;
+
 const HIDE_NAV = ["/help", "/posts/", "/ai-connection"];
 
-/**
- * Exactly four tabs; no global floating Assistant button. The assistant is a
- * full-screen chat at /help (opened via Profile → Help & FAQ) plus guided
- * Report/Search handoffs that live inside that screen — Shell keeps no
- * assistant state, sheet, or navigation seam.
- */
+/** The document never scrolls: routes own the bounded viewport scroller. */
 export function Shell() {
   const { pathname } = useLocation();
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
-  // P1: Home/Search/Help own an internal scroller; every other route scrolls
-  // the bounded route container. Either way the document never scrolls, so
-  // scrolled content stays below the status bar and /help takes the full
-  // viewport with no phantom tab padding (screenshots 08/11/12).
   const ownsInternalScroll =
     pathname === "/" || pathname === "/search" || pathname.startsWith("/help");
 
@@ -53,45 +44,125 @@ export function Shell() {
 function BottomNav() {
   const { notifyTabTap } = useTabTap();
   const { pathname } = useLocation();
+  const [viewportBlocked, setViewportBlocked] = useState(false);
+  // Badge only: count of unread notifications on the bell. Decorative
+  // (aria-hidden) so the link's accessible name stays "Notifications".
+  // Motion/refresh behavior is owned elsewhere; this never animates.
+  const [unread, setUnread] = useState<number | null>(null);
 
+  useEffect(() => {
+    const update = () => {
+      // The visual viewport shrinks when the on-screen keyboard opens. Keep
+      // the nav out of its way; do not infer keyboard state from scroll.
+      const keyboardOpen = !!window.visualViewport &&
+        window.innerHeight - window.visualViewport.height > 120;
+      setViewportBlocked(keyboardOpen || !!document.fullscreenElement);
+    };
+    update();
+    window.visualViewport?.addEventListener("resize", update);
+    document.addEventListener("fullscreenchange", update);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", update);
+      document.removeEventListener("fullscreenchange", update);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pull = () => {
+      fetchUnreadCount().then(
+        (count) => {
+          if (!cancelled) setUnread(count);
+        },
+        () => {
+          if (!cancelled) setUnread(null);
+        },
+      );
+    };
+    void pull();
+    const onFocus = () => void pull();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void pull();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  if (viewportBlocked) return null;
+
+  const selectedPath = pathname === "/search" ? "/" : pathname;
   return (
-    <nav
-      aria-label="Primary"
-      className="shrink-0 border-t border-outline-variant bg-surface"
-    >
-      <div className="grid grid-cols-4">
-        {NAV.map(({ to, label, icon: Icon, end, extraActive }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            onClick={() => {
-              // Active-tab tap: signal the screen to refresh/scroll-top.
-              // /my counts as Profile so the tab signal still works there.
-              const isActive =
-                end
-                  ? pathname === to
-                  : pathname.startsWith(to) || extraActive?.includes(pathname);
-              if (isActive) {
-                notifyTabTap();
-                // Re-tapping Home treats it as the true root: the next back
-                // press should arm exit instead of walking history.
-                if (to === "/") requestHistorySuppression("/");
-              }
-            }}
-            className={({ isActive }) => {
-              const selected = isActive || extraActive?.includes(pathname);
-              return `flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-xs ${
-                selected
-                  ? "font-semibold text-on-surface"
-                  : "text-on-surface-variant"
-              }`;
-            }}
-          >
-            <Icon size={22} aria-hidden />
-            {label}
-          </NavLink>
-        ))}
+    <nav aria-label="Primary" className="fb-nav-slot shrink-0">
+      <div className="fb-nav-row">
+        <div className="fb-nav-pill">
+          {NAV.map(({ to, label, icon: Icon }) => {
+            const selected = selectedPath === to;
+            return (
+              <MotionLink
+                key={to}
+                to={to}
+                aria-label={selected ? undefined : label}
+                aria-current={selected ? "page" : undefined}
+                onClick={() => {
+                  if (selected) {
+                    notifyTabTap();
+                    if (to === "/") requestHistorySuppression("/");
+                  }
+                }}
+                whileTap={pressFeedback.iconButton}
+                transition={{ duration: motionDurations.instant }}
+                className={`fb-nav-link ${selected ? "fb-nav-link-active" : ""}`}
+              >
+                {selected && (
+                  <motion.span
+                    layoutId="fb-nav-active"
+                    className="fb-nav-active-bg"
+                    transition={motionSprings.snappy}
+                    aria-hidden="true"
+                  />
+                )}
+                <Icon
+                  size={22}
+                  strokeWidth={selected ? 2.5 : 2}
+                  className="fb-nav-icon"
+                  aria-hidden="true"
+                />
+                {to === "/notifications" && unread !== null && unread > 0 && (
+                  <span
+                    aria-hidden="true"
+                    data-testid="notifications-unread-badge"
+                    className="absolute right-1 top-1 z-[2] flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full bg-error px-1 text-[11px] font-semibold text-on-error"
+                  >
+                    {unread > 99 ? "99+" : unread}
+                  </span>
+                )}
+                <AnimatePresence initial={false}>
+                  {selected && (
+                    <motion.span
+                      key="fb-nav-label"
+                      className="fb-nav-label"
+                      initial={{ opacity: 0, width: 0 }}
+                      animate={{ opacity: 1, width: "auto" }}
+                      exit={{ opacity: 0, width: 0 }}
+                      transition={{ duration: motionDurations.fast }}
+                      style={{ overflow: "hidden", whiteSpace: "nowrap" }}
+                    >{label}</motion.span>
+                  )}
+                </AnimatePresence>
+              </MotionLink>
+            );
+          })}
+        </div>
+        <motion.div className="fb-nav-create-wrap" whileTap={pressFeedback.iconButton}>
+          <Link to="/report" aria-label="Create report" className="fb-nav-create">
+            <Plus size={26} aria-hidden="true" />
+          </Link>
+        </motion.div>
       </div>
     </nav>
   );

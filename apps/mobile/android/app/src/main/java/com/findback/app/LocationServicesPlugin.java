@@ -2,7 +2,6 @@ package com.findback.app;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.content.IntentSender;
 import android.location.LocationManager;
 
 import com.getcapacitor.JSObject;
@@ -35,12 +34,12 @@ import com.google.android.gms.location.SettingsClient;
  * starting the resolution intent is posted to the UI thread. A single
  * in-flight resolution is enforced — concurrent calls are rejected.
  */
-@CapacitorPlugin(name = "LocationServices")
+@CapacitorPlugin(name = "LocationServices", requestCodes = { 0xFB10 })
 public final class LocationServicesPlugin extends Plugin {
 
     private static final int REQUEST_ENABLE_LOCATION = 0xFB10;
 
-    /** Guarded by the plugin instance lock: the call awaiting a dialog result. */
+    /** Guarded by the plugin instance lock: the call awaiting settings check or dialog. */
     private PluginCall pendingCall;
 
     private boolean isProviderEnabled() {
@@ -72,6 +71,14 @@ public final class LocationServicesPlugin extends Plugin {
         call.resolve(result);
     }
 
+    private void resolvePending(PluginCall call, boolean enabled) {
+        synchronized (this) {
+            if (pendingCall != call) return;
+            pendingCall = null;
+        }
+        resolveEnabled(call, enabled);
+    }
+
     @PluginMethod
     public void isLocationEnabled(PluginCall call) {
         resolveEnabled(call, isProviderEnabled());
@@ -84,15 +91,17 @@ public final class LocationServicesPlugin extends Plugin {
                 call.reject("A location-settings request is already in progress.");
                 return;
             }
+            // Reserve before checkLocationSettings completes asynchronously.
+            pendingCall = call;
         }
         Activity activity = getActivity();
         if (activity == null || activity.isFinishing()) {
-            resolveEnabled(call, isProviderEnabled());
+            resolvePending(call, isProviderEnabled());
             return;
         }
         // Fast path: already on — no dialog, no Play Services round trip.
         if (isProviderEnabled()) {
-            resolveEnabled(call, true);
+            resolvePending(call, true);
             return;
         }
         LocationRequest request =
@@ -102,27 +111,20 @@ public final class LocationServicesPlugin extends Plugin {
         SettingsClient client = LocationServices.getSettingsClient(activity);
         client
             .checkLocationSettings(settings)
-            .addOnSuccessListener(ignored -> resolveEnabled(call, true))
+            .addOnSuccessListener(ignored -> resolvePending(call, isProviderEnabled()))
             .addOnFailureListener(error -> {
                 if (error instanceof ResolvableApiException) {
-                    IntentSender intent = ((ResolvableApiException) error).getResolution().getIntentSender();
-                    synchronized (LocationServicesPlugin.this) {
-                        pendingCall = call;
-                    }
                     activity.runOnUiThread(() -> {
                         try {
-                            startIntentSenderForResult(call, intent, REQUEST_ENABLE_LOCATION, null, 0, 0, 0, null);
+                            ((ResolvableApiException) error).startResolutionForResult(activity, REQUEST_ENABLE_LOCATION);
                         } catch (Exception startError) {
-                            synchronized (LocationServicesPlugin.this) {
-                                pendingCall = null;
-                            }
-                            resolveEnabled(call, isProviderEnabled());
+                            resolvePending(call, isProviderEnabled());
                         }
                     });
                 } else {
                     // Not resolvable here (e.g. no Play Services): the caller
                     // falls back to the manual enable message.
-                    resolveEnabled(call, false);
+                    resolvePending(call, false);
                 }
             });
     }

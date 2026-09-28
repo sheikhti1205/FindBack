@@ -22,6 +22,14 @@ export const WEBP_QUALITY = 0.82;
  */
 export const MAX_DECODE_PIXELS = 30_000_000;
 
+import { BootTimeoutError, throwIfAborted, withTimeout } from "./timeout";
+
+/**
+ * Per-stage budget for decode/encode work. A hung platform decoder must fail
+ * with an actionable error instead of stalling the report flow forever.
+ */
+export const IMAGE_STAGE_TIMEOUT_MS = 30_000;
+
 export const DECODE_TOO_LARGE =
   "That photo's dimensions are too large to process safely on this device. Export a smaller version and try again.";
 
@@ -107,6 +115,10 @@ export function outputTypeFor(
 export interface NormalizeOpts {
   /** Override for the decode pixel bound (default MAX_DECODE_PIXELS). */
   maxDecodePixels?: number;
+  /** AbortSignal threaded from the photo pipeline; abort stops decode/encode. */
+  signal?: AbortSignal;
+  /** Per-stage budget in ms (default IMAGE_STAGE_TIMEOUT_MS). */
+  timeoutMs?: number;
 }
 
 export async function normalizeImage(
@@ -114,41 +126,66 @@ export async function normalizeImage(
   deps: ImageDeps = browserDeps(),
   opts?: NormalizeOpts,
 ): Promise<NormalizedImage> {
+  throwIfAborted(opts?.signal);
   if (!ALLOWED_MIME.includes(file.type)) {
     throw new Error("Unsupported image type");
   }
   const maxPixels = opts?.maxDecodePixels ?? MAX_DECODE_PIXELS;
+  const stageMs = opts?.timeoutMs ?? IMAGE_STAGE_TIMEOUT_MS;
+  const signal = opts?.signal;
   // Inspect header dimensions BEFORE decoding: a few-MB file can describe
   // tens of megapixels. Over-bound stills are downsampled at decode time
   // (bounded memory, legitimate 50 MP photos accepted); over-bound GIFs
   // cannot be downsampled without losing animation, so they fail fast with
   // an actionable error instead of OOMing the renderer mid-decode.
-  // Unprobeable kinds (HEIC, truncated headers) skip pre-scaling and rely on
-  // the post-decode bound below.
-  const probed = await probeFileDimensions(file);
+  // Unprobeable kinds (HEIC/HEIF, truncated headers) first try the
+  // HEIC ispe pre-decode guard below; anything still unknown decodes
+  // without pre-scaling and relies on the post-decode bound.
+  const probed = await probeFileDimensions(file, signal);
+  throwIfAborted(signal);
+  // Pre-decode guard for ISO-BMFF stills (HEIC/HEIF): the generic header
+  // probe returns null for these kinds, but the meta/iprp/ispe box in the
+  // leading slice carries the spatial extents. When present, over-bound
+  // stills downsample at decode time exactly like probeable kinds.
+  const heicGuard = !probed && (file.type === "image/heic" || file.type === "image/heif")
+    ? await probeHeicExtents(file, signal)
+    : null;
+  throwIfAborted(signal);
+  const effective = probed ?? heicGuard;
   const animated = file.type === "image/gif";
-  if (probed && probed.width * probed.height > maxPixels) {
+  if (effective && effective.width * effective.height > maxPixels) {
     if (animated) throw new DecodeError("rejected", DECODE_TOO_LARGE);
   }
-  const downsample = probed && !animated && probed.width * probed.height > maxPixels
-    ? scaleToPixels(probed.width, probed.height, maxPixels)
+  const downsample = effective && !animated && effective.width * effective.height > maxPixels
+    ? scaleToPixels(effective.width, effective.height, maxPixels)
     : null;
   let decoded: DecodedImage;
   try {
     decoded = downsample
-      ? await deps.decode(file, { resizeWidth: downsample.width, resizeHeight: downsample.height })
-      : await deps.decode(file);
+      ? await withTimeout(
+        () => deps.decode(file, { resizeWidth: downsample.width, resizeHeight: downsample.height }),
+        stageMs,
+        "Photo decode timed out",
+        signal,
+      )
+      : await withTimeout(() => deps.decode(file), stageMs, "Photo decode timed out", signal);
   } catch (err) {
     // A decoder the platform actually attempted and refused means damaged or
     // undecodable bytes — mark it so callers do not fall back to shipping the
     // corrupt original. A genuinely missing decoder stays "unavailable".
+    // Timeouts and aborts propagate untouched so the pipeline can type them.
     if (err instanceof DecodeError) throw err;
+    if (err instanceof BootTimeoutError) throw err;
+    if (signal?.aborted) throw signal.reason ?? err;
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
     throw new DecodeError("rejected", err instanceof Error ? err.message : "Could not decode the image");
   }
   try {
+    throwIfAborted(signal);
     // Post-decode bound: platforms without decode-time resize still decode
-    // full-size — refuse the giant bitmap (releasing it first) instead of
-    // carrying hundreds of MB into canvas encode.
+    // full-size, and unprobeable kinds with no ispe metadata skip the
+    // pre-decode guard — refuse the giant bitmap (releasing it first via the
+    // finally below) instead of carrying hundreds of MB into canvas encode.
     if (decoded.width * decoded.height > maxPixels) {
       throw new DecodeError("rejected", DECODE_TOO_LARGE);
     }
@@ -158,7 +195,12 @@ export async function normalizeImage(
     }
     const { width, height } = fitWithin(MAX_EDGE, decoded.width, decoded.height);
     const output = outputTypeFor(file.type, deps.webpSupported);
-    const blob = await deps.encode(decoded.source, width, height, output.mimeType, output.quality);
+    const blob = await withTimeout(
+      () => deps.encode(decoded.source, width, height, output.mimeType, output.quality),
+      stageMs,
+      "Photo encode timed out",
+      signal,
+    );
     return { blob, mimeType: output.mimeType, width, height };
   } finally {
     decoded.close?.();
@@ -174,13 +216,18 @@ function scaleToPixels(width: number, height: number, maxPixels: number): { widt
 /**
  * Header-only dimension probe: reads a small leading slice, never the whole
  * file. Returns null when the kind is unprobeable (HEIC/AVIF/TIFF) or the
- * header is truncated — callers then decode without pre-scaling and enforce
- * the post-decode bound instead.
+ * header is truncated — callers then try the HEIC ispe guard and finally
+ * enforce the post-decode bound instead.
  */
-async function probeFileDimensions(file: File): Promise<{ width: number; height: number } | null> {
+async function probeFileDimensions(
+  file: File,
+  signal?: AbortSignal,
+): Promise<{ width: number; height: number } | null> {
   try {
+    throwIfAborted(signal);
     const head = file.slice(0, 65536);
     const buffer = typeof head.arrayBuffer === "function" ? await head.arrayBuffer() : null;
+    throwIfAborted(signal);
     if (!buffer) return null;
     const bytes = new Uint8Array(buffer);
     const { sniffImage, probeDimensions } = await import("./media/importImage");
@@ -190,6 +237,48 @@ async function probeFileDimensions(file: File): Promise<{ width: number; height:
   } catch {
     return null;
   }
+}
+
+/**
+ * Pre-decode dimension guard for ISO-BMFF stills (HEIC/HEIF) whose kinds the
+ * generic header probe reports as unprobeable. Scans the leading 64 KB slice
+ * for an `ispe` (image spatial extents) full-box and reads its declared
+ * width/height — metadata only, never a decode. Returns null when no usable
+ * extents exist, in which case the post-decode bound still applies.
+ */
+async function probeHeicExtents(
+  file: File,
+  signal?: AbortSignal,
+): Promise<{ width: number; height: number } | null> {
+  try {
+    throwIfAborted(signal);
+    const head = file.slice(0, 65536);
+    const buffer = typeof head.arrayBuffer === "function" ? await head.arrayBuffer() : null;
+    throwIfAborted(signal);
+    if (!buffer) return null;
+    const found = readIspeExtents(new Uint8Array(buffer));
+    return found;
+  } catch {
+    return null;
+  }
+}
+
+/** Scan BMFF boxes for `ispe`: size(4) + "ispe"(4) + v/f(4) + w(4) + h(4). */
+export function readIspeExtents(bytes: Uint8Array): { width: number; height: number } | null {
+  for (let i = 0; i + 16 <= bytes.length; i += 1) {
+    if (bytes[i] === 0x69 && bytes[i + 1] === 0x73 && bytes[i + 2] === 0x70 && bytes[i + 3] === 0x65) {
+      const width = (bytes[i + 8]! * 0x1000000) + (bytes[i + 9]! << 16) + (bytes[i + 10]! << 8) + bytes[i + 11]!;
+      const height = (bytes[i + 12]! * 0x1000000) + (bytes[i + 13]! << 16) + (bytes[i + 14]! << 8) + bytes[i + 15]!;
+      if (
+        Number.isSafeInteger(width) && Number.isSafeInteger(height)
+        && width > 0 && height > 0 && width <= 30000 && height <= 30000
+      ) {
+        return { width, height };
+      }
+      return null;
+    }
+  }
+  return null;
 }
 
 async function decodeImage(file: File, opts?: DecodeOpts): Promise<DecodedImage> {

@@ -164,27 +164,66 @@ describe("CreateReport", () => {
     // warning must NOT clear on press — only "Saving photos…" shows — and it
     // clears only after the durable write confirms.
     let fail = true;
+    let inFlightSaves = 0;
     let release: ((report: { durable: boolean; warning: null }) => void) | null = null;
     const persist = vi.spyOn(photoStore, "persistStashedPhotos").mockImplementation(() => {
-      if (fail) return Promise.reject(new Error("quota"));
+      if (fail) {
+        // Tracked so the test can tell a settled save from one still in
+        // flight. Accepting the picked photo commits before its persist's
+        // pending flag flushes, leaving the retry button briefly visible but
+        // doomed ("Saving photos…" is about to replace it). Full-suite worker
+        // load stretches that commit-to-effect gap wide enough for a findBy
+        // poll to catch the doomed button, so the test must only click once
+        // every pre-retry save has settled.
+        inFlightSaves += 1;
+        return Promise.reject(new Error("quota")).finally(() => {
+          inFlightSaves -= 1;
+        });
+      }
       return new Promise((resolve) => { release = resolve; });
     });
     try {
       render(<CreateReport />);
       pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
-      await screen.findByRole("button", { name: /retry saving photos/i });
+      // The in-flight "Saving photos…" banner shares its words with the
+      // "Retry saving photos" button, so a text query alone is ambiguous
+      // (and the status role takes no name from contents, so a role+name
+      // query can never match it): scope to live-region statuses, which
+      // excludes the button.
+      const savingStatus = () =>
+        Array.from(document.querySelectorAll('[role="status"]')).find((el) =>
+          /saving photos/i.test(el.textContent ?? ""),
+        ) ?? null;
+      // Quiescent retry state: the three pre-retry saves (mount persist,
+      // recovery setPhotos persist, accept persist) have all started AND
+      // settled, the warning is up, and no save is in flight. Each conjunct
+      // excludes one transient: the call count excludes the doomed
+      // commit-before-flush window, inFlight excludes a started-but-unflushed
+      // save, and the DOM checks exclude the visible saving window. The
+      // multi-photo batches elsewhere in this file already allow 5000ms
+      // under full-suite worker load; this gate needs the same headroom.
+      await waitFor(
+        () => {
+          expect(persist.mock.calls.length).toBeGreaterThanOrEqual(3);
+          expect(inFlightSaves).toBe(0);
+          expect(screen.getByRole("button", { name: /retry saving photos/i })).toBeTruthy();
+          expect(savingStatus()).toBeNull();
+        },
+        { timeout: 5000 },
+      );
+      const retryButton = screen.getByRole("button", { name: /retry saving photos/i });
       const beforeRetry = persist.mock.calls.length;
       fail = false;
-      fireEvent.click(screen.getByRole("button", { name: /retry saving photos/i }));
+      fireEvent.click(retryButton);
       // In flight: saving status shows, the failure warning stays hidden, and
       // the session photo is untouched — nothing was cleared optimistically.
-      await screen.findByText(/saving photos/i);
+      await waitFor(() => expect(savingStatus()).toBeTruthy(), { timeout: 5000 });
       expect(screen.queryByText(/photos could not be saved/i)).toBeNull();
       expect(screen.getByRole("button", { name: /remove photo/i })).toBeTruthy();
       // The retry wrote the same photo set again without reselecting.
       expect(persist.mock.calls.length).toBe(beforeRetry + 1);
       release!({ durable: true, warning: null });
-      await waitFor(() => expect(screen.queryByText(/saving photos/i)).toBeNull());
+      await waitFor(() => expect(savingStatus()).toBeNull(), { timeout: 5000 });
       expect(screen.queryByText(/photos could not be saved/i)).toBeNull();
     } finally {
       persist.mockRestore();

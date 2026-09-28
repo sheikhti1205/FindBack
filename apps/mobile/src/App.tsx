@@ -1,5 +1,4 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router";
-import { MotionConfig } from "framer-motion";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
 import { GuestOnly, RequireAuth } from "./components/Guards";
@@ -19,10 +18,10 @@ import { About } from "./screens/About";
 import { MyPosts } from "./screens/MyPosts";
 import { Help } from "./screens/Help";
 import { AiConnection } from "./screens/AiConnection";
+import { Notifications } from "./screens/Notifications";
 
 export function App() {
   return (
-    <MotionConfig reducedMotion="user">
     <ThemeProvider>
       <AuthProvider>
         <HashRouter>
@@ -60,6 +59,7 @@ export function App() {
               <Route path="/posts/:id" element={<PostDetail />} />
               <Route path="/my" element={<MyPosts />} />
               <Route path="/profile" element={<Profile />} />
+              <Route path="/notifications" element={<Notifications />} />
               <Route path="/about" element={<About />} />
               <Route path="/help" element={<Help />} />
               <Route path="/ai-connection" element={<AiConnection />} />
@@ -71,6 +71,5 @@ export function App() {
         </HashRouter>
       </AuthProvider>
     </ThemeProvider>
-    </MotionConfig>
   );
 }

@@ -44,9 +44,10 @@ type PullDirection = "none" | "vertical" | "horizontal";
  *   vertical refresh: direction is locked only once a move is decisive, and a
  *   horizontal-dominant move cancels the pull outright
  * - a cancelled gesture leaves no stale pull distance behind
- * - no map gesture conflict (horizontal swipe locks out)
- * - respects prefers-reduced-motion
- * - P6: the finger-tracked visual is NEVER React state. Touch moves write a
+  * - no map gesture conflict (horizontal swipe locks out)
+  * - motion pass: the indicator always animates (rotation tracks pull
+  *   distance, spinner while refreshing)
+  * - P6: the finger-tracked visual is NEVER React state. Touch moves write a
  *   ref and paint the indicator through one rAF callback; React commits only
  *   at gesture start (indicator mount), release (unmount/refresh) and
  *   refresh settle. No setState — and no layout-height animation — runs per
@@ -83,12 +84,8 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
     const MAX_PULL = 100;
     const RESISTANCE = 0.45;
 
-    const reducedMotion =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-
     useImperativeHandle(ref, () => ({
-      scrollToTop: (behavior: ScrollBehavior = reducedMotion ? "auto" : "smooth") => {
+      scrollToTop: (behavior: ScrollBehavior = "smooth") => {
         scrollRef.current?.scrollTo({ top: 0, behavior });
       },
       get scrollTop() {
@@ -119,8 +116,9 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       const label = active ? "Refreshing feed" : distance >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
       labelRef.current?.setAttribute("aria-label", label);
       if (labelTextRef.current) labelTextRef.current.textContent = active ? "Refreshing…" : distance >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
-      if (iconRef.current && !reducedMotion) iconRef.current.style.transform = `rotate(${progress * 360}deg)`;
-    }, [reducedMotion]);
+      // Rotation tracks pull distance one-to-one (transform only, rAF-throttled).
+      if (iconRef.current) iconRef.current.style.transform = `rotate(${progress * 360}deg)`;
+    }, []);
 
     const schedulePaint = useCallback(() => {
       if (rafRef.current !== null) return;
@@ -292,7 +290,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
             >
               <svg
                 ref={iconRef}
-                className={`h-4 w-4 ${refreshing && !reducedMotion ? "animate-spin" : ""}`}
+                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"

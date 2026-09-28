@@ -19,3 +19,17 @@ export function detectMotionPhoto(bytes: Uint8Array): { stillEnd: number } | nul
   }
   return null;
 }
+
+/**
+ * Video-tail bytes stripped from a Motion Photo container: the trailing MP4
+ * (plus zero pad) that never reaches the decoder or upload. Still and tail
+ * are accounted separately so a container whose still is within cap but whose
+ * tail is large reports the stripped count for the UI status line instead of
+ * passing silently. Returns 0 when there is no motion tail.
+ */
+export function strippedVideoBytes(totalLength: number, stillEnd: number | null): number {
+  if (stillEnd === null) return 0;
+  if (!Number.isSafeInteger(totalLength) || !Number.isSafeInteger(stillEnd)) return 0;
+  if (stillEnd < 0 || stillEnd > totalLength) return 0;
+  return totalLength - stillEnd;
+}

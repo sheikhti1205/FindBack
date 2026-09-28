@@ -57,6 +57,19 @@ const DESCRIPTION_MIN = 10;
 const DESCRIPTION_MAX = 3000;
 const LOCATION_LABEL_MAX = 200;
 
+/**
+ * Cooperative publish cancel: thrown from the upload onProgress callback when
+ * the user cancels. uploadPhotos stages strictly in order and calls onProgress
+ * after each staged file, so throwing here skips every remaining file while
+ * uploadPhotos' own catch removes exactly this attempt's staged objects.
+ */
+class UploadCancelledError extends Error {
+  constructor() {
+    super("Upload cancelled. Your photos are kept — try again.");
+    this.name = "UploadCancelledError";
+  }
+}
+
 /** Check if a date string is a valid calendar date in YYYY-MM-DD format. */
 function isValidCalendarDate(isoDate: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return false;
@@ -227,10 +240,72 @@ function ReportForm() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Serializes overlapping picker work (R-073): a second action queues behind
   // the first instead of racing the shared hash registry or the 5-photo cap.
+  // Coalesced (Lane C): rapid gallery re-taps must not pile full batches, so
+  // a still-queued gallery batch is superseded by the latest selection (drop
+  // the obsolete queued batch, keep the latest). Camera shutter presses are
+  // never coalescable — each is an irreplaceable capture that must be kept.
+  // The backlog is surfaced in the status line (pickBacklog) instead of being
+  // silently inherited at submit. pickQueueRef always drains to idle so
+  // onSubmit still snapshots settled work.
+  interface PendingPickBatch {
+    kind: "native" | "web";
+    /** A still-queued batch with coalescable=true is superseded by a newer one. */
+    coalescable: boolean;
+    nativeItems?: PickedPhoto[];
+    webItems?: File[];
+  }
   const pickQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const enqueuePick = (task: () => Promise<void>): void => {
-    pickQueueRef.current = pickQueueRef.current.then(task, task).catch(() => {});
+  const pickRunningRef = useRef(false);
+  const pickPendingRef = useRef<PendingPickBatch[]>([]);
+  const pickDrainResolveRef = useRef<(() => void) | null>(null);
+  const [pickBacklog, setPickBacklog] = useState(0);
+  async function drainPickQueue(): Promise<void> {
+    for (;;) {
+      const next = pickPendingRef.current.shift();
+      setPickBacklog(pickPendingRef.current.length);
+      if (!next) break;
+      try {
+        if (next.kind === "native") await runNativeBatch(next.nativeItems ?? []);
+        else await runWebBatch(next.webItems ?? []);
+      } catch {
+        // Per-batch failures are reported via screen state, never via the queue.
+      }
+    }
+    pickRunningRef.current = false;
+    setPickBacklog(0);
+    pickDrainResolveRef.current?.();
+    pickDrainResolveRef.current = null;
+  }
+  const enqueuePending = (batch: PendingPickBatch): void => {
+    const pending = pickPendingRef.current;
+    const tail = pending[pending.length - 1];
+    if (batch.coalescable && tail?.coalescable && tail.kind === batch.kind) {
+      // Drop the obsolete queued batch; the latest selection supersedes it.
+      pending[pending.length - 1] = batch;
+    } else {
+      pending.push(batch);
+    }
+    setPickBacklog(pending.length);
+    if (!pickRunningRef.current) {
+      pickRunningRef.current = true;
+      pickQueueRef.current = new Promise<void>((resolve) => {
+        pickDrainResolveRef.current = resolve;
+      });
+      void drainPickQueue();
+    }
   };
+  /** Per-batch photo conversion progress ("Processing N of M") + cancel. */
+  const [pickProgress, setPickProgress] = useState<{ done: number; total: number } | null>(null);
+  const pickAbortRef = useRef<AbortController | null>(null);
+  function cancelPick(): void {
+    pickAbortRef.current?.abort();
+  }
+  /** Multi-photo publish progress ("Uploading i/N") + cooperative cancel. */
+  const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(null);
+  const uploadAbortRef = useRef<AbortController | null>(null);
+  function cancelUpload(): void {
+    uploadAbortRef.current?.abort();
+  }
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(initialDraft?.publishOutcome === "uncertain");
   const [error, setError] = useState<string | null>(null);
@@ -682,29 +757,51 @@ function ReportForm() {
    * detection. One unreadable item never discards the others (R-065, R-068,
    * R-071, R-081).
    */
-  function onPickBatch(picked: PickedPhoto[]): void {
+  /**
+   * Queue a native gallery/camera batch. Gallery re-taps are coalescable (a
+   * still-queued selection is superseded by the latest); camera captures are
+   * irreplaceable and always run.
+   */
+  function onPickBatch(picked: PickedPhoto[], opts?: { coalescable?: boolean }): void {
     setError(null);
     setPhotoFileErrors([]);
-    enqueuePick(async () => {
-      await restorePromiseRef.current;
-      const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
-      if (remaining <= 0) {
-        setPhotoLimitNotice(
-          `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. Remove one first.`,
-        );
-        return;
-      }
-      // Validate after native conversion (including motion-still extraction).
-      // Run each item at current capacity: an invalid item must not consume a
-      // slot or prevent later valid items in the same selection from arriving.
-      // Failures are labeled by selection position ("Photo 2") — never by
-      // native URIs, which must not leak into the interface.
-      let accepted = 0;
-      let duplicates = 0;
-      let unreadable = 0;
-      let overflow = 0;
-      const failures: string[] = [];
+    enqueuePending({ kind: "native", coalescable: opts?.coalescable ?? false, nativeItems: picked });
+  }
+
+  /**
+   * Convert one native batch in selection order with per-photo progress.
+   * Each item is converted at CURRENT capacity (photosRef is updated
+   * synchronously on accept): an invalid item never consumes a slot or
+   * prevents later valid items in the same selection from arriving (R-065,
+   * R-068, R-071, R-081). Cancelling aborts the remaining items;
+   * already-accepted tiles stay. Failures are labeled by selection position
+   * ("Photo 2") — never by native URIs, which must not leak into the
+   * interface.
+   */
+  async function runNativeBatch(picked: PickedPhoto[]): Promise<void> {
+    await restorePromiseRef.current;
+    const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
+    if (remaining <= 0) {
+      setPhotoLimitNotice(
+        `Reports hold up to ${MAX_REPORT_PHOTOS} photos in a fixed order. Remove one first.`,
+      );
+      return;
+    }
+    const controller = new AbortController();
+    pickAbortRef.current = controller;
+    setPickProgress({ done: 0, total: picked.length });
+    let accepted = 0;
+    let duplicates = 0;
+    let unreadable = 0;
+    let overflow = 0;
+    const failures: string[] = [];
+    let cancelled = false;
+    try {
       for (const [selectionIndex, photo] of picked.entries()) {
+        if (controller.signal.aborted) {
+          cancelled = true;
+          break;
+        }
         const position = selectionIndex + 1;
         const result = await processReportBatch(
           [photo],
@@ -723,6 +820,7 @@ function ReportForm() {
             accepted += 1;
           },
           selectionIndex,
+          { signal: controller.signal },
         );
         duplicates += result.duplicates.length;
         unreadable += result.unreadable.length;
@@ -730,17 +828,31 @@ function ReportForm() {
         for (const failed of result.unreadable) {
           failures.push(`Photo ${failed.index + 1}: ${failed.reason}`);
         }
+        setPickProgress({ done: selectionIndex + 1, total: picked.length });
+        if (controller.signal.aborted || result.cancelled) {
+          cancelled = true;
+          break;
+        }
       }
       setPhotoFileErrors(failures);
-      setPhotoLimitNotice(formatBatchNotice(accepted, duplicates, unreadable, overflow) || null);
+      const notice = formatBatchNotice(accepted, duplicates, unreadable, overflow);
+      setPhotoLimitNotice(
+        cancelled
+          ? [notice, "cancelled"].filter(Boolean).join(" · ") || "Photo processing cancelled."
+          : notice || null,
+      );
       diag("report.picker.batch", {
         picked: picked.length,
         accepted,
         duplicates,
         unreadable,
         overflow,
+        cancelled,
       }, { traceId: traceIdRef.current ?? undefined });
-    });
+    } finally {
+      pickAbortRef.current = null;
+      setPickProgress(null);
+    }
   }
 
   /**
@@ -758,60 +870,62 @@ function ReportForm() {
     const list = Array.from(files);
     setError(null);
     setPhotoFileErrors([]);
-    enqueuePick(async () => {
-      await restorePromiseRef.current;
-      let accepted = 0;
-      let duplicates = 0;
-      let unreadable = 0;
-      let overflow = 0;
-      // Per-file failures: when several files fail for different reasons the
-      // user must see WHICH filename caused WHICH failure, not one generic
-      // message that only describes the last error.
-      const failures: string[] = [];
-      for (const file of list) {
-        if (MAX_REPORT_PHOTOS - photosRef.current.length <= 0) {
-          overflow += 1;
-          continue;
-        }
-        if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-          failures.push(`${file.name}: that file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.`);
-          unreadable += 1;
-          continue;
-        }
-        let payload: File;
-        try {
-          payload = await normalizeForUpload(file);
-        } catch (err) {
-          failures.push(`${file.name}: ${friendlyError(err).message}`);
-          unreadable += 1;
-          continue;
-        }
-        let digest: string;
-        try {
-          digest = await computeSha256Hex(payload);
-        } catch {
-          failures.push(`${file.name}: that photo could not be verified. Please try it again.`);
-          unreadable += 1;
-          continue;
-        }
-        if (hashRegistryRef.current.has(digest)) {
-          duplicates += 1;
-          continue;
-        }
-        hashRegistryRef.current.add(digest);
-        acceptPickedPhoto(payload, null, digest);
-        accepted += 1;
+    enqueuePending({ kind: "web", coalescable: true, webItems: list });
+  }
+
+  async function runWebBatch(list: File[]): Promise<void> {
+    await restorePromiseRef.current;
+    let accepted = 0;
+    let duplicates = 0;
+    let unreadable = 0;
+    let overflow = 0;
+    // Per-file failures: when several files fail for different reasons the
+    // user must see WHICH filename caused WHICH failure, not one generic
+    // message that only describes the last error.
+    const failures: string[] = [];
+    for (const file of list) {
+      if (MAX_REPORT_PHOTOS - photosRef.current.length <= 0) {
+        overflow += 1;
+        continue;
       }
-      setPhotoFileErrors(failures);
-      setPhotoLimitNotice(formatBatchNotice(accepted, duplicates, unreadable, overflow) || null);
-      diag("report.picker.web", {
-        picked: list.length,
-        accepted,
-        duplicates,
-        unreadable,
-        overflow,
-      }, { traceId: traceIdRef.current ?? undefined });
-    });
+      if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+        failures.push(`${file.name}: that file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.`);
+        unreadable += 1;
+        continue;
+      }
+      let payload: File;
+      try {
+        payload = await normalizeForUpload(file);
+      } catch (err) {
+        failures.push(`${file.name}: ${friendlyError(err).message}`);
+        unreadable += 1;
+        continue;
+      }
+      let digest: string;
+      try {
+        digest = await computeSha256Hex(payload);
+      } catch {
+        failures.push(`${file.name}: that photo could not be verified. Please try it again.`);
+        unreadable += 1;
+        continue;
+      }
+      if (hashRegistryRef.current.has(digest)) {
+        duplicates += 1;
+        continue;
+      }
+      hashRegistryRef.current.add(digest);
+      acceptPickedPhoto(payload, null, digest);
+      accepted += 1;
+    }
+    setPhotoFileErrors(failures);
+    setPhotoLimitNotice(formatBatchNotice(accepted, duplicates, unreadable, overflow) || null);
+    diag("report.picker.web", {
+      picked: list.length,
+      accepted,
+      duplicates,
+      unreadable,
+      overflow,
+    }, { traceId: traceIdRef.current ?? undefined });
   }
 
   async function onAddGallery(): Promise<void> {
@@ -824,7 +938,7 @@ function ReportForm() {
     try {
       const picked = await chooseReportPhotos(remaining);
       if (picked.length === 0) return;
-      onPickBatch(picked);
+      onPickBatch(picked, { coalescable: true });
     } catch (err) {
       setError(friendlyError(err).message);
     }
@@ -1017,11 +1131,24 @@ function ReportForm() {
         longitude: location.longitude,
         youtubeUrl: trimmedYoutube || undefined,
       };
+      // Multi-photo uploads report "Uploading i/N" with cancel. The cancel
+      // is cooperative: uploadPhotos stages strictly in order and calls
+      // onProgress after each file, so throwing there skips every remaining
+      // file while its own catch removes exactly this attempt's staged
+      // objects — no orphaned uploads, local Files untouched for retry.
+      const uploadController = reportFiles.length > 1 ? new AbortController() : null;
+      uploadAbortRef.current = uploadController;
+      if (uploadController) setUploadProgress({ completed: 0, total: reportFiles.length });
       const postId =
         reportFiles.length <= 1
           ? await publishReport(reportInput, reportFiles[0] ?? null, traceIdRef.current ?? undefined)
           : await publishReportWithPhotos(reportInput, reportFiles, {
               traceId: traceIdRef.current ?? undefined,
+              signal: uploadController?.signal,
+              onProgress: ({ completed, total }) => {
+                if (uploadController?.signal.aborted) throw new UploadCancelledError();
+                setUploadProgress({ completed, total });
+              },
             });
       // Diag: publish success
       diag("report.publish.success", {
@@ -1048,18 +1175,30 @@ function ReportForm() {
       announce("Report published.");
       navigate(`/posts/${postId}`, { replace: true });
     } catch (err) {
-      // Diag: publish error
-      diag("report.publish.error", {
-        message: friendlyError(err).message,
-        code: err instanceof Error ? (err as { code?: string }).code ?? "unknown" : "unknown",
-      }, { traceId: traceIdRef.current ?? undefined });
-      if (err instanceof PublishOutcomeUncertainError) {
-        setUncertain(true);
+      if (err instanceof UploadCancelledError || (err instanceof Error && err.name === "UploadCancelledError")) {
+        // Cooperative cancel: staged objects for this attempt were already
+        // removed by uploadPhotos; the draft and local photos stay for retry.
+        diag("report.publish.cancelled", {
+          photoCount: reportFiles.length,
+        }, { traceId: traceIdRef.current ?? undefined });
         setError(err.message);
+        announce("Upload cancelled. Your photos are kept.");
       } else {
-        setError(friendlyError(err).message);
+        // Diag: publish error
+        diag("report.publish.error", {
+          message: friendlyError(err).message,
+          code: err instanceof Error ? (err as { code?: string }).code ?? "unknown" : "unknown",
+        }, { traceId: traceIdRef.current ?? undefined });
+        if (err instanceof PublishOutcomeUncertainError) {
+          setUncertain(true);
+          setError(err.message);
+        } else {
+          setError(friendlyError(err).message);
+        }
       }
     } finally {
+      uploadAbortRef.current = null;
+      setUploadProgress(null);
       submitting.current = false;
       setBusy(false);
     }
@@ -1266,6 +1405,22 @@ function ReportForm() {
           onMove={movePhotoById}
           onPreview={setPreviewPhotoId}
         />
+        {pickProgress && (
+          <div className="flex items-center gap-2 text-xs" role="status" aria-live="polite">
+            <span>
+              Processing {pickProgress.done} of {pickProgress.total}
+              {pickBacklog > 0 ? ` · ${pickBacklog} batch queued` : ""}
+            </span>
+            <Button type="button" variant="text" size="md" onClick={cancelPick}>
+              Cancel
+            </Button>
+          </div>
+        )}
+        {!pickProgress && pickBacklog > 0 && (
+          <p className="text-xs text-on-surface-variant" role="status">
+            {pickBacklog} batch queued…
+          </p>
+        )}
         {photoLimitNotice && (
           <p className="text-xs text-error" role="status">
             {photoLimitNotice}
@@ -1338,6 +1493,22 @@ function ReportForm() {
         <YouTubeEmbed url={youtubeUrl.trim()} />
       )}
 
+      {uploadProgress && (
+        <div className="flex items-center gap-2 text-sm" role="status" aria-live="polite">
+          {uploadProgress.completed < uploadProgress.total ? (
+            <>
+              <span>
+                Uploading {Math.min(uploadProgress.completed + 1, uploadProgress.total)} of {uploadProgress.total}
+              </span>
+              <Button type="button" variant="text" size="md" onClick={cancelUpload}>
+                Cancel upload
+              </Button>
+            </>
+          ) : (
+            <span>Publishing…</span>
+          )}
+        </div>
+      )}
       <Button type="submit" size="lg" loading={busy} disabled={uncertain || !photoRecoveryReady}>
         Publish {type === "LOST" ? "lost" : "found"} report
       </Button>

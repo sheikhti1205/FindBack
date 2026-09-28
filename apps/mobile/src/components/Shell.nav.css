@@ -1,0 +1,49 @@
+/* The viewport owns the safe-area inset; this in-flow row reserves its own
+   height, keeping route content visible and the pill above the gesture bar. */
+.fb-nav-slot {
+  /* Motion pass monochrome: theme-adaptive action fill — near-black behind a
+     white icon in light theme, white behind a black icon in dark theme. */
+  --fb-nav-action-bg: var(--fb-on-surface);
+  --fb-nav-action-ink: var(--fb-surface);
+  padding: 8px 16px 12px; background: var(--fb-surface);
+}
+.fb-nav-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.fb-nav-pill {
+  display: flex; flex: 1 1 0; min-width: 0; align-items: stretch;
+  padding: 4px; border-radius: 999px;
+  background: var(--fb-surface-container-low);
+  border: 1px solid var(--fb-outline-variant);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--fb-surface);
+}
+.fb-nav-link {
+  position: relative; display: flex; flex: 1 1 0; min-width: 44px;
+  min-height: 48px; align-items: center; justify-content: center;
+  gap: 4px; border-radius: 999px; color: var(--fb-on-surface-variant);
+  text-decoration: none; padding: 4px 2px;
+}
+.fb-nav-link-active { flex: 2 1 0; color: var(--fb-on-surface); font-weight: 600; }
+.fb-nav-active-bg {
+  position: absolute; inset: 0; border-radius: inherit;
+  background: var(--fb-surface); box-shadow: var(--shadow-sm);
+}
+.fb-nav-icon, .fb-nav-label { position: relative; z-index: 1; }
+/* Transform-only selected-icon emphasis (compositor thread). */
+.fb-nav-icon { flex: none; transition: transform 0.15s ease-out; }
+.fb-nav-link-active .fb-nav-icon { transform: scale(1.12); }
+.fb-nav-label {
+  min-width: 0; text-align: center; font-size: 0.75rem;
+  line-height: 1.2; overflow: hidden; white-space: nowrap;
+}
+.fb-nav-create-wrap { flex: none; border-radius: 50%; }
+.fb-nav-create {
+  display: flex; width: 52px; min-height: 52px; align-items: center;
+  justify-content: center; border-radius: 50%;
+  color: var(--fb-nav-action-ink); background: var(--fb-nav-action-bg);
+  box-shadow: var(--shadow-md); text-decoration: none;
+}
+.fb-nav-create:focus-visible, .fb-nav-link:focus-visible {
+  outline: 3px solid var(--fb-on-surface); outline-offset: 2px;
+}
+/* Fullscreen editor is a body-level portal: never leave shell chrome behind it
+   as an extra tab stop, even though the editor itself lives outside Shell. */
+body:has(#report-editor-overlay) .fb-nav-slot { display: none; }

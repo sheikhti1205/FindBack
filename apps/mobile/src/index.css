@@ -153,17 +153,7 @@ body {
   outline-offset: 2px;
 }
 
-/* Respect reduced-motion preferences. */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
+/* Motion pass: animations always play — no reduced-motion kill-switch. */
 
 .fb-markdown p { margin: 0 0 0.5rem; }
 .fb-markdown p:last-child { margin-bottom: 0; }
@@ -269,7 +259,7 @@ body {
   object-fit: cover;
   display: block;
 }
-/* Grayscale loading wash (pulse disabled under reduced-motion by the global rule). */
+/* Grayscale loading wash (motion policy: animations always play). */
 .fb-img-frame[data-state="loading"]::after {
   content: "";
   position: absolute;

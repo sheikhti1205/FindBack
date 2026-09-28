@@ -268,12 +268,10 @@ describe("RichTextEditor report pass — selection and undo preservation across 
     expect(ref.current?.can().undo()).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Expand description editor/i }));
     // Undo in overlay
-    fireEvent.click(screen.getByRole("button", { name: "More" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Undo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("hello");
     // Redo in overlay
-    fireEvent.click(screen.getByRole("button", { name: "More" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Redo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
     expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("hello world");
   });
 
@@ -303,7 +301,7 @@ describe("RichTextEditor report pass — accessibility", () => {
   it("rail buttons have ≥48dp touch targets and accessible labels", () => {
     render(<RichTextEditor label="Description" value="hello" onChange={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: /Expand description editor/i }));
-    for (const name of ["Bold", "Italic", "Link", "List", "More"]) {
+    for (const name of ["Undo", "Redo", "Bold", "Italic", "Link", "Bullets", "Numbered", "Quote", "Paste as Markdown"]) {
       const btn = screen.getByRole("button", { name });
       expect(btn.className).toMatch(/min-h-\[48px\]/);
       expect(btn.className).toMatch(/min-w-\[48px\]/);

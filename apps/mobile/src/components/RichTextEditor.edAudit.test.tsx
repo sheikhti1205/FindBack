@@ -41,15 +41,12 @@ describe("ED-02/ED-06 heading + toolbar menus", () => {
     expect(tiptapToMarkdown(ref.current?.getJSON())).toBe("hello");
   });
 
-  it("groups List and More menus with accessible names", () => {
+  it("groups directly accessible structure and cleanup actions", () => {
     render(<RichTextEditor label="Description" value="" onChange={() => {}} />);
-    expect(screen.getByRole("button", { name: /List/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /More/i })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /^List/i }));
-    expect(screen.getByRole("menuitemradio", { name: /Bullets/i })).toBeTruthy();
-    expect(screen.getByRole("menuitemradio", { name: /Numbers/i })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /More/i }));
-    expect(screen.getByRole("menuitem", { name: /Clear all formatting/i })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Structure" })).toBeTruthy();
+    for (const name of ["Bullets", "Numbered", "Quote", "Clear all formatting"]) {
+      expect(screen.getByRole("button", { name })).toBeTruthy();
+    }
   });
 });
 

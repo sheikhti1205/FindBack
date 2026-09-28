@@ -11,12 +11,34 @@ export class BootTimeoutError extends Error {
   }
 }
 
-export function withTimeout<T>(task: () => Promise<T>, ms: number, message: string): Promise<T> {
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  }
+}
+
+export function withTimeout<T>(
+  task: () => Promise<T>,
+  ms: number,
+  message: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  throwIfAborted(signal);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new BootTimeoutError(message)), ms);
   });
-  return Promise.race([task(), timeout]).finally(() => {
+  const aborted = new Promise<never>((_, reject) => {
+    if (!signal) return;
+    onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  const raced = signal
+    ? Promise.race([task(), timeout, aborted])
+    : Promise.race([task(), timeout]);
+  return raced.finally(() => {
     if (timer !== undefined) clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
   });
 }

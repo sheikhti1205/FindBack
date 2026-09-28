@@ -11,6 +11,8 @@ import { onRealtime } from "../services/realtime";
 import { useAuth } from "../auth";
 import { useTabTap } from "../components/TabTap";
 import { buildFeedCacheKey, clearNewPostCount, getNewPostCount, incrementNewPostCount } from "../hooks/feedCache";
+import { AdvancedSearchFilters, FiltersIconButton, getActiveFilterCount, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
+import type { FeedFilters } from "../services/posts";
 
 type TypeFilter = PostType | "ALL";
 
@@ -27,13 +29,18 @@ export function Home() {
   const [qParam, setQParam] = useUrlParam("q");
   const [query, setQuery] = useState(qParam);
   const [appliedQuery, setAppliedQuery] = useState(qParam.trim());
-  const feedFilters: { type: "" | PostType; q: string | undefined } = {
+  const advanced = useAdvancedSearchFilters();
+  const feedFilters: FeedFilters = {
     type: type === "ALL" ? "" : type,
     q: appliedQuery || undefined,
+    category: advanced.category || undefined,
+    status: advanced.status || undefined,
+    sort: advanced.sort,
   };
   const scopedCacheKey = buildFeedCacheKey(HOME_CACHE_KEY, feedFilters);
   const [newPostCount, setNewPostCount] = useState(() => getNewPostCount(scopedCacheKey));
   const [hasUpdates, setHasUpdates] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const scrollRef = useRef<PullToRefreshHandle>(null);
 
   // Debounce the search box so each keystroke does not hit the API.
@@ -93,7 +100,7 @@ export function Home() {
       const canProveNonMember = postType !== null && !typeOk;
       if (canProveNonMember) return;
 
-      const matchesFilter = typeOk && !appliedQuery;
+      const matchesFilter = typeOk && !appliedQuery && !advanced.category && !advanced.status;
       if (scrolled) {
         if (matchesFilter) {
           incrementNewPostCount(scopedCacheKey, 1);
@@ -106,7 +113,7 @@ export function Home() {
       }
     });
     return off;
-  }, [refresh, scopedCacheKey, type, appliedQuery]);
+  }, [refresh, scopedCacheKey, type, appliedQuery, advanced.category, advanced.status]);
 
   // A post was deleted: reconcile it in place. Never refetch here — a full
   // refresh would rerender/reorder the list underneath a scrolled reader.
@@ -151,11 +158,16 @@ export function Home() {
             { value: "FOUND", label: "Found" },
           ]}
         />
-        <label className="relative block">
+        <div className="flex items-center rounded-full border border-outline-variant bg-surface pl-1 pr-4 focus-within:border-on-surface">
+          <FiltersIconButton
+            activeCount={getActiveFilterCount(advanced)}
+            open={filtersOpen}
+            onClick={() => setFiltersOpen(true)}
+          />
           <Search
             size={16}
             aria-hidden
-            className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant"
+            className="pointer-events-none ml-1 shrink-0 text-on-surface-variant"
           />
           <input
             type="search"
@@ -163,9 +175,15 @@ export function Home() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search title or description…"
             aria-label="Search posts"
-            className="w-full rounded-full border border-outline-variant bg-surface pl-10 pr-4 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+            className="min-w-0 flex-1 bg-transparent py-3 pl-2 text-sm placeholder:text-on-surface-variant focus:outline-none"
           />
-        </label>
+        </div>
+        <AdvancedSearchFilters
+          filters={advanced}
+          open={filtersOpen}
+          onOpenChange={setFiltersOpen}
+          hideTrigger
+        />
       </div>
 
       <NewPostsPill count={newPostCount} hasUpdates={hasUpdates} onTap={onNewPostsTap} />
@@ -181,11 +199,13 @@ export function Home() {
           onLoadMore={loadMore}
           onRetry={refresh}
           density="editorial"
-          emptyTitle={appliedQuery ? "No matches" : "Nothing here yet"}
+          emptyTitle={appliedQuery || advanced.category || advanced.status ? "No matches" : "Nothing here yet"}
           emptySubtitle={
-            appliedQuery
-              ? `No posts match “${appliedQuery}”.`
-              : "Tap Report below to post a lost or found item."
+            advanced.category || advanced.status
+              ? "Try different filters or a broader search."
+              : appliedQuery
+                ? `No posts match “${appliedQuery}”.`
+                : "Tap Create report to post a lost or found item."
           }
         />
       </PullToRefresh>

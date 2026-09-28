@@ -96,6 +96,23 @@ describe("ChatTranscript", () => {
     expect(scroller.className).toMatch(/bg-surface|surface-container/);
     expect(container.innerHTML).not.toMatch(/text-(red|green|blue|amber|emerald)-/);
   });
+
+  it("scrolls smoothly to the latest message even under reduced motion", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView as unknown as typeof Element.prototype.scrollIntoView;
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }) as unknown as typeof window.matchMedia;
+    try {
+      render(<ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />);
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth" });
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
 });
 
 describe("ChatTranscript M2", () => {

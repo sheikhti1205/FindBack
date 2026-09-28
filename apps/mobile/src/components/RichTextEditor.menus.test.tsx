@@ -50,35 +50,25 @@ describe("menu keyboard handling", () => {
 
   it("outside pointerdown closes an open menu", () => {
     render(<RichTextEditor label="Description" value="hello" onChange={() => {}} />);
-    fireEvent.click(screen.getByRole("button", { name: "List" }));
-    expect(screen.getByRole("menu", { name: "List" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Block type/i }));
+    expect(screen.getByRole("menu", { name: "Block type" })).toBeTruthy();
     fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole("menu", { name: "List" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Block type" })).toBeNull();
   });
 
-  it("skips disabled items while arrowing through the More menu", () => {
+  it("keeps unavailable history actions visible but disabled on a fresh editor", () => {
     const ref = createRef<Editor | null>();
     render(<RichTextEditor label="Description" value="" onChange={() => {}} editorRef={ref} />);
-    fireEvent.click(screen.getByRole("button", { name: "More" }));
-    const menu = screen.getByRole("menu", { name: "More formatting options" });
-    const quote = screen.getByRole("menuitem", { name: "Quote" });
-    expect(document.activeElement).toBe(quote);
-    // Undo/Redo are disabled in a fresh empty editor and must be skipped.
-    expect((screen.getByRole("menuitem", { name: "Undo" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Paste as Markdown" }));
-    fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Clear all formatting" }));
-    fireEvent.keyDown(menu, { key: "ArrowDown" });
-    // Skips disabled Undo/Redo and wraps to Quote.
-    expect(document.activeElement).toBe(quote);
+    expect((screen.getByRole("button", { name: "Undo" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Redo" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Quote" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
 describe("narrow-viewport/IME-safe popup positioning", () => {
   it("constrains menus to the viewport with internal scroll and keeps 48px targets", () => {
     render(<RichTextEditor label="Description" value="hello" onChange={() => {}} />);
-    for (const buttonName of [/Block type/i, "List", "More"] as const) {
+    for (const buttonName of [/Block type/i] as const) {
       fireEvent.click(screen.getByRole("button", { name: buttonName }));
       const menu = document.querySelector('[role="menu"]') as HTMLElement;
       expect(menu).toBeTruthy();

@@ -435,6 +435,14 @@ export async function publishReport(input: CreatePostInput, photo: File | null, 
 export interface PublishPhotosOptions {
   onProgress?: (progress: UploadProgress) => void;
   traceId?: string;
+  /**
+   * Cooperative publish cancel threaded from the report screen. Staging
+   * remains cooperative via onProgress; this gate covers the boundary AFTER
+   * the final photo stages but BEFORE the create-post RPC runs (the point of
+   * no return). An abort here cleans exactly this attempt's staged objects
+   * and never creates the post row.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -468,6 +476,12 @@ export async function publishReportWithPhotos(
     onProgress: options.onProgress,
     traceId: options.traceId,
   });
+  if (options.signal?.aborted) {
+    await removeStagedUploads(staged, options.traceId);
+    const cancelled = new Error("Upload cancelled. Your photos are kept \u2014 try again.");
+    cancelled.name = "UploadCancelledError";
+    throw cancelled;
+  }
   try {
     const postId = await createPostMulti(
       { ...input, attachmentKeys: staged.map((s) => s.id) },

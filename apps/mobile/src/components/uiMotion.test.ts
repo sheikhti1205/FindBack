@@ -3,10 +3,17 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   backdropTransition,
+  fadeUpVariants,
+  fadeVariants,
   motionDurations,
   motionEasings,
+  motionSprings,
+  pageVariants,
+  popoverVariants,
+  scaleInVariants,
   sheetTransition,
   shouldReduceMotion,
+  snackbarVariants,
 } from "./uiMotion";
 
 describe("uiMotion tokens (handover 04 motion policy)", () => {
@@ -44,6 +51,39 @@ describe("uiMotion tokens (handover 04 motion policy)", () => {
   it("derives sheet/backdrop transitions from the shared tokens", () => {
     expect(sheetTransition.duration).toBe(motionDurations.sheet);
     expect(backdropTransition.duration).toBeLessThanOrEqual(motionDurations.fast);
+  });
+
+  it("exposes an emphasized duration for hero/notice motion within budget", () => {
+    expect(motionDurations.emphasized).toBeGreaterThanOrEqual(0.24);
+    expect(motionDurations.emphasized).toBeLessThanOrEqual(0.35);
+  });
+
+  it("exposes snappy/soft springs (no per-screen hardcoded spring)", () => {
+    for (const spring of Object.values(motionSprings)) {
+      expect(spring.type).toBe("spring");
+      expect(spring.stiffness).toBeGreaterThan(0);
+      expect(spring.damping).toBeGreaterThan(0);
+    }
+    // Snappy settles faster than soft.
+    expect(motionSprings.snappy.stiffness).toBeGreaterThan(motionSprings.soft.stiffness);
+  });
+
+  it.each([
+    ["fade", fadeVariants],
+    ["fadeUp", fadeUpVariants],
+    ["scaleIn", scaleInVariants],
+    ["popover", popoverVariants],
+    ["snackbar", snackbarVariants],
+    ["page", pageVariants],
+  ])("exposes a transform/opacity-only %s variant", (_name, variants) => {
+    const allowed = new Set(["opacity", "x", "y", "scale", "scaleX", "scaleY"]);
+    for (const state of Object.values(variants)) {
+      expect(typeof state).toBe("object");
+      for (const key of Object.keys(state as Record<string, unknown>)) {
+        expect(allowed.has(key)).toBe(true);
+      }
+    }
+    expect(variants.visible).toBeTruthy();
   });
 
   describe("shouldReduceMotion()", () => {

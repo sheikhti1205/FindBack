@@ -106,7 +106,7 @@ describe("RichTextEditor Markdown paste", () => {
     expect(stored).not.toContain("after");
   });
 
-  it("offers Paste as Markdown in the More menu and inserts clipboard content", async () => {
+  it("offers Paste as Markdown on the rail and inserts clipboard content", async () => {
     const readText = vi.fn().mockResolvedValue(CHATGPT_MD);
     Object.defineProperty(navigator, "clipboard", { value: { readText }, configurable: true });
     try {
@@ -114,8 +114,7 @@ describe("RichTextEditor Markdown paste", () => {
       const { container } = render(
         <RichTextEditor label="Description" value="" onChange={() => {}} editorRef={ref} />,
       );
-      fireEvent.click(screen.getByRole("button", { name: "More" }));
-      const item = await screen.findByRole("menuitem", { name: "Paste as Markdown" });
+      const item = screen.getByRole("button", { name: "Paste as Markdown" });
       fireEvent.click(item);
       await waitFor(() => {
         expect(tiptapToMarkdown(ref.current?.getJSON())).toContain("# Lost Wallet");
@@ -133,8 +132,7 @@ describe("RichTextEditor Markdown paste", () => {
     Object.defineProperty(navigator, "clipboard", { value: { readText }, configurable: true });
     try {
       render(<RichTextEditor label="Description" value="" onChange={() => {}} />);
-      fireEvent.click(screen.getByRole("button", { name: "More" }));
-      fireEvent.click(await screen.findByRole("menuitem", { name: "Paste as Markdown" }));
+      fireEvent.click(screen.getByRole("button", { name: "Paste as Markdown" }));
       await waitFor(() => {
         expect(screen.getByRole("status", { name: "Formatting status" }).textContent).toMatch(
           /unavailable/i,

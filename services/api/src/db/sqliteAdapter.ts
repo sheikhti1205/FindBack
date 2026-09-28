@@ -99,10 +99,33 @@ CREATE TABLE IF NOT EXISTS uploads (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- Nullable only for system STATUS rows (mirrors
+  -- 20260928000000_notifications.sql, where actor_id was made nullable for
+  -- the status trigger's actor-less rows).
+  actor_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('LIKE','DISLIKE','COMMENT','MENTION','STATUS')),
+  post_id TEXT REFERENCES item_posts(id) ON DELETE CASCADE,
+  comment_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+  preview TEXT,
+  read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1)),
+  created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_posts_type_created ON item_posts(type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_category ON item_posts(category);
 CREATE INDEX IF NOT EXISTS idx_posts_user ON item_posts(user_id);
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+-- Parity note: production Postgres (20260928000000_notifications.sql) also
+-- carries the partial index idx_notifications_user_unread ON notifications
+-- (user_id) WHERE read = 0 for the unread-count RPC. SQLite supports partial
+-- indexes too, but the local/test mirror deliberately keeps only the
+-- composite (user_id, created_at) index — the mirror is a correctness
+-- harness, not a perf replica, so index parity is documented here rather
+-- than duplicated.
 CREATE INDEX IF NOT EXISTS idx_challenges_user_channel ON verification_challenges(user_id, channel);
 `;
 

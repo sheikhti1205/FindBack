@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { consumeBackIntercept, consumeHistorySuppression, historyDepth } from "./backNavigation";
+import { Snackbar } from "./LiveRegion";
 
 export interface BackContext {
   /** React Router history has an entry before the current one. */
@@ -108,17 +109,7 @@ export function BackButtonHandler() {
     };
   }, [navigate]);
 
-  if (!toast) return null;
-
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 bottom-24 z-50 flex justify-center px-4"
-    >
-      <span className="rounded-full bg-on-surface px-4 py-2 text-sm text-surface shadow-lg">
-        Press back again to exit
-      </span>
-    </div>
-  );
+  // Always mounted so the shared Snackbar can play its exit animation; the
+  // existing arm timer still owns the auto-dismiss timing.
+  return <Snackbar open={toast} message="Press back again to exit" />;
 }

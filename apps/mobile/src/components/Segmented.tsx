@@ -1,5 +1,7 @@
-import { useRef } from "react";
+import { useId, useRef } from "react";
+import { motion } from "framer-motion";
 import type { PostStatus, PostType } from "@findback/shared";
+import { motionSprings } from "./uiMotion";
 
 interface SegmentedProps<T extends string> {
   value: T;
@@ -17,6 +19,9 @@ export function Segmented<T extends string>({
   disabled = false,
 }: SegmentedProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  // Scoped layoutId so the selection background slides within this group
+  // only (multiple Segmented controls share the page).
+  const selectionId = `fb-segmented-${useId().replace(/:/g, "")}`;
 
   function moveFocus(from: number, delta: 1 | -1) {
     const next = (from + delta + options.length) % options.length;
@@ -59,15 +64,24 @@ export function Segmented<T extends string>({
             // Roving focus: one tab stop for the group; arrows move within it.
             tabIndex={disabled ? -1 : selected ? 0 : -1}
             onClick={() => !disabled && onChange(o.value)}
-            className={`min-h-[48px] rounded-m3-xs px-3 text-sm font-medium transition-colors ${
+            className={`relative min-h-[48px] rounded-m3-xs px-3 text-sm font-medium transition-colors ${
               disabled
                 ? "opacity-50 cursor-not-allowed"
                 : selected
-                ? "bg-surface text-on-surface shadow-sm"
+                ? "text-on-surface"
                 : "text-on-surface-variant hover:bg-surface-container-high"
             }`}
           >
-            {o.label}
+            {selected && (
+              <motion.span
+                layoutId={selectionId}
+                data-testid="segmented-selection"
+                aria-hidden="true"
+                transition={motionSprings.snappy}
+                className="absolute inset-0 rounded-m3-xs bg-surface shadow-sm"
+              />
+            )}
+            <span className="relative z-[1]">{o.label}</span>
           </button>
         );
       })}

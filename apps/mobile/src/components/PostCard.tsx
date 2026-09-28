@@ -11,8 +11,8 @@ interface PostCardProps {
 /**
  * P6: entrance animation is capped to the first visible cards. A long
  * paginated feed must not animate every card (one Motion per row, staggered
- * delays deep into the list). Reduced motion stays owned by the single
- * app-root `<MotionConfig reducedMotion="user">` — never nested here.
+ * delays deep into the list). Motion policy: animations always play — no
+ * reduced-motion gate here (see uiMotion); never nest a MotionConfig here.
  */
 export const POST_CARD_ANIMATED_COUNT = 4;
 

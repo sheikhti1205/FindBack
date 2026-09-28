@@ -81,11 +81,9 @@ export function ChatTranscript({
     return el.scrollHeight - el.scrollTop - el.clientHeight < 96;
   }
 
+  // Motion policy: animations always play — no reduced-motion gate here.
   function scrollToLatest() {
-    const reduce =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-    bottomRef.current?.scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     setShowNewResponse(false);
   }
 

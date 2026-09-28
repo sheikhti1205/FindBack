@@ -7,7 +7,16 @@ import type { LocationAdapter } from "../services/locationAdapter";
 
 vi.mock("./LiveRegion", () => ({ announce: vi.fn() }));
 
+vi.mock("../services/location/rasterTiles", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../services/location/rasterTiles")>();
+  // A short stall budget keeps the timeout test fast; all tile math stays real.
+  return { ...actual, MAP_LOAD_TIMEOUT_MS: 500 };
+});
+
 const behavior = vi.hoisted(() => ({
+  workerUrl: null as string | null,
+  workerConfiguredAtConstruction: [] as boolean[],
   throwOnConstruct: false,
   reportUnsupported: false,
   instances: [] as Array<{
@@ -15,6 +24,8 @@ const behavior = vi.hoisted(() => ({
     center: { lat: number; lng: number };
     handlers: Record<string, () => void>;
     jumpedTo: Array<{ center: [number, number]; zoom?: number }>;
+    easedTo: Array<{ center: [number, number]; zoom?: number; duration?: number }>;
+    resizeCalls: number;
   }>,
 }));
 
@@ -24,6 +35,7 @@ vi.mock("maplibre-gl", () => {
   class FakeMap {
     state: (typeof behavior.instances)[number];
     constructor(opts: { style: string; center: [number, number]; zoom: number }) {
+      behavior.workerConfiguredAtConstruction.push(behavior.workerUrl !== null);
       if (behavior.throwOnConstruct) {
         throw new GPUInitializationError("WebGL unavailable");
       }
@@ -33,6 +45,8 @@ vi.mock("maplibre-gl", () => {
         center: { lat, lng },
         handlers: {},
         jumpedTo: [],
+        easedTo: [],
+        resizeCalls: 0,
       };
       behavior.instances.push(this.state);
     }
@@ -47,11 +61,18 @@ vi.mock("maplibre-gl", () => {
       this.state.center = { lat, lng };
       this.state.jumpedTo.push(next);
     }
+    easeTo(next: { center: [number, number]; zoom?: number; duration?: number }): void {
+      const [lng, lat] = next.center;
+      this.state.center = { lat, lng };
+      this.state.easedTo.push(next);
+    }
     addControl(): void {}
+    resize(): void { this.state.resizeCalls += 1; }
     remove(): void {}
   }
   return {
     Map: FakeMap,
+    setWorkerUrl: (url: string) => { behavior.workerUrl = url; },
     NavigationControl,
     GPUInitializationError,
     // Present on some MapLibre lines; the sheet honors it when available.
@@ -73,6 +94,8 @@ afterEach(() => {
   behavior.throwOnConstruct = false;
   behavior.reportUnsupported = false;
   behavior.instances.length = 0;
+  behavior.workerUrl = null;
+  behavior.workerConfiguredAtConstruction.length = 0;
 });
 
 /** Captures the callbacks the sheet hands to navigator.geolocation. */
@@ -144,6 +167,86 @@ const empty: LocationValue = {
 };
 
 describe("MapPickerSheet", () => {
+  it("configures a bundled worker before constructing the map and waits for load to be ready", async () => {
+    render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />);
+    await waitFor(() => expect(behavior.instances).toHaveLength(1));
+    expect(behavior.workerConfiguredAtConstruction).toEqual([true]);
+    expect(behavior.workerUrl).toBeTruthy();
+    expect(screen.getByText("Loading map…")).toBeTruthy();
+    expect(screen.queryByText(/Map tiles are unavailable/)).toBeNull();
+    behavior.instances[0]?.handlers.load?.();
+    await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
+    expect(behavior.instances[0]?.resizeCalls).toBeGreaterThan(0);
+  });
+
+  it("falls back to a usable pin when tiles error before load (P1)", async () => {
+    const onConfirm = vi.fn();
+    render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />);
+    await waitFor(() => expect(behavior.instances).toHaveLength(1));
+    behavior.instances[0]?.handlers.error?.();
+    expect(await screen.findByText(/Map tiles are unavailable/)).toBeTruthy();
+    // Load never arrives: the sheet must not stay stuck on "starting" forever.
+    await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
+    // Map stays mounted so pan/search still work; the center pin is visible.
+    expect(screen.getByTestId("map-picker-map")).toBeTruthy();
+    expect(screen.getByTestId("map-picker-pin")).toBeTruthy();
+    // Truthful copy: never claim tiles are visible/loaded.
+    expect(screen.queryByText(/tiles (are )?visible|tiles loaded/i)).toBeNull();
+    // Retry is offered and confirm stays usable for the manual pin.
+    expect(
+      screen.getByRole("button", { name: /retry map tiles|try again/i }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /retry map tiles/i }));
+    await waitFor(() => expect(behavior.instances).toHaveLength(2));
+    expect(behavior.workerConfiguredAtConstruction).toEqual([true, true]);
+    behavior.instances[1]?.handlers.load?.();
+    await waitFor(() => expect(screen.getByTestId("map-picker-pin")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps search confirmation usable when tiles error before load with no pin yet", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve([{ display_name: "Mirpur, Dhaka", lat: "23.8103", lon: "90.4125" }]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onConfirm = vi.fn();
+    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
+    await waitFor(() => expect(behavior.instances).toHaveLength(1));
+    behavior.instances[0]?.handlers.error?.();
+    expect(await screen.findByText(/Map tiles are unavailable/)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
+    fireEvent.change(screen.getByLabelText("Search for a place"), {
+      target: { value: "mirpur" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    expect(await screen.findByText("Mirpur, Dhaka")).toBeTruthy();
+    fireEvent.click(screen.getByText("Mirpur, Dhaka"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ label: "Mirpur, Dhaka" }));
+  });
+
+  it("resizes on sheet layout changes and disconnects its observer when closed", async () => {
+    let onResize: (() => void) | undefined;
+    const disconnect = vi.fn();
+    const observe = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) { onResize = callback; }
+      observe = observe;
+      disconnect = disconnect;
+    });
+    const props = { onClose: vi.fn(), value: pinned, onConfirm: vi.fn() };
+    const { rerender } = render(<MapPickerSheet {...props} open />);
+    await waitFor(() => expect(observe).toHaveBeenCalledWith(screen.getByTestId("map-picker-map")));
+    onResize?.();
+    expect(behavior.instances[0]?.resizeCalls).toBe(1);
+    rerender(<MapPickerSheet {...props} open={false} />);
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    onResize?.();
+    expect(behavior.instances[0]?.resizeCalls).toBe(1);
+  });
   it("starts at the existing report pin and confirms approximate-by-default", async () => {
     const onConfirm = vi.fn();
     const onClose = vi.fn();
@@ -152,7 +255,8 @@ describe("MapPickerSheet", () => {
     );
 
     expect(await screen.findByText("Pin rounded to ~100 m precision.")).toBeTruthy();
-    expect(behavior.instances).toHaveLength(1);
+    // Construction now waits a frame for sheet layout — await the map itself.
+    await waitFor(() => expect(behavior.instances).toHaveLength(1));
     expect(behavior.instances[0]?.opts.center).toEqual([90.412, 23.81]);
     expect(behavior.instances[0]?.opts.zoom).toBe(15);
     expect(behavior.instances[0]?.opts.style).toContain("tiles.openfreemap.org");
@@ -184,6 +288,7 @@ describe("MapPickerSheet", () => {
       true,
     );
 
+    await waitFor(() => expect(behavior.instances).toHaveLength(1));
     moveEnd(0, 23.5, 90.5);
     expect(await screen.findByText("23.500, 90.500")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Confirm location" })).toHaveProperty(
@@ -219,7 +324,7 @@ describe("MapPickerSheet", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByText("Mirpur, Dhaka"));
-    expect(behavior.instances[0]?.jumpedTo[0]?.center).toEqual([90.4125, 23.8103]);
+    expect(behavior.instances[0]?.easedTo[0]?.center).toEqual([90.4125, 23.8103]);
     fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -309,6 +414,7 @@ describe("MapPickerSheet one-time approximate location", () => {
     await screen.findByTestId("map-picker-map");
     fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
     await waitFor(() => expect(resolveFix).toBeTypeOf("function"));
+    await waitFor(() => expect(behavior.instances).toHaveLength(1));
     moveEnd(0, 24.123, 91.123);
     resolveFix({ latitude: 23.810332, longitude: 90.412518, accuracyMeters: 42 });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -417,5 +523,106 @@ describe("MapPickerSheet one-time approximate location", () => {
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({ precision: "APPROXIMATE", latitude: 23.81, longitude: 90.413 }),
     );
+  });
+});
+
+describe("MapPickerSheet fallback and camera", () => {
+  function fallbackTiles(): NodeListOf<HTMLImageElement> {
+    return document.querySelectorAll('[data-testid="map-picker-fallback"] img');
+  }
+
+  it("renders a 3x3 raster grid with zoom when WebGL is unavailable", async () => {
+    behavior.throwOnConstruct = true;
+    const onConfirm = vi.fn();
+    render(
+      <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />,
+    );
+    expect(await screen.findByTestId("map-picker-fallback")).toBeTruthy();
+    expect(await screen.findByText(/webgl unavailable/i)).toBeTruthy();
+    expect(screen.queryByTestId("map-picker-map")).toBeNull();
+    const tiles = fallbackTiles();
+    expect(tiles).toHaveLength(9);
+    for (const tile of Array.from(tiles)) {
+      expect(tile.getAttribute("src")).toMatch(
+        /^https:\/\/tile\.openstreetmap\.org\/15\/\d+\/\d+\.png$/,
+      );
+    }
+    fireEvent.click(screen.getByRole("button", { name: /zoom in/i }));
+    for (const tile of Array.from(fallbackTiles())) {
+      expect(tile.getAttribute("src")).toMatch(
+        /^https:\/\/tile\.openstreetmap\.org\/16\/\d+\/\d+\.png$/,
+      );
+    }
+    // Confirm stays usable off the initial draft with no GL map at all.
+    expect(screen.getByText("23.810, 90.412")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides fallback tiles that fail to load instead of broken glyphs", async () => {
+    behavior.throwOnConstruct = true;
+    render(
+      <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />,
+    );
+    await screen.findByTestId("map-picker-fallback");
+    expect(fallbackTiles()).toHaveLength(9);
+    fireEvent.error(fallbackTiles()[0]!);
+    expect((fallbackTiles()[0] as HTMLImageElement).style.display).toBe("none");
+    expect((fallbackTiles()[1] as HTMLImageElement).style.display).not.toBe("none");
+  });
+
+  it("nudges the fallback pin without WebGL", async () => {
+    behavior.throwOnConstruct = true;
+    render(
+      <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />,
+    );
+    await screen.findByTestId("map-picker-fallback");
+    expect(screen.getByText("23.810, 90.412")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /move pin east/i }));
+    expect(await screen.findByText("23.810, 90.423")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /move pin west/i }));
+    expect(await screen.findByText("23.810, 90.412")).toBeTruthy();
+  });
+
+  it("degrades a stalled load to ready-with-notice instead of loading forever", async () => {
+    const onConfirm = vi.fn();
+    render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />);
+    await waitFor(() => expect(behavior.instances).toHaveLength(1));
+    // Neither load nor error ever arrives: the timeout must rescue the sheet.
+    expect(await screen.findByText(/taking a while to load/, undefined, { timeout: 3000 })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
+    expect(screen.getByTestId("map-picker-map")).toBeTruthy();
+    expect(screen.getByTestId("map-picker-pin")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("jumps instead of easing when reduced motion is preferred", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }) as unknown as typeof window.matchMedia;
+    try {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve([{ display_name: "Mirpur, Dhaka", lat: "23.8103", lon: "90.4125" }]),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
+      await screen.findByTestId("map-picker-map");
+      fireEvent.change(screen.getByLabelText("Search for a place"), {
+        target: { value: "mirpur" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+      fireEvent.click(await screen.findByText("Mirpur, Dhaka"));
+      await waitFor(() => expect(behavior.instances[0]?.jumpedTo).toHaveLength(1));
+      expect(behavior.instances[0]?.jumpedTo[0]?.center).toEqual([90.4125, 23.8103]);
+      expect(behavior.instances[0]?.easedTo).toHaveLength(0);
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 });

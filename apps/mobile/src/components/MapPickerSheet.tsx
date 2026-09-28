@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Crosshair, MapPin } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Crosshair,
+  MapPin,
+  Minus,
+  Plus,
+} from "lucide-react";
+import { motion } from "framer-motion";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { BottomSheet } from "./BottomSheet";
@@ -20,6 +30,15 @@ import {
   resolveMapSource,
   type MapSourceOverride,
 } from "../services/location/mapSource";
+import { configureMapLibreWorker } from "../services/location/maplibreWorker";
+import {
+  MAP_LOAD_TIMEOUT_MS,
+  RASTER_ATTRIBUTION,
+  clampRasterZoom,
+  nudgeCenter,
+  rasterTilesForCenter,
+  waitForContainerLayout,
+} from "../services/location/rasterTiles";
 import {
   NominatimRateLimitError,
   NominatimThrottler,
@@ -37,6 +56,7 @@ import {
   type InitialViewSource,
   type MapCenter,
 } from "../services/location/mapPickerState";
+import { motionDurations, motionEasings, shouldReduceMotion } from "./uiMotion";
 
 export interface MapPickerSearchResult {
   lat: number;
@@ -63,6 +83,147 @@ type MapPhase = "starting" | "ready" | "unsupported" | "error";
 
 /** Collapses accidental double-taps on the Search button into one request. */
 const SUBMIT_DEBOUNCE_MS = 600;
+
+interface PickerRasterFallbackProps {
+  center: MapCenter;
+  zoom: number;
+  /** Truthful status line (WebGL copy or the map error message). */
+  notice: string;
+  /** Retry is offered for load errors, not for WebGL-less devices. */
+  onRetry: (() => void) | null;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onNudge: (dxTiles: number, dyTiles: number) => void;
+}
+
+/**
+ * Dependency-free fallback map: a plain-<img> 3x3 OSM tile grid under a
+ * fixed center pin, with zoom and nudge controls. Used when MapLibre cannot
+ * start (WebGL unavailable, library/construct failure). The draft lives
+ * outside the tile layer, so search, GPS preview, nudge, and Confirm all keep
+ * working — including offline, where the grid simply shows no tiles.
+ */
+function PickerRasterFallback({
+  center,
+  zoom,
+  notice,
+  onRetry,
+  onZoomIn,
+  onZoomOut,
+  onNudge,
+}: PickerRasterFallbackProps) {
+  const tiles = rasterTilesForCenter(center, zoom);
+  return (
+    <div
+      data-testid="map-picker-fallback"
+      role="region"
+      aria-label="Fallback map. Use the move and zoom buttons to position the pin."
+      className="absolute inset-0"
+    >
+      <div className="absolute inset-0 grid grid-cols-3 grid-rows-3" aria-hidden="true">
+        {tiles.map((tile) => (
+          <img
+            key={`${tile.z}/${tile.x}/${tile.y}`}
+            src={tile.url}
+            alt=""
+            draggable={false}
+            loading="lazy"
+            className="h-full w-full object-cover"
+            // A failed tile (offline/blocked) hides itself instead of showing
+            // a broken-image glyph over the pin area.
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        ))}
+      </div>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 flex items-center justify-center"
+      >
+        <motion.div
+          initial={{ scale: 0.5, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: motionDurations.instant, ease: motionEasings.out }}
+        >
+          <MapPin size={32} className="text-on-surface drop-shadow" />
+        </motion.div>
+      </div>
+      <div
+        role="group"
+        aria-label="Move pin"
+        className="absolute bottom-2 left-2 grid grid-cols-3 gap-0.5"
+      >
+        <span />
+        <button
+          type="button"
+          aria-label="Move pin north"
+          onClick={() => onNudge(0, -1)}
+          className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm border border-outline bg-surface text-on-surface"
+        >
+          <ChevronUp size={16} aria-hidden />
+        </button>
+        <span />
+        <button
+          type="button"
+          aria-label="Move pin west"
+          onClick={() => onNudge(-1, 0)}
+          className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm border border-outline bg-surface text-on-surface"
+        >
+          <ChevronLeft size={16} aria-hidden />
+        </button>
+        <button
+          type="button"
+          aria-label="Move pin south"
+          onClick={() => onNudge(0, 1)}
+          className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm border border-outline bg-surface text-on-surface"
+        >
+          <ChevronDown size={16} aria-hidden />
+        </button>
+        <button
+          type="button"
+          aria-label="Move pin east"
+          onClick={() => onNudge(1, 0)}
+          className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm border border-outline bg-surface text-on-surface"
+        >
+          <ChevronRight size={16} aria-hidden />
+        </button>
+      </div>
+      <div className="absolute bottom-2 right-2 flex gap-1">
+        <button
+          type="button"
+          aria-label="Zoom in"
+          onClick={onZoomIn}
+          className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm border border-outline bg-surface px-2 text-on-surface"
+        >
+          <Plus size={16} aria-hidden />
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom out"
+          onClick={onZoomOut}
+          className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm border border-outline bg-surface px-2 text-on-surface"
+        >
+          <Minus size={16} aria-hidden />
+        </button>
+      </div>
+      <div className="absolute inset-x-2 top-2 flex items-center gap-2 rounded-m3-sm bg-surface/95 px-2 py-1">
+        <p role="status" className="min-w-0 flex-1 text-[11px] text-on-surface-variant">
+          {notice}
+        </p>
+        {onRetry ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="shrink-0 rounded-m3-sm px-2 py-2 text-[11px] font-medium text-on-surface underline"
+          >
+            Try again
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Interactive location picker in a bottom sheet.
@@ -101,6 +262,10 @@ export function MapPickerSheet({
   const [mapPhase, setMapPhase] = useState<MapPhase>("starting");
   const [mapMessage, setMapMessage] = useState<string | null>(null);
   const [tileNotice, setTileNotice] = useState<string | null>(null);
+  // Raster-fallback camera: mirrors the GL camera so the fallback pin starts
+  // where the map would have, and search/GPS/nudge keep it in sync.
+  const [fallbackCenter, setFallbackCenter] = useState<MapCenter>({ lat: 0, lng: 0 });
+  const [fallbackZoom, setFallbackZoom] = useState(PIN_ZOOM);
   const [viewSource, setViewSource] = useState<InitialViewSource>("neutral-world");
   const [draft, setDraft] = useState<MapCenter | null>(null);
   const [draftLabel, setDraftLabel] = useState("Pinned location");
@@ -122,6 +287,8 @@ export function MapPickerSheet({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    let resizeObserver: ResizeObserver | null = null;
+    let loadTimer = 0;
 
     const reportPin =
       value.latitude != null && value.longitude != null
@@ -142,6 +309,8 @@ export function MapPickerSheet({
 
     setViewSource(initial.source);
     setDraft(initial.source === "neutral-world" ? null : initial.center);
+    setFallbackCenter(initial.center);
+    setFallbackZoom(initial.zoom);
     setDraftLabel(
       initialSearchResult?.label.trim() || value.label.trim() || "Pinned location",
     );
@@ -194,10 +363,23 @@ export function MapPickerSheet({
         setMapMessage("The map container is missing — close and reopen the picker.");
         return;
       }
+      // A 0x0 container (BottomSheet open animation, first Android WebView
+      // layout) builds a blank canvas that never recovers: wait for layout,
+      // then construct and resize. The wait is bounded — worst case we build
+      // anyway and the load timeout below keeps Confirm usable.
+      await waitForContainerLayout(containerRef.current);
+      if (cancelled) return;
+      const host = containerRef.current;
+      if (host == null) {
+        setMapPhase("error");
+        setMapMessage("The map container is missing — close and reopen the picker.");
+        return;
+      }
       let next: MapLibreMap;
       try {
+        configureMapLibreWorker(mod);
         next = new mod.Map({
-          container: containerRef.current,
+          container: host,
           style: mapSource.styleUrl,
           center: [initial.center.lng, initial.center.lat],
           zoom: initial.zoom,
@@ -217,6 +399,24 @@ export function MapPickerSheet({
         return;
       }
       mapRef.current = next;
+      let loaded = false;
+      // A stalled style/load must never spin on "Loading map…" forever:
+      // degrade to a usable ready-with-notice state so the pin, search, and
+      // Confirm stay usable while tiles catch up (or never do, offline).
+      loadTimer = window.setTimeout(() => {
+        if (cancelled || loaded) return;
+        setTileNotice(
+          (prev) =>
+            prev ??
+            "The map is taking a while to load — you can still pan and confirm the pin.",
+        );
+        setMapPhase((prev) => (prev === "starting" ? "ready" : prev));
+        try {
+          next.resize();
+        } catch {
+          // Resize is best-effort; the notice already keeps Confirm usable.
+        }
+      }, MAP_LOAD_TIMEOUT_MS);
       try {
         next.addControl(new mod.NavigationControl({ showCompass: false }), "top-right");
       } catch {
@@ -232,20 +432,39 @@ export function MapPickerSheet({
         }
       });
       // Tile/style failures must never block a manual pick: the draft lives
-      // outside the tile layer, so this notice stays non-blocking.
+      // outside the tile layer, so this notice stays non-blocking. When the
+      // style fails before `load`, promote a stuck "starting" sheet to a
+      // degraded ready state so the center pin, search, and Confirm stay
+      // usable instead of spinning on "Loading map…" forever.
       next.on("error", () => {
         if (!cancelled) {
           setTileNotice(
             "Map tiles are unavailable — you can still pan and confirm the pin.",
           );
+          setMapPhase((prev) => (prev === "starting" ? "ready" : prev));
         }
       });
-      if (!cancelled) setMapPhase("ready");
+      // Resize after map load and on actual layout changes (including sheet
+      // sizing); the observer is disconnected with this map's lifecycle.
+      const container = host;
+      if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(() => { if (!cancelled) next.resize(); });
+        resizeObserver.observe(container);
+      }
+      next.on("load", () => {
+        if (cancelled) return;
+        loaded = true;
+        window.clearTimeout(loadTimer);
+        next.resize();
+        setMapPhase("ready");
+      });
     }
 
     void init();
     return () => {
       cancelled = true;
+      window.clearTimeout(loadTimer);
+      resizeObserver?.disconnect();
       fixGeneration.current += 1;
       mapRef.current?.remove();
       mapRef.current = null;
@@ -260,13 +479,56 @@ export function MapPickerSheet({
     mapSource.styleUrl,
   ]);
 
+  /**
+   * Eased camera recenter on capable devices; an instant jump when the user
+   * prefers reduced motion. Without a GL map (raster fallback) the fallback
+   * camera moves instead — the draft is updated by the caller either way.
+   */
+  function recenterCamera(center: MapCenter, zoom: number = PIN_ZOOM): void {
+    const map = mapRef.current;
+    if (!map) {
+      setFallbackCenter(center);
+      return;
+    }
+    try {
+      const animated = map as unknown as { easeTo?: (options: object) => void };
+      if (!shouldReduceMotion() && typeof animated.easeTo === "function") {
+        animated.easeTo({ center: [center.lng, center.lat], zoom, duration: 600 });
+        return;
+      }
+    } catch {
+      // Fall through to the instant jump below.
+    }
+    try {
+      map.jumpTo({ center: [center.lng, center.lat], zoom });
+    } catch {
+      // The camera is a convenience; the draft is already updated.
+    }
+  }
+
+  /** Nudge-pad pan for the raster fallback (also the offline manual path). */
+  function nudgeFallback(dxTiles: number, dyTiles: number): void {
+    const nextCenter = nudgeCenter(fallbackCenter, fallbackZoom, dxTiles, dyTiles);
+    fixGeneration.current += 1;
+    setLocating(false);
+    setFallbackCenter(nextCenter);
+    setDraft(nextCenter);
+  }
+
+  function retryMap(): void {
+    setMapPhase("starting");
+    setMapMessage(null);
+    setRetryKey((key) => key + 1);
+  }
+
   /** Snaps the preview to a fix. Never confirms — the user still confirms. */
   function snapPreviewTo(fix: MapCenter): void {
     setGpsPreview(fix);
     setPendingFix(null);
     setPendingAccuracy(null);
     setDraft(fix);
-    mapRef.current?.jumpTo({ center: [fix.lng, fix.lat], zoom: PIN_ZOOM });
+    setFallbackCenter(fix);
+    recenterCamera(fix);
     announce("Preview recentered on your location. Confirm to use it.");
   }
 
@@ -346,7 +608,8 @@ export function MapPickerSheet({
     const center: MapCenter = { lat: place.latitude, lng: place.longitude };
     setDraft(center);
     setDraftLabel(place.displayName);
-    mapRef.current?.jumpTo({ center: [center.lng, center.lat], zoom: PIN_ZOOM });
+    setFallbackCenter(center);
+    recenterCamera(center);
   }
 
   function handleConfirm(): void {
@@ -388,51 +651,53 @@ export function MapPickerSheet({
               className="absolute inset-0"
             />
           ) : null}
-          {mapPhase === "ready" ? (
-            <div
+          {mapPhase === "ready" || (mapPhase === "starting" && tileNotice) ? (
+            <motion.div
+              data-testid="map-picker-pin"
               aria-hidden
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: motionDurations.instant, ease: motionEasings.out }}
               className="pointer-events-none absolute inset-0 flex items-center justify-center"
             >
               <MapPin size={32} className="text-on-surface drop-shadow" />
-            </div>
+            </motion.div>
           ) : null}
-          {mapPhase === "starting" ? (
-            <div className="absolute inset-0 flex items-center justify-center">
+          {mapPhase === "starting" && !tileNotice ? (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <p className="text-sm text-on-surface-variant">Loading map…</p>
             </div>
           ) : null}
           {mapPhase === "unsupported" ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
-              <MapPin size={20} className="text-on-surface-variant" aria-hidden />
-              <p className="text-sm text-on-surface-variant">
-                Interactive map is not available on this device (WebGL
-                unavailable). You can still type a place, paste coordinates or
-                a Maps link in the report form, or use Find location in Maps —
-                the map preview and external handoff keep working.
-              </p>
-            </div>
+            <PickerRasterFallback
+              center={fallbackCenter}
+              zoom={fallbackZoom}
+              notice="Interactive map is not available on this device (WebGL unavailable). You can still type a place, paste coordinates or a Maps link in the report form, or use Find location in Maps — the map preview and external handoff keep working."
+              onRetry={null}
+              onZoomIn={() => setFallbackZoom((zoom) => clampRasterZoom(zoom + 1))}
+              onZoomOut={() => setFallbackZoom((zoom) => clampRasterZoom(zoom - 1))}
+              onNudge={nudgeFallback}
+            />
           ) : null}
           {mapPhase === "error" ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
-              <MapPin size={20} className="text-on-surface-variant" aria-hidden />
-              <p className="text-sm text-on-surface-variant">{mapMessage}</p>
-              <Button
-                type="button"
-                variant="outline"
-                size="md"
-                onClick={() => {
-                  setMapPhase("starting");
-                  setMapMessage(null);
-                  setRetryKey((key) => key + 1);
-                }}
-              >
-                Try again
-              </Button>
-            </div>
+            <PickerRasterFallback
+              center={fallbackCenter}
+              zoom={fallbackZoom}
+              notice={
+                mapMessage ??
+                "The map could not start — you can still search for a place or confirm coordinates."
+              }
+              onRetry={retryMap}
+              onZoomIn={() => setFallbackZoom((zoom) => clampRasterZoom(zoom + 1))}
+              onZoomOut={() => setFallbackZoom((zoom) => clampRasterZoom(zoom - 1))}
+              onNudge={nudgeFallback}
+            />
           ) : null}
         </div>
         <p className="text-xs text-on-surface-variant">
-          {mapSource.attribution} · {mapSource.name}
+          {mapPhase === "unsupported" || mapPhase === "error"
+            ? `${RASTER_ATTRIBUTION} · Fallback tiles`
+            : `${mapSource.attribution} · ${mapSource.name}`}
         </p>
 
         {/* Deliberately NOT a <form>: this sheet renders inside the Report
@@ -532,7 +797,24 @@ export function MapPickerSheet({
           </p>
         ) : null}
         {tileNotice ? (
-          <p className="text-xs text-on-surface-variant">{tileNotice}</p>
+          <div
+            data-testid="tile-notice"
+            className="flex flex-wrap items-center gap-2"
+          >
+            <p className="text-xs text-on-surface-variant">{tileNotice}</p>
+            <Button
+              type="button"
+              variant="text"
+              size="md"
+              onClick={() => {
+                setTileNotice(null);
+                setMapPhase("starting");
+                setRetryKey((key) => key + 1);
+              }}
+            >
+              Retry map tiles
+            </Button>
+          </div>
         ) : null}
 
         {draft && exact ? (

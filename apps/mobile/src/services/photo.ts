@@ -1,8 +1,9 @@
 import { Camera, MediaType, MediaTypeSelection, CameraErrorCode } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
 import { probeDimensions, sniffImage } from "./media/importImage";
-import { detectMotionPhoto } from "./media/motionPhoto";
+import { detectMotionPhoto, strippedVideoBytes } from "./media/motionPhoto";
 import { normalizeImage } from "./image";
+import { BootTimeoutError, throwIfAborted, withTimeout } from "./timeout";
 
 /**
  * True when the available decoder attempted the file and refused it
@@ -99,6 +100,84 @@ export const DECODE_FAILED =
   "couldn't be decoded on this device. The file may be damaged — re-save or export it and try again.";
 
 /**
+ * Per-stage budgets for the photo pipeline (Lane C part 2). Every
+ * potentially-hanging stage — fetch, blob materialization, byte reads,
+ * decode/normalize — races its own timer instead of stalling the report flow
+ * forever. Camera picks are user-paced and intentionally NOT timed out.
+ */
+export const PHOTO_FETCH_TIMEOUT_MS = 30_000;
+export const PHOTO_BLOB_TIMEOUT_MS = 30_000;
+export const PHOTO_BYTES_TIMEOUT_MS = 30_000;
+export const PHOTO_NORMALIZE_TIMEOUT_MS = 30_000;
+/** Default per-stage budget; override per call via PhotoPipelineOpts.timeoutMs. */
+export const PHOTO_STAGE_TIMEOUT_MS = 30_000;
+
+/**
+ * Typed timeout for a named pipeline stage. Extends PhotoImportError so the
+ * existing safe-surface contract holds: the message is authored, user-safe,
+ * and free of device paths.
+ */
+export class PhotoStageTimeoutError extends PhotoImportError {
+  readonly stage: string;
+
+  constructor(stage: string, message?: string) {
+    super(message ?? `Photo ${stage} timed out. Check your connection and try again.`);
+    this.name = "PhotoStageTimeoutError";
+    this.stage = stage;
+  }
+}
+
+/** Thread-through for abort + per-stage budget across the photo pipeline. */
+export interface PhotoPipelineOpts {
+  /** AbortSignal that stops fetch, blob, byte reads, and decode. */
+  signal?: AbortSignal;
+  /** Per-stage budget in ms (default PHOTO_STAGE_TIMEOUT_MS). */
+  timeoutMs?: number;
+}
+
+/**
+ * Normalized photo file with Motion Photo tail accounting. `videoBytesStripped`
+ * is the trailing-MP4 byte count removed from the container (0 for stills):
+ * the UI status line can report it instead of the strip passing silently.
+ */
+export type PhotoFile = File & { videoBytesStripped: number };
+
+function stageMs(opts?: PhotoPipelineOpts): number {
+  return opts?.timeoutMs ?? PHOTO_STAGE_TIMEOUT_MS;
+}
+
+/** Map a hung stage to the typed timeout; aborts and safe errors pass through. */
+function toStageError(err: unknown, stage: string): unknown {
+  if (err instanceof BootTimeoutError) return new PhotoStageTimeoutError(stage, err.message);
+  return err;
+}
+
+function isAbort(err: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted
+    || (err instanceof DOMException && err.name === "AbortError")
+    || (typeof err === "object" && err !== null && (err as { name?: string }).name === "AbortError");
+}
+
+/** Content-Length header probe, or null when absent/unparseable. */
+function parseContentLength(headers: Headers | undefined | null): number | null {
+  try {
+    const raw = headers?.get?.("content-length");
+    if (raw === null || raw === undefined) return null;
+    const parsed = Number(String(raw).trim());
+    if (!Number.isSafeInteger(parsed) || parsed < 0) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function withVideoTailInfo(file: File, videoBytesStripped: number): PhotoFile {
+  const out = file as PhotoFile;
+  out.videoBytesStripped = videoBytesStripped;
+  return out;
+}
+
+/**
  * Shared normalize-first contract for native AND web picks: decode and
  * normalize (1920px longest edge, EXIF-oriented, re-encoded; animated GIFs
  * pass through untouched), then enforce the upload limit against the
@@ -107,16 +186,31 @@ export const DECODE_FAILED =
  * limit still applies to them — so a large-but-decodable original is only
  * ever rejected for its original size above MAX_ORIGINAL_BYTES.
  */
-export async function normalizeForUpload(source: File): Promise<File> {
+export async function normalizeForUpload(source: File, opts?: PhotoPipelineOpts): Promise<File> {
+  throwIfAborted(opts?.signal);
+  const budget = stageMs(opts);
+  const signal = opts?.signal;
   if (source.size > MAX_ORIGINAL_BYTES) throw new PhotoImportError(TOO_LARGE_TO_PROCESS);
   try {
-    const normalized = await normalizeImage(source);
+    const normalized = await withTimeout(
+      () => normalizeImage(source, undefined, { signal, timeoutMs: budget }),
+      budget,
+      "Photo decode timed out",
+      signal,
+    ).catch((err: unknown) => {
+      throw toStageError(err, "normalize");
+    });
+    throwIfAborted(signal);
     const out = new File([normalized.blob], withExtension(source.name, normalized.mimeType), {
       type: normalized.mimeType,
     });
     if (out.size > MAX_UPLOAD_BYTES) throw new PhotoImportError(TOO_LARGE_FOR_UPLOAD);
     return out;
   } catch (err) {
+    // Timeout/abort propagate typed — never mask them with the fallback path.
+    if (isAbort(err, signal)) throw err;
+    if (err instanceof PhotoStageTimeoutError) throw err;
+    if (err instanceof BootTimeoutError) throw new PhotoStageTimeoutError("normalize", err.message);
     if (err instanceof Error && (err.message === TOO_LARGE_FOR_UPLOAD || err.message === TOO_LARGE_TO_PROCESS)) throw err;
     if (isDecoderRejection(err)) {
       // The available decoder ATTEMPTED this file and refused it: header
@@ -131,7 +225,16 @@ export async function normalizeForUpload(source: File): Promise<File> {
     // original. Magic bytes reject renamed non-photos, the declared-type
     // cross-check rejects mislabeled files, and the header probe rejects
     // truncated/corrupt images that would otherwise fail later at publish.
-    const bytes = new Uint8Array(await blobBytes(source));
+    throwIfAborted(signal);
+    const bytes = new Uint8Array(await withTimeout(
+      () => blobBytes(source),
+      budget,
+      "Photo read timed out",
+      signal,
+    ).catch((readErr: unknown) => {
+      throw toStageError(readErr, "read");
+    }));
+    throwIfAborted(signal);
     const kind = sniffImage(bytes);
     if (!kind) {
       throw new PhotoImportError(
@@ -192,30 +295,80 @@ function withExtension(name: string, mimeType: string): string {
   return `${base || "photo"}.${ext}`;
 }
 
-export async function photoToFile(photo: PickedPhoto, name?: string): Promise<File> {
+export async function photoToFile(photo: PickedPhoto, name?: string, opts?: PhotoPipelineOpts): Promise<PhotoFile> {
+  throwIfAborted(opts?.signal);
+  const budget = stageMs(opts);
+  const signal = opts?.signal;
   let response: Response;
   try {
-    response = await fetch(photo.webPath);
-  } catch {
+    response = signal
+      ? await withTimeout(() => fetch(photo.webPath, { signal }), budget, "Photo download timed out", signal)
+      : await withTimeout(() => fetch(photo.webPath), budget, "Photo download timed out", signal);
+  } catch (err) {
+    if (isAbort(err, signal)) throw err;
+    if (err instanceof BootTimeoutError) throw new PhotoStageTimeoutError("fetch", err.message);
     throw new PhotoImportError("Could not read the selected photo");
   }
   if (!response.ok) throw new PhotoImportError("Could not read the selected photo");
-  const blob = await response.blob();
-  // Memory guard FIRST: reject huge natives (camera originals, Motion Photo
+  // Size pre-check BEFORE materializing: a declared Content-Length over the
+  // decode safety bound rejects without ever calling blob(). The blob.size
+  // backstop below still applies when the header is absent or lies.
+  const declaredLength = parseContentLength(
+    (response as { headers?: Headers }).headers,
+  );
+  if (declaredLength !== null && declaredLength > MAX_ORIGINAL_BYTES) {
+    throw new PhotoImportError(TOO_LARGE_TO_PROCESS);
+  }
+  let blob: Blob;
+  try {
+    blob = await withTimeout(() => response.blob(), budget, "Photo read timed out", signal);
+  } catch (err) {
+    if (isAbort(err, signal)) throw err;
+    if (err instanceof BootTimeoutError) throw new PhotoStageTimeoutError("read", err.message);
+    throw new PhotoImportError("Could not read the selected photo");
+  }
+  // Memory guard backstop: reject huge natives (camera originals, Motion Photo
   // containers, HEIC) by their reported size before materializing the full
   // bytes or invoking any decoder. Applies to every kind, including HEIC.
   if (blob.size > MAX_ORIGINAL_BYTES) throw new PhotoImportError(TOO_LARGE_TO_PROCESS);
-  const bytes = new Uint8Array(await blobBytes(blob));
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await withTimeout(
+      () => blobBytes(blob),
+      budget,
+      "Photo read timed out",
+      signal,
+    ));
+  } catch (err) {
+    if (isAbort(err, signal)) throw err;
+    if (err instanceof BootTimeoutError) throw new PhotoStageTimeoutError("read", err.message);
+    throw new PhotoImportError("Could not read the selected photo");
+  }
+  throwIfAborted(signal);
   const kind = sniffImage(bytes);
   const still = kind === "jpeg" ? detectMotionPhoto(bytes) : null;
   photo.motionPhoto = still !== null;
+  // Still/tail accounting: only the still reaches the decoder and upload; the
+  // trailing MP4 count is surfaced on the result for the UI status line so a
+  // stripped container never passes silently.
+  const videoBytesStripped = strippedVideoBytes(bytes.length, still?.stillEnd ?? null);
   if (kind === "heic" || kind === "heif") {
     try {
       const source = new File([blob], name ?? `photo.${kind}`, { type: `image/${kind}` });
-      const converted = await normalizeImage(source);
+      const converted = await withTimeout(
+        () => normalizeImage(source, undefined, { signal, timeoutMs: budget }),
+        budget,
+        "Photo decode timed out",
+        signal,
+      ).catch((err: unknown) => {
+        if (err instanceof BootTimeoutError) throw new PhotoStageTimeoutError("normalize", err.message);
+        throw err;
+      });
       if (converted.blob.size > MAX_UPLOAD_BYTES) throw new PhotoImportError(TOO_LARGE_FOR_UPLOAD);
-      return new File([converted.blob], "photo.jpg", { type: "image/jpeg" });
+      return withVideoTailInfo(new File([converted.blob], "photo.jpg", { type: "image/jpeg" }), 0);
     } catch (err) {
+      if (isAbort(err, signal)) throw err;
+      if (err instanceof PhotoStageTimeoutError) throw err;
       if (err instanceof Error && err.message === TOO_LARGE_FOR_UPLOAD) throw err;
       throw new PhotoImportError("This HEIC/HEIF photo could not be decoded on this device. Export it as JPEG and try again.");
     }
@@ -225,8 +378,12 @@ export async function photoToFile(photo: PickedPhoto, name?: string): Promise<Fi
     : kind === "gif" || kind === "gif-animated" ? "image/gif" : null;
   if (!mime) throw new PhotoImportError("Unsupported or unreadable photo. Choose a JPEG, PNG, WebP, or GIF image.");
   const payload = still ? blob.slice(0, still.stillEnd, mime) : blob;
+  // Still-level backstop: the still alone must fit the decode bound even when
+  // the container already passed it (tail accounted separately above).
+  if (payload.size > MAX_ORIGINAL_BYTES) throw new PhotoImportError(TOO_LARGE_TO_PROCESS);
   const extension = mime === "image/jpeg" ? "jpg" : mime.slice(6);
-  return normalizeForUpload(new File([payload], name ?? `photo.${extension}`, { type: mime }));
+  const normalized = await normalizeForUpload(new File([payload], name ?? `photo.${extension}`, { type: mime }), opts);
+  return withVideoTailInfo(normalized, videoBytesStripped);
 }
 
 function blobBytes(blob: Blob): Promise<ArrayBuffer> {

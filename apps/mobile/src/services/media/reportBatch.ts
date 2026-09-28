@@ -31,6 +31,22 @@ export interface ReportBatchResult {
   unreadable: UnreadablePhoto[];
   overflow: PickedPhoto[];
   notice: string;
+  /** True when an AbortSignal stopped the batch early; accepted items stay. */
+  cancelled: boolean;
+}
+
+/** Per-photo progress for a batch conversion. */
+export interface ReportBatchProgress {
+  /** Settled items so far (accepted + duplicates + unreadable + overflow). */
+  done: number;
+  total: number;
+  /** Human label for the item that just settled ("Photo 2"), never a native URI. */
+  currentName: string;
+}
+
+export interface ProcessReportBatchOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: ReportBatchProgress) => void;
 }
 
 /**
@@ -51,6 +67,7 @@ export async function processReportBatch(
    * the selection position here to keep failure labels ("Photo 2") truthful.
    */
   indexBase = 0,
+  options: ProcessReportBatchOptions = {},
 ): Promise<ReportBatchResult> {
   const capacity = Math.max(0, 5 - alreadySelectedCount);
   const registry = existingHashRegistry ?? createHashRegistry();
@@ -58,37 +75,66 @@ export async function processReportBatch(
   const duplicates: PickedPhoto[] = [];
   const unreadable: UnreadablePhoto[] = [];
   const overflow: PickedPhoto[] = [];
+  const total = pickedPhotos.length;
+  let cancelled = false;
+  const reportProgress = (offset: number, index: number): void => {
+    options.onProgress?.({ done: offset + 1, total, currentName: `Photo ${index + 1}` });
+  };
 
   // Process in selection order, respecting capacity
   for (const [offset, photo] of pickedPhotos.entries()) {
+    if (options.signal?.aborted) {
+      cancelled = true;
+      break;
+    }
+    const index = indexBase + offset;
     if (accepted.length >= capacity) {
       overflow.push(photo);
+      reportProgress(offset, index);
       continue;
     }
 
-    const index = indexBase + offset;
     let file: File;
     try {
-      file = await photoToFile(photo);
+      file = await photoToFile(photo, undefined, { signal: options.signal });
     } catch (err) {
+      if (options.signal?.aborted) {
+        cancelled = true;
+        break;
+      }
       unreadable.push({
         photo,
         index,
         reason: isSafeConversionError(err) ? err.message : "Could not read the selected photo",
       });
+      reportProgress(offset, index);
       continue;
+    }
+    if (options.signal?.aborted) {
+      cancelled = true;
+      break;
     }
 
     let hash: string;
     try {
-      hash = await computeSha256Hex(file);
+      hash = await computeSha256Hex(file, { signal: options.signal });
     } catch {
+      if (options.signal?.aborted) {
+        cancelled = true;
+        break;
+      }
       unreadable.push({ photo, index, reason: "Could not compute file hash" });
+      reportProgress(offset, index);
       continue;
+    }
+    if (options.signal?.aborted) {
+      cancelled = true;
+      break;
     }
 
     if (registry.has(hash)) {
       duplicates.push(photo);
+      reportProgress(offset, index);
       continue;
     }
 
@@ -96,10 +142,11 @@ export async function processReportBatch(
     registry.add(hash);
     accepted.push(photo);
     onAccepted?.(photo, file, hash);
+    reportProgress(offset, index);
   }
 
   const notice = formatBatchNotice(accepted.length, duplicates.length, unreadable.length, overflow.length);
-  return { accepted, duplicates, unreadable, overflow, notice };
+  return { accepted, duplicates, unreadable, overflow, notice, cancelled };
 }
 /**
  * Build a notice like "2 photos added · 1 already selected · 1 unreadable".
