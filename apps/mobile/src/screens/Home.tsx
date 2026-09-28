@@ -21,7 +21,7 @@ import {
   motionSprings,
   pressFeedback,
   scaleInVariants,
-  useShouldReduceMotion,
+  shouldReduceMotion,
 } from "../components/uiMotion";
 
 type TypeFilter = PostType | "ALL";
@@ -32,8 +32,9 @@ export function Home() {
   const { user } = useAuth();
   const { tapCount } = useTabTap();
   // Imperative travel (scroll-to-top) cannot see MotionConfig — collapse to
-  // instant when the OS prefers reduced motion.
-  const reduceMotion = useShouldReduceMotion();
+  // instant when the OS prefers reduced motion. Read live (not the cached
+  // framer-motion singleton) so the value is exact at render/scroll time.
+  const reduceMotion = shouldReduceMotion();
   // Type + search survive in the URL so back-nav, deep-links, and copied
   // links restore the feed the reader was looking at.
   const [typeParam, setTypeParam] = useUrlParam("type");

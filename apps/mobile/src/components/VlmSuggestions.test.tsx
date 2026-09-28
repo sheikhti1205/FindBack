@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  waitForElementToBeRemoved,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 const analyze = vi.hoisted(() => vi.fn());
@@ -386,5 +393,60 @@ describe("VlmSuggestions — Draft description from photo", () => {
     fireEvent.change(titleInput, { target: { value: "Edited Title" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply title" }));
     expect(apply).toHaveBeenCalledWith(expect.objectContaining({ suggestedTitle: "Edited Title" }));
+  });
+});
+
+describe("VlmSuggestions motion (Wave E)", () => {
+  const makeFile = (name: string, type: string, size = 1000) =>
+    new File([new Uint8Array(size)], name, { type });
+
+  beforeEach(() => {
+    analyze.mockReset();
+  });
+
+  it("collapses the expanded panel with an accordion exit", async () => {
+    const file = makeFile("photo.jpg", "image/jpeg");
+    render(
+      <MemoryRouter>
+        <VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+    expect(screen.getByRole("button", { name: /Collapse photo suggestions/i }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByLabelText(/Send this selected photo to OpenRouter/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Collapse photo suggestions/i }));
+    expect(screen.getByRole("button", { name: /Expand photo suggestions/i }).getAttribute("aria-expanded")).toBe("false");
+    // The panel plays its exit instead of vanishing in the same frame.
+    await waitForElementToBeRemoved(() =>
+      screen.queryByLabelText(/Send this selected photo to OpenRouter/),
+    );
+  });
+
+  it("lets the drafted suggestion rise into the panel", async () => {
+    analyze.mockResolvedValueOnce({
+      suggestedTitle: "Blue wallet",
+      suggestedDescription: "A blue wallet.",
+      suggestedCategory: "Bags & Wallets",
+      uncertainFields: [],
+    });
+    const file = makeFile("wallet.jpg", "image/jpeg");
+    render(
+      <MemoryRouter>
+        <VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn(() => true)} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+
+    const region = await screen.findByRole("region", { name: "Review AI suggestions" });
+    // Enters hidden, then settles — no instant pop-in over the form.
+    expect(region.style.opacity).toBe("0");
+    await waitFor(() => expect(region.style.opacity).toBe("1"), { timeout: 2000 });
+    // The drafted title lands in the editable field inside the risen region.
+    expect((screen.getByLabelText("Suggested title") as HTMLInputElement).value).toBe("Blue wallet");
   });
 });

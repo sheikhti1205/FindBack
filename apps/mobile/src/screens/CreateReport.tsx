@@ -19,8 +19,11 @@ import type { ReportDraft, ReportPhotoRef } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
 import { isNativeCameraAvailable, takePhoto, chooseReportPhotos, normalizeForUpload, photoToFile, type PickedPhoto } from "../services/photo";
 import { ReportDatePicker } from "../components/ReportDatePicker";
+import { AnimatePresence, motion } from "framer-motion";
 import { ReportMediaPicker } from "../components/ReportMediaPicker";
 import { PhotoLightbox } from "../components/PhotoLightbox";
+import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
+import { fadeVariants, motionDurations, motionEasings } from "../components/uiMotion";
 import { createHashRegistry, formatBatchNotice, processReportBatch } from "../services/media/reportBatch";
 import { computeSha256Hex } from "../services/media/dedupe";
 import {
@@ -45,6 +48,20 @@ import {
 
 const inputCls =
   "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
+
+/** Batch status notice crossfade (queued -> processing -> ready/failed). */
+const statusCrossfade = {
+  type: "tween",
+  duration: motionDurations.fast,
+  ease: motionEasings.inOut,
+} as const;
+
+/** Upload progress bar interpolates only as far as real observed progress. */
+const uploadBarTransition = {
+  type: "tween",
+  duration: motionDurations.standard,
+  ease: motionEasings.out,
+} as const;
 
 /** Server bucket policy mirrored client-side so doomed uploads fail fast. */
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -236,6 +253,8 @@ function ReportForm() {
   const restorePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const [editorResetKey, setEditorResetKey] = useState(0);
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null);
+  /** Viewport rect of the tile that opened the lightbox (FLIP origin). */
+  const [previewOrigin, setPreviewOrigin] = useState<PhotoLightboxOriginRect | null>(null);
   const hashRegistryRef = useRef(createHashRegistry());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Serializes overlapping picker work (R-073): a second action queues behind
@@ -1204,6 +1223,46 @@ function ReportForm() {
     }
   }
 
+  // Always-mounted lightbox helpers: current photo/index plus wrap-around
+  // stepping for the prev/next controls and arrow keys. Stepping re-centers
+  // (no shared-element rect for the next tile) while the first open grows
+  // out of the tapped thumbnail.
+  const previewIndex = previewPhotoId ? photos.findIndex((p) => p.id === previewPhotoId) : -1;
+  const previewPhoto = previewIndex >= 0 ? photos[previewIndex]! : null;
+  function stepPreview(delta: number): void {
+    if (photos.length === 0 || previewIndex < 0) return;
+    const next = (previewIndex + delta + photos.length) % photos.length;
+    setPreviewOrigin(null);
+    setPreviewPhotoId(photos[next]!.id);
+  }
+
+  // One crossfading slot for the batch pipeline: queued -> processing ->
+  // ready/failed, keyed by kind so progress numbers tick in place and only a
+  // state change crossfades. Opacity only — colour never animates.
+  const pickStatus = pickProgress
+    ? {
+        kind: "processing" as const,
+        text: `Processing ${pickProgress.done} of ${pickProgress.total}${
+          pickBacklog > 0 ? ` · ${pickBacklog} batch queued` : ""
+        }`,
+        tone: "",
+      }
+    : pickBacklog > 0
+      ? {
+          kind: "queued" as const,
+          text: `${pickBacklog} batch queued…`,
+          tone: "text-on-surface-variant",
+        }
+      : photoLimitNotice
+        ? { kind: "notice" as const, text: photoLimitNotice, tone: "text-error" }
+        : null;
+
+  // Real observed upload ratio — the bar never runs ahead of the counts.
+  const uploadPercent =
+    uploadProgress && uploadProgress.total > 0
+      ? Math.min(100, Math.round((uploadProgress.completed / uploadProgress.total) * 100))
+      : 0;
+
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-5 px-4 py-5" noValidate>
       <header>
@@ -1403,29 +1462,35 @@ function ReportForm() {
           onAddGallery={() => void onAddGallery()}
           onRemove={removePhoto}
           onMove={movePhotoById}
-          onPreview={setPreviewPhotoId}
+          onPreview={(id, origin) => {
+            setPreviewOrigin(origin ?? null);
+            setPreviewPhotoId(id);
+          }}
         />
-        {pickProgress && (
-          <div className="flex items-center gap-2 text-xs" role="status" aria-live="polite">
-            <span>
-              Processing {pickProgress.done} of {pickProgress.total}
-              {pickBacklog > 0 ? ` · ${pickBacklog} batch queued` : ""}
-            </span>
-            <Button type="button" variant="text" size="md" onClick={cancelPick}>
-              Cancel
-            </Button>
-          </div>
-        )}
-        {!pickProgress && pickBacklog > 0 && (
-          <p className="text-xs text-on-surface-variant" role="status">
-            {pickBacklog} batch queued…
-          </p>
-        )}
-        {photoLimitNotice && (
-          <p className="text-xs text-error" role="status">
-            {photoLimitNotice}
-          </p>
-        )}
+        <AnimatePresence mode="popLayout" initial={false}>
+          {pickStatus && (
+            <motion.div
+              key={pickStatus.kind}
+              role="status"
+              aria-live="polite"
+              data-testid="photo-pick-status"
+              data-status={pickStatus.kind}
+              className={`flex items-center gap-2 text-xs ${pickStatus.tone}`}
+              variants={fadeVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              transition={statusCrossfade}
+            >
+              <span>{pickStatus.text}</span>
+              {pickStatus.kind === "processing" && (
+                <Button type="button" variant="text" size="md" onClick={cancelPick}>
+                  Cancel
+                </Button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
         {photoFileErrors.length > 0 && (
           <div className="text-xs text-error" role="alert">
             <p>Some photos couldn&apos;t be added:</p>
@@ -1451,14 +1516,15 @@ function ReportForm() {
         )}
       </section>
 
-      {previewPhotoId && (
-        <PhotoLightbox
-          photo={photos.find((p) => p.id === previewPhotoId) ?? null}
-          index={photos.findIndex((p) => p.id === previewPhotoId)}
-          total={photos.length}
-          onClose={() => setPreviewPhotoId(null)}
-        />
-      )}
+      <PhotoLightbox
+        photo={previewPhoto}
+        index={previewIndex >= 0 ? previewIndex : undefined}
+        total={photos.length}
+        originRect={previewOrigin}
+        onPrev={photos.length > 1 ? () => stepPreview(-1) : undefined}
+        onNext={photos.length > 1 ? () => stepPreview(1) : undefined}
+        onClose={() => setPreviewPhotoId(null)}
+      />
 
       {photos.length > 0 && (
         <VlmSuggestions
@@ -1494,19 +1560,39 @@ function ReportForm() {
       )}
 
       {uploadProgress && (
-        <div className="flex items-center gap-2 text-sm" role="status" aria-live="polite">
-          {uploadProgress.completed < uploadProgress.total ? (
-            <>
-              <span>
-                Uploading {Math.min(uploadProgress.completed + 1, uploadProgress.total)} of {uploadProgress.total}
-              </span>
-              <Button type="button" variant="text" size="md" onClick={cancelUpload}>
-                Cancel upload
-              </Button>
-            </>
-          ) : (
-            <span>Publishing…</span>
-          )}
+        <div className="flex flex-col gap-1" role="status" aria-live="polite" data-testid="upload-progress">
+          <div className="flex items-center gap-2 text-sm">
+            {uploadProgress.completed < uploadProgress.total ? (
+              <>
+                <span>
+                  Uploading {Math.min(uploadProgress.completed + 1, uploadProgress.total)} of {uploadProgress.total}
+                </span>
+                <Button type="button" variant="text" size="md" onClick={cancelUpload}>
+                  Cancel upload
+                </Button>
+              </>
+            ) : (
+              <span>Publishing…</span>
+            )}
+          </div>
+          {/* Real observed progress only: the bar never runs ahead of the
+              completed/total counts it is derived from. */}
+          <div
+            role="progressbar"
+            aria-label="Upload progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={uploadPercent}
+            className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-surface-container"
+          >
+            <motion.div
+              className="h-full w-full origin-left rounded-full bg-on-surface"
+              initial={{ scaleX: 0 }}
+              animate={{ scaleX: uploadPercent / 100 }}
+              transition={uploadBarTransition}
+              data-upload-percent={uploadPercent}
+            />
+          </div>
         </div>
       )}
       <Button type="submit" size="lg" loading={busy} disabled={uncertain || !photoRecoveryReady}>

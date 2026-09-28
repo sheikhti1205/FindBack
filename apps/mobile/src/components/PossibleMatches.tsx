@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
+import { motion } from "framer-motion";
 import type { PostItem } from "@findback/shared";
 import { EmptyState, Spinner } from "./PostCard";
 import { findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
+import { listItemVariants, motionDurations, motionEasings } from "./uiMotion";
 
 interface PossibleMatchesProps {
   post: PostItem;
@@ -106,8 +108,19 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
         Compared {result.candidatesConsidered} recent report{result.candidatesConsidered === 1 ? "" : "s"}.
       </p>
       <ul className="flex flex-col gap-2" role="list">
-        {result.matches.slice(0, 3).map((match) => (
-          <li key={match.post.id} className="flex flex-col gap-1">
+        {result.matches.slice(0, 3).map((match, index) => (
+          <motion.li
+            key={match.post.id}
+            variants={listItemVariants}
+            initial="hidden"
+            animate="visible"
+            transition={{
+              duration: motionDurations.standard,
+              ease: motionEasings.out,
+              delay: index * 0.03,
+            }}
+            className="flex flex-col gap-1"
+          >
             <Link
               to={`/posts/${match.post.id}`}
               className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant bg-surface p-3 transition-colors hover:border-on-surface-variant active:bg-surface-container"
@@ -132,7 +145,7 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
                 </p>
               )}
             </Link>
-          </li>
+          </motion.li>
         ))}
       </ul>
       <p className="mt-3 text-xs text-on-surface-variant" role="contentinfo">

@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MotionConfig } from "framer-motion";
 
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" },
@@ -507,5 +508,56 @@ describe("PostDetail progressive loading", () => {
     const heading = await screen.findByRole("heading", { level: 1 }, { timeout: 3000 });
     expect(heading.textContent).toBe(LONG);
     expect(await screen.findByText(/could not load comments/i)).toBeTruthy();
+  });
+});
+
+describe("PostDetail shared card → detail element (Wave A)", () => {
+  const photoPost = {
+    ...basePost,
+    title: "Lost camera",
+    locationLabel: null,
+    latitude: null,
+    longitude: null,
+    attachments: [
+      {
+        id: "a1",
+        postId: "p1",
+        fileUrl: "https://cdn.example/a1.jpg",
+        mimeType: "image/jpeg",
+        displayOrder: 1,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    postsMock.fetchPost.mockResolvedValue(photoPost);
+    postsMock.fetchComments.mockResolvedValue([]);
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+  });
+
+  afterEach(cleanup);
+
+  it("carries the same shared media/title ids as the feed card", async () => {
+    renderDetail();
+    const heading = await screen.findByRole("heading", { level: 1 });
+    expect(heading.getAttribute("data-shared-title")).toBe("fb-post-title-p1");
+    const img = await screen.findByRole("img", { name: "Photo for Lost camera" });
+    expect(img.getAttribute("data-shared-media")).toBe("fb-post-media-p1");
+  });
+
+  it("still renders content under forced reduced motion", async () => {
+    render(
+      <MotionConfig reducedMotion="always">
+        <MemoryRouter initialEntries={["/posts/p1"]}>
+          <Routes>
+            <Route path="/posts/:id" element={<PostDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </MotionConfig>,
+    );
+    const heading = await screen.findByRole("heading", { level: 1 });
+    expect(heading.textContent).toBe("Lost camera");
+    expect(await screen.findByRole("img", { name: "Photo for Lost camera" })).toBeTruthy();
   });
 });

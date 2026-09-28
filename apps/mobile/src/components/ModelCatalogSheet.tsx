@@ -1,5 +1,7 @@
+import { AnimatePresence, motion } from "framer-motion";
 import type { ModelRecord, PriceClass, PriceLine } from "../services/ai/providerContract";
 import { formatPerMillionTokens, supportsVision } from "../services/ai/modelCatalog";
+import { listItemVariants, motionDurations, motionEasings, pressFeedback } from "./uiMotion";
 
 export type ModelCatalogSheetProps = {
   /** Catalogue rows to list. Empty means none loaded — never rendered as verified. */
@@ -53,11 +55,21 @@ export function ModelCatalogSheet({
       </header>
       {models.length > 0 ? (
         <ul className="flex flex-col gap-2">
+          {/* Filtering the catalogue is a list edit: rows rise in, filtered-out
+              rows leave, and the rest re-flow on Motion `layout` instead of
+              jumping. */}
+          <AnimatePresence initial={false}>
           {models.map((model) => {
             const selected = selectedId === model.id;
             return (
-              <li
+              <motion.li
                 key={model.id}
+                layout
+                variants={listItemVariants}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
                 className="flex flex-col gap-1 rounded-m3-sm border border-outline bg-surface px-3 py-2"
               >
                 <div className="flex items-center justify-between gap-2">
@@ -89,18 +101,21 @@ export function ModelCatalogSheet({
                   <p className="text-xs text-on-surface-variant">Price unknown.</p>
                 )}
                 {onSelect ? (
-                  <button
+                  <motion.button
                     type="button"
                     aria-pressed={selected}
                     onClick={() => onSelect(model.id)}
+                    whileTap={pressFeedback.button}
+                    transition={{ duration: motionDurations.instant }}
                     className="mt-1 min-h-[48px] rounded-m3-sm border border-outline px-3 text-sm font-medium"
                   >
                     {selected ? "Selected" : "Select"}
-                  </button>
+                  </motion.button>
                 ) : null}
-              </li>
+              </motion.li>
             );
           })}
+          </AnimatePresence>
         </ul>
       ) : null}
     </section>

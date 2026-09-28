@@ -1,6 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  fadeUpVariants,
   motionDurations,
   motionEasings,
 } from "./uiMotion";
@@ -17,11 +16,12 @@ interface NewPostsPillProps {
  * instead of incrementing the new-post count. Tapping refreshes and
  * scrolls to top; scroll is never yanked.
  *
- * Motion: the pill enters with a small shared fade/translate and leaves
- * cleanly after tap (AnimatePresence exit). The motion node keeps a stable
- * key so count updates only swap the label text and never replay the whole
- * entrance. No frozen from-above variant exists, so the shared
- * `fadeUpVariants` rise is used (transform/opacity only, standard duration).
+ * Motion: the pill drops in from above with a small shared fade/translate
+ * and leaves cleanly after tap (AnimatePresence exit). The motion node keeps
+ * a stable key so count updates only swap the label text and never replay
+ * the whole entrance. No frozen from-above variant exists in uiMotion
+ * (reported Wave-D gap), so the travel uses a small inline y with the
+ * shared standard duration/easing — transform/opacity only.
  */
 export function NewPostsPill({ count, hasUpdates, onTap }: NewPostsPillProps) {
   const visible = count > 0 || hasUpdates === true;
@@ -34,10 +34,9 @@ export function NewPostsPill({ count, hasUpdates, onTap }: NewPostsPillProps) {
             key="new-posts-pill"
             type="button"
             onClick={onTap}
-            variants={fadeUpVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
             transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
             className="min-h-[48px] rounded-full bg-on-surface px-4 py-2 text-sm font-medium text-surface shadow-lg"
             aria-label={`${label} — tap to refresh`}

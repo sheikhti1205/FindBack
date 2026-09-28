@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  waitForElementToBeRemoved,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Help } from "./Help";
 import { resetBackInterceptors } from "../components/backNavigation";
@@ -160,7 +167,9 @@ describe("Help full-screen assistant", () => {
     expect(screen.getByText("How do I search?")).toBeTruthy();
     fireEvent.click(screen.getByTestId("chat-retry"));
     await screen.findByText("Use the Search tab.");
-    expect(screen.queryByTestId("chat-error")).toBeNull();
+    // The error row is dismissed with an exit animation — wait for the node to
+    // leave the DOM instead of asserting synchronously.
+    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-error"));
   });
 
   it("opens history as a popup supporting new, continue, rename, delete and clear", async () => {
@@ -306,7 +315,25 @@ describe("Help P1 header/layout (screenshots 10/11/12)", () => {
     const disclosure = screen.getByRole("button", { name: /how your data is used/i });
     expect(disclosure.className).toMatch(/min-h-\[48px\]/);
     fireEvent.click(disclosure);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy();
+    // Collapsing plays the accordion exit before the copy leaves the DOM.
+    fireEvent.click(disclosure);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    await waitForElementToBeRemoved(() =>
+      screen.queryByText(/Photos are never attached automatically/),
+    );
+  });
+
+  it("brings the guided panel in and out instead of snapping it", async () => {
+    renderHelp({ guidedGenerate: async () => '{"query":"keys","status":"LOST"}' });
+    fireEvent.click(screen.getByTestId("guided-shortcut-search"));
+    const panel = await screen.findByTestId("guided-panel");
+    expect(panel.getAttribute("aria-label")).toBe("Guided help");
+    fireEvent.click(screen.getByRole("button", { name: /end guided help/i }));
+    await waitForElementToBeRemoved(() => screen.queryByTestId("guided-panel"));
+    expect(screen.getByTestId("chat-transcript")).toBeTruthy();
+    expect(screen.getByTestId("chat-composer")).toBeTruthy();
   });
 
   it("P2 red: app-help fail-then-retry does not duplicate persisted fallback turns", async () => {
@@ -328,7 +355,9 @@ describe("Help P1 header/layout (screenshots 10/11/12)", () => {
     await screen.findByTestId("chat-error");
     fireEvent.click(screen.getByTestId("chat-retry"));
     await screen.findByText("Use the Search tab.");
-    expect(screen.queryByTestId("chat-error")).toBeNull();
+    // The error row is dismissed with an exit animation — wait for the node to
+    // leave the DOM instead of asserting synchronously.
+    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-error"));
     // One logical reply: the user question persisted exactly once.
     expect(screen.getAllByText("How do I search?").length).toBe(1);
   });

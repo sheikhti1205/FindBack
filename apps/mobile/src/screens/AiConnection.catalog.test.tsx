@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import type { ModelRecord } from "../services/ai/providerContract";
 
@@ -89,7 +89,9 @@ describe("AiConnection catalogue (M2)", () => {
     );
     expect(screen.getByText("openrouter/free-a")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Search models"), { target: { value: "free-b" } });
-    expect(screen.queryByText("openrouter/free-a")).toBeNull();
+    // The filtered-out row leaves through its exit animation (Motion), so the
+    // absence is awaited rather than asserted synchronously.
+    await waitForElementToBeRemoved(() => screen.queryByText("openrouter/free-a"));
     expect(screen.getByText("openrouter/free-b")).toBeTruthy();
   });
 
@@ -219,5 +221,25 @@ describe("AiConnection catalogue (M2)", () => {
     await waitFor(() => expect(listModels).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Refresh catalogue" }));
     await waitFor(() => expect(listModels).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("AiConnection catalogue motion (Wave E)", () => {
+  beforeEach(() => { vi.clearAllMocks(); mocks.currentUserId = "user-1"; });
+  afterEach(cleanup);
+
+  it("dismisses the paid-consent panel through its exit animation", async () => {
+    render(
+      <MemoryRouter>
+        <AiConnection models={[paidC]} modelsRetrievedAt="2026-09-26T00:00:00.000Z" onSelectModel={() => {}} onPaidConsent={() => {}} />
+      </MemoryRouter>,
+    );
+    const row = screen.getByText("openrouter/paid-c").closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Select" }));
+    expect(screen.getByLabelText("Paid model consent")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitForElementToBeRemoved(() => screen.queryByLabelText("Paid model consent"));
+    // The catalogue row behind it never moved on its own.
+    expect(screen.getByText("openrouter/paid-c")).toBeTruthy();
   });
 });

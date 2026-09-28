@@ -1,8 +1,10 @@
 import { memo } from "react";
+import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { motionDurations, pressFeedback } from "./uiMotion";
 
 /**
  * Shared safe Markdown renderer for untrusted user/AI content.
@@ -51,11 +53,22 @@ export const MarkdownView = memo(function MarkdownView({ text }: { text: string 
           h4: ({ children }) => <h5 className="fb-h4">{children}</h5>,
           h5: ({ children }) => <h6 className="fb-h5">{children}</h6>,
           h6: ({ children }) => <h6 className="fb-h6">{children}</h6>,
+          // External links acknowledge the tap and then hand off to the
+          // native surface — Motion never animates the hand-off itself. The
+          // scale token is a no-op on inline boxes, so opacity carries the
+          // acknowledgement there.
           a: ({ href, children }) =>
             isSafeHref(href) ? (
-              <a href={href} target="_blank" rel="noopener noreferrer" className="break-all underline">
+              <motion.a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                whileTap={{ ...pressFeedback.button, opacity: 0.7 }}
+                transition={{ duration: motionDurations.instant }}
+                className="break-all underline"
+              >
                 {children}
-              </a>
+              </motion.a>
             ) : (
               <span>{children}</span>
             ),

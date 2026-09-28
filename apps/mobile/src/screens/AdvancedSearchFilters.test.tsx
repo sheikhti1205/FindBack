@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -93,7 +93,10 @@ describe("AdvancedSearchFilters controlled + hideTrigger (Home search bar)", () 
 
     expect(await screen.findByRole("button", { name: "Filters, 1 active" })).toBeTruthy();
     expect(screen.getByTestId("filters-active-count")).toHaveProperty("textContent", "1");
-    expect(screen.queryByRole("button", { name: /remove category filter/i })).toBeNull();
+    // The removed chip plays its 150ms exit fade before leaving the DOM.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /remove category filter/i })).toBeNull(),
+    );
     expect(screen.getByRole("button", { name: /remove status filter/i })).toBeTruthy();
   });
 });

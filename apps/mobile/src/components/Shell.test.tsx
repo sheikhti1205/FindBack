@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { Link, MemoryRouter, Route, Routes, useNavigate } from "react-router";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { MotionConfig } from "framer-motion";
 import { Shell } from "./Shell";
-import { useTabTap } from "./TabTap";
 import { resetBackInterceptors } from "./backNavigation";
 
 afterEach(() => { cleanup(); resetBackInterceptors(); document.body.style.overflow = ""; });
@@ -177,5 +176,70 @@ describe("Shell P1 viewport (screenshots 08/11/12)", () => {
     renderShellAt("/");
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(nav.className).not.toMatch(/fixed/);
+  });
+});
+
+describe("Shell nav hide/show with focusability (Wave A)", () => {
+  function renderShellWithDetail(entry: string) {
+    function GoDetail() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/posts/p1")}>open detail</button>;
+    }
+    function GoHome() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/")}>go home</button>;
+    }
+    return render(
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes><Route element={<Shell />}>
+          <Route index element={<p>Home screen<GoDetail /></p>} />
+          <Route path="/posts/:id" element={<p>Detail screen<GoHome /></p>} />
+          <Route path="/help" element={<p>Help screen<GoHome /></p>} />
+        </Route></Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("detail route shows content with no focusable nav chrome", async () => {
+    renderShellWithDetail("/posts/p1");
+    expect(screen.getByText(/Detail screen/)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull());
+    // Hidden nav unmounts: no tab stops or labelled links leak.
+    expect(document.querySelector(".fb-nav-slot")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Create report" })).toBeNull();
+  });
+
+  it("navigating detail → home restores the nav without losing content", async () => {
+    renderShellWithDetail("/posts/p1");
+    fireEvent.click(screen.getByRole("button", { name: "go home" }));
+    // Navigation is immediate: new content renders at once...
+    expect(screen.getByText(/Home screen/)).toBeTruthy();
+    // ...and the nav returns to the tab order.
+    expect(await screen.findByRole("navigation", { name: "Primary" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Create report" })).toBeTruthy();
+  });
+
+  it("navigating home → detail swaps content immediately and the nav exits", async () => {
+    renderShellWithDetail("/");
+    expect(screen.getByRole("navigation", { name: "Primary" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "open detail" }));
+    // Motion only accompanies navigation: the new screen is there at once.
+    expect(screen.getByText(/Detail screen/)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull());
+  });
+
+  it("labels still appear under forced reduced motion", () => {
+    render(
+      <MotionConfig reducedMotion="always">
+        <MemoryRouter initialEntries={["/"]}>
+          <Routes><Route element={<Shell />}>
+            <Route index element={<p>Home screen</p>} />
+          </Route></Routes>
+        </MemoryRouter>
+      </MotionConfig>,
+    );
+    // The pill may snap, but the selected label must still render.
+    expect(screen.getByText("Home")).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Primary" })).toBeTruthy();
   });
 });

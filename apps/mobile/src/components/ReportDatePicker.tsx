@@ -11,8 +11,10 @@ import {
 } from "react-aria-components";
 import { parseDate, CalendarDate, CalendarDateTime, ZonedDateTime, today, getLocalTimeZone } from "@internationalized/date";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X, Check } from "lucide-react";
+import { motion, useAnimationControls } from "framer-motion";
 import { BottomSheet } from "./BottomSheet";
 import { Button } from "./Button";
+import { motionDurations, motionEasings, motionSprings, popoverVariants } from "./uiMotion";
 
 interface ReportDatePickerProps {
   value: string;
@@ -80,6 +82,15 @@ export function ReportDatePicker({
   const nextMonthRef = useRef<HTMLButtonElement>(null);
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const suppressDaySelectUntilRef = useRef(0);
+
+  // Drives the month-travel slide only; the entrance above stays declarative.
+  const monthControls = useAnimationControls();
+  const travelMonth = (direction: 1 | -1) => {
+    monthControls.start({
+      x: [direction * 16, 0],
+      transition: { duration: motionDurations.fast, ease: motionEasings.out },
+    });
+  };
 
   const maxDate = today("UTC");
 
@@ -208,6 +219,15 @@ export function ReportDatePicker({
           Calendar for selecting the date. Use arrow keys to navigate days, Page Up/Down to change months, Enter to select, Escape to cancel.
         </div>
 
+        <motion.div
+          data-testid="calendar-surface"
+          variants={popoverVariants}
+          initial="hidden"
+          animate="visible"
+          transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+          className="w-full"
+        >
+        <motion.div data-testid="calendar-month" animate={monthControls} className="w-full">
         <Calendar
           id={calendarId}
           value={displayedValue}
@@ -224,6 +244,7 @@ export function ReportDatePicker({
               slot="previous"
               className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-sm text-on-surface-variant hover:bg-surface-container transition-colors"
               aria-label="Previous month"
+              onClick={() => travelMonth(-1)}
             >
               <ChevronLeft size={24} aria-hidden />
             </AriaButton>
@@ -233,6 +254,7 @@ export function ReportDatePicker({
               slot="next"
               className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-sm text-on-surface-variant hover:bg-surface-container transition-colors"
               aria-label="Next month"
+              onClick={() => travelMonth(1)}
             >
               <ChevronRight size={24} aria-hidden />
             </AriaButton>
@@ -253,7 +275,9 @@ export function ReportDatePicker({
             </CalendarGridHeader>
 
             <CalendarGridBody>
-              {(date) => (
+              {(date) => {
+                const isSelectedDay = Boolean(displayedValue && date.compare(displayedValue) === 0);
+                return (
                 <CalendarCell
                   key={date.toString()}
                   date={date}
@@ -265,11 +289,11 @@ export function ReportDatePicker({
                     isDisabled: boolean;
                   }) =>
                     [
-                      "flex items-center justify-center h-10 w-full rounded-full transition-colors",
+                      "relative flex items-center justify-center h-10 w-full rounded-full transition-colors",
                       isOutsideVisibleRange && "text-on-surface-variant/30",
                       isUnavailable && "text-on-surface-variant/30 line-through",
                       isDisabled && "opacity-50 cursor-not-allowed",
-                      isSelected && "bg-on-surface text-surface font-medium",
+                      isSelected && "text-surface font-medium",
                       isToday && !isSelected && "ring-2 ring-on-surface",
                       isToday && isSelected && "ring-2 ring-on-surface",
                     ]
@@ -277,9 +301,20 @@ export function ReportDatePicker({
                       .join(" ")
                   }
                 >
-                  {date.day}
+                  {/* The disc is the selected state itself: springy across days,
+                      identity at rest (initial={false} never blinks on mount). */}
+                  <motion.span
+                    aria-hidden="true"
+                    data-day-disc
+                    className="absolute inset-0 rounded-full bg-on-surface"
+                    initial={false}
+                    animate={{ scale: isSelectedDay ? 1 : 0, opacity: isSelectedDay ? 1 : 0 }}
+                    transition={motionSprings.snappy}
+                  />
+                  <span className="relative">{date.day}</span>
                 </CalendarCell>
-              )}
+                );
+              }}
             </CalendarGridBody>
           </CalendarGrid>
           </div>
@@ -311,6 +346,8 @@ export function ReportDatePicker({
             </div>
           </div>
         </Calendar>
+        </motion.div>
+        </motion.div>
       </BottomSheet>
     </div>
   );

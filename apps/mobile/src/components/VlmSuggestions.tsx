@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { analyzeReportPhoto } from "../services/analyzeReportPhoto";
 import { isReleasedCategory, type Category } from "@findback/shared";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { Button } from "./Button";
+import { fadeUpVariants, motionDurations, motionEasings } from "./uiMotion";
 
 interface VlmSuggestionsProps {
   file: File | null;
@@ -190,11 +192,21 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     return (
       <section aria-label="Draft description from photo" className="flex flex-col gap-3 rounded-m3-md border border-outline-variant bg-surface-container-low p-4">
         {headerContent}
-        {expanded && (
-          <div className="text-sm text-on-surface-variant" role="status">
-            Add a photo to draft text
-          </div>
-        )}
+        <AnimatePresence initial={false}>
+          {expanded && (
+            <motion.div
+              key="empty-hint"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+              className="overflow-hidden text-sm text-on-surface-variant"
+              role="status"
+            >
+              Add a photo to draft text
+            </motion.div>
+          )}
+        </AnimatePresence>
       </section>
     );
   }
@@ -203,8 +215,18 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     <section aria-label="Draft description from photo" className="flex flex-col gap-3 rounded-m3-md border border-outline-variant bg-surface-container-low p-4">
       {headerContent}
 
-      {expanded && (
-        <div className="flex flex-col gap-3">
+      {/* Expanding panel: height + opacity instead of a hard reveal, so the
+          form never pops in over the report fields below it. */}
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="suggestion-panel"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+            className="flex flex-col gap-3 overflow-hidden"
+          >
           <label className="flex min-h-[48px] items-center gap-3 text-sm">
             <input
               type="checkbox"
@@ -242,7 +264,15 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
           ) : null}
 
           {suggestion ? (
-            <div className="flex flex-col gap-3" role="region" aria-label="Review AI suggestions">
+            <motion.div
+              className="flex flex-col gap-3"
+              role="region"
+              aria-label="Review AI suggestions"
+              variants={fadeUpVariants}
+              initial="hidden"
+              animate="visible"
+              transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+            >
               <p className="text-sm font-medium">Review suggestions from AI:</p>
 
               {/* Title comparison */}
@@ -322,10 +352,11 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
                   Uncertain: {suggestion.uncertainFields.join(", ")}
                 </p>
               )}
-            </div>
+            </motion.div>
           ) : null}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </section>
   );
 }

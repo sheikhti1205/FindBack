@@ -1,4 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { motionDurations, motionEasings, pressFeedback, scaleInVariants } from "./uiMotion";
+import type { PhotoLightboxOriginRect } from "./PhotoLightbox";
 
 /**
  * Narrow-report layout switch: below ~420px two 152px tiles no longer fit,
@@ -46,11 +49,32 @@ export interface ReportMediaPickerProps {
   onAddGallery: (remaining: number) => void;
   onRemove: (id: string) => void;
   onMove: (id: string, direction: "earlier" | "later") => void;
-  onPreview: (id: string) => void;
+  /** `origin` is the tapped thumbnail's viewport rect (shared-element start). */
+  onPreview: (id: string, origin?: PhotoLightboxOriginRect) => void;
   disabled?: boolean;
 }
 
 const MAX_PHOTOS = 5;
+
+/** Tile enter/exit: anchored pop, transform/opacity only. */
+const tileTransition = {
+  type: "tween",
+  duration: motionDurations.fast,
+  ease: motionEasings.out,
+} as const;
+
+/** Press acknowledgement for the camera/gallery hand-off buttons. */
+const pressTransition = {
+  type: "tween",
+  duration: motionDurations.instant,
+  ease: motionEasings.out,
+} as const;
+
+/** Viewport rect of the tapped thumbnail, for the lightbox FLIP origin. */
+function originOf(element: HTMLElement): PhotoLightboxOriginRect {
+  const rect = element.getBoundingClientRect();
+  return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+}
 
 function CameraIcon({ size = 24 }: { size?: number }) {
   return (
@@ -143,8 +167,8 @@ export function ReportMediaPicker({
   );
 
   const handlePreview = useCallback(
-    (id: string) => {
-      if (!disabled) onPreview(id);
+    (id: string, origin?: PhotoLightboxOriginRect) => {
+      if (!disabled) onPreview(id, origin);
     },
     [disabled, onPreview]
   );
@@ -155,26 +179,30 @@ export function ReportMediaPicker({
         <h2 style={styles.headerTitle}>Photos</h2>
         <span style={styles.headerCount}>{photos.length}/{MAX_PHOTOS}</span>
         <div style={styles.headerActions}>
-          <button
+          <motion.button
             type="button"
             style={{ ...styles.iconButton, ...(disabled || atLimit ? styles.iconButtonDisabled : {}) }}
             onClick={handleCameraClick}
             disabled={disabled || atLimit}
             aria-label="Take photo"
             aria-disabled={disabled || atLimit}
+            whileTap={pressFeedback.iconButton}
+            transition={pressTransition}
           >
             <CameraIcon size={24} />
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             type="button"
             style={{ ...styles.iconButton, ...(disabled || atLimit ? styles.iconButtonDisabled : {}) }}
             onClick={handleGalleryClick}
             disabled={disabled || atLimit}
             aria-label={`Choose up to ${remaining} photos`}
             aria-disabled={disabled || atLimit}
+            whileTap={pressFeedback.iconButton}
+            transition={pressTransition}
           >
             <GalleryIcon size={24} />
-          </button>
+          </motion.button>
         </div>
       </header>
 
@@ -183,6 +211,7 @@ export function ReportMediaPicker({
       )}
 
       <div style={narrow ? styles.rows : styles.grid} role="list" aria-label="Selected photos">
+        <AnimatePresence initial={false}>
         {photos.map((photo, index) => (
           narrow ? (
             <CompactPhotoRow
@@ -210,6 +239,7 @@ export function ReportMediaPicker({
             />
           )
         ))}
+        </AnimatePresence>
       </div>
 
       {photos.some((p) => p.motionPhoto) && (
@@ -225,7 +255,7 @@ interface PhotoTileProps {
   total: number;
   onRemove: (id: string) => void;
   onMove: (id: string, direction: "earlier" | "later") => void;
-  onPreview: (id: string) => void;
+  onPreview: (id: string, origin?: PhotoLightboxOriginRect) => void;
   showReorder: boolean;
   disabled: boolean;
 }
@@ -249,12 +279,21 @@ function CompactPhotoRow({
   const isLast = index === total - 1;
   const meta = `${formatLabel(photo.format)}${index === 0 ? " · Primary" : ""}${photo.motionPhoto ? " · Motion still" : ""}`;
   return (
-    <div style={styles.row} role="listitem">
+    <motion.div
+      style={styles.row}
+      role="listitem"
+      layout
+      variants={scaleInVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+      transition={tileTransition}
+    >
       <div style={styles.rowTop}>
         <button
           type="button"
           style={styles.rowThumb}
-          onClick={() => onPreview(photo.id)}
+          onClick={(event) => onPreview(photo.id, originOf(event.currentTarget))}
           disabled={disabled}
           aria-label={`View photo ${index + 1} of ${total} full size`}
         >
@@ -305,7 +344,7 @@ function CompactPhotoRow({
           <TrashIcon size={20} />
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -323,11 +362,20 @@ function PhotoTile({
   const isLast = index === total - 1;
 
   return (
-    <div style={styles.tile} role="listitem">
+    <motion.div
+      style={styles.tile}
+      role="listitem"
+      layout
+      variants={scaleInVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+      transition={tileTransition}
+    >
       <button
         type="button"
         style={styles.tileImageWrapper}
-        onClick={() => onPreview(photo.id)}
+        onClick={(event) => onPreview(photo.id, originOf(event.currentTarget))}
         disabled={disabled}
         aria-label={`View photo ${index + 1} of ${total} full size`}
       >
@@ -381,7 +429,7 @@ function PhotoTile({
           <TrashIcon size={20} />
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 

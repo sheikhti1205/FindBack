@@ -79,7 +79,25 @@ export function loadFeedCache(filterKey: string): FeedCacheEntry | null {
 
 export function incrementNewPostCount(filterKey: string, delta: number): void {
   const entry = sessionCache.get(filterKey);
-  if (entry) entry.newPostCount = Math.max(0, entry.newPostCount + delta);
+  if (entry) {
+    entry.newPostCount = Math.max(0, entry.newPostCount + delta);
+    return;
+  }
+  // A realtime INSERT can arrive before this filter's first persist (a fresh
+  // mount has nothing saved yet). Create a dirty count-only entry so the
+  // new-posts pill still raises; dirty keeps the next load fetching instead
+  // of restoring an empty list.
+  if (delta <= 0) return;
+  sessionCache.set(filterKey, {
+    items: [],
+    total: 0,
+    cursor: null,
+    scrollTop: 0,
+    filters: filterKey,
+    lastRefresh: Date.now(),
+    newPostCount: delta,
+    dirty: true,
+  });
 }
 
 export function clearNewPostCount(filterKey: string): void {

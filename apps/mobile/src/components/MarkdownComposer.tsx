@@ -1,6 +1,8 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Bold, Code, Italic, Link2, List, ListOrdered, Quote } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
+import { fadeVariants, motionDurations, motionEasings, pressFeedback } from "./uiMotion";
 
 interface MarkdownComposerProps {
   label: string;
@@ -147,20 +149,36 @@ export function MarkdownComposer({
         </div>
       </div>
 
+      {/* Write/Preview crossfade: the panels trade places instead of snapping,
+          with `mode="wait"` so both never stack on top of each other. */}
+      <AnimatePresence mode="wait" initial={false}>
       {tab === "write" ? (
-        <div role="tabpanel" id={writePanelId} aria-labelledby={writeTabId} className="flex flex-col gap-2">
+        <motion.div
+          key="write"
+          role="tabpanel"
+          id={writePanelId}
+          aria-labelledby={writeTabId}
+          variants={fadeVariants}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+          className="flex flex-col gap-2"
+        >
           <div role="toolbar" aria-label={`${label} formatting`} className="flex flex-wrap gap-1">
             {tools.map(({ label: toolLabel, icon: Icon, run }) => (
-              <button
+              <motion.button
                 key={toolLabel}
                 type="button"
                 title={toolLabel}
                 aria-label={toolLabel}
                 onClick={() => edit(run)}
+                whileTap={pressFeedback.iconButton}
+                transition={{ duration: motionDurations.instant }}
                 className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs text-on-surface-variant hover:bg-surface-container"
               >
                 <Icon size={17} aria-hidden />
-              </button>
+              </motion.button>
             ))}
           </div>
           <textarea
@@ -186,17 +204,24 @@ export function MarkdownComposer({
           ) : (
             <p className="text-xs text-on-surface-variant">Markdown supported</p>
           )}
-        </div>
+        </motion.div>
       ) : (
-        <div
+        <motion.div
+          key="preview"
           role="tabpanel"
           id={previewPanelId}
           aria-labelledby={previewTabId}
+          variants={fadeVariants}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
           className="min-h-[120px] rounded-m3-sm border border-outline-variant bg-surface-container-low px-3.5 py-3"
         >
           {value.trim() ? <MarkdownView text={value} /> : <p className="text-sm text-on-surface-variant">Nothing to preview yet.</p>}
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }

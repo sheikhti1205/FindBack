@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 const mocks = vi.hoisted(() => ({
@@ -64,5 +64,35 @@ describe("AI connection", () => {
     view.rerender(<MemoryRouter><AiConnection /></MemoryRouter>);
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Disconnected"));
     expect(mocks.get).toHaveBeenCalledWith("user-2");
+  });
+});
+
+describe("AiConnection motion (Wave E)", () => {
+  beforeEach(() => { vi.clearAllMocks(); mocks.currentUserId = "user-1"; });
+  afterEach(cleanup);
+
+  it("rises a failure notice in and settles it fully visible", async () => {
+    mocks.validateKey.mockRejectedValueOnce(new Error("That key was rejected."));
+    render(<MemoryRouter><AiConnection /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("OpenRouter API key"), { target: { value: "bad-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("That key was rejected.");
+    // Enters hidden, then settles — no instant pop-in over the form.
+    await waitFor(() => expect(alert.style.opacity).toBe("1"), { timeout: 2000 });
+    expect(mocks.connect).not.toHaveBeenCalled();
+  });
+
+  it("clears the notice when the next attempt starts", async () => {
+    mocks.validateKey.mockRejectedValueOnce(new Error("That key was rejected."));
+    render(<MemoryRouter><AiConnection /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("OpenRouter API key"), { target: { value: "bad-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await screen.findByRole("alert");
+    // Second attempt: the notice leaves with its exit animation, not a snap.
+    mocks.validateKey.mockResolvedValueOnce({ remaining: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitForElementToBeRemoved(() => screen.queryByRole("alert"));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Connected"));
   });
 });

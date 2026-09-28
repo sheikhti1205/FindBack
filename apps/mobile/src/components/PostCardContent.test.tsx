@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import type { PostItem } from "@findback/shared";
-import { afterEach, describe, expect, it } from "vitest";import { cleanup, render, screen } from "@testing-library/react";
-import { PostCardContent } from "./PostCardContent";
+import { afterEach, describe, expect, it } from "vitest";import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { MotionConfig } from "framer-motion";
+import { PostCardContent, sharedMediaLayoutId, sharedTitleLayoutId } from "./PostCardContent";
 
 afterEach(cleanup);
 
@@ -41,5 +42,77 @@ describe("PostCardContent overflow", () => {
     const excerpt = container.querySelector("p");
     expect(excerpt?.textContent).toContain(LONG);
     expect(excerpt?.className).toContain("break-words");
+  });
+});
+
+function imagePost(): PostItem {
+  return post({
+    attachments: [
+      {
+        id: "a1",
+        postId: "p1",
+        fileUrl: "https://example.test/photo.jpg",
+        mimeType: "image/jpeg",
+        fileName: "photo.jpg",
+        fileSize: 10,
+        createdAt: "2026-09-01T00:00:00.000Z",
+      },
+    ],
+  });
+}
+
+describe("PostCardContent shared card → detail element (Wave A)", () => {
+  it("exposes media/title shared ids keyed by post id when enabled", () => {
+    render(<PostCardContent post={imagePost()} layout="editorial" enableSharedMedia />);
+    const frame = screen.getByTestId("post-image-state");
+    expect(frame.getAttribute("data-shared-media")).toBe(sharedMediaLayoutId("p1"));
+    expect(frame.getAttribute("data-shared-media")).toBe("fb-post-media-p1");
+    expect(screen.getByRole("heading").getAttribute("data-shared-title")).toBe(
+      sharedTitleLayoutId("p1"),
+    );
+  });
+
+  it("carries no shared ids by default so stray cards never duplicate a layoutId", () => {
+    render(<PostCardContent post={imagePost()} layout="editorial" />);
+    expect(screen.getByTestId("post-image-state").getAttribute("data-shared-media")).toBeNull();
+    expect(screen.getByRole("heading").getAttribute("data-shared-title")).toBeNull();
+  });
+
+  it("classic layout shares the media id when enabled", () => {
+    render(<PostCardContent post={imagePost()} enableSharedMedia />);
+    expect(screen.getByAltText("Photo for Lost wallet").getAttribute("data-shared-media")).toBe(
+      "fb-post-media-p1",
+    );
+  });
+});
+
+describe("PostCardContent image crossfade (Wave A)", () => {
+  it("reserves the frame while loading and settles to loaded without unmounting", () => {
+    render(<PostCardContent post={imagePost()} layout="editorial" />);
+    const frame = screen.getByTestId("post-image-state");
+    expect(frame.getAttribute("data-state")).toBe("loading");
+    const img = screen.getByAltText("Photo for Lost wallet");
+    fireEvent.load(img);
+    // Same frame element transitions loading → loaded: no layout shift.
+    expect(screen.getByTestId("post-image-state").getAttribute("data-state")).toBe("loaded");
+    expect(screen.getByAltText("Photo for Lost wallet")).toBeTruthy();
+  });
+
+  it("transitions to a labelled fallback when the photo fails", () => {
+    render(<PostCardContent post={imagePost()} layout="editorial" />);
+    fireEvent.error(screen.getByAltText("Photo for Lost wallet"));
+    const frame = screen.getByTestId("post-image-state");
+    expect(frame.getAttribute("data-state")).toBe("failed");
+    expect(screen.getByRole("img", { name: "Photo unavailable" })).toBeTruthy();
+  });
+
+  it("still renders content under forced reduced motion", () => {
+    render(
+      <MotionConfig reducedMotion="always">
+        <PostCardContent post={imagePost()} layout="editorial" enableSharedMedia />
+      </MotionConfig>,
+    );
+    expect(screen.getByRole("heading", { name: "Lost wallet" })).toBeTruthy();
+    expect(screen.getByAltText("Photo for Lost wallet")).toBeTruthy();
   });
 });

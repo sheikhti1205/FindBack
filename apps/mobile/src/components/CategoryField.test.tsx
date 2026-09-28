@@ -157,4 +157,59 @@ describe("CategoryField (P3 searchable grouped sheet)", () => {
     render(<CategoryField value="Keys" onChange={() => {}} />);
     expect(categoryValue()).toBe("Keys");
   });
+
+  it("fades the results panel in when the sheet opens", async () => {
+    render(<CategoryField value="" onChange={() => {}} />);
+    fireEvent.click(categoryTrigger());
+    const results = screen.getByTestId("category-results");
+    // Entrance starts hidden and settled, never mid-flight.
+    expect(results.style.opacity).toBe("0");
+    await waitFor(() => expect(results.style.opacity).toBe("1"));
+    expect(results.style.transform === "" || results.style.transform === "none").toBe(true);
+  });
+
+  it("staggers result rows in and leaves them steady once settled", async () => {
+    const { container } = render(<CategoryField value="" onChange={() => {}} />);
+    fireEvent.click(categoryTrigger());
+    const rows = Array.from(
+      container.querySelectorAll('[data-testid="category-results"] button'),
+    ) as HTMLButtonElement[];
+    expect(rows.length).toBeGreaterThan(9);
+    const lastRow = rows[rows.length - 1]!;
+    // Queued behind the capped stagger delay while earlier rows are already moving.
+    expect(lastRow.style.opacity).toBe("0");
+    await waitFor(() => expect(lastRow.style.opacity).toBe("1"));
+    // No endless pulse: it stays put afterwards.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(lastRow.style.opacity).toBe("1");
+    expect(lastRow.style.transform === "" || lastRow.style.transform === "none").toBe(true);
+  });
+
+  it("acknowledges the selected row with a persistent mark and aria-pressed", async () => {
+    const { rerender } = render(<CategoryField value="Keys" onChange={() => {}} />);
+    fireEvent.click(categoryTrigger());
+    const mark = (name: string) =>
+      screen.getByRole("button", { name }).querySelector("span[aria-hidden]") as HTMLElement;
+
+    const selected = mark("Keys");
+    const other = mark("Electronics");
+    expect(selected).toBeTruthy();
+    expect(other).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keys" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Electronics" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+    // The mark is always in the DOM and only its opacity/scale differ.
+    expect(selected.style.opacity).toBe("1");
+    expect(other.style.opacity).toBe("0");
+
+    // Selection moves: the acknowledgement follows without a remount blink.
+    rerender(<CategoryField value="Electronics" onChange={() => {}} />);
+    await waitFor(() => expect(mark("Electronics").style.opacity).toBe("1"));
+    await waitFor(() => expect(mark("Keys").style.opacity).toBe("0"));
+    expect(screen.getByRole("button", { name: "Keys" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Electronics" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
 });

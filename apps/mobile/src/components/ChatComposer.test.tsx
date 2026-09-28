@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitForElementToBeRemoved } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import { ChatComposer } from "./ChatComposer";
 
 afterEach(cleanup);
@@ -266,5 +266,182 @@ describe("ChatComposer 360dp two-row layout (screenshot 11)", () => {
     // The menu plays its exit animation before unmounting.
     await waitForElementToBeRemoved(() => screen.queryByTestId("chat-add-menu"));
     expect(screen.getByTestId("chat-camera-input")).toBeTruthy();
+  });
+});
+
+function micState(): string | null {
+  return document.querySelector("[data-mic-state]")?.getAttribute("data-mic-state") ?? null;
+}
+
+describe("ChatComposer motion (Wave E)", () => {
+  it("morphs one control from send into stop instead of swapping buttons", async () => {
+    const view = render(<ChatComposer value="hi" onChange={vi.fn()} onSend={vi.fn()} />);
+    const control = screen.getByTestId("chat-send");
+    expect(control.tagName).toBe("BUTTON");
+    expect(screen.getByTestId("chat-send-icon-send")).toBeTruthy();
+
+    view.rerender(
+      <ChatComposer value="hi" onChange={vi.fn()} onSend={vi.fn()} busy onStop={vi.fn()} />,
+    );
+    // Same DOM node throughout: the geometry morphs, the control never remounts.
+    expect(screen.getByTestId("chat-stop")).toBe(control);
+    expect(control.getAttribute("aria-label")).toBe("Stop generating");
+    // The icons crossfade rather than snap.
+    expect(await screen.findByTestId("chat-send-icon-stop")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId("chat-send-icon-send")).toBeNull());
+
+    view.rerender(<ChatComposer value="hi" onChange={vi.fn()} onSend={vi.fn()} />);
+    expect(screen.getByTestId("chat-send")).toBe(control);
+    expect(control.getAttribute("aria-label")).toBe("Send");
+    expect(await screen.findByTestId("chat-send-icon-send")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId("chat-send-icon-stop")).toBeNull());
+  });
+
+  it("keeps one composer node and flips aria-expanded across expand/minimize", () => {
+    render(<ChatComposer value="draft" onChange={vi.fn()} onSend={vi.fn()} />);
+    const form = screen.getByTestId("chat-composer");
+    const expand = screen.getByTestId("chat-expand");
+    expect(expand.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByTestId("chat-expand-icon-maximize")).toBeTruthy();
+
+    fireEvent.click(expand);
+    // Same form node: geometry animates in place rather than re-mounting.
+    expect(screen.getByTestId("chat-composer")).toBe(form);
+    expect(screen.getByTestId("chat-expand").getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("chat-expand").getAttribute("aria-label")).toBe("Minimize composer");
+    expect((screen.getByLabelText("Ask the Help & FAQ") as HTMLTextAreaElement).value).toBe("draft");
+
+    fireEvent.click(screen.getByTestId("chat-expand"));
+    expect(screen.getByTestId("chat-composer")).toBe(form);
+    expect(screen.getByTestId("chat-expand").getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByTestId("chat-expand").getAttribute("aria-label")).toBe("Expand composer");
+  });
+
+  it("grows the textarea straight from typing with no transition to wait on", () => {
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} />);
+    const field = screen.getByLabelText("Ask the Help & FAQ") as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "line one" } });
+    // Height is written to the element in the same commit — nothing animates,
+    // so the caret can never lag a keystroke.
+    expect(field.style.transition).toBe("");
+    expect(field.style.animationName).toBe("");
+    expect(field.style.height).not.toBe("");
+  });
+
+  it("pulses the mic only while the recorder is actually running", async () => {
+    const speech = mockSpeechFacade();
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} speech={speech as never} />);
+    expect(screen.queryByTestId("chat-mic-pulse")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("chat-mic"));
+    expect(await screen.findByTestId("chat-mic-stop")).toBeTruthy();
+    expect(micState()).toBe("listening");
+    expect(screen.getByTestId("chat-mic-pulse")).toBeTruthy();
+    expect(screen.getByTestId("chat-mic-status").textContent).toMatch(/listening/i);
+
+    fireEvent.click(screen.getByTestId("chat-mic-stop"));
+    // Recording over: the pulse disappears with the state, no lingering loop.
+    expect(screen.queryByTestId("chat-mic-pulse")).toBeNull();
+    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-mic-status"));
+    expect(micState()).toBe("idle");
+    expect(screen.getByTestId("chat-mic")).toBeTruthy();
+  });
+
+  it("shows Finishing… while teardown is in flight, then settles to idle", async () => {
+    let releaseStop!: () => void;
+    const speech = mockSpeechFacade({
+      stop: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseStop = resolve;
+          }),
+      ),
+    });
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} speech={speech as never} />);
+    fireEvent.click(screen.getByTestId("chat-mic"));
+    expect(await screen.findByTestId("chat-mic-stop")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("chat-mic-stop"));
+    expect(micState()).toBe("processing");
+    expect(screen.getByTestId("chat-mic-status").textContent).toMatch(/finishing/i);
+    expect(screen.queryByTestId("chat-mic-pulse")).toBeNull();
+
+    releaseStop();
+    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-mic-status"));
+    expect(micState()).toBe("idle");
+    expect(speech.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a failed start as a status message and returns to idle", async () => {
+    const speech = mockSpeechFacade({
+      start: vi.fn(async () => {
+        throw new Error("recorder busy");
+      }),
+    });
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} speech={speech as never} />);
+    fireEvent.click(screen.getByTestId("chat-mic"));
+    await waitFor(() => expect(screen.getByTestId("chat-mic-status").textContent).toMatch(/recorder busy/));
+    expect(micState()).toBe("idle");
+    expect(screen.getByTestId("chat-mic")).toBeTruthy();
+    expect(screen.queryByTestId("chat-mic-pulse")).toBeNull();
+  });
+
+  it("ignores a re-tap while dictation is still starting (one start only)", async () => {
+    let releaseAvailability!: (value: {
+      available: boolean;
+      onDevice: string;
+      networkOptInRequired: boolean;
+      apiLevel: number;
+    }) => void;
+    const speech = mockSpeechFacade({
+      isAvailable: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            releaseAvailability = resolve;
+          }),
+      ),
+    });
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} speech={speech as never} />);
+    fireEvent.click(screen.getByTestId("chat-mic"));
+    expect(micState()).toBe("starting");
+    expect(screen.getByTestId("chat-mic-status").textContent).toMatch(/starting/i);
+    // Interruption: a second tap lands while the first start is still in flight.
+    fireEvent.click(screen.getByTestId("chat-mic"));
+    expect(speech.isAvailable).toHaveBeenCalledTimes(1);
+
+    releaseAvailability({ available: true, onDevice: "available", networkOptInRequired: false, apiLevel: 33 });
+    expect(await screen.findByTestId("chat-mic-stop")).toBeTruthy();
+    expect(speech.start).toHaveBeenCalledTimes(1);
+    expect(micState()).toBe("listening");
+  });
+
+  it("dismisses the animated microphone pre-prompt without touching the OS", async () => {
+    const speech = mockSpeechFacade({
+      checkPermission: vi.fn(async () => ({ state: "prompt" })),
+    });
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} speech={speech as never} />);
+    fireEvent.click(screen.getByTestId("chat-mic"));
+    const prompt = await screen.findByTestId("chat-mic-permission");
+    expect(prompt.textContent).toMatch(/permission dialog opens next/i);
+
+    fireEvent.click(screen.getByTestId("chat-mic-permission-dismiss"));
+    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-mic-permission"));
+    expect(speech.requestPermission).not.toHaveBeenCalled();
+    expect(speech.start).not.toHaveBeenCalled();
+    expect(micState()).toBe("idle");
+  });
+
+  it("explains camera access before the native surface opens", async () => {
+    const onAddFiles = vi.fn();
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} onAddFiles={onAddFiles} />);
+    fireEvent.click(screen.getByTestId("chat-add-photos"));
+    fireEvent.click(screen.getByTestId("chat-take-photo"));
+    const prompt = await screen.findByTestId("chat-camera-permission");
+    expect(prompt.textContent).toMatch(/camera opens next/i);
+    expect(prompt.getAttribute("aria-label")).toBe("Camera access");
+
+    fireEvent.click(screen.getByTestId("chat-camera-permission-dismiss"));
+    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-camera-permission"));
+    expect(onAddFiles).not.toHaveBeenCalled();
   });
 });

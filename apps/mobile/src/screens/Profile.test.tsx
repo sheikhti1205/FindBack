@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -37,5 +37,44 @@ describe("Profile help destination", () => {
     expect(link).toBeTruthy();
     expect(link.getAttribute("href")).toBe("/help");
     expect(screen.queryByText(/Help Assistant/)).toBeNull();
+  });
+});
+
+describe("Profile motion", () => {
+  function renderProfile() {
+    render(
+      <MemoryRouter>
+        <ThemeProvider>
+          <Profile />
+        </ThemeProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("keeps every row's destination and name (press-state wrap regression guard)", () => {
+    renderProfile();
+    const nav = screen.getByRole("navigation", { name: "Profile links" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["My reports", "/my"],
+      ["Help & FAQ", "/help"],
+      ["AI Connection", "/ai-connection"],
+      ["About", "/about"],
+    ]);
+    // Still real anchors — the motion wrapper must not swallow navigation.
+    for (const link of links) expect(link.tagName).toBe("A");
+  });
+
+  it("slides the reused theme selector indicator to the chosen theme", () => {
+    renderProfile();
+    const group = screen.getByRole("radiogroup", { name: "Theme" });
+    const dark = within(group).getByRole("radio", { name: "Dark" });
+    fireEvent.click(dark);
+    expect(dark.getAttribute("aria-checked")).toBe("true");
+    for (const name of ["System", "Light"]) {
+      expect(within(group).getByRole("radio", { name }).getAttribute("aria-checked")).toBe("false");
+    }
+    // The shared sliding pill (Segmented-owned, reused — not edited).
+    expect(dark.querySelector('[data-testid="segmented-selection"]')).toBeTruthy();
   });
 });

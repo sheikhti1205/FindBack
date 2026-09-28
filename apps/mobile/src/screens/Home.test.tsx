@@ -286,11 +286,13 @@ describe("Home realtime", () => {
     fetchFeedMock.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
     expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("");
-    await waitFor(
-      () => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ q: undefined }), undefined),
-      { timeout: 3000 },
-    );
+    // Clearing restores the cached unfiltered feed instead of refetching:
+    // the URL param drops, the cached rows return, and no network call fires.
     await waitFor(() => expect(screen.getByTestId("location").textContent).not.toContain("q="));
+    expect(screen.getByText("a")).toBeTruthy();
+    expect(screen.getByText("b")).toBeTruthy();
+    expect(screen.getByText("c")).toBeTruthy();
+    expect(fetchFeedMock).not.toHaveBeenCalled();
   });
 
   it("cancel collapses the active field back to its compact state", async () => {

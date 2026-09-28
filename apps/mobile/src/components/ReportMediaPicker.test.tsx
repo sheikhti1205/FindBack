@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
+//
+// Real-timer policy (Wave B): tile enter/exit assertions wait on real
+// animation frames; no fake timers in this file.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ReportMediaPicker } from "./ReportMediaPicker";
 import type { PickedPhoto } from "../services/photo";
 import type { ReportMediaPickerProps } from "./ReportMediaPicker";
@@ -103,7 +106,65 @@ describe("ReportMediaPicker", () => {
     render(<ReportMediaPicker {...props} />);
     const tileImage = screen.getByAltText("Photo 1 of 1");
     fireEvent.click(tileImage);
-    expect(props.onPreview).toHaveBeenCalledWith("p1");
+    // jsdom rects are zeroed; the shape is what the lightbox FLIP needs.
+    expect(props.onPreview).toHaveBeenCalledWith("p1", { x: 0, y: 0, width: 0, height: 0 });
+  });
+
+  it("pops a newly added tile in from scale 0.96", async () => {
+    const props = getDefaultProps({ photos: [createMockPhoto("p1")] });
+    const { rerender } = render(<ReportMediaPicker {...props} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+
+    rerender(<ReportMediaPicker {...getDefaultProps({ photos: [createMockPhoto("p1"), createMockPhoto("p2")] })} />);
+
+    const tile = screen.getByAltText("Photo 2 of 2").closest('[role="listitem"]') as HTMLElement;
+    expect(tile.style.opacity).toBe("0");
+    await waitFor(
+      () => {
+        expect(tile.style.opacity).toBe("1");
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("keeps a removed tile mounted through its exit before it disappears", async () => {
+    const props = getDefaultProps({ photos: [createMockPhoto("p1"), createMockPhoto("p2")] });
+    const { rerender } = render(<ReportMediaPicker {...props} />);
+
+    rerender(<ReportMediaPicker {...getDefaultProps({ photos: [createMockPhoto("p1")] })} />);
+    // Still exiting: both list items are present for a moment.
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+
+    await waitFor(
+      () => {
+        expect(screen.getAllByRole("listitem")).toHaveLength(1);
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("acknowledges a camera press with the shared press scale", async () => {
+    const props = getDefaultProps();
+    render(<ReportMediaPicker {...props} />);
+    const cameraBtn = screen.getByRole("button", { name: "Take photo" });
+
+    fireEvent.pointerDown(cameraBtn, { pointerId: 1, isPrimary: true, buttons: 1 });
+    await waitFor(
+      () => {
+        expect(cameraBtn.style.transform).toContain("scale(0.96");
+      },
+      { timeout: 2000 },
+    );
+
+    fireEvent.pointerUp(cameraBtn, { pointerId: 1, isPrimary: true, buttons: 0 });
+    await waitFor(
+      () => {
+        expect(
+          cameraBtn.style.transform === "" || cameraBtn.style.transform === "none",
+        ).toBe(true);
+      },
+      { timeout: 2000 },
+    );
   });
 
   it("per-tile controls: Move earlier/later/Remove with correct labels", () => {

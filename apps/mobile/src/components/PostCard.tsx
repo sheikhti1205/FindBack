@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router";
+import { listItemVariants, motionDurations, motionEasings } from "./uiMotion";
 
 interface PostCardProps {
   children: ReactNode;
@@ -16,8 +17,25 @@ interface PostCardProps {
  */
 export const POST_CARD_ANIMATED_COUNT = 4;
 
+/**
+ * Wave A entrance suppression: the feed entrance plays once per session.
+ * Realtime inserts, refetches, and full list remounts (e.g. error → content
+ * swaps that remount every row) must NOT replay the rise-and-fade — only
+ * the first mount animates. Effects flush after the whole batch renders,
+ * so every card of the first mount still sees the flag unset.
+ */
+let feedEntrancePlayed = false;
+
+/** Test-only reset for the entrance-suppression flag (fresh module per file). */
+export function __resetFeedEntranceForTests(): void {
+  feedEntrancePlayed = false;
+}
+
 export function PostCard({ children, to, index = 0 }: PostCardProps) {
-  const animated = index < POST_CARD_ANIMATED_COUNT;
+  const animated = index < POST_CARD_ANIMATED_COUNT && !feedEntrancePlayed;
+  useEffect(() => {
+    if (animated) feedEntrancePlayed = true;
+  }, [animated]);
   const body = (
     <Link
       to={to}
@@ -37,9 +55,17 @@ export function PostCard({ children, to, index = 0 }: PostCardProps) {
     <motion.article
       data-testid="post-card"
       data-animated="true"
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22, delay: Math.min(index * 0.03, 0.12) }}
+      variants={listItemVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+      transition={{
+        duration: motionDurations.fast,
+        ease: motionEasings.out,
+        // Token-derived stagger: a fraction of the instant budget per row,
+        // capped at one instant so deep rows never trail behind.
+        delay: Math.min(index * motionDurations.instant * 0.3, motionDurations.instant),
+      }}
     >
       {body}
     </motion.article>

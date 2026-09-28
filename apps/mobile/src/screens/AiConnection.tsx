@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Capacitor } from "@capacitor/core";
 import { KeyRound } from "lucide-react";
 import { useAuth } from "../auth";
@@ -16,6 +17,7 @@ import {
 import { resolveSelection } from "../services/ai/modelPolicy";
 import { directKeyEntitlement as openAiDirectEntitlement } from "../services/ai/providers/openai";
 import { directKeyEntitlement as deepseekDirectEntitlement } from "../services/ai/providers/deepseek";
+import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
 
 const validator = createOpenRouterClient(async () => null);
 
@@ -322,7 +324,24 @@ export function AiConnection({
       </p>
       {/* "Connected" above is set only after validateKey succeeds for this account;
           the catalogue below is browse-only and never a verified state. */}
-      {message ? <p role="alert" className="text-sm text-error">{message}</p> : null}
+      {/* Transient notices rise in; the saved success/failure text is always
+          readable within one short entrance, and still leaves with motion. */}
+      <AnimatePresence initial={false} mode="wait">
+        {message ? (
+          <motion.p
+            key={`connection-${message}`}
+            role="alert"
+            className="text-sm text-error"
+            variants={fadeUpVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+          >
+            {message}
+          </motion.p>
+        ) : null}
+      </AnimatePresence>
       <form onSubmit={(event) => void connect(event)} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <label htmlFor="openrouter-key" className="text-sm font-medium">OpenRouter API key</label>
@@ -403,11 +422,60 @@ export function AiConnection({
               </p>
             ) : null}
           </div>
-          {loadingCatalog ? <p role="status" className="text-sm">Loading models…</p> : null}
-          {catalogError !== null ? <p role="alert" className="text-sm text-error">{catalogError}</p> : null}
-          {gateMessage !== null ? <p role="alert" className="text-sm text-error">{gateMessage}</p> : null}
+          {/* Catalogue notices are keyed replacements: a new message takes the
+              spot immediately and rises in, so readers never see a stale alert
+              mid-transition and there is never more than one of them. */}
+          {loadingCatalog ? (
+            <motion.p
+              key="loading-models"
+              role="status"
+              className="text-sm"
+              variants={fadeUpVariants}
+              initial="hidden"
+              animate="visible"
+              transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+            >
+              Loading models…
+            </motion.p>
+          ) : null}
+          {catalogError !== null ? (
+            <motion.p
+              key={`catalog-error-${catalogError}`}
+              role="alert"
+              className="text-sm text-error"
+              variants={fadeUpVariants}
+              initial="hidden"
+              animate="visible"
+              transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+            >
+              {catalogError}
+            </motion.p>
+          ) : null}
+          {gateMessage !== null ? (
+            <motion.p
+              key={`gate-${gateMessage}`}
+              role="alert"
+              className="text-sm text-error"
+              variants={fadeUpVariants}
+              initial="hidden"
+              animate="visible"
+              transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+            >
+              {gateMessage}
+            </motion.p>
+          ) : null}
+          <AnimatePresence initial={false}>
           {consentDraft !== null ? (
-            <div className="flex flex-col gap-2 rounded-m3-sm border border-outline p-3" aria-label="Paid model consent">
+            <motion.div
+              key="paid-consent"
+              className="flex flex-col gap-2 rounded-m3-sm border border-outline p-3"
+              aria-label="Paid model consent"
+              variants={fadeUpVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+            >
               <p className="text-sm font-medium">Paid model consent: {consentDraft.id}</p>
               <ul className="flex flex-col gap-0.5">
                 {consentDraft.prices.map((line) => (
@@ -432,8 +500,9 @@ export function AiConnection({
                 <Button type="button" disabled={!consentChecked} onClick={confirmConsent}>Confirm and select</Button>
                 <Button type="button" variant="outline" onClick={() => { setConsentDraftId(null); setConsentChecked(false); }}>Cancel</Button>
               </div>
-            </div>
+            </motion.div>
           ) : null}
+          </AnimatePresence>
           {filtered.length > 0 ? (
             <ModelCatalogSheet
               models={filtered}

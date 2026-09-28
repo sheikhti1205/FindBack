@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
-import { Outlet, useLocation, useNavigationType } from "react-router";
+import { useLocation, useNavigationType, useOutlet } from "react-router";
 import {
   motionDurations,
   motionEasings,
@@ -47,6 +47,13 @@ export function resolveRouteVariants(
 export function RouteTransition() {
   const location = useLocation();
   const navType = useNavigationType();
+  // Freeze the outlet element at render time: AnimatePresence keeps the
+  // exiting motion.div mounted for its exit animation, and a bare
+  // `<Outlet />` inside it would re-resolve against the NEW router location
+  // (showing the new screen twice). Capturing the element here lets the
+  // exiting wrapper keep showing the old screen while the entering wrapper
+  // shows the new one.
+  const outlet = useOutlet();
   const prevRef = useRef(location.pathname);
   const from = prevRef.current;
   const to = location.pathname;
@@ -68,7 +75,7 @@ export function RouteTransition() {
           data-testid="route-transition"
           data-route={location.pathname}
         >
-          <Outlet />
+          {outlet}
         </motion.div>
       </AnimatePresence>
     </LayoutGroup>

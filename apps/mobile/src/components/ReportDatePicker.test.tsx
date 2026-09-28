@@ -469,6 +469,11 @@ describe("ReportDatePicker", () => {
       expect(
         screen.getByRole("button", { name: /September 26, 2026/i }).getAttribute("aria-disabled"),
       ).toBe("true");
+      // Unmount and drain framer-motion's frame loop on the fake clock:
+      // restoring real timers with a frame pending freezes every animation
+      // mounted later in this file (rAF callbacks are dropped on restore).
+      cleanup();
+      await vi.advanceTimersByTimeAsync(1000);
     } finally {
       vi.useRealTimers();
     }
@@ -595,12 +600,82 @@ describe("ReportDatePicker", () => {
 
       expect(screen.getByRole("heading", { name: /September 2026/i })).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: /^today$/i }));
-      fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
       expect(onChange).toHaveBeenCalledWith("2026-09-30");
+      // Same frame-loop drain as above: never restore real timers with a
+      // framer-motion frame pending.
+      cleanup();
+      await vi.advanceTimersByTimeAsync(1000);
     } finally {
       vi.useRealTimers();
       vi.unstubAllEnvs();
       resetLocalTimeZone();
     }
+  });
+
+  /** Horizontal travel written by Motion, or 0 when the element is at rest. */
+  function travelX(el: HTMLElement): number {
+    const match = el.style.transform.match(/translateX\((-?[\d.]+)px\)/);
+    return match ? Number.parseFloat(match[1] ?? "0") : 0;
+  }
+
+  function atRest(el: HTMLElement): boolean {
+    return el.style.transform === "" || el.style.transform === "none";
+  }
+
+  it("fades the calendar surface in when the sheet opens", async () => {
+    render(<ReportDatePicker value="2026-09-26" onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+    const surface = screen.getByTestId("calendar-surface");
+    // The entrance starts hidden in the very commit that mounts the sheet.
+    expect(surface.style.opacity).toBe("0");
+    await waitFor(() => expect(surface.style.opacity).toBe("1"));
+    expect(atRest(surface)).toBe(true);
+    // Content is live while it fades: the selected day is already reachable.
+    expect(screen.getByRole("button", { name: /26.*selected/i })).toBeTruthy();
+  });
+
+  it("travels one month in the direction of the header button", async () => {
+    await openSheet("2026-09-26");
+    const month = screen.getByTestId("calendar-month");
+
+    // Backwards first: September is the latest month before the UTC cap.
+    fireEvent.click(screen.getByRole("button", { name: /previous month/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /August 2026/i })).toBeTruthy());
+    await waitFor(() => expect(travelX(month)).toBeLessThan(0));
+    await waitFor(() => expect(atRest(month)).toBe(true));
+
+    // Forwards: the month enters from the trailing edge, then settles.
+    fireEvent.click(screen.getByRole("button", { name: /next month/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /September 2026/i })).toBeTruthy());
+    await waitFor(() => expect(travelX(month)).toBeGreaterThan(0));
+    await waitFor(() => expect(atRest(month)).toBe(true));
+  });
+
+  it("swiping a month travels the same way as tapping the header", async () => {
+    const zone = await openSheet("2026-08-15");
+    const month = screen.getByTestId("calendar-month");
+    swipe(zone, 220, 100);
+    await waitFor(() => expect(screen.getByRole("heading", { name: /September 2026/i })).toBeTruthy());
+    // Forward swipe = forward travel (it drives the same next button).
+    await waitFor(() => expect(travelX(month)).toBeGreaterThan(0));
+    await waitFor(() => expect(atRest(month)).toBe(true));
+  });
+
+  it("springs the selected day's disc across days without blinking", async () => {
+    await openSheet("2026-09-26");
+    const discFor = (name: RegExp) =>
+      screen.getByRole("button", { name }).querySelector("[data-day-disc]") as HTMLElement;
+
+    const day26 = discFor(/Saturday, September 26, 2026/i);
+    expect(day26).toBeTruthy();
+    // initial={false}: the disc renders at its target, never mid-flight.
+    expect(day26.style.opacity).toBe("1");
+    expect(discFor(/Sunday, September 27, 2026/i).style.opacity).toBe("0");
+
+    fireEvent.click(screen.getByRole("button", { name: /Sunday, September 27, 2026/i }));
+    await waitFor(() => expect(discFor(/Sunday, September 27, 2026/i).style.opacity).toBe("1"));
+    // The old day releases on the same node — no unmount/remount blink.
+    await waitFor(() => expect(discFor(/Saturday, September 26, 2026/i).style.opacity).toBe("0"));
   });
 });

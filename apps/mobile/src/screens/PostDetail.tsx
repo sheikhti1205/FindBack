@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
+import { motion } from "framer-motion";
 import { ExternalLink, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
@@ -10,6 +11,11 @@ import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { InteractiveLocationMap } from "../components/InteractiveLocationMap";
 import { EmptyState, Spinner } from "../components/PostCard";
+import {
+  sharedElementTransition,
+  sharedMediaLayoutId,
+  sharedTitleLayoutId,
+} from "../components/PostCardContent";
 import { MarkdownView } from "../components/MarkdownView";
 import { RatingStars } from "../components/RatingStars";
 import { PossibleMatches } from "../components/PossibleMatches";
@@ -42,16 +48,28 @@ interface GalleryImage {
  * Ordered 1..5 photo gallery. A single photo keeps the legacy rendering;
  * multiple photos get a main view + an explicit thumbnail strip (48dp
  * targets, no motion). Read-only: no reorder/remove here.
+ *
+ * Wave A: the main photo carries the shared card → detail `layoutId`
+ * (keyed by post id, matching PostCardContent) so the drill-down travels
+ * inside RouteTransition's LayoutGroup; thumbnail swaps crossfade with the
+ * fast opacity token. Transform/opacity only.
  */
-function PostGallery({ title, images }: { title: string; images: GalleryImage[] }) {
+function PostGallery({ postId, title, images }: { postId: string; title: string; images: GalleryImage[] }) {
   const [selected, setSelected] = useState(0);
+  const mediaId = sharedMediaLayoutId(postId);
   if (images.length === 0) return null;
   if (images.length === 1) {
     return (
-      <img
+      <motion.img
+        key={images[0]!.fileUrl}
         src={images[0]!.fileUrl}
         alt={`Photo for ${title}`}
         className="max-h-72 w-full rounded-m3-md border border-outline-variant object-contain"
+        layoutId={mediaId}
+        data-shared-media={mediaId}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={sharedElementTransition}
       />
     );
   }
@@ -59,10 +77,16 @@ function PostGallery({ title, images }: { title: string; images: GalleryImage[] 
   const current = images[safeSelected]!;
   return (
     <figure className="flex flex-col gap-2">
-      <img
+      <motion.img
+        key={current.fileUrl}
         src={current.fileUrl}
         alt={`Photo ${safeSelected + 1} of ${images.length} for ${title}`}
         className="max-h-72 w-full rounded-m3-md border border-outline-variant object-contain"
+        layoutId={mediaId}
+        data-shared-media={mediaId}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={sharedElementTransition}
       />
       <figcaption className="text-xs text-on-surface-variant" role="status">
         Photo {safeSelected + 1} of {images.length}
@@ -399,10 +423,18 @@ export function PostDetail() {
         {/* key remounts the gallery per post: selection resets without a
             reset effect, so a thumbnail click can never be clobbered by a
             still-pending passive effect after the gallery first paints. */}
-        <PostGallery key={post.id} title={post.title} images={images} />
+        <PostGallery key={post.id} postId={post.id} title={post.title} images={images} />
 
         <div>
-          <h1 className="break-words text-2xl font-semibold leading-tight tracking-tight">{post.title}</h1>
+          {/* Shared-element pair for the card title (see PostCardContent). */}
+          <motion.h1
+            className="break-words text-2xl font-semibold leading-tight tracking-tight"
+            layoutId={sharedTitleLayoutId(post.id)}
+            data-shared-title={sharedTitleLayoutId(post.id)}
+            transition={sharedElementTransition}
+          >
+            {post.title}
+          </motion.h1>
           <p className="mt-1 text-sm text-on-surface-variant">
             @{post.author.username} · {post.category}
           </p>

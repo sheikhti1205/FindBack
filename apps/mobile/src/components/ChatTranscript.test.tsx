@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import { ChatTranscript } from "./ChatTranscript";
 
 beforeAll(() => {
@@ -97,7 +97,18 @@ describe("ChatTranscript", () => {
     expect(container.innerHTML).not.toMatch(/text-(red|green|blue|amber|emerald)-/);
   });
 
-  it("scrolls smoothly to the latest message even under reduced motion", () => {
+  it("scrolls smoothly to the latest message under full motion", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView as unknown as typeof Element.prototype.scrollIntoView;
+    render(<ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />);
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth" });
+  });
+
+  it("collapses the scroll to instant when the OS prefers reduced motion", () => {
+    // Declared after the full-motion case on purpose: the shared reduced-motion
+    // singleton is initialized by whichever test renders first, and the live
+    // `shouldReduceMotion()` read taken at scroll time is what makes the
+    // instant path observable here.
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView as unknown as typeof Element.prototype.scrollIntoView;
     const originalMatchMedia = window.matchMedia;
@@ -108,7 +119,7 @@ describe("ChatTranscript", () => {
     }) as unknown as typeof window.matchMedia;
     try {
       render(<ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />);
-      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth" });
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto" });
     } finally {
       window.matchMedia = originalMatchMedia;
     }
@@ -175,5 +186,102 @@ describe("ChatTranscript P1 layout (screenshots 10/12)", () => {
     expect(scroller.className).toMatch(/overflow-y-auto/);
     expect(scroller.className).toMatch(/min-h-0/);
     expect(scroller.className).toMatch(/flex-1/);
+  });
+});
+
+describe("ChatTranscript motion (Wave E)", () => {
+  it("settles restored history and rises only the newly appended turn", async () => {
+    const view = render(
+      <ChatTranscript messages={[{ id: "u1", role: "user", text: "How do I report?" }]} />,
+    );
+    const restored = screen.getByTestId("chat-message");
+    // Restored history renders settled — the entrance never replays.
+    expect(restored.style.opacity).not.toBe("0");
+
+    view.rerender(
+      <ChatTranscript
+        messages={[
+          { id: "u1", role: "user", text: "How do I report?" },
+          { id: "a1", role: "assistant", text: "Use the Report tab.", source: "llm" },
+        ]}
+      />,
+    );
+    const nodes = screen.getAllByTestId("chat-message");
+    expect(nodes).toHaveLength(2);
+    // History is reused, not remounted, so only the new turn animates.
+    expect(nodes[0]).toBe(restored);
+    expect(nodes[1]!.style.opacity).toBe("0");
+    expect(nodes[1]!.style.transform).toContain("translateY");
+    await waitFor(() => expect(nodes[1]!.style.opacity).toBe("1"), { timeout: 2000 });
+    expect(nodes[1]!.textContent).toContain("Use the Report tab.");
+  });
+
+  it("fades the busy row out as the finished answer arrives", async () => {
+    const view = render(
+      <ChatTranscript messages={[]} busy busyLabel="Thinking…" onStop={() => {}} />,
+    );
+    expect(screen.getByTestId("chat-busy").textContent).toContain("Thinking…");
+    view.rerender(
+      <ChatTranscript
+        messages={[{ id: "a1", role: "assistant", text: "All done.", source: "llm" }]}
+        busy={false}
+      />,
+    );
+    // The answer is readable immediately; the spinner row then leaves cleanly.
+    expect(screen.getByText("All done.")).toBeTruthy();
+    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-busy"));
+    expect(screen.getByText("All done.")).toBeTruthy();
+  });
+
+  it("swaps the copy icon to a check briefly instead of toasting", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(
+      <ChatTranscript messages={[{ id: "a1", role: "assistant", text: "answer text", source: "llm" }]} />,
+    );
+    const button = screen.getByTestId("chat-copy-a1");
+    expect(button.getAttribute("aria-label")).toBe("Copy answer");
+    expect(screen.getByTestId("chat-copy-icon-copy")).toBeTruthy();
+
+    fireEvent.click(button);
+    expect(writeText).toHaveBeenCalledWith("answer text");
+    expect(await screen.findByTestId("chat-copy-icon-check")).toBeTruthy();
+    // The copy glyph crossfades out; it does not vanish in the same frame.
+    await waitFor(() => expect(screen.queryByTestId("chat-copy-icon-copy")).toBeNull());
+    expect(screen.getByTestId("chat-copy-a1").getAttribute("aria-label")).toBe("Copied");
+    expect(screen.getByText("Copied")).toBeTruthy();
+    expect(screen.queryByText(/toast/i)).toBeNull();
+
+    // …and reverts on its own without a second interaction.
+    await waitFor(() => expect(screen.queryByTestId("chat-copy-icon-check")).toBeNull(), {
+      timeout: 4000,
+    });
+    expect(screen.getByTestId("chat-copy-a1").getAttribute("aria-label")).toBe("Copy answer");
+    expect(screen.queryByText("Copied")).toBeNull();
+  });
+
+  it("keeps one partial bubble across streamed updates (tokens never animate)", () => {
+    const view = render(
+      <ChatTranscript
+        messages={[{ id: "u1", role: "user", text: "hi" }]}
+        partialText="Hel"
+        partialLabel="AI answer"
+      />,
+    );
+    const bubble = screen.getByTestId("chat-partial");
+    expect(bubble.textContent).toContain("Hel");
+    view.rerender(
+      <ChatTranscript
+        messages={[{ id: "u1", role: "user", text: "hi" }]}
+        partialText="Hello world, streaming…"
+        partialLabel="AI answer"
+      />,
+    );
+    // Same node: the text grows in place with no re-mount and no re-entrance.
+    expect(screen.getByTestId("chat-partial")).toBe(bubble);
+    expect(bubble.textContent).toContain("Hello world, streaming…");
   });
 });

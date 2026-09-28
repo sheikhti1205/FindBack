@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MarkdownView } from "./MarkdownView";
 import { stripMarkdown } from "../utils/stripMarkdown";
 
@@ -80,5 +80,20 @@ describe("stripMarkdown", () => {
     expect(stripMarkdown("[tap here](https://x.example)")).toBe("tap here");
     expect(stripMarkdown("![photo](https://x.example/p.png)")).toBe("photo");
     expect(stripMarkdown("> quoted\n\nnormal")).toContain("normal");
+  });
+});
+
+describe("MarkdownView motion (Wave E)", () => {
+  it("acknowledges a press on an external link, then leaves the hand-off alone", async () => {
+    render(<MarkdownView text={"[FindBack](https://example.com)"} />);
+    const link = screen.getByRole("link", { name: "FindBack" }) as HTMLElement;
+    // Light acknowledgement only: the anchor semantics are untouched.
+    fireEvent.pointerDown(link, { pointerId: 1, isPrimary: true, buttons: 1 });
+    await waitFor(() => expect(link.style.opacity).not.toBe(""), { timeout: 1500 });
+    expect(link.getAttribute("href")).toBe("https://example.com");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    fireEvent.pointerUp(link, { pointerId: 1, isPrimary: true });
+    await waitFor(() => expect(link.style.opacity).toBe("1"), { timeout: 1500 });
   });
 });

@@ -1,5 +1,7 @@
-import { useRef } from "react";
+import { useRef, type Ref } from "react";
 import { Star } from "lucide-react";
+import { motion, useAnimationControls } from "framer-motion";
+import { motionDurations, motionEasings, motionSprings, pressFeedback } from "./uiMotion";
 
 interface RatingStarsProps {
   /** The signed-in user's own rating (1–5), or null when unrated. */
@@ -11,6 +13,62 @@ interface RatingStarsProps {
 }
 
 const STARS = [1, 2, 3, 4, 5];
+
+interface StarButtonProps {
+  star: number;
+  /** Whether this star is filled by the current (possibly optimistic) value. */
+  filled: boolean;
+  checked: boolean;
+  tabIndex: number;
+  label: string;
+  buttonRef: Ref<HTMLButtonElement>;
+  onRate: (star: number) => void;
+}
+
+/**
+ * One star: a press-down squeeze (whileTap), an optimistic pop the moment its
+ * fill arrives, and a quiet opacity crossfade for the fill itself — so a
+ * rolled-back submit releases without a bounce. The base outline star never
+ * moves; only the overlay and the pop wrapper animate.
+ */
+function StarButton({ star, filled, checked, tabIndex, label, buttonRef, onRate }: StarButtonProps) {
+  // Imperative pop: fires on the tap itself (not on the value round-trip),
+  // so the acknowledgement is immediate even before the parent updates.
+  // start() interrupts any in-flight pop — rapid taps restart, never queue.
+  const popControls = useAnimationControls();
+
+  return (
+    <motion.button
+      ref={buttonRef}
+      type="button"
+      role="radio"
+      aria-checked={checked}
+      aria-label={label}
+      // Roving focus: one tab stop for the whole group.
+      tabIndex={tabIndex}
+      onClick={() => {
+        onRate(star);
+        void popControls.start({ scale: [1.35, 1], transition: motionSprings.snappy });
+      }}
+      whileTap={pressFeedback.iconButton}
+      className="flex min-h-[48px] min-w-[48px] items-center justify-center text-on-surface-variant hover:opacity-80"
+    >
+      <motion.span animate={popControls} data-star-pop className="relative inline-flex">
+        <Star size={26} aria-hidden />
+        <motion.span
+          data-star-fill
+          aria-hidden
+          className="absolute inset-0 inline-flex items-center justify-center"
+          initial={false}
+          animate={{ opacity: filled ? 1 : 0, scale: filled ? 1 : 0.7 }}
+          transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+        >
+          <Star size={26} aria-hidden className="fill-on-surface text-on-surface" />
+        </motion.span>
+      </motion.span>
+    </motion.button>
+  );
+}
 
 /**
  * Accessible 1–5 star rating control.
@@ -56,26 +114,18 @@ export function RatingStars({ value, onRate, labelId, ariaLabel }: RatingStarsPr
       }}
     >
       {STARS.map((star, i) => (
-        <button
+        <StarButton
           key={star}
-          ref={(el) => {
+          star={star}
+          filled={(value ?? 0) >= star}
+          checked={value === star}
+          tabIndex={i === activeIndex ? 0 : -1}
+          label={`${star} star${star > 1 ? "s" : ""}`}
+          onRate={onRate}
+          buttonRef={(el) => {
             refs.current[i] = el;
           }}
-          type="button"
-          role="radio"
-          aria-checked={value === star}
-          aria-label={`${star} star${star > 1 ? "s" : ""}`}
-          // Roving focus: one tab stop for the whole group.
-          tabIndex={i === activeIndex ? 0 : -1}
-          onClick={() => onRate(star)}
-          className="flex min-h-[48px] min-w-[48px] items-center justify-center text-on-surface-variant hover:opacity-80"
-        >
-          <Star
-            size={26}
-            aria-hidden
-            className={(value ?? 0) >= star ? "fill-on-surface text-on-surface" : ""}
-          />
-        </button>
+        />
       ))}
     </div>
   );

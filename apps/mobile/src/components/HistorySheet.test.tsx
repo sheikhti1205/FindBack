@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MotionConfig } from "framer-motion";
 import { HistorySheet } from "./HistorySheet";
 import { resetBackInterceptors } from "./backNavigation";
 
@@ -86,5 +87,55 @@ describe("HistorySheet popup", () => {
   it("shows an empty state when no chats match", () => {
     render(<HistorySheet {...baseProps({ chats: [], searchQuery: "zzz" })} />);
     expect(screen.getByTestId("history-empty").textContent).toMatch(/no chats/i);
+  });
+
+  /** Horizontal travel written by Motion, or 0 when the element is at rest. */
+  function travelX(el: HTMLElement): number {
+    const match = el.style.transform.match(/translateX\((-?[\d.]+)px\)/);
+    return match ? Number.parseFloat(match[1] ?? "0") : 0;
+  }
+
+  function thumbOf() {
+    const toggle = screen.getByRole("switch", { name: /chat history/i });
+    return { toggle, thumb: toggle.querySelector("[data-history-thumb]") as HTMLElement };
+  }
+
+  it("slides the thumb with Motion instead of CSS positioning", async () => {
+    const { rerender } = render(<HistorySheet {...baseProps({ historyEnabled: false })} />);
+    const { toggle, thumb } = thumbOf();
+    expect(thumb).toBeTruthy();
+    // CSS no longer owns the travel: no transition-all, no second left class.
+    expect(thumb.className).not.toMatch(/transition-all|left-\[22px\]/);
+    expect(travelX(thumb)).toBe(0);
+
+    rerender(<HistorySheet {...baseProps({ historyEnabled: true })} />);
+    // Same node across the toggle — no remount blink.
+    expect(screen.getByRole("switch", { name: /chat history/i })).toBe(toggle);
+    await waitFor(() => expect(travelX(thumb)).toBe(20));
+
+    rerender(<HistorySheet {...baseProps({ historyEnabled: false })} />);
+    await waitFor(() => expect(travelX(thumb)).toBe(0));
+  });
+
+  it("snaps the thumb to its end position under reduced motion", async () => {
+    const { rerender } = render(
+      <MotionConfig reducedMotion="always">
+        <HistorySheet {...baseProps({ historyEnabled: false })} />
+      </MotionConfig>,
+    );
+    const { thumb } = thumbOf();
+
+    rerender(
+      <MotionConfig reducedMotion="always">
+        <HistorySheet {...baseProps({ historyEnabled: true })} />
+      </MotionConfig>,
+    );
+    // First observation after the change is already the far end — no travel frame.
+    const x = await waitFor(() => {
+      const value = travelX(thumb);
+      if (value === 0) throw new Error("thumb has not moved");
+      return value;
+    });
+    expect(x).toBe(20);
   });
 });

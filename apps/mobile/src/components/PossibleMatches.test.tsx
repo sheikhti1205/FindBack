@@ -74,4 +74,39 @@ describe("PossibleMatches", () => {
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
     expect(await screen.findByText(/compared 4 recent reports/i)).toBeTruthy();
   });
+
+  it("brings rows in as matching finishes and leaves them steady afterwards", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 4, matches: [
+      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: "2026-09-11", locationLabel: "Central Library" }, score: 0.8, reasons: ["same category"] },
+      { post: { id: "found-2", title: "Umbrella near café", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.7, reasons: [] },
+      { post: { id: "found-3", title: "Dark umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.6, reasons: [] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    const links = await screen.findAllByRole("link");
+    expect(links).toHaveLength(3);
+
+    const rows = links.map((link) => link.closest("li") as HTMLElement);
+    // The last row is still queued behind the stagger the moment results land.
+    expect(rows[2]!.style.opacity).toBe("0");
+    await waitFor(() => expect(rows[0]!.style.opacity).toBe("1"));
+    await waitFor(() => expect(rows[2]!.style.opacity).toBe("1"));
+    // No endless pulse: the settled rows stay put.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    for (const row of rows) {
+      expect(row.style.opacity).toBe("1");
+      expect(row.style.transform === "" || row.style.transform === "none").toBe(true);
+    }
+  });
+
+  it("updates the compared count as plain text, never tweening the number", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 4, matches: [
+      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    const count = await screen.findByText(/compared 4 recent reports/i);
+    expect(count.textContent).toBe("Compared 4 recent reports.");
+    // The count line is deliberately untouched by Motion.
+    expect(count.style.opacity).toBe("");
+    expect(count.style.transform).toBe("");
+  });
 });

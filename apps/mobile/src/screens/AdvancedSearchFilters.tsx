@@ -93,7 +93,9 @@ export function FiltersIconButton({
       <AnimatePresence initial={false}>
         {activeCount > 0 && (
           <motion.span
-            key={`filters-badge-${activeCount}`}
+            // Stable key: count updates swap the label text only and never
+            // replay the badge entrance (modest change, no bouncing button).
+            key="filters-badge"
             aria-hidden="true"
             data-testid="filters-active-count"
             variants={scaleInVariants}

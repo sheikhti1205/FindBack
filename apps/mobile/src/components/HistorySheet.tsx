@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { motion } from "framer-motion";
 import { BottomSheet } from "./BottomSheet";
+import { motionSprings } from "./uiMotion";
 
 export interface HistoryChatSummary {
   id: string;
@@ -112,10 +114,13 @@ export function HistorySheet({
                 historyEnabled ? "bg-on-surface" : "bg-surface-container-high"
               }`}
             >
-              <span
-                className={`absolute top-0.5 h-5 w-5 rounded-full bg-surface shadow transition-all ${
-                  historyEnabled ? "left-[22px]" : "left-0.5"
-                }`}
+              {/* Motion owns the travel (x only) — no CSS left/transition-all race. */}
+              <motion.span
+                data-history-thumb
+                className="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-surface shadow"
+                initial={false}
+                animate={{ x: historyEnabled ? 20 : 0 }}
+                transition={motionSprings.snappy}
               />
             </span>
           </button>

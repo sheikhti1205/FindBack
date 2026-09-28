@@ -3,6 +3,7 @@ import type { PostItem } from "@findback/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { MotionConfig } from "framer-motion";
 import { PostCardContent } from "./PostCardContent";
 import { PostList } from "./PostList";
 
@@ -149,5 +150,97 @@ describe("PostList density", () => {
       </MemoryRouter>,
     );
     expect(screen.getByTestId("post-image-state").className).toContain("fb-thumb");
+  });
+});
+
+describe("PostList state transitions (Wave A)", () => {
+  function renderList(props: Partial<Parameters<typeof PostList>[0]>) {
+    return render(
+      <MemoryRouter>
+        <PostList
+          items={[]}
+          loading={false}
+          loadingMore={false}
+          error={null}
+          hasMore={false}
+          onLoadMore={() => Promise.resolve()}
+          density="editorial"
+          {...props}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("loading → results: spinner gives way to content without losing it", () => {
+    const { rerender } = renderList({ loading: true });
+    expect(screen.getByText(/loading posts/i)).toBeTruthy();
+    rerender(
+      <MemoryRouter>
+        <PostList
+          items={[imagePost()]}
+          loading={false}
+          loadingMore={false}
+          error={null}
+          hasMore={false}
+          onLoadMore={() => Promise.resolve()}
+          density="editorial"
+        />
+      </MemoryRouter>,
+    );
+    // Navigation-equivalent immediacy: content is present right after the swap.
+    expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
+  });
+
+  it("error → content: retry state resolves into the feed", () => {
+    const { rerender } = renderList({ error: "offline", onRetry: () => Promise.resolve() });
+    expect(screen.getByText("Could not load")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    rerender(
+      <MemoryRouter>
+        <PostList
+          items={[imagePost()]}
+          loading={false}
+          loadingMore={false}
+          error={null}
+          hasMore={false}
+          onLoadMore={() => Promise.resolve()}
+          density="editorial"
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
+  });
+
+  it("empty state renders with the provided copy", () => {
+    renderList({ emptyTitle: "No matches", emptySubtitle: "Try different filters." });
+    expect(screen.getByText("No matches")).toBeTruthy();
+    expect(screen.getByText("Try different filters.")).toBeTruthy();
+  });
+
+  it("list cards carry the shared media id for the card → detail pair", () => {
+    renderList({ items: [imagePost()] });
+    expect(screen.getByTestId("post-image-state").getAttribute("data-shared-media")).toBe(
+      "fb-post-media-p1",
+    );
+  });
+
+  it("feed renders under forced reduced motion", () => {
+    render(
+      <MotionConfig reducedMotion="always">
+        <MemoryRouter>
+          <PostList
+            items={[imagePost()]}
+            loading={false}
+            loadingMore={false}
+            error={null}
+            hasMore={false}
+            onLoadMore={() => Promise.resolve()}
+            density="editorial"
+          />
+        </MemoryRouter>
+      </MotionConfig>,
+    );
+    expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
+    expect(screen.getByRole("link")).toBeTruthy();
   });
 });

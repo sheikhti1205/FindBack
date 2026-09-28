@@ -57,8 +57,12 @@ describe("RouteTransition", () => {
     expect(screen.getByText(/Home screen/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "open detail" }));
     // New route renders immediately — motion only accompanies navigation.
+    // AnimatePresence keeps the exiting wrapper mounted for its exit, frozen
+    // on the old screen, while the entering wrapper shows the new screen.
     expect(screen.getByText(/Detail screen/)).toBeTruthy();
-    expect(screen.getByTestId("route-transition").getAttribute("data-route")).toBe("/posts/p1");
+    expect(screen.getByText(/Home screen/)).toBeTruthy();
+    const wrappers = screen.getAllByTestId("route-transition");
+    expect(wrappers.map((w) => w.getAttribute("data-route")).sort()).toEqual(["/", "/posts/p1"]);
   });
 
   it("keeps content rendered under forced reduced motion", () => {
@@ -77,5 +81,28 @@ describe("RouteTransition", () => {
     expect(region).toBeTruthy();
     // Content stays in the accessibility tree under reduced motion.
     expect(screen.getByTestId("route-transition").textContent).toContain("Detail screen");
+  });
+
+  it("renders the previous screen immediately on back navigation", () => {
+    function GoBack() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate(-1)}>go back</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/", "/posts/p1"]} initialIndex={1}>
+        <Routes>
+          <Route element={<RouteTransition />}>
+            <Route index element={<p>Home screen</p>} />
+            <Route path="/posts/:id" element={<p>Detail screen<GoBack /></p>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/Detail screen/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "go back" }));
+    // Back navigation is immediate: the previous screen renders at once and
+    // the backward variants apply (leaving a detail page).
+    expect(screen.getByText(/Home screen/)).toBeTruthy();
+    expect(resolveRouteVariants("/posts/p1", "/", "POP")).toBe(pageBackwardVariants);
   });
 });

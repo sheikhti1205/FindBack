@@ -9,6 +9,7 @@ import {
   motionDurations,
   motionEasings,
   pressFeedback,
+  shouldReduceMotion,
   useShouldReduceMotion,
 } from "./uiMotion";
 
@@ -118,8 +119,12 @@ export function ChatTranscript({
   }
 
   // Imperative scroll cannot see MotionConfig: honor the OS setting here.
+  // The hook supplies the reactive view of the preference; the live read is
+  // re-queried at call time so a change the hook never observed (framer-motion
+  // v13 does not subscribe) still collapses the travel to instant.
   function scrollToLatest() {
-    bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth" });
+    const instant = reduceMotion || shouldReduceMotion();
+    bottomRef.current?.scrollIntoView({ behavior: instant ? "auto" : "smooth" });
     setShowNewResponse(false);
   }
 

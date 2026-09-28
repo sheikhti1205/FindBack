@@ -133,7 +133,11 @@ describe("CreateReport", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /remove photo/i }));
 
-    expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull();
+    // Wave B: the tile now exits with a short fade, so presence checks after
+    // removal settle through waitFor (same pattern as multiImage/photoGc).
+    await waitFor(() => expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull(), {
+      timeout: 3000,
+    });
     expect(URL.revokeObjectURL).toHaveBeenCalled();
   });
 

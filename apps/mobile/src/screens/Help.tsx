@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { AnimatePresence, motion } from "framer-motion";
 import { History, MoreVertical } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
@@ -9,6 +10,7 @@ import { ChatTranscript, type TranscriptMessage, type TranscriptSource } from ".
 import { HistorySheet, type HistoryChatSummary } from "../components/HistorySheet";
 import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
 import { announce } from "../components/LiveRegion";
+import { fadeUpVariants, motionDurations, motionEasings, pressFeedback } from "../components/uiMotion";
 import { ChatController, ControllerError, sanitizeControllerError, type ControllerState } from "../services/ai/chatController";
 import { ChatStore } from "../services/ai/chatStore";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, defaultSelection } from "../services/ai/modelPolicy";
@@ -1145,12 +1147,22 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           }}
         />
 
-        {guided !== null && (
-          <section
-            data-testid="guided-panel"
-            aria-label="Guided help"
-            className="flex shrink-0 flex-col gap-3 border-t border-outline-variant bg-surface-container-low px-4 py-4"
-          >
+        {/* The guided panel is a transient state of this screen: it rises in
+            from below the transcript and leaves the same way, so switching
+            between guided and free chat never snaps. */}
+        <AnimatePresence initial={false}>
+          {guided !== null && (
+            <motion.section
+              key="guided-panel"
+              data-testid="guided-panel"
+              aria-label="Guided help"
+              variants={fadeUpVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              transition={{ duration: motionDurations.sheet, ease: motionEasings.out }}
+              className="flex shrink-0 flex-col gap-3 border-t border-outline-variant bg-surface-container-low px-4 py-4"
+            >
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold text-on-surface">{SHORTCUT_LABELS[guided.flow]}</p>
               <button
@@ -1247,20 +1259,23 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
                 </p>
               </div>
             )}
-          </section>
-        )}
+            </motion.section>
+          )}
+        </AnimatePresence>
 
         {guided === null && isEmptyConversation && (
           <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
             {SUGGESTIONS.map((s) => (
-              <button
+              <motion.button
                 key={s}
                 type="button"
                 onClick={() => void sendFreeChat(s)}
+                whileTap={pressFeedback.button}
+                transition={{ duration: motionDurations.instant }}
                 className="min-h-[48px] rounded-full border border-outline-variant px-3 text-xs text-on-surface-variant hover:bg-surface-container"
               >
                 {s}
-              </button>
+              </motion.button>
             ))}
           </div>
         )}
@@ -1268,15 +1283,17 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         {guided === null && isEmptyConversation && (
           <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
             {(GUIDED_FLOWS.filter((f) => f !== "ask") as GuidedFlow[]).map((flow) => (
-              <button
+              <motion.button
                 key={flow}
                 type="button"
                 data-testid={`guided-shortcut-${flow}`}
                 onClick={() => beginGuided(flow)}
+                whileTap={pressFeedback.button}
+                transition={{ duration: motionDurations.instant }}
                 className="min-h-[48px] rounded-full border border-outline px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
               >
                 {SHORTCUT_LABELS[flow]}
-              </button>
+              </motion.button>
             ))}
           </div>
         )}
@@ -1296,9 +1313,22 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
               >
                 How your data is used
               </button>
-              {disclosureOpen && (
-                <p className="pb-1 text-xs text-on-surface-variant">{PRIVACY_COPY}</p>
-              )}
+              {/* Accordion: the copy expands instead of popping into place, and
+                  collapses the same way so the footer never jumps. */}
+              <AnimatePresence initial={false}>
+                {disclosureOpen && (
+                  <motion.p
+                    key="privacy-copy"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+                    className="overflow-hidden pb-1 text-xs text-on-surface-variant"
+                  >
+                    {PRIVACY_COPY}
+                  </motion.p>
+                )}
+              </AnimatePresence>
             </div>
           ))}
 
