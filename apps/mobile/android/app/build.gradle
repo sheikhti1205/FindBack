@@ -64,6 +64,9 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.findback.app"
+        // Release metadata is DERIVED, never duplicated: minSdk/target come
+        // from rootProject.ext (variables.gradle), compileSdk likewise, and
+        // versionName from apps/mobile/package.json (appVersionName below).
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Version sources (audit #29). Single source of truth is the SemVer
@@ -91,6 +94,23 @@ android {
             storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
             keyAlias System.getenv("ANDROID_KEY_ALIAS")
             keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+        }
+    }
+    splits {
+        abi {
+            // Release-only ABI splits: one APK per supported ABI plus a
+            // universal APK; the AAB (bundleRelease) is unaffected and always
+            // built. Debug stays a single unsplit APK: splits enable only when
+            // the Gradle invocation targets a release task. No density or
+            // language splits (no matrices) — keep the artifact set small and
+            // auditable.
+            // NOTE: minifyEnabled/shrinkResources stay OFF (see release
+            // buildType below). Enabling R8 is a separate future change with
+            // its own size-measurement comparison, not a silent flip here.
+            enable gradle.startParameter.taskNames.any { it.toLowerCase().contains("release") }
+            reset()
+            include "armeabi-v7a", "arm64-v8a", "x86_64"
+            universalApk true
         }
     }
     buildTypes {

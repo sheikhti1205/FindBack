@@ -1,11 +1,24 @@
-# FindBack — signed beta release build (APK + AAB + checksums).
+# FindBack — signed beta release build (per-ABI APKs + universal APK + AAB).
 #
-# Triggers: manual dispatch or a version tag (v*). The `gate` job reruns the
-# full CI gate on the exact release commit; the `signed-beta` job then
-# produces the exact signed artifacts the device matrix must test. This
-# workflow NEVER creates the GitHub Release itself — publishing v0.1.0-beta.1
-# as a pre-release is a separate, explicitly authorized step after the matrix
-# passes.
+# TWO MODES:
+#   workflow_dispatch = signed-candidate DRY path for owner testing. Runs the
+#     full presign checks + release gate + build/sign/scan over every APK
+#     variant, uploads Actions artifacts, and STOPS. It NEVER creates a
+#     GitHub Release.
+#   push of a v* tag = real release path. Validates tag == "v"+mobile version
+#     exactly with the checkout pinned to the tagged commit, reruns the full
+#     gate fresh on that commit, builds/signs/scans every APK variant,
+#     writes checksums + release-manifest.json, then creates a PRERELEASE
+#     GitHub Release carrying those files.
+#
+# This workflow file must be merged to the default branch BEFORE any v* tag
+# is pushed; a tag built from a commit without this file is not a release.
+# (Merging/tagging are owner actions — this change only provides the file.)
+#
+# Version policy: versions are ASSERTED, never bumped here. Root package.json
+# version must equal apps/mobile/package.json version on every run; tag builds
+# additionally require tag == "v"+mobile version and a clean tree. Any
+# mismatch fails BEFORE signing.
 #
 # Required repo configuration:
 #   Variables: VITE_SUPABASE_URL, VITE_SENTRY_DSN (real https DSN — Sentry is
@@ -15,7 +28,10 @@
 #              value is masked in logs), SENTRY_AUTH_TOKEN (CI secret for the
 #              future sourcemap upload — never a VITE_* var, never in repo files),
 #              ANDROID_KEYSTORE_BASE64,
-#              ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#              ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD,
+#              ANDROID_SIGNING_CERT_SHA256 (exact expected SHA-256 fingerprint
+#              of the release certificate, hex with or without colons; pinned
+#              on EVERY APK variant plus the AAB — values are never echoed)
 #   Environment `release` (protection rules configured in repo settings).
 
 name: Release
@@ -25,10 +41,44 @@ on:
   push:
     tags: ["v*"]
 
+# Default read-only. ONLY the `publish` job (tag builds) escalates to
+# contents:write for the prerelease creation — everything before it stays
+# read-only so a compromised build step cannot publish.
 permissions:
   contents: read
 
 jobs:
+  presign-checks:
+    name: Version, tag & convention checks (fail before signing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Version sync + tag/commit pinning + clean tree
+        # Untagged (dispatch) runs assert root == mobile version and a clean
+        # tree. Tag runs additionally assert tag == "v"+mobile version exactly
+        # and HEAD == the tagged commit. Read-only; never bumps versions.
+        run: node scripts/check-version-sync.mjs --ref "${{ github.ref }}"
+      - name: Commit-message convention over the release range
+        # Prospective only: merge/revert/generated commits pass gracefully.
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+            if [[ -n "$PREV" ]]; then
+              node scripts/check-commit-messages.mjs --range "$PREV...$TAG"
+            else
+              node scripts/check-commit-messages.mjs --rev "$TAG"
+            fi
+          else
+            node scripts/check-commit-messages.mjs --count 1
+          fi
+
   gate:
     name: Full release gate
     runs-on: ubuntu-latest
@@ -96,11 +146,11 @@ jobs:
         if: always()
         run: docker logs findback-gate 2>/dev/null || true
 
-  signed-beta:
-    name: Signed APK + AAB
+  signed-build:
+    name: Signed APKs + AAB (+ manifest)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: gate
+    needs: [presign-checks, gate]
     environment: release
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
@@ -213,7 +263,7 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/findback-release.jks
-      - name: Signed assembleRelease + bundleRelease
+      - name: Signed assembleRelease + bundleRelease (per-ABI + universal APKs, AAB)
         run: cd apps/mobile/android && ./gradlew :app:assembleRelease :app:bundleRelease
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/findback-release.jks
@@ -223,38 +273,100 @@ jobs:
       - name: Remove keystore material
         if: always()
         run: rm -f "${{ runner.temp }}/findback-release.jks"
-      - name: Verify APK signature (V2, CN=FindBack)
+      - name: Verify EVERY APK variant (signature pin, identity, ABI, secrets, config)
+        # Any failure here blocks the release. Fingerprint values are never
+        # echoed — the script prints match/mismatch only.
+        # EXPECTED_VERSION_NAME/CODE are exported in-shell (derived, not
+        # duplicated): versionName from apps/mobile/package.json, versionCode
+        # from the same 100000 + commit-count formula build.gradle uses.
         run: |
-          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          [ -n "$SDK" ] || { echo "no Android SDK (ANDROID_HOME/ANDROID_SDK_ROOT empty)"; exit 1; }
-          APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -name apksigner -type f | sort | tail -1)
-          [ -n "$APKSIGNER" ] || { echo "apksigner not found under $SDK/build-tools"; exit 1; }
-          echo "using $APKSIGNER"
-          # apksigner exit code is the real check; digest lines are redacted, only DN is echoed.
-          # NOTE: the "Verified using … scheme" lines require --verbose.
-          "$APKSIGNER" verify --verbose --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
-            | sed -E 's/(digest:).*/\1 <redacted>/' | tee /tmp/apksig.txt
-          grep -q 'Verified using v2 scheme.*true' /tmp/apksig.txt || { echo "V2 signature missing"; exit 1; }
-          grep -q 'certificate DN: CN=FindBack' /tmp/apksig.txt || { echo "signer is not CN=FindBack"; exit 1; }
-          echo "signature verified: V2, CN=FindBack"
-      - name: Strict APK scan (signed release APK)
-        run: npm run scan:apk -- --strict apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-      - name: Verify Supabase and Sentry in signed APK
-        run: node scripts/check-mobile-build-config.mjs --apk apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-      - name: Checksums + artifact names
+          export EXPECTED_VERSION_NAME="$(node -p "require('./apps/mobile/package.json').version")"
+          export EXPECTED_VERSION_CODE="$((100000 + $(git rev-list --count HEAD)))"
+          bash scripts/verify-release-apks.sh \
+            --apk-dir apps/mobile/android/app/build/outputs/apk/release \
+            --aab apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+        env:
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+          EXPECTED_APP_ID: com.findback.app
+      - name: Record artifact sizes (R8 still OFF)
+        # Size-measurement hook only: minifyEnabled/shrinkResources stay false
+        # (enabling R8 is a separate future change with its own before/after
+        # comparison). Sizes land in release-manifest.json `bytes` fields.
         run: |
-          cd apps/mobile/android/app/build/outputs
-          TAG="${GITHUB_REF_NAME:-local}"
-          cp apk/release/app-release.apk "FindBack-${TAG}.apk"
-          cp bundle/release/app-release.aab "FindBack-${TAG}.aab"
-          sha256sum "FindBack-${TAG}.apk" "FindBack-${TAG}.aab" > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          ls -l apps/mobile/android/app/build/outputs/apk/release/*.apk \
+                apps/mobile/android/app/build/outputs/bundle/release/*.aab
+          du -b apps/mobile/android/app/build/outputs/apk/release/*.apk \
+                apps/mobile/android/app/build/outputs/bundle/release/*.aab
+      - name: Stage release files (friendly names, flat dir)
+        # Gradle split names (app-<abi>-release.apk, app-universal-release.apk)
+        # become FindBack-<TAG>-<abi|universal>.apk so the Release page and the
+        # manifest agree. Unexpected APK names fail closed here.
+        run: |
+          OUT=apps/mobile/android/app/build/outputs
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then TAG="${GITHUB_REF_NAME}"; else TAG="dispatch-${GITHUB_SHA:0:12}"; fi
+          echo "ART_TAG=$TAG" >> "$GITHUB_ENV"
+          rm -rf release-stage && mkdir -p release-stage
+          for APK in "$OUT"/apk/release/*.apk; do
+            BASE="$(basename "$APK")"
+            case "$BASE" in
+              app-arm64-v8a-release.apk)     DEST="FindBack-${TAG}-arm64-v8a.apk" ;;
+              app-armeabi-v7a-release.apk)   DEST="FindBack-${TAG}-armeabi-v7a.apk" ;;
+              app-x86_64-release.apk)        DEST="FindBack-${TAG}-x86_64.apk" ;;
+              app-universal-release.apk)     DEST="FindBack-${TAG}-universal.apk" ;;
+              *) echo "unexpected release APK name: $BASE" >&2; exit 1 ;;
+            esac
+            cp "$APK" "release-stage/$DEST"
+          done
+          cp "$OUT/bundle/release/app-release.aab" "release-stage/FindBack-${TAG}.aab"
+          ls -l release-stage/
+      - name: Checksums + release-manifest.json
+        run: |
+          MIN_SDK=$(grep -E '^\s*minSdkVersion' apps/mobile/android/variables.gradle | grep -oE '[0-9]+')
+          TARGET_SDK=$(grep -E '^\s*targetSdkVersion' apps/mobile/android/variables.gradle | grep -oE '[0-9]+')
+          VCODE=$((100000 + $(git rev-list --count HEAD)))
+          SHA12=$(git rev-parse --short=12 HEAD)
+          node scripts/generate-release-manifest.mjs \
+            --tag "$ART_TAG" \
+            --apk-dir release-stage \
+            --aab "release-stage/FindBack-${ART_TAG}.aab" \
+            --version-code "$VCODE" \
+            --git-sha "$SHA12" \
+            --min-sdk "$MIN_SDK" \
+            --target-sdk "$TARGET_SDK" \
+            --out release-stage/release-manifest.json
+          cat release-stage/release-manifest.json
+          (cd release-stage && sha256sum *.apk *.aab release-manifest.json > SHA256SUMS.txt)
+          cat release-stage/SHA256SUMS.txt
       - name: Upload signed artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: findback-signed-${{ github.ref_name }}
-          path: |
-            apps/mobile/android/app/build/outputs/FindBack-*.apk
-            apps/mobile/android/app/build/outputs/FindBack-*.aab
-            apps/mobile/android/app/build/outputs/SHA256SUMS.txt
+          name: findback-signed-${{ github.run_id }}
+          path: release-stage/
           retention-days: 90
+
+  publish:
+    name: Publish prerelease (tag builds only)
+    # The ONLY job with write permission, and it runs ONLY for v* tags after
+    # every variant passed verification. workflow_dispatch stops at artifacts.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: signed-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: findback-signed-${{ github.run_id }}
+          path: release-files
+      - name: Create prerelease GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ls -l release-files/
+          (cd release-files && sha256sum -c SHA256SUMS.txt)
+          gh release create "$TAG" --prerelease \
+            --title "FindBack $TAG (beta)" \
+            --notes "Prerelease signed beta. See release-manifest.json for versionCode, git SHA, and per-artifact checksums." \
+            release-files/*.apk release-files/*.aab release-files/release-manifest.json release-files/SHA256SUMS.txt
