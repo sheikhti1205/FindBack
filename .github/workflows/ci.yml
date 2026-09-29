@@ -7,6 +7,36 @@ on:
   workflow_dispatch:
 
 jobs:
+  conventions:
+    name: Commit messages & version sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full history so the PR/push range resolves; no secrets, no deps —
+      # both scripts run on Node builtins + git only.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Version sync (root == mobile) + clean tree
+        run: node scripts/check-version-sync.mjs
+      - name: Commit-message convention over new commits
+        # Prospective only: merge/revert/generated commits pass gracefully;
+        # an unresolvable range (e.g. all-zero `before` on branch creation)
+        # falls back to HEAD instead of failing the job.
+        run: |
+          if [[ -n "${{ github.base_ref }}" ]]; then
+            git fetch origin "${{ github.base_ref }}" --depth=50 2>/dev/null || true
+            node scripts/check-commit-messages.mjs --range "origin/${{ github.base_ref }}...HEAD"
+          elif [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" && -n "${{ github.event.before }}" ]]; then
+            node scripts/check-commit-messages.mjs --range "${{ github.event.before }}...${{ github.sha }}" || \
+              node scripts/check-commit-messages.mjs --count 1
+          else
+            node scripts/check-commit-messages.mjs --count 1
+          fi
+
   check:
     name: Lint, typecheck & test
     runs-on: ubuntu-latest
