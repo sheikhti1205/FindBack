@@ -2,7 +2,8 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { defineConfig, loadEnv } from "vite";
+import { loadEnv } from "vite";
+import { defineConfig } from "vitest/config";
 
 // Supabase Auth/Data/Realtime/Storage/Functions are called directly from the
 // app with the publishable key only. The secret key must never reach the mobile
@@ -57,6 +58,17 @@ export default defineConfig(({ command, mode }) => {
   );
   return {
     plugins: [react(), tailwindcss()],
+    // Vitest only (ignored by `vite build`). Full-suite worker load can push
+    // the async photo/publish flows used by the CreateReport suites past
+    // vitest's 5s default test timeout (the suite's own explicit gates already
+    // allow 5s for the same reason), which flaked CI and the release gate.
+    // Raise the ceiling and give testing-library queries matching headroom
+    // rather than weakening any assertion.
+    test: {
+      testTimeout: 20_000,
+      hookTimeout: 20_000,
+      setupFiles: ["./src/test-setup.ts"],
+    },
     server: {
       port: 5173,
       host: true,
