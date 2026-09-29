@@ -78,6 +78,7 @@ describe("Profile motion", () => {
       ["My reports", "/my"],
       ["Help & FAQ", "/help"],
       ["AI Connection", "/ai-connection"],
+      ["AI & Models", "/ai-models"],
       ["About", "/about"],
     ]);
     // Still real anchors — the motion wrapper must not swallow navigation.

@@ -1,13 +1,25 @@
 import type { CredentialHandle, ProviderId } from "./ai/providerContract";
 import type { KeyValueStore } from "./storage";
 
-/** The five BYOK providers. Every vault slot is namespaced by one of these. */
+/**
+ * The ten BYOK providers. Every vault slot is namespaced by one of these.
+ *
+ * AI-024a extends the original five slots (openrouter/openai/anthropic/
+ * google/deepseek) with mistral/groq/xai/cohere/generic. Slot mechanics are
+ * unchanged (PBKDF2/AES-GCM, record version 1, AAD = userId), so keys saved
+ * under the original five slots keep decrypting byte-for-byte.
+ */
 export const SUPPORTED_AI_PROVIDERS: readonly ProviderId[] = [
   "openrouter",
   "openai",
   "anthropic",
   "google",
   "deepseek",
+  "mistral",
+  "groq",
+  "xai",
+  "cohere",
+  "generic",
 ];
 
 const PROVIDER_SET: ReadonlySet<string> = new Set(SUPPORTED_AI_PROVIDERS);

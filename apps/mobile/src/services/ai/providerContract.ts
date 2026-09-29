@@ -13,7 +13,7 @@
  * transport knob).
  */
 
-export type ProviderId = "openrouter" | "openai" | "anthropic" | "google" | "deepseek" | "mistral" | "groq" | "xai" | "cohere" | "generic";
+export type ProviderId = "openrouter" | "openai" | "anthropic" | "google" | "deepseek" | "mistral" | "groq" | "xai" | "cohere" | "generic" | "offline";
 
 export type TaskScope =
   | "general"

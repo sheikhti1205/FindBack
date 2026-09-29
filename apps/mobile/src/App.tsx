@@ -20,6 +20,7 @@ import { About } from "./screens/About";
 import { MyPosts } from "./screens/MyPosts";
 import { Help } from "./screens/Help";
 import { AiConnection } from "./screens/AiConnection";
+import { AiModels } from "./screens/AiModels";
 import { Notifications } from "./screens/Notifications";
 
 export function App() {
@@ -70,6 +71,7 @@ export function App() {
               <Route path="/about" element={<About />} />
               <Route path="/help" element={<Help />} />
               <Route path="/ai-connection" element={<AiConnection />} />
+              <Route path="/ai-models" element={<AiModels />} />
               <Route path="/offline-ai" element={<Navigate to="/ai-connection" replace />} />
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />

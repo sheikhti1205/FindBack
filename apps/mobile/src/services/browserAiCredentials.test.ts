@@ -54,26 +54,37 @@ describe("browser BYOK storage", () => {
   });
 });
 
-const FIVE_PROVIDERS: readonly ProviderId[] = ["openrouter", "openai", "anthropic", "google", "deepseek"];
+const TEN_PROVIDERS: readonly ProviderId[] = [
+  "openrouter",
+  "openai",
+  "anthropic",
+  "google",
+  "deepseek",
+  "mistral",
+  "groq",
+  "xai",
+  "cohere",
+  "generic",
+];
 const K1_PHRASE = "k1 strong unlock phrase";
 const fakeKey = (provider: string, tag: string): string => `FAKE-K1-KEY-${provider}-${tag}`;
 const bogusProvider = (name: string): ProviderId => name as unknown as ProviderId;
 
-describe("browser five-provider vault (K1)", () => {
-  it("isolates five per-provider namespaces for one account", async () => {
+describe("browser ten-provider vault (K1/AI-024a)", () => {
+  it("isolates ten per-provider namespaces for one account", async () => {
     const backend = store();
     const keys = createBrowserAiCredentials(backend);
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       await keys.connect("alice", fakeKey(provider, "ns1"), { remember: true, passphrase: K1_PHRASE, provider });
     }
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       expect(await keys.get("alice", provider)).toBe(fakeKey(provider, "ns1"));
       expect(keys.hasSaved("alice", provider)).toBe(true);
     }
     expect(await keys.get("alice", "openai")).not.toBe(fakeKey("anthropic", "ns1"));
     expect(await keys.get("alice", "deepseek")).not.toBe(fakeKey("google", "ns1"));
     const dump = backend.dump();
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       expect(dump).not.toContain(fakeKey(provider, "ns1"));
     }
     expect(dump).not.toContain(K1_PHRASE);
@@ -92,10 +103,10 @@ describe("browser five-provider vault (K1)", () => {
     expect(dump).not.toContain(fakeKey("openai", "bob1"));
   });
 
-  it("removes exactly one provider slot; account logout clears all five and nobody else's", async () => {
+  it("removes exactly one provider slot; account logout clears all ten and nobody else's", async () => {
     const backend = store();
     const keys = createBrowserAiCredentials(backend);
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       await keys.connect("alice", fakeKey(provider, "rm1"), { remember: true, passphrase: K1_PHRASE, provider });
     }
     await keys.connect("bob", fakeKey("openai", "rm1"), { remember: true, passphrase: K1_PHRASE, provider: "openai" });
@@ -107,7 +118,7 @@ describe("browser five-provider vault (K1)", () => {
     expect(await keys.get("bob", "openai")).toBe(fakeKey("openai", "rm1"));
 
     await keys.removeAccount("alice");
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       expect(await keys.get("alice", provider)).toBeNull();
       expect(keys.hasSaved("alice", provider)).toBe(false);
     }
@@ -155,5 +166,76 @@ describe("browser five-provider vault (K1)", () => {
     );
     expect(await keys.get("alice", bogusProvider("bogus"))).toBeNull();
     expect(keys.hasSaved("alice", bogusProvider("bogus"))).toBe(false);
+  });
+});
+
+describe("browser AI-024a slots: backward compat + five new providers", () => {
+  function keyedStore() {
+    const contents = new Map<string, string>();
+    return {
+      getItem: (key: string) => contents.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        contents.set(key, value);
+      },
+      removeItem: (key: string) => {
+        contents.delete(key);
+      },
+      keys: () => [...contents.keys()],
+      dump: () => JSON.stringify([...contents.values()]),
+    };
+  }
+
+  const NEW_FIVE: readonly ProviderId[] = ["mistral", "groq", "xai", "cohere", "generic"];
+
+  it("keeps the legacy openrouter record key readable after the extension", async () => {
+    const backend = keyedStore();
+    const keys = createBrowserAiCredentials(backend);
+    await keys.connect("alice", fakeKey("openrouter", "legacy1"), {
+      remember: true,
+      passphrase: K1_PHRASE,
+      provider: "openrouter",
+    });
+    // Exact legacy record key: previously saved OpenRouter keys stay readable.
+    expect(backend.keys()).toEqual(["findback.ai.openrouter.v1.alice"]);
+    const restarted = createBrowserAiCredentials(backend);
+    await restarted.unlock("alice", K1_PHRASE, "openrouter");
+    expect(await restarted.get("alice", "openrouter")).toBe(fakeKey("openrouter", "legacy1"));
+  });
+
+  it("gives each new provider a disjoint encrypted slot with opaque handles", async () => {
+    const backend = keyedStore();
+    const keys = createBrowserAiCredentials(backend);
+    for (const provider of NEW_FIVE) {
+      await keys.connect("alice", fakeKey(provider, "new1"), {
+        remember: true,
+        passphrase: K1_PHRASE,
+        provider,
+      });
+    }
+    expect(backend.keys().sort()).toEqual(
+      NEW_FIVE.map((provider) => `findback.ai.${provider}.v1.alice`).sort(),
+    );
+    // Cross-slot isolation: no slot leaks another slot's key.
+    expect(await keys.get("alice", "mistral")).toBe(fakeKey("mistral", "new1"));
+    expect(await keys.get("alice", "mistral")).not.toBe(fakeKey("groq", "new1"));
+    expect(await keys.get("alice", "generic")).toBe(fakeKey("generic", "new1"));
+    // Ciphertext only on disk: no key material, no passphrase.
+    const dump = backend.dump();
+    for (const provider of NEW_FIVE) {
+      expect(dump).not.toContain(fakeKey(provider, "new1"));
+    }
+    expect(dump).not.toContain(K1_PHRASE);
+    // Independent unlock after restart, per slot.
+    const restarted = createBrowserAiCredentials(backend);
+    expect(await restarted.get("alice", "groq")).toBeNull();
+    await restarted.unlock("alice", K1_PHRASE, "groq");
+    expect(await restarted.get("alice", "groq")).toBe(fakeKey("groq", "new1"));
+    expect(await restarted.get("alice", "xai")).toBeNull();
+    // Opaque handles for new slots carry no key material.
+    for (const provider of NEW_FIVE) {
+      const handle = keys.credentialHandle("alice", provider);
+      expect(handle.provider).toBe(provider);
+      expect(JSON.stringify(handle)).not.toContain(fakeKey(provider, "new1"));
+    }
   });
 });

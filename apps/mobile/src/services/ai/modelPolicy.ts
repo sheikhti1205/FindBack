@@ -166,6 +166,12 @@ export type FallbackPlanInput = {
   readonly fingerprintOf: (record: ModelRecord) => string;
   readonly hasCredential: (provider: ProviderId) => boolean;
   readonly excludeModelIds?: readonly string[];
+  /**
+   * Offline rows are skipped unless this is explicitly true AND the caller
+   * reports an offline credential. The offline adapter stays unwired until
+   * the native bridge lands, so the default (false) never routes there.
+   */
+  readonly allowOffline?: boolean;
 };
 
 export type FallbackPlanResult =
@@ -213,6 +219,7 @@ export function planModelFallback(input: FallbackPlanInput): FallbackPlanResult 
       record.id !== input.currentModelId &&
       !excluded.has(record.id) &&
       record.entitlement !== "blocked" &&
+      (record.provider !== "offline" || input.allowOffline === true) &&
       input.hasCredential(record.provider) &&
       (!needsVision || supportsImages(record)) &&
       priceGate(record),
@@ -264,6 +271,7 @@ export function planModelFallback(input: FallbackPlanInput): FallbackPlanResult 
         record.id !== input.currentModelId &&
         !excluded.has(record.id) &&
         record.provider !== current.provider &&
+        (record.provider !== "offline" || input.allowOffline === true) &&
         record.entitlement !== "blocked" &&
         input.hasCredential(record.provider) &&
         supportsImages(record) &&

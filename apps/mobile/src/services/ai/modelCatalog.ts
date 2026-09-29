@@ -28,8 +28,10 @@
 import {
   isDecimalAmount,
   priceClassFromLines,
+  resolveContextTokens,
   type ModelRecord,
   type PriceLine,
+  type ProviderId,
 } from "./providerContract";
 
 export const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models" as const;
@@ -317,4 +319,180 @@ export function priceFingerprint(record: ModelRecord): string {
 export function getNextPageLink(response: OpenRouterModelsResponse): string | null {
   const next = response?.links?.next;
   return typeof next === "string" && next.trim() !== "" ? next : null;
+}
+
+/**
+ * Multi-provider catalogue expansion (AI-024b). Shapes mirror the adapter
+ * `listModels` contracts: mistral/groq/xai/generic list endpoints return
+ * id-only rows with no pricing, modality, or window fields, so those stay
+ * `unknown`/text-only here exactly as the adapters report them — the mobile
+ * side never invents what the envelope did not carry. Cohere advertises no
+ * list endpoint, so it (and generic-before-baseURL) is covered by an explicit
+ * caller-supplied fixed fallback, never a guessed id.
+ *
+ * OpenAI/DeepSeek are relay-backed: direct BYOK stays banned, so their
+ * records are provider-route rows (id is the provider route, not a direct
+ * model — the relay server pins the model), priced `unknown` (the client
+ * cannot see server-side fees, so they are never consentable and never
+ * silently selected in free-only mode). `isRelayRouted` marks them;
+ * no key material is carried anywhere here.
+ */
+
+/** Providers served through the server-key relay instead of direct BYOK. */
+export type RelayRoutedProvider = "openai" | "deepseek";
+
+export const RELAY_ROUTED_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>([
+  "openai",
+  "deepseek",
+]);
+
+/** True for relay-routed rows: served via the server relay, never direct. */
+export function isRelayRouted(record: ModelRecord): boolean {
+  return RELAY_ROUTED_PROVIDERS.has(record.provider);
+}
+
+/**
+ * One relay-route row. The id is the provider route (the relay server pins
+ * the model); pricing is unknown by construction, so policy can never
+ * consent to it and free-only mode can never silently select it.
+ */
+export function relayRouteRecord(provider: RelayRoutedProvider, retrievedAt?: string): ModelRecord {
+  return {
+    provider,
+    id: provider,
+    input: ["text"],
+    output: ["text"],
+    prices: [],
+    priceClass: "unknown",
+    retrievedAt: retrievedAt ?? new Date().toISOString(),
+    entitlement: "untested",
+  };
+}
+
+export type FixedFallbackInput = {
+  /** Provider with no usable list endpoint (e.g. cohere, generic-before-baseURL). */
+  readonly provider: ProviderId;
+  /** Caller-verified model ids. Never guessed here — the caller supplies them. */
+  readonly ids: readonly string[];
+  readonly retrievedAt?: string;
+  readonly blockedIds?: readonly string[];
+  readonly verifiedIds?: readonly string[];
+};
+
+/**
+ * Fixed-catalogue fallback for providers with no list endpoint. Every row is
+ * `unknown`-priced text-only: honest about what is not known, never a free
+ * or paid claim.
+ */
+export function fixedFallbackCatalog(input: FixedFallbackInput): readonly ModelRecord[] {
+  const retrievedAt =
+    typeof input.retrievedAt === "string" && input.retrievedAt.trim() !== ""
+      ? input.retrievedAt
+      : new Date().toISOString();
+  const rows = input.ids
+    .filter((id): id is string => typeof id === "string" && id.trim() !== "")
+    .map((id) => ({
+      provider: input.provider,
+      id,
+      input: ["text"],
+      output: ["text"],
+      prices: [],
+      priceClass: "unknown" as const,
+      retrievedAt,
+      entitlement: "untested" as const,
+    }));
+  return applyEntitlements(rows, input);
+}
+
+export type EntitlementStamps = {
+  readonly blockedIds?: readonly string[];
+  readonly verifiedIds?: readonly string[];
+};
+
+/** Stamp blocked/verified entitlements onto listed rows; adds no rows. */
+export function applyEntitlements(
+  records: readonly ModelRecord[],
+  stamps: EntitlementStamps = {},
+): readonly ModelRecord[] {
+  const blocked = new Set(stamps.blockedIds ?? []);
+  const verified = new Set(stamps.verifiedIds ?? []);
+  return records.map((record) => ({
+    ...record,
+    entitlement: blocked.has(record.id) ? ("blocked" as const) : verified.has(record.id) ? ("verified" as const) : record.entitlement,
+  }));
+}
+
+/**
+ * Fast-filter heuristic for the catalogue sheet: free, text-only, known
+ * context window. This is a rough size proxy, NOT a measured latency claim —
+ * the record shape carries no timing data, so nothing here promises speed.
+ */
+export function isFastRecord(record: ModelRecord): boolean {
+  if (record.priceClass !== "free") return false;
+  if (record.input.includes("image")) return false;
+  return resolveContextTokens(record) !== undefined;
+}
+
+export type AuthorizedCatalogDeps = {
+  /** Owning account; only its vault slots are ever probed. */
+  readonly accountId: string;
+  /** BYOK providers to probe (offline is skipped here — see below). */
+  readonly providers: readonly ProviderId[];
+  /** Vault presence probe; false/absent means no rows for that provider. */
+  readonly hasCredential: (provider: ProviderId) => Promise<boolean>;
+  /** Registry-backed list fetch per provider; rejections are skipped, never retried here. */
+  readonly listModels: (provider: ProviderId, signal?: AbortSignal) => Promise<readonly ModelRecord[]>;
+  /** Append relay-route rows for openai/deepseek. Defaults to true. */
+  readonly includeRelayRoutes?: boolean;
+  /** Relay providers to route; defaults to openai + deepseek. */
+  readonly relayProviders?: readonly RelayRoutedProvider[];
+  readonly retrievedAt?: string;
+  readonly blockedIds?: readonly string[];
+  readonly verifiedIds?: readonly string[];
+  readonly signal?: AbortSignal;
+};
+
+/**
+ * Assemble the authorized catalogue: listed rows for providers whose vault
+ * slot holds a key, plus relay routes when enabled. Per-provider failures
+ * yield no rows (never invented); ids dedupe by provider+id. Offline is
+ * deliberately skipped — its adapter stays unwired until the native bridge
+ * lands, and readiness is surfaced separately and honestly.
+ */
+export async function loadAuthorizedCatalog(
+  deps: AuthorizedCatalogDeps,
+): Promise<readonly ModelRecord[]> {
+  const seen = new Set<string>();
+  const out: ModelRecord[] = [];
+  const push = (record: ModelRecord): void => {
+    const key = `${record.provider}/${record.id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(record);
+  };
+  for (const provider of deps.providers) {
+    if (provider === "offline") continue;
+    let present = false;
+    try {
+      present = await deps.hasCredential(provider);
+    } catch {
+      continue;
+    }
+    if (!present) continue;
+    try {
+      const rows = await deps.listModels(provider, deps.signal);
+      for (const row of applyEntitlements(rows, deps)) push(row);
+    } catch {
+      // Unreachable/unauthorized provider: no rows, never guessed.
+    }
+  }
+  if (deps.includeRelayRoutes !== false) {
+    const retrievedAt =
+      typeof deps.retrievedAt === "string" && deps.retrievedAt.trim() !== ""
+        ? deps.retrievedAt
+        : new Date().toISOString();
+    const relay: readonly RelayRoutedProvider[] = deps.relayProviders ?? ["openai", "deepseek"];
+    for (const provider of relay) push(relayRouteRecord(provider, retrievedAt));
+  }
+  return out;
 }

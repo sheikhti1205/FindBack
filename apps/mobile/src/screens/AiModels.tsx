@@ -1,0 +1,619 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router";
+import { useAuth } from "../auth";
+import { BackButton } from "../components/BackButton";
+import { Button } from "../components/Button";
+import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
+import { announce } from "../components/LiveRegion";
+import { aiCredentials, SUPPORTED_AI_PROVIDERS } from "../services/aiCredentials";
+import { createProviderAdapter } from "../services/ai/providerRegistry";
+import {
+  createRelayClient,
+  RELAY_PROVIDERS,
+  type RelayProvider,
+} from "../services/ai/relayClient";
+import {
+  loadAuthorizedCatalog,
+  priceFingerprint,
+} from "../services/ai/modelCatalog";
+import {
+  DEFAULT_MODEL_ID,
+  defaultSelection,
+  planModelFallback,
+} from "../services/ai/modelPolicy";
+import type { ModelRecord, ProviderId } from "../services/ai/providerContract";
+import { getSupabase } from "../services/supabaseClient";
+
+/**
+ * Assistant mode (AI-022): which transports the assistant may use.
+ * Persisted per account; Help honors it at send time (offline-only fails
+ * closed with no network). Unknown stored values fall back to `auto`.
+ */
+export type AssistantMode = "auto" | "offline-first" | "offline-only" | "cloud-only";
+
+export const ASSISTANT_MODES: readonly AssistantMode[] = [
+  "auto",
+  "offline-first",
+  "offline-only",
+  "cloud-only",
+];
+
+const ASSISTANT_MODE_COPY: Record<AssistantMode, { label: string; detail: string }> = {
+  auto: {
+    label: "Auto",
+    detail: "The picked model decides. No transport is forced or refused.",
+  },
+  "offline-first": {
+    label: "Offline-first",
+    detail: "On-device answers are preferred wherever one is ready.",
+  },
+  "offline-only": {
+    label: "Offline-only",
+    detail: "Never uses the network for answers. Cloud models refuse without sending anything.",
+  },
+  "cloud-only": {
+    label: "Cloud-only",
+    detail: "Never attempts on-device answers. Offline rows refuse without running anything.",
+  },
+};
+
+export function assistantModeKey(accountId: string): string {
+  return `findback.ai.assistantMode.v1.${accountId}`;
+}
+
+function isAssistantMode(value: unknown): value is AssistantMode {
+  return (
+    value === "auto" ||
+    value === "offline-first" ||
+    value === "offline-only" ||
+    value === "cloud-only"
+  );
+}
+
+export function loadAssistantMode(accountId: string): AssistantMode {
+  try {
+    const raw = globalThis.localStorage?.getItem(assistantModeKey(accountId)) ?? null;
+    if (isAssistantMode(raw)) return raw;
+  } catch {
+    // Storage unavailable or blocked: fail closed to the default.
+  }
+  return "auto";
+}
+
+export function saveAssistantMode(accountId: string, mode: AssistantMode): void {
+  try {
+    globalThis.localStorage?.setItem(assistantModeKey(accountId), mode);
+  } catch {
+    // Persistence is best effort; the in-memory choice still applies.
+  }
+}
+
+const PROVIDER_LABELS: Record<ProviderId, string> = {
+  openrouter: "OpenRouter",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  google: "Google",
+  deepseek: "DeepSeek",
+  mistral: "Mistral",
+  groq: "Groq",
+  xai: "xAI",
+  cohere: "Cohere",
+  generic: "Custom endpoint",
+  offline: "On-device",
+};
+
+/** Display-only key tail: never persisted, logged, or sent anywhere. */
+export function maskKeyTail(value: string | null): string | null {
+  const trimmed = (value ?? "").trim();
+  if (trimmed.length < 4) return null;
+  return `••••${trimmed.slice(-4)}`;
+}
+
+function isRelayProvider(provider: ProviderId): provider is RelayProvider {
+  return (RELAY_PROVIDERS as readonly ProviderId[]).includes(provider);
+}
+
+/**
+ * Honest offline status copy. The offline adapter is deliberately unwired
+ * from the registry and vault until the native bridge lands, so the seam
+ * refuses; only a not-available refusal is surfaced verbatim, everything
+ * else normalizes to the fixed not-available line (never an internal
+ * unknown-provider message).
+ */
+export const OFFLINE_NOT_AVAILABLE = "Offline AI is not available in this build.";
+
+export function honestOfflineDetail(error: unknown): string {
+  if (error instanceof Error && /not available in this build/i.test(error.message)) {
+    return error.message;
+  }
+  return OFFLINE_NOT_AVAILABLE;
+}
+
+export type AiModelsProps = {
+  /** Account the vault slots and mode are scoped to (defaults to the signed-in user). */
+  readonly accountId?: string;
+  /** Runtime catalogue source; production loads via vault + registry below. */
+  readonly listCatalog?: () => Promise<readonly ModelRecord[]>;
+  /** Relay probe; defaults to a session-authenticated call carrying no key material. */
+  readonly relayChat?: (input: {
+    provider: RelayProvider;
+    text: string;
+    signal?: AbortSignal;
+  }) => Promise<{ text: string }>;
+};
+
+type SlotState = {
+  connected: boolean;
+  saved: boolean;
+  masked: string | null;
+};
+
+type ProbeState = {
+  phase: "idle" | "testing" | "ready" | "error";
+  notice: string | null;
+};
+
+const IDLE_PROBE: ProbeState = { phase: "idle", notice: null };
+
+export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
+  const { user } = useAuth();
+  const account = accountId ?? user?.id ?? "local";
+
+  const [mode, setMode] = useState<AssistantMode>(() => loadAssistantMode(account));
+  const [slots, setSlots] = useState<Record<string, SlotState>>({});
+  const [slotsLoading, setSlotsLoading] = useState(true);
+  const [catalog, setCatalog] = useState<readonly ModelRecord[]>([]);
+  const [retrievedAt, setRetrievedAt] = useState<string | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [offlineDetail, setOfflineDetail] = useState<string | null>(null);
+  const [probes, setProbes] = useState<Record<string, ProbeState>>({});
+  const [busyProvider, setBusyProvider] = useState<ProviderId | null>(null);
+  const [removing, setRemoving] = useState<ProviderId | null>(null);
+
+  // Account switch: mode and slots never cross accounts.
+  useEffect(() => {
+    setMode(loadAssistantMode(account));
+    setProbes({});
+  }, [account]);
+
+  useEffect(() => {
+    let alive = true;
+    setSlotsLoading(true);
+    const read = async () => {
+      const next: Record<string, SlotState> = {};
+      for (const provider of SUPPORTED_AI_PROVIDERS) {
+        try {
+          const handle = aiCredentials.credentialHandle(account, provider);
+          const [key, saved] = await Promise.all([
+            aiCredentials.get(handle.accountId, handle.provider),
+            aiCredentials.hasCredential(handle),
+          ]);
+          next[provider] = {
+            connected: key !== null,
+            saved,
+            masked: maskKeyTail(key),
+          };
+        } catch {
+          next[provider] = { connected: false, saved: false, masked: null };
+        }
+      }
+      if (alive) {
+        setSlots(next);
+        setSlotsLoading(false);
+      }
+    };
+    void read();
+    return () => {
+      alive = false;
+    };
+  }, [account]);
+
+  // Offline honesty comes from the registry seam itself: the adapter stays
+  // unwired until the native bridge lands, so the seam refuses and the
+  // status stays not-available. The refusal wording is normalized here so a
+  // registry unknown-provider message never leaks as the user-facing status.
+  useEffect(() => {
+    let detail: string | null = null;
+    try {
+      createProviderAdapter("offline", { accountId: account, resolveKey: async () => null });
+      detail = null;
+    } catch (e) {
+      detail = honestOfflineDetail(e);
+    }
+    setOfflineDetail(detail);
+  }, [account]);
+
+  useEffect(() => {
+    let alive = true;
+    setCatalogLoading(true);
+    setCatalogError(null);
+    const load = async () => {
+      try {
+        if (listCatalog !== undefined) {
+          const records = await listCatalog();
+          if (alive) {
+            setCatalog(records);
+            setRetrievedAt(records[0]?.retrievedAt ?? new Date().toISOString());
+          }
+          return;
+        }
+        let includeRelayRoutes = false;
+        try {
+          const { data } = await getSupabase().auth.getSession();
+          includeRelayRoutes =
+            data.session?.user?.id !== undefined && data.session.user.id !== null;
+        } catch {
+          includeRelayRoutes = false;
+        }
+        const records = await loadAuthorizedCatalog({
+          accountId: account,
+          providers: SUPPORTED_AI_PROVIDERS,
+          hasCredential: async (provider: ProviderId) => {
+            try {
+              return await aiCredentials.hasCredential(
+                aiCredentials.credentialHandle(account, provider),
+              );
+            } catch {
+              return false;
+            }
+          },
+          listModels: async (provider: ProviderId, signal?: AbortSignal) => {
+            const adapter = createProviderAdapter(provider, {
+              accountId: account,
+              resolveKey: (id, slot) => aiCredentials.get(id, slot),
+            });
+            const list = adapter.listModels;
+            if (list === undefined) return [];
+            return list(signal);
+          },
+          includeRelayRoutes,
+          retrievedAt: new Date().toISOString(),
+        });
+        if (!alive) return;
+        setCatalog(records);
+        setRetrievedAt(new Date().toISOString());
+      } catch (e) {
+        if (alive) {
+          setCatalogError(
+            e instanceof Error ? e.message : "Could not load the model catalogue.",
+          );
+        }
+      } finally {
+        if (alive) setCatalogLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      alive = false;
+    };
+  }, [account, listCatalog]);
+
+  function chooseMode(next: AssistantMode) {
+    setMode(next);
+    saveAssistantMode(account, next);
+    announce(`Assistant mode ${ASSISTANT_MODE_COPY[next].label}.`);
+  }
+
+  async function refreshSlots() {
+    const next: Record<string, SlotState> = {};
+    for (const provider of SUPPORTED_AI_PROVIDERS) {
+      try {
+        const handle = aiCredentials.credentialHandle(account, provider);
+        const [key, saved] = await Promise.all([
+          aiCredentials.get(handle.accountId, handle.provider),
+          aiCredentials.hasCredential(handle),
+        ]);
+        next[provider] = {
+          connected: key !== null,
+          saved,
+          masked: maskKeyTail(key),
+        };
+      } catch {
+        next[provider] = { connected: false, saved: false, masked: null };
+      }
+    }
+    setSlots(next);
+  }
+
+  async function removeProvider(provider: ProviderId) {
+    if (removing !== null) return;
+    setRemoving(provider);
+    try {
+      await aiCredentials.remove(account, provider);
+      await refreshSlots();
+      announce(`${PROVIDER_LABELS[provider]} key removed.`);
+    } catch {
+      setProbes((prev) => ({
+        ...prev,
+        [provider]: { phase: "error", notice: "Could not remove the saved key. Try again." },
+      }));
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  async function testProvider(provider: ProviderId) {
+    if (busyProvider !== null) return;
+    const controller = new AbortController();
+    setBusyProvider(provider);
+    setProbes((prev) => ({ ...prev, [provider]: { phase: "testing", notice: null } }));
+    try {
+      if (isRelayProvider(provider)) {
+        const probe =
+          relayChat ??
+          (async (input: { provider: RelayProvider; text: string; signal?: AbortSignal }) => {
+            const result = await createRelayClient().chat({
+              provider: input.provider,
+              messages: [{ role: "user", content: input.text }],
+              signal: input.signal,
+            });
+            return { text: result.text };
+          });
+        await probe({ provider, text: "Reply with the word ok.", signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setProbes((prev) => ({
+          ...prev,
+          [provider]: {
+            phase: "ready",
+            notice: `Relay ready for ${PROVIDER_LABELS[provider]}. No key is stored on this device.`,
+          },
+        }));
+      } else {
+        const adapter = createProviderAdapter(provider, {
+          accountId: account,
+          resolveKey: (id, slot) => aiCredentials.get(id, slot),
+        });
+        const list = adapter.listModels;
+        if (list === undefined) {
+          setProbes((prev) => ({
+            ...prev,
+            [provider]: {
+              phase: "error",
+              notice: `${PROVIDER_LABELS[provider]} has no list endpoint on this build; sends still use your saved key.`,
+            },
+          }));
+          return;
+        }
+        const rows = await list(controller.signal);
+        if (controller.signal.aborted) return;
+        setProbes((prev) => ({
+          ...prev,
+          [provider]: {
+            phase: "ready",
+            notice:
+              rows.length === 0
+                ? `${PROVIDER_LABELS[provider]} answered, but listed no models for this key.`
+                : `${PROVIDER_LABELS[provider]} answered and listed ${rows.length} ${rows.length === 1 ? "model" : "models"} for this key.`,
+          },
+        }));
+      }
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      const message = e instanceof Error && e.message.trim() !== "" ? e.message : "The test failed. Try again.";
+      setProbes((prev) => ({
+        ...prev,
+        [provider]: { phase: "error", notice: message.slice(0, 300) },
+      }));
+    } finally {
+      if (!controller.signal.aborted) setBusyProvider(null);
+    }
+  }
+
+  const fallbackPreview = useMemo(() => {
+    if (catalog.length === 0) return null;
+    try {
+      const present = new Set<ProviderId>();
+      for (const provider of SUPPORTED_AI_PROVIDERS) {
+        if (slots[provider]?.connected === true) present.add(provider);
+      }
+      const plan = planModelFallback({
+        accountId: account,
+        catalog,
+        task: "general",
+        currentModelId: DEFAULT_MODEL_ID,
+        approvedImageIds: [],
+        mode: "free-only",
+        fingerprintOf: priceFingerprint,
+        hasCredential: (provider) => present.has(provider),
+      });
+      if (plan.ok) {
+        return `If the default route fails, the next route tried is ${plan.record.id} (${PROVIDER_LABELS[plan.record.provider]}).`;
+      }
+      if (plan.reason === "current-unknown") {
+        return "The default route is not in the loaded catalogue, so there is no fallback to plan from.";
+      }
+      return "No compatible fallback route is loaded right now: a failed send keeps your draft.";
+    } catch {
+      return null;
+    }
+  }, [catalog, slots, account]);
+
+  const defaults = useMemo(() => defaultSelection(account), [account]);
+
+  return (
+    <main className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-5">
+      <BackButton fallbackTo="/profile" label="Back to profile" />
+      <header className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold">AI &amp; Models</h1>
+        <p className="text-sm text-on-surface-variant">
+          Modes, on-device status, cloud keys, defaults, and the price-visible catalogue.
+        </p>
+      </header>
+
+      <section aria-label="Assistant mode" className="flex flex-col gap-2">
+        <h2 className="text-base font-semibold">Assistant mode</h2>
+        <div role="radiogroup" aria-label="Assistant mode" className="flex flex-col gap-2">
+          {ASSISTANT_MODES.map((option) => {
+            const checked = mode === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                onClick={() => chooseMode(option)}
+                className="flex min-h-[48px] flex-col justify-center gap-0.5 rounded-m3-sm border border-outline-variant px-3 text-left hover:bg-surface-container"
+              >
+                <span className="text-sm font-medium">
+                  {checked ? "● " : "○ "}
+                  {ASSISTANT_MODE_COPY[option].label}
+                </span>
+                <span className="text-xs text-on-surface-variant">
+                  {ASSISTANT_MODE_COPY[option].detail}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section aria-label="On-device AI" className="flex flex-col gap-2">
+        <h2 className="text-base font-semibold">On-device AI</h2>
+        <p data-testid="ai-offline-status" role="status" className="text-sm text-on-surface-variant">
+          {offlineDetail ?? "No offline models are ready yet."}
+        </p>
+        <p className="text-sm text-on-surface-variant">
+          No on-device models are installed. Storage use is unknown until the native bridge
+          lands — nothing here downloads, verifies, or runs.
+        </p>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled
+            title="On-device downloads arrive with the native bridge."
+          >
+            Download on-device model
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled
+            title="On-device management arrives with the native bridge."
+          >
+            Remove on-device model
+          </Button>
+        </div>
+      </section>
+
+      <section aria-label="Cloud providers" className="flex flex-col gap-3">
+        <h2 className="text-base font-semibold">Cloud providers</h2>
+        {slotsLoading ? (
+          <p role="status" className="text-sm text-on-surface-variant">
+            Reading saved keys…
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {SUPPORTED_AI_PROVIDERS.map((provider) => {
+              const slot = slots[provider] ?? { connected: false, saved: false, masked: null };
+              const probe = probes[provider] ?? IDLE_PROBE;
+              const relay = isRelayProvider(provider);
+              const status = relay
+                ? "Through the server relay. No key is stored on this device."
+                : slot.connected
+                  ? `Connected${slot.masked ? ` · key ending ${slot.masked}` : ""}`
+                  : slot.saved
+                    ? "A saved key is locked. Manage it on the AI Connection screen to unlock."
+                    : "Not connected.";
+              return (
+                <li
+                  key={provider}
+                  data-testid={`ai-provider-${provider}`}
+                  className="flex flex-col gap-2 rounded-m3-sm border border-outline-variant p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{PROVIDER_LABELS[provider]}</span>
+                    <span className="text-xs text-on-surface-variant">{status}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {!relay ? (
+                      <Link
+                        to="/ai-connection"
+                        className="flex min-h-[48px] items-center rounded-m3-sm border border-outline px-3 text-sm font-medium"
+                      >
+                        Manage
+                      </Link>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busyProvider !== null && busyProvider !== provider}
+                      onClick={() => void testProvider(provider)}
+                    >
+                      {busyProvider === provider
+                        ? "Testing…"
+                        : relay
+                          ? "Test relay"
+                          : "Test"}
+                    </Button>
+                    {!relay && (slot.connected || slot.saved) ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={removing !== null}
+                        onClick={() => void removeProvider(provider)}
+                      >
+                        {removing === provider ? "Removing…" : "Remove"}
+                      </Button>
+                    ) : null}
+                  </div>
+                  {probe.notice !== null ? (
+                    <p
+                      aria-live="polite"
+                      className={probe.phase === "error" ? "text-sm text-error" : "text-sm"}
+                    >
+                      {probe.notice}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section aria-label="Defaults and fallback policy" className="flex flex-col gap-2">
+        <h2 className="text-base font-semibold">Defaults and fallback</h2>
+        <p className="text-sm text-on-surface-variant">
+          Default route: {defaults.modelId} · mode: free-only. Paid or unknown-price routes
+          always need explicit per-model, per-price confirmation — a key alone is not consent.
+        </p>
+        <ul className="flex list-disc flex-col gap-1 pl-5 text-sm text-on-surface-variant">
+          <li>Free-only sends never move to a paid or variable-price route.</li>
+          <li>With attached photos, only same-provider vision-capable routes qualify.</li>
+          <li>Blocked routes and providers without a connected key are skipped.</li>
+          <li>Relay routes are served through the server relay, never with a key on this device.</li>
+        </ul>
+        {fallbackPreview !== null ? (
+          <p role="status" className="text-sm">
+            {fallbackPreview}
+          </p>
+        ) : null}
+      </section>
+
+      <section aria-label="Model catalogue" className="flex flex-col gap-2">
+        <h2 className="text-base font-semibold">Model catalogue</h2>
+        {catalogLoading ? (
+          <p role="status" className="text-sm text-on-surface-variant">
+            Loading models…
+          </p>
+        ) : null}
+        {catalogError !== null ? (
+          <p role="alert" className="text-sm text-error">
+            {catalogError}
+          </p>
+        ) : null}
+        {!catalogLoading && catalogError === null && catalog.length === 0 ? (
+          <p className="text-sm text-on-surface-variant">
+            No models loaded. Connect a key on the AI Connection screen to unlock its catalogue,
+            or sign in for relay routes.
+          </p>
+        ) : null}
+        {catalog.length > 0 ? (
+          <ModelCatalogSheet models={catalog} retrievedAt={retrievedAt} offlineDetail={offlineDetail} />
+        ) : null}
+      </section>
+    </main>
+  );
+}

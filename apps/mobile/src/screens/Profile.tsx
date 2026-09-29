@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useState } from "react";
-import { CheckCircle2, LogOut, ShieldQuestion, FileStack, KeyRound, Info, Pencil } from "lucide-react";
+import { CheckCircle2, LogOut, ShieldQuestion, FileStack, KeyRound, Info, Pencil, SlidersHorizontal } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
@@ -83,6 +83,14 @@ export function Profile() {
         >
           <KeyRound size={18} aria-hidden />
           AI Connection
+        </MotionLink>
+        <MotionLink
+          to="/ai-models"
+          whileTap={pressFeedback.button}
+          className="flex min-h-[48px] items-center gap-3 rounded-m3-md border border-outline-variant px-4 text-sm font-medium hover:bg-surface-container"
+        >
+          <SlidersHorizontal size={18} aria-hidden />
+          AI &amp; Models
         </MotionLink>
         <MotionLink
           to="/about"

@@ -8,7 +8,19 @@ vi.mock("@capacitor/core", () => ({
 
 import { aiCredentials } from "./aiCredentials";
 
-const FIVE_PROVIDERS: readonly ProviderId[] = ["openrouter", "openai", "anthropic", "google", "deepseek"];
+const TEN_PROVIDERS: readonly ProviderId[] = [
+  "openrouter",
+  "openai",
+  "anthropic",
+  "google",
+  "deepseek",
+  "mistral",
+  "groq",
+  "xai",
+  "cohere",
+  "generic",
+];
+const NEW_FIVE_PROVIDERS: readonly ProviderId[] = ["mistral", "groq", "xai", "cohere", "generic"];
 const K1_PHRASE = "k1 facade unlock phrase";
 const fakeKey = (provider: string, tag: string): string => `FAKE-K1-FACADE-${provider}-${tag}`;
 const bogusProvider = (name: string): ProviderId => name as unknown as ProviderId;
@@ -39,17 +51,17 @@ describe("aiCredentials facade compatibility (K1)", () => {
   });
 });
 
-describe("aiCredentials five-provider vault (K1)", () => {
-  it("isolates five per-provider namespaces for one account", async () => {
+describe("aiCredentials ten-provider vault (K1/AI-024a)", () => {
+  it("isolates ten per-provider namespaces for one account", async () => {
     const id = user("ns");
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       await aiCredentials.connect(id, fakeKey(provider, "ns1"), {
         remember: true,
         passphrase: K1_PHRASE,
         provider,
       });
     }
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       expect(await aiCredentials.get(id, provider)).toBe(fakeKey(provider, "ns1"));
       expect(await aiCredentials.hasSaved(id, provider)).toBe(true);
     }
@@ -69,7 +81,7 @@ describe("aiCredentials five-provider vault (K1)", () => {
   it("logout clears exactly that account's provider slots", async () => {
     const alice = user("logout-a");
     const bob = user("logout-b");
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       await aiCredentials.connect(alice, fakeKey(provider, "lo1"), { remember: true, passphrase: K1_PHRASE, provider });
     }
     await aiCredentials.connect(bob, fakeKey("openai", "lo1"), { remember: true, passphrase: K1_PHRASE, provider: "openai" });
@@ -79,7 +91,7 @@ describe("aiCredentials five-provider vault (K1)", () => {
     expect(await aiCredentials.get(alice, "anthropic")).toBe(fakeKey("anthropic", "lo1"));
 
     await aiCredentials.removeAccountCredentials(alice);
-    for (const provider of FIVE_PROVIDERS) {
+    for (const provider of TEN_PROVIDERS) {
       expect(await aiCredentials.get(alice, provider)).toBeNull();
       expect(await aiCredentials.hasSaved(alice, provider)).toBe(false);
     }
@@ -119,5 +131,54 @@ describe("aiCredentials five-provider vault (K1)", () => {
     );
     expect(await aiCredentials.get(id, bogusProvider("bogus"))).toBeNull();
     expect(() => aiCredentials.credentialHandle(id, bogusProvider("bogus"))).toThrow(/provider/i);
+  });
+});
+
+describe("aiCredentials AI-024a slots: backward compat + five new providers", () => {
+  it("keeps the legacy default openrouter slot readable after the extension", async () => {
+    const id = user("legacy");
+    await aiCredentials.connect(id, fakeKey("openrouter", "legacy1"), {
+      remember: true,
+      passphrase: K1_PHRASE,
+      provider: "openrouter",
+    });
+    // Session read first, then a session wipe proves the persisted slot unlocks.
+    expect(await aiCredentials.get(id, "openrouter")).toBe(fakeKey("openrouter", "legacy1"));
+    aiCredentials.clearSession();
+    expect(await aiCredentials.get(id, "openrouter")).toBeNull();
+    expect(await aiCredentials.hasSaved(id, "openrouter")).toBe(true);
+    await aiCredentials.unlock(id, K1_PHRASE, "openrouter");
+    expect(await aiCredentials.get(id, "openrouter")).toBe(fakeKey("openrouter", "legacy1"));
+  });
+
+  it("gives each new provider a disjoint slot with opaque handles", async () => {
+    const id = user("newfive");
+    for (const provider of NEW_FIVE_PROVIDERS) {
+      await aiCredentials.connect(id, fakeKey(provider, "new1"), {
+        remember: true,
+        passphrase: K1_PHRASE,
+        provider,
+      });
+    }
+    for (const provider of NEW_FIVE_PROVIDERS) {
+      expect(await aiCredentials.get(id, provider)).toBe(fakeKey(provider, "new1"));
+      expect(await aiCredentials.hasSaved(id, provider)).toBe(true);
+    }
+    expect(await aiCredentials.get(id, "mistral")).not.toBe(fakeKey("groq", "new1"));
+    expect(await aiCredentials.get(id, "generic")).toBe(fakeKey("generic", "new1"));
+    // Per-slot unlock after a session wipe: unlocking groq must not open xai.
+    aiCredentials.clearSession();
+    await aiCredentials.unlock(id, K1_PHRASE, "groq");
+    expect(await aiCredentials.get(id, "groq")).toBe(fakeKey("groq", "new1"));
+    expect(await aiCredentials.get(id, "xai")).toBeNull();
+    // Opaque handles for new slots carry no key material.
+    for (const provider of NEW_FIVE_PROVIDERS) {
+      const handle = aiCredentials.credentialHandle(id, provider);
+      expect(handle.provider).toBe(provider);
+      expect(JSON.stringify(handle)).not.toContain(fakeKey(provider, "new1"));
+      expect(await aiCredentials.resolveCredential(handle)).toBe(
+        provider === "groq" ? fakeKey(provider, "new1") : null,
+      );
+    }
   });
 });
