@@ -30,7 +30,7 @@ permissions:
 jobs:
   deploy:
     name: Migrations + ai-help
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: backend
     env:
@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         with:
           version: latest
       - name: Push pending migrations

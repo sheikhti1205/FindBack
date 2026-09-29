@@ -9,7 +9,7 @@ on:
 jobs:
   conventions:
     name: Commit messages & version sync
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # Full history so the PR/push range resolves; no secrets, no deps —
@@ -39,7 +39,7 @@ jobs:
 
   check:
     name: Lint, typecheck & test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
@@ -74,7 +74,7 @@ jobs:
 
   android:
     name: Android build & JVM tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
@@ -90,7 +90,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
@@ -171,7 +171,7 @@ jobs:
           # Hashes only — no key material, no DSN.
           sha256sum apps/mobile/android/app/build/outputs/apk/debug/*.apk
       - name: Upload debug APK (device monitoring proof)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: findback-debug-apk-${{ github.sha }}
           path: apps/mobile/android/app/build/outputs/apk/debug/*.apk
@@ -183,7 +183,7 @@ jobs:
 
   docker:
     name: Docker build & health check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
