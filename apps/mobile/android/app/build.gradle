@@ -197,3 +197,13 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        // Release artifact set: exactly the three declared ABIs. The universal
+        // APK otherwise bundles every ABI present in the dependency graph
+        // (e.g. 32-bit x86 from MediaPipe/Sentry), which the release verifier
+        // does not advertise. Debug is untouched.
+        variant.packaging.jniLibs.excludes.add("lib/x86/**")
+    }
+}

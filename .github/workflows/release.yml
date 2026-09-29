@@ -113,6 +113,10 @@ jobs:
         run: npm test -w @findback/api
       - name: Mobile tests
         run: npm test -w @findback/mobile
+      - name: Release-infra script tests (signing, ABI, manifest, publish type)
+        # Same suites CI gates; enforced here too so a tag build cannot sign
+        # with a verifier that has drifted from the ABI/signing contract.
+        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
       - name: Strict installable-build config preflight

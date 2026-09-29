@@ -60,6 +60,11 @@ jobs:
         run: npm test -w @findback/api
       - name: Mobile tests
         run: npm test -w @findback/mobile
+      - name: Release-infra script tests (signing, ABI, manifest, publish type)
+        # Gates the release-script regressions (fingerprint parse order, ABI
+        # completeness, full-SHA provenance, SemVer publish type) so an
+        # unverified release path can never reach a tag.
+        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs
       - name: Build mobile web shell
         run: npm run build -w @findback/mobile
         env:
