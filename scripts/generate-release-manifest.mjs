@@ -36,8 +36,13 @@ function argValue(args, name) {
 /**
  * Build the manifest object from explicit inputs + files on disk.
  * Throws when a listed file is missing (fail closed, never invent entries).
+ * gitSha must be the FULL 40-char commit SHA (provenance); short SHAs are
+ * rejected so a truncated identity can never ship in a release manifest.
  */
 export function buildManifest({ versionName, versionCode, gitSha, tag, minSdk, targetSdk, files }) {
+  if (!/^[0-9a-f]{40}$/i.test(gitSha ?? "")) {
+    throw new Error("generate-release-manifest: --git-sha must be a full 40-char commit SHA");
+  }
   const artifacts = files.map((file) => {
     const bytes = statSync(file).size;
     const sha256 = createHash("sha256").update(readFileSync(file)).digest("hex");
