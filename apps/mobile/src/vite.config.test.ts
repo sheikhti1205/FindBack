@@ -1,12 +1,35 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveSupabaseBuildEnv } from "../vite.config";
 
 let envDir = "";
 
+// `loadEnv(mode, dir, "")` merges process.env, so a caller that exports
+// VITE_SUPABASE_* (the release gate does, at job level) would otherwise leak
+// into these file-precedence assertions. Isolate the four keys per test so the
+// suite is hermetic regardless of ambient environment.
+const ENV_KEYS = [
+  "VITE_SUPABASE_URL",
+  "VITE_SUPABASE_PUBLISHABLE_KEY",
+  "SUPABASE_URL",
+  "SUPABASE_PUBLISHABLE_KEY",
+] as const;
+const savedEnv: Record<string, string | undefined> = {};
+
+beforeEach(() => {
+  for (const key of ENV_KEYS) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+});
+
 afterEach(async () => {
+  for (const key of ENV_KEYS) {
+    if (savedEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedEnv[key];
+  }
   if (envDir) await rm(envDir, { force: true, recursive: true });
   envDir = "";
 });

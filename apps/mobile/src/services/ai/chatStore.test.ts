@@ -121,7 +121,11 @@ describe("chatStore history toggle (CTX-03)", () => {
     const { adapter: ad, saves } = makeAdapter();
     const store = new ChatStore(ad, { debounceMs: 10_000 });
     const chat = store.createChat("acct-a", "Temp");
-    store.appendTurn("acct-a", chat.id, turn("user", "sensitive turn", "t1", ["mx"]));
+    // Distinctive marker: a short token like "mx" can coincidentally appear in
+    // the timestamp-derived chat id (`chat-<base36>`), which made this
+    // assertion flaky. Use a marker that cannot collide with an id.
+    const mediaMarker = "media-ref-must-not-persist";
+    store.appendTurn("acct-a", chat.id, turn("user", "sensitive turn", "t1", [mediaMarker]));
     store.setDraft("acct-a", chat.id, "unsent draft");
     await store.flushDrafts();
 
@@ -146,10 +150,15 @@ describe("chatStore history toggle (CTX-03)", () => {
     await store.flushDrafts();
     // The currently retained durable state (last snapshot) holds no turns,
     // checkpoints, or media references — only still-editable drafts.
-    const retained = JSON.stringify(saves[saves.length - 1]!.chats);
+    const retainedChats = saves[saves.length - 1]!.chats;
+    const retained = JSON.stringify(retainedChats);
     expect(retained).not.toContain("sensitive turn");
-    expect(retained).not.toContain("mx");
+    expect(retained).not.toContain(mediaMarker);
     expect(retained).toContain("still editable");
+    // Structural check: no turn survives, so no media reference can either.
+    for (const retainedChat of retainedChats) {
+      expect(retainedChat.turns).toHaveLength(0);
+    }
   });
 });
 
