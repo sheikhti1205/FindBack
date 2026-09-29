@@ -15,6 +15,7 @@ import { SearchScreen } from "./screens/SearchScreen";
 import { CreateReport } from "./screens/CreateReport";
 import { PostDetail } from "./screens/PostDetail";
 import { Profile } from "./screens/Profile";
+import { ProfileEdit } from "./screens/ProfileEdit";
 import { About } from "./screens/About";
 import { MyPosts } from "./screens/MyPosts";
 import { Help } from "./screens/Help";
@@ -64,6 +65,7 @@ export function App() {
               <Route path="/posts/:id" element={<PostDetail />} />
               <Route path="/my" element={<MyPosts />} />
               <Route path="/profile" element={<Profile />} />
+              <Route path="/profile/edit" element={<ProfileEdit />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/about" element={<About />} />
               <Route path="/help" element={<Help />} />

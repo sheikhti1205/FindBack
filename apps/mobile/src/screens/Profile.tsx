@@ -1,20 +1,18 @@
 import { Link } from "react-router";
 import { useState } from "react";
-import { CheckCircle2, LogOut, ShieldQuestion, FileStack, KeyRound, Info } from "lucide-react";
+import { CheckCircle2, LogOut, ShieldQuestion, FileStack, KeyRound, Info, Pencil } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { MonitoringSelfTest } from "../components/MonitoringSelfTest";
-import { Segmented } from "../components/Segmented";
+import { AppearancePanel } from "../components/AppearancePanel";
 import { pressFeedback } from "../components/uiMotion";
-import { useTheme, type Theme } from "../theme";
 
 /** Nav rows with a tiny press state; navigation itself is untouched. */
 const MotionLink = motion.create(Link);
 
 export function Profile() {
   const { user, logout } = useAuth();
-  const { theme, setTheme } = useTheme();
   const [loggingOut, setLoggingOut] = useState(false);
   if (!user) return null;
 
@@ -55,6 +53,14 @@ export function Profile() {
 
       <nav className="flex flex-col gap-2" aria-label="Profile links">
         <MotionLink
+          to="/profile/edit"
+          whileTap={pressFeedback.button}
+          className="flex min-h-[48px] items-center gap-3 rounded-m3-md border border-outline-variant px-4 text-sm font-medium hover:bg-surface-container"
+        >
+          <Pencil size={18} aria-hidden />
+          Edit profile
+        </MotionLink>
+        <MotionLink
           to="/my"
           whileTap={pressFeedback.button}
           className="flex min-h-[48px] items-center gap-3 rounded-m3-md border border-outline-variant px-4 text-sm font-medium hover:bg-surface-container"
@@ -88,19 +94,7 @@ export function Profile() {
         </MotionLink>
       </nav>
 
-      <section className="flex flex-col gap-2">
-        <p className="text-sm font-medium">Appearance</p>
-        <Segmented<Theme>
-          ariaLabel="Theme"
-          value={theme}
-          onChange={setTheme}
-          options={[
-            { value: "system", label: "System" },
-            { value: "light", label: "Light" },
-            { value: "dark", label: "Dark" },
-          ]}
-        />
-      </section>
+      <AppearancePanel />
 
       <MonitoringSelfTest />
 

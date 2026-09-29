@@ -5,6 +5,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import {
+  APPEARANCE_EVENT,
+  applyAppearance,
+  loadAppearance,
+} from "./appearance";
 
 export type Theme = "light" | "dark" | "system";
 
@@ -33,6 +38,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return "system";
     }
   });
+
+  useEffect(() => {
+    // AI-011: apply persisted Quick Appearance (accent vars, root text
+    // scale, reduce-motion markers) once at startup; AppearancePanel
+    // re-applies on every change and notifies via APPEARANCE_EVENT.
+    applyAppearance(loadAppearance());
+    const syncAppearance = () => applyAppearance(loadAppearance());
+    window.addEventListener(APPEARANCE_EVENT, syncAppearance);
+    window.addEventListener("storage", syncAppearance);
+    return () => {
+      window.removeEventListener(APPEARANCE_EVENT, syncAppearance);
+      window.removeEventListener("storage", syncAppearance);
+    };
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;

@@ -188,7 +188,10 @@ const SHIPPED_RULES: Array<{ id: string; re: RegExp }> = [
   { id: "non-free openrouter route", re: /openrouter\/(?!free\b)/ },
   {
     id: "vendor-qualified paid model id",
-    re: /\b(?:openai|anthropic|google|meta-llama|deepseek|deepseek-chat|mistralai|mistral|perplexity|x-ai|cohere|microsoft|togethercomputer|ai21|qwen|moonshotai|z-ai)\//,
+    // NOTE: `openai/(?!v1/)` — Groq's documented OpenAI-compatible endpoint
+    // path (`api.groq.com/openai/v1/...`) is a URL prefix, not a paid model
+    // id like `openai/gpt-4o`. IF-001 multi-provider adoption.
+    re: /(?:\bopenai\/(?!v1\/)|\b(?:anthropic|google|meta-llama|deepseek|deepseek-chat|mistralai|mistral|perplexity|x-ai|cohere|microsoft|togethercomputer|ai21|qwen|moonshotai|z-ai)\/)/,
   },
   {
     id: "bare paid model id",
