@@ -1,7 +1,9 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router";
 import { MotionConfig } from "framer-motion";
+import type { ReactNode } from "react";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
+import { motionConfigValueFor, useAppearance } from "./appearance";
 import { GuestOnly, RequireAuth } from "./components/Guards";
 import { Shell } from "./components/Shell";
 import { BackButtonHandler } from "./components/BackButtonHandler";
@@ -23,14 +25,26 @@ import { AiConnection } from "./screens/AiConnection";
 import { AiModels } from "./screens/AiModels";
 import { Notifications } from "./screens/Notifications";
 
+/**
+ * H1-motion: MotionConfig follows the ONE effective motion preference —
+ * reduce→always, full→never, system→user (defers to the OS). Reactive via
+ * useAppearance, so Quick Appearance changes apply without reload. Gesture
+ * tracking stays enabled; only travel/animation degrades.
+ */
+function AppMotionConfig({ children }: { children: ReactNode }) {
+  const { settings } = useAppearance();
+  return (
+    <MotionConfig reducedMotion={motionConfigValueFor(settings.reduceMotion)}>
+      {children}
+    </MotionConfig>
+  );
+}
+
 export function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        {/* Wave A: the OS reduced-motion setting degrades all Motion
-            transform/layout travel to instant centrally (opacity kept).
-            Imperative motion consults shouldReduceMotion() instead. */}
-        <MotionConfig reducedMotion="user">
+        <AppMotionConfig>
         <HashRouter>
           <BackButtonHandler />
           <ErrorBoundary>
@@ -78,7 +92,7 @@ export function App() {
           </Routes>
           </ErrorBoundary>
         </HashRouter>
-        </MotionConfig>
+        </AppMotionConfig>
       </AuthProvider>
     </ThemeProvider>
   );

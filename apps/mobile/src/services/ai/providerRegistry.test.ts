@@ -104,7 +104,7 @@ describe("providerRegistry", () => {
   it("requires a generic baseURL instead of inventing one", () => {
     expect(() =>
       createProviderAdapter("generic", { accountId: ACCOUNT, resolveKey: async () => null }),
-    ).toThrow(/baseURL/i);
+    ).toThrow(/base ?URL|without an endpoint is unusable/i);
   });
 
   it("requires caller-owned system text for openai instead of inventing policy", () => {

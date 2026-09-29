@@ -153,7 +153,21 @@ body {
   outline-offset: 2px;
 }
 
-/* Motion pass: animations always play — no reduced-motion kill-switch. */
+/* H1-motion: CSS animations honor the ONE effective motion preference.
+ * applyAppearance() toggles `fb-reduce-motion` on <html> from the persisted
+ * override layered on the OS setting; the media query below covers pre-JS
+ * paint and any surface the class hasn't reached. When reduced, loading
+ * washes render as static tints (no sweep) — content and layout unchanged. */
+@media (prefers-reduced-motion: reduce) {
+  .fb-img-frame[data-state="loading"]::after,
+  .fb-thumb[data-state="loading"]::after {
+    animation: none;
+  }
+}
+html.fb-reduce-motion .fb-img-frame[data-state="loading"]::after,
+html.fb-reduce-motion .fb-thumb[data-state="loading"]::after {
+  animation: none;
+}
 
 .fb-markdown p { margin: 0 0 0.5rem; }
 .fb-markdown p:last-child { margin-bottom: 0; }
@@ -259,7 +273,7 @@ body {
   object-fit: cover;
   display: block;
 }
-/* Grayscale loading wash (motion policy: animations always play). */
+/* Grayscale loading wash (static under reduced motion — see kill-switch above). */
 .fb-img-frame[data-state="loading"]::after {
   content: "";
   position: absolute;

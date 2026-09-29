@@ -1,9 +1,14 @@
 /**
  * Quick Appearance panel (AI-011).
  *
- * Collapsible panel owning the theme preview cards, accent swatches, text
- * size, reduce-motion override, and high-quality-photo toggle. Every control
- * applies + persists immediately — there is no Save button.
+ * Collapsible panel owning the theme preview cards, text size, reduce-motion
+ * override, and high-quality-photo toggle. Every control applies + persists
+ * immediately — there is no Save button.
+ *
+ * H1-motion option B: the accent swatches are HIDDEN. `--fb-accent` /
+ * `--fb-accent-ink` have no production consumers, so a visible accent
+ * control would save a value with no visible effect. The persisted accent
+ * value is left untouched (forward-compat); no accent UI renders.
  *
  * The theme cards are custom radio cards (visual previews need layout the
  * shared Segmented control doesn't offer); text size and motion reuse
@@ -17,7 +22,6 @@ import { motion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useTheme, type Theme } from "../theme";
 import {
-  ACCENT_OPTIONS,
   REDUCE_MOTION_OPTIONS,
   TEXT_SCALE_OPTIONS,
   useAppearance,
@@ -90,7 +94,7 @@ export function AppearancePanel() {
         <span>
           <span className="block text-sm font-medium">Quick Appearance</span>
           <span className="block text-xs text-on-surface-variant">
-            Theme, accent, text size, motion, photos
+            Theme, text size, motion, photos
           </span>
         </span>
         <ChevronDown
@@ -160,42 +164,6 @@ export function AppearancePanel() {
                       <span className="text-xs font-medium">{themeLabel(card.value)}</span>
                       <span aria-hidden="true" className="text-[11px] leading-tight opacity-80">{card.hint}</span>
                     </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium">
-              Accent color{" "}
-              <span className="font-normal text-on-surface-variant">
-                · {ACCENT_OPTIONS.find((a) => a.id === settings.accent)?.label}
-              </span>
-            </p>
-            <div role="radiogroup" aria-label="Accent color" className="flex flex-wrap gap-2">
-              {ACCENT_OPTIONS.map((accent) => {
-                const selected = accent.id === settings.accent;
-                return (
-                  <button
-                    key={accent.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    title={accent.label}
-                    onClick={() => update({ accent: accent.id })}
-                    className={`flex min-h-[48px] min-w-[48px] flex-col items-center justify-center gap-1 rounded-m3-sm border px-2 py-1 text-[11px] font-medium transition-colors ${
-                      selected
-                        ? "border-on-surface text-on-surface"
-                        : "border-outline-variant text-on-surface-variant hover:bg-surface-container"
-                    }`}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="h-6 w-6 rounded-full border border-outline-variant"
-                      style={{ backgroundColor: accent.swatch }}
-                    />
-                    {accent.label}
                   </button>
                 );
               })}

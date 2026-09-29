@@ -38,15 +38,14 @@ describe("AppearancePanel (AI-011 Quick Appearance)", () => {
     expect(dark.querySelector('[data-testid="segmented-selection"]')).toBeTruthy();
   });
 
-  it("offers a curated accent set that applies its CSS var immediately", () => {
+  it("hides the accent control: no user-facing setting without visible effect (H1 option B)", () => {
     renderPanel();
-    const group = screen.getByRole("radiogroup", { name: "Accent color" });
-    const radios = within(group).getAllByRole("radio");
-    expect(radios.length).toBeGreaterThanOrEqual(4);
-    fireEvent.click(radios[1]!);
-    expect(radios[1]!.getAttribute("aria-checked")).toBe("true");
-    expect(document.documentElement.style.getPropertyValue("--fb-accent").trim().length).toBeGreaterThan(0);
-    expect(persisted().accent).toBeTruthy();
+    expect(screen.queryByRole("radiogroup", { name: "Accent color" })).toBeNull();
+    // No rendered control can change the accent: using the panel leaves the
+    // stored accent at its default (forward-compat value, never user-set).
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Text size" })).getByRole("radio", { name: "Large" }));
+    expect(persisted().accent).toBe(DEFAULT_APPEARANCE.accent);
+    expect(screen.queryByRole("radiogroup", { name: "Accent color" })).toBeNull();
   });
 
   it("scales root text size immediately with no Save step", () => {

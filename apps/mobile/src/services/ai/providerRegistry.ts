@@ -54,6 +54,14 @@ export type ProviderRegistryOptions = {
   readonly resolveImageUrl?: (imageId: string) => Promise<string | null>;
   /** Caller-supplied OpenAI-compatible endpoint root. Required for `generic`. */
   readonly genericBaseURL?: string;
+  /**
+   * Account-scoped endpoint resolver for `generic` (e.g.
+   * `(accountId) => loadGenericEndpoint(accountId)`). Used when
+   * `genericBaseURL` is absent so catalogue, test, and send paths share one
+   * configured URL. No default is ever invented: a generic key without an
+   * endpoint stays unusable with a visible explanation.
+   */
+  readonly resolveGenericEndpoint?: (accountId: string) => string | null;
   /** Caller-owned system framing. Required for `openai`. */
   readonly assembleSystemText?: (request: NormalizedRequest) => string | undefined;
 };
@@ -101,9 +109,14 @@ export function createProviderAdapter(
     case "google":
       return createGoogleAdapter({ getApiKey: getAccountKey, fetchImpl });
     case "generic": {
-      const baseURL = options.genericBaseURL?.trim() ?? "";
-      if (baseURL === "") throw new Error("A generic endpoint baseURL is required.");
-      return createGenericAdapter({ baseURL, getApiKey, fetchImpl, resolveImageUrl });
+      const direct = options.genericBaseURL?.trim() ?? "";
+      const stored =
+        direct !== "" ? direct : (options.resolveGenericEndpoint?.(accountId)?.trim() ?? "");
+      if (stored === "")
+        throw new Error(
+          "A generic key without an endpoint is unusable: set a custom endpoint base URL for this account first. No default endpoint is assumed.",
+        );
+      return createGenericAdapter({ baseURL: stored, getApiKey, fetchImpl, resolveImageUrl });
     }
     case "openai": {
       const assembleSystemText = options.assembleSystemText;

@@ -21,7 +21,12 @@ public final class AiCredentialSlots {
         "openai",
         "anthropic",
         "google",
-        "deepseek"
+        "deepseek",
+        "mistral",
+        "groq",
+        "xai",
+        "cohere",
+        "generic"
     ));
 
     private AiCredentialSlots() {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Capacitor } from "@capacitor/core";
 import { KeyRound } from "lucide-react";
+import { useSearchParams } from "react-router";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { Button } from "../components/Button";
@@ -32,6 +33,55 @@ export function maskOpenRouterKey(value: string | null): string | null {
   return `••••${trimmed.slice(-4)}`;
 }
 
+/**
+ * Device-key (BYOK) providers managed on this screen. OpenAI and DeepSeek
+ * stay relay-only (the provider key lives on the server): they are never
+ * selectable here, and any `?provider=` value naming them — or anything
+ * outside this list — falls back to OpenRouter, so no device-key entry can
+ * ever be rendered for them.
+ */
+const BYOK_PROVIDERS = [
+  "openrouter",
+  "anthropic",
+  "google",
+  "mistral",
+  "groq",
+  "xai",
+  "cohere",
+  "generic",
+] as const satisfies readonly ProviderId[];
+
+export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
+
+export const BYOK_LABELS: Record<ByokProvider, string> = {
+  openrouter: "OpenRouter",
+  anthropic: "Anthropic",
+  google: "Google",
+  mistral: "Mistral",
+  groq: "Groq",
+  xai: "xAI",
+  cohere: "Cohere",
+  generic: "Custom endpoint",
+};
+
+function isByokProvider(value: unknown): value is ByokProvider {
+  return (
+    typeof value === "string" &&
+    (BYOK_PROVIDERS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Resolve the managed slot: the explicit prop wins, then the routed
+ * `?provider=` value, else OpenRouter. Relay-only ids (openai/deepseek) and
+ * anything unknown never resolve here.
+ */
+export function resolveByokProvider(explicit: unknown, routed: unknown): ByokProvider {
+  if (isByokProvider(explicit)) return explicit;
+  if (isByokProvider(routed)) return routed;
+  return "openrouter";
+}
+
 export type AiConnectionProps = {
   /** Catalogue rows to browse (empty = none loaded). Never implies verification. */
   readonly models?: readonly ModelRecord[];
@@ -45,6 +95,12 @@ export type AiConnectionProps = {
   readonly onPaidConsent?: (consent: PaidConsent) => void;
   /** Account the catalogue/selection is scoped to (defaults to the signed-in user). */
   readonly accountId?: string;
+  /**
+   * BYOK provider slot managed by the key form. Defaults to the routed
+   * `?provider=` value (the AiModels Manage actions deep-link here), else
+   * OpenRouter. Relay-only ids (openai/deepseek) never select a key slot.
+   */
+  readonly provider?: ProviderId;
   /** Runtime catalogue source: called on mount/account change and on refresh. */
   readonly listModels?: (signal?: AbortSignal) => Promise<readonly ModelRecord[]>;
   /** Freshness budget for the stale badge (defaults to 24h). */
@@ -77,12 +133,27 @@ export function AiConnection({
   onSelectModel,
   onPaidConsent,
   accountId,
+  provider,
   listModels,
   staleAfterMs = CATALOG_STALE_AFTER_MS,
   mode = "free-only",
   relayTest,
 }: AiConnectionProps) {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const routedProvider = searchParams.get("provider");
+  const [selectedProvider, setSelectedProvider] = useState<ByokProvider>(() =>
+    resolveByokProvider(provider, routedProvider),
+  );
+  // Deep-link / prop sync: AiModels Manage actions land here with
+  // `?provider=<id>` so the form manages THAT provider's slot.
+  useEffect(() => {
+    setSelectedProvider(resolveByokProvider(provider, routedProvider));
+  }, [provider, routedProvider]);
+  const providerLabel = BYOK_LABELS[selectedProvider];
+  // The default OpenRouter slot keeps the legacy provider-less call shape;
+  // every other slot passes its exact provider so reads/writes hit only it.
+  const isDefaultSlot = selectedProvider === "openrouter";
   const [key, setKey] = useState("");
   const [remember, setRemember] = useState(false);
   const [phrase, setPhrase] = useState("");
@@ -112,6 +183,7 @@ export function AiConnection({
   const [relayNotice, setRelayNotice] = useState<string | null>(null);
 
   // Account switch: consent never crosses accounts; selection state resets.
+  // Provider switch resets the key form the same way: one slot is ever shown.
   useEffect(() => {
     setConsent(null);
     setConsentDraftId(null);
@@ -119,7 +191,10 @@ export function AiConnection({
     setGateMessage(null);
     setRelayPhase("idle");
     setRelayNotice(null);
-  }, [account]);
+    setKey("");
+    setPhrase("");
+    setMessage(null);
+  }, [account, selectedProvider]);
 
   useEffect(() => {
     if (listModels !== undefined) return;
@@ -263,8 +338,9 @@ export function AiConnection({
 
   useEffect(() => {
     let current = true;
-    // Per-user scoping: drop the previous account's state immediately so it can
-    // never flash for the new account; the re-read below is authoritative.
+    // Per-user, per-provider scoping: drop the previous slot's state
+    // immediately so it can never flash for the new account or provider; the
+    // re-read below is authoritative for exactly this slot.
     setConnected(false);
     setMasked(null);
     setSaved(false);
@@ -272,13 +348,19 @@ export function AiConnection({
     setPhrase("");
     setMessage(null);
     if (!userId) return;
-    void Promise.all([aiCredentials.get(userId), aiCredentials.hasSaved(userId)])
+    const readKey = isDefaultSlot
+      ? aiCredentials.get(userId)
+      : aiCredentials.get(userId, selectedProvider);
+    const readSaved = isDefaultSlot
+      ? aiCredentials.hasSaved(userId)
+      : aiCredentials.hasSaved(userId, selectedProvider);
+    void Promise.all([readKey, readSaved])
       .then(([value, hasSaved]) => {
         if (current) { setConnected(!!value); setMasked(maskOpenRouterKey(value)); setSaved(hasSaved); }
       })
       .catch(() => { if (current) setMessage("Could not read AI connection settings."); });
     return () => { current = false; };
-  }, [userId]);
+  }, [userId, selectedProvider, isDefaultSlot]);
 
   async function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -286,15 +368,33 @@ export function AiConnection({
     setBusy(true);
     setMessage(null);
     try {
-      await validator.validateKey(key);
-      await aiCredentials.connect(userId, key, { remember, ...(remember && phrase ? { passphrase: phrase } : {}) });
+      // OpenRouter keeps its live key check; every other BYOK slot saves
+      // without a live test (verified at send time). Connection state always
+      // reflects the stored credential for exactly this slot.
+      if (isDefaultSlot) {
+        await validator.validateKey(key);
+        await aiCredentials.connect(userId, key, { remember, ...(remember && phrase ? { passphrase: phrase } : {}) });
+      } else {
+        if (key.trim() === "") throw new Error("Enter an API key.");
+        await aiCredentials.connect(userId, key, {
+          remember,
+          ...(remember && phrase ? { passphrase: phrase } : {}),
+          provider: selectedProvider,
+        });
+      }
       setConnected(true);
       setMasked(maskOpenRouterKey(key));
       setSaved(remember);
       setKey("");
       setPhrase("");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not connect to OpenRouter.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : isDefaultSlot
+            ? "Could not connect to OpenRouter."
+            : `Could not save the ${providerLabel} key.`,
+      );
     } finally { setBusy(false); }
   }
 
@@ -303,7 +403,8 @@ export function AiConnection({
     setBusy(true);
     setMessage(null);
     try {
-      await aiCredentials.remove(userId);
+      if (isDefaultSlot) await aiCredentials.remove(userId);
+      else await aiCredentials.remove(userId, selectedProvider);
       setConnected(false);
       setMasked(null);
       setSaved(false);
@@ -318,8 +419,11 @@ export function AiConnection({
     setBusy(true);
     setMessage(null);
     try {
-      await aiCredentials.unlock(userId, phrase);
-      const value = await aiCredentials.get(userId);
+      if (isDefaultSlot) await aiCredentials.unlock(userId, phrase);
+      else await aiCredentials.unlock(userId, phrase, selectedProvider);
+      const value = isDefaultSlot
+        ? await aiCredentials.get(userId)
+        : await aiCredentials.get(userId, selectedProvider);
       setConnected(!!value);
       setMasked(maskOpenRouterKey(value));
       setPhrase("");
@@ -377,10 +481,37 @@ export function AiConnection({
         <h1 className="text-xl font-semibold">AI Connection</h1>
       </header>
       <p className="text-sm text-on-surface-variant">
-        Connect your own OpenRouter API key. FindBack uses free models automatically; availability and daily allowance depend on your OpenRouter account. Reports, search and other core features work without AI.
+        Connect your own {providerLabel} API key. FindBack uses free models automatically; availability and daily allowance depend on your provider account. Reports, search and other core features work without AI.
       </p>
+      <div className="flex flex-col gap-1">
+        <label htmlFor="byok-provider" className="text-sm font-medium">AI provider</label>
+        <select
+          id="byok-provider"
+          value={selectedProvider}
+          onChange={(event) => {
+            const next = event.target.value;
+            if (next === selectedProvider) return;
+            // Selection is validated by construction (options only), so the
+            // cast below cannot select a relay-only or unknown slot.
+            setSelectedProvider(next as ByokProvider);
+          }}
+          className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
+        >
+          {(BYOK_PROVIDERS as readonly ByokProvider[]).map((entry) => (
+            <option key={entry} value={entry}>{BYOK_LABELS[entry]}</option>
+          ))}
+        </select>
+        {isDefaultSlot ? null : (
+          <p className="text-xs text-on-surface-variant">
+            Bring-your-own-key is supported; a live key test is not performed on this screen.
+            Saving a key marks {providerLabel} connected — the key itself is verified when it is used.
+          </p>
+        )}
+      </div>
       <p role="status" className="font-medium">
-        {connected ? `Connected${masked ? ` · key ending ${masked}` : ""}` : "Disconnected"}
+        {connected
+          ? `Connected to ${providerLabel}${masked ? ` · key ending ${masked}` : ""}`
+          : `Disconnected · no ${providerLabel} key saved`}
       </p>
       {/* "Connected" above is set only after validateKey succeeds for this account;
           the catalogue below is browse-only and never a verified state. */}
@@ -404,8 +535,8 @@ export function AiConnection({
       </AnimatePresence>
       <form onSubmit={(event) => void connect(event)} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <label htmlFor="openrouter-key" className="text-sm font-medium">OpenRouter API key</label>
-          <input id="openrouter-key" type="password" value={key} onChange={(event) => setKey(event.target.value)} autoComplete="off" spellCheck={false} required className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface" />
+          <label htmlFor="byok-key" className="text-sm font-medium">{providerLabel} API key</label>
+          <input id="byok-key" type="password" value={key} onChange={(event) => setKey(event.target.value)} autoComplete="off" spellCheck={false} required className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface" />
         </div>
         <label className="flex min-h-[48px] items-center gap-3 text-sm">
           <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
@@ -413,9 +544,9 @@ export function AiConnection({
         </label>
         {(remember || (saved && !connected)) && !Capacitor.isNativePlatform() && (
           <div className="flex flex-col gap-1">
-            <label htmlFor="openrouter-phrase" className="text-sm font-medium">Unlock phrase</label>
-            <input id="openrouter-phrase" type="password" value={phrase} onChange={(event) => setPhrase(event.target.value)} autoComplete="new-password" minLength={12} className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface" />
-            <p className="text-xs text-on-surface-variant">On the web, choose at least 12 characters. You will need this phrase again to unlock your encrypted key. Android secures the key with your device.</p>
+            <label htmlFor="byok-phrase" className="text-sm font-medium">Unlock phrase</label>
+            <input id="byok-phrase" type="password" value={phrase} onChange={(event) => setPhrase(event.target.value)} autoComplete="new-password" minLength={12} className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface" />
+            <p className="text-xs text-on-surface-variant">On the web, choose at least 12 characters. You will need this phrase again to unlock your encrypted {providerLabel} key. Session-only keys (remember off) are kept in memory and cleared on sign-out. Android secures the key with your device.</p>
           </div>
         )}
         <Button type="submit" disabled={busy || !key.trim()} loading={busy}>Connect</Button>

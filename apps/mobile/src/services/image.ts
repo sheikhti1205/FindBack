@@ -3,8 +3,10 @@
  *
  * Mirrors the Node sharp pipeline so a phone-camera file never consumes more
  * Storage than needed: honor EXIF orientation, cap the longest edge at 1920px
- * without enlarging, and re-encode by type (JPEG/WebP at 82%, PNG lossless for
- * transparency). Animated GIFs are passed through untouched so their animation
+ * without enlarging, and re-encode by type (JPEG/WebP at the persisted photo
+ * quality tier — 82% standard, 92% when the High Quality Photo flag is on;
+ * PNG lossless for transparency). Dimension/byte caps stay hard regardless
+ * of tier. Animated GIFs are passed through untouched so their animation
  * survives. `createImageBitmap` is preferred; an `<img>` fallback covers WebViews
  * without it. The browser APIs are injectable so the decision logic is unit
  * testable without a real canvas.
@@ -23,6 +25,13 @@ export const WEBP_QUALITY = 0.82;
 export const MAX_DECODE_PIXELS = 30_000_000;
 
 import { BootTimeoutError, throwIfAborted, withTimeout } from "./timeout";
+import { currentPhotoQuality } from "../appearance";
+
+/** Encode-quality tier (jpeg/webp) honoring the High Quality Photo flag. */
+export interface PhotoQuality {
+  readonly jpeg: number;
+  readonly webp: number;
+}
 
 /**
  * Per-stage budget for decode/encode work. A hung platform decoder must fail
@@ -98,18 +107,21 @@ export function fitWithin(
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 
-/** Output container/quality for a source MIME type. */
+/** Output container/quality for a source MIME type. Defaults to the persisted
+ * High Quality Photo tier so every normalizeImage caller honors the toggle
+ * without threading the flag; pass an explicit tier to override (tests). */
 export function outputTypeFor(
   mimeType: string,
   webpSupported: boolean,
+  quality: PhotoQuality = currentPhotoQuality(),
 ): { mimeType: string; quality: number | null } {
   if (mimeType === "image/png") return { mimeType: "image/png", quality: null };
   if (mimeType === "image/webp") {
     return webpSupported
-      ? { mimeType: "image/webp", quality: WEBP_QUALITY }
+      ? { mimeType: "image/webp", quality: quality.webp }
       : { mimeType: "image/png", quality: null };
   }
-  return { mimeType: "image/jpeg", quality: JPEG_QUALITY };
+  return { mimeType: "image/jpeg", quality: quality.jpeg };
 }
 
 export interface NormalizeOpts {
@@ -119,6 +131,12 @@ export interface NormalizeOpts {
   signal?: AbortSignal;
   /** Per-stage budget in ms (default IMAGE_STAGE_TIMEOUT_MS). */
   timeoutMs?: number;
+  /**
+   * Encode-quality tier. Defaults to the persisted High Quality Photo tier
+   * (`currentPhotoQuality()`); the HQ tier raises initial encode quality
+   * only — MAX_EDGE / MAX_DECODE_PIXELS caps stay hard.
+   */
+  quality?: PhotoQuality;
 }
 
 export async function normalizeImage(
@@ -194,7 +212,11 @@ export async function normalizeImage(
       return { blob: file, mimeType: "image/gif", width: decoded.width, height: decoded.height };
     }
     const { width, height } = fitWithin(MAX_EDGE, decoded.width, decoded.height);
-    const output = outputTypeFor(file.type, deps.webpSupported);
+    const output = outputTypeFor(
+      file.type,
+      deps.webpSupported,
+      opts?.quality ?? currentPhotoQuality(),
+    );
     const blob = await withTimeout(
       () => deps.encode(decoded.source, width, height, output.mimeType, output.quality),
       stageMs,

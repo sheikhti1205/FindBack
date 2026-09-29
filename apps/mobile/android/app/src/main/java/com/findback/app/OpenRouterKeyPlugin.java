@@ -26,7 +26,7 @@ import javax.crypto.spec.GCMParameterSpec;
  * Per-account, per-provider AI credential ciphertext; master key never leaves
  * Android Keystore. The plugin name stays {@code OpenRouterKey} so existing
  * installs and the registered bridge keep working; the {@code provider}
- * option (default {@code openrouter}) selects one of the five isolated
+ * option (default {@code openrouter}) selects one of the ten isolated
  * vault slots defined by {@link AiCredentialSlots}.
  */
 @CapacitorPlugin(name = "OpenRouterKey")

@@ -17,6 +17,8 @@ import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, defaultSelection } from "../service
 import { getCurrentKnowledge, getSystemPolicy, isGeneralNonAppQuestion } from "../services/ai/appKnowledge";
 import type { ChatTurn, ModelRecord, NormalizedRequest, ProviderAdapter, ProviderId, StreamEvent } from "../services/ai/providerContract";
 import { SUPPORTED_AI_PROVIDERS, aiCredentials } from "../services/aiCredentials";
+import { loadGenericEndpoint } from "../services/ai/genericEndpoint";
+import { loadAppearance } from "../appearance";
 import { loadAuthorizedCatalog } from "../services/ai/modelCatalog";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
 import { createRelayClient, RELAY_PROVIDERS, type RelayMessage, type RelayProvider } from "../services/ai/relayClient";
@@ -34,7 +36,7 @@ import {
   toApprovedImageIds,
   type ChatTray,
 } from "../services/media/prepareImages";
-import { importImage, type ImportDeps, type TranscodeRequest } from "../services/media/importImage";
+import { importImage, type ImportDeps, type ImportedImage, type TranscodeRequest } from "../services/media/importImage";
 import {
   GUIDED_FLOWS,
   LOCATION_CHOICES,
@@ -455,6 +457,56 @@ function canPreview(): boolean {
   return typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
 }
 
+/**
+ * Derivative MIME types the import pipeline can produce; only these are ever
+ * encoded for upload. Anything else resolves null so the adapter fails loudly
+ * (draft kept) instead of sending unexpected content.
+ */
+const TRAY_IMAGE_MIME_ALLOWLIST: ReadonlySet<string> = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
+/** DOM-free data-URL encoder over one approved derivative (chunked btoa). */
+function encodeTrayImageDataUrl(item: ImportedImage): string | null {
+  const mimeType = item.derivative.mimeType;
+  const bytes = item.derivative.bytes;
+  if (!TRAY_IMAGE_MIME_ALLOWLIST.has(mimeType)) return null;
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) return null;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return `data:${mimeType};base64,${btoa(binary)}`;
+}
+
+/**
+ * G12 photo gap: per-send image resolver bound to THIS send's explicitly
+ * approved tray snapshot. Only ids present in the snapshot resolve — to a
+ * deliverable `data:` URL encoded from that item's own derivative bytes —
+ * anything else resolves null, so the adapter fails loudly (draft and tray
+ * kept) instead of sending unknown content or silently dropping a photo.
+ * No object URLs are minted here, so there is nothing new to revoke; the
+ * chat-tray preview URLs keep their existing remove/unmount revocation.
+ * The snapshot is taken at send start and rebuilt from the retained tray on
+ * retry, so cancellation (adapter abort checks around resolution) is intact.
+ */
+export function createChatTrayImageResolver(
+  items: readonly ImportedImage[],
+): (imageId: string) => Promise<string | null> {
+  const approved = new Map<string, ImportedImage>();
+  for (const item of items) {
+    if (!approved.has(item.id)) approved.set(item.id, item);
+  }
+  return async (imageId: string): Promise<string | null> => {
+    const item = approved.get(imageId);
+    if (item === undefined) return null;
+    return encodeTrayImageDataUrl(item);
+  };
+}
+
 const SHORTCUT_LABELS: Record<GuidedFlow, string> = {
   lost: "Report a lost item",
   found: "Report a found item",
@@ -765,7 +817,12 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         const item = await importImage(
-          { bytes, fileName: file.name, declaredMimeType: file.type },
+          {
+            bytes,
+            fileName: file.name,
+            declaredMimeType: file.type,
+            highQuality: loadAppearance().highQualityPhoto,
+          },
           intake,
         );
         let added = true;
@@ -966,6 +1023,14 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         sendAdapter = createProviderAdapter(sendProvider, {
           accountId,
           resolveKey: (id, slot) => aiCredentials.get(id, slot),
+          // Generic custom endpoint rides along so a configured generic
+          // provider sends with the same URL catalogue/test used.
+          resolveGenericEndpoint: (id) => loadGenericEndpoint(id),
+          // G12 photo gap: the approved chat-tray snapshot for THIS send rides
+          // along, so image-bearing sends resolve instead of refusing. Relay
+          // rows never reach this branch (text-only, refused pre-transport
+          // above); the snapshot is rebuilt from the retained tray on retry.
+          resolveImageUrl: createChatTrayImageResolver(tray.items),
         });
       }
       const result = await controller.send(chatId ?? `transient-${gen}`, question, {

@@ -2,16 +2,21 @@
  * Shared motion tokens (handover 04 motion policy, M2-motion, motion pass).
  *
  * Single source of truth for durations/springs/variants — no per-screen
- * hardcoded animation values.
+ * hardcoded animation values. Token shapes below are FROZEN (motion waves
+ * A-E); only the reduced-motion decision wiring may change.
  *
- * Reduced motion (owner decision 2026-09-28): the OS setting is honored.
- * `<MotionConfig reducedMotion="user">` at the app root is the single switch:
- * Framer Motion then degrades transform/layout travel to instant while keeping
- * opacity/color, so press feedback and fades still register but nothing
- * travels. Imperative, non-Motion work (scrollTo/scrollIntoView, MapLibre
- * camera, raw CSS transitions) cannot see MotionConfig — those call
- * `useShouldReduceMotion()` (components) or `shouldReduceMotion()` (plain
- * modules) and collapse their travel to instant.
+ * Reduced motion (H1-motion): one authoritative effective preference. The OS
+ * `prefers-reduced-motion` setting is the base signal and the persisted
+ * appearance override (`system`/`reduce`/`full`) layers on top — see
+ * `resolveReduceMotion` in `../appearance`. `<MotionConfig>` at the app root
+ * is driven by `motionConfigValueFor` (reduce→always, full→never,
+ * system→user) so Framer Motion degrades transform/layout travel to instant
+ * while keeping opacity/color. Imperative, non-Motion work (scrollTo/
+ * scrollIntoView, MapLibre camera, raw CSS transitions) cannot see
+ * MotionConfig — those call `useShouldReduceMotion()` (components) or
+ * `shouldReduceMotion()` (plain modules), which read the SAME effective flag
+ * (override-aware, not OS-only). Functional gesture tracking (drag, press)
+ * is never disabled — only travel/animation collapses to instant.
  *
  * Duration budget (seconds): instant ~80–120ms state acknowledgement,
  * fast ~120–180ms chip/icon toggle, standard ~180–240ms notice/subpanel,
@@ -22,7 +27,12 @@
  * box-shadow) so every animation stays on the compositor thread.
  */
 
-import { useReducedMotion } from "framer-motion";
+import { useEffect, useState } from "react";
+import {
+  APPEARANCE_EVENT,
+  effectiveReduceMotion,
+  osPrefersReducedMotion,
+} from "../appearance";
 
 export const motionDurations = {
   /** State acknowledgement (pressed/selected). */
@@ -150,25 +160,50 @@ export const dialogVariants = {
 } as const;
 
 /**
- * True when the device prefers reduced motion. Never throws (SSR/jsdom
- * without matchMedia → false, i.e. full motion).
+ * Effective reduce-motion flag: the persisted appearance override layered on
+ * the OS setting (system→OS, reduce→true, full→false). Never throws
+ * (SSR/jsdom without matchMedia or localStorage → full motion).
  *
  * Imperative code (scrollTo, scrollIntoView, MapLibre camera, raw CSS
- * transitions) reads this. Motion components do NOT: `<MotionConfig
- * reducedMotion="user">` at the app root degrades them centrally.
+ * transitions) reads this at call time. Motion components do NOT need it:
+ * the app-root `<MotionConfig>` (driven by `motionConfigValueFor`) degrades
+ * them centrally.
  */
 export function shouldReduceMotion(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
+  try {
+    return effectiveReduceMotion();
+  } catch {
+    return osPrefersReducedMotion();
   }
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 /**
  * React hook form of {@link shouldReduceMotion} for components driving
  * imperative animation (element.scrollTo, scrollIntoView, canvas/CSS work).
- * Re-renders when the OS preference changes.
+ * Re-renders when the OS preference OR the persisted appearance override
+ * changes — no reload needed.
  */
 export function useShouldReduceMotion(): boolean {
-  return useReducedMotion() ?? false;
+  const [reduced, setReduced] = useState<boolean>(shouldReduceMotion);
+
+  useEffect(() => {
+    const sync = () => setReduced(shouldReduceMotion());
+    const media =
+      typeof window !== "undefined" && typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-reduced-motion: reduce)")
+        : null;
+    media?.addEventListener?.("change", sync);
+    window.addEventListener(APPEARANCE_EVENT, sync);
+    window.addEventListener("storage", sync);
+    // Re-read on subscribe: the OS or the stored override may have changed
+    // between render and effect.
+    sync();
+    return () => {
+      media?.removeEventListener?.("change", sync);
+      window.removeEventListener(APPEARANCE_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
+  return reduced;
 }

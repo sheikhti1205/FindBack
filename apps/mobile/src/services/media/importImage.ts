@@ -18,6 +18,13 @@ export const IMPORT_MAX_DECODE_PIXELS = 30_000_000;
 export const IMPORT_MAX_EDGE = 1920;
 export const IMPORT_MAX_DERIVATIVE_BYTES = 2_000_000;
 export const IMPORT_QUALITY_LADDER: readonly number[] = [0.82, 0.7, 0.55, 0.4];
+/**
+ * H1-motion: first rung when the High Quality Photo flag is on. The ladder
+ * still steps down through the standard rungs to fit the 2 MB derivative
+ * cap, so byte/dimension caps stay hard — HQ only raises the initial
+ * quality. Mirrors PHOTO_QUALITY_HIGH.jpeg in appearance.ts.
+ */
+export const IMPORT_QUALITY_LADDER_HQ: readonly number[] = [0.92, 0.82, 0.7, 0.55, 0.4];
 
 export type MediaErrorCode =
   | "EMPTY_INPUT"
@@ -58,6 +65,14 @@ export interface ImportInput {
   fileName: string;
   declaredMimeType?: string;
   text?: string;
+  /**
+   * H1-motion: High Quality Photo flag. When true the adaptive lossy ladder
+   * starts at 0.92 before stepping down to fit IMPORT_MAX_DERIVATIVE_BYTES;
+   * caps stay hard either way. Defaults false (legacy behavior). The module
+   * stays pure/DOM-free — callers read the persisted appearance flag and
+   * pass it in (Help.tsx wiring is a follow-up; Help.tsx is frozen for H1).
+   */
+  highQuality?: boolean;
 }
 
 export interface TranscodeRequest {
@@ -611,7 +626,8 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
     if (lossy) {
       let picked: Uint8Array | null = null;
       let pickedQuality: number | null = null;
-      for (const candidate of IMPORT_QUALITY_LADDER) {
+      const ladder = input.highQuality === true ? IMPORT_QUALITY_LADDER_HQ : IMPORT_QUALITY_LADDER;
+      for (const candidate of ladder) {
         const encoded = await deps.transcode({
           bytes,
           sniffed,

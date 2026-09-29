@@ -8,15 +8,23 @@
  *
  * Layering notes:
  * - The OS reduced-motion preference stays the base signal. `reduceMotion`
- *   `"system"` defers to it; `"reduce"`/`"full"` override it. Imperative
- *   animation code should read `effectiveReduceMotion()` (or
- *   `resolveReduceMotion()` with an injected OS value in tests) instead of
- *   going straight to matchMedia. `uiMotion.shouldReduceMotion()` is NOT
- *   touched here — see the interface proposal in the handoff.
- * - `services/image.ts` is NOT touched here either. It keeps its fixed
- *   0.82 encode qualities; upload call sites should switch to
- *   `currentPhotoQuality()` (or `photoQualityFor(flag)`) when they are ready
- *   to honor the persisted High Quality Photo toggle.
+ *   `"system"` defers to it; `"reduce"`/`"full"` override it. The effective
+ *   flag (`resolveReduceMotion` / `effectiveReduceMotion`) is the single
+ *   authority: `uiMotion.shouldReduceMotion()` / `useShouldReduceMotion()`,
+ *   the App `MotionConfig` mapping (`motionConfigValueFor`), and the
+ *   `fb-reduce-motion` CSS class all consume it, so runtime changes apply
+ *   without reload. Imperative animation code must read the uiMotion helpers
+ *   (never matchMedia directly). Functional gesture tracking stays enabled
+ *   when reduced motion is on — only travel/animation collapses to instant.
+ * - `services/image.ts` honors the High Quality Photo flag via
+ *   `currentPhotoQuality()` (default encode tier, overridable per call);
+ *   `services/media/importImage.ts` takes an explicit `highQuality` input and
+ *   starts its adaptive ladder at the high tier while keeping every byte and
+ *   dimension cap hard.
+ * - The accent control is hidden (option B): `--fb-accent` /
+ *   `--fb-accent-ink` are still applied to the root for forward-compat but
+ *   have no production consumers, so no user-facing control saves a value
+ *   with no visible effect. See AppearancePanel.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -168,6 +176,22 @@ export function effectiveReduceMotion(
 }
 
 /**
+ * Framer Motion `reducedMotion` prop for the persisted override:
+ * - `"reduce"` forces reduced motion → `"always"`,
+ * - `"full"` forces full motion → `"never"`,
+ * - `"system"` defers to the OS → `"user"`.
+ * Pure mapping so the OS×override matrix is unit-testable; App.tsx applies it
+ * reactively (no reload) via `useAppearance()`.
+ */
+export function motionConfigValueFor(
+  override: ReduceMotionOverride,
+): "always" | "never" | "user" {
+  if (override === "reduce") return "always";
+  if (override === "full") return "never";
+  return "user";
+}
+
+/**
  * Apply settings to the document root: accent CSS vars, root font-size
  * scale, and a `fb-reduce-motion` class + `data-reduce-motion-override`
  * marker carrying the effective motion flag.
@@ -201,8 +225,8 @@ export function photoQualityFor(highQuality: boolean): {
 
 /**
  * Quality tier for the currently persisted High Quality Photo flag.
- * Upload call sites in `services/image.ts` consumers should read this instead
- * of the fixed `JPEG_QUALITY`/`WEBP_QUALITY` constants when honoring the toggle.
+ * `services/image.ts` reads this by default on every normalize; explicit
+ * tiers can still be passed per call (tests, special flows).
  */
 export function currentPhotoQuality(): {
   readonly jpeg: number;

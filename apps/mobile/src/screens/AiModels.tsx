@@ -8,6 +8,14 @@ import { announce } from "../components/LiveRegion";
 import { aiCredentials, SUPPORTED_AI_PROVIDERS } from "../services/aiCredentials";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
 import {
+  GENERIC_ENDPOINT_MISSING_COPY,
+  GENERIC_HTTP_LOOPBACK_COPY,
+  GENERIC_HTTP_POLICY_COPY,
+  loadGenericEndpoint,
+  removeGenericEndpoint,
+  saveGenericEndpoint,
+} from "../services/ai/genericEndpoint";
+import {
   createRelayClient,
   RELAY_PROVIDERS,
   type RelayProvider,
@@ -170,11 +178,19 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
   const [probes, setProbes] = useState<Record<string, ProbeState>>({});
   const [busyProvider, setBusyProvider] = useState<ProviderId | null>(null);
   const [removing, setRemoving] = useState<ProviderId | null>(null);
+  // Generic custom endpoint (account-scoped URL only, never key material).
+  const [genericEndpoint, setGenericEndpoint] = useState<string | null>(null);
+  const [genericDraft, setGenericDraft] = useState("");
+  const [genericNotice, setGenericNotice] = useState<string | null>(null);
+  const [genericBusy, setGenericBusy] = useState(false);
 
   // Account switch: mode and slots never cross accounts.
   useEffect(() => {
     setMode(loadAssistantMode(account));
     setProbes({});
+    setGenericEndpoint(loadGenericEndpoint(account));
+    setGenericDraft("");
+    setGenericNotice(null);
   }, [account]);
 
   useEffect(() => {
@@ -262,6 +278,8 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
             const adapter = createProviderAdapter(provider, {
               accountId: account,
               resolveKey: (id, slot) => aiCredentials.get(id, slot),
+              genericBaseURL: loadGenericEndpoint(account) ?? undefined,
+              resolveGenericEndpoint: (id) => loadGenericEndpoint(id),
             });
             const list = adapter.listModels;
             if (list === undefined) return [];
@@ -333,6 +351,42 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
     }
   }
 
+  function saveGeneric() {
+    if (genericBusy) return;
+    setGenericBusy(true);
+    setGenericNotice(null);
+    try {
+      const saved = saveGenericEndpoint(account, genericDraft);
+      setGenericEndpoint(saved);
+      setGenericDraft("");
+      setGenericNotice(
+        saved.startsWith("http://")
+          ? `Endpoint saved: ${saved}. ${GENERIC_HTTP_LOOPBACK_COPY}`
+          : `Endpoint saved: ${saved}.`,
+      );
+      announce("Custom endpoint saved.");
+    } catch (e) {
+      setGenericNotice(e instanceof Error ? e.message : "Could not save the endpoint.");
+    } finally {
+      setGenericBusy(false);
+    }
+  }
+
+  function removeGeneric() {
+    if (genericBusy) return;
+    setGenericBusy(true);
+    setGenericNotice(null);
+    try {
+      removeGenericEndpoint(account);
+      setGenericEndpoint(null);
+      setGenericDraft("");
+      setGenericNotice("Endpoint removed. The generic key cannot be used until an endpoint is set again.");
+      announce("Custom endpoint removed.");
+    } finally {
+      setGenericBusy(false);
+    }
+  }
+
   async function testProvider(provider: ProviderId) {
     if (busyProvider !== null) return;
     const controller = new AbortController();
@@ -363,6 +417,8 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
         const adapter = createProviderAdapter(provider, {
           accountId: account,
           resolveKey: (id, slot) => aiCredentials.get(id, slot),
+          genericBaseURL: loadGenericEndpoint(account) ?? undefined,
+          resolveGenericEndpoint: (id) => loadGenericEndpoint(id),
         });
         const list = adapter.listModels;
         if (list === undefined) {
@@ -509,6 +565,8 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
               const slot = slots[provider] ?? { connected: false, saved: false, masked: null };
               const probe = probes[provider] ?? IDLE_PROBE;
               const relay = isRelayProvider(provider);
+              const generic = provider === "generic";
+              const genericInsecure = (genericEndpoint ?? "").startsWith("http://");
               const status = relay
                 ? "Through the server relay. No key is stored on this device."
                 : slot.connected
@@ -516,6 +574,10 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
                   : slot.saved
                     ? "A saved key is locked. Manage it on the AI Connection screen to unlock."
                     : "Not connected.";
+              const genericSuffix =
+                generic && genericEndpoint === null
+                  ? " No endpoint set — a key alone cannot be used."
+                  : "";
               return (
                 <li
                   key={provider}
@@ -524,12 +586,13 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold">{PROVIDER_LABELS[provider]}</span>
-                    <span className="text-xs text-on-surface-variant">{status}</span>
+                    <span className="text-xs text-on-surface-variant">{status}{genericSuffix}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {!relay ? (
                       <Link
-                        to="/ai-connection"
+                        to={`/ai-connection?provider=${provider}`}
+                        aria-label={`Manage ${PROVIDER_LABELS[provider]} key`}
                         className="flex min-h-[48px] items-center rounded-m3-sm border border-outline px-3 text-sm font-medium"
                       >
                         Manage
@@ -558,6 +621,69 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
                       </Button>
                     ) : null}
                   </div>
+                  {generic ? (
+                    <div className="flex flex-col gap-2 rounded-m3-sm border border-outline-variant p-3">
+                      <h3 className="text-sm font-semibold">Custom endpoint</h3>
+                      {genericEndpoint !== null ? (
+                        <p className="text-xs text-on-surface-variant">
+                          Endpoint: {genericEndpoint}
+                          {genericInsecure ? ` ${GENERIC_HTTP_LOOPBACK_COPY}` : ""}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-on-surface-variant">
+                          No endpoint is set for this account. {GENERIC_ENDPOINT_MISSING_COPY}
+                        </p>
+                      )}
+                      {(slot.connected || slot.saved) && genericEndpoint === null ? (
+                        <p role="alert" className="text-sm text-error">
+                          This account holds a generic key, but it cannot be used: no endpoint
+                          is configured. Set the base URL below; catalogue, test, and sends
+                          all need it.
+                        </p>
+                      ) : null}
+                      <p className="text-xs text-on-surface-variant">{GENERIC_HTTP_POLICY_COPY}</p>
+                      <div className="flex flex-col gap-1">
+                        <label htmlFor="generic-endpoint" className="text-sm font-medium">
+                          Endpoint base URL
+                        </label>
+                        <input
+                          id="generic-endpoint"
+                          type="url"
+                          value={genericDraft}
+                          onChange={(event) => setGenericDraft(event.target.value)}
+                          placeholder="https://api.example.com/v1"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={genericBusy || genericDraft.trim() === ""}
+                          onClick={saveGeneric}
+                        >
+                          {genericBusy ? "Saving…" : genericEndpoint === null ? "Save endpoint" : "Update endpoint"}
+                        </Button>
+                        {genericEndpoint !== null ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={genericBusy}
+                            onClick={removeGeneric}
+                          >
+                            Remove endpoint
+                          </Button>
+                        ) : null}
+                      </div>
+                      {genericNotice !== null ? (
+                        <p aria-live="polite" className="text-sm">
+                          {genericNotice}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {probe.notice !== null ? (
                     <p
                       aria-live="polite"
