@@ -20,9 +20,15 @@ if (strict) {
   // The retired local generative runtime must never come back into the APK.
   const litert = entries.filter((e) => /liblitert/i.test(e));
   if (litert.length) { console.error(`scan-apk: retired litertlm JNI present: ${litert.join(", ")}`); process.exit(1); }
-  // The retained non-generative similarity bridge must actually ship.
-  const embedJni = "lib/arm64-v8a/libmediapipe_tasks_jni.so";
-  if (!entries.includes(embedJni)) { console.error(`scan-apk: embedding JNI missing: ${embedJni}`); process.exit(1); }
+  // The retained non-generative similarity bridge must actually ship, for
+  // every ABI this APK carries. Release artifacts are ABI-split (one ABI per
+  // APK) while debug/universal carry all, so a hardcoded arm64-v8a path wrongly
+  // failed the v7a/x86_64 splits. The embedding JNI must exist for each ABI
+  // present, and at least one ABI must be present at all.
+  const abis = [...new Set(entries.map((e) => /^lib\/([^/]+)\//.exec(e)?.[1]).filter(Boolean))];
+  if (abis.length === 0) { console.error("scan-apk: no native libraries present"); process.exit(1); }
+  const missingEmbed = abis.filter((abi) => !entries.includes(`lib/${abi}/libmediapipe_tasks_jni.so`));
+  if (missingEmbed.length) { console.error(`scan-apk: embedding JNI missing for ABI(s): ${missingEmbed.join(", ")}`); process.exit(1); }
 }
 
 const secretPrefix = ["sb", "secret"].join("_") + "_";
