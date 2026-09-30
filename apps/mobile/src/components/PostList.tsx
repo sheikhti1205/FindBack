@@ -3,6 +3,7 @@ import type { PostItem } from "@findback/shared";
 import { AnimatePresence, motion } from "framer-motion";
 import { FileQuestion } from "lucide-react";
 import { PostCard } from "./PostCard";
+import { OwnerReportCard } from "./OwnerReportCard";
 import { PostCardContent, type PostCardLayout } from "./PostCardContent";
 import { EmptyState, Spinner } from "./PostCard";
 import { fadeVariants, motionDurations, motionEasings } from "./uiMotion";
@@ -20,9 +21,10 @@ interface PostListProps {
   emptySubtitle?: string;
   /** U2 hybrid rollout: `editorial` (Home Variant A, airy photo-led cards) or
    *  `compact` (Search Variant B, dense rows). `home-feed` is the
-   *  reference-inspired Home redesign (image-left/content-right). Omitted =
-   *  pre-U2 rendering. */
-  density?: "editorial" | "compact" | "home-feed";
+   *  reference-inspired Home redesign (image-left/content-right). `owner-feed`
+   *  is the UXN-4 My Reports owner card (image-left, prominent status).
+   *  Omitted = pre-U2 rendering. */
+  density?: "editorial" | "compact" | "home-feed" | "owner-feed";
 }
 
 export function PostList({
@@ -57,9 +59,11 @@ export function PostList({
     return () => observer.disconnect();
   }, [hasMore, loadingMore, onLoadMore, error]);
 
-  // Density maps to card layout; omitted density keeps pre-U2 rendering
-  // so rollout-external screens (e.g. MyPosts) are pixel-identical.
+  // Density maps to card layout; omitted density keeps pre-U2 rendering.
   // `home-feed` is Home-only; Search stays `compact`, classic stays classic.
+  // UXN-4 append-only: `owner-feed` renders compact OwnerReportCards via its
+  // own component and never alters the mappings below.
+  const isOwnerFeed = density === "owner-feed";
   const layout: PostCardLayout =
     density === "compact" ? "compact" : density === "home-feed" ? "home-feed" : density === "editorial" ? "editorial" : "classic";
   const listClass =
@@ -156,14 +160,18 @@ export function PostList({
               </div>
             )}
             {items.map((post, i) => (
-              <PostCard
-                key={post.id}
-                to={`/posts/${post.id}`}
-                index={i}
-                variant={layout === "home-feed" ? "home-feed" : "default"}
-              >
-                <PostCardContent post={post} layout={layout} enableSharedMedia />
-              </PostCard>
+              isOwnerFeed ? (
+                <OwnerReportCard key={post.id} post={post} />
+              ) : (
+                <PostCard
+                  key={post.id}
+                  to={`/posts/${post.id}`}
+                  index={i}
+                  variant={layout === "home-feed" ? "home-feed" : "default"}
+                >
+                  <PostCardContent post={post} layout={layout} enableSharedMedia />
+                </PostCard>
+              )
             ))}
             <div ref={sentinelRef} aria-hidden />
             {loadingMore && <Spinner label="Loading more…" />}
