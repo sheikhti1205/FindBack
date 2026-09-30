@@ -38,6 +38,15 @@ export interface FeedFilters {
   dateTo?: string;
   /** Restrict to one author (used by My Reports pagination). */
   userId?: string;
+  /**
+   * Nearby scope (UXN-1). All three must be numeric for the nearby RPC to be
+   * used; the center is the already-rounded (~100 m) session center and is
+   * never written to the URL. Partial values are ignored (normal feed RPC).
+   */
+  nearLat?: number | null;
+  nearLng?: number | null;
+  /** Search radius in meters. */
+  radiusM?: number | null;
 }
 
 /**
@@ -47,6 +56,11 @@ export interface FeedFilters {
  */
 const PAGE_LIMIT = 10;
 const CLIENT_FEED_RPC = "findback_query_posts_client";
+/**
+ * Additive Nearby feed RPC (UXN-1). The normal feed RPC above is untouched;
+ * this route is taken only when all three nearby filters are numeric.
+ */
+export const NEARBY_FEED_RPC = "findback_query_posts_nearby_client";
 
 /** On-device matching pool: min(OPEN opposite-type, 20) per spec. */
 export const MATCH_CANDIDATE_LIMIT = 20;
@@ -209,6 +223,32 @@ function feedArgs(
   };
 }
 
+/** True when the nearby RPC must be used: all three scope values numeric. */
+export function isNearbyFeedFilters(filters: FeedFilters): boolean {
+  return (
+    typeof filters.nearLat === "number" &&
+    Number.isFinite(filters.nearLat) &&
+    typeof filters.nearLng === "number" &&
+    Number.isFinite(filters.nearLng) &&
+    typeof filters.radiusM === "number" &&
+    Number.isFinite(filters.radiusM) &&
+    (filters.radiusM as number) > 0
+  );
+}
+
+function nearbyArgs(
+  filters: FeedFilters,
+  limit: number,
+  cursor: PostCursor | null,
+): Record<string, unknown> {
+  return {
+    ...feedArgs(filters, limit, cursor),
+    p_near_lat: filters.nearLat,
+    p_near_lng: filters.nearLng,
+    p_radius_m: filters.radiusM,
+  };
+}
+
 function toFeedPage(rows: ClientPostRow[], pagedTotal: boolean): FeedPage {
   const hasMore = rows.length > PAGE_LIMIT;
   const pageRows = hasMore ? rows.slice(0, PAGE_LIMIT) : rows;
@@ -223,9 +263,12 @@ function toFeedPage(rows: ClientPostRow[], pagedTotal: boolean): FeedPage {
 
 /** Authenticated feed/search, read directly from Supabase. */
 export async function fetchFeed(filters: FeedFilters, cursor?: string): Promise<FeedPage> {
+  const nearby = isNearbyFeedFilters(filters);
   const { data, error } = await getSupabase().rpc(
-    CLIENT_FEED_RPC,
-    feedArgs(filters, PAGE_LIMIT + 1, decodeCursor(cursor)),
+    nearby ? NEARBY_FEED_RPC : CLIENT_FEED_RPC,
+    nearby
+      ? nearbyArgs(filters, PAGE_LIMIT + 1, decodeCursor(cursor))
+      : feedArgs(filters, PAGE_LIMIT + 1, decodeCursor(cursor)),
   );
   if (error) throw new ApiError(error.message, 400);
   return toFeedPage((data ?? []) as ClientPostRow[], false);

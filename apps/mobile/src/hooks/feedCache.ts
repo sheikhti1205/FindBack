@@ -1,5 +1,6 @@
 import type { PostItem } from "@findback/shared";
 import type { FeedFilters } from "../services/posts";
+import { nearbyCenterFingerprint } from "../services/nearby";
 
 interface FeedCacheEntry {
   items: PostItem[];
@@ -28,8 +29,27 @@ export function feedFilterKey(filters: FeedFilters): string {
     dateFrom: (filters.dateFrom ?? "").trim(),
     dateTo: (filters.dateTo ?? "").trim(),
     userId: (filters.userId ?? "").trim(),
+    // Nearby scope: on/off + radius + rounded-center fingerprint. The exact
+    // fix never enters the key (only the ~100 m rounded cell), and the
+    // center never enters the URL either.
+    near: nearbyFeedKey(filters),
   };
   return JSON.stringify(normalized);
+}
+
+/** Nearby slice of the cache identity: "" when nearby is off. */
+function nearbyFeedKey(filters: FeedFilters): string {
+  if (
+    typeof filters.nearLat !== "number" ||
+    typeof filters.nearLng !== "number" ||
+    typeof filters.radiusM !== "number" ||
+    !Number.isFinite(filters.nearLat) ||
+    !Number.isFinite(filters.nearLng) ||
+    !Number.isFinite(filters.radiusM)
+  ) {
+    return "";
+  }
+  return nearbyCenterFingerprint({ lat: filters.nearLat, lng: filters.nearLng }, filters.radiusM);
 }
 
 /** Full session key: base scope plus normalized filter identity. */
