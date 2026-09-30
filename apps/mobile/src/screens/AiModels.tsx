@@ -36,15 +36,22 @@ import { getSupabase } from "../services/supabaseClient";
  * Assistant mode (AI-022): which transports the assistant may use.
  * Persisted per account; Help honors it at send time (offline-only fails
  * closed with no network). Unknown stored values fall back to `auto`.
+ *
+ * Beta scope: on-device transport is not wired until the native bridge lands,
+ * so `offline-first`/`offline-only` are accepted and honored defensively but
+ * are NOT offered as selectable modes — the picker exposes only the modes that
+ * this build can actually honor. A previously stored offline mode is preserved
+ * (never silently relaxed to a mode that sends to the network) and surfaced as
+ * unavailable until the user switches to Auto or Cloud-only.
  */
 export type AssistantMode = "auto" | "offline-first" | "offline-only" | "cloud-only";
 
-export const ASSISTANT_MODES: readonly AssistantMode[] = [
-  "auto",
-  "offline-first",
-  "offline-only",
-  "cloud-only",
-];
+/** Selectable modes in this build. Offline modes are informational only (see OFFLINE_BETA_COPY). */
+export const ASSISTANT_MODES: readonly AssistantMode[] = ["auto", "cloud-only"];
+
+/** Informational (non-actionable) stand-in for the offline modes this build cannot honor. */
+export const OFFLINE_BETA_COPY =
+  "On-device AI (Offline-first and Offline-only) is not available in this build yet — it arrives with the native bridge in a later beta. Until then, Auto and Cloud-only are the usable modes.";
 
 const ASSISTANT_MODE_COPY: Record<AssistantMode, { label: string; detail: string }> = {
   auto: {
@@ -88,6 +95,11 @@ export function loadAssistantMode(accountId: string): AssistantMode {
   return "auto";
 }
 
+/** True for the on-device modes this build cannot honor yet. */
+export function isOfflineMode(mode: AssistantMode): boolean {
+  return mode === "offline-first" || mode === "offline-only";
+}
+
 export function saveAssistantMode(accountId: string, mode: AssistantMode): void {
   try {
     globalThis.localStorage?.setItem(assistantModeKey(accountId), mode);
@@ -109,6 +121,40 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   generic: "Custom endpoint",
   offline: "On-device",
 };
+
+/**
+ * Providers whose end-to-end send path has been live-verified for this beta.
+ * Everything else is surfaced with an "Experimental" marker so testers know the
+ * adapter is wired and vault-backed but a real-key send is not yet proven.
+ */
+export const LIVE_TESTED_PROVIDERS: readonly ProviderId[] = ["openrouter"];
+
+export function isExperimentalProvider(provider: ProviderId): boolean {
+  return !LIVE_TESTED_PROVIDERS.includes(provider);
+}
+
+/**
+ * Providers whose ENTIRE loaded catalogue is unknown-priced. Unknown price is
+ * never consentable, so such a provider cannot chat until pricing is verified —
+ * the UI states that plainly instead of a bare "Connected".
+ */
+export function computeProviderPricingUnknown(
+  catalog: readonly ModelRecord[],
+): Partial<Record<ProviderId, boolean>> {
+  const totals: Record<string, { total: number; unknown: number }> = {};
+  for (const record of catalog) {
+    const entry = totals[record.provider] ?? { total: 0, unknown: 0 };
+    entry.total += 1;
+    if (record.priceClass === "unknown") entry.unknown += 1;
+    totals[record.provider] = entry;
+  }
+  const result: Partial<Record<ProviderId, boolean>> = {};
+  for (const provider of SUPPORTED_AI_PROVIDERS) {
+    const entry = totals[provider];
+    result[provider] = entry !== undefined && entry.total > 0 && entry.unknown === entry.total;
+  }
+  return result;
+}
 
 /** Display-only key tail: never persisted, logged, or sent anywhere. */
 export function maskKeyTail(value: string | null): string | null {
@@ -487,6 +533,11 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
 
   const defaults = useMemo(() => defaultSelection(account), [account]);
 
+  const providerPricingUnknown = useMemo(
+    () => computeProviderPricingUnknown(catalog),
+    [catalog],
+  );
+
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-5">
       <BackButton fallbackTo="/profile" label="Back to profile" />
@@ -522,6 +573,24 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
             );
           })}
         </div>
+        <p
+          role="note"
+          data-testid="ai-offline-mode-note"
+          className="text-xs text-on-surface-variant"
+        >
+          {OFFLINE_BETA_COPY}
+        </p>
+        {isOfflineMode(mode) ? (
+          <p
+            role="status"
+            data-testid="ai-offline-mode-active"
+            className="text-xs text-error"
+          >
+            {ASSISTANT_MODE_COPY[mode].label} is set on this account, but on-device AI is not
+            available in this build, so nothing is sent. Choose Auto or Cloud-only above to use
+            cloud AI.
+          </p>
+        ) : null}
       </section>
 
       <section aria-label="On-device AI" className="flex flex-col gap-2">
@@ -566,11 +635,17 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
               const probe = probes[provider] ?? IDLE_PROBE;
               const relay = isRelayProvider(provider);
               const generic = provider === "generic";
+              const experimental = isExperimentalProvider(provider);
               const genericInsecure = (genericEndpoint ?? "").startsWith("http://");
+              const pricingUnknown = slot.connected && providerPricingUnknown[provider] === true;
               const status = relay
-                ? "Through the server relay. No key is stored on this device."
+                ? probe.phase === "ready"
+                  ? "Relay verified for this session. No key is stored on this device."
+                  : "Unavailable — the server relay is not verified yet. Run Test relay. No key is stored on this device."
                 : slot.connected
-                  ? `Connected${slot.masked ? ` · key ending ${slot.masked}` : ""}`
+                  ? `Connected${slot.masked ? ` · key ending ${slot.masked}` : ""}${
+                      pricingUnknown ? " — chat unavailable until pricing can be verified." : ""
+                    }`
                   : slot.saved
                     ? "A saved key is locked. Manage it on the AI Connection screen to unlock."
                     : "Not connected.";
@@ -585,7 +660,17 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
                   className="flex flex-col gap-2 rounded-m3-sm border border-outline-variant p-3"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold">{PROVIDER_LABELS[provider]}</span>
+                    <span className="flex items-center gap-2 text-sm font-semibold">
+                      {PROVIDER_LABELS[provider]}
+                      {experimental ? (
+                        <span
+                          data-testid={`ai-provider-experimental-${provider}`}
+                          className="rounded-m3-xs border border-outline-variant px-1.5 py-0.5 text-xs font-medium uppercase tracking-wide text-on-surface-variant"
+                        >
+                          Experimental
+                        </span>
+                      ) : null}
+                    </span>
                     <span className="text-xs text-on-surface-variant">{status}{genericSuffix}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">

@@ -581,6 +581,12 @@ export function AiConnection({
               Your provider key stays on the server. This device sends only the provider
               and message text over your signed-in session — no key is stored here.
             </p>
+            {relayPhase !== "ready" ? (
+              <p data-testid="relay-unverified" className="text-xs text-on-surface-variant">
+                Unavailable until a test call succeeds — run Test relay to verify the deployed
+                relay.
+              </p>
+            ) : null}
             <div className="flex flex-col gap-1">
               <label htmlFor="relay-provider" className="text-sm font-medium">Relay provider</label>
               <select

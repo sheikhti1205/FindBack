@@ -13,7 +13,7 @@ vi.mock("../services/supabaseClient", () => ({
   }),
 }));
 
-import { AiModels, assistantModeKey } from "./AiModels";
+import { AiModels, assistantModeKey, computeProviderPricingUnknown } from "./AiModels";
 import type { ModelRecord } from "../services/ai/providerContract";
 import { SUPPORTED_AI_PROVIDERS } from "../services/aiCredentials";
 
@@ -61,9 +61,17 @@ describe("AiModels control center (AI-022)", () => {
   it("renders assistant modes, honest offline status, one card per vault slot, and the price-visible catalogue", async () => {
     renderModels();
     expect(screen.getByRole("radiogroup", { name: /assistant mode/i })).toBeTruthy();
-    for (const label of ["Auto", "Offline-first", "Offline-only", "Cloud-only"]) {
+    // Beta scope: only the two modes this build can honor are selectable.
+    for (const label of ["Auto", "Cloud-only"]) {
       expect(screen.getByRole("radio", { name: new RegExp(label) })).toBeTruthy();
     }
+    for (const label of ["Offline-first", "Offline-only"]) {
+      expect(screen.queryByRole("radio", { name: new RegExp(label) })).toBeNull();
+    }
+    // Offline modes are shown as an informational, non-actionable note.
+    expect(screen.getByTestId("ai-offline-mode-note").textContent).toMatch(
+      /not available in this build yet/i,
+    );
     // Offline honesty: the registry seam stays unwired until the native bridge lands.
     expect(screen.getByTestId("ai-offline-status").textContent).toMatch(/not available/i);
     await screen.findByTestId("ai-provider-openai");
@@ -81,22 +89,36 @@ describe("AiModels control center (AI-022)", () => {
 
   it("persists the assistant mode per account and restores it", async () => {
     renderModels();
-    const offlineOnly = screen.getByRole("radio", { name: /offline-only/i });
-    fireEvent.click(offlineOnly);
-    expect(window.localStorage.getItem(assistantModeKey("u1"))).toBe("offline-only");
-    expect(offlineOnly.getAttribute("aria-checked")).toBe("true");
+    const cloudOnly = screen.getByRole("radio", { name: /cloud-only/i });
+    fireEvent.click(cloudOnly);
+    expect(window.localStorage.getItem(assistantModeKey("u1"))).toBe("cloud-only");
+    expect(cloudOnly.getAttribute("aria-checked")).toBe("true");
     cleanup();
     renderModels();
     expect(
-      screen.getByRole("radio", { name: /offline-only/i }).getAttribute("aria-checked"),
+      screen.getByRole("radio", { name: /cloud-only/i }).getAttribute("aria-checked"),
     ).toBe("true");
+  });
+
+  it("surfaces a stored offline mode as unavailable without silently relaxing it", async () => {
+    window.localStorage.setItem(assistantModeKey("u1"), "offline-only");
+    renderModels();
+    expect(screen.getByTestId("ai-offline-mode-active").textContent).toMatch(/not\s+available/i);
+    // The privacy choice is preserved, never rewritten to a network mode.
+    expect(window.localStorage.getItem(assistantModeKey("u1"))).toBe("offline-only");
+    expect(screen.queryByRole("radio", { name: /cloud-only/i })?.getAttribute("aria-checked")).toBe(
+      "false",
+    );
   });
 
   it("probes relay providers without a vault key and reports readiness", async () => {
     const relayChat = vi.fn(async () => ({ text: "ok" }));
     renderModels({ relayChat });
     const openaiCard = await screen.findByTestId("ai-provider-openai");
+    // Relay is not advertised as usable until a test call actually passes.
     expect(openaiCard.textContent).toMatch(/server relay/i);
+    expect(openaiCard.textContent).toMatch(/unavailable/i);
+    expect(screen.getByTestId("ai-provider-experimental-openai")).toBeTruthy();
     const firstRelayTest = screen.getAllByRole("button", { name: /test relay/i }).at(0);
     expect(firstRelayTest).toBeTruthy();
     fireEvent.click(firstRelayTest as HTMLElement);
@@ -114,5 +136,18 @@ describe("AiModels control center (AI-022)", () => {
     const openrouterCard = screen.getByTestId("ai-provider-openrouter");
     expect(openrouterCard.textContent).toMatch(/not connected/i);
     expect(openrouterCard.textContent).not.toMatch(/sk-/);
+    // OpenRouter is the one live-verified provider; everything else is Experimental.
+    expect(screen.queryByTestId("ai-provider-experimental-openrouter")).toBeNull();
+    expect(screen.getByTestId("ai-provider-experimental-groq")).toBeTruthy();
+  });
+
+  it("flags a provider whose whole catalogue is unknown-priced", () => {
+    const unknown: ModelRecord = { ...PAID_ROW, provider: "xai", id: "xai/unknown", priceClass: "unknown" };
+    expect(computeProviderPricingUnknown([unknown])).toMatchObject({ xai: true, groq: false, openrouter: false });
+    expect(computeProviderPricingUnknown([FREE_ROW, PAID_ROW])).toMatchObject({
+      openrouter: false,
+      groq: false,
+    });
+    expect(computeProviderPricingUnknown([])).toMatchObject({ xai: false });
   });
 });
