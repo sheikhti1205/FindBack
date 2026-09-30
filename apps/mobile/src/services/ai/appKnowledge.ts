@@ -23,7 +23,7 @@ export interface VersionedText {
 }
 
 export const SYSTEM_POLICY_VERSION = "policy-2026-09-25.1";
-export const KNOWLEDGE_VERSION = "kb-2026-09-25.1";
+export const KNOWLEDGE_VERSION = "kb-2026-09-30.1";
 
 /** Mirrors `MAX_PROMPT` in services/openRouter.ts (checkedPrompt). */
 export const MAX_PROMPT_CHARS = 2_400;
@@ -107,7 +107,7 @@ export const CURRENT_KNOWLEDGE_FACTS: KnowledgeFacts = Object.freeze({
   ]),
   privacy: Object.freeze([
     "photos stay on the device until publish",
-    "Help text and a confirmed photo go to OpenRouter with your own key",
+    "Help text and a confirmed photo go to the AI provider you connect",
     "no background tracking",
     "no key means nothing leaves the device",
   ]),

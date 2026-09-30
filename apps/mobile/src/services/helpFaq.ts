@@ -59,7 +59,7 @@ export function builtInHelp(question: string): string {
     return "Open your report and use its status control to mark the item Matched, Recovered or Closed when appropriate.";
   }
   if (/photo|image|upload/.test(q)) {
-    return "You can attach a photo while preparing a report. It is uploaded when you publish. AI photo analysis is optional and sends the selected image to OpenRouter only with your consent.";
+    return "You can attach a photo while preparing a report. It is uploaded when you publish. AI photo analysis is optional and sends the selected image to your connected AI provider only with your consent.";
   }
   if (/comment|rating|like/.test(q)) {
     return "Open a post to comment, react or rate it. Comments and counts update while the post is open.";

@@ -33,11 +33,11 @@ describe("About", () => {
     expect(screen.getAllByText("unknown")).toHaveLength(2);
   });
 
-  it("discloses the optional OpenRouter AI route without offline claims", async () => {
+  it("discloses the optional AI routes without offline claims", async () => {
     bridge.getBuildInfo.mockResolvedValue({ buildGitSha: "abc123", versionCode: 1 });
     render(<MemoryRouter><About /></MemoryRouter>);
-    expect(await screen.findByText(/Optional OpenRouter free-model features/)).toBeTruthy();
-    expect(screen.getByText(/sent to OpenRouter for suggestions/)).toBeTruthy();
+    expect(await screen.findByText(/provider key you add/)).toBeTruthy();
+    expect(screen.getByText(/sent to your connected provider for suggestions/)).toBeTruthy();
     expect(screen.queryByText(/offline|on-device|GPU|download.*model/i)).toBeNull();
   });
 });

@@ -19,8 +19,8 @@ const edgeSummary = edgeSource.slice(
 const mobileCopy = JSON.stringify(APP_CAPABILITIES);
 
 /**
- * Vocabulary of the retired local generative runtime. The active architecture is
- * the OpenRouter free route with a user-owned key, so none of these may be
+ * Vocabulary of the retired local generative runtime. The active architecture
+ * is a user-owned BYOK key plus the server relay, so none of these may be
  * claimed as a capability again.
  */
 const RETIRED_CLAIMS: Array<[RegExp, string]> = [
@@ -51,11 +51,11 @@ describe("capability docs", () => {
     }
   });
 
-  it("names the OpenRouter free route for connection, photo analysis and Help", () => {
+  it("names the OpenRouter free route and the connected-provider architecture", () => {
     expect(APP_CAPABILITIES.aiConnection.join(" ")).toMatch(/openrouter\/free/i);
-    expect(APP_CAPABILITIES.photoAnalysis.join(" ")).toMatch(/openrouter/i);
-    expect(APP_CAPABILITIES.helpAssistant.join(" ")).toMatch(/openrouter/i);
-    expect(APP_CAPABILITIES.privacy.join(" ")).toMatch(/openrouter/i);
+    expect(APP_CAPABILITIES.photoAnalysis.join(" ")).toMatch(/AI provider/i);
+    expect(APP_CAPABILITIES.helpAssistant.join(" ")).toMatch(/AI provider/i);
+    expect(APP_CAPABILITIES.privacy.join(" ")).toMatch(/provider you connect/i);
     expect(edgeSummary).toMatch(/openrouter\/free/i);
   });
 

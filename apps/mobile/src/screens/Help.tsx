@@ -97,7 +97,7 @@ const SUGGESTIONS = [
  * nothing here auto-attaches — each photo is chosen per send.
  */
 const PRIVACY_COPY =
-  "With your own OpenRouter key connected (Profile → AI Connection), answers are generated with free models and need an internet connection; your question text is sent to OpenRouter and answers may vary. Photos are never attached automatically. Without a connected key — or when AI is unavailable — you get a built-in answer instead.";
+  "With an AI provider connected (Profile → AI Connection), answers are generated with that provider's models and need an internet connection; your question text is sent to that provider and answers may vary. OpenRouter stays on its free route. Photos are never attached automatically. Without a connected provider — or when AI is unavailable — you get a built-in answer instead.";
 
 /**
  * Pinned free-route seed (P4b origin, AI-024b unpinned): the catalogue opens
@@ -1504,9 +1504,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         >
           <span
             className="min-w-0 flex-1 truncate text-xs text-on-surface-variant"
-            title="OpenRouter when connected · built-in otherwise"
+            title="AI provider when connected · built-in otherwise"
           >
-            OpenRouter when connected · built-in otherwise
+            AI provider when connected · built-in otherwise
           </span>
           <button
             type="button"
