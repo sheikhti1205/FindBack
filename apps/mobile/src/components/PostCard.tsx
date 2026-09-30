@@ -7,6 +7,12 @@ interface PostCardProps {
   children: ReactNode;
   to: string;
   index?: number;
+  /**
+   * Home-feed redesign: `home-feed` renders the Link as a tight horizontal
+   * row shell (rounded 18px, compact padding) for the image-left layout.
+   * Default keeps the pre-existing column card verbatim.
+   */
+  variant?: "default" | "home-feed";
 }
 
 /**
@@ -31,7 +37,7 @@ export function __resetFeedEntranceForTests(): void {
   feedEntrancePlayed = false;
 }
 
-export function PostCard({ children, to, index = 0 }: PostCardProps) {
+export function PostCard({ children, to, index = 0, variant = "default" }: PostCardProps) {
   const animated = index < POST_CARD_ANIMATED_COUNT && !feedEntrancePlayed;
   useEffect(() => {
     if (animated) feedEntrancePlayed = true;
@@ -39,7 +45,11 @@ export function PostCard({ children, to, index = 0 }: PostCardProps) {
   const body = (
     <Link
       to={to}
-      className="flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
+      className={
+        variant === "home-feed"
+          ? "flex gap-2.5 rounded-[18px] border border-outline-variant bg-surface-container-low p-2.5 shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container"
+          : "flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
+      }
     >
       {children}
     </Link>

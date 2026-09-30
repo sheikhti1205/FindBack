@@ -153,6 +153,45 @@ describe("PostList density", () => {
   });
 });
 
+describe("PostList home-feed density (reference-inspired Home redesign)", () => {
+  const base = {
+    loading: false,
+    refreshing: false,
+    loadingMore: false,
+    error: null,
+    hasMore: false,
+    onLoadMore: () => Promise.resolve(),
+    onRetry: () => Promise.resolve(),
+  };
+
+  it("home-feed density renders the image-left/content-right layout", () => {
+    render(
+      <MemoryRouter>
+        <PostList items={[imagePost()]} {...base} density="home-feed" />
+      </MemoryRouter>,
+    );
+    // Home-feed contract markers — none of the other layouts render these.
+    expect(screen.getByTestId("home-feed-content")).toBeTruthy();
+    expect(screen.getByTestId("post-type-badge").textContent).toMatch(/found/i);
+    expect(screen.getByTestId("post-time")).toBeTruthy();
+    expect(screen.getByTestId("post-image-state").className).toContain("fb-feed-img");
+    const title = screen.getByRole("heading", { name: "Black over-ear headphones" });
+    expect(title.className).toContain("fb-feed-title");
+    expect(title.className).not.toContain("fb-editorial-title");
+  });
+
+  it("home-feed keeps the shared card → detail ids", () => {
+    render(
+      <MemoryRouter>
+        <PostList items={[imagePost()]} {...base} density="home-feed" />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("post-image-state").getAttribute("data-shared-media")).toBe(
+      "fb-post-media-p1",
+    );
+  });
+});
+
 describe("PostList state transitions (Wave A)", () => {
   function renderList(props: Partial<Parameters<typeof PostList>[0]>) {
     return render(

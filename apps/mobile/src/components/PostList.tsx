@@ -19,8 +19,10 @@ interface PostListProps {
   emptyTitle?: string;
   emptySubtitle?: string;
   /** U2 hybrid rollout: `editorial` (Home Variant A, airy photo-led cards) or
-   *  `compact` (Search Variant B, dense rows). Omitted = pre-U2 rendering. */
-  density?: "editorial" | "compact";
+   *  `compact` (Search Variant B, dense rows). `home-feed` is the
+   *  reference-inspired Home redesign (image-left/content-right). Omitted =
+   *  pre-U2 rendering. */
+  density?: "editorial" | "compact" | "home-feed";
 }
 
 export function PostList({
@@ -55,15 +57,19 @@ export function PostList({
     return () => observer.disconnect();
   }, [hasMore, loadingMore, onLoadMore, error]);
 
-  // U2: density maps to card layout; omitted density keeps pre-U2 rendering
+  // Density maps to card layout; omitted density keeps pre-U2 rendering
   // so rollout-external screens (e.g. MyPosts) are pixel-identical.
-  const layout: PostCardLayout = density === "compact" ? "compact" : density === "editorial" ? "editorial" : "classic";
+  // `home-feed` is Home-only; Search stays `compact`, classic stays classic.
+  const layout: PostCardLayout =
+    density === "compact" ? "compact" : density === "home-feed" ? "home-feed" : density === "editorial" ? "editorial" : "classic";
   const listClass =
     density === "compact"
       ? "flex flex-col gap-2 px-3"
-      : density === "editorial"
-        ? "flex flex-col gap-4 px-4"
-        : "flex flex-col gap-3 px-4";
+      : density === "home-feed"
+        ? "flex flex-col gap-3 px-4"
+        : density === "editorial"
+          ? "flex flex-col gap-4 px-4"
+          : "flex flex-col gap-3 px-4";
 
   // Wave A: short opacity-only swaps between feed states. The spinner exits
   // as content enters (and likewise for error/empty), so loading → results
@@ -150,7 +156,12 @@ export function PostList({
               </div>
             )}
             {items.map((post, i) => (
-              <PostCard key={post.id} to={`/posts/${post.id}`} index={i}>
+              <PostCard
+                key={post.id}
+                to={`/posts/${post.id}`}
+                index={i}
+                variant={layout === "home-feed" ? "home-feed" : "default"}
+              >
                 <PostCardContent post={post} layout={layout} enableSharedMedia />
               </PostCard>
             ))}

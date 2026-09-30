@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Search, X } from "lucide-react";
 import type { PostType } from "@findback/shared";
-import { Segmented } from "../components/Segmented";
+import { HomeFilterChips } from "./HomeFilterChips";
+import { HomeSearchBar } from "./HomeSearchBar";
 import { PostList } from "../components/PostList";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { NewPostsPill } from "../components/NewPostsPill";
@@ -18,9 +18,6 @@ import {
   fadeVariants,
   motionDurations,
   motionEasings,
-  motionSprings,
-  pressFeedback,
-  scaleInVariants,
   shouldReduceMotion,
 } from "../components/uiMotion";
 
@@ -207,81 +204,24 @@ export function Home() {
       </header>
 
       <div className="flex flex-col gap-3 px-4">
-        <Segmented<TypeFilter>
-          ariaLabel="Post type"
-          value={type}
-          onChange={setType}
-          options={[
-            { value: "ALL", label: "All" },
-            { value: "LOST", label: "Lost" },
-            { value: "FOUND", label: "Found" },
-          ]}
-        />
-        <div className="flex items-center gap-2">
-          <motion.div
-            layout
-            transition={motionSprings.soft}
-            className="flex min-w-0 flex-1 items-center rounded-full border border-outline-variant bg-surface pl-1 pr-4 focus-within:border-on-surface"
-          >
+        <HomeSearchBar
+          query={query}
+          onQueryChange={setQuery}
+          searchActive={searchActive}
+          onClear={() => setQuery("")}
+          onCancel={collapseSearch}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => setSearchFocused(false)}
+          inputRef={searchInputRef}
+          filterButton={
             <FiltersIconButton
               activeCount={getActiveFilterCount(advanced)}
               open={filtersOpen}
               onClick={() => setFiltersOpen(true)}
             />
-            <Search
-              size={16}
-              aria-hidden
-              className="pointer-events-none ml-1 shrink-0 text-on-surface-variant"
-            />
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onFocus={() => setSearchFocused(true)}
-              onBlur={() => setSearchFocused(false)}
-              placeholder="Search title or description…"
-              aria-label="Search posts"
-              className="min-w-0 flex-1 bg-transparent py-3 pl-2 text-sm placeholder:text-on-surface-variant focus:outline-none"
-            />
-            <AnimatePresence initial={false}>
-              {query.length > 0 && (
-                <motion.button
-                  key="home-search-clear"
-                  type="button"
-                  onClick={() => setQuery("")}
-                  aria-label="Clear search"
-                  whileTap={pressFeedback.iconButton}
-                  variants={scaleInVariants}
-                  initial="hidden"
-                  animate="visible"
-                  exit="exit"
-                  transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
-                  className="flex min-h-[48px] min-w-[48px] shrink-0 items-center justify-center rounded-full text-on-surface-variant"
-                >
-                  <X size={16} aria-hidden />
-                </motion.button>
-              )}
-            </AnimatePresence>
-          </motion.div>
-          <AnimatePresence initial={false}>
-            {searchActive && (
-              <motion.button
-                key="home-search-cancel"
-                type="button"
-                onClick={collapseSearch}
-                variants={fadeVariants}
-                initial="hidden"
-                animate="visible"
-                exit="exit"
-                transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
-                className="shrink-0 rounded-full px-2 text-sm font-medium text-on-surface"
-              >
-                Cancel
-              </motion.button>
-            )}
-          </AnimatePresence>
-        </div>
+          }
+        />
+        <HomeFilterChips value={type} onChange={setType} />
         <AdvancedSearchFilters
           filters={advanced}
           open={filtersOpen}
@@ -302,7 +242,7 @@ export function Home() {
           hasMore={hasMore}
           onLoadMore={loadMore}
           onRetry={refresh}
-          density="editorial"
+          density="home-feed"
           emptyTitle={appliedQuery || advanced.category || advanced.status ? "No matches" : "Nothing here yet"}
           emptySubtitle={
             advanced.category || advanced.status

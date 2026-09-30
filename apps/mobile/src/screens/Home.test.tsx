@@ -429,3 +429,42 @@ describe("Home realtime", () => {
     await waitFor(() => expect(screen.getByTestId("home-toolbar").className).toContain("shadow-sm"));
   });
 });
+
+describe("Home feed redesign (reference-inspired)", () => {
+  beforeEach(() => {
+    fetchFeedMock.mockReset();
+    onRealtimeMock.mockClear();
+    handlers.clear();
+    tabTapState.tapCount = 0;
+    clearFeedCaches();
+    fetchFeedMock.mockResolvedValue({
+      items: ["a", "b", "c"].map((id) => ({ id, title: id })),
+      nextCursor: null,
+      total: 3,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    clearFeedCaches();
+    resetBackInterceptors();
+  });
+
+  it("offers All/Lost/Found quick chips and no dead Nearby/Recent chip", async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    expect(screen.getByRole("radio", { name: "All" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "Lost" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "Found" })).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: "Nearby" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Recent" })).toBeNull();
+  });
+
+  it("renders the prominent search with the filter affordance on the right", async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    const input = screen.getByLabelText("Search posts") as HTMLInputElement;
+    expect(input.placeholder).toBe("Search lost or found items…");
+    expect(screen.getByRole("button", { name: /^filters/i })).toBeTruthy();
+  });
+});
