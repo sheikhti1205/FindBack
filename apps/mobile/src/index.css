@@ -396,6 +396,15 @@ html.fb-reduce-motion .fb-feed-img[data-state="loading"]::after {
   background: linear-gradient(100deg, transparent 30%, rgba(128, 128, 128, 0.25) 50%, transparent 70%);
   animation: fb-img-sweep 1.4s ease-in-out infinite;
 }
+/* UXN-2 edge-to-edge media: a decoded Home photo prints with no frame
+ * outline, no padding, and no letterbox — object-fit cover (above) crops it
+ * to the rounded frame, which clips it via overflow hidden. Loading, failed,
+ * and no-photo placeholders intentionally keep their subtle outline so the
+ * reserved geometry stays visible before/after a photo exists. */
+.fb-feed-img[data-state="loaded"] {
+  border-color: transparent;
+  background: transparent;
+}
 /* Failed-image fallback inside the narrow feed column: stack icon above the
  * label and shrink the text so it never crushes. Scoped to the feed frame —
  * the shared .fb-img-fallback used by editorial/compact is untouched. */

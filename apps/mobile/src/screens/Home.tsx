@@ -10,6 +10,7 @@ import { BottomSheet } from "../components/BottomSheet";
 import { MapPickerSheet } from "../components/MapPickerSheet";
 import type { LocationValue } from "../components/LocationPicker";
 import { useFeed } from "../hooks/useFeed";
+import { FeedLoveProvider } from "../hooks/useFeedLove";
 import { useUrlParam } from "../hooks/useUrlParam";
 import { onRealtime } from "../services/realtime";
 import {
@@ -240,7 +241,7 @@ export function Home() {
     setQParam(appliedQuery);
   }, [appliedQuery, setQParam]);
 
-  const { items, total, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore, removeItem } = useFeed(
+  const { items, total, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore, removeItem, patchItem } = useFeed(
     feedFilters,
     { cacheKey: HOME_CACHE_KEY, scrollRef },
   );
@@ -495,27 +496,32 @@ export function Home() {
       <NewPostsPill count={newPostCount} hasUpdates={hasUpdates} onTap={onNewPostsTap} />
 
       <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="flex-1">
-        <PostList
-          items={items}
-          loading={loading}
-          refreshing={refreshing}
-          loadingMore={loadingMore}
-          error={error}
-          hasMore={hasMore}
-          onLoadMore={loadMore}
-          onRetry={refresh}
-          density="home-feed"
-          emptyTitle={appliedQuery || advanced.category || advanced.status || nearbyActive ? "No matches" : "Nothing here yet"}
-          emptySubtitle={
-            nearbyActive
-              ? "Try a wider radius or different filters. Nearby uses reports with a map pin."
-              : advanced.category || advanced.status
-                ? "Try different filters or a broader search."
-                : appliedQuery
-                  ? `No posts match “${appliedQuery}”.`
-                  : "Tap Create report to post a lost or found item."
-          }
-        />
+        {/* UXN-2: batch-hydrated Love state + optimistic feed-cache patching.
+            PostList itself is untouched — the provider flows state to each
+            home-feed card's Love toggle via context. */}
+        <FeedLoveProvider items={items} patchItem={patchItem}>
+          <PostList
+            items={items}
+            loading={loading}
+            refreshing={refreshing}
+            loadingMore={loadingMore}
+            error={error}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            onRetry={refresh}
+            density="home-feed"
+            emptyTitle={appliedQuery || advanced.category || advanced.status || nearbyActive ? "No matches" : "Nothing here yet"}
+            emptySubtitle={
+              nearbyActive
+                ? "Try a wider radius or different filters. Nearby uses reports with a map pin."
+                : advanced.category || advanced.status
+                  ? "Try different filters or a broader search."
+                  : appliedQuery
+                    ? `No posts match “${appliedQuery}”.`
+                    : "Tap Create report to post a lost or found item."
+            }
+          />
+        </FeedLoveProvider>
       </PullToRefresh>
     </div>
   );

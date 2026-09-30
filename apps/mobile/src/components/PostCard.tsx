@@ -8,9 +8,11 @@ interface PostCardProps {
   to: string;
   index?: number;
   /**
-   * Home-feed redesign: `home-feed` renders the Link as a tight horizontal
-   * row shell (rounded 18px, compact padding) for the image-left layout.
-   * Default keeps the pre-existing column card verbatim.
+   * Home-feed redesign: `home-feed` renders a tight horizontal row shell
+   * (rounded 18px, compact padding) for the image-left layout. Unlike the
+   * default card it is NOT a wrapping Link — the content block owns the
+   * detail link and the action controls as siblings. Default keeps the
+   * pre-existing column card verbatim.
    */
   variant?: "default" | "home-feed";
 }
@@ -42,18 +44,25 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
   useEffect(() => {
     if (animated) feedEntrancePlayed = true;
   }, [animated]);
-  const body = (
-    <Link
-      to={to}
-      className={
-        variant === "home-feed"
-          ? "flex gap-2.5 rounded-[18px] border border-outline-variant bg-surface-container-low p-2.5 shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container"
-          : "flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
-      }
-    >
-      {children}
-    </Link>
-  );
+  // UXN-2: the home-feed card is NOT one wrapping Link. A button nested in a
+  // link is invalid DOM and breaks assistive tech, so the shell is a plain
+  // div and the content block owns two siblings: the detail Link (media +
+  // text) and the action row (Love toggle). `to` is kept for API parity with
+  // PostList and still drives the default variant; home-feed ignores it
+  // because PostCardContent links to `/posts/${post.id}` itself.
+  const body =
+    variant === "home-feed" ? (
+      <div className="flex gap-2.5 rounded-[18px] border border-outline-variant bg-surface-container-low p-2.5 shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container">
+        {children}
+      </div>
+    ) : (
+      <Link
+        to={to}
+        className="flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
+      >
+        {children}
+      </Link>
+    );
   if (!animated) {
     return (
       <article data-testid="post-card" data-animated="false">

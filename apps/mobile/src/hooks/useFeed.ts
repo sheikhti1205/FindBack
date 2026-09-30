@@ -19,6 +19,12 @@ export interface FeedState {
   loadMore: () => Promise<void>;
   /** Reconcile a deleted post in place — never refetch or reorder the list. */
   removeItem: (id: string) => void;
+  /**
+   * UXN-2: merge a partial patch into one loaded item in place (e.g.
+   * optimistic Love counts) — never refetch or reorder. The patched items
+   * flow into the Detail→Back session snapshot on unmount like any load.
+   */
+  patchItem: (id: string, patch: Partial<PostItem> | ((prev: PostItem) => Partial<PostItem>)) => void;
 }
 
 interface UseFeedOptions {
@@ -209,6 +215,22 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     setTotal((t) => Math.max(0, t - 1));
   }, []);
 
+  // An optimistic patch (e.g. Love counts) must not yank or reorder a
+  // scrolled reader: merge into the row where it sits and keep every other
+  // item in place. If the post is not loaded, this is a no-op. Totals are
+  // untouched — a patch never adds or removes rows.
+  const patchItem = useCallback(
+    (id: string, patch: Partial<PostItem> | ((prev: PostItem) => Partial<PostItem>)) => {
+      if (!latestRef.current.items.some((item) => item.id === id)) return;
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === id ? { ...item, ...(typeof patch === "function" ? patch(item) : patch) } : item,
+        ),
+      );
+    },
+    [],
+  );
+
   return {
     items,
     total,
@@ -220,5 +242,6 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     refresh,
     loadMore,
     removeItem,
+    patchItem,
   };
 }

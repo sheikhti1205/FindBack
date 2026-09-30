@@ -2,8 +2,10 @@ import { useState } from "react";
 import type { PostItem, PostStatus, PostType } from "@findback/shared";
 import { motion } from "framer-motion";
 import { CircleAlert, CircleCheck, ImageOff, MapPin, MessageSquare, Star, Tag, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Link } from "react-router";
 import { timeAgo } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
+import { HomeFeedLoveButton } from "./HomeFeedLoveButton";
 import {
   fadeVariants,
   motionDurations,
@@ -392,77 +394,90 @@ function HomeFeedMetrics({ post }: { post: PostItem }) {
  * verbatim. Reuses FeedImage (lazy, shimmer, crossfade, failure fallback,
  * shared layoutId), SharedTitle (shared layoutId), stripMarkdown, timeAgo,
  * and the lifecycle labels — only the arrangement and emphasis change.
+ *
+ * UXN-2 DOM contract: the PostCard home-feed shell is a plain div, so this
+ * block owns navigation AND actions as siblings — the detail `Link` wraps
+ * media + text, and the Love toggle sits beside it in an action row. Never
+ * nest the button inside the link.
  */
 function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; enableSharedMedia?: boolean }) {
   const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
   const hero = images[0];
   const excerpt = stripMarkdown(post.description);
+  // Detail destination mirrors PostList (`/posts/${post.id}`) — the single
+  // route both shells navigate to.
   return (
-    <div
-      data-testid="home-feed-content"
-      className="grid min-w-0 flex-1 grid-cols-[minmax(112px,42%)_minmax(0,1fr)] gap-2.5"
-    >
-      <div className="relative min-w-0 self-start">
-        {hero ? (
-          <FeedImage
-            url={hero.fileUrl}
-            alt={`Photo for ${post.title}`}
-            variant="feed"
-            postId={post.id}
-            enableSharedMedia={enableSharedMedia}
-          />
-        ) : (
-          <div data-testid="home-feed-no-photo" className="fb-feed-img fb-feed-img-none">
-            <ImageOff size={18} aria-hidden />
-            <span>No photo</span>
-          </div>
-        )}
-        {images.length > 1 && (
-          <span data-testid="photo-count" className="fb-feed-photo-badge">
-            {images.length} photos
-          </span>
-        )}
-      </div>
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <div className="flex items-start justify-between gap-2">
-          <TypeBadge type={post.type} />
-          <span data-testid="post-time" className="shrink-0 whitespace-nowrap text-[11px] text-on-surface-variant">
-            {timeAgo(post.createdAt)}
-          </span>
-        </div>
-        <div data-testid="post-title">
-          <SharedTitle
-            post={post}
-            className="fb-feed-title line-clamp-2 break-words"
-            enableSharedMedia={enableSharedMedia}
-          />
-        </div>
-        {excerpt && (
-          <p data-testid="post-description" className="line-clamp-2 break-words text-sm leading-relaxed text-on-surface-variant">
-            {excerpt}
-          </p>
-        )}
-        {post.locationLabel && (
-          <p data-testid="post-location" className="flex min-w-0 items-center gap-1 text-xs text-on-surface-variant">
-            <MapPin size={13} aria-hidden className="shrink-0" />
-            <span className="truncate">{post.locationLabel}</span>
-          </p>
-        )}
-        <p data-testid="post-author" className="truncate text-[11px] text-on-surface-variant">
-          @{post.author.username}
-        </p>
-        <div data-testid="post-footer" className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1.5 pt-1">
-          <span data-testid="post-category" className="fb-category-chip">
-            <Tag size={12} aria-hidden className="shrink-0" />
-            <span>{post.category}</span>
-          </span>
-          {post.status !== "OPEN" && (
-            <span data-testid="post-lifecycle" className="text-[11px] font-medium text-on-surface-variant">
-              {STATUS_LABELS[post.status]}
+    <div data-testid="home-feed-content" className="flex min-w-0 flex-1 flex-col gap-1.5">
+      <Link
+        to={`/posts/${post.id}`}
+        data-testid="home-feed-detail-link"
+        className="grid min-w-0 grid-cols-[minmax(112px,42%)_minmax(0,1fr)] gap-2.5"
+      >
+        <div className="relative min-w-0 self-start">
+          {hero ? (
+            <FeedImage
+              url={hero.fileUrl}
+              alt={`Photo for ${post.title}`}
+              variant="feed"
+              postId={post.id}
+              enableSharedMedia={enableSharedMedia}
+            />
+          ) : (
+            <div data-testid="home-feed-no-photo" className="fb-feed-img fb-feed-img-none">
+              <ImageOff size={18} aria-hidden />
+              <span>No photo</span>
+            </div>
+          )}
+          {images.length > 1 && (
+            <span data-testid="photo-count" className="fb-feed-photo-badge">
+              {images.length} photos
             </span>
           )}
-          <HomeFeedMetrics post={post} />
         </div>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <TypeBadge type={post.type} />
+            <span data-testid="post-time" className="shrink-0 whitespace-nowrap text-[11px] text-on-surface-variant">
+              {timeAgo(post.createdAt)}
+            </span>
+          </div>
+          <div data-testid="post-title">
+            <SharedTitle
+              post={post}
+              className="fb-feed-title line-clamp-2 break-words"
+              enableSharedMedia={enableSharedMedia}
+            />
+          </div>
+          {excerpt && (
+            <p data-testid="post-description" className="line-clamp-2 break-words text-sm leading-relaxed text-on-surface-variant">
+              {excerpt}
+            </p>
+          )}
+          {post.locationLabel && (
+            <p data-testid="post-location" className="flex min-w-0 items-center gap-1 text-xs text-on-surface-variant">
+              <MapPin size={13} aria-hidden className="shrink-0" />
+              <span className="truncate">{post.locationLabel}</span>
+            </p>
+          )}
+          <p data-testid="post-author" className="truncate text-[11px] text-on-surface-variant">
+            @{post.author.username}
+          </p>
+          <div data-testid="post-footer" className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1.5 pt-1">
+            <span data-testid="post-category" className="fb-category-chip">
+              <Tag size={12} aria-hidden className="shrink-0" />
+              <span>{post.category}</span>
+            </span>
+            {post.status !== "OPEN" && (
+              <span data-testid="post-lifecycle" className="text-[11px] font-medium text-on-surface-variant">
+                {STATUS_LABELS[post.status]}
+              </span>
+            )}
+            <HomeFeedMetrics post={post} />
+          </div>
+        </div>
+      </Link>
+      <div data-testid="home-feed-actions" className="flex items-center gap-1">
+        <HomeFeedLoveButton postId={post.id} likeCount={post.likeCount} />
       </div>
     </div>
   );
