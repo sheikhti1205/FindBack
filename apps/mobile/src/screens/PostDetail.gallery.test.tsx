@@ -95,7 +95,7 @@ describe("PostDetail photo gallery (G17)", () => {
 
   afterEach(cleanup);
 
-  it("renders a 1..5 gallery strip with counts instead of a single image", async () => {
+  it("renders a swipeable cover hero with counts and dots", async () => {
     postsMock.fetchPost.mockResolvedValue({
       ...basePost,
       attachments: [attachment("a1", 1), attachment("a2", 2), attachment("a3", 3)],
@@ -104,19 +104,61 @@ describe("PostDetail photo gallery (G17)", () => {
 
     const main = await screen.findByRole("img", { name: /photo 1 of 3/i });
     expect(main.getAttribute("src")).toContain("a1.jpg");
-    expect(screen.getByText(/photo 1 of 3/i)).toBeTruthy();
+    expect(main.className).toContain("object-cover");
+    expect(screen.getByText("1 / 3")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /show photo 3/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next photo/i }));
+    const main2 = await screen.findByRole("img", { name: /photo 2 of 3/i });
+    expect(main2.getAttribute("src")).toContain("a2.jpg");
+    expect(screen.getByText("2 / 3")).toBeTruthy();
+
+    // Dots jump straight to a photo.
+    fireEvent.click(screen.getByRole("tab", { name: /show photo 3/i }));
     const main3 = await screen.findByRole("img", { name: /photo 3 of 3/i });
     expect(main3.getAttribute("src")).toContain("a3.jpg");
   });
 
-  it("a single photo renders without a thumb strip", async () => {
+  it("swiping the hero changes the photo; vertical drags do not", async () => {
+    postsMock.fetchPost.mockResolvedValue({
+      ...basePost,
+      attachments: [attachment("a1", 1), attachment("a2", 2)],
+    });
+    renderDetail();
+    await screen.findByRole("img", { name: /photo 1 of 2/i });
+
+    const stage = screen.getByTestId("detail-hero-stage");
+    fireEvent.touchStart(stage, { touches: [{ clientX: 200, clientY: 100 }] });
+    fireEvent.touchMove(stage, { touches: [{ clientX: 80, clientY: 105 }] });
+    fireEvent.touchEnd(stage, { changedTouches: [{ clientX: 80, clientY: 105 }] });
+    expect(await screen.findByRole("img", { name: /photo 2 of 2/i })).toBeTruthy();
+
+    // Mostly-vertical gesture: page scroll wins, photo stays.
+    fireEvent.touchStart(stage, { touches: [{ clientX: 150, clientY: 50 }] });
+    fireEvent.touchMove(stage, { touches: [{ clientX: 140, clientY: 250 }] });
+    fireEvent.touchEnd(stage, { changedTouches: [{ clientX: 140, clientY: 250 }] });
+    expect(screen.getByRole("img", { name: /photo 2 of 2/i })).toBeTruthy();
+  });
+
+  it("tapping the hero opens the fullscreen lightbox", async () => {
+    postsMock.fetchPost.mockResolvedValue({
+      ...basePost,
+      attachments: [attachment("a1", 1), attachment("a2", 2)],
+    });
+    renderDetail();
+    await screen.findByRole("img", { name: /photo 1 of 2/i });
+    fireEvent.click(screen.getByRole("button", { name: /open photo 1 of 2 fullscreen/i }));
+    expect(await screen.findByTestId("photo-lightbox")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Photo 1 of 2" })).toBeTruthy();
+  });
+
+  it("a single photo renders a cover hero without nav controls", async () => {
     postsMock.fetchPost.mockResolvedValue({ ...basePost, attachments: [attachment("a1", 1)] });
     renderDetail();
 
-    await screen.findByRole("img", { name: /photo for found camera/i });
-    expect(screen.queryByRole("button", { name: /show photo/i })).toBeNull();
+    const img = await screen.findByRole("img", { name: /photo for found camera/i });
+    expect(img.className).toContain("object-cover");
+    expect(screen.queryByRole("button", { name: /next photo/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /previous photo/i })).toBeNull();
   });
 
   it("Recovered/Closed need confirmation; other transitions stay direct", async () => {

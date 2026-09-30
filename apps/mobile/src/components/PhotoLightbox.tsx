@@ -5,6 +5,7 @@ import type { Variants } from "framer-motion";
 import { ChevronLeft, ChevronRight, ImageOff, X } from "lucide-react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
+import { resolveHorizontalSwipe } from "../utils/detailSwipe";
 import {
   backdropTransition,
   dialogVariants,
@@ -212,6 +213,23 @@ function LightboxPanel({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [origin, setOrigin] = useState<{ x: number; y: number; scale: number } | null>(null);
   const [measured, setMeasured] = useState(originRect == null);
+  // Touch swipe: horizontal flicks change photo, vertical/small drags ignored.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+
+  function handleTouchStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    if (t) touchStart.current = { x: t.clientX, y: t.clientY };
+  }
+
+  function handleTouchEnd(e: React.TouchEvent) {
+    const start = touchStart.current;
+    touchStart.current = null;
+    const end = e.changedTouches[0];
+    if (!start || !end) return;
+    const dir = resolveHorizontalSwipe(end.clientX - start.x, end.clientY - start.y, 0);
+    if (dir === "next") onNext?.();
+    else if (dir === "prev") onPrev?.();
+  }
 
   // Two-pass measurement: while the origin is unknown the panel renders as an
   // invisible stand-in, its rect is read in a layout effect (before paint),
@@ -277,7 +295,12 @@ function LightboxPanel({
         }
       }}
     >
-      <div className="relative h-[70vh] w-full" data-testid="lightbox-stage">
+      <div
+        className="relative h-[70vh] w-full"
+        data-testid="lightbox-stage"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         <AnimatePresence initial={false} custom={direction}>
           <motion.div
             key={photo.id}

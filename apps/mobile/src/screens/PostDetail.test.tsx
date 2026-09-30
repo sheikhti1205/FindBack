@@ -239,10 +239,10 @@ describe("PostDetail mutation sequencing", () => {
 
   it("latest reaction wins: rapid toggle LIKE->DISLIKE with DISLIKE response first, then LIKE response - UI stays DISLIKE", async () => {
     renderDetail();
-    await waitFor(() => screen.getByRole("button", { name: /Helpful/ }));
+    await waitFor(() => screen.getByRole("button", { name: /Love/ }));
 
     // Click LIKE (starts request A)
-    const likeButton = screen.getByRole("button", { name: /Helpful/ });
+    const likeButton = screen.getByRole("button", { name: /Love/ });
     fireEvent.click(likeButton);
     expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE");
     expect(likeButton.getAttribute("aria-pressed")).toBe("true");
@@ -290,10 +290,10 @@ describe("PostDetail mutation sequencing", () => {
 
   it("stale failure must not roll back newer success: reaction A fails after B succeeds - UI stays B", async () => {
     renderDetail();
-    await waitFor(() => screen.getByRole("button", { name: /Helpful/ }));
+    await waitFor(() => screen.getByRole("button", { name: /Love/ }));
 
     // Click LIKE (starts request A)
-    const likeButton = screen.getByRole("button", { name: /Helpful/ });
+    const likeButton = screen.getByRole("button", { name: /Love/ });
     fireEvent.click(likeButton);
     expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE");
 
