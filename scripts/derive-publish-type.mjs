@@ -2,9 +2,11 @@
 /**
  * Derive the GitHub Release publish type from a SemVer release tag.
  *
- * Prerelease suffix (-beta.*, -rc.*, etc.) → prerelease + beta-style title
- * (historical behavior, unchanged). Plain stable (e.g. v1.0.0) → normal
- * release + stable title. Build metadata (+...) never implies prerelease.
+ * Beta tags (-beta.*) publish as NORMAL releases with a beta-style title, so
+ * they stay Latest-eligible (VoiceStudio-style repo presentation). Other
+ * prerelease suffixes (-rc.*, -alpha, ...) stay prereleases. Plain stable
+ * (e.g. v1.0.0) → normal release + stable title. Build metadata (+...)
+ * never implies prerelease.
  *
  * Usage (consumed by the `publish` job in .github/workflows/release.yml):
  *   node scripts/derive-publish-type.mjs --tag v0.2.0-beta.1 --field title
@@ -19,12 +21,20 @@ export function derivePublishType(tag) {
   if (!m) throw new Error(`derive-publish-type: invalid release tag ${JSON.stringify(tag)} (want v<semver>[-prerelease][+build])`);
   const [, version, pre] = m;
   void version;
-  if (pre) {
+  if (pre && !/^-beta([.-]|$)/i.test(pre)) {
     return {
       prerelease: true,
       prereleaseFlag: "--prerelease",
       title: `FindBack ${tag} (beta)`,
       notes: "Prerelease signed beta. See release-manifest.json for versionCode, git SHA, and per-artifact checksums.",
+    };
+  }
+  if (pre) {
+    return {
+      prerelease: false,
+      prereleaseFlag: "",
+      title: `FindBack ${tag} (beta)`,
+      notes: "Signed beta published as a full release. See release-manifest.json for versionCode, git SHA, and per-artifact checksums.",
     };
   }
   return {
