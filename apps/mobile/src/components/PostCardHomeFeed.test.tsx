@@ -283,6 +283,44 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
       window.removeEventListener("findback:announce", handler);
     }
   });
+
+  it("disables the Love toggle while a toggle is in flight", async () => {
+    let release!: (value: unknown) => void;
+    loveToggleMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderHomeFeed(imagePost());
+    const love = screen.getByTestId("home-feed-love") as HTMLButtonElement;
+    expect(love.disabled).toBe(false);
+    fireEvent.click(love);
+    await waitFor(() => expect(love.disabled).toBe(true));
+    release({ postId: "p1", likeCount: 25, dislikeCount: 1, myReaction: "LIKE" });
+    await waitFor(() => expect(love.disabled).toBe(false));
+  });
+
+  it("treats a rapid second tap as a silent no-op, never a false failure", async () => {
+    let release!: (value: unknown) => void;
+    loveToggleMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderHomeFeed(imagePost());
+    const love = screen.getByTestId("home-feed-love");
+    fireEvent.click(love);
+    await waitFor(() => expect(love.getAttribute("data-pending")).toBe("true"));
+    // Second tap lands while the first request is still in flight.
+    fireEvent.click(love);
+    // Exactly one request leaves the device; the second tap sends nothing.
+    expect(loveToggleMock).toHaveBeenCalledTimes(1);
+    release({ postId: "p1", likeCount: 25, dislikeCount: 1, myReaction: "LIKE" });
+    await waitFor(() => expect(love.getAttribute("data-pending")).toBe("false"));
+    expect(screen.queryByTestId("home-feed-love-error")).toBeNull();
+  });
 });
 
 describe("home-feed detail link + Love action siblings (never nested)", () => {

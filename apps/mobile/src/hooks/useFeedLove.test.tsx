@@ -282,4 +282,56 @@ describe("FeedLoveProvider optimistic Love toggle", () => {
 
     await waitFor(() => expect(result).toBe(false));
   });
+
+  it("reports an in-flight second toggle as handled (true), never a failure", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+    let release!: (value: { data: unknown[]; error: null }) => void;
+    clientMock.rpc.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const patchItem = vi.fn();
+    const results: boolean[] = [];
+    function InFlightProbe() {
+      const love = useFeedLove("p1");
+      if (!love) throw new Error("useFeedLove must be used inside FeedLoveProvider");
+      return (
+        <button
+          type="button"
+          data-testid="toggle-inflight"
+          onClick={() => {
+            void love.toggle().then((ok) => {
+              results.push(ok);
+            });
+          }}
+        >
+          toggle twice
+        </button>
+      );
+    }
+    render(
+      <FeedLoveProvider items={[item({ id: "p1" })]} patchItem={patchItem}>
+        <InFlightProbe />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(1));
+
+    // The second tap lands while the first request is still in flight.
+    act(() => {
+      screen.getByTestId("toggle-inflight").click();
+      screen.getByTestId("toggle-inflight").click();
+    });
+
+    release({
+      data: [{ post_id: "p1", like_count: 5, dislike_count: 1, my_reaction: "LIKE" }],
+      error: null,
+    });
+    await waitFor(() => expect(results).toHaveLength(2));
+    // In-flight is not failure: the first request owns the outcome.
+    expect(results).toEqual([true, true]);
+    // No duplicate request: hydration + exactly one toggle.
+    expect(clientMock.rpc).toHaveBeenCalledTimes(2);
+  });
 });

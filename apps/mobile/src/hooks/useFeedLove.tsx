@@ -102,7 +102,10 @@ export function FeedLoveProvider({
 
   const togglePost = useCallback(
     async (postId: string): Promise<boolean> => {
-      if (pendingRef.current.has(postId)) return false;
+      // In-flight is NOT a failure: the first request still owns the outcome
+      // (and its failure message, if it comes). Report handled so a rapid
+      // second tap stays a silent no-op instead of a false "Couldn't save".
+      if (pendingRef.current.has(postId)) return true;
       const prev = reactionsRef.current[postId] ?? {
         myReaction: null as CallerReaction,
         myRating: null,
@@ -163,7 +166,7 @@ export interface FeedLove {
   /** Live like count from the feed items (patched optimistically on toggle). */
   likeCount: number;
   pending: boolean;
-  /** True when the toggle landed; false when it failed (already rolled back). */
+  /** True when the toggle landed (or was already in flight — the first request owns the outcome); false only on failure (already rolled back). */
   toggle: () => Promise<boolean>;
 }
 

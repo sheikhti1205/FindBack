@@ -73,6 +73,10 @@ export function HomeFeedLoveButton({
         aria-label={loved ? "Loved — tap to unlove this report" : "Love this report"}
         aria-describedby={failed ? errorId : undefined}
         data-pending={pending ? "true" : "false"}
+        // Disabled while in flight: a rapid second tap must not reach the
+        // hook's in-flight guard (which reports "not failed") and surface a
+        // false "Couldn't save" message for a request that is still running.
+        disabled={pending}
         onClick={() => void onToggle()}
         className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
           loved ? "text-on-surface" : "text-on-surface-variant"
