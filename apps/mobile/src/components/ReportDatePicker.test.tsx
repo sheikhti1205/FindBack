@@ -17,6 +17,24 @@ describe("ReportDatePicker", () => {
     onChange.mockClear();
   });
 
+  /**
+   * Step the calendar to the target month by reading the visible heading —
+   * never a hardcoded click count, which drifts as the current month changes
+   * (and outside-month filler days would otherwise let assertions pass on the
+   * wrong month). Fails loudly if the heading never arrives.
+   */
+  async function goToMonthHeading(target: RegExp, direction: "prev" | "next"): Promise<void> {
+    const button = screen.getByRole("button", {
+      name: direction === "prev" ? /previous month/i : /next month/i,
+    });
+    for (let i = 0; i < 14; i++) {
+      if (screen.queryByRole("heading", { name: target })) return;
+      fireEvent.click(button);
+      await waitFor(() => {});
+    }
+    expect(screen.getByRole("heading", { name: target })).toBeTruthy();
+  }
+
   it("renders trigger with formatted date when value is provided", () => {
     render(<ReportDatePicker value="2026-09-26" onChange={onChange} />);
     const trigger = screen.getByRole("button", { name: /date of event/i });
@@ -264,8 +282,9 @@ describe("ReportDatePicker", () => {
   });
 
   it("rejects 2026-02-29 (non-leap year) - date not selectable", async () => {
-    // 2026-02-29 doesn't exist, so it can't be selected in the calendar
-    // Navigate to February 2026 using previous month button
+    // 2026-02-29 doesn't exist, so it can't be selected in the calendar.
+    // Navigate by the visible month heading (never a hardcoded click count,
+    // which drifts as the current month changes).
     render(<ReportDatePicker value="" onChange={onChange} />);
     const trigger = screen.getByRole("button", { name: /date of event/i });
     fireEvent.click(trigger);
@@ -273,14 +292,7 @@ describe("ReportDatePicker", () => {
       expect(screen.getByRole("dialog")).toBeTruthy();
     });
 
-    // Navigate back to February 2026 (7 months back from September)
-    const prevButton = screen.getByRole("button", { name: /previous month/i });
-    for (let i = 0; i < 7; i++) {
-      fireEvent.click(prevButton);
-      await waitFor(() => {
-        // Wait for month to change
-      });
-    }
+    await goToMonthHeading(/February 2026/i, "prev");
 
     // The calendar should show 28 days in February 2026
     const feb28Cell = screen.getByRole("button", { name: /February 28, 2026/i });
@@ -291,8 +303,10 @@ describe("ReportDatePicker", () => {
   });
 
   it("rejects 2026-04-31 (invalid day overflow)", async () => {
-    // April has 30 days, so 31st should not exist
-    // Navigate to April 2026 (5 months back from September)
+    // April has 30 days, so 31st should not exist. Navigate by the visible
+    // month heading (never a hardcoded click count, which drifts as the
+    // current month changes — and outside-month filler days would otherwise
+    // make this pass vacuously on the wrong month).
     render(<ReportDatePicker value="" onChange={onChange} />);
     const trigger = screen.getByRole("button", { name: /date of event/i });
     fireEvent.click(trigger);
@@ -300,11 +314,7 @@ describe("ReportDatePicker", () => {
       expect(screen.getByRole("dialog")).toBeTruthy();
     });
 
-    const prevButton = screen.getByRole("button", { name: /previous month/i });
-    for (let i = 0; i < 5; i++) {
-      fireEvent.click(prevButton);
-      await waitFor(() => {});
-    }
+    await goToMonthHeading(/April 2026/i, "prev");
 
     // Should only show 30 days
     const apr30Cell = screen.getByRole("button", { name: /April 30, 2026/i });

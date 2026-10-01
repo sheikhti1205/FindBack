@@ -76,6 +76,16 @@ export function ReportDatePicker({
   const [displayedValue, setDisplayedValue] = useState<CalendarDate | null>(() =>
     value ? parseISO(value) : null
   );
+  // The visible month follows focus, not selection: react-aria keeps its own
+  // focused date, so shortcuts that set the selection (Today) must also move
+  // focus or the calendar stays on the old month. Controlled from the first
+  // render (value's month, else today) to match the mount behavior.
+  const [focusedDate, setFocusedDate] = useState<CalendarDate>(() => {
+    const parsed = value ? parseISO(value) : null;
+    if (parsed) return parsed;
+    const now = today("UTC");
+    return new CalendarDate(now.year, now.month, now.day);
+  });
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const prevMonthRef = useRef<HTMLButtonElement>(null);
@@ -132,10 +142,16 @@ export function ReportDatePicker({
   const handleCalendarChange = (next: CalendarDate | null) => {
     if (Date.now() < suppressDaySelectUntilRef.current) return;
     setDisplayedValue(next);
+    // Keep focus (hence the visible month) aligned with the selection, as
+    // the uncontrolled calendar does internally.
+    if (next) setFocusedDate(next);
   };
 
   const openSheet = () => {
-    setDisplayedValue(value ? parseISO(value) : null);
+    const parsed = value ? parseISO(value) : null;
+    setDisplayedValue(parsed);
+    // Reopen centered on the value's month, not a stale focused month.
+    if (parsed) setFocusedDate(parsed);
     setIsOpen(true);
   };
 
@@ -232,6 +248,8 @@ export function ReportDatePicker({
           id={calendarId}
           value={displayedValue}
           onChange={handleCalendarChange}
+          focusedValue={focusedDate}
+          onFocusChange={setFocusedDate}
           maxValue={maxDate}
           isDateUnavailable={isFutureDate}
           selectionMode="single"
@@ -327,8 +345,11 @@ export function ReportDatePicker({
               onClick={() => {
                 // Server-aligned "today" (UTC) so the shortcut can never pick a
                 // date the validator rejects at the local/UTC day boundary.
+                // Focus moves too, so the visible month follows the selection.
                 const todayDate = today("UTC");
-                setDisplayedValue(new CalendarDate(todayDate.year, todayDate.month, todayDate.day));
+                const next = new CalendarDate(todayDate.year, todayDate.month, todayDate.day);
+                setDisplayedValue(next);
+                setFocusedDate(next);
               }}
               className="text-on-surface-variant hover:text-on-surface"
             >
