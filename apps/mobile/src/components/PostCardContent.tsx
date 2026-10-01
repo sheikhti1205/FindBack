@@ -369,14 +369,13 @@ function TypeBadge({ type }: { type: PostType }) {
   );
 }
 
-/** Restrained home-feed engagement summary: real likes, comments and rating
- *  only. Dislikes stay visible on Post Detail; the feed footer stays quiet. */
+/** Restrained home-feed engagement summary: comments and rating only. The like
+ *  count lives exactly once on the card — on the Love toggle in the action
+ *  row below. Dislikes stay visible on Post Detail; the feed footer stays
+ *  quiet. */
 function HomeFeedMetrics({ post }: { post: PostItem }) {
   return (
     <span data-testid="post-metrics" className="flex items-center gap-3 text-[11px] text-on-surface-variant">
-      <span className="flex items-center gap-1">
-        <ThumbsUp size={13} aria-hidden /> {post.likeCount}
-      </span>
       <span className="flex items-center gap-1">
         <MessageSquare size={13} aria-hidden /> {post.commentCount}
       </span>

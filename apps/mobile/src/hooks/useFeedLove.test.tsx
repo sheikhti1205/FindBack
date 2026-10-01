@@ -246,4 +246,40 @@ describe("FeedLoveProvider optimistic Love toggle", () => {
     // Rollback restores the exact pre-toggle counts in the feed cache.
     expect(patchItem).toHaveBeenLastCalledWith("p1", { likeCount: 4, dislikeCount: 1 });
   });
+
+  it("reports toggle failure (false) so the caller can announce instead of silently reverting", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+    clientMock.rpc.mockRejectedValueOnce(new Error("offline"));
+    const patchItem = vi.fn();
+    let result: boolean | null = null;
+    function ResultProbe() {
+      const love = useFeedLove("p1");
+      if (!love) throw new Error("useFeedLove must be used inside FeedLoveProvider");
+      return (
+        <button
+          type="button"
+          data-testid="toggle-result"
+          onClick={() => {
+            void love.toggle().then((ok) => {
+              result = ok;
+            });
+          }}
+        >
+          resolve toggle
+        </button>
+      );
+    }
+    render(
+      <FeedLoveProvider items={[item({ id: "p1" })]} patchItem={patchItem}>
+        <ResultProbe />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      screen.getByTestId("toggle-result").click();
+    });
+
+    await waitFor(() => expect(result).toBe(false));
+  });
 });

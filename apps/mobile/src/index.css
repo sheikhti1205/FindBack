@@ -398,11 +398,13 @@ html.fb-reduce-motion .fb-feed-img[data-state="loading"]::after {
 }
 /* UXN-2 edge-to-edge media: a decoded Home photo prints with no frame
  * outline, no padding, and no letterbox — object-fit cover (above) crops it
- * to the rounded frame, which clips it via overflow hidden. Loading, failed,
- * and no-photo placeholders intentionally keep their subtle outline so the
- * reserved geometry stays visible before/after a photo exists. */
+ * to the rounded frame, which clips it via overflow hidden. Loaded photos
+ * carry a true border: 0 (not a 1px transparent border) so no rim or gap can
+ * survive at the frame edge. Loading, failed, and no-photo placeholders
+ * intentionally keep their subtle outline so the reserved geometry stays
+ * visible before/after a photo exists. */
 .fb-feed-img[data-state="loaded"] {
-  border-color: transparent;
+  border: 0;
   background: transparent;
 }
 /* Failed-image fallback inside the narrow feed column: stack icon above the

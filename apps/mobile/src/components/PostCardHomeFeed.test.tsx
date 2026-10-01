@@ -170,12 +170,14 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     expect(screen.getByTestId("post-lifecycle").textContent).toBe("Matched");
   });
 
-  it("summarises real engagement only: likes, comments, rating — no distance, no save", () => {
+  it("keeps comments + rating in metrics; the Love toggle owns the like count (shown once)", () => {
     renderHomeFeed(imagePost());
     const metrics = screen.getByTestId("post-metrics");
-    expect(metrics.textContent).toContain("24");
     expect(metrics.textContent).toContain("3");
     expect(metrics.textContent).toContain("4.5");
+    expect(metrics.textContent).not.toContain("24");
+    // The like count lives exactly once on the card: on the Love toggle.
+    expect(screen.getByTestId("home-feed-love").textContent).toContain("24");
     expect(screen.queryByRole("button", { name: /save|heart/i })).toBeNull();
     expect(document.body.textContent).not.toMatch(/\d+(\.\d+)?\s?km/);
     expect(screen.queryByText(/nearby/i)).toBeNull();
@@ -256,6 +258,30 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     expect(order).toContain("post-title");
     expect(order.indexOf("post-title")).toBeGreaterThan(order.indexOf("post-type-badge"));
     expect(order.indexOf("post-footer")).toBe(order.length - 1);
+  });
+
+  it("meets the 44px minimum touch target on the Love toggle", () => {
+    renderHomeFeed(imagePost());
+    const love = screen.getByTestId("home-feed-love");
+    expect(love.className).toMatch(/min-h-\[44px\]/);
+    expect(love.className).toMatch(/min-w-\[44px\]/);
+  });
+
+  it("shows and announces a failure message when a Love toggle fails", async () => {
+    const heard: string[] = [];
+    const handler = (e: Event) => {
+      heard.push((e as CustomEvent<string>).detail ?? "");
+    };
+    window.addEventListener("findback:announce", handler);
+    try {
+      renderHomeFeed(imagePost());
+      loveToggleMock.mockRejectedValueOnce(new Error("offline"));
+      fireEvent.click(screen.getByTestId("home-feed-love"));
+      expect((await screen.findByTestId("home-feed-love-error")).textContent).toMatch(/try again/i);
+      await waitFor(() => expect(heard.join(" ")).toMatch(/try again/i));
+    } finally {
+      window.removeEventListener("findback:announce", handler);
+    }
   });
 });
 

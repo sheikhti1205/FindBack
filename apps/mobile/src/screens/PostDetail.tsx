@@ -22,6 +22,7 @@ import { MarkdownView } from "../components/MarkdownView";
 import { RatingStars } from "../components/RatingStars";
 import { PossibleMatches } from "../components/PossibleMatches";
 import { announce } from "../components/LiveRegion";
+import { shouldReduceMotion } from "../components/uiMotion";
 import { friendlyError } from "../utils/friendlyErrors";
 import { recordLoadTiming } from "../utils/loadTiming";
 import { openInMaps } from "../utils/location";
@@ -51,9 +52,9 @@ const COMMENTS_PREVIEW_COUNT = 5;
 function scrollToSection(id: string) {
   const el = document.getElementById(id);
   if (!el) return;
-  const reduced =
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Override-aware (not OS-only): the persisted appearance Reduce Motion
+  // setting layers on top of prefers-reduced-motion — see shouldReduceMotion.
+  const reduced = shouldReduceMotion();
   el.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" });
 }
 

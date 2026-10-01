@@ -38,7 +38,7 @@ interface FeedLoveContextValue {
   reactions: Record<string, FeedReactionEntry>;
   pendingMap: Record<string, boolean>;
   itemsById: Map<string, PostItem>;
-  togglePost: (postId: string) => Promise<void>;
+  togglePost: (postId: string) => Promise<boolean>;
 }
 
 const FeedLoveContext = createContext<FeedLoveContextValue | null>(null);
@@ -101,8 +101,8 @@ export function FeedLoveProvider({
   }, [idsSig]);
 
   const togglePost = useCallback(
-    async (postId: string) => {
-      if (pendingRef.current.has(postId)) return;
+    async (postId: string): Promise<boolean> => {
+      if (pendingRef.current.has(postId)) return false;
       const prev = reactionsRef.current[postId] ?? {
         myReaction: null as CallerReaction,
         myRating: null,
@@ -132,9 +132,13 @@ export function FeedLoveProvider({
           },
         }));
         patchItem(postId, { likeCount: res.likeCount, dislikeCount: res.dislikeCount });
+        return true;
       } catch {
         setReactions((r) => ({ ...r, [postId]: prev }));
         patchItem(postId, { likeCount: prevLike, dislikeCount: prevDislike });
+        // False (not a throw): the optimistic update is already rolled back,
+        // and the caller (Love button) owns the failure message + announcement.
+        return false;
       } finally {
         pendingRef.current.delete(postId);
         setPendingMap((p) => {
@@ -159,7 +163,8 @@ export interface FeedLove {
   /** Live like count from the feed items (patched optimistically on toggle). */
   likeCount: number;
   pending: boolean;
-  toggle: () => Promise<void>;
+  /** True when the toggle landed; false when it failed (already rolled back). */
+  toggle: () => Promise<boolean>;
 }
 
 /** Null outside a provider — callers (the Love button) fall back to local state. */

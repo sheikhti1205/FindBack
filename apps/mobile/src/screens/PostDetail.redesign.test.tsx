@@ -36,6 +36,7 @@ vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
 
 import { PostDetail } from "./PostDetail";
+import { DEFAULT_APPEARANCE, saveAppearance } from "../appearance";
 
 const LONG_DESC = `# Lost wallet\n\nThis is a **very long** description with [a link](https://example.com). `.repeat(30);
 
@@ -140,6 +141,39 @@ describe("PostDetail redesign (UXN-3)", () => {
         expect.objectContaining({ behavior: "instant" }),
       );
     } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        writable: true,
+        value: previousMatchMedia,
+      });
+    }
+  });
+
+  it("honors the FindBack Reduce Motion override even when the OS reports full motion", async () => {
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
+    const previousMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      // OS reports FULL motion — the app-level override must still win.
+      value: () => ({
+        matches: false,
+        media: "(prefers-reduced-motion: reduce)",
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+    saveAppearance({ ...DEFAULT_APPEARANCE, reduceMotion: "reduce" });
+    try {
+      renderDetail();
+      const anchor = await screen.findByRole("button", { name: /^comments$/i });
+      fireEvent.click(anchor);
+      expect(scrollSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ behavior: "instant" }),
+      );
+    } finally {
+      saveAppearance({ ...DEFAULT_APPEARANCE, reduceMotion: "system" });
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
         writable: true,
