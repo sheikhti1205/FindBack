@@ -77,8 +77,9 @@ export function HomeFeedLoveButton({
         // hook's in-flight guard (which reports "not failed") and surface a
         // false "Couldn't save" message for a request that is still running.
         disabled={pending}
+        aria-busy={pending}
         onClick={() => void onToggle()}
-        className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
+        className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-3 py-1 text-[11px] font-medium transition-colors disabled:cursor-wait ${
           loved ? "text-on-surface" : "text-on-surface-variant"
         }`}
       >

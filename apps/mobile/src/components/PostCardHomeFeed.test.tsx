@@ -301,7 +301,7 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     await waitFor(() => expect(love.disabled).toBe(false));
   });
 
-  it("treats a rapid second tap as a silent no-op, never a false failure", async () => {
+  it("exposes aria-busy while a Love toggle is in flight", async () => {
     let release!: (value: unknown) => void;
     loveToggleMock.mockImplementationOnce(
       () =>
@@ -311,15 +311,43 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     );
     renderHomeFeed(imagePost());
     const love = screen.getByTestId("home-feed-love");
+    expect(love.getAttribute("aria-busy")).toBe("false");
     fireEvent.click(love);
-    await waitFor(() => expect(love.getAttribute("data-pending")).toBe("true"));
-    // Second tap lands while the first request is still in flight.
-    fireEvent.click(love);
-    // Exactly one request leaves the device; the second tap sends nothing.
-    expect(loveToggleMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(love.getAttribute("aria-busy")).toBe("true"));
     release({ postId: "p1", likeCount: 25, dislikeCount: 1, myReaction: "LIKE" });
-    await waitFor(() => expect(love.getAttribute("data-pending")).toBe("false"));
-    expect(screen.queryByTestId("home-feed-love-error")).toBeNull();
+    await waitFor(() => expect(love.getAttribute("aria-busy")).toBe("false"));
+  });
+
+  it("treats a rapid second tap as a silent no-op, never a false failure", async () => {
+    const heard: string[] = [];
+    const handler = (e: Event) => {
+      heard.push((e as CustomEvent<string>).detail ?? "");
+    };
+    window.addEventListener("findback:announce", handler);
+    try {
+      let release!: (value: unknown) => void;
+      loveToggleMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      renderHomeFeed(imagePost());
+      const love = screen.getByTestId("home-feed-love");
+      fireEvent.click(love);
+      await waitFor(() => expect(love.getAttribute("data-pending")).toBe("true"));
+      // Second tap lands while the first request is still in flight.
+      fireEvent.click(love);
+      // Exactly one request leaves the device; the second tap sends nothing.
+      expect(loveToggleMock).toHaveBeenCalledTimes(1);
+      release({ postId: "p1", likeCount: 25, dislikeCount: 1, myReaction: "LIKE" });
+      await waitFor(() => expect(love.getAttribute("data-pending")).toBe("false"));
+      expect(screen.queryByTestId("home-feed-love-error")).toBeNull();
+      // And nothing was announced: no false failure reached the user.
+      expect(heard.join(" ")).not.toMatch(/try again/i);
+    } finally {
+      window.removeEventListener("findback:announce", handler);
+    }
   });
 });
 
