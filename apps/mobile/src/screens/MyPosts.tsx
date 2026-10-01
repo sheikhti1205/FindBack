@@ -26,6 +26,7 @@ export function MyPosts() {
   const { tapCount } = useTabTap();
   const scrollRef = useRef<PullToRefreshHandle>(null);
   const [ownerStatus, setOwnerStatus] = useState<OwnerStatusFilter>("ALL");
+  const filterRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   // The feed filter carries userId, so the resolved cache key is already
   // user-scoped: `my:reports:<filterKey>`. Passing the base (not a
@@ -55,30 +56,45 @@ export function MyPosts() {
         </div>
       </header>
 
-      <div
-        role="radiogroup"
-        aria-label="Filter by status"
-        className="flex gap-2 overflow-x-auto px-4 pb-1"
-      >
-        {OWNER_STATUS_OPTIONS.map((o) => {
-          const selected = o.value === ownerStatus;
-          return (
-            <button
-              key={o.value}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              onClick={() => setOwnerStatus(o.value)}
-              className={`min-h-[44px] shrink-0 rounded-full border px-4 text-sm font-medium transition-colors ${
-                selected
-                  ? "border-transparent bg-on-surface text-surface"
-                  : "border-outline-variant bg-surface text-on-surface-variant hover:bg-surface-container"
-              }`}
-            >
-              {o.label}
-            </button>
-          );
-        })}
+      <div className="fb-scroll-fade mx-4">
+        <div
+          role="radiogroup"
+          aria-label="Filter by status"
+          className="fb-scroll-row flex gap-2"
+          onKeyDown={(event) => {
+            const index = filterRefs.current.findIndex((button) => button === document.activeElement);
+            if (index < 0) return;
+            const next = event.key === "Home" ? 0 : event.key === "End" ? OWNER_STATUS_OPTIONS.length - 1
+              : event.key === "ArrowRight" || event.key === "ArrowDown" ? (index + 1) % OWNER_STATUS_OPTIONS.length
+                : event.key === "ArrowLeft" || event.key === "ArrowUp" ? (index + OWNER_STATUS_OPTIONS.length - 1) % OWNER_STATUS_OPTIONS.length : null;
+            if (next == null) return;
+            event.preventDefault();
+            filterRefs.current[next]?.focus();
+            setOwnerStatus(OWNER_STATUS_OPTIONS[next]!.value);
+          }}
+        >
+          {OWNER_STATUS_OPTIONS.map((o, index) => {
+            const selected = o.value === ownerStatus;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                tabIndex={selected ? 0 : -1}
+                ref={(element) => { filterRefs.current[index] = element; }}
+                onClick={() => setOwnerStatus(o.value)}
+                className={`min-h-[44px] shrink-0 rounded-full border px-4 text-sm font-medium transition-colors ${
+                  selected
+                    ? "border-transparent bg-on-surface text-surface"
+                    : "border-outline-variant bg-surface text-on-surface-variant hover:bg-surface-container"
+                }`}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="flex-1">

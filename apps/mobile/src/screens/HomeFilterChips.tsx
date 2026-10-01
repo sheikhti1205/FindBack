@@ -18,9 +18,7 @@ const OPTIONS: { value: HomeTypeFilter; label: string }[] = [
  * contract as the previous Segmented control — radiogroup with roving focus,
  * driving the URL-backed type filter — but glanceable pill visuals:
  * horizontally scrollable, never wrapping, selected chip strongly filled.
- * Only All/Lost/Found: no Nearby chip exists because Home has no nearby
- * contract, and no Recent chip because sort already lives in the advanced
- * filters sheet.
+ * Shares one scroll row with the independent discovery-scope toggles.
  */
 export function HomeFilterChips({
   value,
@@ -45,7 +43,7 @@ export function HomeFilterChips({
       role="radiogroup"
       aria-label="Post type"
       aria-disabled={disabled}
-      className="flex gap-2 overflow-x-auto pb-1"
+      className="flex shrink-0 gap-2"
       onKeyDown={(e) => {
         if (disabled) return;
         const active = document.activeElement;
@@ -161,7 +159,7 @@ export function HomeScopeChips({
     },
   ] as const;
   return (
-    <div aria-label="Discovery scope" className="flex gap-2 overflow-x-auto pb-1">
+    <div role="group" aria-label="Discovery scope" className="flex shrink-0 gap-2">
       {chips.map((chip) => (
         <button
           key={chip.key}

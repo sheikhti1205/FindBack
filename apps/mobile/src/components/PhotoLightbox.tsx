@@ -1,11 +1,11 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefCallback } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useIsPresent } from "framer-motion";
 import type { Variants } from "framer-motion";
-import { ChevronLeft, ChevronRight, ImageOff, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ImageOff, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
-import { resolveHorizontalSwipe } from "../utils/detailSwipe";
+import { usePhotoViewport } from "../hooks/usePhotoViewport";
 import {
   backdropTransition,
   dialogVariants,
@@ -45,6 +45,10 @@ export interface PhotoLightboxProps {
   /** Previous/next navigation (parent owns wrap-around). */
   onPrev?: () => void;
   onNext?: () => void;
+  /** Full gallery for direct thumbnail selection; optional for single previews. */
+  photos?: PhotoLightboxPhoto[];
+  onSelect?: (index: number) => void;
+  title?: string;
 }
 
 type Direction = "forward" | "backward";
@@ -79,7 +83,7 @@ const imageStateFade = {
   ease: motionEasings.inOut,
 } as const;
 
-const PANEL_CLASS = "relative flex max-h-full w-full max-w-3xl flex-col items-center gap-3";
+const PANEL_CLASS = "relative flex max-h-full w-full max-w-3xl flex-col items-center gap-3 overflow-y-auto";
 
 /**
  * Full-size preview opened from a media tile (R-047). Tapping a thumbnail
@@ -101,6 +105,9 @@ export function PhotoLightbox({
   originRect,
   onPrev,
   onNext,
+  photos,
+  onSelect,
+  title,
 }: PhotoLightboxProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const open = photo !== null;
@@ -149,6 +156,10 @@ export function PhotoLightbox({
             onPrev={onPrev}
             onNext={onNext}
             showNav={showNav}
+            photos={photos}
+            selectedIndex={activeIndex}
+            onSelect={onSelect}
+            title={title}
             setDialogRef={setRef}
           />
         ) : null}
@@ -179,6 +190,10 @@ interface LightboxShellProps {
   onNext?: () => void;
   showNav: boolean;
   setDialogRef: RefCallback<HTMLElement | null>;
+  photos?: PhotoLightboxPhoto[];
+  selectedIndex?: number;
+  onSelect?: (index: number) => void;
+  title?: string;
 }
 
 function LightboxShell(props: LightboxShellProps): ReactNode {
@@ -186,7 +201,7 @@ function LightboxShell(props: LightboxShellProps): ReactNode {
   return (
     <motion.div
       data-testid="photo-lightbox"
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 p-4"
+      className="fb-photo-overlay fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 p-4"
       style={{ pointerEvents: open ? "auto" : "none" }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -209,27 +224,15 @@ function LightboxPanel({
   onNext,
   showNav,
   setDialogRef,
+  photos,
+  selectedIndex,
+  onSelect,
+  title,
 }: LightboxShellProps): ReactNode {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [origin, setOrigin] = useState<{ x: number; y: number; scale: number } | null>(null);
   const [measured, setMeasured] = useState(originRect == null);
-  // Touch swipe: horizontal flicks change photo, vertical/small drags ignored.
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
-
-  function handleTouchStart(e: React.TouchEvent) {
-    const t = e.touches[0];
-    if (t) touchStart.current = { x: t.clientX, y: t.clientY };
-  }
-
-  function handleTouchEnd(e: React.TouchEvent) {
-    const start = touchStart.current;
-    touchStart.current = null;
-    const end = e.changedTouches[0];
-    if (!start || !end) return;
-    const dir = resolveHorizontalSwipe(end.clientX - start.x, end.clientY - start.y, 0);
-    if (dir === "next") onNext?.();
-    else if (dir === "prev") onPrev?.();
-  }
+  const inspection = usePhotoViewport(photo.id, photo.previewUrl, onPrev, onNext);
 
   // Two-pass measurement: while the origin is unknown the panel renders as an
   // invisible stand-in, its rect is read in a layout effect (before paint),
@@ -285,22 +288,24 @@ function LightboxPanel({
       exit={shared ?? dialogVariants.exit}
       transition={sheetTransition}
       style={{ transformOrigin: origin ? "top left" : "center center" }}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowLeft" && onPrev) {
-          event.preventDefault();
-          onPrev();
-        } else if (event.key === "ArrowRight" && onNext) {
-          event.preventDefault();
-          onNext();
-        }
-      }}
+      onKeyDown={inspection.onKeyDown}
     >
+      <header className="flex w-full shrink-0 items-center gap-3 text-white">
+        <button type="button" aria-label="Close photo preview" onClick={onClose} className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-surface/90 text-on-surface"><ChevronLeft size={24} aria-hidden /></button>
+        <div className="min-w-0 flex-1 text-center">
+          <p className="font-semibold" role="status">{caption}</p>
+          {title && <p className="truncate text-sm text-white/80">{title}</p>}
+        </div>
+        <span className="w-12" aria-hidden />
+      </header>
       <div
-        className="relative h-[70vh] w-full"
+        ref={inspection.stageRef}
+        className="relative h-[55dvh] min-h-40 w-full shrink-0 overflow-hidden rounded-m3-lg"
+        style={{ touchAction: "none" }}
         data-testid="lightbox-stage"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
+        {...inspection.handlers}
       >
+        <div data-testid="lightbox-zoom-content" className="absolute inset-0" style={{ transform: `translate(${inspection.viewport.x}px, ${inspection.viewport.y}px) scale(${inspection.viewport.scale})` }}>
         <AnimatePresence initial={false} custom={direction}>
           <motion.div
             key={photo.id}
@@ -316,6 +321,7 @@ function LightboxPanel({
             <LightboxImage src={photo.previewUrl} alt={caption} />
           </motion.div>
         </AnimatePresence>
+        </div>
         {showNav && onPrev && (
           <div className="absolute inset-y-0 left-0 flex items-center">
             <motion.button
@@ -343,16 +349,25 @@ function LightboxPanel({
           </div>
         )}
       </div>
-      <p className="text-sm text-white/90">{caption}</p>
-      <motion.button
-        type="button"
-        aria-label="Close photo preview"
-        onClick={onClose}
-        whileTap={pressFeedback.iconButton}
-        className="absolute right-0 top-0 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-surface/90 text-on-surface shadow"
-      >
-        <X size={18} aria-hidden />
-      </motion.button>
+      {photos && onSelect && photos.length > 1 && (
+        <>
+          <div className="flex gap-2" aria-hidden="true">{photos.map((p, i) => <span key={p.id} className={`h-2 w-2 rounded-full border border-white/70 ${i === selectedIndex ? "bg-white" : "bg-transparent"}`} />)}</div>
+          <div role="group" aria-label="Photo thumbnails" className="fb-scroll-row flex w-full shrink-0 justify-start gap-2">
+            {photos.map((p, i) => (
+              <button key={p.id} type="button" aria-label={`View photo ${i + 1}`} aria-pressed={i === selectedIndex} onClick={() => onSelect(i)} className={`h-16 w-16 shrink-0 overflow-hidden rounded-m3-md border-2 ${i === selectedIndex ? "border-white" : "border-transparent opacity-70"}`}>
+                <img src={p.previewUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      <div role="group" aria-label="Photo zoom" className="flex shrink-0 items-center gap-2 rounded-m3-lg bg-surface p-1 text-on-surface">
+        <button type="button" aria-label="Zoom out" disabled={inspection.viewport.scale <= 1} onClick={inspection.zoomOut} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm disabled:opacity-40"><ZoomOut size={20} aria-hidden /></button>
+        <span className="min-w-12 text-center text-xs tabular-nums" role="status">{Math.round(inspection.viewport.scale * 100)}%</span>
+        <button type="button" aria-label="Zoom in" disabled={inspection.viewport.scale >= 4} onClick={inspection.zoomIn} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm disabled:opacity-40"><ZoomIn size={20} aria-hidden /></button>
+        <button type="button" aria-label="Reset zoom" onClick={inspection.reset} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm"><RotateCcw size={18} aria-hidden /></button>
+      </div>
+      <p className="shrink-0 text-center text-xs text-white/80">{inspection.viewport.scale > 1 ? "Drag to pan · Reset zoom to swipe photos" : "Pinch or double-tap to zoom · Swipe to browse"}</p>
     </motion.div>
   );
 }
@@ -365,6 +380,7 @@ type ImageState = "loading" | "loaded" | "failed";
  * `data-state` so tests never have to time opacity frames.
  */
 function LightboxImage({ src, alt }: { src: string; alt: string }): ReactNode {
+  const present = useIsPresent();
   const [state, setState] = useState<ImageState>("loading");
   const imgRef = useRef<HTMLImageElement | null>(null);
 
@@ -379,6 +395,7 @@ function LightboxImage({ src, alt }: { src: string; alt: string }): ReactNode {
       className="relative flex h-full w-full items-center justify-center"
       data-testid="lightbox-image-frame"
       data-state={state}
+      aria-hidden={!present || undefined}
     >
       <motion.span
         aria-hidden
@@ -392,6 +409,7 @@ function LightboxImage({ src, alt }: { src: string; alt: string }): ReactNode {
         ref={imgRef}
         src={src}
         alt={alt}
+        draggable={false}
         className="max-h-full max-w-full rounded-m3-sm object-contain"
         initial={{ opacity: 0 }}
         animate={{ opacity: state === "loaded" ? 1 : 0 }}

@@ -65,12 +65,12 @@ export function HomeFeedLoveButton({
   }
 
   return (
-    <span className="inline-flex items-center gap-2">
+    <span className="flex min-w-0 flex-col gap-1">
       <button
         type="button"
         data-testid="home-feed-love"
         aria-pressed={loved}
-        aria-label={loved ? "Loved — tap to unlove this report" : "Love this report"}
+        aria-label={`${loved ? "Loved — tap to unlove this report" : "Love this report"}, ${count} votes`}
         aria-describedby={failed ? errorId : undefined}
         data-pending={pending ? "true" : "false"}
         // Disabled while in flight: a rapid second tap must not reach the
@@ -79,11 +79,9 @@ export function HomeFeedLoveButton({
         disabled={pending}
         aria-busy={pending}
         onClick={() => void onToggle()}
-        className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-3 py-1 text-[11px] font-medium transition-colors disabled:cursor-wait ${
-          loved ? "text-on-surface" : "text-on-surface-variant"
-        }`}
+        className={`fb-report-action min-h-[44px] min-w-[44px] w-full ${loved ? "bg-surface-container text-on-surface" : "text-on-surface-variant"}`}
       >
-        <Heart size={14} aria-hidden fill={loved ? "currentColor" : "none"} />
+        <Heart size={18} aria-hidden fill={loved ? "currentColor" : "none"} />
         <span aria-hidden>{count}</span>
       </button>
       {failed && (

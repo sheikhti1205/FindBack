@@ -397,17 +397,22 @@ export function Home() {
             />
           }
         />
-        <HomeFilterChips value={type} onChange={setType} />
-        <HomeScopeChips
-          nearbyActive={nearbyActive}
-          nearbyRadiusKm={nearbyRadiusKm}
-          locating={locating}
-          openActive={openActive}
-          recentActive={recentOn}
-          onNearbyTap={onNearbyTap}
-          onOpenTap={onOpenTap}
-          onRecentTap={onRecentTap}
-        />
+        <div className="fb-scroll-fade">
+          <div className="fb-scroll-row flex items-center gap-3" aria-label="Feed filters">
+            <HomeFilterChips value={type} onChange={setType} />
+            <span aria-hidden className="h-6 shrink-0 border-l border-outline-variant" />
+            <HomeScopeChips
+              nearbyActive={nearbyActive}
+              nearbyRadiusKm={nearbyRadiusKm}
+              locating={locating}
+              openActive={openActive}
+              recentActive={recentOn}
+              onNearbyTap={onNearbyTap}
+              onOpenTap={onOpenTap}
+              onRecentTap={onRecentTap}
+            />
+          </div>
+        </div>
         {snack && (
           <div
             role="status"

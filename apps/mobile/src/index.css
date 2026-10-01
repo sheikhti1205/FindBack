@@ -368,6 +368,73 @@ html.fb-reduce-motion .fb-feed-img[data-state="loading"]::after {
 
 /* Feed image column: near-square crop filling the left column, geometry
  * reserved before load (no layout shift), shimmer while loading. */
+.fb-report-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 34%) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+.fb-report-media {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.fb-report-media .fb-feed-img {
+  height: 100%;
+  min-height: 12rem;
+}
+.fb-report-actions {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.5rem;
+}
+.fb-report-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-width: 44px;
+  min-height: 48px;
+  padding: 0.5rem 0.25rem;
+  border: 1px solid var(--fb-outline-variant);
+  border-radius: var(--radius-m3-sm);
+  background: var(--fb-surface);
+  color: var(--fb-on-surface);
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: background-color 150ms;
+}
+.fb-report-action:hover, .fb-report-action:active {
+  background: var(--fb-surface-container);
+}
+.fb-report-action:disabled { cursor: wait; opacity: 0.6; }
+@media (min-width: 480px) {
+  .fb-report-action { flex-direction: row; gap: 0.5rem; }
+}
+.fb-scroll-fade {
+  position: relative;
+  min-width: 0;
+}
+.fb-scroll-fade::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 1rem;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, var(--fb-surface));
+}
+.fb-scroll-row {
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-block: 0.25rem;
+  padding-right: 1rem;
+}
+.fb-scroll-row::-webkit-scrollbar { display: none; }
+.fb-photo-overlay {
+  padding-top: max(1rem, env(safe-area-inset-top));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
 .fb-feed-img {
   /* Block: motion.span defaults to inline, where width/aspect-ratio are
    * ignored and the frame collapses (flex parents blockify automatically,
@@ -509,6 +576,8 @@ html.fb-reduce-motion .fb-feed-img[data-state="loading"]::after {
   display: block;
   position: relative;
   width: 100%;
+  height: 100%;
+  min-height: 12rem;
   aspect-ratio: 1 / 1;
   overflow: hidden;
   border-radius: 12px;

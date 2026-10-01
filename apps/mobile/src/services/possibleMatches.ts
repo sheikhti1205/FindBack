@@ -27,6 +27,7 @@ function toMatchCandidate(post: PostItem): MatchCandidate {
     locationLabel: post.locationLabel,
     locationLat: post.latitude,
     locationLng: post.longitude,
+    photoUrl: post.attachments?.find((attachment) => attachment.mimeType.startsWith("image/"))?.fileUrl ?? null,
   };
 }
 

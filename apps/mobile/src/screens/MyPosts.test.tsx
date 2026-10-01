@@ -135,6 +135,20 @@ describe("MyPosts (My Reports alignment)", () => {
     expect(document.querySelector("img.aspect-\\[4\\/3\\]")).toBeNull();
   });
 
+  it("uses a single keyboard tab stop and arrow selection for status filters", async () => {
+    renderMyPosts();
+    const group = screen.getByRole("radiogroup", { name: /status/i });
+    const options = within(group).getAllByRole("radio");
+    expect(options.map((option) => option.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+    options[0]!.focus();
+    fireEvent.keyDown(group, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(options[1]);
+    expect(options[1]!.getAttribute("aria-checked")).toBe("true");
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "u1", status: "OPEN" }), undefined,
+    ));
+  });
+
   it("keeps status prominent on every owner card", async () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));

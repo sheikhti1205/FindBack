@@ -6,6 +6,7 @@ import { Link } from "react-router";
 import { timeAgo } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
 import { HomeFeedLoveButton } from "./HomeFeedLoveButton";
+import { ReportShareButton } from "./ReportShareButton";
 import {
   fadeVariants,
   motionDurations,
@@ -369,24 +370,6 @@ function TypeBadge({ type }: { type: PostType }) {
   );
 }
 
-/** Restrained home-feed engagement summary: comments and rating only. The like
- *  count lives exactly once on the card — on the Love toggle in the action
- *  row below. Dislikes stay visible on Post Detail; the feed footer stays
- *  quiet. */
-function HomeFeedMetrics({ post }: { post: PostItem }) {
-  return (
-    <span data-testid="post-metrics" className="flex items-center gap-3 text-[11px] text-on-surface-variant">
-      <span className="flex items-center gap-1">
-        <MessageSquare size={13} aria-hidden /> {post.commentCount}
-      </span>
-      <span className="flex items-center gap-1">
-        <Star size={13} aria-hidden />
-        {post.ratingCount > 0 ? post.ratingAvg?.toFixed(1) : "—"}
-      </span>
-    </span>
-  );
-}
-
 /**
  * Home-feed layout (reference-inspired redesign): image-left/content-right.
  * Only Home uses this; Search `compact` and other `classic` renderings are
@@ -406,13 +389,13 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
   // Detail destination mirrors PostList (`/posts/${post.id}`) — the single
   // route both shells navigate to.
   return (
-    <div data-testid="home-feed-content" className="flex min-w-0 flex-1 flex-col gap-1.5">
+    <div data-testid="home-feed-content" className="fb-report-preview min-w-0 flex-1">
       <Link
         to={`/posts/${post.id}`}
         data-testid="home-feed-detail-link"
-        className="grid min-w-0 grid-cols-[minmax(112px,42%)_minmax(0,1fr)] gap-2.5"
+        className="group contents"
       >
-        <div className="relative min-w-0 self-start">
+        <div className="fb-report-media relative min-w-0 group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-on-surface">
           {hero ? (
             <FeedImage
               url={hero.fileUrl}
@@ -433,10 +416,10 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
             </span>
           )}
         </div>
-        <div className="flex min-w-0 flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-2 rounded-m3-sm group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-on-surface">
           <div className="flex items-start justify-between gap-2">
             <TypeBadge type={post.type} />
-            <span data-testid="post-time" className="shrink-0 whitespace-nowrap text-[11px] text-on-surface-variant">
+            <span data-testid="post-time" className="shrink-0 whitespace-nowrap text-xs text-on-surface-variant">
               {timeAgo(post.createdAt)}
             </span>
           </div>
@@ -458,7 +441,7 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
               <span className="truncate">{post.locationLabel}</span>
             </p>
           )}
-          <p data-testid="post-author" className="truncate text-[11px] text-on-surface-variant">
+          <p data-testid="post-author" className="truncate text-xs text-on-surface-variant">
             @{post.author.username}
           </p>
           <div data-testid="post-footer" className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1.5 pt-1">
@@ -471,12 +454,15 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
                 {STATUS_LABELS[post.status]}
               </span>
             )}
-            <HomeFeedMetrics post={post} />
           </div>
         </div>
       </Link>
-      <div data-testid="home-feed-actions" className="flex items-center gap-1">
+      <div data-testid="home-feed-actions" className="fb-report-actions" role="group" aria-label="Report actions">
         <HomeFeedLoveButton postId={post.id} likeCount={post.likeCount} />
+        <Link to={`/posts/${post.id}#detail-comments`} aria-label={`Comments, ${post.commentCount}`} className="fb-report-action">
+          <MessageSquare size={18} aria-hidden /><span>{post.commentCount}</span>
+        </Link>
+        <ReportShareButton postId={post.id} title={post.title} />
       </div>
     </div>
   );

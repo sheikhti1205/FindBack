@@ -34,10 +34,14 @@ vi.mock("../services/photo", () => photo);
 
 import { CreateReport } from "./CreateReport";
 import { clearDraft, saveDraft } from "../services/reportDraft";
+import * as photoStore from "../services/photoStore";
 import { clearPhotoStore } from "../services/photoStore";
 import { todayInputValue } from "../utils/dates";
 
 import { chooseCategory } from "../test-utils/reportCategory";
+
+const persistPhotos = photoStore.persistStashedPhotos;
+const pendingPhotoSaves = new Set<ReturnType<typeof persistPhotos>>();
 
 function seedBasics(): void {
   saveDraft(
@@ -72,6 +76,12 @@ function delay(ms: number): Promise<void> {
 }
 
 beforeEach(() => {
+  vi.spyOn(photoStore, "persistStashedPhotos").mockImplementation((...args) => {
+    const save = persistPhotos(...args);
+    pendingPhotoSaves.add(save);
+    void save.then(() => pendingPhotoSaves.delete(save), () => pendingPhotoSaves.delete(save));
+    return save;
+  });
   publishReportMock.mockReset();
   publishReportWithPhotosMock.mockReset();
   publishReportWithPhotosMock.mockResolvedValue("p-multi");
@@ -87,8 +97,13 @@ beforeEach(() => {
   (URL as unknown as Record<string, unknown>).revokeObjectURL = vi.fn();
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  // Draft persistence uses real asynchronous FileReaders. Drain those writes
+  // before jsdom tears down its realm; otherwise a late data-URL conversion
+  // can run against the next realm's Uint8Array and throw out of band.
+  await Promise.allSettled([...pendingPhotoSaves]);
+  vi.restoreAllMocks();
   clearDraft();
   clearPhotoStore();
 });
@@ -162,8 +177,10 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
     });
     await screen.findByRole("img", { name: /photo 2 of/i });
 
-    // Deferred publish: surfaces each onProgress update so the test can
-    // observe the status line, then hangs until cancelled.
+    // Complete the first upload explicitly after Cancel. A wall-clock timer
+    // can fire before the click under worker load, leaving this deferred
+    // publisher with no further progress callback to observe the abort.
+    let finishFirstUpload!: () => void;
     publishReportWithPhotosMock.mockImplementationOnce(
       (_report: unknown, _files: unknown, options: { onProgress?: (p: { completed: number; total: number }) => void } = {}) =>
         new Promise<string>((_resolve, reject) => {
@@ -173,14 +190,13 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
             reject(err);
             return;
           }
-          const timer = setTimeout(() => {
+          finishFirstUpload = () => {
             try {
               options.onProgress?.({ completed: 1, total: 2 });
             } catch (err) {
-              clearTimeout(timer);
               reject(err);
             }
-          }, 120);
+          };
         }),
     );
     submit();
@@ -188,6 +204,7 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
     await screen.findByText(/uploading 1 of 2/i);
     expect(screen.getByRole("button", { name: /cancel upload/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /cancel upload/i }));
+    finishFirstUpload();
 
     await screen.findByText(/upload cancelled/i);
     // Photos are kept for retry after a cancelled publish.

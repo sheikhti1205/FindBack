@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { useLocation, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { ExternalLink, Heart, MessageCircle, Share2, ThumbsDown, Trash2 } from "lucide-react";
+import { CalendarDays, ExternalLink, Heart, MapPin, MessageCircle, Star, Tag, ThumbsDown, Trash2 } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -20,6 +20,7 @@ import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
 import { PhotoLightbox } from "../components/PhotoLightbox";
 import { MarkdownView } from "../components/MarkdownView";
 import { RatingStars } from "../components/RatingStars";
+import { ReportShareButton } from "../components/ReportShareButton";
 import { PossibleMatches } from "../components/PossibleMatches";
 import { announce } from "../components/LiveRegion";
 import { shouldReduceMotion } from "../components/uiMotion";
@@ -55,11 +56,13 @@ function scrollToSection(id: string) {
   // Override-aware (not OS-only): the persisted appearance Reduce Motion
   // setting layers on top of prefers-reduced-motion — see shouldReduceMotion.
   const reduced = shouldReduceMotion();
+  el.focus({ preventScroll: true });
   el.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" });
 }
 
 export function PostDetail() {
   const { id = "" } = useParams();
+  const { hash, key: locationKey } = useLocation();
   const { user } = useAuth();
   const [post, setPost] = useState<PostItem | null>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
@@ -200,6 +203,14 @@ export function PostDetail() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // A feed Comments shortcut targets the existing section once the shell is
+  // mounted. Retry/social/realtime hydration must not keep stealing focus.
+  useEffect(() => {
+    if (loading || post?.id !== id || hash !== "#detail-comments") return;
+    const frame = requestAnimationFrame(() => scrollToSection("detail-comments"));
+    return () => cancelAnimationFrame(frame);
+  }, [loading, post?.id, id, hash, locationKey]);
 
   // Live updates while viewing this post (no refresh).
   useEffect(() => {
@@ -379,35 +390,6 @@ export function PostDetail() {
     }
   }
 
-  async function onShare() {
-    const url = window.location.href;
-    try {
-      if (typeof navigator.share === "function") {
-        await navigator.share({ title: current.title, url });
-        announce("Link shared.");
-      } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-        announce("Link copied to clipboard.");
-      } else {
-        setActionError("Sharing is not supported on this device.");
-      }
-    } catch (e) {
-      if ((e as DOMException)?.name === "AbortError") {
-        announce("Share dismissed.");
-        return;
-      }
-      // Share sheet failed: fall back to copying the link.
-      try {
-        await navigator.clipboard.writeText(url);
-        announce("Link copied to clipboard.");
-      } catch {
-        const message = friendlyError(e).message;
-        setActionError(message);
-        announce(message);
-      }
-    }
-  }
-
   const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
   const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
 
@@ -440,17 +422,6 @@ export function PostDetail() {
       )}
 
       <article className="flex flex-col gap-4 px-4">
-        {/* key remounts the gallery per post: selection resets without a
-            reset effect, so a swipe can never be clobbered by a still-pending
-            passive effect after the gallery first paints. */}
-        <DetailHeroGallery
-          key={post.id}
-          postId={post.id}
-          title={post.title}
-          images={images}
-          onOpenLightbox={(index, origin) => setLightbox({ index, origin })}
-        />
-
         {/* Primary info card */}
         <section aria-label="Report summary" className="flex flex-col gap-2">
           <div>
@@ -463,11 +434,40 @@ export function PostDetail() {
             >
               {post.title}
             </motion.h1>
-            <p className="mt-1 text-sm text-on-surface-variant">
-              @{post.author.username} · {post.category}
-            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-on-surface-variant">
+              <span className="font-medium text-on-surface">@{post.author.username}</span>
+              <span className="fb-category-chip"><Tag size={14} aria-hidden /> <span>{post.category}</span></span>
+            </div>
+            {post.locationLabel && <p className="mt-2 flex items-center gap-1.5 text-sm text-on-surface-variant"><MapPin size={16} aria-hidden className="shrink-0" />{post.locationLabel}</p>}
           </div>
+        </section>
 
+        <DetailHeroGallery
+          key={post.id}
+          postId={post.id}
+          title={post.title}
+          images={images}
+          onOpenLightbox={(index, origin) => setLightbox({ index, origin })}
+        />
+
+        <div className="grid grid-cols-3 gap-2" role="group" aria-label="Report actions">
+          <button
+            type="button"
+            className="fb-report-action"
+            onClick={toggleLove}
+            aria-label={`Love, ${post.likeCount} ${post.likeCount === 1 ? "vote" : "votes"}`}
+            aria-pressed={myReaction === "LIKE"}
+          >
+            <Heart size={20} aria-hidden fill={myReaction === "LIKE" ? "currentColor" : "none"} /> {post.likeCount}
+          </button>
+          <button type="button" className="fb-report-action" onClick={() => scrollToSection("detail-comments")} aria-label={`Comments, ${comments.length}`}>
+            <MessageCircle size={20} aria-hidden /> {comments.length}
+          </button>
+          <ReportShareButton postId={post.id} title={post.title} />
+        </div>
+
+        <section aria-label="Description" className="rounded-m3-lg border border-outline-variant bg-surface-container-low p-4">
+          <h2 className="mb-2 text-sm font-medium text-on-surface-variant">Description</h2>
           {descriptionIsLong && !descriptionExpanded ? (
             <div>
               <p className="line-clamp-5 whitespace-pre-line break-words text-sm leading-relaxed">
@@ -499,28 +499,6 @@ export function PostDetail() {
           )}
         </section>
 
-        {/* Social action row: Love + Comments + Share (no share count). */}
-        <div className="flex items-center gap-2" role="group" aria-label="Report actions">
-          <Button
-            variant={myReaction === "LIKE" ? "primary" : "outline"}
-            onClick={toggleLove}
-            aria-label={`Love, ${post.likeCount} ${post.likeCount === 1 ? "vote" : "votes"}`}
-            aria-pressed={myReaction === "LIKE"}
-          >
-            <Heart size={16} aria-hidden /> {post.likeCount}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => scrollToSection("detail-comments")}
-            aria-label={`Comments, ${comments.length}`}
-          >
-            <MessageCircle size={16} aria-hidden /> {comments.length}
-          </Button>
-          <Button variant="outline" onClick={() => void onShare()} aria-label="Share report">
-            <Share2 size={16} aria-hidden /> Share
-          </Button>
-        </div>
-
         {actionError && (
           <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
             <span role="alert">{actionError}</span>
@@ -551,44 +529,55 @@ export function PostDetail() {
           </section>
         )}
 
-        {/* Section anchors: vertical scroll only, never a tab-carousel. */}
-        <nav aria-label="Report sections" className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => scrollToSection("detail-overview")}
-            className="min-h-[48px] flex-1 rounded-m3-sm border border-outline-variant px-3 text-sm font-medium"
-          >
-            Overview
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollToSection("detail-matches")}
-            className="min-h-[48px] flex-1 rounded-m3-sm border border-outline-variant px-3 text-sm font-medium"
-          >
-            Matches
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollToSection("detail-comments")}
-            className="min-h-[48px] flex-1 rounded-m3-sm border border-outline-variant px-3 text-sm font-medium"
-          >
-            Comments
-          </button>
-        </nav>
+        <section aria-label="Community Rating" className="flex flex-col gap-3 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4">
+          <h2 className="text-sm font-medium text-on-surface-variant">Community Rating</h2>
+          <div aria-live="polite">
+            <p className="sr-only">
+              {post.ratingCount > 0 ? `Community rating: ${post.ratingAvg?.toFixed(1) ?? "—"} / 5 from ${post.ratingCount} rating${post.ratingCount === 1 ? "" : "s"}` : "No community ratings yet — be the first to rate."}
+            </p>
+            <div className="flex flex-wrap items-center gap-3" aria-hidden="true">
+              <span className="text-4xl font-semibold tabular-nums tracking-tight">{post.ratingCount > 0 ? post.ratingAvg?.toFixed(1) ?? "—" : "—"}</span>
+              <div className="flex gap-1">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <span key={i} className="relative inline-flex text-on-surface-variant">
+                    <Star size={24} />
+                    <span className="absolute inset-y-0 left-0 overflow-hidden text-on-surface" style={{ width: `${Math.max(0, Math.min(1, (post.ratingAvg ?? 0) - i)) * 100}%` }}><Star size={24} fill="currentColor" /></span>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <p className="mt-1 text-sm text-on-surface-variant" aria-hidden="true">{post.ratingCount} rating{post.ratingCount === 1 ? "" : "s"}</p>
+          </div>
+          {socialLoading && <p role="status" className="text-sm text-on-surface-variant">Loading reactions…</p>}
+          {socialError && (
+            <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
+              <span>Could not load reactions: {socialError}</span>
+              <button type="button" onClick={retrySocial} className="min-h-[48px] shrink-0 px-3 font-medium underline">Retry</button>
+            </div>
+          )}
+          <div className="border-t border-outline-variant pt-3">
+            <p className="text-sm font-medium" id="your-rating-label">Your rating{myRating != null ? `: ${myRating} out of 5` : ""}</p>
+            <RatingStars value={myRating} onRate={(s) => void onRate(s)} labelId="your-rating-label" />
+            <p className="text-xs text-on-surface-variant">Tap a star to rate this report.</p>
+          </div>
+          <Button variant="text" className="self-start" onClick={toggleDislike} aria-label={`Not helpful, ${post.dislikeCount} ${post.dislikeCount === 1 ? "vote" : "votes"}`} aria-pressed={myReaction === "DISLIKE"}>
+            <ThumbsDown size={16} aria-hidden /> Not helpful · {post.dislikeCount}
+          </Button>
+        </section>
 
         {/* Overview: compact lazy heavy sections. */}
         <section data-testid="detail-overview" id="detail-overview" aria-label="Overview" className="flex flex-col gap-3">
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 text-sm">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4 text-sm">
             <div>
               <dt className="text-xs text-on-surface-variant">Status</dt>
               <dd className="font-medium">{statusLabel(post.status)}</dd>
             </div>
             <div>
-              <dt className="text-xs text-on-surface-variant">{post.type === "LOST" ? "Lost on" : "Found on"}</dt>
+              <dt className="flex items-center gap-1 text-xs text-on-surface-variant"><CalendarDays size={14} aria-hidden />{post.type === "LOST" ? "Lost on" : "Found on"}</dt>
               <dd className="font-medium">{formatEventDate(post.eventDate)}</dd>
             </div>
             <div className="col-span-2">
-              <dt className="text-xs text-on-surface-variant">Location</dt>
+              <dt className="flex items-center gap-1 text-xs text-on-surface-variant"><MapPin size={14} aria-hidden />Location</dt>
               <dd className="break-words font-medium">
                 {post.locationLabel ?? (post.latitude != null ? "Pinned location" : "Not specified")}
               </dd>
@@ -641,45 +630,6 @@ export function PostDetail() {
             </div>
           )}
 
-          {/* Community: reactions hydrate independently; the post never waits. */}
-          <section aria-label="Community" className="flex flex-col gap-2 rounded-m3-md border border-outline-variant p-3">
-            {socialLoading && (
-              <p role="status" className="text-sm text-on-surface-variant">
-                Loading reactions…
-              </p>
-            )}
-            {socialError && (
-              <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
-                <span>Could not load reactions: {socialError}</span>
-                <button
-                  type="button"
-                  onClick={retrySocial}
-                  className="min-h-[48px] shrink-0 px-3 font-medium underline"
-                >
-                  Retry
-                </button>
-              </div>
-            )}
-            <p className="text-sm text-on-surface" aria-live="polite">
-              {post.ratingCount > 0
-                ? `Community rating: ${post.ratingAvg?.toFixed(1) ?? "—"} / 5 from ${post.ratingCount} rating${post.ratingCount === 1 ? "" : "s"}`
-                : "No community ratings yet — be the first to rate."}
-            </p>
-            <p className="mt-1 text-sm font-medium" id="your-rating-label">
-              Your rating{myRating != null ? `: ${myRating} out of 5` : ""}
-            </p>
-            <RatingStars value={myRating} onRate={(s) => void onRate(s)} labelId="your-rating-label" />
-            <div className="mt-1">
-              <Button
-                variant={myReaction === "DISLIKE" ? "primary" : "outline"}
-                onClick={toggleDislike}
-                aria-label={`Not helpful, ${post.dislikeCount} ${post.dislikeCount === 1 ? "vote" : "votes"}`}
-                aria-pressed={myReaction === "DISLIKE"}
-              >
-                <ThumbsDown size={16} aria-hidden /> {post.dislikeCount}
-              </Button>
-            </div>
-          </section>
         </section>
 
         {/* Matches: dedicated compact section, async, never blocks the shell. */}
@@ -695,7 +645,7 @@ export function PostDetail() {
         </section>
 
         {/* Comments */}
-        <section data-testid="detail-comments" id="detail-comments" aria-label="Comments" className="flex flex-col gap-3">
+        <section data-testid="detail-comments" id="detail-comments" tabIndex={-1} aria-label="Comments" className="flex scroll-mt-4 flex-col gap-3">
           <h2 className="text-base font-semibold">
             Comments <span className="text-on-surface-variant">({comments.length})</span>
           </h2>
@@ -793,6 +743,9 @@ export function PostDetail() {
           photo={lightboxPhotos[Math.min(lightbox.index, lightboxPhotos.length - 1)]!}
           index={Math.min(lightbox.index, lightboxPhotos.length - 1)}
           total={lightboxPhotos.length}
+          photos={lightboxPhotos}
+          title={post.title}
+          onSelect={(index) => setLightbox({ index, origin: null })}
           originRect={lightbox.origin}
           onClose={() => setLightbox(null)}
           onPrev={

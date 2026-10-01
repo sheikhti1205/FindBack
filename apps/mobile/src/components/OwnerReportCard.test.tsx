@@ -83,7 +83,7 @@ describe("OwnerReportCard (My Reports owner-feed layout)", () => {
 
   it("keeps the lifecycle status PROMINENT and always visible, even for OPEN", () => {
     const { rerender } = renderCard(<OwnerReportCard post={imagePost()} />);
-    expect(screen.getByTestId("owner-report-status").textContent).toBe("Open");
+    expect(screen.getByTestId("owner-report-status").textContent).toContain("Still missing");
     rerender(
       <MemoryRouter>
         <OwnerReportCard
@@ -91,7 +91,13 @@ describe("OwnerReportCard (My Reports owner-feed layout)", () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId("owner-report-status").textContent).toBe("Matched");
+    expect(screen.getByTestId("owner-report-status").textContent).toContain("Potential match");
+  });
+
+  it("does not describe an open Found report as missing", () => {
+    renderCard(<OwnerReportCard post={imagePost(1, { type: "FOUND" })} />);
+    expect(screen.getByTestId("owner-report-status").textContent).toContain("Awaiting owner");
+    expect(screen.queryByText(/still missing/i)).toBeNull();
   });
 
   it("renders title, category, and posted age", () => {
@@ -103,12 +109,12 @@ describe("OwnerReportCard (My Reports owner-feed layout)", () => {
     expect(screen.getByTestId("owner-report-time").textContent).toMatch(/2h ago/);
   });
 
-  it("shows a compact truthful engagement count: likes, comments, rating only", () => {
+  it("shows owner engagement without duplicating the Detail-only rating", () => {
     renderCard(<OwnerReportCard post={imagePost()} />);
     const metrics = screen.getByTestId("owner-report-metrics");
     expect(metrics.textContent).toContain("24");
     expect(metrics.textContent).toContain("3");
-    expect(metrics.textContent).toContain("4.5");
+    expect(metrics.textContent).not.toContain("4.5");
     expect(document.body.textContent).not.toMatch(/\d+(\.\d+)?\s?km/);
     expect(screen.queryByText(/community reach|share count/i)).toBeNull();
   });

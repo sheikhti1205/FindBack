@@ -25,6 +25,8 @@ export interface MatchCandidate {
   locationLabel: string | null;
   locationLat: number | null;
   locationLng: number | null;
+  /** Presentation-only; never contributes to the similarity score. */
+  photoUrl?: string | null;
 }
 
 /** A ranked possible match with score and human-readable reasons. */

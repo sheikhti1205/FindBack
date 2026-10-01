@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { PostItem, PostStatus, PostType } from "@findback/shared";
 import { POST_STATUS_LABELS } from "@findback/shared";
-import { CircleAlert, CircleCheck, ImageOff, MessageSquare, Star, Tag, ThumbsUp } from "lucide-react";
+import { CircleAlert, CircleCheck, ImageOff, Link2, MessageSquare, Tag, Heart } from "lucide-react";
 import { Link } from "react-router";
 import { timeAgo } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
@@ -28,23 +28,18 @@ function OwnerTypeBadge({ type }: { type: PostType }) {
   );
 }
 
-/** Restrained owner-card engagement summary: real likes, comments and
- *  rating only — the same truthful set as the home feed. */
+/** Owner engagement; rating remains on the individual report. */
 function OwnerMetrics({ post }: { post: PostItem }) {
   return (
     <span
       data-testid="owner-report-metrics"
-      className="flex items-center gap-3 text-[11px] text-on-surface-variant"
+      className="flex items-center gap-3 text-xs text-on-surface-variant"
     >
       <span className="flex items-center gap-1">
-        <ThumbsUp size={13} aria-hidden /> {post.likeCount}
+        <Heart size={14} aria-hidden /> {post.likeCount}
       </span>
       <span className="flex items-center gap-1">
         <MessageSquare size={13} aria-hidden /> {post.commentCount}
-      </span>
-      <span className="flex items-center gap-1">
-        <Star size={13} aria-hidden />
-        {post.ratingCount > 0 ? post.ratingAvg?.toFixed(1) : "—"}
       </span>
     </span>
   );
@@ -101,9 +96,9 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
       >
         <div
           data-testid="owner-report-card"
-          className="grid min-w-0 flex-1 grid-cols-[minmax(112px,42%)_minmax(0,1fr)] gap-2.5"
+           className="grid min-w-0 flex-1 grid-cols-[minmax(0,34%)_minmax(0,1fr)] gap-3"
         >
-          <div data-testid="owner-report-media" className="relative min-w-0 self-start">
+          <div data-testid="owner-report-media" className="relative min-w-0">
             {hero ? (
               <OwnerImage post={post} fileUrl={hero.fileUrl} />
             ) : (
@@ -129,18 +124,19 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
               <OwnerTypeBadge type={post.type} />
               <span
                 data-testid="owner-report-time"
-                className="shrink-0 whitespace-nowrap text-[11px] text-on-surface-variant"
+                className="shrink-0 whitespace-nowrap text-xs text-on-surface-variant"
               >
                 {timeAgo(post.createdAt)}
               </span>
             </div>
             <h3 className="fb-feed-title line-clamp-2 break-words">{post.title}</h3>
-            <span
+            <div
               data-testid="owner-report-status"
-              className={`fb-owner-status ${OWNER_STATUS_CLASS[post.status]}`}
+              className={`flex items-center gap-2 rounded-m3-sm border bg-surface p-2 text-xs font-semibold ${OWNER_STATUS_CLASS[post.status]}`}
             >
-              {POST_STATUS_LABELS[post.status]}
-            </span>
+              {post.status === "MATCHED" ? <Link2 size={16} aria-hidden className="shrink-0" /> : post.status === "RECOVERED" ? <CircleCheck size={16} aria-hidden className="shrink-0" /> : <CircleAlert size={16} aria-hidden className="shrink-0" />}
+              <span>{post.status === "OPEN" ? (post.type === "LOST" ? "Still missing" : "Awaiting owner") : post.status === "MATCHED" ? "Potential match" : POST_STATUS_LABELS[post.status]}</span>
+            </div>
             {excerpt && (
               <p className="line-clamp-2 break-words text-sm leading-relaxed text-on-surface-variant">
                 {excerpt}

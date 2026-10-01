@@ -1,9 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { findPossibleMatches } from "./possibleMatches";
 
+const { fetchMatchCandidates } = vi.hoisted(() => ({ fetchMatchCandidates: vi.fn() }));
+vi.mock("./posts", () => ({ MATCH_CANDIDATE_LIMIT: 20, fetchMatchCandidates }));
+
 const target = { id: "lost-1", type: "LOST", status: "OPEN", title: "black umbrella", description: "wooden handle", category: "Clothing", eventDate: null, locationLabel: null, locationLat: null, locationLng: null } as never;
 
 describe("findPossibleMatches", () => {
+  it("retains the first image URL in the safe match-card projection", async () => {
+    fetchMatchCandidates.mockResolvedValue([{ ...(target as Record<string, unknown>), id: "found-1", type: "FOUND", attachments: [
+      { mimeType: "application/pdf", fileUrl: "https://example.com/document.pdf" },
+      { mimeType: "image/jpeg", fileUrl: "https://example.com/photo.jpg" },
+    ] }]);
+    const result = await findPossibleMatches(target, { embed: async () => [[1, 0], [1, 0]] });
+    expect(result.matches[0]?.post).toMatchObject({ id: "found-1", photoUrl: "https://example.com/photo.jpg" });
+  });
   it("only compares with relevant open reports of the opposite type", async () => {
     const fetchCandidates = vi.fn().mockResolvedValue([]);
     await findPossibleMatches(target, { fetchCandidates, embed: vi.fn().mockResolvedValue([[1, 0]]) });

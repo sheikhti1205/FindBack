@@ -78,9 +78,9 @@ function comment(i: number) {
   };
 }
 
-function renderDetail() {
+function renderDetail(entry = "/posts/p1") {
   return render(
-    <MemoryRouter initialEntries={["/posts/p1"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/posts/:id" element={<PostDetail />} />
       </Routes>
@@ -135,7 +135,7 @@ describe("PostDetail redesign (UXN-3)", () => {
     });
     try {
       renderDetail();
-      const anchor = await screen.findByRole("button", { name: /^comments$/i });
+      const anchor = await screen.findByRole("button", { name: /comments, 7/i });
       fireEvent.click(anchor);
       expect(scrollSpy).toHaveBeenCalledWith(
         expect.objectContaining({ behavior: "instant" }),
@@ -167,7 +167,7 @@ describe("PostDetail redesign (UXN-3)", () => {
     saveAppearance({ ...DEFAULT_APPEARANCE, reduceMotion: "reduce" });
     try {
       renderDetail();
-      const anchor = await screen.findByRole("button", { name: /^comments$/i });
+      const anchor = await screen.findByRole("button", { name: /comments, 7/i });
       fireEvent.click(anchor);
       expect(scrollSpy).toHaveBeenCalledWith(
         expect.objectContaining({ behavior: "instant" }),
@@ -234,13 +234,26 @@ describe("PostDetail redesign (UXN-3)", () => {
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
   });
 
-  it("anchor row exposes Overview, Matches and Comments", async () => {
+  it("feed comment links scroll and move focus to the existing comments section", async () => {
+    const targets: Element[] = [];
+    Element.prototype.scrollIntoView = function () { targets.push(this); };
+    renderDetail("/posts/p1#detail-comments");
+    const comments = await screen.findByTestId("detail-comments");
+    await waitFor(() => expect(targets).toContain(comments));
+    expect(document.activeElement).toBe(comments);
+  });
+
+  it("uses vertical sections, with a distinct average and personal rating", async () => {
     renderDetail();
     await screen.findByRole("heading", { level: 1 });
-    const nav = screen.getByRole("navigation", { name: /report sections/i });
-    expect(nav.textContent).toMatch(/Overview/);
-    expect(nav.textContent).toMatch(/Matches/);
-    expect(nav.textContent).toMatch(/Comments/);
+    expect(screen.queryByRole("navigation", { name: /report sections/i })).toBeNull();
+    const rating = screen.getByRole("region", { name: /community rating/i });
+    expect(rating.textContent).toContain("4.5");
+    expect(screen.getByRole("radiogroup", { name: /your rating/i })).toBeTruthy();
+    const summary = screen.getByRole("region", { name: /report summary/i });
+    const hero = screen.getByTestId("detail-hero-stage");
+    expect(summary.compareDocumentPosition(hero) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(rating.compareDocumentPosition(screen.getByTestId("detail-overview")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("matches section carries the suggestions disclaimer", async () => {

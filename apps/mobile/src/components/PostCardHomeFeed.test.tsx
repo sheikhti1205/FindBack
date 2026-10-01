@@ -170,17 +170,44 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     expect(screen.getByTestId("post-lifecycle").textContent).toBe("Matched");
   });
 
-  it("keeps comments + rating in metrics; the Love toggle owns the like count (shown once)", () => {
+  it("has separate Love, Comments and Share controls outside the report link", () => {
     renderHomeFeed(imagePost());
-    const metrics = screen.getByTestId("post-metrics");
-    expect(metrics.textContent).toContain("3");
-    expect(metrics.textContent).toContain("4.5");
-    expect(metrics.textContent).not.toContain("24");
-    // The like count lives exactly once on the card: on the Love toggle.
-    expect(screen.getByTestId("home-feed-love").textContent).toContain("24");
-    expect(screen.queryByRole("button", { name: /save|heart/i })).toBeNull();
-    expect(document.body.textContent).not.toMatch(/\d+(\.\d+)?\s?km/);
-    expect(screen.queryByText(/nearby/i)).toBeNull();
+    const detail = screen.getByTestId("home-feed-detail-link");
+    const love = screen.getByTestId("home-feed-love");
+    const comments = screen.getByRole("link", { name: /comments, 3/i });
+    const share = screen.getByRole("button", { name: /share report/i });
+    for (const control of [love, comments, share]) expect(detail.contains(control)).toBe(false);
+    expect(comments.getAttribute("href")).toBe("/posts/p1#detail-comments");
+    expect(love.textContent).toContain("24");
+    expect(screen.getAllByText("24")).toHaveLength(1);
+    expect(screen.queryByText("4.5")).toBeNull();
+  });
+
+  it("shares the selected report URL, not the feed URL", async () => {
+    const share = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "share", { configurable: true, value: share });
+    renderHomeFeed(imagePost());
+    fireEvent.click(screen.getByRole("button", { name: /share report/i }));
+    await waitFor(() => expect(share).toHaveBeenCalledWith({
+      title: "Golden Retriever near Riverside Park",
+      url: `${window.location.origin}${window.location.pathname}#/posts/p1`,
+    }));
+  });
+
+  it("copies the report link when Web Share fails, but not on dismissal", async () => {
+    const share = vi.fn().mockRejectedValueOnce(new Error("unavailable"))
+      .mockRejectedValueOnce(new DOMException("dismissed", "AbortError"));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "share", { configurable: true, value: share });
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderHomeFeed(imagePost());
+    fireEvent.click(screen.getByRole("button", { name: /share report/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+      `${window.location.origin}${window.location.pathname}#/posts/p1`,
+    ));
+    fireEvent.click(screen.getByRole("button", { name: /share report/i }));
+    await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
+    expect(writeText).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the author as quiet metadata without competing with the title", () => {
@@ -392,10 +419,11 @@ describe("home-feed detail link + Love action siblings (never nested)", () => {
       </MemoryRouter>,
     );
     const card = screen.getByTestId("post-card");
-    // Exactly one navigation link: the detail link owned by the content block.
+    // Main navigation and the comments shortcut are separate links.
     const links = card.querySelectorAll("a[href]");
-    expect(links).toHaveLength(1);
+    expect(links).toHaveLength(2);
     expect(links[0]!.getAttribute("href")).toBe("/posts/p1");
+    expect(links[1]!.getAttribute("href")).toBe("/posts/p1#detail-comments");
   });
 });
 

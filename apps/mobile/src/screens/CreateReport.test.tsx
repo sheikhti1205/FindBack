@@ -198,17 +198,14 @@ describe("CreateReport", () => {
         Array.from(document.querySelectorAll('[role="status"]')).find((el) =>
           /saving photos/i.test(el.textContent ?? ""),
         ) ?? null;
-      // Quiescent retry state: the three pre-retry saves (mount persist,
-      // recovery setPhotos persist, accept persist) have all started AND
-      // settled, the warning is up, and no save is in flight. Each conjunct
-      // excludes one transient: the call count excludes the doomed
-      // commit-before-flush window, inFlight excludes a started-but-unflushed
-      // save, and the DOM checks exclude the visible saving window. The
-      // multi-photo batches elsewhere in this file already allow 5000ms
-      // under full-suite worker load; this gate needs the same headroom.
+      await screen.findByRole("img", { name: /photo 1 of/i });
+      // The photo must be accepted and its failed save settled before Retry.
+      // Recovery and acceptance updates may batch into a single effect, so
+      // the number of pre-retry writes is not a user-visible contract.
+      // Keep the actual contract: no write or saving banner remains in flight
+      // and the retry action is available with the selected photo intact.
       await waitFor(
         () => {
-          expect(persist.mock.calls.length).toBeGreaterThanOrEqual(3);
           expect(inFlightSaves).toBe(0);
           expect(screen.getByRole("button", { name: /retry saving photos/i })).toBeTruthy();
           expect(savingStatus()).toBeNull();

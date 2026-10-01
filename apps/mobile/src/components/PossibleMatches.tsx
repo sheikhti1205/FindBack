@@ -2,12 +2,25 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { motion } from "framer-motion";
 import type { PostItem } from "@findback/shared";
+import { ImageOff, MapPin } from "lucide-react";
 import { EmptyState, Spinner } from "./PostCard";
 import { findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
 import { listItemVariants, motionDurations, motionEasings } from "./uiMotion";
+import type { MatchCandidate } from "../services/similarity";
 
 interface PossibleMatchesProps {
   post: PostItem;
+}
+
+function MatchPhoto({ post }: { post: MatchCandidate }) {
+  const [failed, setFailed] = useState(false);
+  return post.photoUrl && !failed ? (
+    <img src={post.photoUrl} alt={`Photo for ${post.title}`} loading="lazy" onError={() => setFailed(true)} className="aspect-[4/3] w-full rounded-m3-sm object-cover" />
+  ) : (
+    <div className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-m3-sm bg-surface-container text-xs text-on-surface-variant">
+      <ImageOff size={18} aria-hidden />{failed ? "Photo unavailable" : "No photo"}
+    </div>
+  );
 }
 
 export function PossibleMatches({ post }: PossibleMatchesProps) {
@@ -100,14 +113,14 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
   }
 
   return (
-    <section className="rounded-m3-md border border-outline-variant bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
+    <section className="min-w-0 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
       <h2 id="possible-matches-heading" className="mb-3 text-base font-semibold">
         Possible matches
       </h2>
       <p className="mb-3 text-xs text-on-surface-variant">
         Compared {result.candidatesConsidered} recent report{result.candidatesConsidered === 1 ? "" : "s"}.
       </p>
-      <ul className="flex flex-col gap-2" role="list">
+      <ul className="fb-scroll-row flex gap-3" role="list">
         {result.matches.slice(0, 3).map((match, index) => (
           <motion.li
             key={match.post.id}
@@ -119,15 +132,16 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
               ease: motionEasings.out,
               delay: index * 0.03,
             }}
-            className="flex flex-col gap-1"
+            className="flex min-w-0 flex-[0_0_clamp(9rem,42%,12rem)] flex-col"
           >
             <Link
               to={`/posts/${match.post.id}`}
-              className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant bg-surface p-3 transition-colors hover:border-on-surface-variant active:bg-surface-container"
+              className="flex h-full flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface p-2 transition-colors hover:border-on-surface-variant active:bg-surface-container"
             >
-              <h3 className="font-medium text-on-surface">{match.post.title}</h3>
-              <div className="flex flex-wrap items-center gap-2 text-sm text-on-surface-variant">
-                <span className="rounded-full border border-outline px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide">
+              <MatchPhoto post={match.post} />
+              <h3 className="line-clamp-2 break-words text-sm font-semibold text-on-surface">{match.post.title}</h3>
+              <div className="flex flex-col gap-1 text-xs text-on-surface-variant">
+                <span className="self-start rounded-full border border-outline px-2 py-0.5 font-medium">
                   {match.post.category}
                 </span>
                 {match.post.eventDate && (
@@ -136,7 +150,7 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
                   </time>
                 )}
                 {match.post.locationLabel && (
-                  <span>{match.post.locationLabel}</span>
+                  <span className="flex items-start gap-1"><MapPin size={14} aria-hidden className="shrink-0" /><span className="line-clamp-2 break-words">{match.post.locationLabel}</span></span>
                 )}
               </div>
               {match.reasons.length > 0 && (

@@ -29,6 +29,20 @@ describe("PossibleMatches", () => {
     expect(screen.queryByText(/probability/i)).toBeNull();
   });
 
+  it("shows the candidate photo and reasons without presenting similarity as a percentage", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
+      { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: "2026-09-11", locationLabel: "Library", photoUrl: "https://example.com/umbrella.jpg" }, score: 0.8, reasons: ["Similar date", "Similar text"] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    const image = await screen.findByRole("img", { name: /black umbrella/i });
+    expect(image.getAttribute("src")).toBe("https://example.com/umbrella.jpg");
+    expect(screen.getByText(/Similar date, Similar text/i)).toBeTruthy();
+    expect(screen.queryByText(/80%|match probability/i)).toBeNull();
+    fireEvent.error(image);
+    expect(screen.getByText("Photo unavailable")).toBeTruthy();
+    expect(screen.getByRole("link").getAttribute("href")).toBe("/posts/found-1");
+  });
+
   it("reruns matching when category/date/location change, not just title/description", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
     const { rerender } = render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
