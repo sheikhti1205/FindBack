@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://findback.app/tools/bench/goldenCorpus.schema.json",
+  "title": "FindBack WS6 golden corpus",
+  "description": "Golden records for the WS6 benchmark harness skeleton: text match pairs (query + candidates + relevant ids for ranking metrics) and photo analysis cases (image fixture ref + expected structured fields). The harness never downloads models and never fetches remote images; imageRef points at a repo-local fixture or a stable fixture id.",
+  "type": "object",
+  "required": ["corpusVersion", "textMatchPairs", "photoCases"],
+  "properties": {
+    "corpusVersion": {
+      "type": "string",
+      "pattern": "^ws6-v[0-9]+$",
+      "description": "Corpus revision pinned into every benchmark record (e.g. ws6-v1)."
+    },
+    "textMatchPairs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/textMatchPair" }
+    },
+    "photoCases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/photoCase" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "category": {
+      "type": "string",
+      "description": "Canonical category persisted to the database (see packages/shared CATEGORIES).",
+      "enum": [
+        "Electronics",
+        "Bags & Wallets",
+        "Keys",
+        "Documents & IDs",
+        "Books & Stationery",
+        "Clothing",
+        "Accessories & Jewelry",
+        "Other",
+        "Phones & Tablets",
+        "Computers & Accessories",
+        "Audio & Wearables",
+        "Cameras & Photography",
+        "Watches & Eyewear",
+        "Footwear",
+        "Personal Care",
+        "Tools & Equipment",
+        "Office Supplies",
+        "Umbrellas & Bottles",
+        "Household Items",
+        "Sports & Fitness",
+        "Toys & Games",
+        "Travel & Luggage",
+        "Vehicle Accessories",
+        "Medical & Health Items",
+        "Pet Accessories"
+      ]
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["id", "title", "category"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": ["string", "null"] },
+        "category": { "$ref": "#/$defs/category" }
+      },
+      "additionalProperties": false
+    },
+    "textMatchPair": {
+      "type": "object",
+      "required": ["id", "query", "candidates", "relevantIds"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "query": {
+          "type": "object",
+          "required": ["title", "category"],
+          "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "description": { "type": ["string", "null"] },
+            "category": { "$ref": "#/$defs/category" }
+          },
+          "additionalProperties": false
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/candidate" }
+        },
+        "relevantIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Candidate ids considered relevant. Every entry must match a candidate id (checked by the harness validator, not expressible in JSON Schema)."
+        },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "photoCase": {
+      "type": "object",
+      "required": ["id", "imageRef", "instruction", "expected", "requiredFields"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "imageRef": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-local fixture path or stable fixture id. The harness never downloads models and never fetches remote images."
+        },
+        "instruction": { "type": "string", "minLength": 1 },
+        "expected": {
+          "type": "object",
+          "required": ["objectName", "suggestedCategory", "colors", "suggestedTitle", "suggestedDescription"],
+          "properties": {
+            "objectName": { "type": "string", "minLength": 1 },
+            "suggestedCategory": { "type": "string", "minLength": 1 },
+            "colors": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "visibleBrand": { "type": ["string", "null"] },
+            "visibleText": { "type": "array", "items": { "type": "string" } },
+            "identifyingFeatures": { "type": "array", "items": { "type": "string" } },
+            "suggestedTitle": { "type": "string", "minLength": 1 },
+            "suggestedDescription": { "type": "string", "minLength": 1 },
+            "uncertainFields": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "requiredFields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Subset of expected-field names the harness scores. Every entry must name a known expected field (checked by the harness validator)."
+        },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

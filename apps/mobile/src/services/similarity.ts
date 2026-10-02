@@ -172,3 +172,111 @@ export function rankMatches(
 
   return ranked;
 }
+
+/**
+ * WS6 benchmark metric hooks: binary-relevance ranking metrics over id lists.
+ * Pure functions shared with the bench harness (tools/bench/score.mjs mirrors
+ * this math in dependency-free JS; the TS module below owns the contract).
+ *
+ * `rankedIds` is the system's ranked candidate ids (best first);
+ * `relevantIds` is the golden relevant set. Empty `relevantIds` scores 0
+ * (corpus validation requires non-empty relevant sets; see goldenCorpus.ts).
+ */
+
+/** Rank (0-based) of the first ranked id in `relevant`, or -1 when absent. */
+function firstRelevantRank(rankedIds: readonly string[], relevant: ReadonlySet<string>): number {
+  for (let i = 0; i < rankedIds.length; i++) {
+    const id = rankedIds[i];
+    if (id !== undefined && relevant.has(id)) return i;
+  }
+  return -1;
+}
+
+/**
+ * Recall@k: fraction of relevant ids appearing in the top-k ranked ids.
+ * Returns 0 when k <= 0 or when there are no relevant ids.
+ */
+export function recallAtK(rankedIds: readonly string[], relevantIds: readonly string[], k: number): number {
+  if (k <= 0 || relevantIds.length === 0) return 0;
+  const relevant = new Set(relevantIds);
+  const topK = new Set(rankedIds.slice(0, k));
+  let hits = 0;
+  for (const id of relevant) {
+    if (topK.has(id)) hits++;
+  }
+  return hits / relevant.size;
+}
+
+/**
+ * Reciprocal rank: 1 / (1 + rank of first relevant), or 0 when no relevant
+ * id is ranked. Returns 0 when there are no relevant ids.
+ */
+export function reciprocalRank(rankedIds: readonly string[], relevantIds: readonly string[]): number {
+  if (relevantIds.length === 0) return 0;
+  const rank = firstRelevantRank(rankedIds, new Set(relevantIds));
+  return rank < 0 ? 0 : 1 / (rank + 1);
+}
+
+/**
+ * nDCG@k over binary relevance. DCG sums rel_i / log2(i + 2); IDCG is the
+ * ideal DCG of min(|relevant|, k) ones up front. Returns 0 when k <= 0 or
+ * when there are no relevant ids; 1.0 for a perfect top-k ranking.
+ */
+export function ndcgAtK(rankedIds: readonly string[], relevantIds: readonly string[], k: number): number {
+  if (k <= 0 || relevantIds.length === 0) return 0;
+  const relevant = new Set(relevantIds);
+  let dcg = 0;
+  const depth = Math.min(k, rankedIds.length);
+  for (let i = 0; i < depth; i++) {
+    const id = rankedIds[i];
+    if (id !== undefined && relevant.has(id)) dcg += 1 / Math.log2(i + 2);
+  }
+  const idealHits = Math.min(k, relevant.size);
+  let idcg = 0;
+  for (let i = 0; i < idealHits; i++) {
+    idcg += 1 / Math.log2(i + 2);
+  }
+  return idcg === 0 ? 0 : dcg / idcg;
+}
+
+/** Per-query WS6 ranking metrics: Recall@1, Recall@3, MRR, nDCG@3. */
+export interface RankingMetrics {
+  recallAt1: number;
+  recallAt3: number;
+  mrr: number;
+  ndcgAt3: number;
+}
+
+/** Scores one ranked list against its golden relevant set. Pure. */
+export function rankingMetrics(rankedIds: readonly string[], relevantIds: readonly string[]): RankingMetrics {
+  return {
+    recallAt1: recallAtK(rankedIds, relevantIds, 1),
+    recallAt3: recallAtK(rankedIds, relevantIds, 3),
+    mrr: reciprocalRank(rankedIds, relevantIds),
+    ndcgAt3: ndcgAtK(rankedIds, relevantIds, 3),
+  };
+}
+
+/**
+ * Macro-averages per-query metrics (each query counts equally). Empty input
+ * yields zeros rather than NaN. Pure.
+ */
+export function averageRankingMetrics(rows: readonly RankingMetrics[]): RankingMetrics {
+  if (rows.length === 0) return { recallAt1: 0, recallAt3: 0, mrr: 0, ndcgAt3: 0 };
+  let recallAt1 = 0;
+  let recallAt3 = 0;
+  let mrr = 0;
+  let ndcgAt3 = 0;
+  for (const row of rows) {
+    recallAt1 += row.recallAt1;
+    recallAt3 += row.recallAt3;
+    mrr += row.mrr;
+    ndcgAt3 += row.ndcgAt3;
+  }
+  return {
+    recallAt1: recallAt1 / rows.length,
+    recallAt3: recallAt3 / rows.length,
+    mrr: mrr / rows.length,
+    ndcgAt3: ndcgAt3 / rows.length,
+  };
+}
