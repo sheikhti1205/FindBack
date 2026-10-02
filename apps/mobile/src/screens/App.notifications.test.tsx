@@ -10,7 +10,7 @@ const { auth, native, fetchNotificationsMock, markReadMock } = vi.hoisted(() => 
 }));
 vi.mock("../auth", () => ({ AuthProvider: ({ children }: { children: React.ReactNode }) => children, useAuth: () => ({ user: auth.user, booting: false, bootError: null }) }));
 vi.mock("../theme", () => ({ ThemeProvider: ({ children }: { children: React.ReactNode }) => children }));
-vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true } }));
+vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true }, registerPlugin: () => ({}) }));
 vi.mock("@capacitor/app", () => ({ App: { getLaunchUrl: async () => undefined, addListener: (event: string, listener: () => void) => {
   if (event !== "backButton") return Promise.resolve({ remove: () => {} });
   native.back = listener;
