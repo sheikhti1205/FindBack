@@ -65,6 +65,16 @@ export interface ModelProfile {
   readonly retryLimit: number;
   readonly loopPolicy: LoopPolicy;
   readonly thoughtEnvelope?: ThoughtEnvelope;
+  /**
+   * Distribution license id. Only LFM arms set this ("LFM-1.0"); permissive
+   * profiles leave it undefined. No pin lives here — see revision/sha fields.
+   */
+  readonly license?: string;
+  /**
+   * True when the profile is a lab catalogue entry that must never be
+   * bundled or offered as a redistributable download (LFM arms only).
+   */
+  readonly catalogOnly?: boolean;
 }
 
 const TASK22_LOOP_POLICY: LoopPolicy = { owner: "task-22", errorClass: "LOOP_DETECTED" };
@@ -147,6 +157,8 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
     structuredOutputStrategy: "prose-answer",
     retryLimit: 1,
     loopPolicy: TASK22_LOOP_POLICY,
+    license: "LFM-1.0",
+    catalogOnly: true,
   },
   {
     id: "smolvlm2-500M-vision",
@@ -200,6 +212,8 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
     structuredOutputStrategy: "single-json-object",
     retryLimit: 1,
     loopPolicy: TASK22_LOOP_POLICY,
+    license: "LFM-1.0",
+    catalogOnly: true,
   },
   {
     id: "lfm2.5-vl-450m-fixb",
@@ -226,6 +240,8 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
     structuredOutputStrategy: "single-json-object",
     retryLimit: 1,
     loopPolicy: TASK22_LOOP_POLICY,
+    license: "LFM-1.0",
+    catalogOnly: true,
   },
 ];
 
