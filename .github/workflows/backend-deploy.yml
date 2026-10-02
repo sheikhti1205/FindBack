@@ -27,6 +27,10 @@ on:
         description: "Deploy the push-dispatch Edge Function"
         type: boolean
         default: true
+      deploy_reply_comment:
+        description: "Deploy the reply-comment Edge Function"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -65,3 +69,10 @@ jobs:
           # Server-to-server only: the function enforces its own
           # x-findback-dispatch-secret, so the gateway JWT check is redundant.
           supabase functions deploy push-dispatch --no-verify-jwt
+      - name: Deploy reply-comment
+        if: inputs.deploy_reply_comment
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # Server-to-server only: the device presents a single-use reply token,
+          # not a Supabase session.
+          supabase functions deploy reply-comment --no-verify-jwt

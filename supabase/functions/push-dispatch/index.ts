@@ -18,17 +18,18 @@
  * - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — injected by the runtime.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { generateReplyToken, hashToken, REPLY_TOKEN_TTL_MS } from "../_shared/replyTokens.ts";
 
 const BATCH_LIMIT = 100;
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
-const ANDROID_CHANNEL_ID = "findback_updates";
 
 export interface DispatchNotification {
   id: string;
   user_id: string;
   type: string;
   post_id: string | null;
+  comment_id: string | null;
   created_at: string;
 }
 
@@ -52,6 +53,7 @@ export interface Delivery {
   token: string;
   type: string;
   postId: string;
+  commentId: string | null;
 }
 
 /** Maps a notification type to its preference column; null means never push. */
@@ -117,30 +119,71 @@ export function planDeliveries(
         token,
         type: notification.type,
         postId,
+        commentId: notification.comment_id ?? null,
       });
     }
   }
   return deliveries;
 }
 
-/** Builds an FCM HTTP v1 `message` payload. Report content is never included. */
-export function buildFcmMessage(delivery: Delivery, origin: string): Record<string, unknown> {
+/**
+ * Builds a data-only FCM HTTP v1 `message`. Data-only is required so the app's
+ * FirebaseMessagingService can attach the RemoteInput reply action; the system
+ * will not auto-display notification payloads. Report content is never included.
+ */
+export function buildFcmMessage(
+  delivery: Delivery,
+  origin: string,
+  replyToken?: string,
+): Record<string, unknown> {
+  const data: Record<string, string> = {
+    title: "FindBack",
+    body: BODY[delivery.type] ?? "New activity on your report",
+    type: delivery.type,
+    postId: delivery.postId,
+    notificationId: delivery.notificationId,
+    url: `${origin}/r/${encodeURIComponent(delivery.postId)}`,
+  };
+  if (delivery.commentId) data.commentId = delivery.commentId;
+  if (replyToken) data.replyToken = replyToken;
   return {
     token: delivery.token,
-    notification: {
-      title: "FindBack",
-      body: BODY[delivery.type] ?? "New activity on your report",
-    },
-    data: {
-      postId: delivery.postId,
-      type: delivery.type,
-      url: `${origin}/r/${encodeURIComponent(delivery.postId)}`,
-    },
-    android: {
-      priority: "high",
-      notification: { channel_id: ANDROID_CHANNEL_ID, tag: delivery.notificationId },
-    },
-    apns: { payload: { aps: { "thread-id": delivery.notificationId } } },
+    data,
+    android: { priority: "high", ttl: "86400s" },
+  };
+}
+
+/**
+ * Row shape for a minted reply token. Only the hash is persisted; the raw token
+ * travels in the FCM payload. Null when the notification cannot be replied to.
+ */
+export interface ReplyTokenInsert {
+  id: string;
+  user_id: string;
+  post_id: string;
+  parent_comment_id: string;
+  token_hash: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export function buildReplyTokenRow(
+  notification: DispatchNotification,
+  tokenHash: string,
+  createdAt: string,
+  expiresAt: string,
+): ReplyTokenInsert | null {
+  if (notification.type !== "COMMENT" || !notification.comment_id || !notification.post_id) {
+    return null;
+  }
+  return {
+    id: crypto.randomUUID(),
+    user_id: notification.user_id,
+    post_id: notification.post_id,
+    parent_comment_id: notification.comment_id,
+    token_hash: tokenHash,
+    created_at: createdAt,
+    expires_at: expiresAt,
   };
 }
 
@@ -264,7 +307,7 @@ export default {
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
     const { data: pending, error: readError } = await admin
       .from("notifications")
-      .select("id, user_id, type, post_id, created_at")
+      .select("id, user_id, type, post_id, comment_id, created_at")
       .is("pushed_at", null)
       .is("deleted_at", null)
       .order("created_at", { ascending: true })
@@ -293,11 +336,34 @@ export default {
       return Response.json({ error: "fcm auth failed" }, { status: 502 });
     }
 
+    // One single-use reply token per COMMENT notification, shared by that user's
+    // devices so a reply sent from any device consumes it once.
+    const replyTokens = new Map<string, string>();
+    const tokenCreatedAt = new Date().toISOString();
+    const tokenExpiresAt = new Date(Date.now() + REPLY_TOKEN_TTL_MS).toISOString();
+    for (const notification of notifications) {
+      if (notification.type !== "COMMENT" || !notification.comment_id || !notification.post_id) continue;
+      const raw = generateReplyToken();
+      const row = buildReplyTokenRow(
+        notification,
+        await hashToken(raw),
+        tokenCreatedAt,
+        tokenExpiresAt,
+      );
+      if (!row) continue;
+      const { error } = await admin.from("push_reply_tokens").insert(row);
+      if (!error) replyTokens.set(notification.id, raw);
+    }
+
     let sent = 0;
     let failed = 0;
     const pruned: string[] = [];
     for (const delivery of deliveries) {
-      const result = await sendMessage(projectId, accessToken, buildFcmMessage(delivery, origin));
+      const result = await sendMessage(
+        projectId,
+        accessToken,
+        buildFcmMessage(delivery, origin, replyTokens.get(delivery.notificationId)),
+      );
       if (result.ok) sent += 1;
       else {
         failed += 1;

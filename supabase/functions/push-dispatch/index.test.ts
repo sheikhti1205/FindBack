@@ -5,6 +5,7 @@
 import { assert, assertEquals } from "jsr:@std/assert";
 import {
   buildFcmMessage,
+  buildReplyTokenRow,
   categoryFor,
   isAuthorized,
   planDeliveries,
@@ -18,6 +19,7 @@ const notification = (overrides: Partial<DispatchNotification> = {}): DispatchNo
   user_id: "u1",
   type: "LIKE",
   post_id: "p1",
+  comment_id: null,
   created_at: "2026-10-02T00:00:00.000Z",
   ...overrides,
 });
@@ -29,6 +31,16 @@ const prefs = (overrides: Record<string, unknown> = {}) => ({
   comments: 1,
   mentions: 1,
   status: 1,
+  ...overrides,
+});
+
+const delivery = (overrides: Partial<Delivery> = {}): Delivery => ({
+  notificationId: "n1",
+  userId: "u1",
+  token: "tok",
+  type: "COMMENT",
+  postId: "post-9",
+  commentId: "c1",
   ...overrides,
 });
 
@@ -67,11 +79,12 @@ Deno.test("planDeliveries honours push and category opt-outs", () => {
   assertEquals(noLikes, []);
 
   const stillComment = planDeliveries(
-    [notification({ type: "COMMENT" })],
+    [notification({ type: "COMMENT", comment_id: "c1" })],
     [prefs({ likes: 0 })],
     [{ user_id: "u1", token: "a" }],
   );
   assertEquals(stillComment.length, 1);
+  assertEquals(stillComment[0]!.commentId, "c1");
 });
 
 Deno.test("planDeliveries skips rows with no report or no device", () => {
@@ -81,27 +94,54 @@ Deno.test("planDeliveries skips rows with no report or no device", () => {
   assertEquals(noDevice, []);
 });
 
-Deno.test("buildFcmMessage carries only the report URL, never report content", () => {
-  const delivery: Delivery = {
-    notificationId: "n1",
-    userId: "u1",
-    token: "tok",
-    type: "COMMENT",
-    postId: "post-9",
-  };
-  const message = buildFcmMessage(delivery, "https://findbackapp.social") as {
+Deno.test("buildFcmMessage is data-only and carries the report URL, no content", () => {
+  const message = buildFcmMessage(delivery(), "https://findbackapp.social") as {
     token: string;
-    notification: { title: string; body: string };
+    notification?: unknown;
     data: Record<string, string>;
-    android: { notification: { channel_id: string; tag: string } };
+    android: { priority: string };
   };
   assertEquals(message.token, "tok");
-  assertEquals(message.notification.title, "FindBack");
+  assertEquals(message.notification, undefined);
+  assertEquals(message.data.title, "FindBack");
   assertEquals(message.data.url, "https://findbackapp.social/r/post-9");
   assertEquals(message.data.postId, "post-9");
-  assertEquals(message.android.notification.channel_id, "findback_updates");
-  assertEquals(message.android.notification.tag, "n1");
-  assert(!JSON.stringify(message).includes("Lost"));
+  assertEquals(message.data.commentId, "c1");
+  assertEquals(message.android.priority, "high");
+  assert(!("replyToken" in message.data));
+});
+
+Deno.test("buildFcmMessage includes a reply token only when supplied", () => {
+  const token = "A".repeat(43);
+  const message = buildFcmMessage(delivery(), "https://findbackapp.social", token) as {
+    data: Record<string, string>;
+  };
+  assertEquals(message.data.replyToken, token);
+});
+
+Deno.test("buildReplyTokenRow is only for comment notifications on a report", () => {
+  const created = "2026-10-02T00:00:00.000Z";
+  const expires = "2026-10-09T00:00:00.000Z";
+  const row = buildReplyTokenRow(
+    notification({ type: "COMMENT", comment_id: "c1" }),
+    "hash",
+    created,
+    expires,
+  );
+  assertEquals(row?.parent_comment_id, "c1");
+  assertEquals(row?.post_id, "p1");
+  assertEquals(row?.token_hash, "hash");
+  assertEquals(row?.expires_at, expires);
+
+  assertEquals(buildReplyTokenRow(notification({ type: "LIKE" }), "h", created, expires), null);
+  assertEquals(
+    buildReplyTokenRow(notification({ type: "COMMENT", comment_id: null }), "h", created, expires),
+    null,
+  );
+  assertEquals(
+    buildReplyTokenRow(notification({ type: "COMMENT", comment_id: "c1", post_id: null }), "h", created, expires),
+    null,
+  );
 });
 
 Deno.test("isAuthorized compares the dispatch secret in constant time", () => {
