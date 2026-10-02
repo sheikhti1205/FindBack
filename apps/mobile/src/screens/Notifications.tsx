@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
+import { motion, type PanInfo } from "framer-motion";
 import { Bell, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
 import { NotificationSettings } from "../components/NotificationSettings";
@@ -12,9 +13,22 @@ import {
   type NotificationItem,
   type NotificationType,
 } from "../services/notifications";
+import { signalInboxChanged } from "../services/notificationSignals";
 import { onRealtime } from "../services/realtime";
 import { friendlyError } from "../utils/friendlyErrors";
 import { formatTimestamp, timeAgo } from "../utils/dates";
+
+/** How long the undo affordance stays available after a delete. */
+export const UNDO_WINDOW_MS = 5000;
+/** Horizontal drag distance (px) that commits a swipe action. */
+export const SWIPE_THRESHOLD_PX = 72;
+
+/** Pure swipe decision: right toggles read, left deletes, short drags do nothing. */
+export function swipeActionFor(offsetX: number): "toggle-read" | "delete" | null {
+  if (offsetX <= -SWIPE_THRESHOLD_PX) return "delete";
+  if (offsetX >= SWIPE_THRESHOLD_PX) return "toggle-read";
+  return null;
+}
 
 function typeLabel(type: NotificationType): string {
   switch (type) {
@@ -39,6 +53,22 @@ export function Notifications() {
   const [error, setError] = useState<string | null>(null);
   const [lastDeleted, setLastDeleted] = useState<readonly string[] | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearUndo = useCallback(() => {
+    if (undoTimer.current !== null) {
+      clearTimeout(undoTimer.current);
+      undoTimer.current = null;
+    }
+    setLastDeleted(null);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (undoTimer.current !== null) clearTimeout(undoTimer.current);
+    },
+    [],
+  );
 
   const load = useCallback(async (target: InboxView) => {
     setError(null);
@@ -81,6 +111,7 @@ export function Notifications() {
       updateItem(id, { read: true });
       try {
         await markNotificationsRead([id]);
+        signalInboxChanged();
       } catch {
         updateItem(id, { read: false });
       }
@@ -93,6 +124,7 @@ export function Notifications() {
       updateItem(id, { read: false });
       try {
         await markNotificationsUnread([id]);
+        signalInboxChanged();
       } catch {
         updateItem(id, { read: true });
       }
@@ -105,6 +137,7 @@ export function Notifications() {
     setItems((current) => current?.map((item) => ({ ...item, read: true })) ?? current);
     try {
       await markNotificationsRead();
+      signalInboxChanged();
     } catch {
       setItems(previous);
     }
@@ -115,9 +148,19 @@ export function Notifications() {
       const previous = items;
       setItems((current) => current?.filter((item) => !ids.includes(item.id)) ?? current);
       setLastDeleted(ids);
+      if (undoTimer.current !== null) clearTimeout(undoTimer.current);
+      undoTimer.current = setTimeout(() => {
+        undoTimer.current = null;
+        setLastDeleted(null);
+      }, UNDO_WINDOW_MS);
       try {
         await deleteNotifications([...ids]);
+        signalInboxChanged();
       } catch (err) {
+        if (undoTimer.current !== null) {
+          clearTimeout(undoTimer.current);
+          undoTimer.current = null;
+        }
         setItems(previous);
         setLastDeleted(null);
         setError(friendlyError(err).message);
@@ -129,20 +172,22 @@ export function Notifications() {
   const handleUndoDelete = useCallback(async () => {
     if (!lastDeleted) return;
     const ids = lastDeleted;
-    setLastDeleted(null);
+    clearUndo();
     try {
       await restoreNotifications([...ids]);
+      signalInboxChanged();
     } catch (err) {
       setError(friendlyError(err).message);
     }
     await load("inbox");
-  }, [lastDeleted, load]);
+  }, [lastDeleted, clearUndo, load]);
 
   const handleRestore = useCallback(
     async (ids: readonly string[]) => {
       setItems((current) => current?.filter((item) => !ids.includes(item.id)) ?? current);
       try {
         await restoreNotifications([...ids]);
+        signalInboxChanged();
       } catch (err) {
         setError(friendlyError(err).message);
         await load("deleted");
@@ -181,7 +226,7 @@ export function Notifications() {
             type="button"
             onClick={() => {
               setView((current) => (current === "inbox" ? "deleted" : "inbox"));
-              setLastDeleted(null);
+              clearUndo();
             }}
             aria-pressed={view === "deleted"}
             className="min-h-[44px] rounded-full border border-outline-variant px-3 text-sm font-medium text-on-surface"
@@ -236,7 +281,20 @@ export function Notifications() {
         <ul className="flex flex-col gap-2 py-4" aria-label="Notifications">
           {items.map((item) => (
             <li key={item.id}>
-              <div
+              <motion.div
+                drag={view === "inbox" ? "x" : false}
+                dragDirectionLock
+                dragConstraints={{ left: 0, right: 0 }}
+                dragElastic={0.25}
+                onDragEnd={(_event, info: PanInfo) => {
+                  if (view !== "inbox") return;
+                  const action = swipeActionFor(info.offset.x);
+                  if (action === "delete") void handleDelete([item.id]);
+                  else if (action === "toggle-read") {
+                    if (item.read) void handleMarkUnread(item.id);
+                    else void handleMarkRead(item.id);
+                  }
+                }}
                 className={`flex flex-col rounded-m3-md border ${
                   !item.read && view === "inbox"
                     ? "border-primary bg-surface-container"
@@ -299,7 +357,7 @@ export function Notifications() {
                     </>
                   )}
                 </div>
-              </div>
+              </motion.div>
             </li>
           ))}
         </ul>

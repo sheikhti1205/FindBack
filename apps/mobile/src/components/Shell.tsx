@@ -7,6 +7,7 @@ import { LiveRegion } from "./LiveRegion";
 import { RouteTransition } from "./RouteTransition";
 import { requestHistorySuppression } from "./backNavigation";
 import { fetchUnreadCount } from "../services/notifications";
+import { INBOX_CHANGED_EVENT } from "../services/notificationSignals";
 import { onRealtime } from "../services/realtime";
 import { PUSH_RECEIVED_EVENT } from "../services/pushNotifications";
 import {
@@ -107,10 +108,14 @@ function BottomNav() {
     // A foregrounded push is a second signal (realtime can be disconnected).
     const onPush = () => void pull();
     window.addEventListener(PUSH_RECEIVED_EVENT, onPush);
+    // Local read/unread/delete/restore on the inbox screen: keep the badge live.
+    const onInboxChanged = () => void pull();
+    window.addEventListener(INBOX_CHANGED_EVENT, onInboxChanged);
     return () => {
       cancelled = true;
       offInbox();
       window.removeEventListener(PUSH_RECEIVED_EVENT, onPush);
+      window.removeEventListener(INBOX_CHANGED_EVENT, onInboxChanged);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
