@@ -76,15 +76,20 @@ browser/APK build.
 - The `Push dispatch` workflow calls `push-dispatch` every 10 minutes. It no-ops
   with a notice until `PUSH_DISPATCH_SECRET` is provisioned as a GitHub secret
   and the `Backend deploy` + `Sync FCM server secrets` workflows have run.
-- The mobile client requests permission, creates the `findback_updates` Android
-  channel, registers the FCM token, and writes preferences through the
-  `auth.uid()`-scoped RPCs. Notification taps route through the same `/r/<UUID>`
-  parser as App Links.
+- The mobile client requests permission, creates the Android category channels
+  (`findback.comments.v1`, `findback.activity.v1`, `findback.updates.v1` under
+  the `findback` group), registers the FCM token, and writes preferences through
+  the `auth.uid()`-scoped RPCs. Notification taps route through the same
+  `/r/<UUID>` parser as App Links.
 - Push messages are **data-only**: the app's `FindbackMessagingService` replaces
   the Capacitor plugin's service (removed via manifest merge) and presents the
   notification, attaching a `RemoteInput` reply action for COMMENT
   notifications. Foreground messages still forward to JS; taps open MainActivity
   with the canonical report URL.
+- Inline replies post from `ReplyReceiver` with `goAsync()` + a background
+  thread — there is intentionally **no WorkManager** dependency. On failure the
+  notification retains the Reply action so the user can retry inline; there is no
+  automated background retry.
 
 The Azure deployment token printed during initial provisioning was rotated and
 the GitHub secret replaced. The original temporary sender JSON was deleted after
