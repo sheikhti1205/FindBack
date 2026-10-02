@@ -131,6 +131,7 @@ Deno.test("buildReplyTokenRow is only for comment notifications on a report", ()
   );
   assertEquals(row?.parent_comment_id, "c1");
   assertEquals(row?.post_id, "p1");
+  assertEquals(row?.notification_id, "n1");
   assertEquals(row?.token_hash, "hash");
   assertEquals(row?.expires_at, expires);
 

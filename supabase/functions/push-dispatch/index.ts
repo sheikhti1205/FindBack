@@ -207,6 +207,7 @@ export interface ReplyTokenInsert {
   user_id: string;
   post_id: string;
   parent_comment_id: string;
+  notification_id: string;
   token_hash: string;
   created_at: string;
   expires_at: string;
@@ -226,6 +227,7 @@ export function buildReplyTokenRow(
     user_id: notification.user_id,
     post_id: notification.post_id,
     parent_comment_id: notification.comment_id,
+    notification_id: notification.id,
     token_hash: tokenHash,
     created_at: createdAt,
     expires_at: expiresAt,
