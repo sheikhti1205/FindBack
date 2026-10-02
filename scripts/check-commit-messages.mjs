@@ -11,6 +11,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 // Merge / revert / generated commits are exempt from every rule.
 const SKIP_SUBJECT_RE =
@@ -38,14 +39,39 @@ export function classifyCommit(subject) {
 }
 
 /**
+ * Parse a commit-message enforcement-baseline file: one commit SHA per line.
+ * Blank lines and `#` comments are ignored. Any commit whose SHA is listed is
+ * pre-enforcement and is skipped, so a historical commit that predates the
+ * convention (and cannot be rewritten) never blocks a release. The list is
+ * append-only: new commits are always enforced.
+ */
+export function parseBaseline(text) {
+  const shas = new Set();
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    shas.add(line.toLowerCase());
+  }
+  return shas;
+}
+
+/** True when `sha` is in the enforcement baseline (pre-enforcement commit). */
+export function isExempt(sha, baseline) {
+  if (!sha || !baseline) return false;
+  return baseline.has(String(sha).toLowerCase());
+}
+
+/**
  * Check one commit message. Returns { ok, errors[], skipped }.
  * Never throws on content; never prints key material (no secrets involved).
+ * `options.sha` + `options.baseline` exempt pre-enforcement commits.
  */
-export function checkMessage(subject, body = "") {
+export function checkMessage(subject, body = "", options = {}) {
   const errors = [];
   const trimmed = subject.trim();
 
   if (classifyCommit(trimmed) === "skip") return { ok: true, errors, skipped: true };
+  if (isExempt(options.sha, options.baseline)) return { ok: true, errors, skipped: true };
   if (!trimmed) return { ok: false, errors: ["empty subject"], skipped: false };
 
   if (WIP_RE.test(trimmed)) errors.push("subject looks like WIP");
@@ -125,7 +151,15 @@ function loadCommits(args) {
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
   try {
-    const commits = await loadCommits(process.argv.slice(2));
+    const argv = process.argv.slice(2);
+    const baselineIdx = argv.indexOf("--baseline");
+    let baseline = new Set();
+    if (baselineIdx !== -1) {
+      const baselinePath = argv[baselineIdx + 1];
+      if (!baselinePath) throw new Error("check-commit-messages: --baseline requires a file path");
+      baseline = parseBaseline(readFileSync(baselinePath, "utf8"));
+    }
+    const commits = await loadCommits(argv);
     if (commits.length === 0) {
       console.log("check-commit-messages: PASS (no commits in range — nothing to check)");
       process.exit(0);
@@ -133,7 +167,7 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     let failed = 0;
     let skipped = 0;
     for (const { sha, subject, body } of commits) {
-      const result = checkMessage(subject, body);
+      const result = checkMessage(subject, body, { sha, baseline });
       if (result.skipped) {
         skipped += 1;
         console.log(`check-commit-messages: SKIP ${sha} (${subject.slice(0, 60)})`);

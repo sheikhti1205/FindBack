@@ -68,15 +68,18 @@ jobs:
         # and HEAD == the tagged commit. Read-only; never bumps versions.
         run: node scripts/check-version-sync.mjs --ref "${{ github.ref }}"
       - name: Commit-message convention over the release range
-        # Prospective only: merge/revert/generated commits pass gracefully.
+        # Prospective only: merge/revert/generated commits pass gracefully, and
+        # the enforcement baseline exempts pre-convention history that cannot be
+        # rewritten (e.g. a merged commit whose body predates the Gates rule).
         run: |
+          BASELINE="scripts/commit-message-baseline.txt"
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF_NAME}"
             PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
             if [[ -n "$PREV" ]]; then
-              node scripts/check-commit-messages.mjs --range "$PREV...$TAG"
+              node scripts/check-commit-messages.mjs --range "$PREV...$TAG" --baseline "$BASELINE"
             else
-              node scripts/check-commit-messages.mjs --rev "$TAG"
+              node scripts/check-commit-messages.mjs --rev "$TAG" --baseline "$BASELINE"
             fi
           else
             node scripts/check-commit-messages.mjs --count 1

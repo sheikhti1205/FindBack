@@ -29,11 +29,12 @@ jobs:
         # an unresolvable range (e.g. all-zero `before` on branch creation)
         # falls back to HEAD instead of failing the job.
         run: |
+          BASELINE="scripts/commit-message-baseline.txt"
           if [[ -n "${{ github.base_ref }}" ]]; then
             git fetch origin "${{ github.base_ref }}" --depth=50 2>/dev/null || true
-            node scripts/check-commit-messages.mjs --range "origin/${{ github.base_ref }}...HEAD"
+            node scripts/check-commit-messages.mjs --range "origin/${{ github.base_ref }}...HEAD" --baseline "$BASELINE"
           elif [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" && -n "${{ github.event.before }}" ]]; then
-            node scripts/check-commit-messages.mjs --range "${{ github.event.before }}...${{ github.sha }}" || \
+            node scripts/check-commit-messages.mjs --range "${{ github.event.before }}...${{ github.sha }}" --baseline "$BASELINE" || \
               node scripts/check-commit-messages.mjs --count 1
           else
             node scripts/check-commit-messages.mjs --count 1
@@ -65,8 +66,9 @@ jobs:
       - name: Release-infra script tests (signing, ABI, manifest, publish type)
         # Gates the release-script regressions (fingerprint parse order, ABI
         # completeness, full-SHA provenance, SemVer publish type) so an
-        # unverified release path can never reach a tag.
-        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs
+        # unverified release path can never reach a tag. Also the commit-message
+        # checker (range + enforcement baseline) itself.
+        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-commit-messages.test.mjs
       - name: Sharing and server credential config tests
         run: node --test scripts/check-share-config.test.mjs scripts/check-mobile-build-config.test.mjs scripts/sync-fcm-secrets.test.mjs
       - name: Build mobile web shell

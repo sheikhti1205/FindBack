@@ -1,0 +1,12 @@
+# Commit-message enforcement baseline (append-only).
+#
+# Commits listed here predate enforcement of the `scope: outcome` + `Gates:`
+# convention and cannot be rewritten (accepted-history policy). The
+# release-range check skips exactly these SHAs; every other commit in a release
+# range is still enforced.
+#
+# Rules:
+#   - Never remove a SHA from this list.
+#   - Never add a commit created after enforcement began — fix its message
+#     instead. This file is for history that is already merged, nothing else.
+abda2c78661372075e8b08e32eb4d5f4c6325984
