@@ -75,6 +75,12 @@ GitHub storage and Supabase digest verification.
   missing association files returned 404 rather than the SPA HTML fallback.
 - Live browser checks at 320px and 1280px passed: landing, shared account gate,
   sign-in and pending-link storage; no overflow/page errors or anonymous report reads.
+- GitHub Web deployment: run `36977658113` passed for `abda2c7`.
+- GitHub server-secret synchronization: run `36977672171` passed, verifying all
+  three stored digests using the repository secrets.
+- GitHub CI run `36977658036`: test, Android and Docker jobs passed; the commit
+  convention job rejected `abda2c7` because its message lacked the required gate
+  body. The subsequent correction commit records its gates.
 
 ## Remaining v0.3 gates
 
@@ -87,3 +93,7 @@ release-signed candidate and verify OS App Links association and cold/warm taps,
 authentication resume, notification delivery/taps, and direct reply. A debug APK
 does not match the release-only association certificate. Version/tag publication
 stays behind the signed-candidate and device gates.
+
+Before a release-range check that includes `abda2c7`, resolve that original
+commit-message defect explicitly. A follow-up commit does not change its body;
+history rewriting requires the owner's authorization.

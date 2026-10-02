@@ -42,5 +42,4 @@ jobs:
           action: upload
           app_location: apps/mobile/dist
           skip_app_build: true
-          skip_api_build: true
-          production_branch: main
+          api_location: ""
