@@ -7,6 +7,7 @@ import { LiveRegion } from "./LiveRegion";
 import { RouteTransition } from "./RouteTransition";
 import { requestHistorySuppression } from "./backNavigation";
 import { fetchUnreadCount } from "../services/notifications";
+import { onRealtime } from "../services/realtime";
 import {
   fadeUpVariants,
   motionDurations,
@@ -100,8 +101,11 @@ function BottomNav() {
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
+    // Private inbox signal: refetch the badge immediately on a new notification.
+    const offInbox = onRealtime("notification:added", () => void pull());
     return () => {
       cancelled = true;
+      offInbox();
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };

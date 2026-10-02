@@ -3,14 +3,20 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchMock, markReadMock } = vi.hoisted(() => ({
+const { fetchMock, markReadMock, markUnreadMock, deleteMock, restoreMock } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
   markReadMock: vi.fn(),
+  markUnreadMock: vi.fn(),
+  deleteMock: vi.fn(),
+  restoreMock: vi.fn(),
 }));
 
 vi.mock("../services/notifications", () => ({
   fetchNotifications: fetchMock,
   markNotificationsRead: markReadMock,
+  markNotificationsUnread: markUnreadMock,
+  deleteNotifications: deleteMock,
+  restoreNotifications: restoreMock,
 }));
 
 import { Notifications } from "./Notifications";
@@ -50,7 +56,13 @@ function renderNotifications() {
 beforeEach(() => {
   fetchMock.mockReset();
   markReadMock.mockReset();
-  markReadMock.mockResolvedValue(0);
+  markUnreadMock.mockReset();
+  deleteMock.mockReset();
+  restoreMock.mockReset();
+  markReadMock.mockResolvedValue(1);
+  markUnreadMock.mockResolvedValue(1);
+  deleteMock.mockResolvedValue(1);
+  restoreMock.mockResolvedValue(1);
 });
 
 afterEach(() => {
@@ -66,30 +78,69 @@ describe("Notifications inbox", () => {
     expect(screen.getByText(/liked your report/i)).toBeTruthy();
     expect(screen.getByText("Lost wallet")).toBeTruthy();
     expect(screen.getByText(/5m ago/i)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith({ deleted: false });
   });
 
-  it("styles unread items and marks them read on view", async () => {
-    let resolveMark!: (value: number) => void;
-    markReadMock.mockImplementation(() => new Promise<number>((r) => { resolveMark = r; }));
-    fetchMock.mockResolvedValue([
-      item({ id: "n1", read: false }),
-      item({ id: "n2", type: "COMMENT", read: true, actorUsername: "cara" }),
-    ]);
+  it("styles unread items without auto-marking them read on open", async () => {
+    fetchMock.mockResolvedValue([item({ read: false })]);
     renderNotifications();
 
-    // The fresh unread row is styled unread before the mark-read lands.
     expect(await screen.findByLabelText(/unread/i)).toBeTruthy();
-    await waitFor(() => expect(markReadMock).toHaveBeenCalled());
-    resolveMark(1);
-    await waitFor(() => expect(screen.queryByLabelText(/unread/i)).toBeNull());
+    expect(markReadMock).not.toHaveBeenCalled();
   });
 
-  it("navigates to the post on tap", async () => {
+  it("marks just the tapped item read and navigates", async () => {
     fetchMock.mockResolvedValue([item()]);
     renderNotifications();
 
     fireEvent.click(await screen.findByRole("link", { name: /bob.*lost wallet/i }));
+    await waitFor(() => expect(markReadMock).toHaveBeenCalledWith(["n1"]));
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/posts/p1"));
+  });
+
+  it("clears the whole inbox with Mark all read", async () => {
+    fetchMock.mockResolvedValue([item({ id: "n1" }), item({ id: "n2", actorUsername: "cara" })]);
+    renderNotifications();
+
+    fireEvent.click(await screen.findByRole("button", { name: /mark all read/i }));
+    await waitFor(() => expect(markReadMock).toHaveBeenCalledWith());
+    await waitFor(() => expect(screen.queryByLabelText(/unread/i)).toBeNull());
+  });
+
+  it("deletes an item, then restores it from the Undo banner", async () => {
+    fetchMock.mockResolvedValue([item()]);
+    renderNotifications();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    await waitFor(() => expect(deleteMock).toHaveBeenCalledWith(["n1"]));
+    expect(await screen.findByText(/notification deleted/i)).toBeTruthy();
+
+    fetchMock.mockResolvedValue([item()]);
+    fireEvent.click(screen.getByRole("button", { name: /undo/i }));
+    await waitFor(() => expect(restoreMock).toHaveBeenCalledWith(["n1"]));
+    expect(await screen.findByText("bob")).toBeTruthy();
+  });
+
+  it("marks a read item unread", async () => {
+    fetchMock.mockResolvedValue([item({ read: true })]);
+    renderNotifications();
+
+    fireEvent.click(await screen.findByRole("button", { name: /mark unread/i }));
+    await waitFor(() => expect(markUnreadMock).toHaveBeenCalledWith(["n1"]));
+    expect(await screen.findByLabelText(/unread/i)).toBeTruthy();
+  });
+
+  it("shows the soft-deleted view and restores from it", async () => {
+    fetchMock.mockResolvedValueOnce([item()]);
+    renderNotifications();
+    await screen.findByText("bob");
+
+    fetchMock.mockResolvedValueOnce([item({ read: true })]);
+    fireEvent.click(screen.getByRole("button", { name: "Deleted" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith({ deleted: true }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /restore/i }));
+    await waitFor(() => expect(restoreMock).toHaveBeenCalledWith(["n1"]));
   });
 
   it("keeps a truthful empty state when the inbox is empty", async () => {
@@ -98,7 +149,6 @@ describe("Notifications inbox", () => {
 
     expect(await screen.findByRole("heading", { name: "Notifications" })).toBeTruthy();
     expect(screen.getByText(/no notifications/i)).toBeTruthy();
-    expect(screen.queryByText(/not available yet/i)).toBeNull();
     expect(markReadMock).not.toHaveBeenCalled();
   });
 

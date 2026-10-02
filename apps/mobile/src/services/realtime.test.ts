@@ -183,6 +183,35 @@ describe("joinPostRoom", () => {
   });
 });
 
+describe("joinInboxRoom", () => {
+  it("subscribes to the private per-user inbox topic and dispatches the signal", async () => {
+    const mod = await load();
+    const seen: unknown[] = [];
+    mod.onRealtime("notification:added", (p) => seen.push(p));
+    mod.connectRealtime();
+    mod.joinInboxRoom("user-1");
+    await flush();
+
+    const channel = find("notification:user-1");
+    expect(channel.opts.config?.private).toBe(true);
+    emit(channel, "notification:added", { op: "insert" });
+
+    expect(seen).toEqual([{ op: "insert" }]);
+  });
+
+  it("is idempotent and can be torn down", async () => {
+    const mod = await load();
+    mod.connectRealtime();
+    mod.joinInboxRoom("u1");
+    mod.joinInboxRoom("u1");
+    await flush();
+    expect(channels.filter((c) => c.topic === "notification:u1")).toHaveLength(1);
+
+    mod.leaveInboxRoom();
+    expect(clientMock.removeChannel).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("onRealtime", () => {
   it("stops delivering after unsubscribe", async () => {
     const mod = await load();

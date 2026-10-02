@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  deleteNotifications,
   fetchNotifications,
   fetchUnreadCount,
   markNotificationsRead,
+  markNotificationsUnread,
+  restoreNotifications,
 } from "./notifications";
 
 const { clientMock } = vi.hoisted(() => ({
@@ -40,7 +43,9 @@ describe("fetchNotifications", () => {
 
     const items = await fetchNotifications();
 
-    expect(clientMock.rpc).toHaveBeenCalledWith("findback_list_notifications_client", {});
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_list_notifications_client", {
+      p_deleted: false,
+    });
     expect(items).toEqual([
       {
         id: "n1",
@@ -90,6 +95,14 @@ describe("fetchNotifications", () => {
     ]);
   });
 
+  it("reads the soft-deleted view when asked", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [], error: null });
+    await fetchNotifications({ deleted: true });
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_list_notifications_client", {
+      p_deleted: true,
+    });
+  });
+
   it("maps an auth failure to 401", async () => {
     clientMock.rpc.mockResolvedValue({
       data: null,
@@ -132,5 +145,61 @@ describe("markNotificationsRead", () => {
       p_ids: null,
     });
     expect(updated).toBe(5);
+  });
+});
+
+describe("markNotificationsUnread", () => {
+  it("marks the given ids unread", async () => {
+    clientMock.rpc.mockResolvedValue({ data: 1, error: null });
+
+    expect(await markNotificationsUnread(["n1"])).toBe(1);
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_mark_notifications_unread_client", {
+      p_ids: ["n1"],
+    });
+  });
+
+  it("marks the whole active inbox unread when no ids are given", async () => {
+    clientMock.rpc.mockResolvedValue({ data: 4, error: null });
+    await markNotificationsUnread();
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_mark_notifications_unread_client", {
+      p_ids: null,
+    });
+  });
+});
+
+describe("deleteNotifications / restoreNotifications", () => {
+  it("soft-deletes the given ids and returns the updated count", async () => {
+    clientMock.rpc.mockResolvedValue({ data: 2, error: null });
+
+    expect(await deleteNotifications(["n1", "n2"])).toBe(2);
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_delete_notifications_client", {
+      p_ids: ["n1", "n2"],
+    });
+  });
+
+  it("soft-deletes everything when no ids are given", async () => {
+    clientMock.rpc.mockResolvedValue({ data: 3, error: null });
+    await deleteNotifications();
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_delete_notifications_client", {
+      p_ids: null,
+    });
+  });
+
+  it("restores the given ids", async () => {
+    clientMock.rpc.mockResolvedValue({ data: 1, error: null });
+    expect(await restoreNotifications(["n9"])).toBe(1);
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_restore_notifications_client", {
+      p_ids: ["n9"],
+    });
+  });
+
+  it("maps an ownership failure to 403", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "denied", code: "42501" },
+    });
+    await expect(deleteNotifications(["n1"])).rejects.toMatchObject({ status: 403 });
   });
 });

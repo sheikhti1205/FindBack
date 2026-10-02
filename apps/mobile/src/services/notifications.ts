@@ -53,9 +53,16 @@ function notificationErrorStatus(code: string | undefined): number {
   return 400;
 }
 
-/** The signed-in user's notification inbox, newest first. */
-export async function fetchNotifications(): Promise<NotificationItem[]> {
-  const { data, error } = await getSupabase().rpc("findback_list_notifications_client", {});
+/**
+ * The signed-in user's notification inbox, newest first. Pass
+ * `{ deleted: true }` for the soft-deleted view used by restore.
+ */
+export async function fetchNotifications(
+  options: { deleted?: boolean } = {},
+): Promise<NotificationItem[]> {
+  const { data, error } = await getSupabase().rpc("findback_list_notifications_client", {
+    p_deleted: options.deleted ?? false,
+  });
   if (error) throw new ApiError(error.message, notificationErrorStatus(error.code));
   return ((data ?? []) as NotificationRow[]).map(mapNotification);
 }
@@ -73,6 +80,36 @@ export async function fetchUnreadCount(): Promise<number> {
  */
 export async function markNotificationsRead(ids?: readonly string[]): Promise<number> {
   const { data, error } = await getSupabase().rpc("findback_mark_notifications_read_client", {
+    p_ids: ids ? [...ids] : null,
+  });
+  if (error) throw new ApiError(error.message, notificationErrorStatus(error.code));
+  return Number(data ?? 0);
+}
+
+/** Mark notifications unread. With ids, only those (owned) rows; without, all. */
+export async function markNotificationsUnread(ids?: readonly string[]): Promise<number> {
+  const { data, error } = await getSupabase().rpc("findback_mark_notifications_unread_client", {
+    p_ids: ids ? [...ids] : null,
+  });
+  if (error) throw new ApiError(error.message, notificationErrorStatus(error.code));
+  return Number(data ?? 0);
+}
+
+/**
+ * Soft-delete notifications. With ids, only those (owned) rows; without, the
+ * whole active inbox. Rows stay recoverable through {@link restoreNotifications}.
+ */
+export async function deleteNotifications(ids?: readonly string[]): Promise<number> {
+  const { data, error } = await getSupabase().rpc("findback_delete_notifications_client", {
+    p_ids: ids ? [...ids] : null,
+  });
+  if (error) throw new ApiError(error.message, notificationErrorStatus(error.code));
+  return Number(data ?? 0);
+}
+
+/** Restore soft-deleted notifications. With ids, only those; without, all. */
+export async function restoreNotifications(ids?: readonly string[]): Promise<number> {
+  const { data, error } = await getSupabase().rpc("findback_restore_notifications_client", {
     p_ids: ids ? [...ids] : null,
   });
   if (error) throw new ApiError(error.message, notificationErrorStatus(error.code));

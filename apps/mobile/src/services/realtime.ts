@@ -9,7 +9,8 @@ export type RealtimeEvent =
   | "comment:added"
   | "comment:deleted"
   | "reaction:changed"
-  | "rating:changed";
+  | "rating:changed"
+  | "notification:added";
 
 type Handler = (payload: Record<string, unknown>) => void;
 
@@ -18,6 +19,8 @@ const postChannels = new Map<string, RealtimeChannel>();
 const desiredPosts = new Set<string>();
 let client: SupabaseClient | null = null;
 let feedChannel: RealtimeChannel | null = null;
+let inboxChannel: RealtimeChannel | null = null;
+let desiredInboxUser: string | null = null;
 let ready: Promise<void> = Promise.resolve();
 
 /** Wire a private Supabase channel, translating DB event names to app events. */
@@ -86,10 +89,15 @@ void ready.then(() => {
 /** Tear down every channel (logout/unmount). The listener registry is kept. */
 export function disconnectRealtime(): void {
   desiredPosts.clear();
+  desiredInboxUser = null;
   if (!client) return;
   if (feedChannel) {
     void client.removeChannel(feedChannel);
     feedChannel = null;
+  }
+  if (inboxChannel) {
+    void client.removeChannel(inboxChannel);
+    inboxChannel = null;
   }
   for (const [postId, channel] of postChannels) {
     void client.removeChannel(channel);
@@ -133,4 +141,27 @@ export function leavePostRoom(postId: string): void {
   if (!channel || !client) return;
   void client.removeChannel(channel);
   postChannels.delete(postId);
+}
+
+/**
+ * Subscribe to the signed-in user's private inbox topic. The server broadcasts
+ * a data-free signal on new notifications; consumers refetch their own inbox.
+ */
+export function joinInboxRoom(userId: string): void {
+  const c = ensureClient();
+  if (!c) return;
+  desiredInboxUser = userId;
+  void ready.then(() => {
+    if (client !== c || desiredInboxUser !== userId || inboxChannel) return;
+    inboxChannel = bind(c.channel(`notification:${userId}`, { config: { private: true } }), [
+      ["notification:added", "notification:added"],
+    ]);
+  });
+}
+
+export function leaveInboxRoom(): void {
+  desiredInboxUser = null;
+  if (!client || !inboxChannel) return;
+  void client.removeChannel(inboxChannel);
+  inboxChannel = null;
 }

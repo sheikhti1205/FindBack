@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
-import { Bell } from "lucide-react";
+import { Bell, RotateCcw, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
 import {
+  deleteNotifications,
   fetchNotifications,
   markNotificationsRead,
+  markNotificationsUnread,
+  restoreNotifications,
   type NotificationItem,
   type NotificationType,
 } from "../services/notifications";
+import { onRealtime } from "../services/realtime";
 import { friendlyError } from "../utils/friendlyErrors";
 import { formatTimestamp, timeAgo } from "../utils/dates";
 
@@ -26,30 +30,29 @@ function typeLabel(type: NotificationType): string {
   }
 }
 
+type InboxView = "inbox" | "deleted";
+
 export function Notifications() {
+  const [view, setView] = useState<InboxView>("inbox");
   const [items, setItems] = useState<NotificationItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastDeleted, setLastDeleted] = useState<readonly string[] | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (target: InboxView) => {
     setError(null);
     try {
-      const rows = await fetchNotifications();
-      setItems(rows);
-      if (rows.some((row) => !row.read)) {
-        await markNotificationsRead();
-        setItems(rows.map((row) => ({ ...row, read: true })));
-      }
+      setItems(await fetchNotifications({ deleted: target === "deleted" }));
     } catch (err) {
       setError(friendlyError(err).message);
     }
   }, []);
 
   useEffect(() => {
-    void load();
-    // Pull the inbox again when the app regains focus (badge + list agree).
-    const onFocus = () => void load();
+    void load(view);
+    if (view === "deleted") return;
+    const onFocus = () => void load("inbox");
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void load();
+      if (document.visibilityState === "visible") void load("inbox");
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
@@ -57,13 +60,124 @@ export function Notifications() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [load]);
+  }, [load, view]);
+
+  useEffect(() => {
+    if (view !== "inbox") return;
+    // Private inbox signal: refresh the list when a new notification lands.
+    return onRealtime("notification:added", () => void load("inbox"));
+  }, [load, view]);
+
+  const updateItem = useCallback((id: string, patch: Partial<NotificationItem>) => {
+    setItems((current) =>
+      current ? current.map((item) => (item.id === id ? { ...item, ...patch } : item)) : current,
+    );
+  }, []);
+
+  const handleMarkRead = useCallback(
+    async (id: string) => {
+      updateItem(id, { read: true });
+      try {
+        await markNotificationsRead([id]);
+      } catch {
+        updateItem(id, { read: false });
+      }
+    },
+    [updateItem],
+  );
+
+  const handleMarkUnread = useCallback(
+    async (id: string) => {
+      updateItem(id, { read: false });
+      try {
+        await markNotificationsUnread([id]);
+      } catch {
+        updateItem(id, { read: true });
+      }
+    },
+    [updateItem],
+  );
+
+  const handleMarkAllRead = useCallback(async () => {
+    const previous = items;
+    setItems((current) => current?.map((item) => ({ ...item, read: true })) ?? current);
+    try {
+      await markNotificationsRead();
+    } catch {
+      setItems(previous);
+    }
+  }, [items]);
+
+  const handleDelete = useCallback(
+    async (ids: readonly string[]) => {
+      const previous = items;
+      setItems((current) => current?.filter((item) => !ids.includes(item.id)) ?? current);
+      setLastDeleted(ids);
+      try {
+        await deleteNotifications([...ids]);
+      } catch (err) {
+        setItems(previous);
+        setLastDeleted(null);
+        setError(friendlyError(err).message);
+      }
+    },
+    [items],
+  );
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!lastDeleted) return;
+    const ids = lastDeleted;
+    setLastDeleted(null);
+    try {
+      await restoreNotifications([...ids]);
+    } catch (err) {
+      setError(friendlyError(err).message);
+    }
+    await load("inbox");
+  }, [lastDeleted, load]);
+
+  const handleRestore = useCallback(
+    async (ids: readonly string[]) => {
+      setItems((current) => current?.filter((item) => !ids.includes(item.id)) ?? current);
+      try {
+        await restoreNotifications([...ids]);
+      } catch (err) {
+        setError(friendlyError(err).message);
+        await load("deleted");
+      }
+    },
+    [load],
+  );
+
+  const unreadCount = items?.filter((item) => !item.read).length ?? 0;
 
   return (
     <div className="flex min-h-full flex-col px-4 py-5">
-      <header className="flex items-center gap-2">
+      <header className="flex flex-wrap items-center gap-2">
         <BackButton fallbackTo="/" label="Back to home" />
         <h1 className="text-xl font-semibold tracking-tight">Notifications</h1>
+        <div className="ml-auto flex items-center gap-1">
+          {view === "inbox" && unreadCount > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleMarkAllRead()}
+              className="min-h-[44px] rounded-full px-3 text-sm font-medium text-on-surface underline"
+            >
+              Mark all read
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setView((current) => (current === "inbox" ? "deleted" : "inbox"));
+              setLastDeleted(null);
+            }}
+            aria-pressed={view === "deleted"}
+            className="min-h-[44px] rounded-full border border-outline-variant px-3 text-sm font-medium text-on-surface"
+          >
+            {view === "inbox" ? "Deleted" : "Inbox"}
+          </button>
+        </div>
       </header>
 
       {error ? (
@@ -71,7 +185,7 @@ export function Notifications() {
           <p role="alert" className="text-sm text-on-surface-variant">{error}</p>
           <button
             type="button"
-            onClick={() => void load()}
+            onClick={() => void load(view)}
             className="flex min-h-[48px] items-center rounded-m3-xs bg-primary px-4 text-sm font-medium text-on-primary"
           >
             Try again
@@ -89,38 +203,105 @@ export function Notifications() {
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-container text-on-surface-variant">
             <Bell size={28} aria-hidden />
           </div>
-          <h2 id="notifications-empty-title" className="text-lg font-semibold">No notifications</h2>
+          <h2 id="notifications-empty-title" className="text-lg font-semibold">
+            {view === "deleted" ? "No deleted notifications" : "No notifications"}
+          </h2>
           <p className="max-w-xs text-sm text-on-surface-variant">
-            You&apos;re all caught up. Likes, comments, and mentions on your reports will show up here.
+            {view === "deleted"
+              ? "Deleted notifications you can restore will appear here."
+              : "You're all caught up. Likes, comments, and mentions on your reports will show up here."}
           </p>
         </section>
       ) : (
         <ul className="flex flex-col gap-2 py-4" aria-label="Notifications">
           {items.map((item) => (
             <li key={item.id}>
-              {item.postId ? (
-                <Link
-                  to={`/posts/${item.postId}`}
-                  aria-label={`${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}: ${item.postTitle ?? "your report"}`}
-                  className={`flex flex-col gap-1 rounded-m3-md border p-3 ${
-                    item.read ? "border-outline-variant" : "border-primary bg-surface-container"
-                  }`}
-                >
-                  <NotificationBody item={item} />
-                </Link>
-              ) : (
-                <div
-                  className={`flex flex-col gap-1 rounded-m3-md border p-3 ${
-                    item.read ? "border-outline-variant" : "border-primary bg-surface-container"
-                  }`}
-                >
-                  <NotificationBody item={item} />
+              <div
+                className={`flex flex-col rounded-m3-md border ${
+                  !item.read && view === "inbox"
+                    ? "border-primary bg-surface-container"
+                    : "border-outline-variant"
+                }`}
+              >
+                {item.postId ? (
+                  <Link
+                    to={`/posts/${item.postId}`}
+                    onClick={() => {
+                      if (!item.read) void handleMarkRead(item.id);
+                    }}
+                    aria-label={`${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}: ${item.postTitle ?? "your report"}`}
+                    className="flex flex-col gap-1 p-3"
+                  >
+                    <NotificationBody item={item} />
+                  </Link>
+                ) : (
+                  <div className="flex flex-col gap-1 p-3">
+                    <NotificationBody item={item} />
+                  </div>
+                )}
+                <div className="flex items-center gap-1 border-t border-outline-variant/60 px-2 py-1">
+                  {view === "deleted" ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleRestore([item.id])}
+                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-sm font-medium text-on-surface"
+                    >
+                      <RotateCcw size={15} aria-hidden />
+                      Restore
+                    </button>
+                  ) : (
+                    <>
+                      {item.read ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleMarkUnread(item.id)}
+                          className="inline-flex min-h-[44px] items-center rounded-full px-3 text-sm font-medium text-on-surface-variant"
+                        >
+                          Mark unread
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleMarkRead(item.id)}
+                          className="inline-flex min-h-[44px] items-center rounded-full px-3 text-sm font-medium text-on-surface-variant"
+                        >
+                          Mark read
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete([item.id])}
+                        className="ml-auto inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-sm font-medium text-error"
+                      >
+                        <Trash2 size={15} aria-hidden />
+                        Delete
+                      </button>
+                    </>
+                  )}
                 </div>
-              )}
+              </div>
             </li>
           ))}
         </ul>
       )}
+
+      {lastDeleted && view === "inbox" ? (
+        <div
+          role="status"
+          className="sticky bottom-3 mt-auto flex items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
+        >
+          <span className="flex-1">
+            {lastDeleted.length === 1 ? "Notification deleted" : `${lastDeleted.length} notifications deleted`}
+          </span>
+          <button
+            type="button"
+            onClick={() => void handleUndoDelete()}
+            className="min-h-[44px] rounded-full px-3 font-semibold underline"
+          >
+            Undo
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

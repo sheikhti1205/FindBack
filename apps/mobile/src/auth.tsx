@@ -26,7 +26,12 @@ import {
   setToken,
 } from "./services/session";
 import { getSupabase } from "./services/supabaseClient";
-import { connectRealtime, disconnectRealtime } from "./services/realtime";
+import {
+  connectRealtime,
+  disconnectRealtime,
+  joinInboxRoom,
+  leaveInboxRoom,
+} from "./services/realtime";
 import { clearUserScopedLocalState } from "./services/userScopedState";
 import { aiCredentials } from "./services/aiCredentials";
 
@@ -144,8 +149,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (user) connectRealtime();
-    else disconnectRealtime();
+    if (user) {
+      connectRealtime();
+      joinInboxRoom(user.id);
+    } else {
+      leaveInboxRoom();
+      disconnectRealtime();
+    }
   }, [user]);
 
   const setUser = useCallback((next: PublicUser) => setUserState(next), []);
