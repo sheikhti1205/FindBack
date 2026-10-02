@@ -245,9 +245,11 @@ function base64Url(input: string): string {
 
 /** RS256-sign `data` with a PKCS#8 PEM private key using WebCrypto (no npm dep). */
 async function signRs256(data: string, pem: string): Promise<string> {
+  // Drop the PEM armor lines, then all whitespace, leaving base64 DER.
   const der = pem
-    .replace(/-----BEGIN PRIVATE KEY-----/, "")
-    .replace(/-----END PRIVATE KEY-----/, "")
+    .split("\n")
+    .filter((line) => !line.includes("-----"))
+    .join("")
     .replace(/\s+/g, "");
   const raw = Uint8Array.from(atob(der), (char) => char.charCodeAt(0));
   const key = await crypto.subtle.importKey(
