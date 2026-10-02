@@ -50,7 +50,7 @@ const GROQ_FREE_ROW: ModelRecord = {
   id: "groq/free-row",
 };
 
-const RELAY_ROW: ModelRecord = {
+const OPENAI_UNKNOWN_ROW: ModelRecord = {
   provider: "openai",
   id: "openai",
   input: ["text"],
@@ -142,7 +142,7 @@ describe("refuseHelpSend gate (G12)", () => {
     ).toMatch(/not available/i);
   });
 
-  it("never sends paid or unknown-price rows silently (relay rows exempt from price gates)", () => {
+  it("never sends paid or unknown-price rows silently", () => {
     expect(
       refuseHelpSend({ provider: "groq", record: PAID_ROW, mode: "auto", hasImages: false }),
     ).toMatch(/consent/i);
@@ -154,15 +154,10 @@ describe("refuseHelpSend gate (G12)", () => {
         hasImages: false,
       }),
     ).toMatch(/unknown is never treated as free/i);
+    // OpenAI is an ordinary BYOK provider: its unknown-price row is gated too.
     expect(
-      refuseHelpSend({ provider: "openai", record: RELAY_ROW, mode: "auto", hasImages: false }),
-    ).toBeNull();
-  });
-
-  it("keeps photos off the text-only relay", () => {
-    expect(
-      refuseHelpSend({ provider: "openai", record: RELAY_ROW, mode: "auto", hasImages: true }),
-    ).toMatch(/text-only/i);
+      refuseHelpSend({ provider: "openai", record: OPENAI_UNKNOWN_ROW, mode: "auto", hasImages: false }),
+    ).toMatch(/unknown is never treated as free/i);
   });
 });
 
@@ -191,37 +186,15 @@ describe("Help G12 per-send binding", () => {
     expect(JSON.stringify(seen.at(0) ?? {})).toContain('"provider":"groq"');
   });
 
-  it("routes relay rows through the keyless relay with conversation context", async () => {
-    const relayChat = vi.fn(async () => ({ text: "Relay says hi." }));
-    renderHelp({
-      getKey: async () => "should-never-be-read-for-relay",
-      listCatalog: async () => [FREE_ROW, RELAY_ROW],
-      relayChat,
-    });
-    await pickRow(1);
-    send("Hello relay?");
-    await screen.findByText("Relay says hi.");
-    expect(relayChat).toHaveBeenCalledTimes(1);
-    const input = relayChat.mock.calls.at(0)?.at(0) as unknown as {
-      provider: string;
-      messages: Array<{ role: string; content: string }>;
-    };
-    expect(input.provider).toBe("openai");
-    expect(input.messages.at(-1)).toMatchObject({ role: "user", content: "Hello relay?" });
-  });
-
   it("offline-only mode fails closed with no network for cloud rows", async () => {
     window.localStorage.setItem(assistantModeKey("u-g12"), "offline-only");
-    const relayChat = vi.fn(async () => ({ text: "must never send" }));
     renderHelp({
       createAdapter: () => cannedAdapter("must never send"),
       getKey: async () => "test-key",
       listCatalog: async () => [FREE_ROW],
-      relayChat,
     });
     send("Hello?");
     await screen.findByText(/offline-only mode is on/i);
-    expect(relayChat).not.toHaveBeenCalled();
     expect(screen.queryByText("must never send")).toBeNull();
     // The draft is kept for Retry.
     expect(screen.getByLabelText("Ask the Help & FAQ")).toHaveProperty("value", "Hello?");

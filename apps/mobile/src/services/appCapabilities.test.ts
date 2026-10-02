@@ -20,8 +20,10 @@ const mobileCopy = JSON.stringify(APP_CAPABILITIES);
 
 /**
  * Vocabulary of the retired local generative runtime. The active architecture
- * is a user-owned BYOK key plus the server relay, so none of these may be
- * claimed as a capability again.
+ * is a user-owned BYOK key talking directly to the user's provider, so none of
+ * these may be claimed as a capability again. The photo-privacy entry is scoped
+ * to photo/image/picture statements so truthful key-residency copy ("keys are
+ * never sent to FindBack's servers") does not trip it.
  */
 const RETIRED_CLAIMS: Array<[RegExp, string]> = [
   [/offline ai/i, "offline AI"],
@@ -34,7 +36,10 @@ const RETIRED_CLAIMS: Array<[RegExp, string]> = [
   [/\b256M\b/, "256M model"],
   [/pause and resume/i, "pause/resume downloads"],
   [/wi-fi only/i, "Wi-Fi-only downloads"],
-  [/never (sent|leaves).{0,30}(server|device|phone)/i, "photo never leaves the device"],
+  [
+    /(photo|image|picture)[^.]{0,60}never (sent|leaves)[^.]{0,30}(server|device|phone)/i,
+    "photo never leaves the device",
+  ],
   [/help answers come from this server/i, "server-side Help"],
 ];
 

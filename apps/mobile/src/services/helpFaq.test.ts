@@ -59,11 +59,14 @@ describe("builtInHelp", () => {
     expect(builtInHelp("are you ChatGPT?")).not.toMatch(/gpt|claude|llama|qwen/i);
   });
 
-  it("gives a negative claim for a feature this build does not have", () => {
+  it("answers notification questions with the shipped inbox behavior", () => {
     const push = builtInHelp("How do I turn on push notifications?");
-    expect(push.toLowerCase()).toContain("push notification");
-    expect(push).toMatch(/does not have|not available|not in this build/i);
+    expect(push.toLowerCase()).toContain("notification");
+    expect(push).toMatch(/bell|inbox/i);
+    expect(push).not.toMatch(/does not have|not available|not in this build/i);
+  });
 
+  it("gives a negative claim for a feature this build does not have", () => {
     const deletion = builtInHelp("How do I delete my FindBack account?");
     expect(deletion.toLowerCase()).toContain("account");
     expect(deletion).toMatch(/does not have|not available|not in this build/i);

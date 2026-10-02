@@ -19,10 +19,10 @@ const LOOKUP_REFUSAL =
 
 /** Unknown app claim: refuse to invent a feature. */
 const UNKNOWN_FEATURE_ANSWER =
-  "I don't know of that feature, and I won't guess. This build ships reports, search, status changes, comments, ratings, photos and email verification — see the Help tab, or ask me about one of them.";
+  "I don't know of that feature, and I won't guess. This build ships reports, search, status changes, comments, ratings, photos, notifications and email verification — see the Help tab, or ask me about one of them.";
 
 const DEFAULT_SCOPE_ANSWER =
-  "I can help with FindBack reports, search, status changes, comments, photos and account verification. Try asking about one of those features.";
+  "I can help with FindBack reports, search, status changes, comments, photos, notifications and account verification. Try asking about one of those features.";
 
 const OTP_ANSWER =
   "Confirm your email with the one-time code sent at signup. Phone verification is not available in this build.";
@@ -60,6 +60,9 @@ export function builtInHelp(question: string): string {
   }
   if (/photo|image|upload/.test(q)) {
     return "You can attach a photo while preparing a report. It is uploaded when you publish. AI photo analysis is optional and sends the selected image to your connected AI provider only with your consent.";
+  }
+  if (/notification|push|bell|inbox|unread|mark all read|swipe/.test(q)) {
+    return "Open the bell to see notifications for likes, dislikes, comments, mentions and status changes. Opening it does not mark everything read; swipe right to toggle read, swipe left to delete, or use the row buttons. On Android you can also get a system notification, and comment notifications can be answered directly.";
   }
   if (/comment|rating|like/.test(q)) {
     return "Open a post to comment, react or rate it. Comments and counts update while the post is open.";

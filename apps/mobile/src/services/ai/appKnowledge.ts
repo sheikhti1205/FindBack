@@ -23,7 +23,7 @@ export interface VersionedText {
 }
 
 export const SYSTEM_POLICY_VERSION = "policy-2026-09-25.1";
-export const KNOWLEDGE_VERSION = "kb-2026-09-30.1";
+export const KNOWLEDGE_VERSION = "kb-2026-10-02.1";
 
 /** Mirrors `MAX_PROMPT` in services/openRouter.ts (checkedPrompt). */
 export const MAX_PROMPT_CHARS = 2_400;
@@ -59,7 +59,6 @@ export const UNAVAILABLE_FEATURES: ReadonlyArray<{
   readonly label: string;
   readonly pattern: RegExp;
 }> = [
-  { label: "push notifications", pattern: /\bpush notifications?\b|\bpush alerts?\b/i },
   {
     label: "account deletion",
     pattern: /\b(?:delete|remov\w+)\s+(?:my\s+)?(?:findback\s+)?account\b|\bdelete my account\b/i,
@@ -94,22 +93,21 @@ export const CURRENT_KNOWLEDGE_FACTS: KnowledgeFacts = Object.freeze({
     "/search",
     "/report",
     "/profile",
+    "/notifications",
     "/help",
-    "/verify",
     "/ai-connection",
   ]),
   tabs: Object.freeze(["Home", "Search", "Report", "Profile"]),
   features: Object.freeze([
-    "Report: Lost or Found — title, Markdown description, category, date, optional photo, approximate location, YouTube link; statuses OPEN, MATCHED, RECOVERED, CLOSED",
+    "Report: Lost or Found — title, description, category, date, photo, location, YouTube link; statuses OPEN, MATCHED, RECOVERED, CLOSED",
     "Comments, 1–5 star ratings, one like/dislike; up to 3 Possible Matches by similarity, not probability",
-    "Photo analysis only after the user confirms consent",
-    "Search: listing text, category, status, sort, Lost/Found; results are FindBack listings, not AI",
+    "Notifications for likes, dislikes, comments, mentions, status changes; mark read/unread or delete; swipe right toggles read, swipe left deletes",
+    "Photo analysis only on consent",
+    "Search: listing text, category, status, sort, Lost/Found; results are listings, not AI",
   ]),
   privacy: Object.freeze([
     "photos stay on the device until publish",
-    "Help text and a confirmed photo go to the AI provider you connect",
-    "no background tracking",
-    "no key means nothing leaves the device",
+    "Help text and a confirmed photo go to the AI provider you connect with your key",
   ]),
   unavailable: UNAVAILABLE_FEATURES.map((entry) => entry.label),
   verification:
@@ -262,6 +260,7 @@ const SUPPORTED_TOPICS: ReadonlyArray<{
   { topic: "status", pattern: /\b(?:status|statuses|recovered|recover|closed|matched|open)\b/i },
   { topic: "photo", pattern: /\b(?:photo|photos|image|images|upload|uploads|camera|gallery|picture)\b/i },
   { topic: "verification", pattern: VERIFICATION_QUESTION },
+  { topic: "notifications", pattern: /\b(?:notifications?|push|bell|inbox|unread|mark all read|swipe)\b/i },
   { topic: "social", pattern: /\b(?:comment|comments|rating|ratings|rate|likes?|dislikes?|react|reactions?|stars?)\b/i },
   { topic: "location", pattern: /\b(?:location|locations|map|maps|gps|coordinates|nearby|landmark)\b/i },
   { topic: "ai", pattern: /\b(?:ai|openrouter|api key|assistant|model|photo analysis|consent)\b/i },
@@ -295,6 +294,10 @@ const APP_DOMAIN = new RegExp(
     "\\bmap\\b",
     "\\bverif\\w*\\b",
     "\\botp\\b",
+    "\\bnotifications?\\b",
+    "\\bpush\\b",
+    "\\bbell\\b",
+    "\\binbox\\b",
     "\\bassistant\\b",
     "\\bhelp\\b",
     "\\bdraft\\b",

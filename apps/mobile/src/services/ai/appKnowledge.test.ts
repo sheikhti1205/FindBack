@@ -79,7 +79,9 @@ describe("versioned system policy and knowledge", () => {
     expect(knowledge).toContain("/report");
     expect(knowledge).toContain("possible matches");
     expect(knowledge).toMatch(/never upload|photos stay on the device|consent/);
-    expect(knowledge).toContain("push notifications");
+    expect(knowledge).toContain("/notifications");
+    expect(knowledge).toContain("notifications");
+    expect(knowledge).not.toContain("push notifications");
     expect(knowledge).toContain("account deletion");
     expect(knowledge).toContain("phone verification");
     expect(knowledge).not.toMatch(/\bpets\b/);
@@ -178,9 +180,9 @@ describe("deterministic intent checks", () => {
     expect(checkAppClaim("How do I report a lost item?").status).toBe("supported");
     expect(checkAppClaim("how do I search and filter?").status).toBe("supported");
 
-    const unavailable = checkAppClaim("How do I turn on push notifications?");
-    expect(unavailable.status).toBe("unavailable");
-    expect(unavailable.status === "unavailable" && unavailable.feature).toContain("push notifications");
+    const notifications = checkAppClaim("How do I turn on push notifications?");
+    expect(notifications.status).toBe("supported");
+    expect(notifications.status === "supported" && notifications.topics).toContain("notifications");
 
     const deleteAccount = checkAppClaim("How do I delete my FindBack account?");
     expect(deleteAccount.status).toBe("unavailable");
