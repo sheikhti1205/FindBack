@@ -29,8 +29,12 @@ class NotificationPresenter(private val context: Context) {
         manager.notify(PushData.notificationIdFor(push), build(push))
     }
 
-    /** Replaces the notification body after an inline reply succeeds/fails. */
-    fun updateStatus(push: PushData, text: String) {
+    /**
+     * Replaces the notification body after an inline reply succeeds/fails.
+     * `keepReply` retains the RemoteInput action so a transient failure leaves
+     * the user a one-tap retry instead of stranding the reply.
+     */
+    fun updateStatus(push: PushData, text: String, keepReply: Boolean = false) {
         if (!notificationsAllowed()) return
         ensureChannel()
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -39,6 +43,7 @@ class NotificationPresenter(private val context: Context) {
             .setContentText(text)
             .setAutoCancel(true)
             .setContentIntent(contentIntent(push))
+        if (keepReply && push.canReply) builder.addAction(replyAction(push))
         NotificationManagerCompat.from(context).notify(PushData.notificationIdFor(push), builder.build())
     }
 

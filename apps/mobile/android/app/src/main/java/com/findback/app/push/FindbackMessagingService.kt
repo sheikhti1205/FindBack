@@ -1,6 +1,7 @@
 package com.findback.app.push
 
 import com.capacitorjs.plugins.pushnotifications.PushNotificationsPlugin
+import com.findback.app.FindbackApp
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
@@ -9,9 +10,10 @@ import com.google.firebase.messaging.RemoteMessage
  * manifest) so data-only messages can be presented natively with a RemoteInput
  * reply action while still forwarding to the plugin when a bridge is alive.
  *
- * Foreground: the plugin delivers `pushNotificationReceived` to JS and the
- * in-app inbox updates; no system notification is posted. Background: the app
- * owns presentation and posts the notification itself.
+ * Foreground (an activity is started AND a bridge exists): the plugin delivers
+ * `pushNotificationReceived` to JS and the in-app inbox updates; no system
+ * notification is posted. Background, including a warm process with no started
+ * activity: the app owns presentation and posts the notification itself.
  */
 class FindbackMessagingService : FirebaseMessagingService() {
 
@@ -20,8 +22,12 @@ class FindbackMessagingService : FirebaseMessagingService() {
         // stash for a cold/background launch.
         PushNotificationsPlugin.sendRemoteMessage(message)
 
-        // A live instance means the WebView bridge exists (app in foreground).
-        if (PushNotificationsPlugin.getPushNotificationsInstance() != null) return
+        // `FindbackApp.foreground` is the real lifecycle signal. The plugin
+        // instance only tells us a bridge/WebView exists, which is also true for
+        // a warm app sitting in the background — so it is a secondary guard,
+        // never the definition of "foreground".
+        val bridgeAlive = PushNotificationsPlugin.getPushNotificationsInstance() != null
+        if (FindbackApp.foreground && bridgeAlive) return
 
         val push = PushData.fromData(message.data) ?: return
         NotificationPresenter(this).show(push)

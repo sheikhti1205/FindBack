@@ -27,6 +27,7 @@
     </queries>
 
     <application
+        android:name=".FindbackApp"
         android:allowBackup="false"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"

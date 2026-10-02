@@ -31,6 +31,8 @@ class ReplyReceiver : BroadcastReceiver() {
                 presenter.updateStatus(
                     push,
                     context.getString(if (posted) R.string.findback_reply_sent else R.string.findback_reply_failed),
+                    // Failure keeps the reply action so the user can retry inline.
+                    keepReply = !posted,
                 )
             } finally {
                 pendingResult.finish()
