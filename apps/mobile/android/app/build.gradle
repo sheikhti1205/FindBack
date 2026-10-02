@@ -88,6 +88,12 @@ android {
         versionName appVersionName()
         resValue "string", "findback_build_git_sha", gitCommitSha()
         manifestPlaceholders = [findbackShareHost: shareLinkHostname()]
+        // Native direct-reply endpoint. The Supabase URL is public (it is baked
+        // into the web bundle); the publishable key is NOT needed here — the
+        // reply-comment function is token-authenticated. Env override first so
+        // CI/local can point at a different project.
+        def nativeSupabaseUrl = System.getenv("VITE_SUPABASE_URL") ?: System.getenv("SUPABASE_URL") ?: "https://nfjhpigbsyyoaaktfaev.supabase.co"
+        buildConfigField "String", "REPLY_ENDPOINT", "\"${nativeSupabaseUrl}/functions/v1/reply-comment\""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -138,6 +144,9 @@ android {
     kotlinOptions {
         jvmTarget = '21'
     }
+    buildFeatures {
+        buildConfig = true
+    }
 }
 
 // Fetch USE model task - runs before preBuild
@@ -187,6 +196,10 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
     implementation "com.google.mediapipe:tasks-text:1.0.0"
+    // FCM runtime for the data-only notification service + RemoteInput reply
+    // action. The Capacitor push plugin brings this transitively; depended on
+    // explicitly because our own FirebaseMessagingService overrides its service.
+    implementation "com.google.firebase:firebase-messaging:25.0.1"
     // Report location-services check + enable dialog (SettingsClient). The
     // Geolocation fix itself comes from @capacitor/geolocation (fused provider).
     implementation "com.google.android.gms:play-services-location:21.3.0"

@@ -61,20 +61,30 @@ browser/APK build.
 ## Device tokens, preferences and dispatch
 
 - Migrations `20261002000000` (inbox actions), `20261002010000` (private inbox
-  Realtime signal) and `20261002020000` (device tokens, preferences,
-  `pushed_at`) reach production only through the manual `Backend deploy`
-  workflow with `push_migrations=true`.
+  Realtime signal), `20261002020000` (device tokens, preferences, `pushed_at`),
+  `20261002030000` (nested comments) and `20261002040000` (reply tokens) reach
+  production only through the manual `Backend deploy` workflow with
+  `push_migrations=true`.
 - `push-dispatch` is a server-to-server Edge Function. Deploy it from the same
   workflow (`deploy_push_dispatch=true`, `--no-verify-jwt`); it authenticates
   callers with the `x-findback-dispatch-secret` header in constant time and reads
   the service-role key from the runtime environment only.
-- The `Push dispatch` workflow calls it every 10 minutes. It no-ops with a notice
-  until `PUSH_DISPATCH_SECRET` is provisioned as a GitHub secret and the
-  `Backend deploy` + `Sync FCM server secrets` workflows have run.
+- `reply-comment` is the device-facing Edge Function for notification-shade
+  replies (`deploy_reply_comment=true`, `--no-verify-jwt`). It accepts only a
+  single-use, expiring token minted by `push-dispatch` (hash-only at rest) and
+  posts the reply as the token owner via the service role.
+- The `Push dispatch` workflow calls `push-dispatch` every 10 minutes. It no-ops
+  with a notice until `PUSH_DISPATCH_SECRET` is provisioned as a GitHub secret
+  and the `Backend deploy` + `Sync FCM server secrets` workflows have run.
 - The mobile client requests permission, creates the `findback_updates` Android
   channel, registers the FCM token, and writes preferences through the
   `auth.uid()`-scoped RPCs. Notification taps route through the same `/r/<UUID>`
   parser as App Links.
+- Push messages are **data-only**: the app's `FindbackMessagingService` replaces
+  the Capacitor plugin's service (removed via manifest merge) and presents the
+  notification, attaching a `RemoteInput` reply action for COMMENT
+  notifications. Foreground messages still forward to JS; taps open MainActivity
+  with the canonical report URL.
 
 The Azure deployment token printed during initial provisioning was rotated and
 the GitHub secret replaced. The original temporary sender JSON was deleted after
@@ -108,8 +118,8 @@ GitHub storage and Supabase digest verification.
 ## Remaining v0.3 gates
 
 Inbox read/unread/delete/restore, the private inbox Realtime signal, FCM
-permission/channels/token registration/preferences and server-side dispatch are
-implemented. Scoped Android direct reply from the notification shade is not.
+permission/channels/token registration/preferences and server-side dispatch,
+nested comments, and scoped notification-shade direct reply are implemented.
 
 No Android device is currently connected. Before releasing v0.3, install a
 release-signed candidate and verify OS App Links association and cold/warm taps,

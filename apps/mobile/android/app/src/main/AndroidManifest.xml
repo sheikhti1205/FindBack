@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Queries for AppLauncher to resolve geo: URIs and Google Maps URLs on Android 11+ -->
     <queries>
@@ -66,12 +67,36 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
+        <!--
+          FindBack owns FCM presentation: the Capacitor plugin's service is
+          removed so data-only messages can be shown with a RemoteInput reply
+          action. The service still forwards to the plugin for foreground JS
+          events and token registration.
+        -->
+        <service
+            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+            tools:node="remove" />
+        <service
+            android:name=".push.FindbackMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Receives the notification-shade reply text and posts it. -->
+        <receiver
+            android:name=".push.ReplyReceiver"
+            android:exported="false" />
+
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Android 13+ runtime permission for the push notification service. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!--
       One-time coarse location for "Use my location once" (report pin).
       Both entries are required: Capacitor's BridgeWebChromeClient requests
