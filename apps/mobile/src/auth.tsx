@@ -206,6 +206,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [pendingEmail]);
 
   const logout = useCallback(async () => {
+    // Unregister this device's push token while the session is still valid,
+    // then clear auth. The user->null effect's stop() is then a no-op.
+    await stopPushNotifications();
     try {
       await apiLogout();
     } catch {

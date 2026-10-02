@@ -129,4 +129,27 @@ describe("createPushController", () => {
     handles.registration[0]!("tok");
     await vi.waitFor(() => expect(onRegistrationError).toHaveBeenCalledWith("server down"));
   });
+
+  it("unregisters the device token and deletes it on stop", async () => {
+    const unregisterToken = vi.fn(async () => {});
+    const deleteToken = vi.fn(async () => {});
+    const { adapter, handles } = fakeAdapter({ deleteToken });
+    const controller = createPushController({ adapter, unregisterToken });
+
+    await controller.start();
+    handles.registration[0]!("fcm-token-123");
+    await controller.stop();
+
+    expect(unregisterToken).toHaveBeenCalledWith("fcm-token-123");
+    expect(deleteToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not unregister when no token was ever registered", async () => {
+    const unregisterToken = vi.fn(async () => {});
+    const { adapter } = fakeAdapter();
+    const controller = createPushController({ adapter, unregisterToken });
+    await controller.start();
+    await controller.stop();
+    expect(unregisterToken).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,5 @@
 import { reportLink } from "../utils/reportLinks";
-import { registerDeviceToken, type PushPlatform } from "./deviceTokens";
+import { registerDeviceToken, unregisterDeviceToken, type PushPlatform } from "./deviceTokens";
 
 export type PushPermissionState = "granted" | "denied" | "prompt" | "unsupported";
 
@@ -26,11 +26,15 @@ export interface PushAdapter {
   onRegistrationError(cb: (message: string) => void): Promise<() => void>;
   onReceived(cb: (data: Record<string, string>) => void): Promise<() => void>;
   onAction(cb: (data: Record<string, string>) => void): Promise<() => void>;
+  /** Deletes the FCM registration token on the device; absent on web/test fakes. */
+  deleteToken?(): Promise<void>;
 }
 
 export interface PushControllerOptions {
   adapter: PushAdapter;
   registerToken?: (token: string, platform: PushPlatform) => Promise<void>;
+  /** Test seam; defaults to the auth.uid()-scoped unregister RPC. */
+  unregisterToken?: (token: string) => Promise<void>;
   onRegistrationError?: (message: string) => void;
   /** Test seam; defaults to dispatching the report-link window event. */
   openReportUrl?: (url: string) => void;
@@ -61,6 +65,7 @@ export function createPushController(options: PushControllerOptions): PushContro
   const { adapter } = options;
   const cleanups: Array<() => void> = [];
   let running = false;
+  let currentToken: string | null = null;
 
   const emitReceived =
     options.emitReceived ??
@@ -91,6 +96,7 @@ export function createPushController(options: PushControllerOptions): PushContro
         await adapter.onRegistration(async (token) => {
           const trimmed = token?.trim();
           if (!trimmed) return;
+          currentToken = trimmed;
           try {
             await (options.registerToken ?? registerDeviceToken)(trimmed, adapter.platform());
           } catch (error) {
@@ -115,6 +121,22 @@ export function createPushController(options: PushControllerOptions): PushContro
 
     async stop(): Promise<void> {
       for (const cleanup of cleanups.splice(0)) cleanup();
+      // Unregister while the session is still valid so a logged-out or
+      // switched account can never keep receiving this device's pushes.
+      if (currentToken) {
+        const token = currentToken;
+        currentToken = null;
+        try {
+          await (options.unregisterToken ?? unregisterDeviceToken)(token);
+        } catch {
+          /* server cleanup is best-effort; the token row is transferred on next sign-in */
+        }
+        try {
+          await adapter.deleteToken?.();
+        } catch {
+          /* deleting the device token is best-effort */
+        }
+      }
       running = false;
     },
   };
@@ -141,6 +163,9 @@ export function createCapacitorPushAdapter(): PushAdapter {
     },
     async register() {
       await (await plugin()).register();
+    },
+    async deleteToken() {
+      await (await plugin()).unregister();
     },
     async createChannel(channel) {
       await (await plugin()).createChannel({
