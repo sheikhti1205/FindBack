@@ -1,0 +1,46 @@
+name: Web
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: findback-web-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VITE_PUBLIC_SHARE_ORIGIN: ${{ vars.VITE_PUBLIC_SHARE_ORIGIN }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+      VITE_SENTRY_ENVIRONMENT: production-web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Fail-closed public client configuration
+        run: node scripts/check-mobile-build-config.mjs --preflight && node scripts/check-sentry-config.mjs
+      - name: Typecheck and test link routing
+        run: npm run typecheck && npm test -w @findback/mobile -- src/utils/reportLinks.test.ts src/components/ReportLinkHandler.test.tsx src/screens/SharedReport.test.tsx
+      - name: Build static web surface
+        run: npm run build -w @findback/mobile
+      - name: Verify baked configuration and App Links association
+        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-web-association.mjs apps/mobile/dist
+        env:
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+      - name: Deploy prebuilt static output (Free SWA; no API backend)
+        uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: upload
+          app_location: apps/mobile/dist
+          skip_app_build: true
+          skip_api_build: true
+          production_branch: main

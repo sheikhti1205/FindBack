@@ -233,10 +233,13 @@ describe("BottomSheet", () => {
     expect(screen.getByRole("dialog", { name: "Details" })).toBeTruthy();
     expect(screen.getByTestId("bottom-sheet-backdrop")).toBeTruthy();
     // … then the sheet unmounts and releases the scroll lock.
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), {
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // Passive effect cleanup can follow DOM removal under full-suite load.
+      expect(document.body.style.overflow).toBe("");
+    }, {
       timeout: 3000,
     });
-    expect(document.body.style.overflow).toBe("");
   });
 
   it("fades the backdrop out on exit", async () => {

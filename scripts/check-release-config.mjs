@@ -11,6 +11,7 @@
 // Prints only lengths/shapes — never key material.
 
 import { checkEffectiveSentryDsn } from "./check-sentry-config.mjs";
+import { effectiveShareOrigin } from "./check-share-config.mjs";
 const PLACEHOLDER_RE = /^(-|x{2,}|your[-_].*|.*placeholder.*|changeme|example.*|.*example|test|dummy|null|undefined)$/i;
 
 function fail(message) {
@@ -37,6 +38,7 @@ function isLikelySecretKey(key) {
 
 const url = (process.env.VITE_SUPABASE_URL ?? "").trim();
 const key = (process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
+try { effectiveShareOrigin(); } catch (error) { fail(error.message); }
 
 if (!url) fail("VITE_SUPABASE_URL is empty");
 if (!key) fail("VITE_SUPABASE_PUBLISHABLE_KEY is empty");

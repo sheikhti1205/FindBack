@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "vite";
 import { checkEffectiveSentryDsn } from "./check-sentry-config.mjs";
+import { effectiveShareOrigin, checkShareChunks } from "./check-share-config.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const placeholder = /^(-|x{2,}|your[-_].*|.*placeholder.*|changeme|example.*|.*example|test|dummy|null|undefined)$/i;
@@ -57,6 +58,7 @@ function checkJs(chunks, config, sentryHost, source) {
   if (!has(config.url)) fail(`Supabase URL missing from ${source}`);
   if (!has(config.key)) fail(`Supabase publishable key missing from ${source}`);
   if (!has(sentryHost)) fail(`Sentry DSN host missing from ${source}`);
+  checkShareChunks(chunks, effectiveShareOrigin());
 }
 
 export function checkAssetDirectory(path, config, sentryHost) {
@@ -86,6 +88,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const [action, path] = process.argv.slice(2);
     if (!["--preflight", "--assets", "--apk"].includes(action)) fail("expected --preflight, --assets PATH, or --apk PATH");
     const config = effectiveSupabaseConfig();
+    effectiveShareOrigin();
     if (action !== "--preflight" && !path) fail(`${action} requires a path`);
     if (action !== "--preflight") {
       const sentry = checkEffectiveSentryDsn({ mode: "production" });
@@ -96,7 +99,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.log(`check-mobile-build-config: PASS (${action}; host=${config.host}; key_len=${config.key.length})`);
   } catch (error) {
     // Validation errors deliberately never contain credentials.
-    console.error(error.message.startsWith("check-mobile-build-config:") ? error.message :
+    console.error(/^(check-mobile-build-config:|share config:)/.test(error.message) ? error.message :
       "check-mobile-build-config: cannot read build assets");
     process.exitCode = 1;
   }

@@ -52,7 +52,8 @@ npm run lint
 npm run build
 
 # Android APK (from repo root): canonical root .env contains SUPABASE_URL
-# and SUPABASE_PUBLISHABLE_KEY; export a real VITE_SENTRY_DSN as well.
+# and SUPABASE_PUBLISHABLE_KEY; set VITE_PUBLIC_SHARE_ORIGIN from .env.example
+# and export a real VITE_SENTRY_DSN as well.
 npm run apk
 # → apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -70,6 +71,23 @@ Storage (on-device-normalized image uploads) — plus OpenRouter for the optiona
 AI features described below. The Node Express API remains in the repo as a
 Docker/coursework reference but is not part of the mobile runtime. Post and
 comment payloads expose a public author profile only — never email or phone.
+
+## Public sharing and Android App Links
+
+The public web surface is hosted at
+<https://ambitious-wave-0f1b6c500.3.azurestaticapps.net>. Shared reports use
+`/r/<UUID>` and require a FindBack account to view report content. Signing in
+resumes the validated report link, including a comments/activity/manage focus.
+Android builds declare verified HTTPS App Links for the same host; the public
+`/.well-known/assetlinks.json` pins the release signing certificate.
+
+`VITE_PUBLIC_SHARE_ORIGIN` is mandatory for production web/Android/Docker builds,
+with pre-build validation and post-build bundle/APK checks. Firebase Android
+client configuration is ignored locally and restored from a GitHub secret in
+Android CI. FCM server credentials are confined to the separately dispatched
+server-secret workflow. Notification delivery and device-level App Links proof
+remain pending for the v0.3 feature wave; see
+[`docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md`](docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md).
 
 **AI (optional, cloud):** AI is off until the user connects their own OpenRouter
 API key under Profile → AI Connection. FindBack is pinned to the free route

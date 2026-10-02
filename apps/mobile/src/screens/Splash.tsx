@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { Navigate } from "react-router";
 import { useAuth } from "../auth";
 import { getBootDiagnostics } from "../services/bootDiagnostics";
+import { getPendingReportRoute } from "../utils/pendingReportLink";
 
 /**
  * Boot screen: shows briefly while a stored session hydrates, then redirects.
@@ -60,5 +61,5 @@ export function Splash() {
     );
   }
 
-  return <Navigate to={user ? "/" : "/signin"} replace />;
+  return <Navigate to={user ? getPendingReportRoute() ?? "/" : "/signin"} replace />;
 }

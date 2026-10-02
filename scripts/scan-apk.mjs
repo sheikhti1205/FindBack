@@ -33,7 +33,7 @@ if (strict) {
 
 const secretPrefix = ["sb", "secret"].join("_") + "_";
 const serviceRoleName = ["SUPABASE", "SERVICE", "ROLE", "KEY"].join("_");
-const SECRETS = [new RegExp(`${secretPrefix}[A-Za-z0-9_-]+`), new RegExp(serviceRoleName), /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/, /sk-or-v1-[A-Za-z0-9]{32,}/];
+const SECRETS = [new RegExp(`${secretPrefix}[A-Za-z0-9_-]+`), new RegExp(serviceRoleName), /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/, /sk-or-v1-[A-Za-z0-9]{32,}/, /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/];
 const scanEntries = entries.filter((e) => /^classes\d*\.dex$/.test(e) || e.startsWith("assets/") || e.startsWith("res/raw/"));
 const secretHits = [];
 for (const entry of scanEntries) {

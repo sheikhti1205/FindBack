@@ -1,4 +1,6 @@
 name: CI
+env:
+  VITE_PUBLIC_SHARE_ORIGIN: ${{ vars.VITE_PUBLIC_SHARE_ORIGIN }}
 
 on:
   push:
@@ -65,6 +67,8 @@ jobs:
         # completeness, full-SHA provenance, SemVer publish type) so an
         # unverified release path can never reach a tag.
         run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs
+      - name: Sharing and server credential config tests
+        run: node --test scripts/check-share-config.test.mjs scripts/check-mobile-build-config.test.mjs scripts/sync-fcm-secrets.test.mjs
       - name: Build mobile web shell
         run: npm run build -w @findback/mobile
         env:
@@ -97,6 +101,10 @@ jobs:
       - run: npm ci
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
+      - name: Restore Firebase Android client configuration
+        run: node scripts/materialize-google-services.mjs
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
       - name: Strict Supabase preflight (installable build)
         run: node scripts/check-mobile-build-config.mjs --preflight
       - name: Strict Sentry DSN preflight (installable build)
@@ -193,7 +201,7 @@ jobs:
       - name: Build image
         run: |
           test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
-          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY -t findback:ci .
+          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN -t findback:ci .
       - name: Verify Supabase URL in packaged web shell
         run: |
           docker run --rm --env VITE_SUPABASE_URL --entrypoint node findback:ci -e '

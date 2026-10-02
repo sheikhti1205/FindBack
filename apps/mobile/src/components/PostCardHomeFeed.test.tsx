@@ -89,6 +89,7 @@ function renderHomeFeed(
 }
 
 beforeEach(() => {
+  vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", "https://findback.test");
   feedFetchMock.mockReset();
   loveToggleMock.mockReset();
   feedFetchMock.mockResolvedValue({});
@@ -100,7 +101,7 @@ beforeEach(() => {
   });
 });
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
 
 describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
   it("shows a Lost badge with icon + text and keeps time as a separate element", () => {
@@ -190,7 +191,7 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     fireEvent.click(screen.getByRole("button", { name: /share report/i }));
     await waitFor(() => expect(share).toHaveBeenCalledWith({
       title: "Golden Retriever near Riverside Park",
-      url: `${window.location.origin}${window.location.pathname}#/posts/p1`,
+      url: "https://findback.test/r/p1",
     }));
   });
 
@@ -203,7 +204,7 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     renderHomeFeed(imagePost());
     fireEvent.click(screen.getByRole("button", { name: /share report/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(
-      `${window.location.origin}${window.location.pathname}#/posts/p1`,
+      "https://findback.test/r/p1",
     ));
     fireEvent.click(screen.getByRole("button", { name: /share report/i }));
     await waitFor(() => expect(share).toHaveBeenCalledTimes(2));

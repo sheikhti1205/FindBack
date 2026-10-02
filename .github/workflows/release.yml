@@ -36,6 +36,8 @@
 #   Environment `release` (protection rules configured in repo settings).
 
 name: Release
+env:
+  VITE_PUBLIC_SHARE_ORIGIN: ${{ vars.VITE_PUBLIC_SHARE_ORIGIN }}
 
 on:
   workflow_dispatch:
@@ -119,6 +121,10 @@ jobs:
         run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
+      - name: Restore Firebase Android client configuration
+        run: node scripts/materialize-google-services.mjs
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
       - name: Strict installable-build config preflight
         run: node scripts/check-mobile-build-config.mjs --preflight && node scripts/check-sentry-config.mjs
       - name: Build mobile web dist (Capacitor webDir)
@@ -140,7 +146,7 @@ jobs:
           # path. Without these build args the container build dies on the
           # preflight (unlike CI's docker job, which passes them). Values come
           # from the job env below; never hardcoded here.
-          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY -t findback:release-gate .
+          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN -t findback:release-gate .
           docker run -d --name findback-gate -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:release-gate
           for _ in $(seq 1 30); do
             if curl -fsS http://localhost:4000/health >/dev/null; then
@@ -191,6 +197,10 @@ jobs:
       - run: npm ci
       - name: Strict release config preflight
         run: node scripts/check-release-config.mjs
+      - name: Restore Firebase Android client configuration
+        run: node scripts/materialize-google-services.mjs
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
       - name: Build shared package
         run: npm run build -w @findback/shared
       - name: Fetch pinned USE asset

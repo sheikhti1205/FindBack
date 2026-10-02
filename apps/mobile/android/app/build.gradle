@@ -59,6 +59,15 @@ def gitCommitSha() {
     }
 }
 
+def shareLinkHostname() {
+    def out = new ByteArrayOutputStream()
+    exec {
+        commandLine "node", new File(rootProject.projectDir, "../../../scripts/check-share-config.mjs").canonicalPath, "--hostname"
+        standardOutput = out
+    }
+    return out.toString().trim()
+}
+
 android {
     namespace = "com.findback.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -78,6 +87,7 @@ android {
         versionCode gitVersionCode()
         versionName appVersionName()
         resValue "string", "findback_build_git_sha", gitCommitSha()
+        manifestPlaceholders = [findbackShareHost: shareLinkHostname()]
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

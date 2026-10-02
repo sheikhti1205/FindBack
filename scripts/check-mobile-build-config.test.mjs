@@ -10,6 +10,7 @@ const script = resolve("scripts/check-mobile-build-config.mjs");
 const url = "https://sampleproject.supabase.co";
 const key = "sb_publishable_abcdefghijklmnopqrstuvwxyz";
 const dsn = "https://abcdef123456@o123.ingest.sentry.io/123";
+const share = "https://findback.test";
 
 function run(args, env = {}) {
   return spawnSync(process.execPath, [script, ...args], {
@@ -21,6 +22,7 @@ function run(args, env = {}) {
       SUPABASE_URL: "",
       SUPABASE_PUBLISHABLE_KEY: "",
       VITE_SENTRY_DSN: dsn,
+      VITE_PUBLIC_SHARE_ORIGIN: share,
       ...env,
     },
   });
@@ -70,7 +72,7 @@ test("installable assets reject the exact CI failure: Sentry present, Supabase a
     assert.match(result.stderr, /Supabase URL missing from assets/);
 
     writeFileSync(join(dir, "assets", "index-test.js"),
-      `const u="${url}",k="${key}",dsn="o123.ingest.sentry.io";`);
+      `const u="${url}",k="${key}",dsn="o123.ingest.sentry.io",share="${share}";`);
     const good = run(["--assets", join(dir, "assets")], {
       VITE_SUPABASE_URL: url,
       VITE_SUPABASE_PUBLISHABLE_KEY: key,
@@ -97,7 +99,7 @@ test("final APK gate examines packaged JavaScript, not the build directory", () 
     assert.notEqual(missing.status, 0);
     assert.match(missing.stderr, /Supabase URL missing from APK/);
 
-    writeFileSync(js, `const u="${url}",k="${key}",dsn="o123.ingest.sentry.io";`);
+    writeFileSync(js, `const u="${url}",k="${key}",dsn="o123.ingest.sentry.io",share="${share}";`);
     assert.equal(pack().status, 0);
     const valid = run(["--apk", apk], env);
     assert.equal(valid.status, 0, valid.stderr);

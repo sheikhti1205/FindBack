@@ -1,9 +1,8 @@
-/** HashRouter report URL, without feed filters or a comments anchor. */
+import { reportLink } from "./reportLinks";
+
+/** Canonical public URL, without feed filters or a comments anchor. */
 export function reportUrl(postId: string): string {
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = `/posts/${encodeURIComponent(postId)}`;
-  return url.href;
+  return reportLink(postId);
 }
 
 /** Cancellation is not a failure; other share failures try the clipboard. */

@@ -24,6 +24,17 @@ import { Help } from "./screens/Help";
 import { AiConnection } from "./screens/AiConnection";
 import { AiModels } from "./screens/AiModels";
 import { Notifications } from "./screens/Notifications";
+import { Capacitor } from "@capacitor/core";
+import { ReportLinkHandler } from "./components/ReportLinkHandler";
+import { PublicLanding } from "./screens/PublicLanding";
+import { SharedReport } from "./screens/SharedReport";
+import { useAuth } from "./auth";
+
+function StartScreen() {
+  const { user } = useAuth();
+  if (!Capacitor.isNativePlatform() && !user) return <PublicLanding />;
+  return <RequireAuth><Shell /></RequireAuth>;
+}
 
 /**
  * H1-motion: MotionConfig follows the ONE effective motion preference —
@@ -46,9 +57,14 @@ export function App() {
       <AuthProvider>
         <AppMotionConfig>
         <HashRouter>
+          <ReportLinkHandler />
           <BackButtonHandler />
           <ErrorBoundary>
-          <Routes>
+           <Routes>
+             <Route path="/shared/:id" element={<SharedReport />} />
+             <Route path="/" element={<StartScreen />}>
+               <Route index element={<Home />} />
+             </Route>
             <Route path="/splash" element={<Splash />} />
             <Route
               path="/signin"
@@ -74,7 +90,6 @@ export function App() {
                 </RequireAuth>
               }
             >
-              <Route index element={<Home />} />
               <Route path="/search" element={<SearchScreen />} />
               <Route path="/report" element={<CreateReport />} />
               <Route path="/posts/:id" element={<PostDetail />} />

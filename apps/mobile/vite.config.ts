@@ -44,6 +44,7 @@ export default defineConfig(({ command, mode }) => {
     if (preflight.status !== 0) throw new Error("Supabase build configuration preflight failed");
   }
   const { publishableKey, url } = resolveSupabaseBuildEnv(mode);
+  const shareOrigin = loadEnv(mode, resolve(import.meta.dirname, "../.."), "").VITE_PUBLIC_SHARE_ORIGIN?.trim() || "";
   if (command === "build") {
     // Derive the VITE_* names in the build environment from the canonical
     // local SUPABASE_* values; import.meta.env and define then agree.
@@ -84,6 +85,7 @@ export default defineConfig(({ command, mode }) => {
       sourcemap,
     },
     define: {
+      "import.meta.env.VITE_PUBLIC_SHARE_ORIGIN": JSON.stringify(shareOrigin),
       __SUPABASE_URL__: JSON.stringify(url),
       __SUPABASE_PUBLISHABLE_KEY__: JSON.stringify(publishableKey),
     },

@@ -9,6 +9,7 @@ const PATTERNS = [
   new RegExp(`${secretPrefix}[A-Za-z0-9_-]+`),
   new RegExp(`${serviceRoleName}\\s*=\\s*\\S+`),
   /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/,
+  /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
 ];
 const SKIP = /(^|\/)(node_modules|\.git|dist|build|\.gradle)\//;
 const explicit = process.argv.slice(2);

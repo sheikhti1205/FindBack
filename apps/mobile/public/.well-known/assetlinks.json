@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.findback.app",
+      "sha256_cert_fingerprints": ["34:11:5A:E9:B5:97:68:27:6B:54:D4:0B:B0:33:68:2A:46:EF:0F:39:18:D5:B7:83:26:3E:A1:83:3A:07:62:4C"]
+    }
+  }
+]

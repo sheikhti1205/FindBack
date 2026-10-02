@@ -22,8 +22,10 @@ COPY scripts scripts
 # build on purpose. No defaults are baked in here.
 ARG VITE_SUPABASE_URL=""
 ARG VITE_SUPABASE_PUBLISHABLE_KEY=""
+ARG VITE_PUBLIC_SHARE_ORIGIN=""
 ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
 ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
+ENV VITE_PUBLIC_SHARE_ORIGIN=${VITE_PUBLIC_SHARE_ORIGIN}
 COPY docs/specs/model-library/catalogue.v1.json docs/specs/model-library/catalogue.v1.json
 RUN npm run build -w @findback/shared \
  && npm run build -w @findback/api \

@@ -62,7 +62,10 @@ function scrollToSection(id: string) {
 
 export function PostDetail() {
   const { id = "" } = useParams();
-  const { hash, key: locationKey } = useLocation();
+  const { hash, search, key: locationKey } = useLocation();
+  const requestedComment = new URLSearchParams(search).get("comment");
+  const linkedComment = requestedComment && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedComment) ? requestedComment : null;
+  const focusedLink = useRef<string | null>(null);
   const { user } = useAuth();
   const [post, setPost] = useState<PostItem | null>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
@@ -213,10 +216,18 @@ export function PostDetail() {
   // A feed Comments shortcut targets the existing section once the shell is
   // mounted. Retry/social/realtime hydration must not keep stealing focus.
   useEffect(() => {
-    if (loading || post?.id !== id || hash !== "#detail-comments") return;
-    const frame = requestAnimationFrame(() => scrollToSection("detail-comments"));
+    if (loading || post?.id !== id || !["#detail-comments", "#detail-activity", "#detail-manage"].includes(hash)) return;
+    if (linkedComment && commentsLoading) return;
+    const focusKey = `${id}:${locationKey}:${hash}:${linkedComment ?? ""}`;
+    if (focusedLink.current === focusKey) return;
+    const frame = requestAnimationFrame(() => {
+      focusedLink.current = focusKey;
+      const target = linkedComment && comments.some(c => c.id === linkedComment)
+        ? `detail-comment-${linkedComment}` : hash.slice(1);
+      scrollToSection(target);
+    });
     return () => cancelAnimationFrame(frame);
-  }, [loading, post?.id, id, hash, locationKey]);
+  }, [loading, post?.id, id, hash, locationKey, linkedComment, commentsLoading, comments]);
 
   // Live updates while viewing this post (no refresh).
   useEffect(() => {
@@ -410,7 +421,7 @@ export function PostDetail() {
     : strippedDescription;
 
   const visibleComments =
-    commentsExpanded || comments.length <= COMMENTS_PREVIEW_COUNT
+    commentsExpanded || linkedComment || comments.length <= COMMENTS_PREVIEW_COUNT
       ? comments
       : comments.slice(0, COMMENTS_PREVIEW_COUNT);
 
@@ -457,7 +468,7 @@ export function PostDetail() {
           onOpenLightbox={(index, origin) => setLightbox({ index, origin })}
         />
 
-        <div className="grid grid-cols-3 gap-2" role="group" aria-label="Report actions">
+        <div id="detail-activity" tabIndex={-1} className="grid scroll-mt-4 grid-cols-3 gap-2" role="group" aria-label="Report actions">
           <button
             type="button"
             className="fb-report-action"
@@ -523,7 +534,7 @@ export function PostDetail() {
 
         {/* Owner management sits early, right after summary/actions. */}
         {isOwner && (
-          <section aria-label="Manage report" className="rounded-m3-md border border-outline-variant p-3">
+          <section id="detail-manage" tabIndex={-1} aria-label="Manage report" className="scroll-mt-4 rounded-m3-md border border-outline-variant p-3">
             <p className="mb-1 text-sm">
               Current status: <strong>{statusLabel(post.status)}</strong>
             </p>
@@ -694,7 +705,7 @@ export function PostDetail() {
                 {visibleComments.map((c) => {
                   const canDelete = c.author.id === user?.id || isOwner;
                   return (
-                    <li key={c.id} className="rounded-m3-md border border-outline-variant p-3">
+                    <li key={c.id} id={`detail-comment-${c.id}`} tabIndex={-1} className="scroll-mt-4 rounded-m3-md border border-outline-variant p-3 focus:outline-2 focus:outline-offset-2 focus:outline-on-surface">
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
                         <span className="shrink-0 text-[11px] text-on-surface-variant">
@@ -718,7 +729,7 @@ export function PostDetail() {
                   );
                 })}
               </ul>
-              {!commentsExpanded && comments.length > COMMENTS_PREVIEW_COUNT && (
+              {!commentsExpanded && !linkedComment && comments.length > COMMENTS_PREVIEW_COUNT && (
                 <button
                   type="button"
                   onClick={() => setCommentsExpanded(true)}

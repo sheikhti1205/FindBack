@@ -1,0 +1,89 @@
+# Sharing, App Links and FCM infrastructure
+
+## Provisioned endpoints
+
+- Public web: `https://ambitious-wave-0f1b6c500.3.azurestaticapps.net`.
+- Azure Static Web Apps: `findback-web`, `findback-rg`, East Asia, Free SKU.
+- Supabase project: `nfjhpigbsyyoaaktfaev` (existing Auth, Data API, Realtime and Storage).
+- Firebase project: `findback-mobile-app`, number `847111479023`.
+- Android package: `com.findback.app`.
+- Dedicated FCM sender: `findback-push@findback-mobile-app.iam.gserviceaccount.com`,
+  with `roles/firebasecloudmessaging.admin`; FCM HTTP v1 enabled.
+
+## External report contract
+
+`/r/<UUID>` accepts `focus=comments|activity|manage`. A `comment=<UUID>` is
+allowed only with comments focus. The shared parser rejects other hosts,
+unknown/duplicate parameters, credentials, malformed IDs, and URL normalization
+tricks. Browser, native cold/warm entry and future push taps use this contract.
+
+The landing and shared-link sign-in gate fetch no anonymous report data.
+Authenticated users enter the existing report detail screen. Pending links are
+validated on read, expire after one hour and are consumed after navigation.
+An exact linked comment expands the preview and receives keyboard focus.
+
+## Automation and credentials
+
+The `Web` workflow runs on `main` pushes or manual dispatch. It validates public
+config, typechecks/tests routing, builds the existing React client, verifies
+baked values and the signing-certificate association, then deploys prebuilt
+static output to Azure.
+
+Required GitHub repository variables:
+
+- `VITE_PUBLIC_SHARE_ORIGIN`, `VITE_SUPABASE_URL`, `VITE_SENTRY_DSN`.
+- `SUPABASE_PROJECT_REF` for server-secret synchronization.
+
+Required GitHub secrets:
+
+- Web: `AZURE_STATIC_WEB_APPS_API_TOKEN`, `VITE_SUPABASE_PUBLISHABLE_KEY`,
+  `ANDROID_SIGNING_CERT_SHA256` (association verification).
+- Android: `GOOGLE_SERVICES_JSON_B64` (public Firebase client configuration).
+- Server-secret sync only: `FIREBASE_SERVICE_ACCOUNT_JSON`, `SUPABASE_ACCESS_TOKEN`.
+
+Run the separate server workflow after rotating the dedicated sender credential:
+
+```bash
+gh workflow run sync-fcm-secrets.yml --ref main
+```
+
+It validates the sender/project/key, writes a mode-0600 temporary env file,
+stores `FIREBASE_SERVICE_ACCOUNT_JSON`, `FCM_PROJECT_ID` and
+`PUBLIC_SHARE_ORIGIN` in Supabase, checks all three SHA-256 digests, and removes
+the temporary directory in a `finally` block. It never logs credential input or
+raw CLI output. Server credentials are not supplied to any browser/APK build.
+
+The Azure deployment token printed during initial provisioning was rotated and
+the GitHub secret replaced. The original temporary sender JSON was deleted after
+GitHub storage and Supabase digest verification.
+
+## Verification recorded on 2026-10-02
+
+- FCM OAuth and HTTP v1 **validate-only** succeeded; no message was delivered.
+- Supabase sender secret digest matched; project and public-origin secrets exist.
+- Lint and all-workspace typecheck passed.
+- API: 156 tests passed. Mobile: 2402 passed, 1 skipped, 6 todo.
+- Selected release/sharing/server-config tooling: 30 tests passed.
+- Android debug assembly and JVM tests passed: 35 tests, zero failures/errors.
+- Packaged manifest contains `autoVerify`, the canonical HTTPS host and `/r/`.
+- Google Services generated resources match the Firebase project/app/sender.
+- Bundle and final debug APK checks matched Supabase URL/publishable key,
+  Sentry host and public share origin; strict APK scan passed.
+- Association JSON matches release certificate SHA-256
+  `34115ae9b59768276b54d40bb033682a46ef0f3918d5b783263ea1833a07624c`.
+- CLI-deployed HTTPS landing/report shell and association returned 200;
+  missing association files returned 404 rather than the SPA HTML fallback.
+- Live browser checks at 320px and 1280px passed: landing, shared account gate,
+  sign-in and pending-link storage; no overflow/page errors or anonymous report reads.
+
+## Remaining v0.3 gates
+
+The infrastructure pass does not implement inbox read/unread/delete/restore,
+private inbox Realtime, FCM permission/channels/tokens/preferences/dispatch, or
+scoped direct reply. These remain feature-wave work.
+
+No Android device is currently connected. Before releasing v0.3, install a
+release-signed candidate and verify OS App Links association and cold/warm taps,
+authentication resume, notification delivery/taps, and direct reply. A debug APK
+does not match the release-only association certificate. Version/tag publication
+stays behind the signed-candidate and device gates.

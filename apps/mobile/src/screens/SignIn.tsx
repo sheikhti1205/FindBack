@@ -5,6 +5,7 @@ import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import { friendlyError } from "../utils/friendlyErrors";
 import { motion } from "framer-motion";
+import { getPendingReportRoute } from "../utils/pendingReportLink";
 
 export function SignIn() {
   const { user, login } = useAuth();
@@ -13,7 +14,7 @@ export function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

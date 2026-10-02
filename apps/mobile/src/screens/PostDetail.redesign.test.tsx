@@ -256,6 +256,15 @@ describe("PostDetail redesign (UXN-3)", () => {
     expect(rating.compareDocumentPosition(screen.getByTestId("detail-overview")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("expands and focuses an exact linked comment beyond the preview", async () => {
+    const linkedId = "5b6f7c8d-1234-4abc-8def-123456789012";
+    postsMock.fetchComments.mockResolvedValue([0, 1, 2, 3, 4, 5].map(comment).concat({...comment(6), id:linkedId}));
+    Element.prototype.scrollIntoView = () => {};
+    renderDetail(`/posts/p1?comment=${linkedId}#detail-comments`);
+    const body = await screen.findByText("comment body 6");
+    await waitFor(() => expect(document.activeElement).toBe(body.closest("li")));
+  });
+
   it("matches carry one local disclaimer rather than a duplicate footer landmark", async () => {
     findMock.mockResolvedValue({
       available: true,

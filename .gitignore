@@ -17,6 +17,12 @@ apps/mobile/android/local.properties
 apps/mobile/android/app/release/
 *.keystore
 *.jks
+# Firebase / FCM — never commit (CI materializes from GitHub Secrets)
+google-services.json
+**/google-services.json
+firebase-service-account*.json
+**/firebase-service-account*.json
+fcm-service-account*.json
 
 # OS / editor
 .DS_Store
