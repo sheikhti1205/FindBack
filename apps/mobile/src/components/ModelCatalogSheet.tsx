@@ -4,7 +4,6 @@ import type { ModelRecord, PriceClass, PriceLine, ProviderId } from "../services
 import {
   formatPerMillionTokens,
   isFastRecord,
-  isRelayRouted,
   supportsVision,
 } from "../services/ai/modelCatalog";
 import { listItemVariants, motionDurations, motionEasings, pressFeedback } from "./uiMotion";
@@ -178,7 +177,6 @@ export function ModelCatalogSheet({
                 </div>
                 <p className="text-xs text-on-surface-variant">
                   {model.provider}
-                  {isRelayRouted(model) ? " · via relay, never direct" : ""}
                   {" · "}
                   {model.contextTokens !== undefined ? `Up to ${model.contextTokens} context tokens` : "Context window unknown"}
                   {" · "}

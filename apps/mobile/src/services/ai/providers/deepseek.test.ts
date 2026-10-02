@@ -833,16 +833,16 @@ describe("deepseek hygiene", () => {
   });
 });
 
-describe("deepseek direct-key policy (O1 documented-blocked)", () => {
-  it("records the direct client-side key policy as blocked with reason, source and date", () => {
-    expect(DIRECT_KEY_POLICY.status).toBe("blocked");
+describe("deepseek direct-key policy (BYOK, 2026-10-02 reversal)", () => {
+  it("records the direct client-side key policy as allowed with reason, source and date", () => {
+    expect(DIRECT_KEY_POLICY.status).toBe("allowed");
     expect(DIRECT_KEY_POLICY.reason.trim().length).toBeGreaterThan(0);
     expect(DIRECT_KEY_POLICY.sourceUrl.startsWith("https://")).toBe(true);
     expect(DIRECT_KEY_POLICY.retrievedAt.trim().length).toBeGreaterThan(0);
   });
 
-  it("reports the direct-key entitlement as blocked for callers/UI", () => {
-    expect(directKeyEntitlement()).toBe("blocked");
+  it("reports the direct-key entitlement as allowed for callers/UI", () => {
+    expect(directKeyEntitlement()).toBe("allowed");
   });
 
   it("keeps the wire module free of proxy, embedded-key and base-URL-override routes", async () => {

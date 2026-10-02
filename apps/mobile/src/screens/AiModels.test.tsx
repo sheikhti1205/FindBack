@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -111,22 +111,15 @@ describe("AiModels control center (AI-022)", () => {
     );
   });
 
-  it("probes relay providers without a vault key and reports readiness", async () => {
-    const relayChat = vi.fn(async () => ({ text: "ok" }));
-    renderModels({ relayChat });
+  it("treats OpenAI and DeepSeek as ordinary BYOK providers with a Manage link", async () => {
+    renderModels();
     const openaiCard = await screen.findByTestId("ai-provider-openai");
-    // Relay is not advertised as usable until a test call actually passes.
-    expect(openaiCard.textContent).toMatch(/server relay/i);
-    expect(openaiCard.textContent).toMatch(/unavailable/i);
-    expect(screen.getByTestId("ai-provider-experimental-openai")).toBeTruthy();
-    const firstRelayTest = screen.getAllByRole("button", { name: /test relay/i }).at(0);
-    expect(firstRelayTest).toBeTruthy();
-    fireEvent.click(firstRelayTest as HTMLElement);
-    await waitFor(() => expect(relayChat).toHaveBeenCalled());
-    expect(relayChat.mock.calls.at(0)?.at(0)).toMatchObject({ provider: "openai" });
-    await waitFor(() =>
-      expect(openaiCard.textContent).toMatch(/relay ready for openai/i),
-    );
+    expect(openaiCard.textContent).not.toMatch(/server relay/i);
+    expect(within(openaiCard).getByRole("link", { name: /manage openai key/i })).toBeTruthy();
+    expect(within(openaiCard).getByRole("button", { name: /^test$/i })).toBeTruthy();
+    const deepseekCard = screen.getByTestId("ai-provider-deepseek");
+    expect(deepseekCard.textContent).not.toMatch(/server relay/i);
+    expect(within(deepseekCard).getByRole("link", { name: /manage deepseek key/i })).toBeTruthy();
   });
 
   it("shows vault connection state with masked tails only", async () => {

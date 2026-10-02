@@ -45,35 +45,33 @@ export const DEEPSEEK_COMPLETIONS_URL = `${DEEPSEEK_API_ORIGIN}/chat/completions
 export const DEEPSEEK_MODELS_URL = `${DEEPSEEK_API_ORIGIN}/models`;
 
 /**
- * Owner decision 2026-09-25: direct client-side keys for DeepSeek are
- * officially BLOCKED, not merely untested. The API docs
- * (https://api-docs.deepseek.com/, reviewed 2026-09-25 — see
- * temp-Com/P-deepseek.log.md row 7) publish no browser/CORS statement and no
- * safe direct mobile or browser key route, so a direct connection must not be
- * offered. Callers/UI must show this provider as blocked.
+ * Owner decision 2026-10-02: direct client-side keys for DeepSeek are ALLOWED.
+ * This reverses the 2026-09-25 "blocked" decision. DeepSeek is an ordinary
+ * bring-your-own-key (BYOK) provider: the user supplies their own key, it is
+ * stored only in the device credential vault like every other BYOK provider,
+ * and it is resolved by the caller's vault at send time. No server-side relay
+ * and no embedded developer key is involved.
  *
- * The wire/streaming implementation below stays intact for possible reuse
- * through a future approved route — but it must never be mistaken for a
- * working direct connection: no proxy, no embedded developer key, no
- * base-URL override.
+ * The wire/streaming implementation below is unchanged: the sole allowlisted
+ * origin only — no proxy, no embedded developer key, no base-URL override.
  */
 export type DirectKeyPolicy = {
-  readonly status: "blocked";
+  readonly status: "allowed";
   readonly reason: string;
   readonly sourceUrl: string;
   readonly retrievedAt: string;
 };
 
 export const DIRECT_KEY_POLICY: DirectKeyPolicy = {
-  status: "blocked",
+  status: "allowed",
   reason:
-    "DeepSeek documents no safe direct client-side key route; no official browser or mobile key guidance exists.",
+    "DeepSeek is an ordinary BYOK provider: the user supplies their own key and it is stored only in the device vault.",
   sourceUrl: "https://api-docs.deepseek.com/",
-  retrievedAt: "2026-09-25",
+  retrievedAt: "2026-10-02",
 };
 
-/** Entitlement for callers/UI: this provider is blocked, never connected. */
-export function directKeyEntitlement(): "blocked" {
+/** Entitlement for callers/UI: direct user-supplied keys are allowed. */
+export function directKeyEntitlement(): "allowed" {
   return DIRECT_KEY_POLICY.status;
 }
 

@@ -1,5 +1,5 @@
 /**
- * Worker E (M2 QA/security) — paid-consent + blocked-provider +
+ * Worker E (M2 QA/security) — paid-consent + provider-entitlement +
  * no-cross-provider-photo policy battery.
  *
  * Method: test through C's PUBLIC policy functions only —
@@ -240,10 +240,10 @@ describe("isSelectionAuthorized — direct authorization checks", () => {
   });
 });
 
-describe("blocked providers — OpenAI/DeepSeek direct keys never connect (AI-09/AI-13)", () => {
-  it("both providers report blocked direct-key entitlement", () => {
-    expect(openaiEntitlement()).toBe("blocked");
-    expect(deepseekEntitlement()).toBe("blocked");
+describe("BYOK providers — OpenAI/DeepSeek direct keys allowed (2026-10-02 reversal)", () => {
+  it("both providers report allowed direct-key entitlement", () => {
+    expect(openaiEntitlement()).toBe("allowed");
+    expect(deepseekEntitlement()).toBe("allowed");
   });
 
   it("catalog rows marked blocked resolve to blocked-model with safe default", () => {

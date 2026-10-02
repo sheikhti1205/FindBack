@@ -2,7 +2,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ModelCatalogSheet, matchesCatalogFilter } from "./ModelCatalogSheet";
-import { relayRouteRecord } from "../services/ai/modelCatalog";
 import type { ModelRecord } from "../services/ai/providerContract";
 
 afterEach(() => {
@@ -72,23 +71,21 @@ describe("ModelCatalogSheet filters (AI-024b)", () => {
     expect(screen.getByRole("button", { name: "groq" }).getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("shows the seam-provided offline readiness copy and relay routing per row", () => {
-    const relay = relayRouteRecord("openai", "2026-09-26T00:00:00.000Z");
+  it("shows the seam-provided offline readiness copy and selects a row", () => {
     const onSelect = vi.fn();
     render(
       <ModelCatalogSheet
-        models={[freeRecord("groq", "a"), relay]}
+        models={[freeRecord("groq", "a"), freeRecord("groq", "b")]}
         onSelect={onSelect}
         offlineDetail="Offline AI is not available in this build."
       />,
     );
-    expect(screen.getByText(/via relay, never direct/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Offline" }));
     expect(screen.getByTestId("offline-status").textContent).toBe(
       "Offline AI is not available in this build.",
     );
     fireEvent.click(screen.getByRole("button", { name: "All" }));
     fireEvent.click(screen.getAllByRole("button", { name: /^select$/i })[1]!);
-    expect(onSelect).toHaveBeenCalledWith("openai");
+    expect(onSelect).toHaveBeenCalledWith("b");
   });
 });

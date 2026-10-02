@@ -16,9 +16,6 @@ import {
   priceFingerprint,
 } from "../services/ai/modelCatalog";
 import { resolveSelection } from "../services/ai/modelPolicy";
-import { createRelayClient, type RelayProvider } from "../services/ai/relayClient";
-import { directKeyEntitlement as openAiDirectEntitlement } from "../services/ai/providers/openai";
-import { directKeyEntitlement as deepseekDirectEntitlement } from "../services/ai/providers/deepseek";
 import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
 
 const validator = createOpenRouterClient(async () => null);
@@ -34,16 +31,18 @@ export function maskOpenRouterKey(value: string | null): string | null {
 }
 
 /**
- * Device-key (BYOK) providers managed on this screen. OpenAI and DeepSeek
- * stay relay-only (the provider key lives on the server): they are never
- * selectable here, and any `?provider=` value naming them — or anything
- * outside this list — falls back to OpenRouter, so no device-key entry can
- * ever be rendered for them.
+ * Device-key (BYOK) providers managed on this screen, including OpenAI and
+ * DeepSeek (BYOK since the 2026-10-02 reversal: the user supplies their own
+ * key and it is stored in the device vault like every other provider). Any
+ * `?provider=` value outside this list falls back to OpenRouter, so no
+ * device-key entry can ever be rendered for an unknown provider.
  */
 const BYOK_PROVIDERS = [
   "openrouter",
+  "openai",
   "anthropic",
   "google",
+  "deepseek",
   "mistral",
   "groq",
   "xai",
@@ -55,8 +54,10 @@ export type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 
 export const BYOK_LABELS: Record<ByokProvider, string> = {
   openrouter: "OpenRouter",
+  openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",
+  deepseek: "DeepSeek",
   mistral: "Mistral",
   groq: "Groq",
   xai: "xAI",
@@ -73,8 +74,7 @@ function isByokProvider(value: unknown): value is ByokProvider {
 
 /**
  * Resolve the managed slot: the explicit prop wins, then the routed
- * `?provider=` value, else OpenRouter. Relay-only ids (openai/deepseek) and
- * anything unknown never resolve here.
+ * `?provider=` value, else OpenRouter. Unknown ids never resolve here.
  */
 export function resolveByokProvider(explicit: unknown, routed: unknown): ByokProvider {
   if (isByokProvider(explicit)) return explicit;
@@ -98,7 +98,7 @@ export type AiConnectionProps = {
   /**
    * BYOK provider slot managed by the key form. Defaults to the routed
    * `?provider=` value (the AiModels Manage actions deep-link here), else
-   * OpenRouter. Relay-only ids (openai/deepseek) never select a key slot.
+   * OpenRouter.
    */
   readonly provider?: ProviderId;
   /** Runtime catalogue source: called on mount/account change and on refresh. */
@@ -107,22 +107,14 @@ export type AiConnectionProps = {
   readonly staleAfterMs?: number;
   /** Selection mode gate: paid rows need paid-explicit + consent (default free-only). */
   readonly mode?: AiSelection["mode"];
-  /**
-   * Relay probe for the OpenAI/DeepSeek server route (AI-021). Defaults to a
-   * session-authenticated `ai-relay` call carrying no key material; tests
-   * inject a fake here so no network is touched.
-   */
-  readonly relayTest?: (input: {
-    provider: RelayProvider;
-    text: string;
-    signal?: AbortSignal;
-  }) => Promise<{ text: string }>;
 };
 
 const PROVIDER_AVAILABILITY: ReadonlyArray<{ provider: ProviderId; copy: string }> = [
   { provider: "openrouter", copy: "OpenRouter: connect your own key above; free models are the default." },
+  { provider: "openai", copy: "OpenAI: bring-your-own-key is supported; live key test is not performed on this screen." },
   { provider: "anthropic", copy: "Anthropic: bring-your-own-key is supported; live key test is not performed on this screen." },
   { provider: "google", copy: "Google: bring-your-own-key is supported; live key test is not performed on this screen." },
+  { provider: "deepseek", copy: "DeepSeek: bring-your-own-key is supported; live key test is not performed on this screen." },
 ];
 
 export function AiConnection({
@@ -137,7 +129,6 @@ export function AiConnection({
   listModels,
   staleAfterMs = CATALOG_STALE_AFTER_MS,
   mode = "free-only",
-  relayTest,
 }: AiConnectionProps) {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
@@ -175,12 +166,6 @@ export function AiConnection({
   const [consentDraftId, setConsentDraftId] = useState<string | null>(null);
   const [consentChecked, setConsentChecked] = useState(false);
   const [gateMessage, setGateMessage] = useState<string | null>(null);
-  // AI-021 server relay for OpenAI/DeepSeek: the provider key stays on the
-  // server, so this panel holds no key input — only provider, test, remove.
-  const [relayProvider, setRelayProvider] = useState<RelayProvider>("openai");
-  const [relayPhase, setRelayPhase] = useState<"idle" | "testing" | "ready" | "error">("idle");
-  const [relayBusy, setRelayBusy] = useState(false);
-  const [relayNotice, setRelayNotice] = useState<string | null>(null);
 
   // Account switch: consent never crosses accounts; selection state resets.
   // Provider switch resets the key form the same way: one slot is ever shown.
@@ -189,8 +174,6 @@ export function AiConnection({
     setConsentDraftId(null);
     setConsentChecked(false);
     setGateMessage(null);
-    setRelayPhase("idle");
-    setRelayNotice(null);
     setKey("");
     setPhrase("");
     setMessage(null);
@@ -431,46 +414,6 @@ export function AiConnection({
     finally { setBusy(false); }
   }
 
-  /**
-   * AI-021 relay probe: sends only provider + message text over the signed-in
-   * session. No key material is held or sent here; the server owns the secret.
-   */
-  async function testRelay() {
-    if (relayBusy) return;
-    const controller = new AbortController();
-    setRelayBusy(true);
-    setRelayPhase("testing");
-    setRelayNotice(null);
-    try {
-      const probe = relayTest ?? (async (input: { provider: RelayProvider; text: string; signal?: AbortSignal }) => {
-        const result = await createRelayClient().chat({
-          provider: input.provider,
-          messages: [{ role: "user", content: input.text }],
-          signal: input.signal,
-        });
-        return { text: result.text };
-      });
-      await probe({ provider: relayProvider, text: "Reply with the word ok.", signal: controller.signal });
-      if (controller.signal.aborted) return;
-      setRelayPhase("ready");
-      setRelayNotice(
-        `Relay ready for ${relayProvider === "openai" ? "OpenAI" : "DeepSeek"}. No key is stored on this device.`,
-      );
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      setRelayPhase("error");
-      setRelayNotice(error instanceof Error ? error.message : "The relay test failed. Try again.");
-    } finally {
-      if (!controller.signal.aborted) setRelayBusy(false);
-    }
-  }
-
-  function clearRelay() {
-    if (relayBusy) return;
-    setRelayPhase("idle");
-    setRelayNotice(null);
-  }
-
   const showCatalogue = catalog.length > 0 || listModels !== undefined || retrievedAt !== null;
 
   return (
@@ -492,7 +435,7 @@ export function AiConnection({
             const next = event.target.value;
             if (next === selectedProvider) return;
             // Selection is validated by construction (options only), so the
-            // cast below cannot select a relay-only or unknown slot.
+            // cast below cannot select an unknown slot.
             setSelectedProvider(next as ByokProvider);
           }}
           className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
@@ -565,60 +508,6 @@ export function AiConnection({
             Selection mode: {mode === "paid-explicit" ? "explicit consent" : "free-only"}.
             Paid models always need explicit per-model, per-price confirmation.
           </p>
-          {openAiDirectEntitlement() === "blocked" && deepseekDirectEntitlement() === "blocked" ? (
-            <p className="text-xs text-on-surface-variant">
-              Direct OpenAI and DeepSeek connections are blocked on this device (provider key policy).
-              Those routes are never selectable here; use OpenRouter free models below.
-            </p>
-          ) : null}
-          {/* AI-021: on-device keys for OpenAI/DeepSeek stay blocked (see above),
-              so this panel connects through the server relay instead: the
-              provider key stays on the server and this device sends only the
-              provider plus message text over the signed-in session. */}
-          <div className="flex flex-col gap-2 rounded-m3-sm border border-outline p-3">
-            <h3 className="text-sm font-semibold">OpenAI and DeepSeek through the server relay</h3>
-            <p className="text-xs text-on-surface-variant">
-              Your provider key stays on the server. This device sends only the provider
-              and message text over your signed-in session — no key is stored here.
-            </p>
-            {relayPhase !== "ready" ? (
-              <p data-testid="relay-unverified" className="text-xs text-on-surface-variant">
-                Unavailable until a test call succeeds — run Test relay to verify the deployed
-                relay.
-              </p>
-            ) : null}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="relay-provider" className="text-sm font-medium">Relay provider</label>
-              <select
-                id="relay-provider"
-                value={relayProvider}
-                onChange={(event) => {
-                  setRelayProvider(event.target.value as RelayProvider);
-                  setRelayPhase("idle");
-                  setRelayNotice(null);
-                }}
-                className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
-              >
-                <option value="openai">OpenAI</option>
-                <option value="deepseek">DeepSeek</option>
-              </select>
-            </div>
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" disabled={relayBusy} onClick={() => void testRelay()}>
-                {relayBusy ? "Testing…" : "Test relay"}
-              </Button>
-              {relayPhase === "ready" ? (
-                <Button type="button" variant="outline" disabled={relayBusy} onClick={clearRelay}>
-                  Remove relay
-                </Button>
-              ) : null}
-            </div>
-            {relayNotice !== null ? (
-              <p aria-live="polite" className={relayPhase === "error" ? "text-sm text-error" : "text-sm"}>
-                {relayNotice}
-              </p>
-            ) : null}
-          </div>
           <ul className="flex flex-col gap-1">
             {PROVIDER_AVAILABILITY.map((entry) => (
               <li key={entry.provider} className="text-xs text-on-surface-variant">{entry.copy}</li>

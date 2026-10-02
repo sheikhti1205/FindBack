@@ -48,8 +48,10 @@ import { AiModels } from "./AiModels";
 
 const BYOK_CASES = [
   { provider: "openrouter", label: "OpenRouter" },
+  { provider: "openai", label: "OpenAI" },
   { provider: "anthropic", label: "Anthropic" },
   { provider: "google", label: "Google" },
+  { provider: "deepseek", label: "DeepSeek" },
   { provider: "mistral", label: "Mistral" },
   { provider: "groq", label: "Groq" },
   { provider: "xai", label: "xAI" },
@@ -172,26 +174,6 @@ describe("AiConnection per-provider BYOK slots", () => {
     expect(screen.getByLabelText("Mistral API key")).toBeTruthy();
   });
 
-  for (const relay of ["openai", "deepseek"]) {
-    it(`never renders device-key entry for relay-only ${relay} (falls back to OpenRouter)`, async () => {
-      await renderSettledConnection(relay);
-      expect((screen.getByLabelText("AI provider") as HTMLSelectElement).value).toBe("openrouter");
-      expect(screen.getByLabelText("OpenRouter API key")).toBeTruthy();
-      expect(screen.queryByLabelText(/openai api key/i)).toBeNull();
-      expect(screen.queryByLabelText(/deepseek api key/i)).toBeNull();
-      const raw = `h1-prov-relay-key-${relay}`;
-      fireEvent.change(screen.getByLabelText("OpenRouter API key"), { target: { value: raw } });
-      fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-      await waitFor(() =>
-        expect(mocks.connect).toHaveBeenCalledWith("user-1", raw, { remember: false }),
-      );
-      // No call ever carries the relay-only provider as a device slot.
-      for (const call of mocks.connect.mock.calls) {
-        expect(JSON.stringify(call)).not.toContain(`"${relay}"`);
-      }
-    });
-  }
-
   it("resets the key form when the account switches on the google slot", async () => {
     mocks.get.mockImplementation((async (userId: string) =>
       userId === "user-1" ? "google-key-user-1" : null) as never);
@@ -217,7 +199,7 @@ describe("AiModels Manage actions deep-link to the provider's slot", () => {
   });
   afterEach(cleanup);
 
-  it("links every BYOK provider to its own connection form and hides Manage for relay-only routes", async () => {
+  it("links every BYOK provider to its own connection form", async () => {
     render(
       <MemoryRouter>
         <AiModels accountId="u1" listCatalog={async () => []} />
@@ -229,11 +211,6 @@ describe("AiModels Manage actions deep-link to the provider's slot", () => {
         name: new RegExp(`manage ${label} key`, "i"),
       });
       expect(manage.getAttribute("href")).toBe(`/ai-connection?provider=${provider}`);
-    }
-    for (const relay of ["openai", "deepseek"]) {
-      const card = await screen.findByTestId(`ai-provider-${relay}`);
-      expect(card.textContent).toMatch(/server relay/i);
-      expect(within(card).queryByRole("link", { name: /manage/i })).toBeNull();
     }
   });
 });

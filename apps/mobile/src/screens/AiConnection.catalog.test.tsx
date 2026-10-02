@@ -157,15 +157,15 @@ describe("AiConnection catalogue (M2)", () => {
     expect(within(row).getByText(/Not usable on this account/)).toBeTruthy();
   });
 
-  it("states blocked-direct providers and untested availability honestly", async () => {
+  it("states BYOK provider availability honestly", async () => {
     render(
       <MemoryRouter>
         <AiConnection models={[freeA]} modelsRetrievedAt="2026-09-26T00:00:00.000Z" onSelectModel={() => {}} />
       </MemoryRouter>,
     );
-    expect(screen.getByText(/Direct OpenAI and DeepSeek connections are blocked/i)).toBeTruthy();
     expect(screen.getByText(/Not yet tested on this account/i)).toBeTruthy();
-    expect(screen.getAllByText(/bring-your-own-key is supported/i)).toHaveLength(2);
+    // OpenAI, Anthropic, Google and DeepSeek all advertise BYOK on this screen.
+    expect(screen.getAllByText(/bring-your-own-key is supported/i)).toHaveLength(4);
   });
 
   it("changed prices invalidate consent instead of reusing it", async () => {

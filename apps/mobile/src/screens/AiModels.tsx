@@ -16,11 +16,6 @@ import {
   saveGenericEndpoint,
 } from "../services/ai/genericEndpoint";
 import {
-  createRelayClient,
-  RELAY_PROVIDERS,
-  type RelayProvider,
-} from "../services/ai/relayClient";
-import {
   loadAuthorizedCatalog,
   priceFingerprint,
 } from "../services/ai/modelCatalog";
@@ -30,7 +25,6 @@ import {
   planModelFallback,
 } from "../services/ai/modelPolicy";
 import type { ModelRecord, ProviderId } from "../services/ai/providerContract";
-import { getSupabase } from "../services/supabaseClient";
 
 /**
  * Assistant mode (AI-022): which transports the assistant may use.
@@ -163,10 +157,6 @@ export function maskKeyTail(value: string | null): string | null {
   return `••••${trimmed.slice(-4)}`;
 }
 
-function isRelayProvider(provider: ProviderId): provider is RelayProvider {
-  return (RELAY_PROVIDERS as readonly ProviderId[]).includes(provider);
-}
-
 /**
  * Honest offline status copy. The offline adapter is deliberately unwired
  * from the registry and vault until the native bridge lands, so the seam
@@ -188,12 +178,6 @@ export type AiModelsProps = {
   readonly accountId?: string;
   /** Runtime catalogue source; production loads via vault + registry below. */
   readonly listCatalog?: () => Promise<readonly ModelRecord[]>;
-  /** Relay probe; defaults to a session-authenticated call carrying no key material. */
-  readonly relayChat?: (input: {
-    provider: RelayProvider;
-    text: string;
-    signal?: AbortSignal;
-  }) => Promise<{ text: string }>;
 };
 
 type SlotState = {
@@ -209,7 +193,7 @@ type ProbeState = {
 
 const IDLE_PROBE: ProbeState = { phase: "idle", notice: null };
 
-export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
+export function AiModels({ accountId, listCatalog }: AiModelsProps) {
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
 
@@ -300,14 +284,6 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
           }
           return;
         }
-        let includeRelayRoutes = false;
-        try {
-          const { data } = await getSupabase().auth.getSession();
-          includeRelayRoutes =
-            data.session?.user?.id !== undefined && data.session.user.id !== null;
-        } catch {
-          includeRelayRoutes = false;
-        }
         const records = await loadAuthorizedCatalog({
           accountId: account,
           providers: SUPPORTED_AI_PROVIDERS,
@@ -331,7 +307,6 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
             if (list === undefined) return [];
             return list(signal);
           },
-          includeRelayRoutes,
           retrievedAt: new Date().toISOString(),
         });
         if (!alive) return;
@@ -439,57 +414,35 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
     setBusyProvider(provider);
     setProbes((prev) => ({ ...prev, [provider]: { phase: "testing", notice: null } }));
     try {
-      if (isRelayProvider(provider)) {
-        const probe =
-          relayChat ??
-          (async (input: { provider: RelayProvider; text: string; signal?: AbortSignal }) => {
-            const result = await createRelayClient().chat({
-              provider: input.provider,
-              messages: [{ role: "user", content: input.text }],
-              signal: input.signal,
-            });
-            return { text: result.text };
-          });
-        await probe({ provider, text: "Reply with the word ok.", signal: controller.signal });
-        if (controller.signal.aborted) return;
+      const adapter = createProviderAdapter(provider, {
+        accountId: account,
+        resolveKey: (id, slot) => aiCredentials.get(id, slot),
+        genericBaseURL: loadGenericEndpoint(account) ?? undefined,
+        resolveGenericEndpoint: (id) => loadGenericEndpoint(id),
+      });
+      const list = adapter.listModels;
+      if (list === undefined) {
         setProbes((prev) => ({
           ...prev,
           [provider]: {
-            phase: "ready",
-            notice: `Relay ready for ${PROVIDER_LABELS[provider]}. No key is stored on this device.`,
+            phase: "error",
+            notice: `${PROVIDER_LABELS[provider]} has no list endpoint on this build; sends still use your saved key.`,
           },
         }));
-      } else {
-        const adapter = createProviderAdapter(provider, {
-          accountId: account,
-          resolveKey: (id, slot) => aiCredentials.get(id, slot),
-          genericBaseURL: loadGenericEndpoint(account) ?? undefined,
-          resolveGenericEndpoint: (id) => loadGenericEndpoint(id),
-        });
-        const list = adapter.listModels;
-        if (list === undefined) {
-          setProbes((prev) => ({
-            ...prev,
-            [provider]: {
-              phase: "error",
-              notice: `${PROVIDER_LABELS[provider]} has no list endpoint on this build; sends still use your saved key.`,
-            },
-          }));
-          return;
-        }
-        const rows = await list(controller.signal);
-        if (controller.signal.aborted) return;
-        setProbes((prev) => ({
-          ...prev,
-          [provider]: {
-            phase: "ready",
-            notice:
-              rows.length === 0
-                ? `${PROVIDER_LABELS[provider]} answered, but listed no models for this key.`
-                : `${PROVIDER_LABELS[provider]} answered and listed ${rows.length} ${rows.length === 1 ? "model" : "models"} for this key.`,
-          },
-        }));
+        return;
       }
+      const rows = await list(controller.signal);
+      if (controller.signal.aborted) return;
+      setProbes((prev) => ({
+        ...prev,
+        [provider]: {
+          phase: "ready",
+          notice:
+            rows.length === 0
+              ? `${PROVIDER_LABELS[provider]} answered, but listed no models for this key.`
+              : `${PROVIDER_LABELS[provider]} answered and listed ${rows.length} ${rows.length === 1 ? "model" : "models"} for this key.`,
+        },
+      }));
     } catch (e) {
       if (controller.signal.aborted) return;
       const message = e instanceof Error && e.message.trim() !== "" ? e.message : "The test failed. Try again.";
@@ -633,22 +586,17 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
             {SUPPORTED_AI_PROVIDERS.map((provider) => {
               const slot = slots[provider] ?? { connected: false, saved: false, masked: null };
               const probe = probes[provider] ?? IDLE_PROBE;
-              const relay = isRelayProvider(provider);
               const generic = provider === "generic";
               const experimental = isExperimentalProvider(provider);
               const genericInsecure = (genericEndpoint ?? "").startsWith("http://");
               const pricingUnknown = slot.connected && providerPricingUnknown[provider] === true;
-              const status = relay
-                ? probe.phase === "ready"
-                  ? "Relay verified for this session. No key is stored on this device."
-                  : "Unavailable — the server relay is not verified yet. Run Test relay. No key is stored on this device."
-                : slot.connected
-                  ? `Connected${slot.masked ? ` · key ending ${slot.masked}` : ""}${
-                      pricingUnknown ? " — chat unavailable until pricing can be verified." : ""
-                    }`
-                  : slot.saved
-                    ? "A saved key is locked. Manage it on the AI Connection screen to unlock."
-                    : "Not connected.";
+              const status = slot.connected
+                ? `Connected${slot.masked ? ` · key ending ${slot.masked}` : ""}${
+                    pricingUnknown ? " — chat unavailable until pricing can be verified." : ""
+                  }`
+                : slot.saved
+                  ? "A saved key is locked. Manage it on the AI Connection screen to unlock."
+                  : "Not connected.";
               const genericSuffix =
                 generic && genericEndpoint === null
                   ? " No endpoint set — a key alone cannot be used."
@@ -674,28 +622,22 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
                     <span className="text-xs text-on-surface-variant">{status}{genericSuffix}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {!relay ? (
-                      <Link
-                        to={`/ai-connection?provider=${provider}`}
-                        aria-label={`Manage ${PROVIDER_LABELS[provider]} key`}
-                        className="flex min-h-[48px] items-center rounded-m3-sm border border-outline px-3 text-sm font-medium"
-                      >
-                        Manage
-                      </Link>
-                    ) : null}
+                    <Link
+                      to={`/ai-connection?provider=${provider}`}
+                      aria-label={`Manage ${PROVIDER_LABELS[provider]} key`}
+                      className="flex min-h-[48px] items-center rounded-m3-sm border border-outline px-3 text-sm font-medium"
+                    >
+                      Manage
+                    </Link>
                     <Button
                       type="button"
                       variant="outline"
                       disabled={busyProvider !== null && busyProvider !== provider}
                       onClick={() => void testProvider(provider)}
                     >
-                      {busyProvider === provider
-                        ? "Testing…"
-                        : relay
-                          ? "Test relay"
-                          : "Test"}
+                      {busyProvider === provider ? "Testing…" : "Test"}
                     </Button>
-                    {!relay && (slot.connected || slot.saved) ? (
+                    {slot.connected || slot.saved ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -794,7 +736,6 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
           <li>Free-only sends never move to a paid or variable-price route.</li>
           <li>With attached photos, only same-provider vision-capable routes qualify.</li>
           <li>Blocked routes and providers without a connected key are skipped.</li>
-          <li>Relay routes are served through the server relay, never with a key on this device.</li>
         </ul>
         {fallbackPreview !== null ? (
           <p role="status" className="text-sm">
@@ -817,8 +758,7 @@ export function AiModels({ accountId, listCatalog, relayChat }: AiModelsProps) {
         ) : null}
         {!catalogLoading && catalogError === null && catalog.length === 0 ? (
           <p className="text-sm text-on-surface-variant">
-            No models loaded. Connect a key on the AI Connection screen to unlock its catalogue,
-            or sign in for relay routes.
+            No models loaded. Connect a key on the AI Connection screen to unlock its catalogue.
           </p>
         ) : null}
         {catalog.length > 0 ? (

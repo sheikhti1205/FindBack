@@ -18,19 +18,13 @@ import { describe, expect, it } from "vitest";
  * `*.test.*` fixtures. If paid-model protection regresses, it regresses in policy
  * tests, not here.
  *
- * Still banned: legacy `ai-help`/`functions/v1`, `LLM_MODEL`/`LLM_BASE_URL`, `sk-or-`
- * literals outside tests, `VITE_OPENROUTER_API_KEY`, `api/v1/byok`, unapproved
- * `/api/v1` base URLs/proxies (only `openrouter.ai` approved), and calling an
+ * Still banned: legacy `ai-help`/`functions/v1`, the retired server-key
+ * `ai-relay` route (deleted 2026-10-02 — OpenAI/DeepSeek became ordinary BYOK
+ * providers, so no server-held key or relay function may reappear),
+ * `LLM_MODEL`/`LLM_BASE_URL`, `sk-or-` literals outside tests,
+ * `VITE_OPENROUTER_API_KEY`, `api/v1/byok`, unapproved `/api/v1` base
+ * URLs/proxies (only `openrouter.ai` approved), and calling an
  * OpenRouter-served model a "direct connection" (it is `Via OpenRouter`, never direct).
- *
- * AI-021 deliberate exception (reviewed): the server-key `ai-relay` Edge
- * Function (`services/ai/relayClient.ts`, UI in `screens/AiConnection.tsx`)
- * is the ONE approved route for OpenAI/DeepSeek traffic. The provider secret
- * lives only in the function environment; mobile sends `{ provider, messages }`
- * over the signed-in session with no key material. Direct BYOK for
- * openai/deepseek stays banned (adapters untouched) and `ai-help` stays
- * banned everywhere. The "approved ai-relay route" test below pins this
- * exception; every other ban in this file is unchanged.
  *
  * Static + import-graph scan (CI-safe: no network, no build, no key, no subprocess).
  * Chosen over an import-graph-only check because a URL built from a string literal is
@@ -191,6 +185,7 @@ function matchesOf(code: string, pattern: RegExp): string[] {
 /** Rules that must hold in every shipped (non-test) module. */
 const SHIPPED_RULES: Array<{ id: string; re: RegExp }> = [
   { id: "legacy ai-help symbol", re: /ai-help/i },
+  { id: "legacy ai-relay route", re: /ai-relay/i },
   { id: "legacy functions/v1 endpoint", re: /functions\/v1/ },
   { id: "LLM_MODEL second route", re: /\bLLM_MODEL\b/ },
   { id: "LLM_BASE_URL second route", re: /\bLLM_BASE_URL\b/ },
@@ -363,26 +358,5 @@ describe("legacy AI route absence (WB-02 client guard)", () => {
     expect(graph.unresolved).toEqual([]);
     expect(graph.nodes.length).toBeGreaterThanOrEqual(40);
     expect(violations(graphFiles, SHIPPED_RULES)).toEqual([]);
-  });
-
-  it("allows the approved ai-relay server-key route (AI-021) and nothing else", () => {
-    // The relay caller is the single shipped module allowed to name the relay
-    // function. It must invoke it by constant over the session client, carry
-    // no legacy markers, no key material, and no env-sourced secret.
-    const relayClient = shipped.find((f) => f.rel === "services/ai/relayClient.ts");
-    expect(relayClient).toBeDefined();
-    const code = relayClient?.code ?? "";
-    expect(matchesOf(code, /ai-relay/).length).toBeGreaterThanOrEqual(1);
-    expect(matchesOf(code, /RELAY_FUNCTION_NAME/).length).toBeGreaterThanOrEqual(1);
-    expect(code).toContain(".functions.invoke(");
-    expect(violations([relayClient as SourceFile], SHIPPED_RULES)).toEqual([]);
-    expect(violations([relayClient as SourceFile], ALL_FILE_RULES)).toEqual([]);
-    for (const re of [/VITE_/, /\bsb_secret_/, /service_role/, /import\.meta\.env/, /\bapiKey\b/, /\bapi_key\b/]) {
-      expect(matchesOf(code, re)).toEqual([]);
-    }
-    // No other shipped module may name the relay function: the exception is
-    // confined to the relay caller (the screen reaches it via import).
-    const namers = shipped.filter((f) => matchesOf(f.code, /ai-relay/).length > 0).map((f) => f.rel);
-    expect(namers).toEqual(["services/ai/relayClient.ts"]);
   });
 });

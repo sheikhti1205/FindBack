@@ -330,44 +330,11 @@ export function getNextPageLink(response: OpenRouterModelsResponse): string | nu
  * list endpoint, so it (and generic-before-baseURL) is covered by an explicit
  * caller-supplied fixed fallback, never a guessed id.
  *
- * OpenAI/DeepSeek are relay-backed: direct BYOK stays banned, so their
- * records are provider-route rows (id is the provider route, not a direct
- * model — the relay server pins the model), priced `unknown` (the client
- * cannot see server-side fees, so they are never consentable and never
- * silently selected in free-only mode). `isRelayRouted` marks them;
- * no key material is carried anywhere here.
+ * OpenAI/DeepSeek are ordinary BYOK providers (2026-10-02 reversal): their
+ * rows come from the same credential-gated adapters as every other provider.
+ * The server-key relay was removed, so no provider-route row is synthesized
+ * here and no key material is carried anywhere.
  */
-
-/** Providers served through the server-key relay instead of direct BYOK. */
-export type RelayRoutedProvider = "openai" | "deepseek";
-
-export const RELAY_ROUTED_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>([
-  "openai",
-  "deepseek",
-]);
-
-/** True for relay-routed rows: served via the server relay, never direct. */
-export function isRelayRouted(record: ModelRecord): boolean {
-  return RELAY_ROUTED_PROVIDERS.has(record.provider);
-}
-
-/**
- * One relay-route row. The id is the provider route (the relay server pins
- * the model); pricing is unknown by construction, so policy can never
- * consent to it and free-only mode can never silently select it.
- */
-export function relayRouteRecord(provider: RelayRoutedProvider, retrievedAt?: string): ModelRecord {
-  return {
-    provider,
-    id: provider,
-    input: ["text"],
-    output: ["text"],
-    prices: [],
-    priceClass: "unknown",
-    retrievedAt: retrievedAt ?? new Date().toISOString(),
-    entitlement: "untested",
-  };
-}
 
 export type FixedFallbackInput = {
   /** Provider with no usable list endpoint (e.g. cohere, generic-before-baseURL). */
@@ -442,10 +409,6 @@ export type AuthorizedCatalogDeps = {
   readonly hasCredential: (provider: ProviderId) => Promise<boolean>;
   /** Registry-backed list fetch per provider; rejections are skipped, never retried here. */
   readonly listModels: (provider: ProviderId, signal?: AbortSignal) => Promise<readonly ModelRecord[]>;
-  /** Append relay-route rows for openai/deepseek. Defaults to true. */
-  readonly includeRelayRoutes?: boolean;
-  /** Relay providers to route; defaults to openai + deepseek. */
-  readonly relayProviders?: readonly RelayRoutedProvider[];
   readonly retrievedAt?: string;
   readonly blockedIds?: readonly string[];
   readonly verifiedIds?: readonly string[];
@@ -454,10 +417,10 @@ export type AuthorizedCatalogDeps = {
 
 /**
  * Assemble the authorized catalogue: listed rows for providers whose vault
- * slot holds a key, plus relay routes when enabled. Per-provider failures
- * yield no rows (never invented); ids dedupe by provider+id. Offline is
- * deliberately skipped — its adapter stays unwired until the native bridge
- * lands, and readiness is surfaced separately and honestly.
+ * slot holds a key. Per-provider failures yield no rows (never invented); ids
+ * dedupe by provider+id. Offline is deliberately skipped — its adapter stays
+ * unwired until the native bridge lands, and readiness is surfaced separately
+ * and honestly.
  */
 export async function loadAuthorizedCatalog(
   deps: AuthorizedCatalogDeps,
@@ -485,14 +448,6 @@ export async function loadAuthorizedCatalog(
     } catch {
       // Unreachable/unauthorized provider: no rows, never guessed.
     }
-  }
-  if (deps.includeRelayRoutes !== false) {
-    const retrievedAt =
-      typeof deps.retrievedAt === "string" && deps.retrievedAt.trim() !== ""
-        ? deps.retrievedAt
-        : new Date().toISOString();
-    const relay: readonly RelayRoutedProvider[] = deps.relayProviders ?? ["openai", "deepseek"];
-    for (const provider of relay) push(relayRouteRecord(provider, retrievedAt));
   }
   return out;
 }

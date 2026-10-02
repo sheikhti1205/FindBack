@@ -68,8 +68,8 @@ export function About() {
         <div className="min-w-0">
           <dt className="text-xs text-on-surface-variant">AI</dt>
           <dd className="min-w-0 break-words font-medium">
-            Optional AI features using a provider key you add (Profile → AI Connection), or the
-            server relay when signed in. OpenRouter is the default and stays on its free route; with
+            Optional AI features using a provider key you add (Profile → AI Connection).
+            OpenRouter is the default and stays on its free route; with
             your consent a selected report photo is sent to your connected provider for suggestions.
             Reports, search and other core features work without AI.
           </dd>

@@ -43,36 +43,33 @@ const MODELS_URL = `${OPENAI_API_BASE_URL}/models`;
 const ATTEMPT = 1 as const;
 
 /**
- * Owner decision 2026-09-25: direct client-side keys for OpenAI are officially
- * BLOCKED, not merely untested. OpenAI's authentication docs state: "Remember
- * that your API key is a secret. Don't share it with others or expose it in
- * any client-side code such as browsers or apps."
- * (https://platform.openai.com/docs/api-reference/authentication, verified
- * live 2026-09-25 — see temp-Com/P2.run.log.) No approved direct mobile key
- * route exists, so callers/UI must show this provider as blocked.
+ * Owner decision 2026-10-02: direct client-side keys for OpenAI are ALLOWED.
+ * This reverses the 2026-09-25 "blocked" decision. OpenAI is an ordinary
+ * bring-your-own-key (BYOK) provider: the user supplies their own key, it is
+ * stored only in the device credential vault like every other BYOK provider,
+ * and it is resolved by the caller's vault at send time. No server-side relay
+ * and no embedded developer key is involved.
  *
- * The wire/streaming implementation below stays intact for possible reuse
- * through a future approved route — but it must never be mistaken for a
- * working direct connection: no proxy, no embedded developer key, no
- * base-URL override.
+ * The wire/streaming implementation below is unchanged: allowlisted HTTPS
+ * origin only — no base-URL override, no proxy, no embedded developer key.
  */
 export type DirectKeyPolicy = {
-  readonly status: "blocked";
+  readonly status: "allowed";
   readonly reason: string;
   readonly sourceUrl: string;
   readonly retrievedAt: string;
 };
 
 export const DIRECT_KEY_POLICY: DirectKeyPolicy = {
-  status: "blocked",
+  status: "allowed",
   reason:
-    "OpenAI forbids exposing API keys in client-side code such as browsers or apps; no approved direct mobile key route exists.",
+    "OpenAI is an ordinary BYOK provider: the user supplies their own key and it is stored only in the device vault.",
   sourceUrl: "https://platform.openai.com/docs/api-reference/authentication",
-  retrievedAt: "2026-09-25",
+  retrievedAt: "2026-10-02",
 };
 
-/** Entitlement for callers/UI: this provider is blocked, never connected. */
-export function directKeyEntitlement(): "blocked" {
+/** Entitlement for callers/UI: direct user-supplied keys are allowed. */
+export function directKeyEntitlement(): "allowed" {
   return DIRECT_KEY_POLICY.status;
 }
 

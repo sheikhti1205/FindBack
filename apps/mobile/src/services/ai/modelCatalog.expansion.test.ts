@@ -4,9 +4,7 @@ import {
   applyEntitlements,
   fixedFallbackCatalog,
   isFastRecord,
-  isRelayRouted,
   loadAuthorizedCatalog,
-  relayRouteRecord,
 } from "./modelCatalog";
 import { priceFingerprint } from "./modelCatalog";
 import {
@@ -47,21 +45,6 @@ function paidRecord(provider: ProviderId, id: string): ModelRecord {
 const fingerprintOf = (record: ModelRecord): string => priceFingerprint(record);
 
 describe("modelCatalog expansion (AI-024b)", () => {
-  it("marks relay-backed openai/deepseek routes as relay-routed, never direct, price unknown", () => {
-    const openai = relayRouteRecord("openai", "2026-09-26T00:00:00.000Z");
-    const deepseek = relayRouteRecord("deepseek", "2026-09-26T00:00:00.000Z");
-    for (const record of [openai, deepseek]) {
-      expect(record.provider === "openai" || record.provider === "deepseek").toBe(true);
-      expect(record.prices).toEqual([]);
-      expect(record.priceClass).toBe("unknown");
-      expect(record.entitlement).toBe("untested");
-      expect(isRelayRouted(record)).toBe(true);
-      expect(JSON.stringify(record)).not.toMatch(/sk-or-|secret|service_role/i);
-    }
-    expect(isRelayRouted(freeRecord("openrouter", "openrouter/free"))).toBe(false);
-    expect(isRelayRouted(freeRecord("groq", "llama-3.3-70b-versatile"))).toBe(false);
-  });
-
   it("builds honest fixed fallbacks for providers with no list endpoint (unknown, never priced)", () => {
     const records = fixedFallbackCatalog({
       provider: "cohere",
@@ -81,7 +64,7 @@ describe("modelCatalog expansion (AI-024b)", () => {
     expect(blocked[0]?.entitlement).toBe("blocked");
   });
 
-  it("loads the authorized catalogue: merges listed rows, skips failing providers, appends relay routes", async () => {
+  it("loads the authorized catalogue: merges listed rows and skips failing providers", async () => {
     const groqRows = [freeRecord("groq", "llama-3.3-70b-versatile")];
     const records = await loadAuthorizedCatalog({
       accountId: "acct-1",
@@ -91,27 +74,22 @@ describe("modelCatalog expansion (AI-024b)", () => {
         if (provider === "groq") return groqRows;
         throw new Error("xai unreachable");
       },
-      includeRelayRoutes: true,
       retrievedAt: "2026-09-26T00:00:00.000Z",
     });
     expect(records.some((r) => r.id === "llama-3.3-70b-versatile")).toBe(true);
-    expect(records.some((r) => r.provider === "openai" && isRelayRouted(r))).toBe(true);
-    expect(records.some((r) => r.provider === "deepseek" && isRelayRouted(r))).toBe(true);
     expect(records.some((r) => r.provider === "xai")).toBe(false);
     expect(records.some((r) => r.provider === "cohere")).toBe(false);
   });
 
-  it("omits relay routes when disabled and dedupes repeated ids", async () => {
+  it("dedupes repeated ids", async () => {
     const rows = [freeRecord("mistral", "mistral-small-latest"), freeRecord("mistral", "mistral-small-latest")];
     const records = await loadAuthorizedCatalog({
       accountId: "acct-1",
       providers: ["mistral"],
       hasCredential: async () => true,
       listModels: async () => rows,
-      includeRelayRoutes: false,
     });
     expect(records.filter((r) => r.id === "mistral-small-latest")).toHaveLength(1);
-    expect(records.some((r) => isRelayRouted(r))).toBe(false);
   });
 
   it("applies blocked/verified entitlements without inventing rows", () => {
@@ -193,20 +171,20 @@ describe("modelPolicy over the expanded catalogue (AI-024b)", () => {
     ).toBe(false);
   });
 
-  it("never consents to unknown-priced rows, including relay routes", () => {
-    const relay = relayRouteRecord("openai");
+  it("never consents to unknown-priced rows", () => {
+    const unknown: ModelRecord = { ...freeRecord("openai", "openai/unknown"), prices: [], priceClass: "unknown" };
     const consent = authorizePaidSelection({
       accountId: "a",
-      record: relay,
-      fingerprint: fingerprintOf(relay),
+      record: unknown,
+      fingerprint: fingerprintOf(unknown),
       taskScopes: ["general"],
       acceptedAt: "2026-09-26T00:00:00.000Z",
     }).paidConsent;
     const resolved = resolveSelection({
       accountId: "a",
-      catalog: [freeRecord("openrouter", "openrouter/free"), relay],
+      catalog: [freeRecord("openrouter", "openrouter/free"), unknown],
       task: "general",
-      desiredModelId: relay.id,
+      desiredModelId: unknown.id,
       mode: "paid-explicit",
       paidConsent: consent,
       fingerprintOf,
