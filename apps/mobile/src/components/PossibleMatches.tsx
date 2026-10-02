@@ -5,7 +5,7 @@ import type { PostItem } from "@findback/shared";
 import { ImageOff, MapPin } from "lucide-react";
 import { EmptyState, Spinner } from "./PostCard";
 import { findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
-import { listItemVariants, motionDurations, motionEasings } from "./uiMotion";
+import { listItemVariants, motionDurations, motionEasings, motionStagger } from "./uiMotion";
 import type { MatchCandidate } from "../services/similarity";
 
 interface PossibleMatchesProps {
@@ -130,7 +130,7 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
             transition={{
               duration: motionDurations.standard,
               ease: motionEasings.out,
-              delay: index * 0.03,
+              delay: index * motionStagger,
             }}
             className="flex min-w-0 flex-[0_0_clamp(9rem,42%,12rem)] flex-col"
           >

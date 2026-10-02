@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
+import { motionDurations, motionEasings } from "../components/uiMotion";
 import { checkUsername } from "../services/auth";
 import { USERNAME_CHECK_DEBOUNCE_MS, normalizePhone } from "@findback/shared";
 
@@ -112,7 +113,7 @@ export function Register() {
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
+      transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
       className="mx-auto flex min-h-full max-w-md flex-col justify-center gap-5 bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >
       <header>

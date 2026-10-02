@@ -5,6 +5,7 @@ import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import { friendlyError } from "../utils/friendlyErrors";
 import { motion } from "framer-motion";
+import { motionDurations, motionEasings } from "../components/uiMotion";
 import { getPendingReportRoute } from "../utils/pendingReportLink";
 
 export function SignIn() {
@@ -41,7 +42,7 @@ export function SignIn() {
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
+      transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
       className="mx-auto flex min-h-full max-w-md flex-col justify-center gap-6 bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >
       <header>

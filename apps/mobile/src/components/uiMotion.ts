@@ -89,6 +89,9 @@ export const pressFeedback = {
   rail: { scale: 0.92 },
 } as const;
 
+/** Per-item stagger step for short lists (kept tiny; never an endless cascade). */
+export const motionStagger = 0.03 as const;
+
 /** Plain opacity fade (toasts, labels). */
 export const fadeVariants = {
   hidden: { opacity: 0 },
