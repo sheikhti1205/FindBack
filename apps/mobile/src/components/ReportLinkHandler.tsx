@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router";
 import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { useAuth } from "../auth";
+import { PUSH_REPORT_LINK_EVENT } from "../services/pushNotifications";
 import { parseReportLink, publicShareOrigin } from "../utils/reportLinks";
 import { clearPendingReportLink, getPendingReportRoute, rememberReportLink } from "../utils/pendingReportLink";
 
@@ -28,13 +29,19 @@ export function ReportLinkHandler() {
       const authenticated = authRef.current.user && !authRef.current.booting;
       navigateRef.current(authenticated ? link.route : link.sharedRoute, { replace: true });
     };
+    // A notification tap carries the same allowlisted /r/<id> contract as App Links.
+    const onPushLink = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (typeof detail === "string") open(detail);
+    };
+    window.addEventListener(PUSH_REPORT_LINK_EVENT, onPushLink);
     if (!Capacitor.isNativePlatform()) {
       // The public server returns the app shell at /r/:id; hash navigation
       // thereafter preserves the current app's routing and authorization.
       if (!window.location.hash && window.location.pathname.startsWith("/r/")) {
         try { open(`${publicShareOrigin()}${window.location.pathname}${window.location.search}`); } catch { /* unconfigured dev server */ }
       }
-      return;
+      return () => window.removeEventListener(PUSH_REPORT_LINK_EVENT, onPushLink);
     }
     void (async () => {
       try {
@@ -45,7 +52,7 @@ export function ReportLinkHandler() {
         if (launch?.url && !warmReceived) open(launch.url);
       } catch { /* ordinary launches and unsupported bridges have no URL */ }
     })();
-    return () => { stopped = true; remove?.(); };
+    return () => { stopped = true; remove?.(); window.removeEventListener(PUSH_REPORT_LINK_EVENT, onPushLink); };
   }, []);
 
   useEffect(() => {

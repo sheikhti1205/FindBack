@@ -32,6 +32,7 @@ import {
   joinInboxRoom,
   leaveInboxRoom,
 } from "./services/realtime";
+import { startPushNotifications, stopPushNotifications } from "./services/pushRuntime";
 import { clearUserScopedLocalState } from "./services/userScopedState";
 import { aiCredentials } from "./services/aiCredentials";
 
@@ -152,9 +153,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (user) {
       connectRealtime();
       joinInboxRoom(user.id);
+      void startPushNotifications();
     } else {
       leaveInboxRoom();
       disconnectRealtime();
+      void stopPushNotifications();
     }
   }, [user]);
 

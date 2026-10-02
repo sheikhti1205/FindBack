@@ -21,6 +21,15 @@ test("FCM sync accepts only the dedicated sender and valid private key", async (
     FCM_PROJECT_ID: "findback-mobile-app",
     PUBLIC_SHARE_ORIGIN: "https://findbackapp.social",
   });
+  // The dispatch secret is optional, but when supplied it must be well-formed.
+  const dispatchSecret = "A".repeat(48);
+  assert.deepEqual(fcmSecretValues({ ...input, PUSH_DISPATCH_SECRET: dispatchSecret }), {
+    FIREBASE_SERVICE_ACCOUNT_JSON: JSON.stringify(sender),
+    FCM_PROJECT_ID: "findback-mobile-app",
+    PUBLIC_SHARE_ORIGIN: "https://findbackapp.social",
+    PUSH_DISPATCH_SECRET: dispatchSecret,
+  });
+  assert.throws(() => fcmSecretValues({ ...input, PUSH_DISPATCH_SECRET: "too-short" }));
   for (const change of [
     { project_id: "wrong-project" },
     { client_email: "other@findback-mobile-app.iam.gserviceaccount.com" },

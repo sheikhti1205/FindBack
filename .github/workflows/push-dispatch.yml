@@ -1,0 +1,46 @@
+# FindBack — scheduled FCM dispatch.
+#
+# Every 10 minutes, call the `push-dispatch` Edge Function to drain unsent
+# notifications into FCM. The function is authenticated by the shared
+# `PUSH_DISPATCH_SECRET`, stored both here (GitHub secret) and in the function
+# environment. Runs are no-ops until that secret is provisioned.
+#
+# Required: secret `PUSH_DISPATCH_SECRET`, variable `SUPABASE_PROJECT_REF`.
+
+name: Push dispatch
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: findback-push-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch pending notifications
+        env:
+          PUSH_DISPATCH_SECRET: ${{ secrets.PUSH_DISPATCH_SECRET }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$PUSH_DISPATCH_SECRET" ]; then
+            echo "PUSH_DISPATCH_SECRET is not provisioned; skipping dispatch."
+            exit 0
+          fi
+          if [ -z "$PROJECT_REF" ]; then
+            echo "SUPABASE_PROJECT_REF is not set; skipping dispatch."
+            exit 0
+          fi
+          curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/push-dispatch" \
+            -H "x-findback-dispatch-secret: ${PUSH_DISPATCH_SECRET}" \
+            -H "content-type: application/json" \
+            -d '{}' \
+            --retry 2 --retry-all-errors --max-time 60

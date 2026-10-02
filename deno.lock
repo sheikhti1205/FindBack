@@ -1,0 +1,119 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/assert@*": "1.0.19",
+    "jsr:@std/internal@^1.0.12": "1.0.14"
+  },
+  "jsr": {
+    "@std/assert@1.0.19": {
+      "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@eslint/js@^9.30.1",
+        "npm:@supabase/server@^1.6.0",
+        "npm:eslint@^9.30.1",
+        "npm:supabase@2.117.0",
+        "npm:typescript-eslint@^8.44.1",
+        "npm:typescript@~5.9.3"
+      ],
+      "overrides": {
+        "uuid": "^11.1.1"
+      }
+    },
+    "members": {
+      "apps/mobile": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@capacitor/android@^8.5.1",
+            "npm:@capacitor/app-launcher@^8.0.1",
+            "npm:@capacitor/app@^8.1.1",
+            "npm:@capacitor/browser@^8.0.4",
+            "npm:@capacitor/camera@^8.2.4",
+            "npm:@capacitor/cli@^8.5.1",
+            "npm:@capacitor/core@^8.5.1",
+            "npm:@capacitor/geolocation@^8.1.0",
+            "npm:@capacitor/push-notifications@^8.1.2",
+            "npm:@findback/shared@*",
+            "npm:@floating-ui/react@~0.27.20",
+            "npm:@internationalized/date@^3.12.4",
+            "npm:@sentry/capacitor@^4.4.0",
+            "npm:@sentry/react@^10.69.0",
+            "npm:@supabase/supabase-js@2.116.0",
+            "npm:@tailwindcss/vite@^4.3.3",
+            "npm:@testing-library/dom@^10.4.2",
+            "npm:@testing-library/react@^16.3.3",
+            "npm:@tiptap/core@^3.31.3",
+            "npm:@tiptap/react@^3.31.3",
+            "npm:@tiptap/starter-kit@^3.31.3",
+            "npm:@types/react-dom@^19.2.7",
+            "npm:@types/react@^19.2.18",
+            "npm:@vitejs/plugin-react@^6.1.1",
+            "npm:fake-indexeddb@^6.2.5",
+            "npm:framer-motion@^13.2.0",
+            "npm:jsdom@^30.0.1",
+            "npm:lucide-react@^1.43.0",
+            "npm:maplibre-gl@^6.10.0",
+            "npm:react-aria-components@^1.21.1",
+            "npm:react-dom@^19.2.8",
+            "npm:react-markdown@10.1.0",
+            "npm:react-router@^8.3.1",
+            "npm:react@^19.2.8",
+            "npm:rehype-sanitize@6.0.0",
+            "npm:remark-breaks@4.0.0",
+            "npm:remark-gfm@4.0.1",
+            "npm:tailwindcss@^4.3.3",
+            "npm:typescript@~5.9.3",
+            "npm:vite@^8.2.2"
+          ]
+        }
+      },
+      "packages/shared": {
+        "packageJson": {
+          "dependencies": [
+            "npm:typescript@~5.9.3",
+            "npm:zod@^3.25.0"
+          ]
+        }
+      },
+      "services/api": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@findback/shared@*",
+            "npm:@supabase/supabase-js@2.116.0",
+            "npm:@types/bcryptjs@3",
+            "npm:@types/cors@^2.8.19",
+            "npm:@types/express@^5.0.6",
+            "npm:@types/jsonwebtoken@^9.0.10",
+            "npm:@types/multer@^2.2.0",
+            "npm:@types/node@24",
+            "npm:@types/supertest@^6.0.3",
+            "npm:bcryptjs@^3.0.3",
+            "npm:cors@^2.8.6",
+            "npm:dotenv@^17.4.2",
+            "npm:express@^5.2.1",
+            "npm:graphql-yoga@^5.22.0",
+            "npm:graphql@^16.11.0",
+            "npm:jsonwebtoken@^9.0.3",
+            "npm:multer@^2.4.0",
+            "npm:sharp@0.35.4",
+            "npm:socket.io@^4.8.3",
+            "npm:supertest@^7.2.2",
+            "npm:tsx@^4.23.13",
+            "npm:typescript@~5.9.3",
+            "npm:vitest@5",
+            "npm:zod@^3.25.0"
+          ]
+        }
+      }
+    }
+  }
+}

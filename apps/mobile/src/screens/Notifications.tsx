@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
-import { Bell, RotateCcw, Trash2 } from "lucide-react";
+import { Bell, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
+import { NotificationSettings } from "../components/NotificationSettings";
 import {
   deleteNotifications,
   fetchNotifications,
@@ -37,6 +38,7 @@ export function Notifications() {
   const [items, setItems] = useState<NotificationItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastDeleted, setLastDeleted] = useState<readonly string[] | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   const load = useCallback(async (target: InboxView) => {
     setError(null);
@@ -168,6 +170,15 @@ export function Notifications() {
           )}
           <button
             type="button"
+            onClick={() => setShowSettings((current) => !current)}
+            aria-expanded={showSettings}
+            aria-label="Notification settings"
+            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-2 text-on-surface-variant"
+          >
+            <Settings size={18} aria-hidden />
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setView((current) => (current === "inbox" ? "deleted" : "inbox"));
               setLastDeleted(null);
@@ -179,6 +190,15 @@ export function Notifications() {
           </button>
         </div>
       </header>
+
+      {showSettings ? (
+        <section
+          aria-label="Notification settings"
+          className="mt-3 rounded-m3-md border border-outline-variant bg-surface-container/40"
+        >
+          <NotificationSettings />
+        </section>
+      ) : null}
 
       {error ? (
         <section className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-12 text-center">

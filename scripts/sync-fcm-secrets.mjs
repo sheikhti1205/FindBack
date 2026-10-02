@@ -15,11 +15,19 @@ export function fcmSecretValues(env) {
     throw new Error("invalid dedicated FCM sender");
   }
   if (createPrivateKey(sender.private_key).asymmetricKeyType !== "rsa") throw new Error("invalid FCM private key");
-  return {
+  const values = {
     FIREBASE_SERVICE_ACCOUNT_JSON: JSON.stringify(sender),
     FCM_PROJECT_ID: sender.project_id,
     PUBLIC_SHARE_ORIGIN: validateShareOrigin(env.VITE_PUBLIC_SHARE_ORIGIN || ""),
   };
+  // Optional: provisioned by the owner as a GitHub secret. When present it is
+  // mirrored into the function environment so the scheduler can authenticate.
+  const dispatchSecret = (env.PUSH_DISPATCH_SECRET || "").trim();
+  if (dispatchSecret) {
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(dispatchSecret)) throw new Error("invalid push dispatch secret");
+    values.PUSH_DISPATCH_SECRET = dispatchSecret;
+  }
+  return values;
 }
 
 export function verifyFcmDigests(secrets, values) {

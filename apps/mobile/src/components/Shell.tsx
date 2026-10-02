@@ -8,6 +8,7 @@ import { RouteTransition } from "./RouteTransition";
 import { requestHistorySuppression } from "./backNavigation";
 import { fetchUnreadCount } from "../services/notifications";
 import { onRealtime } from "../services/realtime";
+import { PUSH_RECEIVED_EVENT } from "../services/pushNotifications";
 import {
   fadeUpVariants,
   motionDurations,
@@ -103,9 +104,13 @@ function BottomNav() {
     document.addEventListener("visibilitychange", onVisibility);
     // Private inbox signal: refetch the badge immediately on a new notification.
     const offInbox = onRealtime("notification:added", () => void pull());
+    // A foregrounded push is a second signal (realtime can be disconnected).
+    const onPush = () => void pull();
+    window.addEventListener(PUSH_RECEIVED_EVENT, onPush);
     return () => {
       cancelled = true;
       offInbox();
+      window.removeEventListener(PUSH_RECEIVED_EVENT, onPush);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };

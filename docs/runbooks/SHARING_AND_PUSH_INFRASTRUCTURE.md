@@ -41,6 +41,8 @@ Required GitHub secrets:
   `ANDROID_SIGNING_CERT_SHA256` (association verification).
 - Android: `GOOGLE_SERVICES_JSON_B64` (public Firebase client configuration).
 - Server-secret sync only: `FIREBASE_SERVICE_ACCOUNT_JSON`, `SUPABASE_ACCESS_TOKEN`.
+- Push dispatch (optional): `PUSH_DISPATCH_SECRET` — a 32–128 character
+  `[A-Za-z0-9_-]` token the owner generates once.
 
 Run the separate server workflow after rotating the dedicated sender credential:
 
@@ -50,9 +52,29 @@ gh workflow run sync-fcm-secrets.yml --ref main
 
 It validates the sender/project/key, writes a mode-0600 temporary env file,
 stores `FIREBASE_SERVICE_ACCOUNT_JSON`, `FCM_PROJECT_ID` and
-`PUBLIC_SHARE_ORIGIN` in Supabase, checks all three SHA-256 digests, and removes
-the temporary directory in a `finally` block. It never logs credential input or
-raw CLI output. Server credentials are not supplied to any browser/APK build.
+`PUBLIC_SHARE_ORIGIN` in Supabase, and — when `PUSH_DISPATCH_SECRET` is present —
+mirrors it into the function environment too. It checks every stored SHA-256
+digest and removes the temporary directory in a `finally` block. It never logs
+credential input or raw CLI output. Server credentials are not supplied to any
+browser/APK build.
+
+## Device tokens, preferences and dispatch
+
+- Migrations `20261002000000` (inbox actions), `20261002010000` (private inbox
+  Realtime signal) and `20261002020000` (device tokens, preferences,
+  `pushed_at`) reach production only through the manual `Backend deploy`
+  workflow with `push_migrations=true`.
+- `push-dispatch` is a server-to-server Edge Function. Deploy it from the same
+  workflow (`deploy_push_dispatch=true`, `--no-verify-jwt`); it authenticates
+  callers with the `x-findback-dispatch-secret` header in constant time and reads
+  the service-role key from the runtime environment only.
+- The `Push dispatch` workflow calls it every 10 minutes. It no-ops with a notice
+  until `PUSH_DISPATCH_SECRET` is provisioned as a GitHub secret and the
+  `Backend deploy` + `Sync FCM server secrets` workflows have run.
+- The mobile client requests permission, creates the `findback_updates` Android
+  channel, registers the FCM token, and writes preferences through the
+  `auth.uid()`-scoped RPCs. Notification taps route through the same `/r/<UUID>`
+  parser as App Links.
 
 The Azure deployment token printed during initial provisioning was rotated and
 the GitHub secret replaced. The original temporary sender JSON was deleted after

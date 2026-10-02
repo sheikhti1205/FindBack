@@ -23,6 +23,10 @@ on:
         description: "Deploy the ai-help Edge Function"
         type: boolean
         default: true
+      deploy_push_dispatch:
+        description: "Deploy the push-dispatch Edge Function"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -54,3 +58,10 @@ jobs:
         run: |
           supabase link --project-ref "$PROJECT_REF"
           supabase functions deploy ai-help
+      - name: Deploy push-dispatch
+        if: inputs.deploy_push_dispatch
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # Server-to-server only: the function enforces its own
+          # x-findback-dispatch-secret, so the gateway JWT check is redundant.
+          supabase functions deploy push-dispatch --no-verify-jwt
