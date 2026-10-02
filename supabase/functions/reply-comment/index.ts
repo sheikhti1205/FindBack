@@ -5,23 +5,32 @@
  * action. The device posts `{ token, body }`; the token was minted by
  * `push-dispatch` and delivered inside the FCM payload. Only the SHA-256 hash is
  * stored (`push_reply_tokens`), the token is single-use, expiring, and scoped to
- * one (user, report, parent comment). This function consumes it with the service
- * role and inserts the reply as the token owner, so the device never needs the
- * user's Supabase session.
+ * one (user, report, parent comment).
+ *
+ * Consumption is a single database transaction
+ * (`findback_consume_reply_token_and_add_comment`): the token row is locked
+ * `FOR UPDATE`, validated, and the reply is inserted plus the token stamped in
+ * the same transaction. Two concurrent replies for one token cannot both
+ * succeed, and a failed insert never burns the token.
  *
  * Deploy with `--no-verify-jwt`; the token is the sole credential.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
-import {
-  evaluateReplyToken,
-  hashToken,
-  isWellFormedToken,
-  MAX_REPLY_DEPTH,
-  normalizeReplyBody,
-  type ReplyTokenRow,
-} from "../_shared/replyTokens.ts";
+import { hashToken, isWellFormedToken, normalizeReplyBody } from "../_shared/replyTokens.ts";
 
-const nowIso = () => new Date().toISOString();
+/** Maps an RPC reason to an HTTP status. */
+function statusForReason(reason: string): number {
+  switch (reason) {
+    case "used":
+    case "parent_unavailable":
+      return 409;
+    case "invalid_body":
+    case "depth_exceeded":
+      return 422;
+    default:
+      return 403;
+  }
+}
 
 export default {
   async fetch(req: Request): Promise<Response> {
@@ -48,50 +57,19 @@ export default {
 
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
     const tokenHash = await hashToken(token);
-    const { data: row, error: readError } = await admin
-      .from("push_reply_tokens")
-      .select("id, user_id, post_id, parent_comment_id, expires_at, used_at")
-      .eq("token_hash", tokenHash)
-      .maybeSingle();
-    if (readError) return Response.json({ error: "lookup failed" }, { status: 500 });
-
-    const decision = evaluateReplyToken((row ?? null) as ReplyTokenRow | null, nowIso());
-    if (!decision.ok) return Response.json({ error: decision.reason ?? "invalid token" }, { status: 403 });
-
-    const reply = row as ReplyTokenRow;
-    const { data: parent, error: parentError } = await admin
-      .from("comments")
-      .select("post_id, depth")
-      .eq("id", reply.parent_comment_id)
-      .maybeSingle();
-    if (parentError || !parent || parent.post_id !== reply.post_id) {
-      return Response.json({ error: "parent unavailable" }, { status: 409 });
-    }
-    const depth = Number(parent.depth ?? 0) + 1;
-    if (depth > MAX_REPLY_DEPTH) return Response.json({ error: "depth exceeded" }, { status: 422 });
-
-    // Consume the token first so a retry cannot double-post.
-    const consumedAt = nowIso();
-    const { error: consumeError } = await admin
-      .from("push_reply_tokens")
-      .update({ used_at: consumedAt })
-      .eq("id", reply.id)
-      .is("used_at", null);
-    if (consumeError) return Response.json({ error: "consume failed" }, { status: 500 });
-
-    const commentId = crypto.randomUUID();
-    const { error: insertError } = await admin.from("comments").insert({
-      id: commentId,
-      post_id: reply.post_id,
-      user_id: reply.user_id,
-      parent_id: reply.parent_comment_id,
-      depth,
-      body,
-      created_at: consumedAt,
-      updated_at: consumedAt,
+    const { data, error } = await admin.rpc("findback_consume_reply_token_and_add_comment", {
+      p_token_hash: tokenHash,
+      p_body: body,
     });
-    if (insertError) return Response.json({ error: "insert failed" }, { status: 500 });
+    if (error) return Response.json({ error: "reply failed" }, { status: 500 });
 
-    return Response.json({ ok: true, commentId });
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { ok?: unknown; reason?: unknown; comment_id?: unknown }
+      | null;
+    if (row?.ok !== true) {
+      const reason = typeof row?.reason === "string" ? row.reason : "invalid";
+      return Response.json({ error: reason }, { status: statusForReason(reason) });
+    }
+    return Response.json({ ok: true, commentId: row.comment_id ?? null });
   },
 };

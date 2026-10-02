@@ -23,6 +23,8 @@ import { generateReplyToken, hashToken, REPLY_TOKEN_TTL_MS } from "../_shared/re
 const BATCH_LIMIT = 100;
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
+/** A transient FCM failure keeps a notification pending this many runs. */
+const MAX_PUSH_ATTEMPTS = 5;
 
 export interface DispatchNotification {
   id: string;
@@ -124,6 +126,49 @@ export function planDeliveries(
     }
   }
   return deliveries;
+}
+
+export interface SendOutcome {
+  notificationId: string;
+  ok: boolean;
+  prune: boolean;
+}
+
+export interface DispatchPlan {
+  /** Delivered to at least one device, had no eligible device, or failed only
+   * terminally: safe to stamp `pushed_at` now. */
+  handled: string[];
+  /** Nothing delivered and at least one transient failure: keep pending. */
+  retry: string[];
+}
+
+/**
+ * Decides per-notification disposition from the per-delivery results. A
+ * notification is only retried when nothing reached a device and at least one
+ * failure was transient (not a pruned/invalid token). This is what stops a
+ * temporary FCM outage from silently retiring an undelivered notification.
+ */
+export function planDispatchOutcomes(
+  notifications: ReadonlyArray<{ id: string }>,
+  results: ReadonlyArray<SendOutcome>,
+): DispatchPlan {
+  const sent = new Map<string, number>();
+  const retryable = new Map<string, number>();
+  for (const result of results) {
+    if (result.ok) sent.set(result.notificationId, (sent.get(result.notificationId) ?? 0) + 1);
+    else if (!result.prune) {
+      retryable.set(result.notificationId, (retryable.get(result.notificationId) ?? 0) + 1);
+    }
+  }
+  const handled: string[] = [];
+  const retry: string[] = [];
+  for (const notification of notifications) {
+    const delivered = sent.get(notification.id) ?? 0;
+    const transient = retryable.get(notification.id) ?? 0;
+    if (delivered > 0 || transient === 0) handled.push(notification.id);
+    else retry.push(notification.id);
+  }
+  return { handled, retry };
 }
 
 /**
@@ -360,12 +405,14 @@ export default {
     let sent = 0;
     let failed = 0;
     const pruned: string[] = [];
+    const outcomes: SendOutcome[] = [];
     for (const delivery of deliveries) {
       const result = await sendMessage(
         projectId,
         accessToken,
         buildFcmMessage(delivery, origin, replyTokens.get(delivery.notificationId)),
       );
+      outcomes.push({ notificationId: delivery.notificationId, ok: result.ok, prune: result.prune });
       if (result.ok) sent += 1;
       else {
         failed += 1;
@@ -373,18 +420,36 @@ export default {
       }
     }
 
-    // Stamp every scanned notification, including ones with no eligible device,
-    // so a delivery-less row is not rescanned forever.
+    // Terminal disposition only: a notification with no eligible device, one
+    // delivered anywhere, or only invalid-token failures is stamped. A
+    // notification whose only failures were transient stays pending so the next
+    // scheduled run retries it, up to MAX_PUSH_ATTEMPTS.
+    const { handled, retry } = planDispatchOutcomes(notifications, outcomes);
     const pushedAt = new Date().toISOString();
-    await admin
-      .from("notifications")
-      .update({ pushed_at: pushedAt })
-      .in("id", notifications.map((n) => n.id));
+    if (handled.length > 0) {
+      await admin.from("notifications").update({ pushed_at: pushedAt }).in("id", handled);
+    }
+    let retired = 0;
+    if (retry.length > 0) {
+      const { data } = await admin.rpc("findback_record_push_failure", {
+        p_ids: retry,
+        p_error: "temporary FCM failure",
+        p_max_attempts: MAX_PUSH_ATTEMPTS,
+      });
+      retired = Number(data ?? 0);
+    }
 
     if (pruned.length > 0) {
       await admin.from("device_tokens").delete().in("token", [...new Set(pruned)]);
     }
 
-    return Response.json({ scanned: notifications.length, sent, pruned: pruned.length, failed });
+    return Response.json({
+      scanned: notifications.length,
+      sent,
+      pruned: pruned.length,
+      failed,
+      retried: retry.length,
+      retired,
+    });
   },
 };

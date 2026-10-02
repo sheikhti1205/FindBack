@@ -9,6 +9,7 @@ import {
   categoryFor,
   isAuthorized,
   planDeliveries,
+  planDispatchOutcomes,
   shouldPruneToken,
   type Delivery,
   type DispatchNotification,
@@ -159,4 +160,40 @@ Deno.test("shouldPruneToken only prunes permanently invalid tokens", () => {
   assert(!shouldPruneToken(500, "UNREGISTERED"));
   assert(!shouldPruneToken(429, "quota"));
   assert(!shouldPruneToken(400, "some other invalid request"));
+});
+
+Deno.test("planDispatchOutcomes retires delivered, device-less and terminal-failure rows", () => {
+  const notifications = [{ id: "n1" }, { id: "n2" }, { id: "n3" }, { id: "n4" }];
+  const plan = planDispatchOutcomes(notifications, [
+    { notificationId: "n1", ok: true, prune: false },
+    { notificationId: "n2", ok: false, prune: true },
+    // n3 has no deliveries at all (no device / preference off)
+    { notificationId: "n4", ok: false, prune: false },
+  ]);
+  assertEquals(plan.handled.sort(), ["n1", "n2", "n3"]);
+  assertEquals(plan.retry, ["n4"]);
+});
+
+Deno.test("planDispatchOutcomes keeps a notification pending only on transient failure", () => {
+  const plan = planDispatchOutcomes(
+    [{ id: "n1" }],
+    [
+      { notificationId: "n1", ok: false, prune: false },
+      { notificationId: "n1", ok: false, prune: false },
+    ],
+  );
+  assertEquals(plan.handled, []);
+  assertEquals(plan.retry, ["n1"]);
+});
+
+Deno.test("planDispatchOutcomes treats a partial send as handled", () => {
+  const plan = planDispatchOutcomes(
+    [{ id: "n1" }],
+    [
+      { notificationId: "n1", ok: true, prune: false },
+      { notificationId: "n1", ok: false, prune: false },
+    ],
+  );
+  assertEquals(plan.handled, ["n1"]);
+  assertEquals(plan.retry, []);
 });
