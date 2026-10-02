@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import type { NeedleEmbedder } from "./ai/needle/embedder";
 
 interface EmbeddingBridge {
   embedTexts(options: { texts: string[] }): Promise<{ vectors: number[][] }>;
@@ -37,6 +38,35 @@ export function validateEmbeddingVectors(texts: readonly string[], vectors: unkn
   const dimension = rows[0]?.length ?? 0;
   if (rows.some((row) => row.length !== dimension)) throw invalid;
   return rows;
+}
+
+/**
+ * WS2 Needle TEXT challenger seam (optional injection; USE remains default).
+ *
+ * The incumbent `embedTexts` path above is untouched and stays the default
+ * for all matching flows. A challenger embedder (see
+ * `services/ai/needle/embedder.ts`) may be injected in experiments via
+ * `setNeedleEmbedder`; `embedNeedleTexts` delegates to it and throws while
+ * none is set. Never falls back to USE — a missing challenger is an error,
+ * not a silent substitution.
+ */
+let needleEmbedder: NeedleEmbedder | null = null;
+
+/** Injects (or clears, with `null`) the challenger embedder. Test/experiment seam only. */
+export function setNeedleEmbedder(impl: NeedleEmbedder | null): void {
+  needleEmbedder = impl;
+}
+
+/** Returns the currently injected challenger embedder, if any. */
+export function getNeedleEmbedder(): NeedleEmbedder | null {
+  return needleEmbedder;
+}
+
+/** Embeds texts via the injected challenger. Throws while none is set. */
+export async function embedNeedleTexts(texts: string[]): Promise<number[][]> {
+  const impl = needleEmbedder;
+  if (!impl) throw new Error("Needle embedder unavailable (challenger seam, USE default)");
+  return impl.embedNeedleTexts(texts);
 }
 
 /**
