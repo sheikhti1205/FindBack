@@ -246,6 +246,82 @@ export function estimateOfflineMemoryMb(asset: OfflineAssetFacts): number {
 }
 
 /**
+ * WS3 skeleton: explicit on-device vision backend states
+ * (SmolVLM2-500M LiteRT stable path).
+ *
+ * - `"ready"`: the model is installed+verified AND an image-capable
+ *   vision bridge is present, so an image request may take the on-device
+ *   vision path.
+ * - `"unavailable"`: anything else. The request fails closed with typed
+ *   `vision_unsupported` (see `OfflineVisionUnavailable`).
+ *
+ * There is no third outcome by construction: the only permitted fallback
+ * is the literal `"no-fallback"` (`OfflineVisionFallback`). Callers must
+ * surface the typed refusal — silently retrying via a cloud provider is
+ * never allowed, and this module offers no value that could express it.
+ * The compute-backend choice inside the vision path (CPU-first, GPU only
+ * with measured probe-pass evidence) lives in
+ * `../vision/backendSelector`; it likewise has no cloud member.
+ */
+export type OfflineVisionState = "ready" | "unavailable";
+
+/** Literal marker: on-device vision never falls back, silently or otherwise. */
+export const OFFLINE_VISION_NO_FALLBACK = "no-fallback" as const;
+
+/** The only permitted fallback for on-device vision: none. */
+export type OfflineVisionFallback = typeof OFFLINE_VISION_NO_FALLBACK;
+
+export type OfflineVisionUnavailable = {
+  readonly state: "unavailable";
+  readonly code: Extract<OfflineErrorCode, "vision_unsupported">;
+  readonly reason: string;
+  readonly fallback: OfflineVisionFallback;
+  readonly retryable: false;
+};
+
+export type OfflineVisionReady = {
+  readonly state: "ready";
+  readonly fallback: OfflineVisionFallback;
+};
+
+/** Verdict for the on-device vision path of one request. */
+export type OfflineVisionVerdict = OfflineVisionReady | OfflineVisionUnavailable;
+
+export interface OfflineVisionProbe {
+  /** The model already passed `describeOfflineReadiness` (installed+verified). */
+  readonly modelReady: boolean;
+  /**
+   * An image-capable vision bridge is present. WS3 skeleton: there is no
+   * such seam yet (the native bridge is text-only), so callers pass
+   * `false` until the follow-up native worker adds one. Never inferred
+   * from the text bridge — text availability proves nothing about vision.
+   */
+  readonly visionBridgeReady: boolean;
+}
+
+/**
+ * Verdict for the on-device vision path. Pure: no bridge calls, no
+ * downloads, no cloud. Unavailable carries the exact `vision_unsupported`
+ * contract error the adapter streams, so the failure stays typed and
+ * non-retryable end to end.
+ */
+export function describeOfflineVision(probe: OfflineVisionProbe): OfflineVisionVerdict {
+  if (probe.modelReady && probe.visionBridgeReady) {
+    return { state: "ready", fallback: OFFLINE_VISION_NO_FALLBACK };
+  }
+  const reason = !probe.modelReady
+    ? "on-device model is not ready; vision unavailable"
+    : "on-device vision is not proven; text requests only";
+  return {
+    state: "unavailable",
+    code: "vision_unsupported",
+    reason,
+    fallback: OFFLINE_VISION_NO_FALLBACK,
+    retryable: false,
+  };
+}
+
+/**
  * Build the bridge prompt from a normalized request. Text only: callers
  * must reject `approvedImageIds` before calling (vision is unproven
  * on-device). History attachments are intentionally dropped — approval is
@@ -319,14 +395,31 @@ async function* completeOffline(
 
   // Vision is unproven on-device (archive eval-only arms never promoted):
   // fail closed before touching the bridge. The model verdict comes first
-  // so a missing model never reads as a vision refusal.
+  // so a missing model never reads as a vision refusal. The verdict is
+  // explicit (`describeOfflineVision`) and carries `no-fallback`: the
+  // refusal is typed `vision_unsupported` and must be surfaced, never
+  // silently retried via cloud.
   if (request.approvedImageIds.length > 0) {
-    yield* failureEvents(
-      "vision_unsupported",
-      "on-device vision is not proven; text requests only",
-      false,
-    );
-    return;
+    // WS3 skeleton: no image-capable vision seam exists yet (the native
+    // bridge is text-only), so the vision bridge is never ready here.
+    // Text-bridge availability is deliberately NOT consulted — a working
+    // text path proves nothing about vision.
+    const verdict = describeOfflineVision({ modelReady: true, visionBridgeReady: false });
+    switch (verdict.state) {
+      case "ready":
+        // Unreachable in the skeleton: the worker that flips
+        // `visionBridgeReady` must add the image-capable prompt/bridge
+        // path on this arm. Fail closed until then — never fall to cloud.
+        yield* failureEvents(
+          "vision_unsupported",
+          "on-device vision is not wired yet; text requests only",
+          false,
+        );
+        return;
+      case "unavailable":
+        yield* failureEvents(verdict.code, verdict.reason, verdict.retryable);
+        return;
+    }
   }
 
   const hasContent =
