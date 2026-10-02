@@ -24,7 +24,11 @@ data class PushData(
         get() = type == TYPE_COMMENT && !commentId.isNullOrBlank() && !replyToken.isNullOrBlank()
 
     companion object {
+        const val TYPE_LIKE = "LIKE"
+        const val TYPE_DISLIKE = "DISLIKE"
         const val TYPE_COMMENT = "COMMENT"
+        const val TYPE_MENTION = "MENTION"
+        const val TYPE_STATUS = "STATUS"
         const val MAX_REPLY_LENGTH = 1000
         const val DEFAULT_TITLE = "FindBack"
         const val DEFAULT_BODY = "New activity on your report"

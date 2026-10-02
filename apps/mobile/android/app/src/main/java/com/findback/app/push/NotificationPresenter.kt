@@ -1,18 +1,12 @@
 package com.findback.app.push
 
-import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
-import androidx.core.content.ContextCompat
 import com.findback.app.MainActivity
 import com.findback.app.R
 
@@ -24,7 +18,7 @@ class NotificationPresenter(private val context: Context) {
 
     fun show(push: PushData) {
         if (!notificationsAllowed()) return
-        ensureChannel()
+        PushChannels.ensureCreated(context)
         val manager = NotificationManagerCompat.from(context)
         manager.notify(PushData.notificationIdFor(push), build(push))
     }
@@ -36,8 +30,8 @@ class NotificationPresenter(private val context: Context) {
      */
     fun updateStatus(push: PushData, text: String, keepReply: Boolean = false) {
         if (!notificationsAllowed()) return
-        ensureChannel()
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        PushChannels.ensureCreated(context)
+        val builder = NotificationCompat.Builder(context, PushChannels.channelIdFor(push.type))
             .setSmallIcon(R.drawable.ic_stat_findback)
             .setContentTitle(push.title)
             .setContentText(text)
@@ -48,7 +42,7 @@ class NotificationPresenter(private val context: Context) {
     }
 
     private fun build(push: PushData): android.app.Notification {
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, PushChannels.channelIdFor(push.type))
             .setSmallIcon(R.drawable.ic_stat_findback)
             .setContentTitle(push.title)
             .setContentText(push.body)
@@ -93,29 +87,5 @@ class NotificationPresenter(private val context: Context) {
         return PendingIntent.getActivity(context, PushData.notificationIdFor(push), intent, flags)
     }
 
-    private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            context.getString(R.string.findback_channel_name),
-            NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply {
-            description = context.getString(R.string.findback_channel_description)
-        }
-        manager.createNotificationChannel(channel)
-    }
-
-    private fun notificationsAllowed(): Boolean {
-        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
-        return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-    }
-
-    companion object {
-        // Must match FINDBACK_PUSH_CHANNEL.id in the web client.
-        const val CHANNEL_ID = "findback_updates"
-    }
+    private fun notificationsAllowed(): Boolean = PushChannels.notificationsAllowed(context)
 }

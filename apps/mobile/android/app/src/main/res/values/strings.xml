@@ -6,6 +6,13 @@
     <string name="custom_url_scheme">com.findback.app</string>
     <string name="findback_channel_name">FindBack updates</string>
     <string name="findback_channel_description">Likes, comments, mentions and status changes on your reports.</string>
+    <string name="findback_channel_group">FindBack</string>
+    <string name="findback_channel_comments">Comments &amp; mentions</string>
+    <string name="findback_channel_comments_description">Comments and @mentions on your reports.</string>
+    <string name="findback_channel_activity">Report activity</string>
+    <string name="findback_channel_activity_description">Likes and dislikes on your reports.</string>
+    <string name="findback_channel_updates">Report updates</string>
+    <string name="findback_channel_updates_description">Status changes on reports.</string>
     <string name="findback_reply_label">Reply</string>
     <string name="findback_reply_sent">Reply sent</string>
     <string name="findback_reply_failed">Reply failed — open FindBack to try again</string>

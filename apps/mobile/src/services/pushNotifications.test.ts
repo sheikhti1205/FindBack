@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  FINDBACK_PUSH_CHANNEL,
   createPushController,
   reportUrlFromPushData,
   type PushAdapter,
@@ -35,7 +34,6 @@ function fakeAdapter(overrides: Partial<PushAdapter> = {}) {
     platform: () => "android",
     requestPermission: async () => "granted",
     register: vi.fn(async () => {}),
-    createChannel: vi.fn(async () => {}),
     onRegistration: async (cb) => registration(cb),
     onRegistrationError: async (cb) => registrationError(cb),
     onReceived: async (cb) => received(cb),
@@ -67,13 +65,12 @@ describe("createPushController", () => {
     expect(adapter.register).not.toHaveBeenCalled();
   });
 
-  it("creates the Android channel and registers the token after permission", async () => {
+  it("registers the token after permission (channels are native-owned)", async () => {
     const registerToken = vi.fn(async () => {});
     const { adapter, handles } = fakeAdapter();
     const controller = createPushController({ adapter, registerToken });
 
     expect(await controller.start()).toBe("granted");
-    expect(adapter.createChannel).toHaveBeenCalledWith(FINDBACK_PUSH_CHANNEL);
     expect(adapter.register).toHaveBeenCalledTimes(1);
 
     handles.registration[0]!("fcm-token-123");

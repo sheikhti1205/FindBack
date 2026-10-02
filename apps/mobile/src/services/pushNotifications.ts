@@ -1,14 +1,20 @@
+import { registerPlugin } from "@capacitor/core";
 import { reportLink } from "../utils/reportLinks";
 import { registerDeviceToken, unregisterDeviceToken, type PushPlatform } from "./deviceTokens";
 
 export type PushPermissionState = "granted" | "denied" | "prompt" | "unsupported";
 
-/** Android channel used for all FindBack activity notifications. */
-export const FINDBACK_PUSH_CHANNEL = {
-  id: "findback_updates",
-  name: "FindBack updates",
-  description: "Likes, comments, mentions and status changes on your reports.",
-  importance: 3,
+/**
+ * Android notification channels are owned natively (`PushChannels` /
+ * `FindbackApp.onCreate`): one channel per category under the "FindBack" group,
+ * created before the first push so Android Settings shows them immediately.
+ * The JS layer deliberately does not create channels.
+ */
+export const FINDBACK_PUSH_CHANNEL_GROUP = "findback";
+export const FINDBACK_PUSH_CHANNELS = {
+  comments: "findback.comments.v1",
+  activity: "findback.activity.v1",
+  updates: "findback.updates.v1",
 } as const;
 
 /** Window event fired when a push arrives while the app is foregrounded. */
@@ -21,7 +27,10 @@ export interface PushAdapter {
   platform(): PushPlatform;
   requestPermission(): Promise<Exclude<PushPermissionState, "unsupported">>;
   register(): Promise<void>;
-  createChannel(channel: typeof FINDBACK_PUSH_CHANNEL): Promise<void>;
+  /** Current OS permission, without prompting. */
+  checkPermission?(): Promise<PushPermissionState>;
+  /** Opens the OS notification settings for recovery after a denial. */
+  openSettings?(): Promise<void>;
   onRegistration(cb: (token: string) => void): Promise<() => void>;
   onRegistrationError(cb: (message: string) => void): Promise<() => void>;
   onReceived(cb: (data: Record<string, string>) => void): Promise<() => void>;
@@ -54,6 +63,10 @@ export interface PushController {
   start(): Promise<PushPermissionState>;
   stop(): Promise<void>;
   isRunning(): boolean;
+  /** Current OS permission state without prompting; "unsupported" on web. */
+  permission(): Promise<PushPermissionState>;
+  /** Opens OS notification settings; no-op when the adapter cannot. */
+  openSettings(): Promise<void>;
 }
 
 /**
@@ -81,14 +94,19 @@ export function createPushController(options: PushControllerOptions): PushContro
   return {
     isRunning: () => running,
 
+    async permission(): Promise<PushPermissionState> {
+      if (!adapter.isNative()) return "unsupported";
+      if (adapter.checkPermission) return adapter.checkPermission();
+      return running ? "granted" : "prompt";
+    },
+
+    async openSettings(): Promise<void> {
+      await adapter.openSettings?.();
+    },
+
     async start(): Promise<PushPermissionState> {
       if (!adapter.isNative()) return "unsupported";
       if (running) return "granted";
-      try {
-        await adapter.createChannel(FINDBACK_PUSH_CHANNEL);
-      } catch {
-        /* channel creation is best-effort (Android < 8 has none) */
-      }
       const permission = await adapter.requestPermission();
       if (permission !== "granted") return permission;
 
@@ -153,6 +171,8 @@ export function createCapacitorPushAdapter(): PushAdapter {
   };
   // Deferred import keeps the plugin out of the web bundle graph at load time.
   const plugin = async () => (await import("@capacitor/push-notifications")).PushNotifications;
+  const settingsPlugin = () =>
+    registerPlugin<{ openSettings(): Promise<void> }>("FindbackNotifications");
 
   return {
     isNative: native,
@@ -161,19 +181,18 @@ export function createCapacitorPushAdapter(): PushAdapter {
       const result = await (await plugin()).requestPermissions();
       return result.receive === "granted" ? "granted" : result.receive === "denied" ? "denied" : "prompt";
     },
+    async checkPermission() {
+      const result = await (await plugin()).checkPermissions();
+      return result.receive === "granted" ? "granted" : result.receive === "denied" ? "denied" : "prompt";
+    },
+    async openSettings() {
+      await settingsPlugin().openSettings();
+    },
     async register() {
       await (await plugin()).register();
     },
     async deleteToken() {
       await (await plugin()).unregister();
-    },
-    async createChannel(channel) {
-      await (await plugin()).createChannel({
-        id: channel.id,
-        name: channel.name,
-        description: channel.description,
-        importance: channel.importance,
-      });
     },
     async onRegistration(cb) {
       const handle = await (await plugin()).addListener("registration", (token) => cb(token.value));

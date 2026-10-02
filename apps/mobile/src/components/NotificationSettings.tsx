@@ -5,6 +5,8 @@ import {
   saveNotificationPreferences,
   type NotificationPreferences,
 } from "../services/notificationPreferences";
+import { pushController } from "../services/pushRuntime";
+import type { PushPermissionState } from "../services/pushNotifications";
 import { friendlyError } from "../utils/friendlyErrors";
 
 const TOGGLES: Array<{ key: keyof NotificationPreferences; label: string; hint: string }> = [
@@ -19,6 +21,8 @@ const TOGGLES: Array<{ key: keyof NotificationPreferences; label: string; hint: 
 export function NotificationSettings() {
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [permission, setPermission] = useState<PushPermissionState | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,9 +33,37 @@ export function NotificationSettings() {
       .catch((err) => {
         if (!cancelled) setError(friendlyError(err).message);
       });
+    pushController()
+      .permission()
+      .then((state) => {
+        if (!cancelled) setPermission(state);
+      })
+      .catch(() => {
+        if (!cancelled) setPermission(null);
+      });
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const enableDeviceNotifications = useCallback(async () => {
+    setBusy(true);
+    try {
+      const state = await pushController().start();
+      setPermission(state);
+    } catch {
+      setPermission("denied");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const openSystemSettings = useCallback(async () => {
+    try {
+      await pushController().openSettings();
+    } catch {
+      /* recovery path is best-effort */
+    }
   }, []);
 
   const toggle = useCallback(
@@ -65,6 +97,29 @@ export function NotificationSettings() {
 
   return (
     <div className="flex flex-col gap-1 px-3 py-2">
+      {permission && permission !== "unsupported" ? (
+        <section className="mb-1 rounded-m3-xs border border-outline-variant p-3" aria-label="Device notifications">
+          {permission === "granted" ? (
+            <p className="text-xs text-on-surface-variant">Device notifications are on for this phone.</p>
+          ) : (
+            <>
+              <p className="text-sm font-medium text-on-surface">Turn on device notifications?</p>
+              <p className="mt-1 text-xs text-on-surface-variant">
+                FindBack can alert you to comments, mentions and activity on your reports. Android asks for
+                permission only when you tap the button below. The in-app inbox works either way.
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void (permission === "denied" ? openSystemSettings() : enableDeviceNotifications())}
+                className="mt-2 inline-flex min-h-[44px] items-center rounded-full bg-on-surface px-4 text-sm font-medium text-surface disabled:opacity-60"
+              >
+                {permission === "denied" ? "Open notification settings" : "Enable device notifications"}
+              </button>
+            </>
+          )}
+        </section>
+      ) : null}
       {TOGGLES.map(({ key, label, hint }) => {
         const disabled = key !== "pushEnabled" && pushOff;
         return (

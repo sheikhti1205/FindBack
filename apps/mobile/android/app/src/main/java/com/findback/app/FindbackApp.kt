@@ -3,6 +3,7 @@ package com.findback.app
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import com.findback.app.push.PushChannels
 
 /**
  * Tracks whether any FindBack activity is currently started.
@@ -17,6 +18,9 @@ class FindbackApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Create the category channels up front so Android Settings shows them
+        // before the first push arrives.
+        PushChannels.ensureCreated(this)
         registerActivityLifecycleCallbacks(
             object : ActivityLifecycleCallbacks {
                 var startedActivities = 0
