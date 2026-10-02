@@ -25,7 +25,7 @@ export const CAPABILITY_SUMMARY = [
   "Markdown supported in descriptions and Help answers; raw HTML/scripts/remote images stripped.",
   "Email verification uses a real one-time code. Phone verification is NOT enabled (no SMS provider).",
   "Not available: account deletion, private messaging, face recognition, automatic background matching.",
-  "Automatic execution mode, offline generative models, Needle text models, and GPU acceleration are hidden unless this device has a fresh passing measurement for the current model; with no verified measurement the app uses its default path and says nothing about them.",
+  "Automatic execution mode, offline generative models, Needle text models, and hardware acceleration are hidden unless this device has a fresh passing measurement for the current model; with no verified measurement the app uses its default path and says nothing about them.",
 ].join("\n");
 
 export function buildSystemPrompt(): string {
