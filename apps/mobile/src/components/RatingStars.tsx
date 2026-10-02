@@ -10,6 +10,8 @@ interface RatingStarsProps {
   /** id of the visible "Your rating" label; preferred over ariaLabel. */
   labelId?: string;
   ariaLabel?: string;
+  /** Prevent overlapping rating writes while preserving the selected value. */
+  pending?: boolean;
 }
 
 const STARS = [1, 2, 3, 4, 5];
@@ -23,6 +25,7 @@ interface StarButtonProps {
   label: string;
   buttonRef: Ref<HTMLButtonElement>;
   onRate: (star: number) => void;
+  disabled: boolean;
 }
 
 /**
@@ -31,7 +34,7 @@ interface StarButtonProps {
  * rolled-back submit releases without a bounce. The base outline star never
  * moves; only the overlay and the pop wrapper animate.
  */
-function StarButton({ star, filled, checked, tabIndex, label, buttonRef, onRate }: StarButtonProps) {
+function StarButton({ star, filled, checked, tabIndex, label, buttonRef, onRate, disabled }: StarButtonProps) {
   // Imperative pop: fires on the tap itself (not on the value round-trip),
   // so the acknowledgement is immediate even before the parent updates.
   // start() interrupts any in-flight pop — rapid taps restart, never queue.
@@ -44,6 +47,7 @@ function StarButton({ star, filled, checked, tabIndex, label, buttonRef, onRate 
       role="radio"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       // Roving focus: one tab stop for the whole group.
       tabIndex={tabIndex}
       onClick={() => {
@@ -78,7 +82,7 @@ function StarButton({ star, filled, checked, tabIndex, label, buttonRef, onRate 
  * jump to the ends. Community average is rendered separately by the caller so
  * the user's own stars are never filled from other people's ratings.
  */
-export function RatingStars({ value, onRate, labelId, ariaLabel }: RatingStarsProps) {
+export function RatingStars({ value, onRate, labelId, ariaLabel, pending = false }: RatingStarsProps) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeIndex = value != null ? value - 1 : 0;
 
@@ -94,8 +98,10 @@ export function RatingStars({ value, onRate, labelId, ariaLabel }: RatingStarsPr
       role="radiogroup"
       aria-label={ariaLabel}
       aria-labelledby={labelId}
+      aria-busy={pending}
       className="flex"
       onKeyDown={(e) => {
+        if (pending) return;
         const index = refs.current.findIndex((el) => el === document.activeElement);
         if (index < 0) return;
         if (e.key === "ArrowRight" || e.key === "ArrowDown") {
@@ -122,6 +128,7 @@ export function RatingStars({ value, onRate, labelId, ariaLabel }: RatingStarsPr
           tabIndex={i === activeIndex ? 0 : -1}
           label={`${star} star${star > 1 ? "s" : ""}`}
           onRate={onRate}
+          disabled={pending}
           buttonRef={(el) => {
             refs.current[i] = el;
           }}

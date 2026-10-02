@@ -160,7 +160,7 @@ describe("Home realtime", () => {
       }),
     );
 
-    expect(await screen.findByText(/^updates$/i)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Updates — tap to refresh" })).toBeTruthy();
     expect(screen.queryByText(/new post/i)).toBeNull();
   });
 
@@ -396,20 +396,20 @@ describe("Home realtime", () => {
       act(() =>
         emit("feed:changed", { change: "INSERT", op: "INSERT", postId: "n1", postType: "LOST", title: "Lost wallet" }),
       );
-      expect(await screen.findByText("1 new post")).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "1 new post — tap to refresh" })).toBeTruthy();
 
       // A second insert updates the count label (no full re-render of rows).
       act(() =>
         emit("feed:changed", { change: "INSERT", op: "INSERT", postId: "n2", postType: "FOUND", title: "Found keys" }),
       );
-      expect(await screen.findByText("2 new posts")).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "2 new posts — tap to refresh" })).toBeTruthy();
       expect(screen.getByText("a")).toBeTruthy();
 
       fetchFeedMock.mockClear();
       fireEvent.click(screen.getByRole("button", { name: /tap to refresh/i }));
       await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
       expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
-      await waitFor(() => expect(screen.queryByText(/new post/i)).toBeNull());
+      await waitFor(() => expect(screen.queryByRole("button", { name: /new posts? — tap to refresh/i })).toBeNull());
     } finally {
       HTMLElement.prototype.scrollTo = originalScrollTo;
     }

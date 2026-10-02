@@ -94,6 +94,12 @@ export function PostDetail() {
   const reactionSeq = useRef(0);
   const ratingSeq = useRef(0);
   const statusSeq = useRef(0);
+  // Sequence guards only protect response application. Synchronous locks
+  // also prevent competing server writes before React flushes disabled UI.
+  const reactionPendingRef = useRef(false);
+  const ratingPendingRef = useRef(false);
+  const [reactionPending, setReactionPending] = useState(false);
+  const [ratingPending, setRatingPending] = useState(false);
   // Generation guard: only the current post id / reload may apply results.
   const loadGen = useRef(0);
   // Per-section retry tokens: retries reuse the same generation, so each
@@ -102,7 +108,7 @@ export function PostDetail() {
   const socialSeq = useRef(0);
   const postPresentRef = useRef(false);
   // Track in-flight mutations to disable owner controls
-  const [mutationActive, setMutationActive] = useState<"reaction" | "rating" | "status" | null>(null);
+  const [statusPending, setStatusPending] = useState(false);
 
   const loadPost = useCallback(
     async (gen: number) => {
@@ -255,12 +261,14 @@ export function PostDetail() {
   const isOwner = user?.id === current.author.id;
 
   async function applyReaction(next: "LIKE" | "DISLIKE" | null) {
+    if (reactionPendingRef.current) return;
+    reactionPendingRef.current = true;
+    setReactionPending(true);
     const prev = myReaction;
     // Optimistic update
     setMyReaction(next);
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++reactionSeq.current;
-    setMutationActive("reaction");
     try {
       const res = await reactToPost(current.id, next);
       // Only apply if this is still the latest request
@@ -279,9 +287,8 @@ export function PostDetail() {
         announce(message);
       }
     } finally {
-      // Functional clear: the closure holds the pre-mutation value, so a
-      // direct comparison would never reset and lock the owner controls.
-      setMutationActive((cur) => (cur === "reaction" ? null : cur));
+      reactionPendingRef.current = false;
+      setReactionPending(false);
     }
   }
 
@@ -296,12 +303,14 @@ export function PostDetail() {
   }
 
   async function onRate(score: number) {
+    if (ratingPendingRef.current) return;
+    ratingPendingRef.current = true;
+    setRatingPending(true);
     const prev = myRating;
     // Optimistic update
     setMyRating(score);
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++ratingSeq.current;
-    setMutationActive("rating");
     try {
       const res = await ratePost(current.id, score);
       // Only apply if this is still the latest request
@@ -319,8 +328,8 @@ export function PostDetail() {
         announce(message);
       }
     } finally {
-      // Functional clear (see applyReaction): never leave controls stuck.
-      setMutationActive((cur) => (cur === "rating" ? null : cur));
+      ratingPendingRef.current = false;
+      setRatingPending(false);
     }
   }
 
@@ -368,7 +377,7 @@ export function PostDetail() {
     }
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++statusSeq.current;
-    setMutationActive("status");
+    setStatusPending(true);
     try {
       const updated = await updatePostStatus(current.id, status);
       // Only apply if this is still the latest request
@@ -384,9 +393,7 @@ export function PostDetail() {
         announce(message);
       }
     } finally {
-      // Functional clear (see applyReaction): the owner control must unlock
-      // so a confirmed Recovered/Closed can be followed by another change.
-      setMutationActive((cur) => (cur === "status" ? null : cur));
+      if (statusSeq.current === seq) setStatusPending(false);
     }
   }
 
@@ -394,7 +401,7 @@ export function PostDetail() {
   const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
 
   // Owner status control is disabled while any mutation is active
-  const ownerControlsDisabled = mutationActive !== null;
+  const ownerControlsDisabled = reactionPending || ratingPending || statusPending;
 
   const strippedDescription = stripMarkdown(current.description ?? "");
   const descriptionIsLong = strippedDescription.length > DESCRIPTION_PREVIEW_LIMIT;
@@ -455,7 +462,9 @@ export function PostDetail() {
             type="button"
             className="fb-report-action"
             onClick={toggleLove}
-            aria-label={`Love, ${post.likeCount} ${post.likeCount === 1 ? "vote" : "votes"}`}
+            disabled={reactionPending}
+            aria-busy={reactionPending}
+            aria-label={`Love, ${post.likeCount} ${post.likeCount === 1 ? "love" : "loves"}`}
             aria-pressed={myReaction === "LIKE"}
           >
             <Heart size={20} aria-hidden fill={myReaction === "LIKE" ? "currentColor" : "none"} /> {post.likeCount}
@@ -557,10 +566,10 @@ export function PostDetail() {
           )}
           <div className="border-t border-outline-variant pt-3">
             <p className="text-sm font-medium" id="your-rating-label">Your rating{myRating != null ? `: ${myRating} out of 5` : ""}</p>
-            <RatingStars value={myRating} onRate={(s) => void onRate(s)} labelId="your-rating-label" />
+            <RatingStars value={myRating} onRate={(s) => void onRate(s)} labelId="your-rating-label" pending={ratingPending} />
             <p className="text-xs text-on-surface-variant">Tap a star to rate this report.</p>
           </div>
-          <Button variant="text" className="self-start" onClick={toggleDislike} aria-label={`Not helpful, ${post.dislikeCount} ${post.dislikeCount === 1 ? "vote" : "votes"}`} aria-pressed={myReaction === "DISLIKE"}>
+          <Button variant="text" className="self-start" onClick={toggleDislike} disabled={reactionPending} aria-busy={reactionPending} aria-label={`Not helpful, ${post.dislikeCount} ${post.dislikeCount === 1 ? "reaction" : "reactions"}`} aria-pressed={myReaction === "DISLIKE"}>
             <ThumbsDown size={16} aria-hidden /> Not helpful · {post.dislikeCount}
           </Button>
         </section>
@@ -639,9 +648,6 @@ export function PostDetail() {
             Reports of the opposite type with similar details. Review them yourself before reaching out.
           </p>
           {post.status === "OPEN" && <PossibleMatches post={post} />}
-          <p className="text-xs text-on-surface-variant" role="note">
-            Suggestions, not confirmed matches.
-          </p>
         </section>
 
         {/* Comments */}

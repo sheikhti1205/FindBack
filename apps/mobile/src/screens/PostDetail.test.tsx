@@ -37,6 +37,7 @@ vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
 
 import { PostDetail } from "./PostDetail";
+import { LiveRegion } from "../components/LiveRegion";
 
 beforeEach(() => {
   authState.user = { id: "u9", username: "reader" };
@@ -220,9 +221,16 @@ describe("PostDetail comment delete visibility", () => {
   });
 });
 
-describe("PostDetail mutation sequencing", () => {
-  let resolveReact: (value: { postId: string; likeCount: number; dislikeCount: number; myReaction: "LIKE" | "DISLIKE" | null }) => void;
-  let resolveRate: (value: { postId: string; score: number; ratingAvg: number | null; ratingCount: number }) => void;
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+describe("PostDetail mutation locks", () => {
+  let reaction: ReturnType<typeof deferred<{ postId: string; likeCount: number; dislikeCount: number; myReaction: "LIKE" | "DISLIKE" | null }>>;
+  let rating: ReturnType<typeof deferred<{ postId: string; score: number; ratingAvg: number | null; ratingCount: number }>>;
 
   beforeEach(() => {
     postsMock.fetchPost.mockResolvedValue(basePost);
@@ -230,86 +238,128 @@ describe("PostDetail mutation sequencing", () => {
     postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
 
-    // Create deferred promises for each mutation
-    postsMock.reactToPost.mockImplementation(() => new Promise((resolve) => { resolveReact = resolve; }));
-    postsMock.ratePost.mockImplementation(() => new Promise((resolve) => { resolveRate = resolve; }));
+    reaction = deferred();
+    rating = deferred();
+    postsMock.reactToPost.mockImplementation(() => reaction.promise);
+    postsMock.ratePost.mockImplementation(() => rating.promise);
   });
 
   afterEach(cleanup);
 
-  it("latest reaction wins: rapid toggle LIKE->DISLIKE with DISLIKE response first, then LIKE response - UI stays DISLIKE", async () => {
+  it("sends one Love RPC on a rapid double tap and shares the lock with Not helpful", async () => {
     renderDetail();
-    await waitFor(() => screen.getByRole("button", { name: /Love/ }));
-
-    // Click LIKE (starts request A)
-    const likeButton = screen.getByRole("button", { name: /Love/ });
-    fireEvent.click(likeButton);
+    const likeButton = await screen.findByRole("button", { name: /Love/ });
+    const dislikeButton = screen.getByRole("button", { name: /Not helpful/ });
+    // Same React batch also exercises the synchronous ref guard.
+    act(() => {
+      fireEvent.click(likeButton);
+      fireEvent.click(likeButton);
+      fireEvent.click(dislikeButton);
+    });
+    expect(postsMock.reactToPost).toHaveBeenCalledTimes(1);
     expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE");
     expect(likeButton.getAttribute("aria-pressed")).toBe("true");
-
-    // Click DISLIKE quickly (starts request B, cancels A's effect on local state)
-    const dislikeButton = screen.getByRole("button", { name: /Not helpful/ });
-    fireEvent.click(dislikeButton);
-    expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "DISLIKE");
-    expect(dislikeButton.getAttribute("aria-pressed")).toBe("true");
-    expect(likeButton.getAttribute("aria-pressed")).toBe("false");
-
-    // Resolve B (DISLIKE) first
-    resolveReact!({ postId: "p1", likeCount: 0, dislikeCount: 1, myReaction: "DISLIKE" });
-    await waitFor(() => expect(dislikeButton.getAttribute("aria-pressed")).toBe("true"));
-
-    // Resolve A (LIKE) second - should NOT overwrite the newer DISLIKE state
-    resolveReact!({ postId: "p1", likeCount: 1, dislikeCount: 0, myReaction: "LIKE" });
-    await waitFor(() => expect(dislikeButton.getAttribute("aria-pressed")).toBe("true"));
-    expect(likeButton.getAttribute("aria-pressed")).toBe("false");
+    for (const button of [likeButton, dislikeButton]) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      expect(button.getAttribute("aria-busy")).toBe("true");
+    }
+    await act(async () => reaction.resolve({ postId: "p1", likeCount: 1, dislikeCount: 0, myReaction: "LIKE" }));
+    expect((likeButton as HTMLButtonElement).disabled).toBe(false);
+    expect(likeButton.getAttribute("aria-busy")).toBe("false");
+    expect((dislikeButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(likeButton);
+    expect(postsMock.reactToPost).toHaveBeenLastCalledWith("p1", null);
   });
 
-  it("latest rating wins: rapid rate 3->5 with 5 response first, then 3 response - UI stays 5", async () => {
+  it("Not helpful locks Love until the reaction settles", async () => {
     renderDetail();
-    await waitFor(() => screen.getByRole("radiogroup"));
+    const likeButton = await screen.findByRole("button", { name: /Love/ });
+    const dislikeButton = screen.getByRole("button", { name: /Not helpful/ });
+    fireEvent.click(dislikeButton);
+    fireEvent.click(likeButton);
+    expect(postsMock.reactToPost).toHaveBeenCalledTimes(1);
+    expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "DISLIKE");
+    expect((likeButton as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => reaction.resolve({ postId: "p1", likeCount: 0, dislikeCount: 1, myReaction: "DISLIKE" }));
+    expect((likeButton as HTMLButtonElement).disabled).toBe(false);
+    expect(dislikeButton.getAttribute("aria-pressed")).toBe("true");
+  });
 
-    // Rate 3 stars (starts request A)
+  it("rolls a failed reaction back, announces it and allows retry", async () => {
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: "LIKE", myRating: null });
+    render(<LiveRegion />);
+    renderDetail();
+    const likeButton = await screen.findByRole("button", { name: /Love/ });
+    await waitFor(() => expect(likeButton.getAttribute("aria-pressed")).toBe("true"));
+    fireEvent.click(likeButton);
+    expect(likeButton.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => reaction.reject(new Error("Reaction could not be saved")));
+    expect(likeButton.getAttribute("aria-pressed")).toBe("true");
+    expect((likeButton as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole("alert").textContent).toBe("Reaction could not be saved");
+    expect(screen.getByTestId("live-region-announcement").textContent).toBe("Reaction could not be saved");
+    reaction = deferred();
+    fireEvent.click(likeButton);
+    expect(postsMock.reactToPost).toHaveBeenCalledTimes(2);
+    await act(async () => reaction.resolve({ postId: "p1", likeCount: 0, dislikeCount: 0, myReaction: null }));
+  });
+
+  it("locks every star during a rating request, then allows the next rating", async () => {
+    renderDetail();
+    await screen.findByRole("radiogroup", { name: /Your rating/ });
     const star3 = screen.getByRole("radio", { name: "3 stars" });
-    fireEvent.click(star3);
+    const star5 = screen.getByRole("radio", { name: "5 stars" });
+    act(() => {
+      fireEvent.click(star3);
+      fireEvent.click(star5);
+    });
+    expect(postsMock.ratePost).toHaveBeenCalledTimes(1);
     expect(postsMock.ratePost).toHaveBeenCalledWith("p1", 3);
+    for (const radio of screen.getAllByRole("radio")) expect((radio as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("radiogroup", { name: /Your rating/ }).getAttribute("aria-busy")).toBe("true");
+    await act(async () => rating.resolve({ postId: "p1", score: 3, ratingAvg: 3, ratingCount: 1 }));
+    expect(star3.getAttribute("aria-checked")).toBe("true");
+    expect((star5 as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole("radiogroup", { name: /Your rating/ }).getAttribute("aria-busy")).toBe("false");
+    rating = deferred();
+    fireEvent.click(star5);
+    expect(postsMock.ratePost).toHaveBeenLastCalledWith("p1", 5);
+    await act(async () => rating.resolve({ postId: "p1", score: 5, ratingAvg: 5, ratingCount: 1 }));
+    expect(star5.getAttribute("aria-checked")).toBe("true");
+  });
 
-    // Rate 5 stars quickly (starts request B)
+  it("restores the previous rating and announces a real failure", async () => {
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: 2 });
+    render(<LiveRegion />);
+    renderDetail();
+    const star2 = await screen.findByRole("radio", { name: "2 stars" });
+    await waitFor(() => expect(star2.getAttribute("aria-checked")).toBe("true"));
     const star5 = screen.getByRole("radio", { name: "5 stars" });
     fireEvent.click(star5);
-    expect(postsMock.ratePost).toHaveBeenCalledWith("p1", 5);
-
-    // Resolve B (5 stars) first
-    resolveRate!({ postId: "p1", score: 5, ratingAvg: 5, ratingCount: 1 });
-    await waitFor(() => expect(star5.getAttribute("aria-checked")).toBe("true"));
-
-    // Resolve A (3 stars) second - should NOT overwrite the newer 5-star state
-    resolveRate!({ postId: "p1", score: 3, ratingAvg: 3, ratingCount: 1 });
-    await waitFor(() => expect(star5.getAttribute("aria-checked")).toBe("true"));
-    expect(star3.getAttribute("aria-checked")).toBe("false");
+    expect(star5.getAttribute("aria-checked")).toBe("true");
+    await act(async () => rating.reject(new Error("Rating could not be saved")));
+    expect(star2.getAttribute("aria-checked")).toBe("true");
+    expect(star5.getAttribute("aria-checked")).toBe("false");
+    expect((star5 as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole("alert").textContent).toBe("Rating could not be saved");
+    expect(screen.getByTestId("live-region-announcement").textContent).toBe("Rating could not be saved");
+    rating = deferred();
+    fireEvent.click(star5);
+    expect(postsMock.ratePost).toHaveBeenCalledTimes(2);
+    await act(async () => rating.resolve({ postId: "p1", score: 5, ratingAvg: 5, ratingCount: 1 }));
   });
 
-  it("stale failure must not roll back newer success: reaction A fails after B succeeds - UI stays B", async () => {
+  it("keeps owner controls locked until both independent social requests settle", async () => {
+    authState.user = { id: "u2", username: "owner" };
     renderDetail();
-    await waitFor(() => screen.getByRole("button", { name: /Love/ }));
-
-    // Click LIKE (starts request A)
-    const likeButton = screen.getByRole("button", { name: /Love/ });
+    const likeButton = await screen.findByRole("button", { name: /Love/ });
     fireEvent.click(likeButton);
-    expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE");
-
-    // Click DISLIKE quickly (starts request B)
-    const dislikeButton = screen.getByRole("button", { name: /Not helpful/ });
-    fireEvent.click(dislikeButton);
-    expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "DISLIKE");
-
-    // Resolve B (DISLIKE) success
-    resolveReact!({ postId: "p1", likeCount: 0, dislikeCount: 1, myReaction: "DISLIKE" });
-    await waitFor(() => expect(dislikeButton.getAttribute("aria-pressed")).toBe("true"));
-
-    // Reject A (LIKE) failure - should NOT roll back the newer DISLIKE state
-    // We need to reject the first promise. Since we can't easily do that with the current mock setup,
-    // we'll test that the UI doesn't change when an error occurs for an older request.
-    // The implementation should track sequence numbers and ignore stale responses.
+    fireEvent.click(screen.getByRole("radio", { name: "3 stars" }));
+    await act(async () => rating.resolve({ postId: "p1", score: 3, ratingAvg: 3, ratingCount: 1 }));
+    const status = screen.getByRole("radio", { name: "Matched" });
+    expect(status.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => reaction.resolve({ postId: "p1", likeCount: 1, dislikeCount: 0, myReaction: "LIKE" }));
+    expect(status.getAttribute("aria-disabled")).toBe("false");
   });
 });
 

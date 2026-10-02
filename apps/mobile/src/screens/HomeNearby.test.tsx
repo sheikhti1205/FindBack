@@ -371,7 +371,7 @@ describe("Home nearby discovery (UXN-1)", () => {
     act(() =>
       emit("feed:changed", { change: "INSERT", op: "INSERT", postId: "n1", postType: "LOST" }),
     );
-    expect(await screen.findByText(/^updates$/i)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Updates — tap to refresh" })).toBeTruthy();
     expect(screen.queryByText(/new post/i)).toBeNull();
     expect(fetchFeedMock).not.toHaveBeenCalled();
   });

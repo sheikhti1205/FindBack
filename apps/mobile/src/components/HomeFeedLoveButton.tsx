@@ -70,7 +70,7 @@ export function HomeFeedLoveButton({
         type="button"
         data-testid="home-feed-love"
         aria-pressed={loved}
-        aria-label={`${loved ? "Loved — tap to unlove this report" : "Love this report"}, ${count} votes`}
+        aria-label={`${loved ? "Loved — tap to unlove this report" : "Love this report"}, ${count} ${count === 1 ? "love" : "loves"}`}
         aria-describedby={failed ? errorId : undefined}
         data-pending={pending ? "true" : "false"}
         // Disabled while in flight: a rapid second tap must not reach the

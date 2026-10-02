@@ -27,24 +27,29 @@ export function NewPostsPill({ count, hasUpdates, onTap }: NewPostsPillProps) {
   const visible = count > 0 || hasUpdates === true;
   const label = count > 0 ? `${count} new post${count === 1 ? "" : "s"}` : "Updates";
   return (
-    <div className="sticky top-2 z-10 flex min-h-[48px] justify-center px-4" aria-live="polite">
+    <>
+      <span className="sr-only" aria-live="polite">{visible ? label : ""}</span>
       <AnimatePresence initial={false}>
         {visible && (
-          <motion.button
+          <motion.div
             key="new-posts-pill"
-            type="button"
-            onClick={onTap}
             initial={{ opacity: 0, y: -12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
-            className="min-h-[48px] rounded-full bg-on-surface px-4 py-2 text-sm font-medium text-surface shadow-lg"
-            aria-label={`${label} — tap to refresh`}
+            className="sticky top-2 z-10 flex min-h-[48px] justify-center px-4"
           >
-            {label}
-          </motion.button>
+            <button
+              type="button"
+              onClick={onTap}
+              className="min-h-[48px] rounded-full bg-on-surface px-4 py-2 text-sm font-medium text-surface shadow-lg"
+              aria-label={`${label} — tap to refresh`}
+            >
+              {label}
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </>
   );
 }

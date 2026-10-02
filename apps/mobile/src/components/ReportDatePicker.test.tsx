@@ -574,16 +574,21 @@ describe("ReportDatePicker", () => {
 
   it("a day tapped in the wake of a swipe is not selected", async () => {
     const zone = await openSheet("2026-09-26");
-    swipe(zone, 100, 220);
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /August 2026/i })).toBeTruthy();
-    });
-    // The swipe's own touchend can synthesize a click on the cell under the
-    // finger; it must not move the pending selection.
-    fireEvent.click(screen.getByRole("button", { name: /Thursday, August 20, 2026/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith("2026-09-26");
+    // The synthetic click represents the swipe's immediate follow-up, even
+    // when full-suite CPU load delays the test beyond the 400ms guard window.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    try {
+      swipe(zone, 100, 220);
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: /August 2026/i })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Thursday, August 20, 2026/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledWith("2026-09-26");
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("a day tapped without a preceding swipe still selects", async () => {

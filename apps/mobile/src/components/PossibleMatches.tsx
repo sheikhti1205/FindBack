@@ -162,7 +162,7 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
           </motion.li>
         ))}
       </ul>
-      <p className="mt-3 text-xs text-on-surface-variant" role="contentinfo">
+      <p className="mt-3 text-xs text-on-surface-variant" role="note">
         These are text-similarity suggestions, not confirmed matches.
       </p>
     </section>

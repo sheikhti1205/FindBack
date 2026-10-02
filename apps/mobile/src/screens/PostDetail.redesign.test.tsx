@@ -256,8 +256,20 @@ describe("PostDetail redesign (UXN-3)", () => {
     expect(rating.compareDocumentPosition(screen.getByTestId("detail-overview")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("matches section carries the suggestions disclaimer", async () => {
+  it("matches carry one local disclaimer rather than a duplicate footer landmark", async () => {
+    findMock.mockResolvedValue({
+      available: true,
+      candidatesConsidered: 1,
+      matches: [{
+        post: { id: "p2", title: "Found wallet", category: "Accessories", photoUrl: null },
+        similarity: 0.8,
+        reasons: ["Same category"],
+      }],
+    });
     renderDetail();
-    expect(await screen.findByText(/suggestions, not confirmed matches/i)).toBeTruthy();
+    const disclaimers = await screen.findAllByText(/suggestions, not confirmed matches/i);
+    expect(disclaimers).toHaveLength(1);
+    expect(disclaimers[0]?.getAttribute("role")).toBe("note");
+    expect(screen.queryByRole("contentinfo")).toBeNull();
   });
 });
