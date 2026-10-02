@@ -19,7 +19,7 @@ vi.mock("../services/notifications", () => ({
 }));
 vi.mock("../services/notificationSignals", () => ({ signalInboxChanged: signalMock }));
 
-import { Notifications, UNDO_WINDOW_MS, swipeActionFor } from "./Notifications";
+import { Notifications, UNDO_WINDOW_MS, notificationRoute, swipeActionFor } from "./Notifications";
 
 function item() {
   return {
@@ -66,6 +66,30 @@ describe("swipeActionFor", () => {
     expect(swipeActionFor(-120)).toBe("delete");
     expect(swipeActionFor(10)).toBeNull();
     expect(swipeActionFor(-10)).toBeNull();
+  });
+});
+
+describe("notificationRoute", () => {
+  it("focuses the exact comment for comment and mention rows", () => {
+    expect(notificationRoute({ postId: "p1", commentId: "c1", type: "COMMENT" })).toBe(
+      "/posts/p1?comment=c1#detail-comments",
+    );
+    expect(notificationRoute({ postId: "p1", commentId: null, type: "MENTION" })).toBe(
+      "/posts/p1#detail-comments",
+    );
+  });
+
+  it("routes reactions to activity and status to management", () => {
+    expect(notificationRoute({ postId: "p1", commentId: null, type: "LIKE" })).toBe(
+      "/posts/p1#detail-activity",
+    );
+    expect(notificationRoute({ postId: "p1", commentId: null, type: "STATUS" })).toBe(
+      "/posts/p1#detail-manage",
+    );
+  });
+
+  it("returns null without a report and never emits a raw external path", () => {
+    expect(notificationRoute({ postId: null, commentId: null, type: "LIKE" })).toBeNull();
   });
 });
 

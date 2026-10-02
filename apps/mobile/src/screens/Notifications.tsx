@@ -30,6 +30,30 @@ export function swipeActionFor(offsetX: number): "toggle-read" | "delete" | null
   return null;
 }
 
+/**
+ * Tap destination on the same allowlisted contract as share links and push
+ * taps: comments focus the exact comment, reactions open activity, status
+ * opens management. Never passes a raw external path into the router.
+ */
+export function notificationRoute(item: {
+  postId: string | null;
+  commentId: string | null;
+  type: NotificationType;
+}): string | null {
+  if (!item.postId) return null;
+  if ((item.type === "COMMENT" || item.type === "MENTION") && item.commentId) {
+    return `/posts/${item.postId}?comment=${encodeURIComponent(item.commentId)}#detail-comments`;
+  }
+  if (item.type === "COMMENT" || item.type === "MENTION") {
+    return `/posts/${item.postId}#detail-comments`;
+  }
+  if (item.type === "LIKE" || item.type === "DISLIKE") {
+    return `/posts/${item.postId}#detail-activity`;
+  }
+  if (item.type === "STATUS") return `/posts/${item.postId}#detail-manage`;
+  return `/posts/${item.postId}`;
+}
+
 function typeLabel(type: NotificationType): string {
   switch (type) {
     case "LIKE":
@@ -303,7 +327,7 @@ export function Notifications() {
               >
                 {item.postId ? (
                   <Link
-                    to={`/posts/${item.postId}`}
+                    to={notificationRoute(item) ?? `/posts/${item.postId}`}
                     onClick={() => {
                       if (!item.read) void handleMarkRead(item.id);
                     }}
