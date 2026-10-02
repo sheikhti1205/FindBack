@@ -5,7 +5,7 @@ phases 2–3 and notification credential provisioning. Baseline `90c9b31`.
 
 ## Contracts and constraints
 
-- Public origin: `https://ambitious-wave-0f1b6c500.3.azurestaticapps.net`.
+- Public origin: `https://findbackapp.social`.
 - External path: `/r/<UUID>`; optional `focus=comments|activity|manage`, with
   `comment=<UUID>` only for comments. Reject unknown hosts, malformed IDs,
   duplicate/unknown parameters, credentials and normalization tricks.

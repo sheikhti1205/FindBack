@@ -75,7 +75,7 @@ comment payloads expose a public author profile only — never email or phone.
 ## Public sharing and Android App Links
 
 The public web surface is hosted at
-<https://ambitious-wave-0f1b6c500.3.azurestaticapps.net>. Shared reports use
+<https://findbackapp.social>. Shared reports use
 `/r/<UUID>` and require a FindBack account to view report content. Signing in
 resumes the validated report link, including a comments/activity/manage focus.
 Android builds declare verified HTTPS App Links for the same host; the public

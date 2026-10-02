@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseReportLink, reportLink } from "./reportLinks";
 
-const origin = "https://ambitious-wave-0f1b6c500.3.azurestaticapps.net";
+const origin = "https://findbackapp.social";
 const id = "5b6f7c8d-1234-4abc-8def-123456789012";
 afterEach(() => vi.unstubAllEnvs());
 
@@ -20,9 +20,9 @@ describe("external report link contract", () => {
     expect(parseReportLink(`${origin}/r/${id}`, origin)?.route).toBe(`/posts/${id}`);
   });
   it.each([
-    `http://ambitious-wave-0f1b6c500.3.azurestaticapps.net/r/${id}`,
+    `http://findbackapp.social/r/${id}`,
     `https://evil.test/r/${id}`,
-    `https://user@ambitious-wave-0f1b6c500.3.azurestaticapps.net/r/${id}`,
+    `https://user@findbackapp.social/r/${id}`,
     `${origin}:444/r/${id}`, `${origin}/posts/${id}`, `${origin}/r/../r/${id}`,
     `${origin}/r/p1`, `${origin}/r/${id}/extra`, `${origin}/r/%2Fsignin`,
     `${origin}/r/${id}?focus=unknown`, `${origin}/r/${id}?comment=bad`,

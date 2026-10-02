@@ -14,12 +14,12 @@ test("FCM sync accepts only the dedicated sender and valid private key", async (
   const input = {
     FIREBASE_SERVICE_ACCOUNT_JSON: JSON.stringify(sender),
     SUPABASE_PROJECT_REF: "nfjhpigbsyyoaaktfaev",
-    VITE_PUBLIC_SHARE_ORIGIN: "https://ambitious-wave-0f1b6c500.3.azurestaticapps.net",
+    VITE_PUBLIC_SHARE_ORIGIN: "https://findbackapp.social",
   };
   assert.deepEqual(fcmSecretValues(input), {
     FIREBASE_SERVICE_ACCOUNT_JSON: JSON.stringify(sender),
     FCM_PROJECT_ID: "findback-mobile-app",
-    PUBLIC_SHARE_ORIGIN: "https://ambitious-wave-0f1b6c500.3.azurestaticapps.net",
+    PUBLIC_SHARE_ORIGIN: "https://findbackapp.social",
   });
   for (const change of [
     { project_id: "wrong-project" },

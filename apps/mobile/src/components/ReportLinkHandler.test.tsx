@@ -14,7 +14,7 @@ vi.mock("@capacitor/app", () => ({ App: {
 import { ReportLinkHandler } from "./ReportLinkHandler";
 import { getPendingReportRoute } from "../utils/pendingReportLink";
 
-const origin = "https://ambitious-wave-0f1b6c500.3.azurestaticapps.net";
+const origin = "https://findbackapp.social";
 const id = "5b6f7c8d-1234-4abc-8def-123456789012";
 function Location() { const l = useLocation(); return <output>{l.pathname}{l.search}{l.hash}</output>; }
 function Harness() { return <MemoryRouter><ReportLinkHandler /><Location /></MemoryRouter>; }

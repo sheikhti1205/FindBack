@@ -11,7 +11,7 @@ function Destination() { const l=useLocation(); return <output>{l.pathname}{l.se
 function renderLink(path=`/shared/${id}`) {
   return render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/shared/:id" element={<SharedReport />} /><Route path="/posts/:id" element={<Destination />} /></Routes></MemoryRouter>);
 }
-beforeEach(() => { auth.user=null; sessionStorage.clear(); vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", "https://ambitious-wave-0f1b6c500.3.azurestaticapps.net"); });
+beforeEach(() => { auth.user=null; sessionStorage.clear(); vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", "https://findbackapp.social"); });
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
 describe("public shared-report gate", () => {
   it("reveals no report data and retains the destination while signed out", () => {

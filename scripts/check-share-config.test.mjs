@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { validateShareOrigin, checkShareChunks } from "./check-share-config.mjs";
 
 test("accepts a bare production HTTPS origin", () => {
-  assert.equal(validateShareOrigin("https://ambitious-wave-0f1b6c500.3.azurestaticapps.net"), "https://ambitious-wave-0f1b6c500.3.azurestaticapps.net");
+  assert.equal(validateShareOrigin("https://findbackapp.social"), "https://findbackapp.social");
 });
 test("rejects local, non-HTTPS, credentials, paths, placeholders, and IP origins", () => {
   for (const origin of ["", "http://findback.test", "https://localhost", "https://foo.localhost", "https://127.0.0.1", "https://[::1]", "https://10.0.0.1", "file:///tmp", "capacitor://localhost", "https://u:p@findback.test", "https://findback.test/r", "https://findback.test?x=1", "https://findback.test#x", "https://example.com", "https://findback.local"]) {

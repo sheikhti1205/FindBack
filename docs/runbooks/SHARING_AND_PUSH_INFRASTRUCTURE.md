@@ -2,7 +2,8 @@
 
 ## Provisioned endpoints
 
-- Public web: `https://ambitious-wave-0f1b6c500.3.azurestaticapps.net`.
+- Public web: `https://findbackapp.social` (Azure Static Web Apps custom domain;
+  `https://ambitious-wave-0f1b6c500.3.azurestaticapps.net` remains the default host).
 - Azure Static Web Apps: `findback-web`, `findback-rg`, East Asia, Free SKU.
 - Supabase project: `nfjhpigbsyyoaaktfaev` (existing Auth, Data API, Realtime and Storage).
 - Firebase project: `findback-mobile-app`, number `847111479023`.
