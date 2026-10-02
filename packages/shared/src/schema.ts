@@ -196,6 +196,10 @@ export interface PostItem {
 export interface CommentItem {
   id: string;
   postId: string;
+  /** Parent comment for a threaded reply; null/absent for a top-level comment. */
+  parentId?: string | null;
+  /** Nesting level (0 = top-level, capped server-side at 5). */
+  depth?: number;
   author: PublicProfile;
   body: string;
   createdAt: string;

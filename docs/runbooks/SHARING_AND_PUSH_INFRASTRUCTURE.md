@@ -107,9 +107,9 @@ GitHub storage and Supabase digest verification.
 
 ## Remaining v0.3 gates
 
-The infrastructure pass does not implement inbox read/unread/delete/restore,
-private inbox Realtime, FCM permission/channels/tokens/preferences/dispatch, or
-scoped direct reply. These remain feature-wave work.
+Inbox read/unread/delete/restore, the private inbox Realtime signal, FCM
+permission/channels/token registration/preferences and server-side dispatch are
+implemented. Scoped Android direct reply from the notification shade is not.
 
 No Android device is currently connected. Before releasing v0.3, install a
 release-signed candidate and verify OS App Links association and cold/warm taps,

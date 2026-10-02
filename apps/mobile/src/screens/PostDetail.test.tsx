@@ -611,3 +611,80 @@ describe("PostDetail shared card → detail element (Wave A)", () => {
     expect(await screen.findByRole("img", { name: "Photo for Lost camera" })).toBeTruthy();
   });
 });
+
+describe("PostDetail threaded replies", () => {
+  const parent = {
+    id: "c1",
+    postId: "p1",
+    parentId: null,
+    depth: 0,
+    body: "top level",
+    createdAt: "2026-09-02T00:00:00.000Z",
+    updatedAt: "2026-09-02T00:00:00.000Z",
+    author: { id: "u9", username: "commenter" },
+  };
+  const child = {
+    id: "c2",
+    postId: "p1",
+    parentId: "c1",
+    depth: 1,
+    body: "nested reply",
+    createdAt: "2026-09-02T00:01:00.000Z",
+    updatedAt: "2026-09-02T00:01:00.000Z",
+    author: { id: "u4", username: "replier" },
+  };
+
+  beforeEach(() => {
+    postsMock.fetchPost.mockResolvedValue(basePost);
+    postsMock.fetchComments.mockResolvedValue([parent, child]);
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+    postsMock.deleteComment.mockResolvedValue(undefined);
+  });
+
+  afterEach(cleanup);
+
+  it("nests a reply inside its parent", async () => {
+    renderDetail();
+    const nested = await screen.findByText("nested reply");
+    const list = nested.closest("ul");
+    expect(list?.className).toContain("border-l");
+  });
+
+  it("posts a reply with the parent id and clears the reply banner", async () => {
+    postsMock.addComment.mockResolvedValue({
+      id: "c3",
+      postId: "p1",
+      parentId: "c1",
+      depth: 1,
+      body: "me too",
+      createdAt: "2026-09-02T00:02:00.000Z",
+      updatedAt: "2026-09-02T00:02:00.000Z",
+      author: { id: "u9", username: "reader" },
+    });
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Reply to commenter" }));
+    expect(screen.getByText(/replying to/i)).toBeTruthy();
+
+    const input = screen.getByPlaceholderText("Reply to @commenter…");
+    fireEvent.change(input, { target: { value: "me too" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+
+    await waitFor(() => expect(postsMock.addComment).toHaveBeenCalledWith("p1", "me too", "c1"));
+    await waitFor(() => expect(screen.queryByText(/replying to/i)).toBeNull());
+  });
+
+  it("removes a deleted parent's replies locally", async () => {
+    renderDetail();
+    await screen.findByText("nested reply");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete comment by commenter" }));
+
+    await waitFor(() => expect(postsMock.deleteComment).toHaveBeenCalledWith("p1", "c1"));
+    await waitFor(() => {
+      expect(screen.queryByText("top level")).toBeNull();
+      expect(screen.queryByText("nested reply")).toBeNull();
+    });
+  });
+});

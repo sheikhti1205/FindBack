@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, ExternalLink, Heart, MapPin, MessageCircle, Star, Tag, ThumbsDown, Trash2 } from "lucide-react";
+import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, MessageCircle, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -91,6 +91,7 @@ export function PostDetail() {
   const [mapOpen, setMapOpen] = useState(false);
   const [videoOpen, setVideoOpen] = useState(false);
   const [commentsExpanded, setCommentsExpanded] = useState(false);
+  const [replyTo, setReplyTo] = useState<CommentItem | null>(null);
   const [lightbox, setLightbox] = useState<{ index: number; origin: PhotoLightboxOriginRect | null } | null>(null);
 
   // Sequence tokens for latest-request-wins mutation sequencing
@@ -352,9 +353,10 @@ export function PostDetail() {
     if (body.length > 1000) return;
     setBusy(true);
     try {
-      const comment = await addComment(current.id, body);
+      const comment = await addComment(current.id, body, replyTo?.id ?? null);
       setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
       setCommentText("");
+      setReplyTo(null);
     } catch (err) {
       const message = friendlyError(err).message;
       setActionError(message);
@@ -367,7 +369,21 @@ export function PostDetail() {
   async function onDeleteComment(commentId: string) {
     try {
       await deleteComment(current.id, commentId);
-      setComments((prev) => prev.filter((c) => c.id !== commentId));
+      // Deleting a parent cascades server-side; mirror that locally by removing
+      // the whole subtree so no orphaned reply is left on screen.
+      const doomed = new Set<string>([commentId]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const c of comments) {
+          if (c.parentId && doomed.has(c.parentId) && !doomed.has(c.id)) {
+            doomed.add(c.id);
+            grew = true;
+          }
+        }
+      }
+      setComments((prev) => prev.filter((c) => !doomed.has(c.id)));
+      if (replyTo && doomed.has(replyTo.id)) setReplyTo(null);
     } catch (err) {
       const message = friendlyError(err).message;
       setActionError(message);
@@ -420,10 +436,74 @@ export function PostDetail() {
     ? `${strippedDescription.slice(0, DESCRIPTION_PREVIEW_LIMIT).trimEnd()}…`
     : strippedDescription;
 
-  const visibleComments =
-    commentsExpanded || linkedComment || comments.length <= COMMENTS_PREVIEW_COUNT
-      ? comments
-      : comments.slice(0, COMMENTS_PREVIEW_COUNT);
+  // Threaded comments: group replies under their parent. A reply whose parent is
+  // not in the current page is treated as a root so it is never hidden.
+  const childrenByParent = new Map<string, CommentItem[]>();
+  const commentRoots: CommentItem[] = [];
+  for (const c of comments) {
+    const parentId = c.parentId ?? null;
+    if (parentId && comments.some((p) => p.id === parentId)) {
+      const list = childrenByParent.get(parentId) ?? [];
+      list.push(c);
+      childrenByParent.set(parentId, list);
+    } else {
+      commentRoots.push(c);
+    }
+  }
+  const visibleRoots =
+    commentsExpanded || linkedComment || commentRoots.length <= COMMENTS_PREVIEW_COUNT
+      ? commentRoots
+      : commentRoots.slice(0, COMMENTS_PREVIEW_COUNT);
+
+  const renderComment = (c: CommentItem): React.ReactNode => {
+    const canDelete = c.author.id === user?.id || isOwner;
+    const children = childrenByParent.get(c.id) ?? [];
+    const isReplyTarget = replyTo?.id === c.id;
+    return (
+      <li
+        key={c.id}
+        id={`detail-comment-${c.id}`}
+        tabIndex={-1}
+        className="scroll-mt-4 rounded-m3-md border border-outline-variant p-3 focus:outline-2 focus:outline-offset-2 focus:outline-on-surface"
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
+          <span className="shrink-0 text-[11px] text-on-surface-variant">
+            {formatTimestamp(c.createdAt)}
+          </span>
+        </div>
+        <div className="mt-1 text-sm leading-relaxed">
+          <MarkdownView text={c.body} />
+        </div>
+        <div className="mt-2 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setReplyTo(isReplyTarget ? null : c)}
+            aria-pressed={isReplyTarget}
+            aria-label={`Reply to ${c.author.username}`}
+            className="inline-flex min-h-[48px] items-center gap-1 rounded-full px-2 text-xs font-medium text-on-surface-variant"
+          >
+            <CornerDownRight size={13} aria-hidden /> Reply
+          </button>
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => void onDeleteComment(c.id)}
+              aria-label={`Delete comment by ${c.author.username}`}
+              className="inline-flex min-h-[48px] items-center gap-1 px-2 text-xs text-on-surface-variant hover:text-error"
+            >
+              <Trash2 size={13} aria-hidden /> Delete
+            </button>
+          )}
+        </div>
+        {children.length > 0 && (
+          <ul className="mt-3 flex flex-col gap-3 border-l border-outline-variant pl-3">
+            {children.map(renderComment)}
+          </ul>
+        )}
+      </li>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -667,17 +747,36 @@ export function PostDetail() {
             Comments <span className="text-on-surface-variant">({comments.length})</span>
           </h2>
 
+          {replyTo ? (
+            <div
+              role="status"
+              className="flex items-center gap-2 rounded-m3-sm border border-outline-variant bg-surface-container/50 px-3 py-2 text-xs text-on-surface-variant"
+            >
+              <span className="flex-1 truncate">
+                Replying to <span className="font-semibold text-on-surface">@{replyTo.author.username}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setReplyTo(null)}
+                aria-label="Cancel reply"
+                className="inline-flex min-h-[44px] items-center gap-1 rounded-full px-2 font-medium"
+              >
+                <X size={13} aria-hidden /> Cancel
+              </button>
+            </div>
+          ) : null}
+
           <form onSubmit={(e) => void onComment(e)} className="flex items-start gap-2">
             <input
               value={commentText}
               onChange={(e) => setCommentText(e.target.value)}
-              placeholder="Write a helpful comment…"
+              placeholder={replyTo ? `Reply to @${replyTo.author.username}…` : "Write a helpful comment…"}
               aria-label="Comment"
               maxLength={1000}
               className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
             />
             <Button type="submit" loading={busy} disabled={!commentText.trim()}>
-              Post
+              {replyTo ? "Reply" : "Post"}
             </Button>
           </form>
 
@@ -702,34 +801,9 @@ export function PostDetail() {
                 <p className="text-sm text-on-surface-variant">No comments yet.</p>
               )}
               <ul className="flex flex-col gap-3">
-                {visibleComments.map((c) => {
-                  const canDelete = c.author.id === user?.id || isOwner;
-                  return (
-                    <li key={c.id} id={`detail-comment-${c.id}`} tabIndex={-1} className="scroll-mt-4 rounded-m3-md border border-outline-variant p-3 focus:outline-2 focus:outline-offset-2 focus:outline-on-surface">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
-                        <span className="shrink-0 text-[11px] text-on-surface-variant">
-                          {formatTimestamp(c.createdAt)}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-sm leading-relaxed">
-                        <MarkdownView text={c.body} />
-                      </div>
-                      {canDelete && (
-                        <button
-                          type="button"
-                          onClick={() => void onDeleteComment(c.id)}
-                          aria-label={`Delete comment by ${c.author.username}`}
-                          className="mt-2 inline-flex min-h-[48px] items-center gap-1 px-2 text-xs text-on-surface-variant hover:text-error"
-                        >
-                          <Trash2 size={13} aria-hidden /> Delete
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
+                {visibleRoots.map(renderComment)}
               </ul>
-              {!commentsExpanded && !linkedComment && comments.length > COMMENTS_PREVIEW_COUNT && (
+              {!commentsExpanded && !linkedComment && commentRoots.length > COMMENTS_PREVIEW_COUNT && (
                 <button
                   type="button"
                   onClick={() => setCommentsExpanded(true)}

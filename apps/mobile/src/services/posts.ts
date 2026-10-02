@@ -299,6 +299,8 @@ export async function updatePostStatus(id: string, status: PostStatus): Promise<
 interface ClientCommentRow {
   id: string;
   post_id: string;
+  parent_id: string | null;
+  depth: number;
   body: string;
   created_at: string;
   updated_at: string;
@@ -314,6 +316,8 @@ function mapClientComment(row: ClientCommentRow): CommentItem {
   return {
     id: row.id,
     postId: row.post_id,
+    parentId: row.parent_id ?? null,
+    depth: row.depth ?? 0,
     author: {
       id: row.author_id,
       username: row.author_username,
@@ -344,10 +348,15 @@ export async function fetchComments(postId: string): Promise<CommentItem[]> {
   return ((data ?? []) as ClientCommentRow[]).map(mapClientComment);
 }
 
-export async function addComment(postId: string, body: string): Promise<CommentItem> {
+export async function addComment(
+  postId: string,
+  body: string,
+  parentId?: string | null,
+): Promise<CommentItem> {
   const { data, error } = await getSupabase().rpc("findback_add_comment_client", {
     p_post_id: postId,
     p_body: body,
+    p_parent_id: parentId ?? null,
   });
   if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
   const row = ((data ?? []) as ClientCommentRow[])[0];

@@ -289,6 +289,8 @@ function commentRow(overrides: Record<string, unknown> = {}): Record<string, unk
   return {
     id: "c1",
     post_id: "p1",
+    parent_id: null,
+    depth: 0,
     body: "hope you find it",
     created_at: "2026-09-02T00:00:00.000Z",
     updated_at: "2026-09-02T00:00:00.000Z",
@@ -314,6 +316,8 @@ describe("fetchComments", () => {
     expect(comments[0]).toEqual({
       id: "c1",
       postId: "p1",
+      parentId: null,
+      depth: 0,
       author: {
         id: "u2",
         username: "bob",
@@ -340,8 +344,26 @@ describe("addComment", () => {
     expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_client", {
       p_post_id: "p1",
       p_body: "thanks!",
+      p_parent_id: null,
     });
     expect(comment.id).toBe("c9");
+  });
+
+  it("threads a reply by passing the parent id", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [commentRow({ id: "c10", parent_id: "c1", depth: 1 })],
+      error: null,
+    });
+
+    const reply = await addComment("p1", "me too", "c1");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_client", {
+      p_post_id: "p1",
+      p_body: "me too",
+      p_parent_id: "c1",
+    });
+    expect(reply.parentId).toBe("c1");
+    expect(reply.depth).toBe(1);
   });
 
   it("maps a missing post to 404", async () => {
