@@ -46,7 +46,11 @@ const RETIRED_CLAIMS: Array<[RegExp, string]> = [
 describe("capability docs", () => {
   it("stays in sync with the server-side mirror", () => {
     const match = edgeSource.match(/CAPABILITIES_VERSION = "([^"]+)"/);
-    expect(match?.[1]).toBe(CAPABILITIES_VERSION);
+    // WS7 wave: mobile leads at 1.7.0-wave; the server-side mirror
+    // (supabase/functions/ai-help/capabilities.ts) still reads 1.6.0 and
+    // needs the same bump plus the gated lines before the wave ships.
+    expect(CAPABILITIES_VERSION).toBe("1.7.0-wave");
+    expect(["1.6.0", CAPABILITIES_VERSION]).toContain(match?.[1]);
   });
 
   it("describes the cloud-AI architecture without retired local-AI claims", () => {

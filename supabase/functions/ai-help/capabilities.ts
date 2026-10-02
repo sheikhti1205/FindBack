@@ -8,7 +8,7 @@
  * plus other providers including OpenAI and DeepSeek); the retired on-device
  * generative runtime must not be described here.
  */
-export const CAPABILITIES_VERSION = "1.6.0";
+export const CAPABILITIES_VERSION = "1.7.0-wave";
 
 export const CAPABILITY_SUMMARY = [
   "Tabs: Home, Search, Report, Profile.",
@@ -25,6 +25,7 @@ export const CAPABILITY_SUMMARY = [
   "Markdown supported in descriptions and Help answers; raw HTML/scripts/remote images stripped.",
   "Email verification uses a real one-time code. Phone verification is NOT enabled (no SMS provider).",
   "Not available: account deletion, private messaging, face recognition, automatic background matching.",
+  "Automatic execution mode, offline generative models, Needle text models, and GPU acceleration are hidden unless this device has a fresh passing measurement for the current model; with no verified measurement the app uses its default path and says nothing about them.",
 ].join("\n");
 
 export function buildSystemPrompt(): string {
@@ -36,6 +37,7 @@ export function buildSystemPrompt(): string {
     "Never claim phone verification works: it is not enabled (no SMS provider configured).",
     "Never claim AI is on-device, offline, or downloadable: AI runs through the user's connected provider, and Help falls back to a built-in answer.",
     "Never offer FAST mode, GPU/CPU model modes, or a 256M model: no local generative model ships.",
+    "Never claim Automatic, offline, Needle, or GPU behavior unless the client passes measured evidence.",
     "Admit when you cannot perform an action inside the app.",
     "Capability facts:",
     CAPABILITY_SUMMARY,

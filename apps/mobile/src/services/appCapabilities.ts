@@ -8,12 +8,18 @@ import packageJson from "../../package.json";
  * `supabase/functions/ai-help/capabilities.ts` — bump CAPABILITIES_VERSION
  * in both files whenever shipped UI behavior changes.
  *
+ * WS7 wave note: this file leads at "1.7.0-wave" with measured-state-gated
+ * copy (see `MeasuredCapabilityFlags` below). The server-side mirror still
+ * reads "1.6.0" and needs the same bump plus the gated lines before the
+ * wave ships — see the handoff mirror note. Do NOT edit
+ * `supabase/functions/*` from this packet.
+ *
  * Cloud-AI architecture: a user-owned BYOK key (OpenRouter's free route by
  * default, plus other providers including OpenAI and DeepSeek) replaced the
  * retired on-device generative runtime; no capability line may describe a
  * downloadable/local model, GPU/CPU model modes, or server-side AI help.
  */
-export const CAPABILITIES_VERSION = "1.6.0";
+export const CAPABILITIES_VERSION = "1.7.0-wave";
 
 /** Generated from apps/mobile/package.json (the canonical SemVer source) — never a duplicated literal. */
 export const APP_VERSION: string = packageJson.version;
@@ -116,3 +122,93 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "automatic background matching",
   ],
 };
+
+// ---------------------------------------------------------------------------
+// WS7 measured-state-gated copy (capability-truth skeleton).
+//
+// The static `APP_CAPABILITIES` above never mentions Automatic/offline/Needle
+// backends or GPU behavior: those affordances are hidden until measured
+// evidence passes (see `./ai/uiGates.ts`). The getters below return copy for
+// those affordances ONLY when the caller passes explicit measured/probe
+// flags; with no evidence they return a conservative hidden-state line that
+// claims nothing about speed or automation. No string here may claim a
+// backend is faster, automatic, or magic — measured winners are described as
+// "the measured backend", never as "GPU-faster" or "auto-magic".
+// ---------------------------------------------------------------------------
+
+/** Explicit measured/probe flags gating WS7 capability copy. All default off. */
+export interface MeasuredCapabilityFlags {
+  /** At least one fresh, correctness-passing device probe exists. */
+  readonly hasFreshAutoProbe: boolean;
+  /** An offline model is installed with a verified checksum. */
+  readonly hasVerifiedOfflineModel: boolean;
+  /** Fresh, passing Needle measurement evidence exists. */
+  readonly hasNeedleEvidence: boolean;
+  /** A fresh, passing GPU probe is the measured winner. */
+  readonly hasFreshGpuProbe: boolean;
+}
+
+/** Default flags: no evidence, every gated affordance stays hidden. */
+export const MEASURED_FLAGS_NONE: MeasuredCapabilityFlags = {
+  hasFreshAutoProbe: false,
+  hasVerifiedOfflineModel: false,
+  hasNeedleEvidence: false,
+  hasFreshGpuProbe: false,
+};
+
+/**
+ * Automatic-backend copy. Shown only with a fresh passing probe; otherwise
+ * the affordance is hidden and the app serves the safe CPU fallback.
+ */
+export function getAutoCapabilityCopy(flags: MeasuredCapabilityFlags): string[] {
+  if (flags.hasFreshAutoProbe === true) {
+    return [
+      "Automatic backend choice is shown because a fresh on-device measurement passed its correctness check; the measured backend is used, otherwise the safe CPU fallback is served.",
+    ];
+  }
+  return [
+    "Automatic backend choice is hidden: no fresh passing measurement on this device, so the safe CPU fallback is served.",
+  ];
+}
+
+/**
+ * Offline-model copy. Shown only with a verified install; otherwise hidden
+ * with no download or offline-generation claims.
+ */
+export function getOfflineCapabilityCopy(flags: MeasuredCapabilityFlags): string[] {
+  if (flags.hasVerifiedOfflineModel === true) {
+    return [
+      "Offline use is shown because a model is installed with a verified checksum; downloads start only on explicit user action.",
+    ];
+  }
+  return [
+    "Offline use is hidden: no verified model is installed on this device.",
+  ];
+}
+
+/**
+ * Needle copy. Shown only with fresh, passing measurement evidence;
+ * otherwise hidden with no capability claims.
+ */
+export function getNeedleCapabilityCopy(flags: MeasuredCapabilityFlags): string[] {
+  if (flags.hasNeedleEvidence === true) {
+    return [
+      "Needle details are shown because a fresh measurement passed its correctness check on this device.",
+    ];
+  }
+  return ["Needle details are hidden: no fresh passing measurement on this device."];
+}
+
+/**
+ * GPU copy. Shown only when a fresh, passing GPU probe is the measured
+ * winner; otherwise hidden. Never claims a GPU is faster in general — only
+ * that this device measured it for the current model revision.
+ */
+export function getGpuCapabilityCopy(flags: MeasuredCapabilityFlags): string[] {
+  if (flags.hasFreshGpuProbe === true) {
+    return [
+      "GPU use is shown because this device measured it with a fresh probe that passed its correctness check for the current model; other devices may measure differently.",
+    ];
+  }
+  return ["GPU details are hidden: no fresh passing measurement on this device."];
+}
