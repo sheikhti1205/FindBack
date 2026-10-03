@@ -1,0 +1,79 @@
+{
+  "modelId": "needle3-cact-l20",
+  "modelRev": "c7c415a3d1b3d929014bc6e866d51ebb971f7089",
+  "runtimeRev": "needle-cli-linux-x86_64",
+  "cases": [
+    {
+      "id": "lost-umbrella",
+      "prompt": "I lost my red umbrella near the park gate",
+      "expected": {
+        "object": "red umbrella",
+        "color": "red"
+      },
+      "fieldRecall": 1,
+      "routed": "suppressed",
+      "confidence": 0.0474,
+      "prefillTps": 57.2,
+      "decodeTps": 28.4,
+      "peakRamMb": 78.5,
+      "validation": {
+        "ungrounded": [],
+        "negation": false
+      }
+    },
+    {
+      "id": "lost-keys",
+      "prompt": "Missing blue keys with a lanyard from yesterday",
+      "expected": {
+        "object": "blue keys",
+        "color": "blue"
+      },
+      "fieldRecall": 1,
+      "routed": "suppressed",
+      "confidence": 0.0689,
+      "prefillTps": 54.6,
+      "decodeTps": 40.2,
+      "peakRamMb": 78.6,
+      "validation": {
+        "ungrounded": [],
+        "negation": false
+      }
+    },
+    {
+      "id": "lost-passport",
+      "prompt": "My black passport is gone, last seen at the airport cafe",
+      "expected": {
+        "object": "passport",
+        "color": "black"
+      },
+      "fieldRecall": 1,
+      "routed": "suppressed",
+      "confidence": 0.0624,
+      "prefillTps": 64.3,
+      "decodeTps": 25.9,
+      "peakRamMb": 78.2,
+      "validation": {
+        "ungrounded": [],
+        "negation": false
+      }
+    },
+    {
+      "id": "lost-wallet",
+      "prompt": "Brown leather wallet fell out of my pocket on bus 12",
+      "expected": {
+        "object": "wallet",
+        "color": "brown"
+      },
+      "fieldRecall": 1,
+      "routed": "suppressed",
+      "confidence": 0.0145,
+      "prefillTps": 252.7,
+      "decodeTps": 51.3,
+      "peakRamMb": 78.3,
+      "validation": {
+        "ungrounded": [],
+        "negation": false
+      }
+    }
+  ]
+}

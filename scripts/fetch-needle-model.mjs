@@ -47,6 +47,24 @@ const WEIGHTS = {
   url: `${HF_BASE}/needle3.cact`,
 };
 
+// Host bench CLI (linux-x86_64 `needle` binary): real text-side execution
+// for the bench harness on CI/host runners. Never packaged, never shipped.
+const BENCH_ENGINE = {
+  dir: "linux-x86_64",
+  libBytes: 2143656,
+  libSha256: "5c0ff309dcf9c2238bd07986d9d100069d568596c2378f0bfedc1677cc02f756",
+  headerBytes: 3322,
+  headerSha256: "90f347f9dca1199de79967ab199a56e0588bd473fe306051f8d80d146976a324",
+};
+const BENCH_ENGINE_DIR = join(WEIGHTS_DIR, "engine-x86_64");
+const BENCH_CLI = {
+  file: "needle",
+  bytes: 1517200,
+  sha256: "b197ceaef3b300a0b14c3a4fde92305527e43f9256c53d2a53d2a2fe8fe69678",
+  url: `${HF_BASE}/linux-x86_64/needle`,
+};
+const BENCH_CLI_PATH = join(WEIGHTS_DIR, "needle-cli");
+
 // NDK link engine for arm64-v8a (devices). Upstream also publishes
 // android-armv7 and a desktop linux-x86_64 engine, but neither links into
 // an Android build: armv7 has no FindBack bridge target (32-bit builds stay
@@ -150,6 +168,8 @@ async function main() {
   const args = process.argv.slice(2);
   const checkOnly = args.includes("--check");
   const engineOnly = args.includes("--engine-only");
+  const cliOnly = args.includes("--cli-only");
+  const benchOnly = args.includes("--bench-only");
   const enabled = process.env.NEEDLE_MODEL_ENABLED === "1";
 
   if (!enabled) {
@@ -166,16 +186,43 @@ async function main() {
   const engineBase = process.env.NEEDLE_ENGINE_URL || null;
 
   const abis = Object.keys(ENGINES);
-  for (const abi of abis) {
-    const engine = ENGINES[abi];
-    const paths = enginePaths(abi);
-    const base = engineBase ?? `${HF_BASE}/${engine.dir}`;
-    await ensureFile(`${base}/libneedle.a`, paths.lib, engine.libBytes, engine.libSha256, `needle engine ${abi}`);
-    await ensureFile(`${base}/needle.h`, paths.header, engine.headerBytes, engine.headerSha256, `needle header ${abi}`);
+  if (!cliOnly && !benchOnly) {
+    for (const abi of abis) {
+      const engine = ENGINES[abi];
+      const paths = enginePaths(abi);
+      const base = engineBase ?? `${HF_BASE}/${engine.dir}`;
+      await ensureFile(`${base}/libneedle.a`, paths.lib, engine.libBytes, engine.libSha256, `needle engine ${abi}`);
+      await ensureFile(`${base}/needle.h`, paths.header, engine.headerBytes, engine.headerSha256, `needle header ${abi}`);
+    }
   }
 
-  if (!engineOnly) {
+  if (!engineOnly && !cliOnly) {
     await ensureFile(weightsUrl, WEIGHTS_PATH, WEIGHTS.bytes, WEIGHTS.sha256, "needle3 weights");
+  }
+
+  if (benchOnly || cliOnly) {
+    const { execFileSync } = await import("node:child_process");
+    await ensureFile(BENCH_CLI.url, BENCH_CLI_PATH, BENCH_CLI.bytes, BENCH_CLI.sha256, "needle bench CLI");
+    try {
+      execFileSync("chmod", ["+x", BENCH_CLI_PATH]);
+    } catch {
+      // Non-POSIX hosts run the CLI through an explicit interpreter instead.
+    }
+    const base = `${HF_BASE}/${BENCH_ENGINE.dir}`;
+    await ensureFile(
+      `${base}/libneedle.a`,
+      join(BENCH_ENGINE_DIR, "libneedle.a"),
+      BENCH_ENGINE.libBytes,
+      BENCH_ENGINE.libSha256,
+      "needle bench engine",
+    );
+    await ensureFile(
+      `${base}/needle.h`,
+      join(BENCH_ENGINE_DIR, "needle.h"),
+      BENCH_ENGINE.headerBytes,
+      BENCH_ENGINE.headerSha256,
+      "needle bench header",
+    );
   }
 }
 

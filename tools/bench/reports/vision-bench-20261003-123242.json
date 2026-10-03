@@ -1,0 +1,164 @@
+{
+  "modelId": "smolvlm2-500M-vision",
+  "modelRev": "dad030b6e56756201d670cfb4d042736a2ce3a5c",
+  "modelSha256": "b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0",
+  "runtimeRev": "litert-lm-cpu-host",
+  "backend": "cpu",
+  "photoCases": {
+    "executed": 8,
+    "plates": [
+      {
+        "plate": "ocr-object-umbrella",
+        "file": "ocr-object-umbrella.png",
+        "prompts": {
+          "describe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' A red abstract line that appears to be a silhouette of a person.'}]}",
+            "latencyMs": 2418.5,
+            "loop": false
+          },
+          "transcribe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' RED UMBRELTA LOST AND FOUND'}]}",
+            "latencyMs": 1727.2,
+            "loop": false
+          }
+        },
+        "ocrRecallDescribe": 0.2,
+        "ocrRecallTranscribe": 0.8,
+        "forbiddenHits": []
+      },
+      {
+        "plate": "ocr-keys-lanyard",
+        "file": "ocr-keys-lanyard.png",
+        "prompts": {
+          "describe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' A blue circle is at the bottom of a white background.'}]}",
+            "latencyMs": 1738.0,
+            "loop": false
+          },
+          "transcribe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': \" KEY'S BLUE LANYARD 04\"}]}",
+            "latencyMs": 1739.4,
+            "loop": false
+          }
+        },
+        "ocrRecallDescribe": 0.25,
+        "ocrRecallTranscribe": 0.75,
+        "forbiddenHits": []
+      },
+      {
+        "plate": "ocr-brand-decoy",
+        "file": "ocr-brand-decoy.png",
+        "prompts": {
+          "describe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' The image displays a white background with the text \"ZORBLLE SPORT DRINK NOT A REAL BRAND\" in bold black letters. The text is centered and positioned at the top of the image. In the center of the image, there is a green horizontal line. The image does not contain any other objects or text. The image is simple and straightforward, with the text clearly stating the message.'}]}",
+            "latencyMs": 3475.0,
+            "loop": false
+          },
+          "transcribe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' ZORBLLE SPORT DRINK NOT A REAL BRAND\\n\\nThe image displays a white background with the text \"ZORBLLE SPORT DRINK NOT A REAL BRAND\" in bold black letters. The text is centered and positioned at the top of the image. In the center of the image, there is a green horizontal line. The image does not contain any other objects or text. The image is simple and straightforward, with the text clearly stating the message.'}]}",
+            "latencyMs": 3786.2,
+            "loop": false
+          }
+        },
+        "ocrRecallDescribe": 0.8571428571428571,
+        "ocrRecallTranscribe": 0.8571428571428571,
+        "forbiddenHits": []
+      },
+      {
+        "plate": "swatch-primary",
+        "file": "swatch-primary.png",
+        "prompts": {
+          "describe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' In the image, there are four squares of different colors. The top left square is red, the top right square is green, the bottom left square is blue, and the bottom right square is yellow. The colors are arranged in a grid, with each square having a unique color. The image does not contain any text or other discernible objects.'}]}",
+            "latencyMs": 3118.9,
+            "loop": false
+          },
+          "transcribe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' RED GREEN BLUE YELLOW'}]}",
+            "latencyMs": 1654.4,
+            "loop": false
+          }
+        },
+        "ocrRecallDescribe": 1.0,
+        "ocrRecallTranscribe": 1.0,
+        "forbiddenHits": []
+      },
+      {
+        "plate": "shapes-outline",
+        "file": "shapes-outline.png",
+        "prompts": {
+          "describe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' In the image, there are three geometric shapes placed against a white background. The shapes are red, blue, and green, which are all different colors. The red shape is located in the top left corner, the blue shape is in the top right, and the green shape is in the bottom right. The shapes are not touching each other, but they are all in the same color.'}]}",
+            "latencyMs": 3298.9,
+            "loop": false
+          },
+          "transcribe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' The image contains three geometric shapes. The shapes are red, blue, and green, which are all different colors. The shapes are not touching each other, but they are all in the same color.'}]}",
+            "latencyMs": 2419.9,
+            "loop": false
+          }
+        },
+        "ocrRecallDescribe": null,
+        "ocrRecallTranscribe": null,
+        "forbiddenHits": []
+      },
+      {
+        "plate": "clutter-grid",
+        "file": "clutter-grid.png",
+        "prompts": {
+          "describe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' In this image, we see a grid of nine squares, each of which is colored in a different way. The colors are red, yellow, green, blue, and black. In the top left corner, there is a red square, in the top right corner, there is a yellow square, in the bottom left, there is a green square, in the bottom right, there is a blue square, in the top right, there is a black square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a green square, in the bottom left, there is a blue square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a green square, in the bottom left, there is a blue square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a green square, in the bottom left, there is a blue square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a green square, in the bottom left, there is a blue square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a green square, in the bottom left, there is a blue square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a green square, in the bottom left, there is a blue square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a green square, in the bottom left, there is a blue square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a green square, in the bottom left, there is a blue square, in the bottom right, there is a red square, in the bottom left, there is a yellow square, in the bottom right, there is a gre",
+            "latencyMs": 48404.9,
+            "loop": false
+          },
+          "transcribe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ''}]}",
+            "latencyMs": 6.5,
+            "loop": false
+          }
+        },
+        "ocrRecallDescribe": 0.0,
+        "ocrRecallTranscribe": 0.0,
+        "forbiddenHits": []
+      },
+      {
+        "plate": "ocr-noisy",
+        "file": "ocr-noisy.png",
+        "prompts": {
+          "describe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' The image depicts a red umbrella, which is located in the center of the image. The umbrella is positioned in the center of the image, with a small portion of it visible at the top left. The umbrella is surrounded by a series of small, white dots, which are likely representing the sky. The image does not contain any text or other objects. The image does not contain any text or other objects. The image does not contain any text or other objects.'}]}",
+            "latencyMs": 3666.1,
+            "loop": true
+          },
+          "transcribe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' RED UNBRELFLOST AND FOUND'}]}",
+            "latencyMs": 1645.3,
+            "loop": false
+          }
+        },
+        "ocrRecallDescribe": 0.4,
+        "ocrRecallTranscribe": 0.6,
+        "forbiddenHits": []
+      },
+      {
+        "plate": "ocr-blur",
+        "file": "ocr-blur.png",
+        "prompts": {
+          "describe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' A blue circle is placed at the bottom of a white background.'}]}",
+            "latencyMs": 1766.8,
+            "loop": false
+          },
+          "transcribe": {
+            "output": "{'role': 'assistant', 'content': [{'type': 'text', 'text': ' K e y s B l u y L a n y i r d 0 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 '}]}",
+            "latencyMs": 47020.0,
+            "loop": true
+          }
+        },
+        "ocrRecallDescribe": 0.25,
+        "ocrRecallTranscribe": 0.0,
+        "forbiddenHits": []
+      }
+    ]
+  }
+}

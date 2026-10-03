@@ -1,22 +1,16 @@
 /**
- * WS6 benchmark harness skeleton.
+ * Golden-corpus benchmark harness.
  *
- * Loads a golden corpus (see tools/bench/goldenCorpus.schema.json), ranks each
- * text-match case under two injected comparison configs, and writes a
- * benchmark-record JSON carrying model-rev, runtime-rev, app-sha,
- * corpus-version, Recall@1/3, MRR, nDCG@3, latency, and a memory note.
+ * Text-match pairs rank under two deterministic comparison configs
+ * (token-overlap stub + category-boosted fake); real Needle vectors plug
+ * in at `runConfig` without changing the record shape.
  *
- * Comparison configs (deterministic, no models, no network):
- *   - "stub":  ranks candidates by token overlap between the query text and
- *              each candidate text (USE-vs-stub stand-in for the embedding
- *              path: swap `rankStub` for real USE scores when available).
- *   - "fake":  same overlap plus a same-category boost, standing in for the
- *              injected FakeAiProvider-assisted path. Real provider injection
- *              (FakeAiProvider / on-device runtime) plugs in at `runConfig`
- *              without changing the record shape.
- *
- * Photo cases are schema-validated and counted, but NOT executed: the
- * skeleton has no model runtime. They record as `status: "skipped"`.
+ * Photo cases execute through the real vision bench
+ * (tools/bench/run-vision-bench.py over generated fixture plates):
+ * this harness aggregates the latest vision report when present —
+ * executed counts plates actually run, never a skeleton zero. Without a
+ * report the cases record `device-required` with the real fixture files
+ * queued (not placeholder URIs).
  *
  * Metrics come from ./score.mjs (the file-level mirror of the TS contract in
  * apps/mobile/src/services/similarity.ts).
@@ -31,8 +25,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreCases } from "./score.mjs";
 
@@ -136,6 +130,46 @@ function runConfig(name, pairs) {
   });
 }
 
+/**
+ * Photo-case summary: aggregate the latest real vision-bench report when
+ * one exists (executed = plates actually run with real modelRev). Without
+ * a report the real fixture files stay queued as `device-required` — the
+ * inputs are concrete PNGs, never placeholder URIs.
+ */
+function summarizePhotoCases(photoCases, hereDir) {
+  const reportsDir = resolve(hereDir, "reports");
+  let latest = null;
+  try {
+    const names = readdirSync(reportsDir).filter((n) => n.startsWith("vision-bench-") && n.endsWith(".json")).sort();
+    if (names.length > 0) latest = JSON.parse(readFileSync(join(reportsDir, names[names.length - 1]), "utf8"));
+  } catch {
+    latest = null;
+  }
+  if (latest !== null && typeof latest.photoCases?.executed === "number" && latest.photoCases.executed > 0) {
+    const plates = latest.photoCases.plates ?? [];
+    const recalls = plates.map((p) => p.ocrRecallTranscribe).filter((r) => typeof r === "number");
+    return {
+      total: photoCases.length,
+      executed: latest.photoCases.executed,
+      status: "executed",
+      report: {
+        modelRev: latest.modelRev ?? null,
+        runtimeRev: latest.runtimeRev ?? null,
+        meanOcrRecallTranscribe: recalls.length ? recalls.reduce((a, b) => a + b, 0) / recalls.length : null,
+        loops: plates.reduce((n, p) => n + Object.values(p.prompts ?? {}).filter((v) => v.loop === true).length, 0),
+        forbiddenHits: plates.reduce((n, p) => n + (p.forbiddenHits ?? []).length, 0),
+      },
+    };
+  }
+  return {
+    total: photoCases.length,
+    executed: 0,
+    status: "device-required",
+    reason: "no vision-bench report present: run tools/bench/run-vision-bench.py with provisioned weights, or execute on-device",
+    fixtureFiles: photoCases.map((c) => c.imageRef).filter((r) => typeof r === "string"),
+  };
+}
+
 function main() {
   const argv = globalThis.process.argv.slice(2);
   const log = globalThis.console;
@@ -167,6 +201,7 @@ function main() {
   }
 
   const mem = typeof globalThis.process.memoryUsage === "function" ? globalThis.process.memoryUsage() : null;
+  const hereDir = dirname(fileURLToPath(import.meta.url));
   const record = {
     benchmark: "ws6-golden-corpus",
     corpusVersion: doc.corpusVersion,
@@ -175,14 +210,9 @@ function main() {
     appSha: resolveAppSha(flagValue(argv, "--app-sha")),
     createdAt: new Date().toISOString(),
     configs,
-    photoCases: {
-      total: photoCases.length,
-      executed: 0,
-      status: "skipped",
-      reason: "skeleton harness has no model runtime; photo cases are schema-validated and counted only",
-    },
+    photoCases: summarizePhotoCases(photoCases, hereDir),
     memoryNote:
-      "Skeleton-harness note, not a device measurement: RSS/heap sampled from the Node bench process at end of run. " +
+      "Harness note, not a device measurement: RSS/heap sampled from the Node bench process at end of run. " +
       "On-device RAM budgets are owned by ModelProfile + evaluation measurements.",
     memory: mem ? { rssBytes: mem.rss, heapUsedBytes: mem.heapUsed } : null,
   };
