@@ -33,7 +33,10 @@ import {
   type NeedleEvidence,
 } from "../services/ai/uiGates";
 import type { ProbeContext, ProbeRecord } from "../services/ai/deviceProbe";
-import type { OfflineModelStatus } from "../services/ai/offlineModelManager";
+import type {
+  OfflineDownloadState,
+  OfflineModelStatus,
+} from "../services/ai/offlineModelManager";
 import {
   getAutoCapabilityCopy,
   getGpuCapabilityCopy,
@@ -203,7 +206,101 @@ export type AiModelsProps = {
   readonly probeContext?: ProbeContext | null;
   readonly offlineStatus?: OfflineModelStatus | null;
   readonly needleEvidence?: NeedleEvidence | null;
+  /**
+   * Managed-download controls for the on-device model section. Absent on
+   * builds without the native download bridge, where the section stays
+   * honestly disabled. Present (even mid-download) once the driver is
+   * wired: buttons enable per download state, never for cloud models.
+   */
+  readonly offlineDownload?: OfflineDownloadControls | null;
 };
+
+/**
+ * Download/pause/resume/remove affordances for one on-device model.
+ * The parent owns the manager + driver and refreshes `state` from
+ * `manager.statusOf`; this screen only renders and forwards intent.
+ * `notice` carries the last user-facing outcome (gate refusal, checksum
+ * mismatch, storage shortfall) — never raw error objects.
+ */
+export type OfflineDownloadControls = {
+  readonly modelId: string;
+  readonly state: OfflineDownloadState;
+  readonly downloadedBytes: number;
+  readonly totalBytes: number | null;
+  readonly busy: boolean;
+  readonly notice: string | null;
+  readonly onDownload: () => void;
+  readonly onPause: () => void;
+  readonly onResume: () => void;
+  readonly onRemove: () => void;
+};
+
+function OfflineDownloadSection({ controls }: { controls: OfflineDownloadControls }) {
+  const { state, downloadedBytes, totalBytes, busy, notice } = controls;
+  const canDownload =
+    !busy && (state === "not-installed" || state === "failed" || state === "paused");
+  const canPause = !busy && state === "downloading";
+  const canResume = !busy && state === "paused";
+  const canRemove =
+    !busy && (state === "installed" || state === "paused" || state === "failed");
+  const showProgress =
+    state === "downloading" || state === "paused" || state === "verifying";
+  const progressRatio =
+    totalBytes !== null && totalBytes > 0
+      ? Math.min(1, Math.max(0, downloadedBytes / totalBytes))
+      : null;
+  return (
+    <div className="flex flex-col gap-2">
+      {showProgress ? (
+        <div
+          role="progressbar"
+          aria-label="On-device model download progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progressRatio === null ? undefined : Math.round(progressRatio * 100)}
+          data-testid="ai-offline-progress"
+          className="text-sm text-on-surface-variant"
+        >
+          {progressRatio === null
+            ? `Downloaded ${downloadedBytes} bytes.`
+            : `Downloaded ${Math.round(progressRatio * 100)}%.`}
+        </div>
+      ) : null}
+      {notice !== null ? (
+        <p data-testid="ai-offline-notice" role="status" className="text-sm text-on-surface-variant">
+          {notice}
+        </p>
+      ) : null}
+      <div className="flex gap-2">
+        {state === "downloading" ? (
+          <Button type="button" variant="outline" disabled={!canPause} onClick={controls.onPause}>
+            Pause download
+          </Button>
+        ) : null}
+        {state === "paused" && canResume ? (
+          <Button type="button" variant="outline" onClick={controls.onResume}>
+            Resume download
+          </Button>
+        ) : null}
+        {canDownload ? (
+          <Button type="button" variant="outline" onClick={controls.onDownload}>
+            {state === "not-installed" ? "Download on-device model" : "Retry download"}
+          </Button>
+        ) : null}
+        {state === "verifying" ? (
+          <Button type="button" variant="outline" disabled title="Verifying checksum.">
+            Verifying…
+          </Button>
+        ) : null}
+        {canRemove ? (
+          <Button type="button" variant="outline" onClick={controls.onRemove}>
+            Remove on-device model
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 type SlotState = {
   connected: boolean;
@@ -225,6 +322,7 @@ export function AiModels({
   probeContext = null,
   offlineStatus = null,
   needleEvidence = null,
+  offlineDownload = null,
 }: AiModelsProps) {
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
@@ -604,24 +702,28 @@ export function AiModels({
           No on-device models are installed. Storage use is unknown until the native bridge
           lands — nothing here downloads, verifies, or runs.
         </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled
-            title="On-device downloads arrive with the native bridge."
-          >
-            Download on-device model
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            disabled
-            title="On-device management arrives with the native bridge."
-          >
-            Remove on-device model
-          </Button>
-        </div>
+        {offlineDownload === null ? (
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled
+              title="On-device downloads arrive with the native bridge."
+            >
+              Download on-device model
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled
+              title="On-device management arrives with the native bridge."
+            >
+              Remove on-device model
+            </Button>
+          </div>
+        ) : (
+          <OfflineDownloadSection controls={offlineDownload} />
+        )}
       </section>
 
       <section aria-label="On-device measurements" className="flex flex-col gap-2">
