@@ -3,8 +3,15 @@
  *
  * Pure transport logic over an injected `fetch` (fake in tests — never real
  * network in unit tests). Range resume, redirect policy, byte bound,
- * progress reporting, abort, and the sidecar journal live here; bytes land
- * in memory and the caller persists them through `storage.ts`.
+ * progress reporting, abort, and the sidecar journal live here.
+ *
+ * Two consumers share one negotiation core (`negotiateDownload`):
+ * - `downloadFile` buffers into memory (small files + tests only — never
+ *   model weights; a ~361 MB model must not transit JS memory twice over).
+ * - `downloadToSink` streams chunk-by-chunk into a `ChunkSink` (staged
+ *   app-private storage) while a `StreamingHasher` folds bytes
+ *   incrementally — the production model path. Peak JS memory is one
+ *   network chunk, and verification hashes the staged file, not a copy.
  */
 
 export interface DownloadJournal {
@@ -64,9 +71,45 @@ export interface DownloadFileResult {
   readonly journal: DownloadJournal;
 }
 
+/**
+ * Exactly-once, in-order byte consumer. Production appends to the staged
+ * file (fsync at flush points); tests record chunks in memory.
+ */
+export interface ChunkSink {
+  append(chunk: Uint8Array): Promise<void>;
+  /** Durability point: flush staged bytes + persist the journal. */
+  flush(): Promise<void>;
+  close(): Promise<void>;
+}
+
+/** Incremental SHA-256: native MessageDigest or hash-wasm, never buffering. */
+export interface StreamingHasher {
+  update(chunk: Uint8Array): void;
+  digestHex(): Promise<string>;
+}
+
+export interface DownloadToSinkOptions extends DownloadFileOptions {
+  readonly sink: ChunkSink;
+  /** When present, bytes fold into the running digest as they stream. */
+  readonly hasher?: StreamingHasher;
+  /** Journal durability callback (caller persists `<staging>.journal.json`). */
+  readonly onJournal?: (journal: DownloadJournal) => void;
+  /** Journal/flush cadence in bytes (default 1 MiB). */
+  readonly journalEveryBytes?: number;
+}
+
+export interface DownloadToSinkResult {
+  readonly bytesReceived: number;
+  readonly total: number | null;
+  readonly journal: DownloadJournal;
+  /** Running digest, or null when no hasher was injected. */
+  readonly actualHex: string | null;
+}
+
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 export const DEFAULT_MAX_REDIRECTS = 3;
 export const DEFAULT_MAX_BYTES = 4 * 1024 * 1024 * 1024;
+export const DEFAULT_JOURNAL_EVERY_BYTES = 1024 * 1024;
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted === true) {
@@ -116,6 +159,142 @@ export async function downloadFile(
   url: string,
   options: DownloadFileOptions = {},
 ): Promise<DownloadFileResult> {
+  const negotiated = await negotiateDownload(url, options);
+  const { offset, maxBytes } = negotiated;
+
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const push = (view: Uint8Array): void => {
+    if (view.length === 0) return;
+    if (offset + received + view.length > maxBytes) {
+      throw new TransportError(
+        "BYTE_BOUND_EXCEEDED",
+        `download exceeded byte bound ${maxBytes} while streaming`,
+      );
+    }
+    chunks.push(view.slice());
+    received += view.length;
+    options.onProgress?.({ received, total: negotiated.total, offset });
+  };
+
+  await readBodyChunks(negotiated.response, options.signal, push);
+
+  const bytes = new Uint8Array(received);
+  let cursor = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, cursor);
+    cursor += chunk.length;
+  }
+
+  return {
+    bytes,
+    bytesReceived: received,
+    total: negotiated.total,
+    journal: {
+      url: negotiated.finalUrl,
+      offset: offset + received,
+      sha: options.expectedSha ?? "",
+    },
+  };
+}
+
+/**
+ * Stream a download straight into a sink (production model path): chunk
+ * bytes are appended exactly once, in order, and never accumulated in JS
+ * memory. The hasher folds incrementally; the journal callback fires on
+ * the flush cadence and at completion so a kill resumes byte-exact.
+ * Abort/pause surfaces `ABORTED` after a best-effort final flush so the
+ * last emitted journal stays durable — the caller persists every journal
+ * it receives.
+ */
+export async function downloadToSink(
+  url: string,
+  options: DownloadToSinkOptions,
+): Promise<DownloadToSinkResult> {
+  const negotiated = await negotiateDownload(url, options);
+  const { offset, maxBytes } = negotiated;
+  const journalEvery = options.journalEveryBytes ?? DEFAULT_JOURNAL_EVERY_BYTES;
+  const emitJournal = (received: number): void => {
+    options.onJournal?.({
+      url: negotiated.finalUrl,
+      offset: offset + received,
+      sha: options.expectedSha ?? "",
+    });
+  };
+
+  let received = 0;
+  let sinceFlush = 0;
+  try {
+    await readBodyChunks(negotiated.response, options.signal, async (view) => {
+      if (view.length === 0) return;
+      if (offset + received + view.length > maxBytes) {
+        throw new TransportError(
+          "BYTE_BOUND_EXCEEDED",
+          `download exceeded byte bound ${maxBytes} while streaming`,
+        );
+      }
+      await options.sink.append(view);
+      options.hasher?.update(view);
+      received += view.length;
+      sinceFlush += view.length;
+      options.onProgress?.({ received, total: negotiated.total, offset });
+      if (sinceFlush >= journalEvery) {
+        sinceFlush = 0;
+        await options.sink.flush();
+        emitJournal(received);
+      }
+    });
+  } catch (error) {
+    // Best-effort durability on abort: the staged prefix stays valid and
+    // the last flushed journal is the resume truth.
+    try {
+      await options.sink.flush();
+    } catch {
+      // Flush itself failed — the error below still carries the failure.
+    }
+    emitJournal(received);
+    try {
+      await options.sink.close();
+    } catch {
+      // Ignore close failures when the stream already failed.
+    }
+    throw error;
+  }
+  await options.sink.flush();
+  await options.sink.close();
+  emitJournal(received);
+  const actualHex =
+    options.hasher !== undefined ? await options.hasher.digestHex() : null;
+  return {
+    bytesReceived: received,
+    total: negotiated.total,
+    journal: {
+      url: negotiated.finalUrl,
+      offset: offset + received,
+      sha: options.expectedSha ?? "",
+    },
+    actualHex,
+  };
+}
+
+interface NegotiatedDownload {
+  readonly finalUrl: string;
+  readonly response: Response;
+  readonly total: number | null;
+  readonly offset: number;
+  readonly maxBytes: number;
+}
+
+/**
+ * Shared negotiation core: offset validation, https gate, manual redirect
+ * loop (https-only, bounded), status check, Range/200 resume rules,
+ * Content-Range match, and the preface byte bound. Returns the live
+ * response with its body unconsumed for exactly one streaming pass.
+ */
+async function negotiateDownload(
+  url: string,
+  options: DownloadFileOptions,
+): Promise<NegotiatedDownload> {
   const offset = options.offset ?? 0;
   if (!Number.isInteger(offset) || offset < 0) {
     throw new TransportError("OFFSET_MISMATCH", "resume offset must be >= 0");
@@ -126,7 +305,6 @@ export async function downloadFile(
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   const fetchFn: FetchFn = options.fetchFn ?? fetch;
-  const expectedSha = options.expectedSha ?? "";
   throwIfAborted(options.signal);
 
   let current = url;
@@ -202,30 +380,28 @@ export async function downloadFile(
     );
   }
 
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  const push = (view: Uint8Array): void => {
-    if (view.length === 0) return;
-    if (offset + received + view.length > maxBytes) {
-      throw new TransportError(
-        "BYTE_BOUND_EXCEEDED",
-        `download exceeded byte bound ${maxBytes} while streaming`,
-      );
-    }
-    chunks.push(view.slice());
-    received += view.length;
-    options.onProgress?.({ received, total, offset });
-  };
+  return { finalUrl: current, response: active, total, offset, maxBytes };
+}
 
-  const body = active.body;
+/**
+ * Single streaming pass over a negotiated body. `push` may be async
+ * (sink append); chunks are awaited in order, so delivery is exactly-once
+ * and in-order. Non-stream bodies fall back to one `arrayBuffer` push.
+ */
+async function readBodyChunks(
+  response: Response,
+  signal: AbortSignal | undefined,
+  push: (view: Uint8Array) => void | Promise<void>,
+): Promise<void> {
+  const body = response.body;
   if (body !== null && typeof (body as ReadableStream<Uint8Array>).getReader === "function") {
     const reader = (body as ReadableStream<Uint8Array>).getReader();
     try {
       for (;;) {
-        throwIfAborted(options.signal);
+        throwIfAborted(signal);
         const { done, value } = await reader.read();
         if (done) break;
-        if (value !== undefined) push(value as Uint8Array);
+        if (value !== undefined) await push(value as Uint8Array);
       }
     } finally {
       try {
@@ -235,22 +411,8 @@ export async function downloadFile(
       }
     }
   } else {
-    throwIfAborted(options.signal);
-    const buffer = await active.arrayBuffer();
-    push(new Uint8Array(buffer));
+    throwIfAborted(signal);
+    const buffer = await response.arrayBuffer();
+    await push(new Uint8Array(buffer));
   }
-
-  const bytes = new Uint8Array(received);
-  let cursor = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, cursor);
-    cursor += chunk.length;
-  }
-
-  return {
-    bytes,
-    bytesReceived: received,
-    total,
-    journal: { url: current, offset: offset + received, sha: expectedSha },
-  };
 }

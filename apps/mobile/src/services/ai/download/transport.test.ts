@@ -9,8 +9,12 @@ import {
   TransportError,
   createResumeJournal,
   downloadFile,
+  downloadToSink,
   journalResumeOffset,
+  type ChunkSink,
+  type DownloadJournal,
   type FetchFn,
+  type StreamingHasher,
 } from "./transport";
 
 function bytesOf(text: string): Uint8Array {
@@ -204,5 +208,164 @@ describe("chunk transport", () => {
   it("round-trips a resume journal offset", () => {
     const journal = createResumeJournal("https://cdn.example.com/m", 42, "c".repeat(64));
     expect(journalResumeOffset(journal)).toBe(42);
+  });
+});
+
+describe("streaming download to sink", () => {
+  function memorySink(): ChunkSink & { chunks: Uint8Array[]; flushes: number; closed: boolean } {
+    const state = { chunks: [] as Uint8Array[], flushes: 0, closed: false };
+    return {
+      chunks: state.chunks,
+      get flushes() {
+        return state.flushes;
+      },
+      get closed() {
+        return state.closed;
+      },
+      append: async (chunk: Uint8Array) => {
+        state.chunks.push(chunk.slice());
+      },
+      flush: async () => {
+        state.flushes += 1;
+      },
+      close: async () => {
+        state.closed = true;
+      },
+    };
+  }
+
+  function recordingHasher(): StreamingHasher & { seen: Uint8Array[] } {
+    const seen: Uint8Array[] = [];
+    return {
+      seen,
+      update: (chunk: Uint8Array) => {
+        seen.push(chunk.slice());
+      },
+      digestHex: async () => "ab".repeat(32),
+    };
+  }
+
+  it("streams chunks exactly once in order without accumulating", async () => {
+    const sink = memorySink();
+    const hasher = recordingHasher();
+    const journals: DownloadJournal[] = [];
+    const fetchFn = fakeFetch(() => ({ status: 200, chunks: ["ab", "cd", "ef"] }));
+    const result = await downloadToSink("https://cdn.example.com/m.gguf", {
+      fetchFn,
+      sink,
+      hasher,
+      onJournal: (journal) => {
+        journals.push(journal);
+      },
+    });
+    expect(result.bytesReceived).toBe(6);
+    expect(sink.chunks.map((chunk) => new TextDecoder().decode(chunk)).join("")).toBe("abcdef");
+    expect(hasher.seen.map((chunk) => new TextDecoder().decode(chunk)).join("")).toBe("abcdef");
+    expect(result.actualHex).toBe("ab".repeat(32));
+    expect(sink.closed).toBe(true);
+    const last = journals.at(-1);
+    expect(last).toMatchObject({ url: "https://cdn.example.com/m.gguf", offset: 6 });
+  });
+
+  it("flushes and journals on the cadence", async () => {
+    const sink = memorySink();
+    const journals: DownloadJournal[] = [];
+    const fetchFn = fakeFetch(() => ({ status: 200, chunks: ["aa", "bb", "cc", "dd"] }));
+    await downloadToSink("https://cdn.example.com/m.gguf", {
+      fetchFn,
+      sink,
+      journalEveryBytes: 4,
+      onJournal: (journal) => {
+        journals.push(journal);
+      },
+    });
+    expect(sink.flushes).toBeGreaterThanOrEqual(2);
+    expect(journals.length).toBeGreaterThanOrEqual(2);
+    expect(journals.at(-1)).toMatchObject({ offset: 8 });
+  });
+
+  it("resumes at the journal offset with Range and Content-Range", async () => {
+    const seen: { url: string; headers: Record<string, string> }[] = [];
+    const sink = memorySink();
+    const fetchFn = fakeFetch(
+      () => ({
+        status: 206,
+        headers: { "content-range": "bytes 2-5/6" },
+        chunks: ["cdef"],
+      }),
+      seen,
+    );
+    const result = await downloadToSink("https://cdn.example.com/m.gguf", {
+      fetchFn,
+      sink,
+      offset: 2,
+    });
+    expect(seen[0]?.headers["Range"]).toBe("bytes=2-");
+    expect(result.bytesReceived).toBe(4);
+    expect(result.journal.offset).toBe(6);
+  });
+
+  it("refuses a 200 response to a Range resume", async () => {
+    const sink = memorySink();
+    const fetchFn = fakeFetch(() => ({ status: 200, bodyText: "abcdef" }));
+    await expect(
+      downloadToSink("https://cdn.example.com/m.gguf", { fetchFn, sink, offset: 2 }),
+    ).rejects.toMatchObject({ code: "RESUME_NOT_SUPPORTED" });
+  });
+
+  it("enforces the byte bound mid-stream", async () => {
+    const sink = memorySink();
+    const fetchFn = fakeFetch(() => ({ status: 200, chunks: ["aaaa", "bbbb"] }));
+    await expect(
+      downloadToSink("https://cdn.example.com/m.gguf", { fetchFn, sink, maxBytes: 5 }),
+    ).rejects.toMatchObject({ code: "BYTE_BOUND_EXCEEDED" });
+  });
+
+  it("refuses non-https redirects", async () => {
+    const sink = memorySink();
+    const fetchFn = fakeFetch(() => ({
+      status: 302,
+      headers: { location: "http://cdn.example.com/m.gguf" },
+    }));
+    await expect(
+      downloadToSink("https://cdn.example.com/m.gguf", { fetchFn, sink }),
+    ).rejects.toMatchObject({ code: "REDIRECT_NON_HTTPS" });
+    expect(sink.chunks).toEqual([]);
+  });
+
+  it("flushes and journals before surfacing abort", async () => {
+    const controller = new AbortController();
+    const sink = memorySink();
+    const journals: DownloadJournal[] = [];
+    const fetchFn = fakeFetch(() => ({ status: 200, chunks: ["ab", "cd", "ef"] }));
+    await expect(
+      downloadToSink("https://cdn.example.com/m.gguf", {
+        fetchFn,
+        sink,
+        signal: controller.signal,
+        onProgress: () => {
+          controller.abort();
+        },
+        onJournal: (journal) => {
+          journals.push(journal);
+        },
+      }),
+    ).rejects.toMatchObject({ code: "ABORTED" });
+    // The first chunk landed before the abort; the failure path still
+    // flushed, journaled, and closed the sink for a byte-exact resume.
+    expect(sink.chunks.length).toBe(1);
+    expect(sink.closed).toBe(true);
+    expect(journals.at(-1)).toMatchObject({ offset: 2 });
+  });
+
+  it("returns a null digest without a hasher", async () => {
+    const sink = memorySink();
+    const fetchFn = fakeFetch(() => ({ status: 200, bodyText: "xy" }));
+    const result = await downloadToSink("https://cdn.example.com/m.gguf", {
+      fetchFn,
+      sink,
+    });
+    expect(result.actualHex).toBeNull();
+    expect(result.bytesReceived).toBe(2);
   });
 });
