@@ -139,6 +139,71 @@ export interface OfflineAdapterDeps {
   readonly bridge: OfflineNativeBridge;
   /** App-controlled immutable instructions; never invented by the adapter. */
   readonly buildSystemText?: (request: NormalizedRequest) => string;
+  /**
+   * Image-capable vision seam (SmolVLM2-500M native plugin). Optional:
+   * absent on web / builds without the native module, where image
+   * requests fail closed with `vision_unsupported`. Never inferred from
+   * the text bridge — text availability proves nothing about vision.
+   */
+  readonly visionBridge?: OfflineVisionNativeBridge;
+  /**
+   * Compute backend for the vision resident, already resolved against
+   * probe evidence by `vision/backendSelector`. Defaults to CPU-first when
+   * no selector is injected (safe fallback, never GPU by guess).
+   */
+  readonly resolveVisionBackend?: () => "cpu" | "gpu";
+  /**
+   * Resolve an approved image id to base64 bytes for the vision bridge.
+   * Required alongside `visionBridge` for image requests; image bytes are
+   * never inlined in the request itself (see `hasNoInlineImageBytesOrKeys`).
+   */
+  readonly resolveApprovedImage?: (imageId: string) => Promise<string>;
+}
+
+/**
+ * One vision inference request for the native bridge. References the
+ * approved image by bytes resolved via `resolveApprovedImage` — the
+ * request itself carries ids only, and bytes stay behind the bridge
+ * boundary (never logged, never persisted by the adapter).
+ */
+export interface OfflineVisionRequest {
+  readonly generationId: string;
+  readonly imageBase64: string;
+  readonly prompt: string;
+  readonly maxOutputTokens: number;
+}
+
+/**
+ * Image-capable native vision seam (see NATIVE SEAM in the header).
+ * Implemented by the SmolVLM2-500M Capacitor plugin (`FindbackSmolVlm`);
+ * faked in tests. A rejected `isVisionAvailable()` (or throw) means the
+ * vision path is unavailable — never a reason to try cloud.
+ */
+export interface OfflineVisionNativeBridge {
+  /** Human-readable bridge name for diagnostics (e.g. "smolvlm2-litertlm"). */
+  readonly bridgeName: string;
+  /** True only when an image-capable resident is loaded and alive. */
+  isVisionAvailable(): Promise<boolean>;
+  /**
+   * Make `modelId` vision-resident (evict-then-load, self-test, resolve on
+   * READY). `backend` arrives already resolved against probe evidence by
+   * `vision/backendSelector` — the bridge never re-decides.
+   */
+  loadVisionModel(args: {
+    readonly modelId: string;
+    readonly backend: "cpu" | "gpu";
+    readonly installedPath?: string;
+    readonly maxOutputTokens: number;
+  }): Promise<void>;
+  /** Release the vision resident, if any (idempotent). */
+  unloadVisionModel(): Promise<void>;
+  /** Chunked vision inference; must honor `signal` (cancelGeneration). */
+  describeImage(
+    visionRequest: OfflineVisionRequest,
+    signal: AbortSignal,
+  ): AsyncGenerator<OfflineGenerationChunk>;
+  /** Abort an in-flight generation. */
+  cancelGeneration(generationId: string): Promise<void>;
 }
 
 /** Readiness verdict for one on-device model. */
@@ -291,10 +356,11 @@ export interface OfflineVisionProbe {
   /** The model already passed `describeOfflineReadiness` (installed+verified). */
   readonly modelReady: boolean;
   /**
-   * An image-capable vision bridge is present. WS3 skeleton: there is no
-   * such seam yet (the native bridge is text-only), so callers pass
-   * `false` until the follow-up native worker adds one. Never inferred
-   * from the text bridge — text availability proves nothing about vision.
+   * An image-capable vision bridge is present and its resident is loaded.
+   * Callers derive this from the injected `OfflineVisionNativeBridge`
+   * (`isVisionAvailable()`); the default with no seam is `false`. Never
+   * inferred from the text bridge — text availability proves nothing
+   * about vision.
    */
   readonly visionBridgeReady: boolean;
 }
@@ -346,6 +412,127 @@ export function buildOfflinePrompt(
   };
 }
 
+async function* completeOfflineVision(
+  request: NormalizedRequest,
+  deps: OfflineAdapterDeps,
+  visionBridge: OfflineVisionNativeBridge,
+): AsyncGenerator<StreamEvent> {
+  const signal = request.signal;
+  const modelId = request.selection.modelId;
+
+  // The caller already emitted `queued`; do not repeat it here.
+  if (signal.aborted) {
+    yield* cancelledEvents();
+    return;
+  }
+
+  // One image per call until multi-image batching is proven on-device.
+  if (request.approvedImageIds.length !== 1) {
+    yield* failureEvents(
+      "vision_unsupported",
+      "on-device vision supports exactly one approved image per call",
+      false,
+    );
+    return;
+  }
+  const resolveImage = deps.resolveApprovedImage;
+  if (resolveImage === undefined) {
+    yield* failureEvents(
+      "vision_unsupported",
+      "on-device vision has no approved-image resolver on this build",
+      false,
+    );
+    return;
+  }
+
+  let imageBase64: string;
+  try {
+    imageBase64 = await resolveImage(request.approvedImageIds[0] as string);
+  } catch {
+    yield* failureEvents(
+      "vision_unsupported",
+      "the approved image could not be resolved for on-device vision",
+      false,
+    );
+    return;
+  }
+  if (imageBase64.trim() === "") {
+    yield* failureEvents(
+      "vision_unsupported",
+      "the approved image resolved to empty bytes",
+      false,
+    );
+    return;
+  }
+
+  // Ensure vision residency (backend pre-resolved by the selector; CPU
+  // default here is the safe fallback, never a GPU guess).
+  try {
+    await visionBridge.loadVisionModel({
+      modelId,
+      backend: deps.resolveVisionBackend?.() ?? "cpu",
+      maxOutputTokens: request.maxOutputTokens,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message.trim() !== ""
+        ? error.message.slice(0, 400)
+        : "the on-device vision runtime failed to load the model";
+    yield* failureEvents("runtime_load_failed", message, false);
+    return;
+  }
+  if (signal.aborted) {
+    yield* cancelledEvents();
+    return;
+  }
+
+  const generationId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `vision-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const prompt =
+    request.currentText.trim() !== "" ? request.currentText : "Describe this image.";
+
+  yield { kind: "phase", phase: "sending", attempt: ATTEMPT };
+
+  let sawText = false;
+  try {
+    for await (const chunk of visionBridge.describeImage(
+      { generationId, imageBase64, prompt, maxOutputTokens: request.maxOutputTokens },
+      signal,
+    )) {
+      if (signal.aborted) {
+        await visionBridge.cancelGeneration(generationId).catch(() => undefined);
+        yield* cancelledEvents();
+        return;
+      }
+      const delta = chunk.textDelta;
+      if (delta === "") continue;
+      if (!sawText) {
+        sawText = true;
+        yield { kind: "phase", phase: "first-token", attempt: ATTEMPT };
+        yield { kind: "phase", phase: "streaming", attempt: ATTEMPT };
+      }
+      yield { kind: "text", attempt: ATTEMPT, delta };
+    }
+  } catch (error) {
+    if (signal.aborted) {
+      await visionBridge.cancelGeneration(generationId).catch(() => undefined);
+      yield* cancelledEvents();
+      return;
+    }
+    const message =
+      error instanceof Error && error.message.trim() !== ""
+        ? error.message.slice(0, 400)
+        : "on-device vision generation failed";
+    yield* failureEvents("generation_failed", message, false);
+    return;
+  }
+
+  yield { kind: "phase", phase: "complete", attempt: ATTEMPT };
+  yield { kind: "done", attempt: ATTEMPT, stopReason: "complete" };
+}
+
 async function* completeOffline(
   request: NormalizedRequest,
   deps: OfflineAdapterDeps,
@@ -393,29 +580,42 @@ async function* completeOffline(
     return;
   }
 
-  // Vision is unproven on-device (archive eval-only arms never promoted):
-  // fail closed before touching the bridge. The model verdict comes first
-  // so a missing model never reads as a vision refusal. The verdict is
-  // explicit (`describeOfflineVision`) and carries `no-fallback`: the
-  // refusal is typed `vision_unsupported` and must be surfaced, never
-  // silently retried via cloud.
+  // Vision path: model verdict first so a missing model never reads as a
+  // vision refusal, then the injected vision seam. With no seam (web /
+  // builds without the native module) the bridge is never ready and the
+  // verdict stays explicit `vision_unsupported` with `no-fallback`: the
+  // refusal is typed and must be surfaced, never silently retried via
+  // cloud. Text-bridge availability is deliberately NOT consulted — a
+  // working text path proves nothing about vision.
   if (request.approvedImageIds.length > 0) {
-    // WS3 skeleton: no image-capable vision seam exists yet (the native
-    // bridge is text-only), so the vision bridge is never ready here.
-    // Text-bridge availability is deliberately NOT consulted — a working
-    // text path proves nothing about vision.
-    const verdict = describeOfflineVision({ modelReady: true, visionBridgeReady: false });
+    const visionBridge = deps.visionBridge;
+    // No seam injected (web / builds without the native module): the
+    // probe default is visionBridgeReady: false and the verdict below
+    // stays explicit `vision_unsupported` with `no-fallback`.
+    let visionBridgeReady = false;
+    if (visionBridge !== undefined) {
+      try {
+        visionBridgeReady = await visionBridge.isVisionAvailable();
+      } catch {
+        visionBridgeReady = false;
+      }
+    }
+    const verdict = describeOfflineVision({ modelReady: true, visionBridgeReady });
     switch (verdict.state) {
-      case "ready":
-        // Unreachable in the skeleton: the worker that flips
-        // `visionBridgeReady` must add the image-capable prompt/bridge
-        // path on this arm. Fail closed until then — never fall to cloud.
-        yield* failureEvents(
-          "vision_unsupported",
-          "on-device vision is not wired yet; text requests only",
-          false,
-        );
+      case "ready": {
+        // Defensive: verdict ready implies a present, available seam, but
+        // never call a possibly-absent bridge — fail closed instead.
+        if (visionBridge === undefined) {
+          yield* failureEvents(
+            "vision_unsupported",
+            "on-device vision is not proven; text requests only",
+            false,
+          );
+          return;
+        }
+        yield* completeOfflineVision(request, deps, visionBridge);
         return;
+      }
       case "unavailable":
         yield* failureEvents(verdict.code, verdict.reason, verdict.retryable);
         return;

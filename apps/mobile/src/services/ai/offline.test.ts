@@ -20,6 +20,7 @@ import {
   createOfflineAdapter,
   type OfflineAdapterDeps,
   type OfflineNativeBridge,
+  type OfflineVisionNativeBridge,
 } from "./providers/offline";
 import type { NormalizedRequest, StreamEvent } from "./providerContract";
 
@@ -459,5 +460,178 @@ describe("offline provider adapter", () => {
       maxOutputTokens: { state: "unknown" },
       streaming: { state: "known", value: true },
     });
+  });
+});
+
+describe("offline vision path (native seam)", () => {
+  function visionBridge(opts?: {
+    available?: boolean;
+    chunks?: string[];
+    availableThrows?: boolean;
+  }): OfflineVisionNativeBridge & {
+    loads: { modelId: string; backend: string }[];
+    describes: number;
+    cancels: string[];
+  } {
+    const state = {
+      loads: [] as { modelId: string; backend: string }[],
+      describes: 0,
+      cancels: [] as string[],
+    };
+    return {
+      loads: state.loads,
+      get describes() {
+        return state.describes;
+      },
+      cancels: state.cancels,
+      bridgeName: "test-vision-stub",
+      isVisionAvailable: async () => {
+        if (opts?.availableThrows === true) throw new Error("bridge down");
+        return opts?.available ?? true;
+      },
+      loadVisionModel: async (args: { modelId: string; backend: "cpu" | "gpu" }) => {
+        state.loads.push({ modelId: args.modelId, backend: args.backend });
+      },
+      unloadVisionModel: async () => {},
+      describeImage: async function* () {
+        state.describes += 1;
+        for (const chunk of opts?.chunks ?? []) yield { textDelta: chunk };
+      },
+      cancelGeneration: async (generationId: string) => {
+        state.cancels.push(generationId);
+      },
+    };
+  }
+
+  function visionDeps(
+    manager: OfflineModelManager,
+    bridge: OfflineNativeBridge,
+    vision: OfflineVisionNativeBridge,
+    opts?: {
+      resolveVisionBackend?: () => "cpu" | "gpu";
+      resolveApprovedImage?: (imageId: string) => Promise<string>;
+    },
+  ): OfflineAdapterDeps {
+    return {
+      manager,
+      bridge,
+      visionBridge: vision,
+      resolveVisionBackend: opts?.resolveVisionBackend,
+      resolveApprovedImage:
+        opts?.resolveApprovedImage ?? (async () => "aW1hZ2UtYnl0ZXM="),
+    };
+  }
+
+  it("streams vision deltas through the seam for one approved image", async () => {
+    const textBridge = controllableBridge(["must not stream"]);
+    const vision = visionBridge({ chunks: ["A red ", "umbrella"] });
+    const manager = installedManager({ resident: true });
+    const adapter = createOfflineAdapter(
+      visionDeps(manager, textBridge, vision),
+    );
+    const { request } = baseRequest({ approvedImageIds: ["photo-1"] });
+    const events = await collect(adapter.complete(request));
+    const phases = events
+      .filter((event) => event.kind === "phase")
+      .map((event) => (event as { phase: string }).phase);
+    expect(phases).toEqual([
+      "queued",
+      "sending",
+      "first-token",
+      "streaming",
+      "complete",
+    ]);
+    const text = events
+      .filter((event) => event.kind === "text")
+      .map((event) => (event as { delta: string }).delta)
+      .join("");
+    expect(text).toBe("A red umbrella");
+    expect(vision.loads).toEqual([{ modelId: PIN.modelId, backend: "cpu" }]);
+    expect(vision.describes).toBe(1);
+    expect(textBridge.generates).toBe(0);
+  });
+
+  it("fails closed without touching the seam when it reports unavailable", async () => {
+    const textBridge = controllableBridge(["must not stream"]);
+    const vision = visionBridge({ available: false, chunks: ["must not stream"] });
+    const manager = installedManager({ resident: true });
+    const adapter = createOfflineAdapter(
+      visionDeps(manager, textBridge, vision),
+    );
+    const { request } = baseRequest({ approvedImageIds: ["photo-1"] });
+    const events = await collect(adapter.complete(request));
+    expect(errorOf(events).code).toBe("vision_unsupported");
+    expect(vision.describes).toBe(0);
+    expect(vision.loads).toEqual([]);
+  });
+
+  it("fails closed on a throwing availability probe", async () => {
+    const textBridge = controllableBridge(["must not stream"]);
+    const vision = visionBridge({ availableThrows: true });
+    const manager = installedManager({ resident: true });
+    const adapter = createOfflineAdapter(
+      visionDeps(manager, textBridge, vision),
+    );
+    const { request } = baseRequest({ approvedImageIds: ["photo-1"] });
+    const events = await collect(adapter.complete(request));
+    expect(errorOf(events).code).toBe("vision_unsupported");
+    expect(vision.describes).toBe(0);
+  });
+
+  it("fails closed on multiple approved images", async () => {
+    const textBridge = controllableBridge(["must not stream"]);
+    const vision = visionBridge({ chunks: ["must not stream"] });
+    const manager = installedManager({ resident: true });
+    const adapter = createOfflineAdapter(
+      visionDeps(manager, textBridge, vision),
+    );
+    const { request } = baseRequest({ approvedImageIds: ["a", "b"] });
+    const events = await collect(adapter.complete(request));
+    expect(errorOf(events).code).toBe("vision_unsupported");
+    expect(vision.describes).toBe(0);
+  });
+
+  it("fails closed without an image resolver", async () => {
+    const textBridge = controllableBridge(["must not stream"]);
+    const vision = visionBridge({ chunks: ["must not stream"] });
+    const manager = installedManager({ resident: true });
+    const adapter = createOfflineAdapter({
+      manager,
+      bridge: textBridge,
+      visionBridge: vision,
+    });
+    const { request } = baseRequest({ approvedImageIds: ["photo-1"] });
+    const events = await collect(adapter.complete(request));
+    expect(errorOf(events).code).toBe("vision_unsupported");
+    expect(vision.describes).toBe(0);
+  });
+
+  it("forwards the selector-resolved backend to the native load", async () => {
+    const textBridge = controllableBridge(["must not stream"]);
+    const vision = visionBridge({ chunks: ["ok"] });
+    const manager = installedManager({ resident: true });
+    const adapter = createOfflineAdapter(
+      visionDeps(manager, textBridge, vision, {
+        resolveVisionBackend: () => "gpu",
+      }),
+    );
+    const { request } = baseRequest({ approvedImageIds: ["photo-1"] });
+    const events = await collect(adapter.complete(request));
+    expect(events.at(-1)).toMatchObject({ kind: "done", stopReason: "complete" });
+    expect(vision.loads).toEqual([{ modelId: PIN.modelId, backend: "gpu" }]);
+  });
+
+  it("cancels an in-flight vision generation on abort", async () => {
+    const textBridge = controllableBridge(["must not stream"]);
+    const vision = visionBridge({ chunks: ["must not stream"] });
+    const manager = installedManager({ resident: true });
+    const adapter = createOfflineAdapter(
+      visionDeps(manager, textBridge, vision),
+    );
+    const { request, controller } = baseRequest({ approvedImageIds: ["photo-1"] });
+    controller.abort();
+    const events = await collect(adapter.complete(request));
+    expect(events.at(-1)).toMatchObject({ kind: "done", stopReason: "cancelled" });
+    expect(vision.describes).toBe(0);
   });
 });
