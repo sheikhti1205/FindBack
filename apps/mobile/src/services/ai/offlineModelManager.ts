@@ -362,6 +362,11 @@ export class OfflineModelManager {
     return [...this.assets.keys()];
   }
 
+  /** Catalogue pin for one model, or undefined when unknown. */
+  assetPinOf(modelId: string): OfflineAssetPin | undefined {
+    return this.assets.get(modelId);
+  }
+
   statusOf(modelId: string): OfflineModelStatus | undefined {
     return this.statuses.get(modelId);
   }
