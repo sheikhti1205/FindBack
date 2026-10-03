@@ -4,7 +4,8 @@
  *
  * Fails closed (exit 1, naming every violation) when ANY of these hold:
  *   1. stale-markers  — TODO/FIXME/"not wired" work markers in the shipped AI
- *                        scope (outside the allowlisted honest-refusal string)
+ *                        scope (no allowlist: honest-refusal strings must not
+ *                        look like work markers)
  *   2. manifest-pins  — a model profile lacks a revision or sha256 pin, or an
  *                        LFM arm is not catalogOnly (delegates to
  *                        check-ai-manifest.mjs validators)
@@ -13,21 +14,28 @@
  *                        block both required)
  *   4. abi-artifacts  — the Android ABI split config is missing a supported
  *                        ABI (armeabi-v7a, arm64-v8a, x86_64)
- *   5. capability-lie — shipped capability copy claims ready on-device vision
- *                        while the offline bridge reports vision_unsupported
- *                        (text-only skeleton truth)
- *   6. endpoint-pin   — the generic endpoint invents a default (unpinned)
+ *   5. vision-truth   — the production vision seam or its local-vision
+ *                        registration is absent (text-only skeleton tree), OR
+ *                        shipped capability copy claims ready vision without
+ *                        device measurement
+ *   6. runtime-wiring — a task-spec runtime has no production adapter, a
+ *                        foreign (lab) runtime is registered as routable, or
+ *                        the orchestrator lets deterministic-local shadow
+ *                        model runtimes on the model path
+ *   7. endpoint-pin   — the generic endpoint invents a default (unpinned)
  *                        endpoint instead of failing closed with
  *                        GENERIC_ENDPOINT_MISSING_COPY
- *   7. needle-telemetry — Needle telemetry defaults ON or bypasses the global
+ *   8. needle-telemetry — Needle telemetry defaults ON or bypasses the global
  *                        diag gate (must be off unless BOTH the global diag
  *                        gate and the explicit per-seam opt-in are set)
- *   8. secrets        — delegates to scripts/scan-secrets.mjs (non-zero fails)
+ *   9. secrets        — delegates to scripts/scan-secrets.mjs (non-zero fails)
  *
- * Lab/challenger/test skeletons (llama-cpp challenger stub, needle bench,
- * testing fakes, generationGuard rewire note) are deliberately OUTSIDE the
+ * Lab/challenger/test skeletons (needle bench, testing fakes,
+ * generationGuard rewire note) are deliberately OUTSIDE the
  * shipped scope: they never enter the APK through a production path, and the
  * lab-only policy confining them is enforced by check-ai-promotion.mjs.
+ * The llama.cpp challenger additionally must never appear as a routable
+ * runtime: runtime-wiring fails closed on any such registration.
  *
  * Usage:
  *   node scripts/ai-release-gate.mjs [--json]
@@ -59,11 +67,13 @@ export const SHIPPED_AI_FILES = [
   "apps/mobile/src/services/ai/llama/licenseGate.ts",
   "apps/mobile/src/services/ai/llama/promotionPolicy.ts",
   "apps/mobile/src/services/ai/needle/telemetryGate.ts",
+  "apps/mobile/src/services/ai/orchestrator/taskRegistry.ts",
+  "apps/mobile/src/services/ai/orchestrator/runtimeRegistry.ts",
+  "apps/mobile/src/services/ai/orchestrator/productionRuntimes.ts",
+  "apps/mobile/src/services/ai/orchestrator/AiOrchestrator.ts",
 ];
 
 const MARKER_RE = /\bTODO\b|\bFIXME\b|not\s+wired/i;
-/** Honest runtime refusal strings: user-visible truth, not work markers. */
-const MARKER_ALLOWLIST = ["on-device vision is not wired yet; text requests only"];
 
 const REQUIRED_ABIS = ["armeabi-v7a", "arm64-v8a", "x86_64"];
 
@@ -90,7 +100,6 @@ function checkStaleMarkers() {
     }
     source.split("\n").forEach((line, index) => {
       if (!MARKER_RE.test(line)) return;
-      if (MARKER_ALLOWLIST.some((allowed) => line.includes(allowed))) return;
       errors.push(`stale-markers: ${file}:${index + 1}: ${line.trim().slice(0, 120)}`);
     });
   }
@@ -151,32 +160,100 @@ function checkAbiArtifacts() {
   return errors;
 }
 
-function checkCapabilityBridge() {
+/**
+ * Skeleton-tree detector for the production vision path. Fails when:
+ * - the offline adapter has no image-capable seam (text-only skeleton), or
+ * - no local-vision production adapter is registered, or
+ * - capability copy claims ready vision (no device measurement has landed).
+ *
+ * `vision_unsupported` remains a legitimate fail-closed error code; this
+ * check asserts the seam exists, not the absence of the refusal string.
+ */
+export function validateVisionTruth({ offlineSource, runtimesSource, capabilitiesSource }) {
   const errors = [];
+  for (const marker of ["OfflineVisionNativeBridge", "visionBridge?:", "completeOfflineVision"]) {
+    if (!offlineSource.includes(marker)) {
+      errors.push(`vision-truth: offline adapter has no production vision seam (${marker} absent)`);
+    }
+  }
+  if (!runtimesSource.includes("LOCAL_VISION_RUNTIME_ID") || !runtimesSource.includes("visionRuntime(")) {
+    errors.push("vision-truth: no local-vision production adapter registered");
+  }
+  for (const pattern of VISION_CLAIM_RES) {
+    if (pattern.test(capabilitiesSource)) {
+      errors.push(`vision-truth: capability copy claims ready vision (${pattern})`);
+    }
+  }
+  if (!/hidden/i.test(capabilitiesSource)) {
+    errors.push("vision-truth: capability copy lost its hidden-until-measured default");
+  }
+  return errors;
+}
+
+/**
+ * Skeleton-tree detector for task routing. Fails when:
+ * - a non-deterministic task-spec runtime has no production adapter (every
+ *   such route would end in NO_RUNTIME on a real device), or
+ * - a foreign (lab) runtime is registered as routable, or
+ * - the orchestrator passes unfiltered spec.runtimes to firstAvailable,
+ *   letting always-available deterministic-local shadow model runtimes.
+ */
+export function validateRuntimeWiring({ registrySource, runtimesSource, orchestratorSource }) {
+  const errors = [];
+  const specIds = new Set(
+    [...registrySource.matchAll(/runtimes:\s*\[([^\]]*)\]/g)].flatMap((match) =>
+      [...match[1].matchAll(/"([^"]+)"/g)].map((id) => id[1]),
+    ),
+  );
+  const modelIds = [...specIds].filter((id) => id !== "deterministic-local");
+  for (const id of modelIds) {
+    if (!runtimesSource.includes(`"${id}"`)) {
+      errors.push(`runtime-wiring: task-spec runtime "${id}" has no production adapter`);
+    }
+  }
+  const registerCalls = [...runtimesSource.matchAll(/registry\.register\(\s*([A-Za-z0-9_]+)/g)].map(
+    (match) => match[1],
+  );
+  const knownAdapters = new Set(["textRuntime", "embeddingRuntime", "visionRuntime"]);
+  for (const call of registerCalls) {
+    if (!knownAdapters.has(call)) {
+      errors.push(`runtime-wiring: foreign routable runtime registered (${call})`);
+    }
+  }
+  if (!/firstAvailable\(\s*spec\.runtimes\.filter/.test(orchestratorSource)) {
+    errors.push(
+      "runtime-wiring: orchestrator does not skip deterministic-local on the model path (shadowing)",
+    );
+  }
+  return errors;
+}
+
+function checkVisionTruth() {
   let offline;
+  let runtimes;
   let capabilities;
   try {
     offline = read("apps/mobile/src/services/ai/providers/offline.ts");
+    runtimes = read("apps/mobile/src/services/ai/orchestrator/productionRuntimes.ts");
     capabilities = read("apps/mobile/src/services/appCapabilities.ts");
   } catch (error) {
-    return [`capability-lie: cannot read bridge/capability source (${error.message})`];
+    return [`vision-truth: cannot read vision source (${error.message})`];
   }
-  // Bridge truth: the skeleton is text-only until a vision seam lands.
-  if (!offline.includes("vision_unsupported")) {
-    errors.push("capability-lie: offline bridge no longer reports vision_unsupported");
+  return validateVisionTruth({ offlineSource: offline, runtimesSource: runtimes, capabilitiesSource: capabilities });
+}
+
+function checkRuntimeWiring() {
+  let registry;
+  let runtimes;
+  let orchestrator;
+  try {
+    registry = read("apps/mobile/src/services/ai/orchestrator/taskRegistry.ts");
+    runtimes = read("apps/mobile/src/services/ai/orchestrator/productionRuntimes.ts");
+    orchestrator = read("apps/mobile/src/services/ai/orchestrator/AiOrchestrator.ts");
+  } catch (error) {
+    return [`runtime-wiring: cannot read routing source (${error.message})`];
   }
-  if (!offline.includes("visionBridgeReady: false")) {
-    errors.push("capability-lie: offline vision default is not visionBridgeReady: false");
-  }
-  for (const pattern of VISION_CLAIM_RES) {
-    if (pattern.test(capabilities)) {
-      errors.push(`capability-lie: capability copy claims ready vision (${pattern})`);
-    }
-  }
-  if (!/hidden/i.test(capabilities)) {
-    errors.push("capability-lie: capability copy lost its hidden-until-measured default");
-  }
-  return errors;
+  return validateRuntimeWiring({ registrySource: registry, runtimesSource: runtimes, orchestratorSource: orchestrator });
 }
 
 function checkEndpointPin() {
@@ -230,7 +307,8 @@ export const GATE_CHECKS = [
   { id: "manifest-pins", run: checkManifestPins },
   { id: "license-bundle", run: checkLicenseBundle },
   { id: "abi-artifacts", run: checkAbiArtifacts },
-  { id: "capability-lie", run: checkCapabilityBridge },
+  { id: "vision-truth", run: checkVisionTruth },
+  { id: "runtime-wiring", run: checkRuntimeWiring },
   { id: "endpoint-pin", run: checkEndpointPin },
   { id: "needle-telemetry", run: checkNeedleTelemetry },
   { id: "promotion-policy", run: runPromotionPolicy },
@@ -278,7 +356,8 @@ checks (any failure exits 1):
   manifest-pins     modelProfiles rev+sha pins, LFM catalogOnly
   license-bundle    lfm1.0 arms blocked on the bundle channel
   abi-artifacts     ABI split config carries every supported ABI
-  capability-lie    capability copy vs offline vision_unsupported truth
+  vision-truth      production vision seam + registration present, copy honest
+  runtime-wiring    every spec runtime has a production adapter, no lab routes
   endpoint-pin      generic endpoint pinned (no invented default)
   needle-telemetry  Needle telemetry default-OFF behind the diag gate
   promotion-policy  lab-only runtimes never promotable/routable
@@ -321,7 +400,7 @@ function main() {
     }
     console.log(
       passed
-        ? "ai-release-gate: PASS (all 9 checks green)"
+        ? `ai-release-gate: PASS (all ${results.length} checks green)`
         : `ai-release-gate: FAIL (${results.filter((r) => !r.ok).length} check(s) red)`,
     );
   }

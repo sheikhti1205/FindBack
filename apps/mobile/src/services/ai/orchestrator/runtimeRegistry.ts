@@ -3,7 +3,8 @@
  *
  * A runtime reports availability synchronously (`available`) and runs one
  * invocation (`invoke`). The orchestrator picks the FIRST available runtime
- * in spec order and invokes it exactly once per route (single-path: no
+ * in spec order on the model path (skipping `deterministic-local`, whose
+ * rules already ran) and invokes it exactly once per route (single-path: no
  * fan-out, no silent retry on another backend). Test doubles register
  * counting fakes the same way production registers native bridges.
  */
@@ -19,7 +20,14 @@ export interface RuntimeInvokeInput {
 }
 
 export type RuntimeResult =
-  | { readonly ok: true; readonly value: unknown; readonly modelId: string; readonly backend: string }
+  | {
+      readonly ok: true;
+      readonly value: unknown;
+      readonly modelId: string;
+      readonly backend: string;
+      /** Pinned catalogue revision of the serving model, when the runtime knows it. */
+      readonly modelRevision?: string;
+    }
   | { readonly ok: false; readonly error: string; readonly denialReason: string };
 
 export interface AiRuntime {

@@ -69,6 +69,10 @@ export default defineConfig(({ command, mode }) => {
       testTimeout: 20_000,
       hookTimeout: 20_000,
       setupFiles: ["./src/test-setup.ts"],
+      // Vendored upstream sources (llama.cpp, needle engines) ship their own
+      // web/UI tests for reference; they are not part of this workspace's
+      // suite and their frameworks are not installed here.
+      exclude: ["**/node_modules/**", "**/dist/**", "android/app/src/main/cpp/third_party/**"],
     },
     server: {
       port: 5173,

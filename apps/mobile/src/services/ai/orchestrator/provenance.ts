@@ -41,6 +41,8 @@ export interface InferenceProvenance {
   readonly modelId: string;
   readonly requestedBackend: string;
   readonly actualBackend: string;
+  /** Pinned catalogue revision of the serving model (production routes only). */
+  readonly modelRevision?: string;
   readonly denialReason?: string;
   readonly latencyMs: number;
   readonly traceId: string;
@@ -60,6 +62,8 @@ export function isInferenceProvenance(value: unknown): value is InferenceProvena
   if (typeof candidate["latencyMs"] !== "number") return false;
   if (!Number.isFinite(candidate["latencyMs"]) || candidate["latencyMs"] < 0) return false;
   if (typeof candidate["traceId"] !== "string" || candidate["traceId"] === "") return false;
+  const revision = candidate["modelRevision"];
+  if (revision !== undefined && !isNonEmptyString(revision)) return false;
   const denial = candidate["denialReason"];
   return denial === undefined || isNonEmptyString(denial);
 }

@@ -19,6 +19,11 @@ import { evaluateProposal, type GateDecision, type GatePermissions } from "./act
 import { isAllowedTransition, type InferenceProvenance, type OrchestratorState } from "./provenance";
 import { createDefaultRegistry, type AiRuntime, type RuntimeRegistry } from "./runtimeRegistry";
 import { fallbackFor, getTaskSpec, isTaskId, tryDeterministic } from "./taskRegistry";
+import {
+  registerProductionRuntimes,
+  type ProductionRuntimeDeps,
+  type ProductionRuntimeId,
+} from "./productionRuntimes";
 
 export type { GateDecision, GatePermissions };
 export type { InferenceProvenance, OrchestratorState };
@@ -114,6 +119,17 @@ export class AiOrchestrator {
       traceId: request.traceId,
       permissions: request.permissions,
     });
+  }
+
+  /**
+   * Attach production runtimes to the shared registry (WS-G boot path).
+   * The shared registry starts deterministic-only; after attach, routes
+   * without an injected `ctx.registry` can reach installed + verified
+   * on-device models. Idempotent per runtime id (re-registration replaces
+   * the adapter). Returns the registered ids.
+   */
+  attachProductionRuntimes(deps: ProductionRuntimeDeps): readonly ProductionRuntimeId[] {
+    return registerProductionRuntimes(this.sharedRegistry, deps);
   }
 
   async route(taskId: string, input: unknown, ctx: RouteContext): Promise<RouteResult> {
@@ -219,7 +235,13 @@ export class AiOrchestrator {
       ctx.timeoutMs === undefined || ctx.timeoutMs <= 0
         ? spec.timeoutMs
         : Math.min(ctx.timeoutMs, spec.timeoutMs);
-    const runtime = registry.firstAvailable(spec.runtimes);
+    // Model path: the deterministic rules already ran above, so the
+    // deterministic registry entry is skipped — otherwise its
+    // always-available stub would shadow every model runtime and reduce
+    // every non-deterministic input to NO_DETERMINISTIC.
+    const runtime = registry.firstAvailable(
+      spec.runtimes.filter((id) => id !== DETERMINISTIC_BACKEND),
+    );
     if (runtime === undefined) {
       return this.fail({
         taskId,
@@ -293,6 +315,7 @@ export class AiOrchestrator {
       modelId: ctx.modelId ?? outcome.modelId,
       requestedBackend,
       actualBackend: outcome.backend,
+      modelRevision: outcome.modelRevision,
       value: outcome.value,
       traceId,
       startedAt,
@@ -334,6 +357,7 @@ export class AiOrchestrator {
     readonly modelId: string;
     readonly requestedBackend: string;
     readonly actualBackend: string;
+    readonly modelRevision?: string;
     readonly value: unknown;
     readonly traceId: string;
     readonly startedAt: number;
@@ -348,6 +372,7 @@ export class AiOrchestrator {
         modelId: args.modelId,
         requestedBackend: args.requestedBackend,
         actualBackend: args.actualBackend,
+        ...(args.modelRevision === undefined ? {} : { modelRevision: args.modelRevision }),
         latencyMs: Date.now() - args.startedAt,
         traceId: args.traceId,
       },
