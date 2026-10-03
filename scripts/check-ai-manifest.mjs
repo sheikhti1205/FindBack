@@ -31,8 +31,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
 const DEFAULT_FILE = "apps/mobile/src/services/ai/modelProfiles.ts";
 
-const KNOWN_RUNTIMES = new Set(["litert-lm", "llama-cpp"]);
-const KNOWN_FORMATS = new Set(["litertlm", "gguf"]);
+const KNOWN_RUNTIMES = new Set(["litert-lm", "llama-cpp", "needle-cact"]);
+const KNOWN_FORMATS = new Set(["litertlm", "gguf", "cact"]);
 const KNOWN_MATURITIES = new Set(["default", "experimental", "eval-only"]);
 const HEX_REV_RE = /^[0-9a-f]{7,40}$/i;
 const HEX_SHA_RE = /^[0-9a-f]{64}$/i;
