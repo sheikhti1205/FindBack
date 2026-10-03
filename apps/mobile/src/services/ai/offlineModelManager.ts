@@ -38,6 +38,17 @@
  *   on an explicit `userInitiated` event (see `QUEUE_DOWNLOAD`).
  */
 
+import { verifyChecksumMatch } from "./download/installer";
+import {
+  buildModelPaths,
+  preflightCheck,
+  type PreflightResult,
+} from "./download/storage";
+import {
+  journalResumeOffset,
+  type DownloadJournal,
+} from "./download/transport";
+
 /** Schema version for `OfflineManagerSnapshot`. Bump on shape change. */
 export const OFFLINE_MANAGER_SNAPSHOT_VERSION = 1 as const;
 
@@ -424,6 +435,60 @@ export class OfflineModelManager {
       }
     }
     return { ok: true };
+  }
+
+  /**
+   * WS-C delegation: download/verify/install steps live in
+   * `download/*`; the manager only owns gating + transitions.
+   */
+
+  /** Checksum compare delegated to `download/installer`. */
+  checksumsMatch(expectedHex: string, actualHex: string): boolean {
+    return verifyChecksumMatch(expectedHex, actualHex);
+  }
+
+  /** Storage headroom gate delegated to `download/storage`. */
+  preflightForDownload(
+    requiredBytes: number,
+    freeBytes: number,
+    headroomBytes = this.headroomBytes,
+  ): PreflightResult {
+    return preflightCheck({ requiredBytes, freeBytes, headroomBytes });
+  }
+
+  /** App-private staging/installed paths delegated to `download/storage`. */
+  stagingPathsFor(
+    rootDir: string,
+    modelId: string,
+    revision: string,
+    filePath: string,
+  ): { readonly stagingPath: string; readonly installedPath: string } {
+    return buildModelPaths(rootDir, modelId, revision, filePath);
+  }
+
+  /** Resume offset delegated to the `download/transport` journal. */
+  resumeOffsetFrom(journal: DownloadJournal): number {
+    return journalResumeOffset(journal);
+  }
+
+  /**
+   * Record transport progress from a sidecar journal: the journal offset
+   * becomes the staged-byte count (the resume offset for a future fetch).
+   */
+  recordJournalProgress(
+    modelId: string,
+    journal: DownloadJournal,
+  ): OfflineModelStatus {
+    const current = this.statuses.get(modelId);
+    if (current === undefined) {
+      throw new OfflineTransitionError(`unknown model ${modelId}`);
+    }
+    const next = transitionOfflineModel(current, {
+      type: "PROGRESS",
+      downloadedBytes: journalResumeOffset(journal),
+    });
+    this.statuses.set(modelId, next);
+    return next;
   }
 
   /** Verify staged weights through the injected verifier (no-op if absent). */
