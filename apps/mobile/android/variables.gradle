@@ -18,6 +18,14 @@ ext {
     // On-device vision (SmolVLM2-500M via LiteRT-LM). Pinned exact — never
     // dynamic — so every build resolves the same AAR. Verified present on
     // Google Maven (maven-metadata: latest 0.17.1).
+    // On-device vision (SmolVLM2-500M via LiteRT-LM). Pinned exact — never
+    // dynamic — so every build resolves the same AAR. Verified present on
+    // Google Maven (maven-metadata: latest 0.17.1).
     litertLmVersion = '0.17.1'
     coroutinesVersion = '1.10.2'
+    // Pinned NDK + CMake for `findback_probe` (see ndkVersion /
+    // externalNativeBuild in app/build.gradle). Kept here so the toolchain
+    // pin lives next to every other version pin.
+    ndkPinnedVersion = '29.0.13113456'
+    cmakePinnedVersion = '3.31.6'
 }

@@ -73,6 +73,10 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.findback.app"
+        // Pinned NDK + CMake for the `findback_probe` capability library
+        // (dlopen-only NNAPI/Vulkan/OpenCL probes). Pinned exact in
+        // variables.gradle — never floating.
+        ndkVersion rootProject.ext.ndkPinnedVersion
         // Release metadata is DERIVED, never duplicated: minSdk/target come
         // from rootProject.ext (variables.gradle), compileSdk likewise, and
         // versionName from apps/mobile/package.json (appVersionName below).
@@ -143,6 +147,12 @@ android {
     }
     kotlinOptions {
         jvmTarget = '21'
+    }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.31.6"
+        }
     }
     buildFeatures {
         buildConfig = true
