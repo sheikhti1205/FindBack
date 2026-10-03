@@ -24,10 +24,10 @@ function persisted(): Record<string, unknown> {
 }
 
 describe("AppearancePanel (AI-011 Quick Appearance)", () => {
-  it("renders Light/Dark/System theme preview cards that persist immediately", () => {
+  it("renders all four theme preview cards that persist immediately", () => {
     renderPanel();
     const group = screen.getByRole("radiogroup", { name: "Theme" });
-    for (const name of ["Light", "Dark", "System"]) {
+    for (const name of ["Light", "Dark", "System", "AMOLED"]) {
       expect(within(group).getByRole("radio", { name: new RegExp(name) })).toBeTruthy();
     }
     const dark = within(group).getByRole("radio", { name: /Dark/ });
@@ -36,6 +36,30 @@ describe("AppearancePanel (AI-011 Quick Appearance)", () => {
     expect(localStorage.getItem("findback.theme")).toBe("dark");
     // The shared sliding selection indicator follows the chosen card.
     expect(dark.querySelector('[data-testid="segmented-selection"]')).toBeTruthy();
+  });
+
+  it("retains a theme-group tab stop for persisted AMOLED and arrows out and back", () => {
+    localStorage.setItem("findback.theme", "amoled");
+    renderPanel();
+    const group = screen.getByRole("radiogroup", { name: "Theme" });
+    const radios = within(group).getAllByRole("radio") as HTMLButtonElement[];
+    const tabStops = radios.filter((radio) => radio.tabIndex === 0);
+    expect(tabStops).toHaveLength(1);
+    const amoled = within(group).getByRole("radio", { name: /AMOLED/ });
+    expect(tabStops[0]).toBe(amoled);
+    expect(amoled.getAttribute("aria-checked")).toBe("true");
+    amoled.focus();
+    fireEvent.keyDown(amoled, { key: "ArrowRight" });
+    const light = within(group).getByRole("radio", { name: /Light/ });
+    expect(document.activeElement).toBe(light);
+    expect(light.getAttribute("aria-checked")).toBe("true");
+    expect(localStorage.getItem("findback.theme")).toBe("light");
+    expect(document.documentElement.classList.contains("amoled")).toBe(false);
+    fireEvent.keyDown(light, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(amoled);
+    expect(amoled.getAttribute("aria-checked")).toBe("true");
+    expect(localStorage.getItem("findback.theme")).toBe("amoled");
+    expect(document.documentElement.classList.contains("amoled")).toBe(true);
   });
 
   it("hides the accent control: no user-facing setting without visible effect (H1 option B)", () => {

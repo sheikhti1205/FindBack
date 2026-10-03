@@ -36,11 +36,13 @@ const THEME_CARDS: readonly { value: Theme; hint: string }[] = [
   { value: "dark", hint: "Dimmed surfaces" },
   // "System" IS the Auto mode — it follows the device setting.
   { value: "system", hint: "Auto · follows device" },
+  { value: "amoled", hint: "True black surfaces" },
 ];
 
 function themeLabel(value: Theme): string {
   if (value === "light") return "Light";
   if (value === "dark") return "Dark";
+  if (value === "amoled") return "AMOLED";
   return "System";
 }
 
@@ -53,12 +55,12 @@ function ThemePreview({ value }: { value: Theme }) {
       </span>
     );
   }
-  const dark = value === "dark";
+  const dark = value === "dark" || value === "amoled";
   return (
     <span
       aria-hidden="true"
       className={`flex h-10 flex-col justify-center gap-1 rounded-m3-xs border border-outline-variant px-2 ${
-        dark ? "bg-[#121212]" : "bg-white"
+        value === "amoled" ? "bg-black" : dark ? "bg-[#121212]" : "bg-white"
       }`}
     >
       <span className={`h-1.5 w-3/4 rounded-full ${dark ? "bg-[#e6e6e0]" : "bg-[#1a1a1a]"}`} />
@@ -117,7 +119,7 @@ export function AppearancePanel() {
               role="radiogroup"
               aria-label="Theme"
               aria-describedby={`${panelId}-theme`}
-              className="grid grid-cols-3 gap-2"
+              className="grid grid-cols-2 gap-2 sm:grid-cols-4"
               onKeyDown={(e) => {
                 const active = document.activeElement;
                 const index = cardRefs.current.findIndex((el) => el === active);
@@ -162,7 +164,7 @@ export function AppearancePanel() {
                     <span className="relative z-[1] flex flex-col gap-1.5">
                       <ThemePreview value={card.value} />
                       <span className="text-xs font-medium">{themeLabel(card.value)}</span>
-                      <span aria-hidden="true" className="text-[11px] leading-tight opacity-80">{card.hint}</span>
+                      <span aria-hidden="true" className="text-[11px] leading-tight text-on-surface-variant">{card.hint}</span>
                     </span>
                   </button>
                 );

@@ -46,6 +46,8 @@
   --fb-outline: #626761;
   --fb-outline-variant: #dce0da;
   --fb-primary: var(--fb-primary-light, #256c4a);
+  --fb-primary-hover-layer: rgba(0, 0, 0, 0.08);
+  --fb-primary-pressed-layer: rgba(0, 0, 0, 0.12);
   --fb-on-primary: var(--fb-on-primary-light, #ffffff);
   --fb-primary-container: var(--fb-primary-container-light, #e1f2e8);
   --fb-on-primary-container: var(--fb-on-primary-container-light, #00391e);
@@ -101,6 +103,8 @@
   --fb-outline: #b8bdb7;
   --fb-outline-variant: #343a35;
   --fb-primary: var(--fb-primary-dark, #82d5aa);
+  --fb-primary-hover-layer: rgba(255, 255, 255, 0.08);
+  --fb-primary-pressed-layer: rgba(255, 255, 255, 0.12);
   --fb-on-primary: var(--fb-on-primary-dark, #00391e);
   --fb-primary-container: var(--fb-primary-container-dark, #153c29);
   --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
@@ -143,6 +147,8 @@
     --fb-outline: #b8bdb7;
     --fb-outline-variant: #343a35;
     --fb-primary: var(--fb-primary-dark, #82d5aa);
+    --fb-primary-hover-layer: rgba(255, 255, 255, 0.08);
+    --fb-primary-pressed-layer: rgba(255, 255, 255, 0.12);
     --fb-on-primary: var(--fb-on-primary-dark, #00391e);
     --fb-primary-container: var(--fb-primary-container-dark, #153c29);
     --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
@@ -181,6 +187,8 @@
   --fb-outline: #b8bab6;
   --fb-outline-variant: #242624;
   --fb-primary: var(--fb-primary-dark, #82d5aa);
+  --fb-primary-hover-layer: rgba(255, 255, 255, 0.08);
+  --fb-primary-pressed-layer: rgba(255, 255, 255, 0.12);
   --fb-on-primary: var(--fb-on-primary-dark, #00391e);
   --fb-primary-container: var(--fb-primary-container-dark, #153c29);
   --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
@@ -248,6 +256,16 @@ body {
 ::selection {
   background: var(--fb-selection);
   color: var(--fb-on-selection);
+}
+
+/* Enabled primary state layers modify only the background, never label or
+ * whole-element opacity. Black deepens light swatches; white lifts dark ones.
+ * The underlying primary remains opaque and the existing press motion stays. */
+.fb-button-primary:not(:disabled):hover {
+  background-image: linear-gradient(var(--fb-primary-hover-layer), var(--fb-primary-hover-layer));
+}
+.fb-button-primary:not(:disabled):active {
+  background-image: linear-gradient(var(--fb-primary-pressed-layer), var(--fb-primary-pressed-layer));
 }
 
 /* H1-motion: CSS animations honor the ONE effective motion preference.

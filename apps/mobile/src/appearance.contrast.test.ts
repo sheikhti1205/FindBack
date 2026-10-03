@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ACCENT_OPTIONS, accentTokensFor } from "./appearance";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Button } from "./components/Button";
+import { AppearancePanel } from "./components/AppearancePanel";
+import { ThemeProvider } from "./theme";
 
 const css = readFileSync("src/index.css", "utf8");
 function block(selector: string) {
@@ -21,6 +26,30 @@ function contrast(a: string, b: string) {
   }
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi! + 0.05) / (lo! + 0.05);
+}
+
+/** sRGB alpha compositing, including whole-element fading into its surface. */
+function composite(foreground: string, background: string, opacity: number) {
+  return `#${[1, 3, 5].map((start) => {
+    const fg = parseInt(foreground.slice(start, start + 2), 16);
+    const bg = parseInt(background.slice(start, start + 2), 16);
+    return Math.round(fg * opacity + bg * (1 - opacity)).toString(16).padStart(2, "0");
+  }).join("")}`;
+}
+
+const buttonClasses = renderToStaticMarkup(createElement(Button, { children: "Continue" })).match(/class="([^"]+)"/)![1]!;
+const panelMarkup = renderToStaticMarkup(createElement(ThemeProvider, { children: createElement(AppearancePanel) }));
+const hintClasses = panelMarkup.match(/class="([^"]+)">Bright surfaces<\/span>/)![1]!;
+
+function primaryStateBackground(base: string, source: string, state: "hover" | "active") {
+  if (!buttonClasses.includes("fb-button-primary")) return base;
+  // Verify the state layer is consumed by this enabled Button, not merely defined.
+  const rule = block(`.fb-button-primary:not(:disabled):${state}`);
+  const role = state === "hover" ? "--fb-primary-hover-layer" : "--fb-primary-pressed-layer";
+  expect(token(rule, "background-image")).toBe(`linear-gradient(var(${role}), var(${role}))`);
+  const rgba = token(source, role).match(/^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/)!;
+  const layer = `#${rgba.slice(1, 4).map((channel) => Number(channel).toString(16).padStart(2, "0")).join("")}`;
+  return composite(layer, base, Number(rgba[4]));
 }
 
 describe("Soft Utility semantic palette", () => {
@@ -57,6 +86,29 @@ describe("Soft Utility semantic palette", () => {
         expect(contrast(token(source, "--fb-on-surface-variant"), token(source, surface))).toBeGreaterThanOrEqual(4.5);
       }
     });
+    it(`${mode}: legacy Quick Appearance hints meet AA after actual opacity compositing`, () => {
+      const opacity = Number(hintClasses.match(/(?:^| )opacity-(\d+)/)?.[1] ?? "100") / 100;
+      // Unselected, hovered, and selected legacy cards use these surfaces.
+      for (const surface of ["--fb-surface-container-low", "--fb-surface-container", "--fb-surface"]) {
+        const background = token(source, surface);
+        const visibleInk = composite(token(source, "--fb-on-surface-variant"), background, opacity);
+        expect(contrast(visibleInk, background)).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+    for (const state of ["hover", "active"] as const) {
+      it.each(ACCENT_OPTIONS)(`${mode}: enabled $id Button ${state} rendered text meets AA`, ({ id }) => {
+        const colors = accentTokensFor(id, mode);
+        const opacity = Number(buttonClasses.match(new RegExp(`${state}:opacity-(\\d+)`))?.[1] ?? "100") / 100;
+        const stateBackground = primaryStateBackground(colors.primary, source, state);
+        for (const surface of surfaces) {
+          const background = token(source, surface);
+          const visibleBackground = composite(stateBackground, background, opacity);
+          const visibleLabel = composite(colors.onPrimary, background, opacity);
+          expect(contrast(visibleLabel, visibleBackground)).toBeGreaterThanOrEqual(4.5);
+        }
+        expect(opacity).toBe(1);
+      });
+    }
     it.each(ACCENT_OPTIONS)(`${mode}: $id primary/container text AA and focus/control/link contrast`, ({ id }) => {
       const colors = accentTokensFor(id, mode);
       expect(contrast(colors.primary, colors.onPrimary)).toBeGreaterThanOrEqual(4.5);

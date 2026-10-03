@@ -10,7 +10,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANTS: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "bg-primary text-on-primary hover:opacity-90 active:opacity-80",
+  primary: "fb-button-primary bg-primary text-on-primary",
   outline:
     "border border-outline text-on-surface bg-transparent hover:bg-surface-container",
   text: "text-on-surface hover:bg-surface-container",
