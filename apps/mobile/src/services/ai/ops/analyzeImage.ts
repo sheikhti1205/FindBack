@@ -9,6 +9,7 @@
  */
 import type { ModelProfile } from "../modelProfiles";
 import { normalizeJsonOp, validatePhotoAnalysis, type NormalizeOptions } from "../normalize";
+import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import { PHOTO_ANALYSIS_KEYS, type AiResult, type GenerateFn, type PhotoAnalysis } from "../types";
 
 export const PHOTO_INSTRUCTION =
@@ -62,3 +63,5 @@ export async function analyzeImage(
   }
   return last;
 }
+
+export const analyzeImageTaskSpec: AiTaskSpec = taskSpecFor("analyze-image");

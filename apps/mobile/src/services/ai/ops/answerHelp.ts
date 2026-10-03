@@ -9,6 +9,7 @@
  */
 import type { ModelProfile } from "../modelProfiles";
 import { normalizeProse, type NormalizeOptions } from "../normalize";
+import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import type { AiResult, GenerateFn, HelpAnswer } from "../types";
 
 export const HELP_INSTRUCTION =
@@ -38,3 +39,5 @@ export async function answerHelp(
   if (!parsed.ok) return parsed;
   return { ok: true, value: { answerText: parsed.value, action: { action: "NONE" } } };
 }
+
+export const answerHelpTaskSpec: AiTaskSpec = taskSpecFor("answer-help");

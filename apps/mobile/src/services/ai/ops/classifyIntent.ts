@@ -9,6 +9,7 @@
  */
 import type { ModelProfile } from "../modelProfiles";
 import { normalizeJsonOp, validateIntentPayload, type NormalizeOptions } from "../normalize";
+import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import type { AiResult, ClassifiedIntent, GenerateFn } from "../types";
 
 export const CLASSIFY_INTENT_INSTRUCTION =
@@ -39,3 +40,5 @@ export async function classifyIntent(
     context,
   });
 }
+
+export const classifyIntentTaskSpec: AiTaskSpec = taskSpecFor("classify-intent");
