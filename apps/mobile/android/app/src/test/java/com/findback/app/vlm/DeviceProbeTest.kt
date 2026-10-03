@@ -1,20 +1,32 @@
 package com.findback.app.vlm
 
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * WS-F L2: pure-JVM pinning tests for [DeviceProbe].
+ * WS-F L2: pure-JVM tests for [DeviceProbe].
  *
- * Tests the probe-record contract only (schema version, backend vocabulary,
- * staleness gate, skeleton-collect nullability). Collection itself is NOT YET
- * IMPLEMENTED on the native side and stays untested here by design — no
- * emulator, no device APIs, no I/O.
+ * Contract pins (schema version, backend vocabulary, staleness gate) plus
+ * fake-[DeviceProbe.Deps] tests for the collection logic: fact assembly,
+ * per-signal fallback strings, failure-to-null mapping, and the
+ * timing-runner wiring. No emulator, no device APIs, no I/O — the EGL and
+ * JNI paths are covered on-device, not here.
  */
 class DeviceProbeTest {
+
+    @BeforeTest fun silenceProbeLogging() {
+        DeviceProbe.logWarn = { _, _, _ -> }
+    }
+
+    @AfterTest fun restoreProbeLogging() {
+        DeviceProbe.logWarn = { tag, message, throwable -> android.util.Log.w(tag, message, throwable) }
+    }
 
     @Test fun probeVersionMatchesTsContract() {
         // Must match TS `PROBE_VERSION` in src/services/ai/deviceProbe.ts.
@@ -128,13 +140,132 @@ class DeviceProbeTest {
     }
 
     @Test fun collectIsSkeletonAndReturnsNull() {
-        // Native measurement is not implemented yet; null forces the TS-side
-        // `selectBackend` no-probe path (serve cpu, schedule a probe).
+        // Without a timing runner there is no measured sample: null forces
+        // the TS-side `selectBackend` no-probe path (serve cpu, schedule
+        // a probe). Identity facts still execute (see collectFacts tests).
         assertNull(
             DeviceProbe.collect(
                 backend = DeviceProbe.BACKEND_CPU,
                 modelRev = "smolvlm2-500m-r1",
                 corpusVersion = "ws6-v1",
+                deps = fakeDeps(),
+            ),
+        )
+    }
+
+    private fun fakeDeps(
+        ramMb: Long = 8192L,
+        socModel: String = "Tensor-test",
+        gpu: String = "TestRenderer",
+        osVersion: String = "15",
+        nnapi: String = "supported:1:t0-TestDriver",
+        vulkan: String = "ok:1:v1.3-TestGPU",
+        openCl: String = "unavailable",
+        timing: DeviceProbe.TimingResult? = null,
+        timingThrows: Boolean = false,
+    ): DeviceProbe.Deps = object : DeviceProbe.Deps {
+        override fun soc() = object : DeviceProbe.SocInfoProvider {
+            override fun socModel() = socModel
+            override fun osVersion() = osVersion
+        }
+
+        override fun ram() = object : DeviceProbe.RamProvider {
+            override fun totalRamMb() = ramMb
+        }
+
+        override fun gpu() = object : DeviceProbe.GpuInfoProvider {
+            override fun rendererSummary() = gpu
+        }
+
+        override fun nnapi() = object : DeviceProbe.NnapiProbe {
+            override fun status() = nnapi
+        }
+
+        override fun vulkan() = object : DeviceProbe.VulkanProbe {
+            override fun status() = vulkan
+        }
+
+        override fun openCl() = object : DeviceProbe.OpenClProbe {
+            override fun status() = openCl
+        }
+
+        override fun timing(): DeviceProbe.TimingRunner? =
+            if (timing == null && !timingThrows) null
+            else object : DeviceProbe.TimingRunner {
+                override fun run(backend: String): DeviceProbe.TimingResult? {
+                    if (timingThrows) throw IllegalStateException("no runtime")
+                    return timing
+                }
+            }
+    }
+
+    @Test fun collectFactsReturnsRealEvidence() {
+        val facts = DeviceProbe.collectFacts(fakeDeps())
+        assertNotNull(facts)
+        assertEquals("Tensor-test", facts.socModel)
+        assertEquals(8192L, facts.ramMb)
+        assertEquals("supported:1:t0-TestDriver", facts.nnapiStatus)
+        assertEquals("ok:1:v1.3-TestGPU", facts.vulkanStatus)
+        assertEquals("unavailable", facts.openClStatus)
+    }
+
+    @Test fun collectFactsDegradesPerSignalToFallbacks() {
+        val facts = DeviceProbe.collectFacts(
+            fakeDeps(socModel = "", gpu = "", nnapi = "", vulkan = "", openCl = ""),
+        )
+        assertNotNull(facts)
+        assertEquals("unknown", facts.socModel)
+        assertEquals("unknown", facts.gpuInfo)
+        assertEquals("unavailable-unknown", facts.nnapiStatus)
+    }
+
+    @Test fun collectFactsNullWhenRamUnreadable() {
+        assertNull(DeviceProbe.collectFacts(fakeDeps(ramMb = 0L)))
+        assertNull(DeviceProbe.collectFacts(fakeDeps(ramMb = -1L)))
+    }
+
+    @Test fun collectReturnsNullOnBlankArguments() {
+        val deps = fakeDeps(timing = DeviceProbe.TimingResult(10.0, 20.0, true))
+        assertNull(DeviceProbe.collect("", "r1", "c1", deps))
+        assertNull(DeviceProbe.collect("cpu", "", "c1", deps))
+        assertNull(DeviceProbe.collect("cpu", "r1", "", deps))
+    }
+
+    @Test fun collectReturnsRecordWhenRunnerMeasures() {
+        val record = DeviceProbe.collect(
+            backend = DeviceProbe.BACKEND_GPU,
+            modelRev = "smolvlm2-500m-r1",
+            corpusVersion = "ws6-v1",
+            deps = fakeDeps(timing = DeviceProbe.TimingResult(120.0, 18.5, true)),
+        )
+        assertNotNull(record)
+        assertEquals(DeviceProbe.BACKEND_GPU, record.backend)
+        assertEquals(120.0, record.ttftMs)
+        assertEquals(18.5, record.tokensPerSec)
+        assertTrue(record.correctnessPass)
+        assertTrue(record.gpuInfo.contains("nnapi=supported:1:t0-TestDriver"))
+    }
+
+    @Test fun collectKeepsFailingSamplesVisible() {
+        // A fast-but-wrong backend must never win by hiding: correctness
+        // false still returns a record; selection filters it.
+        val record = DeviceProbe.collect(
+            backend = DeviceProbe.BACKEND_CPU,
+            modelRev = "r1",
+            corpusVersion = "c1",
+            deps = fakeDeps(timing = DeviceProbe.TimingResult(5.0, 99.0, false)),
+        )
+        assertNotNull(record)
+        assertFalse(record.correctnessPass)
+    }
+
+    @Test fun collectReturnsNullWhenRunnerThrows() {
+        assertNull(
+            DeviceProbe.collect(
+                backend = DeviceProbe.BACKEND_CPU,
+                modelRev = "r1",
+                corpusVersion = "c1",
+                deps = fakeDeps(timingThrows = true),
             ),
         )
     }
