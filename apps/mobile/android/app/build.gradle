@@ -181,6 +181,17 @@ tasks.register("fetchNeedleEngine", Exec) {
 tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }
     .configureEach { dependsOn("fetchNeedleEngine") }
 
+// Fetch pinned llama.cpp lab source (v0.5.0 tarball, size+SHA verified)
+// before any native build. Weights are NEVER fetched here: lab GGUF files
+// install at lab time through the verified downloader, and LFM-licensed
+// arms stay blocked from production distribution by the license gate.
+tasks.register("fetchLlamaCpp", Exec) {
+    commandLine "node", new File(repoRoot, "scripts/fetch-llama-cpp.mjs").absolutePath
+    outputs.dir(new File(projectDir, "src/main/cpp/third_party/llama.cpp"))
+}
+tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }
+    .configureEach { dependsOn("fetchLlamaCpp") }
+
 // A direct Gradle package of stale Capacitor assets cannot bypass the web
 // build gate. This checks the actual staged JS against the effective public
 // config; missing or mismatched values stop APK/AAB packaging. JVM-only tests
