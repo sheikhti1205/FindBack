@@ -1,0 +1,81 @@
+# FindBack — local-AI native path (WS-D).
+#
+# Compile + JVM Kotlin unit tests + Capacitor sync check for the on-device AI
+# scope. This workflow NEVER downloads model weights: the JVM tests run
+# against fakes/stubs, and model pins are validated by local-ai-model-smoke.yml.
+# No fetch-use-model / fetch-needle-model step may be added here.
+
+name: Local AI — native
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/src/services/ai/**"
+      - "apps/mobile/src/services/appCapabilities.ts"
+      - "apps/mobile/android/**"
+      - "apps/mobile/capacitor.config.*"
+      - "scripts/check-ai-*.mjs"
+      - "scripts/ai-release-gate.mjs"
+      - ".github/workflows/local-ai-native.yml"
+  pull_request:
+    paths:
+      - "apps/mobile/src/services/ai/**"
+      - "apps/mobile/src/services/appCapabilities.ts"
+      - "apps/mobile/android/**"
+      - "apps/mobile/capacitor.config.*"
+      - "scripts/check-ai-*.mjs"
+      - "scripts/ai-release-gate.mjs"
+      - ".github/workflows/local-ai-native.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Kotlin compile + JVM tests + Cap sync check (no model downloads)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+    steps:
+      # Full history: versionCode derives from `git rev-list --count HEAD`.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - name: Build shared package (types for mobile)
+        run: npm run build -w @findback/shared
+      - name: AI manifest + promotion pre-checks (static, no downloads)
+        run: |
+          node scripts/check-ai-manifest.mjs
+          node scripts/check-ai-promotion.mjs
+      - name: Restore Firebase Android client configuration
+        run: node scripts/materialize-google-services.mjs
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
+      - name: Build mobile web dist (Capacitor webDir)
+        run: npm run build -w @findback/mobile
+        env:
+          CI: true
+      - name: Capacitor sync check
+        # Fails closed when the native shell cannot sync the web assets
+        # (missing webDir, misconfigured capacitor.config, …). The sync must
+        # leave the android tree reproducible: any unexpected diff is shown.
+        run: |
+          npm run cap:sync -w @findback/mobile
+          test -d apps/mobile/android/app/src/main/assets/public || { echo "cap sync did not stage web assets"; exit 1; }
+          git status --porcelain -- apps/mobile/android || true
+      - name: Kotlin compile + JVM unit tests (no model bytes on this path)
+        run: cd apps/mobile/android && ./gradlew :app:compileDebugSources :app:testDebugUnitTest

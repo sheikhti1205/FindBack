@@ -1,0 +1,103 @@
+# FindBack — local-AI model smoke (WS-D).
+#
+# Pinned-checksum smoke for the on-device model scope:
+#   * fetch-use-model --check (pinned USE bytes + SHA-256)
+#   * needle disabled-check (Needle fetch stays opt-in; no needle bytes land)
+#   * manifest pin validation via scripts/check-ai-manifest.mjs
+#   * full AI release gate via scripts/ai-release-gate.mjs
+#   * APK audit: no .litertlm/.gguf bytes except the USE allowlist entry
+#     (assets/models/use/universal_sentence_encoder.tflite)
+#
+# This is the ONLY local-AI workflow that downloads weights (the pinned USE
+# asset); local-ai-native.yml must stay download-free.
+
+name: Local AI — model smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/src/services/ai/**"
+      - "apps/mobile/src/services/appCapabilities.ts"
+      - "apps/mobile/android/**"
+      - "scripts/fetch-*-model.mjs"
+      - "scripts/check-ai-*.mjs"
+      - "scripts/ai-release-gate.mjs"
+      - "scripts/scan-apk.mjs"
+      - ".github/workflows/local-ai-model-smoke.yml"
+  pull_request:
+    paths:
+      - "apps/mobile/src/services/ai/**"
+      - "apps/mobile/src/services/appCapabilities.ts"
+      - "apps/mobile/android/**"
+      - "scripts/fetch-*-model.mjs"
+      - "scripts/check-ai-*.mjs"
+      - "scripts/ai-release-gate.mjs"
+      - "scripts/scan-apk.mjs"
+      - ".github/workflows/local-ai-model-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-smoke:
+    name: Pinned checksum smoke + APK model-byte audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - name: AI manifest pin validation
+        run: node scripts/check-ai-manifest.mjs
+      - name: AI promotion policy check
+        run: node scripts/check-ai-promotion.mjs
+      - name: Fetch pinned USE asset (sole weight download on this path)
+        run: node scripts/fetch-use-model.mjs
+      - name: Pinned checksum smoke (verify, do not re-download)
+        run: node scripts/fetch-use-model.mjs --check
+      - name: Needle disabled-check (stays opt-in, no bytes land)
+        run: |
+          node scripts/fetch-needle-model.mjs --check
+          test ! -f apps/mobile/android/app/src/main/assets/models/needle/needle_text.tflite || { echo "needle asset present without opt-in"; exit 1; }
+          echo "needle disabled-check OK: no download, no asset"
+      - name: Restore Firebase Android client configuration
+        run: node scripts/materialize-google-services.mjs
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
+      - name: Build mobile web dist (Capacitor webDir)
+        run: npm run build -w @findback/mobile
+        env:
+          CI: true
+      - name: Capacitor sync
+        run: npm run cap:sync -w @findback/mobile
+      - name: Android JVM tests + debug APK
+        run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
+      - name: Strict APK scan (USE allowlist, no retired JNI, per-ABI embedding JNI)
+        run: npm run scan:apk -- --strict
+      - name: Model-byte audit (no .litertlm/.gguf except the USE allowlist)
+        run: |
+          APK=apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          ALLOW="assets/models/use/universal_sentence_encoder.tflite"
+          LIST="$(unzip -Z1 "$APK")"
+          echo "$LIST" | grep -iE '\.litertlm$' && { echo "forbidden .litertlm bytes in APK"; exit 1; } || true
+          echo "$LIST" | grep -iE '\.gguf$' && { echo "forbidden .gguf bytes in APK"; exit 1; } || true
+          echo "$LIST" | grep -iE '\.tflite$' | grep -v -x "$ALLOW" && { echo "non-allowlist .tflite bytes in APK"; exit 1; } || true
+          echo "$LIST" | grep -x "$ALLOW" || { echo "USE allowlist asset missing from APK"; exit 1; }
+          echo "model-byte audit OK: only the USE allowlist entry ships"
+      - name: Full AI release gate
+        run: node scripts/ai-release-gate.mjs
