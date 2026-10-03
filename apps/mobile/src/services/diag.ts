@@ -342,3 +342,144 @@ export function clearDiagEvents(): void {
 export function exportDiagJson(): string {
   return JSON.stringify([...ring]);
 }
+
+/**
+ * Privacy-enforcing diagnostic bundle (WS-G, isolated scope).
+ *
+ * Caller-assembled summary only — never the raw ring. Only these seven
+ * allowlisted keys survive, each scrubbed to identifiers/numbers/enums:
+ * `{ buildSha, modelIds, backends, probes, timings, memory, errorCodes }`.
+ * Prompts, images, raw text, and secrets/keys can never pass through:
+ * unknown keys are dropped, identifier-shaped strings are allowlisted, and
+ * any secret/PII-shaped value is replaced with `[redacted]` (then dropped
+ * from identifier lists).
+ */
+export interface DiagBundleInput {
+  readonly buildSha?: unknown;
+  readonly modelIds?: readonly unknown[];
+  readonly backends?: readonly unknown[];
+  readonly probes?: Readonly<Record<string, unknown>>;
+  readonly timings?: Readonly<Record<string, unknown>>;
+  readonly memory?: Readonly<Record<string, unknown>>;
+  readonly errorCodes?: readonly unknown[];
+}
+
+export interface DiagBundle {
+  readonly buildSha: string;
+  readonly modelIds: readonly string[];
+  readonly backends: readonly string[];
+  readonly probes: Readonly<Record<string, string | number | boolean | null>>;
+  readonly timings: Readonly<Record<string, number>>;
+  readonly memory: Readonly<Record<string, number>>;
+  readonly errorCodes: readonly string[];
+}
+
+const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const BUNDLE_ENUM_RE = /^[A-Za-z0-9][A-Za-z0-9._/: -]{0,63}$/;
+
+/** Key fragments that must never appear in a bundle (prompts/images/keys). */
+const BUNDLE_FORBIDDEN_KEY_PARTS = [
+  "prompt",
+  "instruction",
+  "message",
+  "text",
+  "output",
+  "content",
+  "response",
+  "completion",
+  "image",
+  "photo",
+  "picture",
+  "base64",
+  "dataurl",
+  "data_url",
+  "uri",
+  "apikey",
+  "api_key",
+  "llm_api_key",
+  "authorization",
+  "token",
+  "secret",
+  "password",
+  "private_key",
+  "access_key",
+  "refresh_token",
+  "session_key",
+];
+
+function isBundleKeyAllowed(key: string): boolean {
+  const lower = key.toLowerCase();
+  if (RAW_TEXT_KEYS.has(lower)) return false;
+  if (isSensitiveKey(key)) return false;
+  return !BUNDLE_FORBIDDEN_KEY_PARTS.some((part) => lower.includes(part));
+}
+
+function cleanIdentifier(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!BUNDLE_ID_RE.test(trimmed)) return null;
+  if (isSensitiveValue(trimmed)) return null;
+  return trimmed;
+}
+
+function cleanEnum(value: unknown): string | number | boolean | null | undefined {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!BUNDLE_ENUM_RE.test(trimmed)) return undefined;
+  return isSensitiveValue(trimmed) ? REDACTED : trimmed;
+}
+
+function cleanNumberMap(
+  record: Readonly<Record<string, unknown>> | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!record) return out;
+  for (const [key, value] of Object.entries(record)) {
+    if (!isBundleKeyAllowed(key)) continue;
+    if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+  }
+  return out;
+}
+
+function cleanProbeMap(
+  record: Readonly<Record<string, unknown>> | undefined,
+): Record<string, string | number | boolean | null> {
+  const out: Record<string, string | number | boolean | null> = {};
+  if (!record) return out;
+  for (const [key, value] of Object.entries(record)) {
+    if (!isBundleKeyAllowed(key)) continue;
+    const cleaned = cleanEnum(value);
+    if (cleaned !== undefined) out[key] = cleaned;
+  }
+  return out;
+}
+
+function cleanIdList(values: readonly unknown[] | undefined): string[] {
+  if (!values) return [];
+  const out: string[] = [];
+  for (const value of values) {
+    const cleaned = cleanIdentifier(value);
+    if (cleaned !== null && !out.includes(cleaned)) out.push(cleaned);
+  }
+  return out;
+}
+
+/** Build the sanitized bundle and serialize it (throws never; always safe JSON). */
+export function exportDiagBundle(input: DiagBundleInput = {}): string {
+  const buildSha =
+    typeof input.buildSha === "string" && /^[0-9a-fA-F]{7,64}$/.test(input.buildSha.trim())
+      ? input.buildSha.trim()
+      : "unknown";
+  const bundle: DiagBundle = {
+    buildSha,
+    modelIds: cleanIdList(input.modelIds),
+    backends: cleanIdList(input.backends),
+    probes: cleanProbeMap(input.probes),
+    timings: cleanNumberMap(input.timings),
+    memory: cleanNumberMap(input.memory),
+    errorCodes: cleanIdList(input.errorCodes),
+  };
+  return JSON.stringify(bundle);
+}

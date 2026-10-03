@@ -11,6 +11,7 @@ import {
   clearDiagEvents,
   diag,
   diagModelDigest,
+  exportDiagBundle,
   exportDiagJson,
   getDiagEvents,
   isDiagEnabled,
@@ -192,5 +193,63 @@ describe("traceId + ring", () => {
     const parsed = JSON.parse(exportDiagJson()) as unknown[];
     expect(parsed).toHaveLength(1);
     expect(JSON.stringify(parsed)).not.toContain("secret prose");
+  });
+});
+
+describe("exportDiagBundle", () => {
+  it("emits exactly the seven allowlisted keys with sanitized values", () => {
+    const bundle = JSON.parse(
+      exportDiagBundle({
+        buildSha: "abc1234def5678",
+        modelIds: ["qwen3-0.6b-dynamic-int4"],
+        backends: ["litert-lm"],
+        probes: { freeRamMb: 1024, deviceTier: "mid" },
+        timings: { embedMs: 12 },
+        memory: { peakMb: 256 },
+        errorCodes: ["INVALID_OUTPUT"],
+      }),
+    ) as Record<string, unknown>;
+    expect(Object.keys(bundle).sort()).toEqual(
+      ["backends", "buildSha", "errorCodes", "memory", "modelIds", "probes", "timings"].sort(),
+    );
+    expect(bundle.buildSha).toBe("abc1234def5678");
+    expect(bundle.modelIds).toEqual(["qwen3-0.6b-dynamic-int4"]);
+  });
+
+  it("drops prompts, images, raw text, and keys — never leaks them", () => {
+    const secretPrompt = "Classify owner@example.com urgently";
+    const raw = exportDiagBundle({
+      buildSha: "not a sha!!",
+      modelIds: ["qwen3-0.6b-dynamic-int4", secretPrompt],
+      backends: ["litert-lm"],
+      probes: {
+        userPrompt: secretPrompt,
+        photoBase64: "aGVsbG8td29ybGQ=",
+        apiKey: "sk-abcdefghijklmnop",
+        deviceTier: "mid",
+      },
+      timings: { embedMs: 12, prompt: 5 },
+      memory: { peakMb: 256 },
+      errorCodes: ["INVALID_OUTPUT", "sk-abcdefghijklmnop"],
+    });
+    expect(raw).not.toContain("owner@example.com");
+    expect(raw).not.toContain("Classify");
+    expect(raw).not.toContain("aGVsbG8td29ybGQ=");
+    expect(raw).not.toContain("sk-abcdefghijklmnop");
+    const bundle = JSON.parse(raw) as {
+      buildSha: string;
+      probes: Record<string, unknown>;
+      timings: Record<string, unknown>;
+      errorCodes: unknown[];
+      modelIds: unknown[];
+    };
+    expect(bundle.buildSha).toBe("unknown");
+    expect(bundle.probes).not.toHaveProperty("userPrompt");
+    expect(bundle.probes).not.toHaveProperty("photoBase64");
+    expect(bundle.probes).not.toHaveProperty("apiKey");
+    expect(bundle.probes.deviceTier).toBe("mid");
+    expect(bundle.timings).not.toHaveProperty("prompt");
+    expect(bundle.errorCodes).not.toContain("sk-abcdefghijklmnop");
+    expect(bundle.modelIds).not.toContain(secretPrompt);
   });
 });

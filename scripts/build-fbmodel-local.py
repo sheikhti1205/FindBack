@@ -78,14 +78,48 @@ def fixed_entry(name, data, compress_type, compress_level=None):
     return info, data
 
 
+def load_license_gate_map(raw):
+    """Parse embedded modelProfiles JSON ({id: {catalogOnly, license}}) for the license gate."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"license gate: invalid model-profiles JSON: {exc}", file=sys.stderr)
+        sys.exit(2)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def license_gate_refuse(entry, profiles_map):
+    """Refuse .fbmodel emit for catalogOnly profiles (LFM benchmark/eval-only)."""
+    mapped = profiles_map.get(entry["entryId"], {})
+    catalog_only = entry.get("catalogOnly") is True or mapped.get("catalogOnly") is True
+    license_id = mapped.get("license", entry.get("license", ""))
+    if catalog_only or license_id == "LFM-1.0":
+        print(
+            f"license gate: refusing .fbmodel emit for catalogOnly profile "
+            f"'{entry['entryId']}' (LFM Open License v1.0: benchmark/eval-only, "
+            f"no bundling or redistributable download)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache-dir", default=os.path.expanduser("~/.cache/findback-model-lab"))
     parser.add_argument("--out-dir", default="/tmp/findback-modeldist")
+    parser.add_argument(
+        "--profiles-json",
+        default=os.environ.get("FBMODEL_PROFILES_JSON", ""),
+        help="Embedded modelProfiles JSON for the license gate ({entryId: {catalogOnly, license}})",
+    )
     args = parser.parse_args()
+    profiles_map = load_license_gate_map(args.profiles_json)
     created = PACKAGE_CREATED_AT
     os.makedirs(args.out_dir, exist_ok=True)
     for entry in ENTRIES:
+        license_gate_refuse(entry, profiles_map)
         src = os.path.join(args.cache_dir, entry["srcName"])
         if not os.path.exists(src):
             print(f"missing pinned weights: {src}", file=sys.stderr)
