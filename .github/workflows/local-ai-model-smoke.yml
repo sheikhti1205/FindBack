@@ -77,7 +77,8 @@ jobs:
       - name: Needle disabled-check (stays opt-in, no bytes land)
         run: |
           node scripts/fetch-needle-model.mjs --check
-          test ! -f apps/mobile/android/app/src/main/assets/models/needle/needle_text.tflite || { echo "needle asset present without opt-in"; exit 1; }
+          test ! -d apps/mobile/android/app/src/main/assets/models/needle || { echo "needle asset present without opt-in"; exit 1; }
+          test ! -f build/needle/needle3.cact || { echo "needle weights present without opt-in"; exit 1; }
           echo "needle disabled-check OK: no download, no asset"
       - name: Restore Firebase Android client configuration
         run: node scripts/materialize-google-services.mjs

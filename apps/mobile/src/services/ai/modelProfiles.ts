@@ -23,8 +23,8 @@
 import type { AiErrorClass } from "./testing/FakeAiProvider";
 import type { NarrowOp } from "./types";
 
-export type ModelRuntime = "litert-lm" | "llama-cpp";
-export type ModelFormat = "litertlm" | "gguf";
+export type ModelRuntime = "litert-lm" | "llama-cpp" | "needle-cact";
+export type ModelFormat = "litertlm" | "gguf" | "cact";
 export type ModelMaturity = "default" | "experimental" | "eval-only";
 export type StructuredOutputStrategy =
   | "single-json-object"
@@ -242,6 +242,35 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
     loopPolicy: TASK22_LOOP_POLICY,
     license: "LFM-1.0",
     catalogOnly: true,
+  },
+  {
+    id: "needle3-cact-l20",
+    corpusLabel: "Needle3-cact-l20",
+    modelSha256: "c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38",
+    runtime: "needle-cact",
+    format: "cact",
+    revision: "c7c415a3d1b3d929014bc6e866d51ebb971f7089",
+    quantization: "cactus-quants (embedding=4,mhc=4,default=2, 8-bit kv/activations)",
+    supportsText: true,
+    supportsVision: false,
+    supportsGeneral: false,
+    roles: ["extract-report-fields"],
+    maturity: "experimental",
+    roleNotes:
+      "TEXT challenger to the USE incumbent (never the default): 121M-param " +
+      "tool-calling model run as a local extraction/embedding engine via " +
+      "needle_embed/needle_complete. 20-layer full rung (35,335,380 bytes); " +
+      "256-token kv window — keep extraction prompts compact and schema " +
+      "single-record. Every response carries calibrated confidence: route " +
+      "below-threshold extractions to escalate/re-ask via uncertainFields. " +
+      "Apache-2.0 (bundlable, unlike LFM arms). Telemetry off at the " +
+      "native boundary (NEEDLE_TELEMETRY=0, DO_NOT_TRACK=1).",
+    defaultTemperature: 0.0,
+    maxOutputTokensText: 256,
+    stopSequences: [],
+    structuredOutputStrategy: "single-json-object",
+    retryLimit: 1,
+    loopPolicy: TASK22_LOOP_POLICY,
   },
 ];
 

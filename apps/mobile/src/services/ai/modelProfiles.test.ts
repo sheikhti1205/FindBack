@@ -8,14 +8,28 @@ const CORPUS_MODELS = [
   "SmolVLM2-500M-vision",
   "LFM2.5-VL-450M-int4-stock",
   "LFM2.5-VL-450M-int4-fixB",
+  "Needle3-cact-l20",
 ];
 
 describe("model profiles", () => {
   it("encodes every authorized lab model and none is deleted", () => {
-    expect(MODEL_PROFILES).toHaveLength(6);
+    expect(MODEL_PROFILES).toHaveLength(7);
     for (const label of CORPUS_MODELS) {
       expect(MODEL_PROFILES.some((profile) => profile.corpusLabel === label)).toBe(true);
     }
+  });
+
+  it("pins needle3 challenger to rev c7c415a3 with Apache-2.0 terms", () => {
+    const needle = profileFor("needle3-cact-l20");
+    expect(needle?.revision).toBe("c7c415a3d1b3d929014bc6e866d51ebb971f7089");
+    expect(needle?.modelSha256).toBe(
+      "c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38",
+    );
+    expect(needle?.runtime).toBe("needle-cact");
+    expect(needle?.format).toBe("cact");
+    expect(needle?.license).toBeUndefined();
+    expect(needle?.catalogOnly).toBeUndefined();
+    expect(needle?.maturity).toBe("experimental");
   });
 
   it("pins Qwen3-0.6B INT4 to rev a3c5d805 with the thought envelope", () => {

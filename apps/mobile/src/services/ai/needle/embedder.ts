@@ -1,17 +1,33 @@
 /**
- * WS2 Needle TEXT challenger seam — embedder interface plus deterministic stub.
+ * Needle TEXT challenger seam — embedder interface, deterministic stub for
+ * shape tests, and the native-backed production embedder.
  *
- * Isolated scope: no network, no model download, no native bridge. The stub
- * produces deterministic finite vectors of `NEEDLE_EMBEDDING_DIM` so matching
- * experiments can run shape-correct comparisons against the USE default
- * without wiring any real model. Real-model wiring lands behind the
- * `embedNeedle` seam in `services/embeddings.ts` in a later step.
+ * The stub produces deterministic finite vectors of `NEEDLE_EMBEDDING_DIM`
+ * so matching experiments can run shape-correct comparisons against the USE
+ * default without wiring any real model. Production injects
+ * `NativeNeedleEmbedder` (backed by the `FindbackNeedle` JNI bridge over
+ * the pinned needle3 engine) via `setNeedleEmbedder` in
+ * `services/embeddings.ts`; the stub never serves production traffic.
  */
 
 /** Challenger embedding width. Fixed so parity checks can assert on it. */
 export const NEEDLE_EMBEDDING_DIM = 384;
 
 export const NEEDLE_STUB_MODEL_ID = "needle-text-stub-v0";
+
+/**
+ * Pinned production Needle model (Cactus needle3, Apache-2.0).
+ * Revision + content SHA mirror `scripts/fetch-needle-model.mjs` and the
+ * `needle3-cact-l20` catalogue profile. The embedding width is discovered
+ * from the engine at bring-up (`needle_embed` null-output probe) — the
+ * constant above stays the test/stub contract until the probe result is
+ * wired through (never assumed from `hidden_size`).
+ */
+export const NEEDLE_MODEL_ID = "needle3-cact-l20";
+export const NEEDLE_MODEL_REVISION = "c7c415a3d1b3d929014bc6e866d51ebb971f7089";
+export const NEEDLE_MODEL_SHA256 =
+  "c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38";
+export const NEEDLE_MODEL_BYTES = 35335380;
 
 const MAX_TEXT_LENGTH = 5000;
 
@@ -83,5 +99,53 @@ export class StubNeedleEmbedder implements NeedleEmbedder {
     assertValidInputs(texts);
     const vectors = texts.map((text) => stubVector(text, this.dimension));
     return validateNeedleVectors(texts, vectors, this.dimension);
+  }
+}
+
+/**
+ * Native bridge surface for one embed call. Implemented by the
+ * `FindbackNeedle` Capacitor plugin (JNI over the pinned engine);
+ * faked in tests. Rejects while the engine or weights are absent — never
+ * falls back to the stub (stub vectors must never mix with real ones).
+ */
+export interface NativeNeedleBridge {
+  readonly bridgeName: string;
+  /** Engine + weights loaded and embedding dimension probed. */
+  isNeedleAvailable(): Promise<boolean>;
+  /** Live embedding width from the engine null-output probe. */
+  embeddingDimension(): Promise<number>;
+  embedNeedleTexts(texts: string[]): Promise<number[][]>;
+}
+
+/**
+ * Production embedder over the native Needle engine. Validates every
+ * payload with the same strictness as the USE bridge contract (one vector
+ * per input, uniform engine-reported dimension, finite numbers, stable
+ * order). Throws instead of fabricating vectors.
+ */
+export class NativeNeedleEmbedder implements NeedleEmbedder {
+  readonly modelId = NEEDLE_MODEL_ID;
+
+  constructor(
+    private readonly bridge: NativeNeedleBridge,
+    private readonly probedDimension: number,
+  ) {
+    if (!Number.isInteger(probedDimension) || probedDimension <= 0) {
+      throw new Error("Invalid needle embedding dimension");
+    }
+  }
+
+  get dimension(): number {
+    return this.probedDimension;
+  }
+
+  async embedNeedleTexts(texts: string[]): Promise<number[][]> {
+    assertValidInputs(texts);
+    const available = await this.bridge.isNeedleAvailable();
+    if (available !== true) {
+      throw new Error("Needle engine is not available on this device");
+    }
+    const vectors = await this.bridge.embedNeedleTexts(texts);
+    return validateNeedleVectors(texts, vectors, this.probedDimension);
   }
 }

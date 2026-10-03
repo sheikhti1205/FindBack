@@ -15,6 +15,9 @@ apps/mobile/android/build/
 apps/mobile/android/.gradle/
 apps/mobile/android/local.properties
 apps/mobile/android/app/release/
+# Fetched NDK link engines (build input via scripts/fetch-needle-model.mjs
+# --engine-only, pinned + verified; never committed).
+apps/mobile/android/app/src/main/cpp/third_party/
 *.keystore
 *.jks
 # Firebase / FCM — never commit (CI materializes from GitHub Secrets)

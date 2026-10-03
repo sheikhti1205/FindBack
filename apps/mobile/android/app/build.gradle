@@ -168,6 +168,19 @@ tasks.register("fetchUseModel", Exec) {
 }
 tasks.named("preBuild").configure { dependsOn("fetchUseModel") }
 
+// Fetch Needle NDK link engines (libneedle.a + needle.h per ABI) before any
+// native build. Opt-in script with pinned + verified artifacts; weights are
+// NEVER fetched here (runtime downloader installs them post-consent).
+// The CMake bridge links the static archives, so missing engines fail the
+// build loudly instead of shipping a stub.
+tasks.register("fetchNeedleEngine", Exec) {
+    commandLine "node", new File(repoRoot, "scripts/fetch-needle-model.mjs").absolutePath, "--engine-only"
+    environment "NEEDLE_MODEL_ENABLED", "1"
+    outputs.dir(new File(projectDir, "src/main/cpp/third_party/needle"))
+}
+tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }
+    .configureEach { dependsOn("fetchNeedleEngine") }
+
 // A direct Gradle package of stale Capacitor assets cannot bypass the web
 // build gate. This checks the actual staged JS against the effective public
 // config; missing or mismatched values stop APK/AAB packaging. JVM-only tests

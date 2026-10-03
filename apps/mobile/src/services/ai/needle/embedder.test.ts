@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   NEEDLE_EMBEDDING_DIM,
+  NEEDLE_MODEL_BYTES,
+  NEEDLE_MODEL_ID,
+  NEEDLE_MODEL_REVISION,
+  NativeNeedleEmbedder,
   StubNeedleEmbedder,
   validateNeedleVectors,
+  type NativeNeedleBridge,
 } from "./embedder";
 
 describe("StubNeedleEmbedder", () => {
@@ -50,5 +55,47 @@ describe("StubNeedleEmbedder", () => {
     expect(() =>
       validateNeedleVectors(["a"], [[0.1, Number.POSITIVE_INFINITY]]),
     ).toThrow();
+  });
+});
+
+describe("NativeNeedleEmbedder", () => {
+  function fakeBridge(vectors: number[][], available = true): NativeNeedleBridge {
+    return {
+      bridgeName: "test-needle-stub",
+      isNeedleAvailable: async () => available,
+      embeddingDimension: async () => vectors[0]?.length ?? 0,
+      embedNeedleTexts: async () => vectors,
+    };
+  }
+
+  it("serves the engine-probed dimension, never the stub constant", async () => {
+    const vectors = [
+      [0.1, 0.2, 0.3],
+      [0.4, 0.5, 0.6],
+    ];
+    const embedder = new NativeNeedleEmbedder(fakeBridge(vectors), 3);
+    expect(embedder.dimension).toBe(3);
+    expect(embedder.modelId).toBe(NEEDLE_MODEL_ID);
+    await expect(embedder.embedNeedleTexts(["a", "b"])).resolves.toEqual(vectors);
+  });
+
+  it("rejects a non-positive probed dimension at construction", () => {
+    expect(() => new NativeNeedleEmbedder(fakeBridge([[0.1]]), 0)).toThrow();
+  });
+
+  it("fails closed while the engine is unavailable", async () => {
+    const embedder = new NativeNeedleEmbedder(fakeBridge([[0.1, 0.2]], false), 2);
+    await expect(embedder.embedNeedleTexts(["a"])).rejects.toThrow(/not available/);
+  });
+
+  it("rejects dimension-mismatched engine payloads", async () => {
+    const embedder = new NativeNeedleEmbedder(fakeBridge([[0.1, 0.2, 0.3]]), 2);
+    await expect(embedder.embedNeedleTexts(["a"])).rejects.toThrow();
+  });
+
+  it("pins the production model identity to the catalogue", () => {
+    expect(NEEDLE_MODEL_ID).toBe("needle3-cact-l20");
+    expect(NEEDLE_MODEL_REVISION).toBe("c7c415a3d1b3d929014bc6e866d51ebb971f7089");
+    expect(NEEDLE_MODEL_BYTES).toBe(35335380);
   });
 });
