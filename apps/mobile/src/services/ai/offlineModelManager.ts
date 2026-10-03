@@ -339,6 +339,11 @@ export function transitionOfflineModel(
  * storage/user gate, and snapshot persistence for process-death recovery.
  */
 export class OfflineModelManager {
+  private readonly listeners = new Set<() => void>();
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
   private readonly assets = new Map<string, OfflineAssetPin>();
   private readonly statuses = new Map<string, OfflineModelStatus>();
   private readonly verifier?: ChecksumVerifier;
@@ -387,11 +392,13 @@ export class OfflineModelManager {
           reason: "checksum mismatch against catalogue pin",
         });
         this.statuses.set(modelId, mismatch);
+        this.listeners.forEach((listener) => listener());
         return mismatch;
       }
     }
     const next = transitionOfflineModel(current, event);
     this.statuses.set(modelId, next);
+    this.listeners.forEach((listener) => listener());
     return next;
   }
 

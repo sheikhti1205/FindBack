@@ -7,6 +7,14 @@ vi.mock("./posts", () => ({ MATCH_CANDIDATE_LIMIT: 20, fetchMatchCandidates }));
 const target = { id: "lost-1", type: "LOST", status: "OPEN", title: "black umbrella", description: "wooden handle", category: "Clothing", eventDate: null, locationLabel: null, locationLat: null, locationLng: null } as never;
 
 describe("findPossibleMatches", () => {
+  it("uses the explicitly selected Needle service for the product matching batch", async () => {
+    const result = await findPossibleMatches(target, {
+      fetchCandidates: async () => [{ id: "found", title: "umbrella", description: "handle", category: "Clothing", eventDate: null, locationLabel: null, locationLat: null, locationLng: null, photoUrl: null }],
+      aiService: { matchingBackend: "needle", embedNeedle: async (texts: string[]) => texts.map(() => [1, 0]) },
+    });
+    expect(result.available).toBe(true);
+    expect(result.matches[0]?.post.id).toBe("found");
+  });
   it("retains the first image URL in the safe match-card projection", async () => {
     fetchMatchCandidates.mockResolvedValue([{ ...(target as Record<string, unknown>), id: "found-1", type: "FOUND", attachments: [
       { mimeType: "application/pdf", fileUrl: "https://example.com/document.pdf" },

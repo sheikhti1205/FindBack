@@ -15,6 +15,7 @@ import {
   checkAiReleaseGate,
   validateRuntimeWiring,
   validateVisionTruth,
+  validateApplicationIntegration,
 } from "./ai-release-gate.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,47 @@ const REAL = {
   orchestratorSource: read("apps/mobile/src/services/ai/orchestrator/AiOrchestrator.ts"),
   offlineSource: read("apps/mobile/src/services/ai/providers/offline.ts"),
   capabilitiesSource: read("apps/mobile/src/services/appCapabilities.ts"),
+  mainSource: read("apps/mobile/src/main.tsx"),
+  appSource: read("apps/mobile/src/App.tsx"),
+  serviceSource: read("apps/mobile/src/services/ai/applicationAi.ts"),
+  providersSource: read("apps/mobile/src/services/ai/providerRegistry.ts"),
+  modelsSource: read("apps/mobile/src/screens/AiModelsRoute.tsx"),
+  helpSource: read("apps/mobile/src/screens/Help.tsx"),
+  matchesSource: read("apps/mobile/src/services/possibleMatches.ts"),
+  visionNativeSource: read("apps/mobile/src/services/ai/vision/native.ts"),
+  probeSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt"),
+  timingSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt"),
+  pluginSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt"),
 };
+
+describe("validateApplicationIntegration", () => {
+  it("passes only with the real application-owned path", () => {
+    deepStrictEqual(validateApplicationIntegration(REAL), []);
+  });
+  for (const [label, field, mutate] of [
+    ["disconnected startup", "mainSource", (source) => source.replace(/initializeApplicationAi\(\)/g, "Promise.resolve()")],
+    ["manager without production boot", "serviceSource", (source) => source.replace(/bootProductionAi\(/g, "fakeBoot(")],
+    ["unconstructed Needle bridge", "serviceSource", (source) => source.replace(/new CapacitorNeedleBridge\(/g, "fakeNeedle(")],
+    ["unconstructed Smol bridge", "serviceSource", (source) => source.replace(/new CapacitorSmolVlmBridge\(/g, "fakeSmol(")],
+    ["offline id excluded by provider guard", "providersSource", (source) => source.replace('...SUPPORTED_AI_PROVIDERS, "offline"', "...SUPPORTED_AI_PROVIDERS")],
+    ["offline provider hard refusal", "providersSource", (source) => source.replace(/\.offlineAdapter\(/g, ".refuseOffline(")],
+    ["plain models screen at product route", "appSource", (source) => source.replace(/<AiModelsRoute\s*\/>/g, "<AiModels />")],
+    ["absent route download controls", "modelsSource", (source) => source.replace(/offlineDownload=\{controls\}/g, "")],
+    ["download button disconnected from driver", "modelsSource", (source) => source.replace(/service\.download\(/g, "fakeDownload(")],
+    ["Help without installed offline catalogue", "helpSource", (source) => source.replace(/createProviderAdapter\("offline",/g, "fakeOffline(")],
+    ["matching never calls Needle", "matchesSource", (source) => source.replace(/ai\.embedNeedle\(/g, "fakeEmbed(")],
+    ["native Smol binding disconnected", "visionNativeSource", (source) => source.replace('"FindbackSmolVlm"', '"MissingPlugin"')],
+    ["null production timing runner", "probeSource", (source) => source.replace(/RuntimeTimingRunner\.forInstalledSmol\(appContext\)/g, "null")],
+    ["synthetic token estimates", "timingSource", (source) => source.replace(/conversation\.getBenchmarkInfo\(\)/g, "wordEstimates()")],
+    ["no native timing endpoint", "pluginSource", (source) => source.replace(/fun measureBackend\(/g, "fun disconnectedMeasurement(")],
+  ]) {
+    it(`fails on ${label}`, () => {
+      const broken = mutate(REAL[field]);
+      ok(broken !== REAL[field], `${label}: mutation must change its input`);
+      ok(validateApplicationIntegration({ ...REAL, [field]: broken }).length > 0, label);
+    });
+  }
+});
 
 describe("validateRuntimeWiring", () => {
   it("passes on the real tree", () => {

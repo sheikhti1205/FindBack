@@ -50,12 +50,10 @@ import {
  * Persisted per account; Help honors it at send time (offline-only fails
  * closed with no network). Unknown stored values fall back to `auto`.
  *
- * Beta scope: on-device transport is not wired until the native bridge lands,
- * so `offline-first`/`offline-only` are accepted and honored defensively but
- * are NOT offered as selectable modes — the picker exposes only the modes that
- * this build can actually honor. A previously stored offline mode is preserved
- * (never silently relaxed to a mode that sends to the network) and surfaced as
- * unavailable until the user switches to Auto or Cloud-only.
+ * Android offers offline-only for explicitly installed compatible models.
+ * Offline-first stays hidden; stored offline modes are never silently relaxed
+ * to permit network sends. Web exposes Auto and Cloud-only with honest refusal
+ * for a stale offline selection.
  */
 export type AssistantMode = "auto" | "offline-first" | "offline-only" | "cloud-only";
 
@@ -64,7 +62,7 @@ export const ASSISTANT_MODES: readonly AssistantMode[] = ["auto", "cloud-only"];
 
 /** Informational (non-actionable) stand-in for the offline modes this build cannot honor. */
 export const OFFLINE_BETA_COPY =
-  "On-device AI (Offline-first and Offline-only) is not available in this build yet — it arrives with the native bridge in a later beta. Until then, Auto and Cloud-only are the usable modes.";
+  "On-device AI requires the Android app and an installed, checksum-verified model. Offline-first remains hidden pending product validation; Offline-only blocks cloud sends. Web on-device AI is not available.";
 
 const ASSISTANT_MODE_COPY: Record<AssistantMode, { label: string; detail: string }> = {
   auto: {
@@ -177,9 +175,8 @@ export function maskKeyTail(value: string | null): string | null {
 }
 
 /**
- * Honest offline status copy. The offline adapter is deliberately unwired
- * from the registry and vault until the native bridge lands, so the seam
- * refuses; only a not-available refusal is surfaced verbatim, everything
+ * Honest offline status copy. Native Android uses the shared service without
+ * a vault slot; web refuses. Only a not-available refusal is verbatim, everything
  * else normalizes to the fixed not-available line (never an internal
  * unknown-provider message).
  */
@@ -193,6 +190,7 @@ export function honestOfflineDetail(error: unknown): string {
 }
 
 export type AiModelsProps = {
+  readonly offlineTools?: import("react").ReactNode;
   /** Account the vault slots and mode are scoped to (defaults to the signed-in user). */
   readonly accountId?: string;
   /** Runtime catalogue source; production loads via vault + registry below. */
@@ -323,6 +321,7 @@ export function AiModels({
   offlineStatus = null,
   needleEvidence = null,
   offlineDownload = null,
+  offlineTools = null,
 }: AiModelsProps) {
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
@@ -385,10 +384,8 @@ export function AiModels({
     };
   }, [account]);
 
-  // Offline honesty comes from the registry seam itself: the adapter stays
-  // unwired until the native bridge lands, so the seam refuses and the
-  // status stays not-available. The refusal wording is normalized here so a
-  // registry unknown-provider message never leaks as the user-facing status.
+  // Platform availability comes from the actual registry seam; normalize web
+  // refusal so internal errors never leak into user-facing status.
   useEffect(() => {
     let detail: string | null = null;
     try {
@@ -414,7 +411,7 @@ export function AiModels({
           }
           return;
         }
-        const records = await loadAuthorizedCatalog({
+        const cloudRecords = await loadAuthorizedCatalog({
           accountId: account,
           providers: SUPPORTED_AI_PROVIDERS,
           hasCredential: async (provider: ProviderId) => {
@@ -439,6 +436,9 @@ export function AiModels({
           },
           retrievedAt: new Date().toISOString(),
         });
+        let offlineRecords: readonly ModelRecord[] = [];
+        try { offlineRecords = await createProviderAdapter("offline", { accountId: account, resolveKey: async () => null }).listModels?.() ?? []; } catch { /* Web has no native runtime. */ }
+        const records = [...offlineRecords, ...cloudRecords];
         if (!alive) return;
         setCatalog(records);
         setRetrievedAt(new Date().toISOString());
@@ -456,7 +456,7 @@ export function AiModels({
     return () => {
       alive = false;
     };
-  }, [account, listCatalog]);
+  }, [account, listCatalog, offlineStatus?.checksumVerified]);
 
   function chooseMode(next: AssistantMode) {
     setMode(next);
@@ -651,7 +651,7 @@ export function AiModels({
       <section aria-label="Assistant mode" className="flex flex-col gap-2">
         <h2 className="text-base font-semibold">Assistant mode</h2>
         <div role="radiogroup" aria-label="Assistant mode" className="flex flex-col gap-2">
-          {ASSISTANT_MODES.map((option) => {
+           {(offlineDownload === null ? ASSISTANT_MODES : ["auto", "offline-only", "cloud-only"] as const).map((option) => {
             const checked = mode === option;
             return (
               <button
@@ -686,9 +686,9 @@ export function AiModels({
             data-testid="ai-offline-mode-active"
             className="text-xs text-error"
           >
-            {ASSISTANT_MODE_COPY[mode].label} is set on this account, but on-device AI is not
-            available in this build, so nothing is sent. Choose Auto or Cloud-only above to use
-            cloud AI.
+             {offlineDownload === null
+               ? `${ASSISTANT_MODE_COPY[mode].label} is set on this account, but on-device AI is not available here; cloud sends remain blocked in Offline-only.`
+               : `${ASSISTANT_MODE_COPY[mode].label} is set. Pick an installed on-device row in Help; Offline-only never sends to cloud.`}
           </p>
         ) : null}
       </section>
@@ -699,16 +699,18 @@ export function AiModels({
           {offlineDetail ?? "No offline models are ready yet."}
         </p>
         <p className="text-sm text-on-surface-variant">
-          No on-device models are installed. Storage use is unknown until the native bridge
-          lands — nothing here downloads, verifies, or runs.
-        </p>
+           Android installs pinned models in app-private storage after an explicit download.
+           Needle produces structured item records; SmolVLM2 describes approved images.
+           General offline chat quality and device performance are not yet measured.
+         </p>
+         {offlineTools}
         {offlineDownload === null ? (
           <div className="flex gap-2">
             <Button
               type="button"
               variant="outline"
               disabled
-              title="On-device downloads arrive with the native bridge."
+               title="On-device downloads require the Android app."
             >
               Download on-device model
             </Button>
@@ -716,7 +718,7 @@ export function AiModels({
               type="button"
               variant="outline"
               disabled
-              title="On-device management arrives with the native bridge."
+               title="On-device management requires the Android app."
             >
               Remove on-device model
             </Button>

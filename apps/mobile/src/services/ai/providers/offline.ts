@@ -22,7 +22,7 @@
  *   (`generateText({modelId, prompt, ...})`) and the honest admission that
  *   streaming has no bridge method yet (bridge-backed engine reports
  *   `supportsStreaming: false`). Maps to `OfflineNativeBridge.generate`
- *   being an async-iterator seam the native worker must still implement.
+ *   being an async-iterator seam, now bound by ApplicationAiService.
  * - `android/.../vlm/GenerativeResidencyArbiter.kt` -> single-resident
  *   invariant, residency as runtime-only state. Maps to LOAD/LOADED/UNLOAD
  *   handling that never persists residency (see manager `snapshot`).
@@ -31,9 +31,9 @@
  *   `releaseCandidateModel` + state listeners). Maps to the NATIVE SEAM
  *   note below.
  *
- * NATIVE SEAM (for the follow-up native worker — nothing here binds it):
- * `OfflineNativeBridge` is the TypeScript side of a Capacitor plugin the
- * native worker must provide, e.g. `OfflineLlmPlugin`:
+ * NATIVE SEAM (bound by ApplicationAiService, with test fakes):
+ * Needle supplies structured text; SmolVLM2 supplies approved image streaming.
+ * The following archive notes describe the interface rationale:
  * - `isAvailable()` -> plugin presence probe (cf. archive
  *   `isTextRuntimePresent` in `textRuntime.ts`): resolves false on web and
  *   on builds without the LiteRT-LM native module, so the adapter fails
@@ -57,9 +57,9 @@
  *   persisted, so process death always restarts `unloaded` (see manager
  *   `snapshot`/`restore`).
  *
- * Provider identity note: identifies as `"offline"` (IF-002). The offline
- * adapter is intentionally NOT in the provider registry or vault slot list
- * until the native bridge lands — selection checks compare against
+ * Provider identity note: identifies as `"offline"` (IF-002). The registry
+ * reaches the application-owned Android service without a BYOK vault slot;
+ * web fails closed. Selection checks compare against
  * `OFFLINE_PROVIDER_ID`, never a bare string.
  */
 
@@ -73,6 +73,7 @@ import type {
 } from "../providerContract";
 import { hasNoInlineImageBytesOrKeys } from "../providerContract";
 import type { OfflineModelManager } from "../offlineModelManager";
+import { profileFor } from "../modelProfiles";
 
 /**
  * Provider id this adapter serves.
@@ -115,8 +116,7 @@ export interface OfflineGenerationChunk {
 }
 
 /**
- * Native bridge seam (see NATIVE SEAM in the header). Implemented by the
- * follow-up native worker's Capacitor plugin; faked in tests.
+ * Native text seam bound by ApplicationAiService to Needle; faked in tests.
  */
 export interface OfflineNativeBridge {
   /** Human-readable bridge name for diagnostics (e.g. "litert-lm"). */
@@ -656,7 +656,7 @@ async function* completeOffline(
     );
     return;
   }
-  if (residency !== "resident") {
+  {
     try {
       if (residency === "unloaded") manager.dispatch(modelId, { type: "LOAD" });
       await bridge.load(modelId);
@@ -749,7 +749,7 @@ export function createOfflineAdapter(deps: OfflineAdapterDeps): ProviderAdapter 
         records.push({
           provider: OFFLINE_PROVIDER_ID,
           id: modelId,
-          input: ["text"],
+           input: profileFor(modelId)?.supportsVision ? ["text", "image"] : ["text"],
           output: ["text"],
           prices: [],
           priceClass: "free",

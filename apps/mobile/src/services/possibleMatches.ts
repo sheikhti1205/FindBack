@@ -1,4 +1,5 @@
 import { MATCH_CANDIDATE_LIMIT, fetchMatchCandidates } from "./posts";
+import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi";
 import { embeddingInput, embedTexts, validateEmbeddingVectors } from "./embeddings";
 import { stripMarkdown } from "../utils/stripMarkdown";
 import type { PostItem, PostType } from "@findback/shared";
@@ -45,10 +46,12 @@ export async function findPossibleMatches(
   deps?: {
     fetchCandidates?: (oppositeType: PostType) => Promise<MatchCandidate[]>;
     embed?: (texts: string[]) => Promise<number[][]>;
+    aiService?: Pick<ApplicationAiService, "matchingBackend" | "embedNeedle">;
   },
 ): Promise<PossibleMatchesResult> {
   const fetchCandidates = deps?.fetchCandidates ?? defaultFetchCandidates;
-  const embed = deps?.embed ?? embedTexts;
+  const ai = deps?.aiService ?? getApplicationAi();
+  const embed = deps?.embed ?? (ai.matchingBackend === "needle" ? (texts: string[]) => ai.embedNeedle(texts) : embedTexts);
 
   const oppositeType: PostType = target.type === "LOST" ? "FOUND" : "LOST";
 

@@ -136,7 +136,7 @@ object DeviceProbe {
         fun nnapi(): NnapiProbe
         fun vulkan(): VulkanProbe
         fun openCl(): OpenClProbe
-        /** Null until the benchmark workstream wires a real runner. */
+        /** Null only on test/platform dependencies without an inference runtime. */
         fun timing(): TimingRunner?
     }
 
@@ -212,7 +212,7 @@ object DeviceProbe {
             }
         }
 
-        override fun timing(): TimingRunner? = null
+        override fun timing(): TimingRunner = RuntimeTimingRunner.forInstalledSmol(appContext)
     }
 
     /**

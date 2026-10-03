@@ -70,9 +70,9 @@ describe("AiModels control center (AI-022)", () => {
     }
     // Offline modes are shown as an informational, non-actionable note.
     expect(screen.getByTestId("ai-offline-mode-note").textContent).toMatch(
-      /not available in this build yet/i,
+      /requires the Android app.*checksum-verified/i,
     );
-    // Offline honesty: the registry seam stays unwired until the native bridge lands.
+    // Web offline honesty: no native bridge may be invoked here.
     expect(screen.getByTestId("ai-offline-status").textContent).toMatch(/not available/i);
     await screen.findByTestId("ai-provider-openai");
     for (const provider of SUPPORTED_AI_PROVIDERS) {

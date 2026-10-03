@@ -418,9 +418,8 @@ export type AuthorizedCatalogDeps = {
 /**
  * Assemble the authorized catalogue: listed rows for providers whose vault
  * slot holds a key. Per-provider failures yield no rows (never invented); ids
- * dedupe by provider+id. Offline is deliberately skipped — its adapter stays
- * unwired until the native bridge lands, and readiness is surfaced separately
- * and honestly.
+ * dedupe by provider+id. Offline is separate from credential-backed rows:
+ * product callers append the shared service's verified installed catalogue.
  */
 export async function loadAuthorizedCatalog(
   deps: AuthorizedCatalogDeps,

@@ -71,11 +71,7 @@ export class CapacitorNeedleBridge implements NativeNeedleBridge {
   }
 
   async unload(): Promise<void> {
-    try {
-      await this.plugin().unloadNeedleModel();
-    } catch {
-      // Unload is best-effort; residency state is re-probed on next use.
-    }
+    await this.plugin().unloadNeedleModel();
   }
 }
 

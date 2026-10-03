@@ -1,63 +1,103 @@
-# Runbook X1 — Gate-E device-day run (CreateReport integration set)
+# Gate-E — Civi 3 application-integration acceptance
 
-Device-day replay of the prepared pass. The retired
-`scripts/devprep/gate-e-run.mjs` dry-run no longer exists (removed in
-`34b6ae7`); this runbook is the human checklist for the device steps,
-with the host preconditions in §0 using currently supported commands.
+**Status: DEVICE_REQUIRED / NOT EXECUTED.** This is a prepared device-day matrix,
+not evidence of a passing Civi 3 run. The v0.3.0-beta.1 owner waiver is historical
+and does not validate this integration wave. Run only when device work is authorized.
 
-## 0. Preconditions (host)
+## Current paths and limits
 
-The `scripts/devprep/` host harnesses (`gate-e-run.mjs`,
-`collect-build-info.mjs`) were retired in commit `34b6ae7` — there is no
-`--dry-run` command anymore. Run the supported host checks instead:
+- Startup → `initializeApplicationAi` → shared `ApplicationAiService` →
+  `bootProductionAi` manager/orchestrator. Startup rehashes installed pins, but
+  does not download, load inference weights, or benchmark automatically.
+- Profile → **AI & Models** (`/ai-models`) owns real native download controls.
+  Installed Needle and SmolVLM2 appear in the Help model picker without BYOK keys.
+- Needle: structured item-detail extraction and explicitly selected Possible
+  Matches challenger; USE stays the default. Matching selection lasts this session.
+- SmolVLM2: Help approved-image description, CPU default. **Measure CPU / Measure
+  GPU** run `smol-color-plate-v1` (red and blue generated PNGs, greedy sampling,
+  24-token cap). Both arms use the CPU language decoder; only the vision backend
+  changes. Counters are real LiteRT `BenchmarkInfo`, not word/chunk estimates.
+- Fresh passing records can select a backend in this session. GPU init failure
+  revokes its record, announces an explicit CPU retry, and never routes to cloud.
+- **Inspect hardware** discovers NNAPI/Vulkan/OpenCL; discovery is not proof that
+  those APIs execute Smol or Needle. There is no NNAPI timing arm.
+- Report → Analyze photo remains the consented cloud provider path. Do not use
+  the retired GPU-preferred `vlmPlugin.ts` flow or retired `scripts/devprep` harnesses.
+- The web build must refuse native inference/downloads. LFM/llama.cpp are lab-only.
 
-- `npm run typecheck` passes (repo root).
-- `npm test -w @findback/mobile` passes (repo root).
-- Record the build identity manually into
-  `test-evidence/gate-e/<run>/build-capture.json`: `git rev-parse HEAD`
-  (git SHA), `node -p "require('./apps/mobile/package.json').version"`
-  (versionName), and the native `versionCode` from the About screen
-  (`build.gradle` `gitVersionCode()` rule).
-- Debug APK installed from the recorded SHA.
+## Host preconditions
 
-## 1. camera → Analyze
+Run from the repo root, recording results and the working-tree identity:
 
-1. Report tab → camera capture a real photo.
-2. **Analyze photo** → **Generate suggestions (local VLM, GPU preferred)**.
-3. Start a stopwatch at tap; stop when suggestions land in title/description.
-4. Evidence: `camera-analyze-timing.json` (`{startedAt, durationMs,
-   backend: gpu|cpu, cpuNoticeShown}`), `screenshot-ca01..NN.png`.
-5. Expected: GPU backend; if GPU init fails and CPU compatibility mode is
-   allowed, analysis runs on CPU with the explicit on-screen notice — never
-   silent (`vlmPlugin.ts` CPU-notice path).
+```bash
+git rev-parse HEAD
+git status --short
+npm run lint
+npm run typecheck
+npm test
+node --test scripts/ai-release-gate.test.mjs
+node scripts/ai-release-gate.mjs
+# From apps/mobile/android:
+./gradlew :app:testDebugUnitTest --console=plain
+```
 
-## 2. gallery → Analyze
+Build only with the canonical ignored root `.env` loaded: derive and assert
+nonempty `VITE_SUPABASE_URL=$SUPABASE_URL` and
+`VITE_SUPABASE_PUBLISHABLE_KEY=$SUPABASE_PUBLISHABLE_KEY` before `npm run apk`.
+Use only a publishable key. Supply `VITE_PUBLIC_SHARE_ORIGIN` and the release
+configuration required by `scripts/build-apk.mjs`. Require post-build
+`scripts/check-release-config.mjs` bundle/APK proof before installing or handing
+over the artifact. Never install an artifact with a missing server URL.
 
-Same as §1 with a gallery attach. Evidence: `gallery-analyze-timing.json`,
-`screenshot-ga01..NN.png`. Note any backend difference vs §1.
+Record git SHA **and dirty diff if any**, APK SHA-256, app versionName/versionCode,
+Android OS/security-patch version, device serial, SoC/GPU/RAM, model revision/SHA,
+probe version and corpus version. Select the target with `adb -s <serial>`.
+Use a dedicated test account/reports; publishing and clearing app data are explicit
+device-day actions, not host checks.
 
-## 3. Publish
+## Acceptance matrix
 
-Publish → open the post → **Possible Matches** shows ≤3 open opposite-type
-reports (on-device text embeddings, cosine similarity; photo never leaves
-the device). Evidence: `publish-timing.json`, `screenshot-publish.png`.
+Every row starts **NOT EXECUTED**. Record PASS/FAIL/BLOCKED, exact inputs, output,
+screenshots/logs and reason; do not fill performance values before measuring.
 
-## 4. Subscript-error repro
+| ID | Path / procedure | Acceptance / evidence |
+|---|---|---|
+| I1 | Clean install, sign in, open AI & Models without a provider key. Inspect before any tap. | No model auto-download/load/probe; no fabricated installed state. Build/About identity and initial screenshot. |
+| D1 | Select Needle → Download; record progress → Pause → Resume. Repeat with SmolVLM2. | Real byte counts, responsive pause, retained staged bytes, HTTPS Range resume, full checksum verification before installed. Record transferred offsets and transitions, not invented percentages. |
+| D2 | Kill/relaunch during a partial download, resume; restart after a completed install. | Partial bytes recover as resumable; completed installs rehash against current pin. Corrupt/truncated weights must not enter the picker. Never restore resident state from disk. |
+| D3 | Remove each model, repeat; attempt removal during inference or measurement. | Runtime ownership prevents deletion while busy; remove releases resident then staged/installed/journal files and revokes availability. Missing files are idempotent; failures remain visible. |
+| V1 | Install Smol, remove cloud keys; Help → Choose model → installed Smol → explicitly approve red/blue and real object photos → send. | CPU cold-load and image description work offline after install. Unapproved images excluded, no provider-key request/network fallback. Retain prompts, image fixture hashes, raw answers and correctness judgment. |
+| V2 | Measure CPU, then Measure GPU; repeat with a driver/init failure or unsupported GPU. | Valid counters + correctness per arm, or explicit unavailable/error. Fast wrong output never wins. If a measured GPU later fails load, show CPU retry notice; fail visibly if CPU also fails. |
+| N1 | Needle Help prompt: supplied item title/description/location details. Include ambiguous and unsupported questions. | Native structured extraction only; preserve uncertainty and supplied details. Do not evaluate Needle as a general chatbot or auto-apply fields. |
+| N2 | Seed fixed opposite-type open report candidates; evaluate Possible Matches with USE, then explicitly select installed Needle. | Real native vectors; transparent top-3 ranking; no wrong-type/closed posts. Record candidate IDs/texts and rankings for both arms; no automatic Needle promotion. Remove Needle/restart → default USE. |
+| H1 | Inspect hardware; correlate output with Android/driver facts. | Record NNAPI devices, Vulkan/OpenCL availability and discovery errors. Do not label discovery as executed inference, correctness, or speed. |
+| P1 | CPU/GPU measurements from cold start, then at least five warm repeats, same fixtures/model/OS. | Raw records: TTFT ms, decode tokens/s, correctness, corpus/probe/revision. Separate model-load wall time from SDK TTFT. Report median/range; missing counters are unavailable, never zero-filled. |
+| R1 | Sample process memory before load, after Needle, after Smol, after unload/remove; exercise low-memory/restart. | RAM/peak footprint and release behavior, no overlapping generative residents or false readiness after eviction. Capture `adb shell dumpsys meminfo com.findback.app` per phase. |
+| L1 | Smol stream → Stop; switch screen/model, background/foreground, rotate, force-stop/relaunch. Retry after cancellation/error. | Correct generation-ID isolation, no stale chunks, listener cleanup, no double engines/native crash; restored verified files require a fresh runtime load. Needle Stop must suppress late output; its bounded native call has no token-level cancellation API. |
+| T1 | Fixed repeated CPU/GPU workload; capture initial/final thermal and battery state, durations and charging condition. | Battery delta/thermal throttling evidence, UI responsiveness and sustained-rate range; no broad battery or acceleration claims from one run. |
+| U1 | Keyboard/screen reader, large text, navigation and touch controls; unplug network during download. | Labeled model/matching selectors, progress and notices announced, usable Pause/Resume/Remove, clear recovery paths. Offline-only never sends to cloud; unsupported model/task preserves the draft. |
+| W1 | Open web build → AI & Models / Help; choose stale offline selection if possible. | No native downloads/inference, honest refusal, cloud and built-in fallback still function within their selected mode. |
 
-Reproduce the Gate-E subscript error; paste the EXACT message (on-screen
-text + matching `logcat -v threadtime` lines) into `subscript-error.txt`
-with the tap sequence. Do not paraphrase — exact text only.
+## Evidence and close-out
 
-## 5. Diagnostics export + logcat
+Store results in a dated private evidence directory (for example
+`test-evidence/gate-e/<run>/`) with build identity, matrix statuses, screenshot
+references, redacted raw probe records, prompts/fixture hashes, memory/thermal/
+battery samples and logcat crash/error excerpts. Avoid keys, account credentials,
+or personal photos in committed evidence.
 
-- Settings → Diagnostics → export (`exportDiagJson`, redacted at record
-  time) → `diag-export.json`; Splash boot diagnostics → `screenshot-diag.png`.
-- Full pass logcat: `adb -s <serial> logcat -d -v threadtime` →
-  `logcat-gate-e.txt`.
+Useful read-only captures after the authorized run:
 
-## 6. Close-out
+```bash
+adb -s <serial> shell dumpsys meminfo com.findback.app
+adb -s <serial> shell dumpsys thermalservice
+adb -s <serial> shell dumpsys battery
+adb -s <serial> logcat -d -v threadtime
+```
 
-Update the step statuses in the run dir manually (the retired
-`gate-e-run.mjs --device` flip no longer exists); attach the run dir
-listing to the status report. Timing rows from §§1–3 are the Gate-E
-performance evidence.
+TTFT is the mean of two corpus samples in each current native probe; tokens/s is
+the mean of the SDK decode rates. The two-color gate is a backend sanity check,
+not general vision quality acceptance. Real object-photo output, lifecycle,
+memory, battery and UX require their own matrix evidence. Records currently stay
+in the application session; copy them before restarting. Gate success and JVM
+fakes prove software wiring, not Civi 3 hardware acceptance.

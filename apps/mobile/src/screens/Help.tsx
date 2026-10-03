@@ -21,6 +21,7 @@ import { loadGenericEndpoint } from "../services/ai/genericEndpoint";
 import { loadAppearance } from "../appearance";
 import { loadAuthorizedCatalog } from "../services/ai/modelCatalog";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
+import { getApplicationAi } from "../services/ai/applicationAi";
 import { honestOfflineDetail, loadAssistantMode, OFFLINE_NOT_AVAILABLE, type AssistantMode } from "./AiModels";
 import { createOpenRouterAdapter } from "../services/ai/providers/openrouter";
 import { builtInHelp } from "../services/helpFaq";
@@ -180,19 +181,20 @@ export function parseHelpResponse(raw: string): { markdown: string; actions: Act
  * provider slot and listed rows through the registry wiring seam. Per-provider
  * failures (no key, no list endpoint, refused) yield no rows — never invented
  * ones. Offline readiness comes from the registry seam itself: the adapter
- * stays unwired until the native bridge lands, so its error copy is the honest
+ * reports verified Android installs; on web its error copy is the honest
  * status line. This binder only fills the picker.
  */
 async function loadHelpCatalog(
   accountId: string,
 ): Promise<{ records: readonly ModelRecord[]; offlineDetail: string | null }> {
   let offlineDetail: string | null = null;
+  let offlineRecords: readonly ModelRecord[] = [];
   try {
-    createProviderAdapter("offline", { accountId, resolveKey: async () => null });
+    const offline = createProviderAdapter("offline", { accountId, resolveKey: async () => null });
+    offlineRecords = await offline.listModels?.() ?? [];
     offlineDetail = null;
   } catch (e) {
-    // IF-002: the registry seam refuses offline until the native bridge
-    // lands — surface the normalized not-available line, never internals.
+    // Web or unavailable Android storage: surface honest availability, never internals.
     offlineDetail = honestOfflineDetail(e);
   }
   const records = await loadAuthorizedCatalog({
@@ -216,7 +218,7 @@ async function loadHelpCatalog(
     },
     retrievedAt: new Date().toISOString(),
   });
-  return { records, offlineDetail };
+  return { records: [...offlineRecords, ...records], offlineDetail };
 }
 
 /**
@@ -240,7 +242,10 @@ export function refuseHelpSend(input: {
     return "Cloud-only mode is on, so the on-device row was not run. Switch modes in AI & Models to use it.";
   }
   if (input.provider === "offline") {
-    return honestOfflineDetail(new Error(OFFLINE_NOT_AVAILABLE));
+    if (!getApplicationAi().android || input.record === null) return honestOfflineDetail(new Error(OFFLINE_NOT_AVAILABLE));
+    if (!getApplicationAi().manager.statusOf(input.record.id)?.checksumVerified) return "Install and verify this on-device model in AI & Models first.";
+    if (input.hasImages && !input.record.input.includes("image")) return "This on-device model accepts text only; select SmolVLM2 for an approved image.";
+    if (!input.hasImages && input.record.input.includes("image")) return "SmolVLM2 requires one approved image. Select Needle for structured text extraction.";
   }
   const priceClass = input.record?.priceClass ?? "free";
   if (priceClass === "paid" || priceClass === "variable") {
@@ -849,11 +854,10 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       clearTray();
     };
     try {
-      // Every provider row needs its own vault slot or the honest built-in
-      // answer below. The test seam keeps its openrouter-era shape.
-      const key = await (deps?.getKey?.() ?? aiCredentials.get(accountId, sendProvider));
+      // Cloud rows need a vault slot; installed offline rows do not.
+      const key = sendProvider === "offline" ? null : await (deps?.getKey?.() ?? aiCredentials.get(accountId, sendProvider));
       if (generation.current !== gen) return;
-      if (key === null) {
+      if (key === null && sendProvider !== "offline") {
         // No connected key: honest built-in answer, kept like any turn.
         finishFallback(persistFallback(chatId, historyOn, question), builtInHelp(question));
         return;
@@ -926,7 +930,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       const safeMessage = sanitizeControllerError(message, [question]);
       setPartial(null);
       setAttempts((prev) => [...prev, { n: attemptN, status: "failed" }]);
-      if (isGeneralNonAppQuestion(question)) {
+      if (sendProvider === "offline" || isGeneralNonAppQuestion(question)) {
         // G07 fix: general-chat failures NEVER get an FAQ substitution — the
         // draft and the tray photos are preserved for Retry.
         setInput(question);

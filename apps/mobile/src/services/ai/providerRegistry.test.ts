@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SUPPORTED_AI_PROVIDERS } from "../browserAiCredentials";
 import type { NormalizedRequest, ProviderId } from "./providerContract";
 import { createProviderAdapter } from "./providerRegistry";
+import { ApplicationAiService } from "./applicationAi";
 
 const ACCOUNT = "registry-acct-1";
 
@@ -113,12 +114,25 @@ describe("providerRegistry", () => {
     ).toThrow(/assembleSystemText/i);
   });
 
-    it("refuses offline loudly until the native bridge lands (IF-002)", () => {
-    // Offline has no vault slot, so the known-provider guard fires first;
-    // the switch's explicit offline case stays as exhaustiveness documentation.
+  it("refuses offline on web with platform truth", () => {
     expect(() =>
       createProviderAdapter("offline", { accountId: ACCOUNT, resolveKey: async () => null }),
-    ).toThrow(/unknown AI provider/i);
+    ).toThrow(/Android/i);
+  });
+
+  it("binds Android offline to the shared service without reading a vault slot", async () => {
+    const service = new ApplicationAiService({ android: true, driver: {
+      rootDir: async () => "/private/ai-models", freeBytes: async () => 1e9,
+      stagedSize: async () => 0, readJournalText: async () => null,
+      download: async () => { throw new Error("unexpected download"); },
+      cancelDownload: async () => {}, hashFile: async () => { throw new Error("missing"); },
+      promoteFile: async () => {}, removeFile: async () => {},
+    } });
+    const adapter = createProviderAdapter("offline", {
+      accountId: ACCOUNT, resolveKey: async () => { throw new Error("offline must never read credentials"); }, offlineService: service,
+    });
+    expect(adapter.id).toBe("offline");
+    expect(await adapter.listModels?.()).toEqual([]);
   });
 
   it("rejects unknown providers without echoing key material", () => {

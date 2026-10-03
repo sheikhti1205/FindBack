@@ -33,6 +33,7 @@ import { createMistralAdapter } from "./providers/mistral";
 import { createOpenAiAdapter } from "./providers/openai";
 import { createOpenRouterAdapter } from "./providers/openrouter";
 import { createXaiAdapter } from "./providers/xai";
+import { getApplicationAi, type ApplicationAiService } from "./applicationAi";
 
 /**
  * Standard credential-getter seam. Returns the vault key for one
@@ -44,6 +45,7 @@ export type RegistryCredentialGetter = (
 ) => Promise<string | null>;
 
 export type ProviderRegistryOptions = {
+  readonly offlineService?: ApplicationAiService;
   /** Owning account; its per-provider slot is the only slot ever read. */
   readonly accountId: string;
   /** Standard seam, e.g. `(accountId, provider) => aiCredentials.get(accountId, provider)`. */
@@ -66,7 +68,7 @@ export type ProviderRegistryOptions = {
   readonly assembleSystemText?: (request: NormalizedRequest) => string | undefined;
 };
 
-const KNOWN_PROVIDERS: ReadonlySet<string> = new Set(SUPPORTED_AI_PROVIDERS);
+const KNOWN_PROVIDERS: ReadonlySet<string> = new Set([...SUPPORTED_AI_PROVIDERS, "offline"]);
 
 function isKnownProvider(provider: unknown): provider is ProviderId {
   return typeof provider === "string" && KNOWN_PROVIDERS.has(provider);
@@ -132,8 +134,13 @@ export function createProviderAdapter(
       });
     }
     case "offline":
-      // IF-002: the offline adapter exists but is deliberately unwired here —
-      // no vault slot, no cloud credential seam — until the native bridge lands.
-      throw new Error("Offline AI is not available in this build.");
+      return (options.offlineService ?? getApplicationAi()).offlineAdapter(
+        resolveImageUrl === undefined ? undefined : async (id) => {
+          const url = await resolveImageUrl(id);
+          const bytes = url?.match(/^data:image\/(?:jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/)?.[1];
+          if (!bytes) throw new Error("Approved local image bytes are unavailable");
+          return bytes;
+        },
+      );
   }
 }

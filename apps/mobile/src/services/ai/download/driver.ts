@@ -377,7 +377,10 @@ export class CapacitorModelDownloadDriver implements ModelDownloadDriver {
       if (event.downloadId !== downloadId) return;
       attempt.onProgress?.(event.received, event.total ?? null);
     });
+    const cancel = () => { void plugin.cancelDownload({ stagingPath: attempt.stagingPath }).catch(() => undefined); };
+    attempt.signal?.addEventListener("abort", cancel, { once: true });
     try {
+      if (attempt.signal?.aborted) throw new DriverError("ABORTED", "download cancelled");
       const done = await plugin.startDownload({
         downloadId,
         url: attempt.url,
@@ -401,6 +404,7 @@ export class CapacitorModelDownloadDriver implements ModelDownloadDriver {
         error instanceof Error && /cancelled/i.test(error.message) ? "ABORTED" : "DOWNLOAD_FAILED";
       throw new DriverError(code, error instanceof Error ? error.message : "download failed");
     } finally {
+      attempt.signal?.removeEventListener("abort", cancel);
       await handle.remove().catch(() => undefined);
     }
   }

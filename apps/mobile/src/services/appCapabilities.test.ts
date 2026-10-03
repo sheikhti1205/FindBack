@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { APP_CAPABILITIES, CAPABILITIES_VERSION } from "./appCapabilities";
 
 // The server-side mirror lives outside the Vite root, so compare by source:
-// the contract is version parity + no retired local-AI claims on either side.
+// the contract is strict version parity + accurate, platform-scoped product facts.
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const edgeSource = readFileSync(
   join(repoRoot, "supabase", "functions", "ai-help", "capabilities.ts"),
@@ -19,23 +19,13 @@ const edgeSummary = edgeSource.slice(
 const mobileCopy = JSON.stringify(APP_CAPABILITIES);
 
 /**
- * Vocabulary of the retired local generative runtime. The active architecture
- * is a user-owned BYOK key talking directly to the user's provider, so none of
- * these may be claimed as a capability again. The photo-privacy entry is scoped
- * to photo/image/picture statements so truthful key-residency copy ("keys are
- * never sent to FindBack's servers") does not trip it.
+ * Unsupported claims remain forbidden even with the new downloadable Android runtimes.
  */
 const RETIRED_CLAIMS: Array<[RegExp, string]> = [
-  [/offline ai/i, "offline AI"],
-  [/smolvlm/i, "SmolVLM"],
-  [/litert/i, "LiteRT"],
-  [/\bmodel download/i, "model downloads"],
-  [/\bmodel mode/i, "model modes"],
-  [/\bGPU\b/, "GPU-preferring model"],
-  [/\bCPU compatibility\b/i, "CPU compatibility mode"],
   [/\b256M\b/, "256M model"],
-  [/pause and resume/i, "pause/resume downloads"],
   [/wi-fi only/i, "Wi-Fi-only downloads"],
+  [/GPU (is |always )?faster/i, "unmeasured GPU speed"],
+  [/no downloadable or offline generative model/i, "retired architecture"],
   [
     /(photo|image|picture)[^.]{0,60}never (sent|leaves)[^.]{0,30}(server|device|phone)/i,
     "photo never leaves the device",
@@ -46,17 +36,26 @@ const RETIRED_CLAIMS: Array<[RegExp, string]> = [
 describe("capability docs", () => {
   it("stays in sync with the server-side mirror", () => {
     const match = edgeSource.match(/CAPABILITIES_VERSION = "([^"]+)"/);
-    // WS7 wave: mobile leads at 1.7.0-wave; the server-side mirror
-    // (supabase/functions/ai-help/capabilities.ts) still reads 1.6.0 and
-    // needs the same bump plus the gated lines before the wave ships.
-    expect(CAPABILITIES_VERSION).toBe("1.7.0-wave");
-    expect(["1.6.0", CAPABILITIES_VERSION]).toContain(match?.[1]);
+    expect(match?.[1]).toBe(CAPABILITIES_VERSION);
   });
 
-  it("describes the cloud-AI architecture without retired local-AI claims", () => {
+  it("avoids unsupported speed, privacy and retired-architecture claims", () => {
     for (const [pattern, label] of RETIRED_CLAIMS) {
       expect(pattern.test(mobileCopy), `mobile capability copy still claims ${label}`).toBe(false);
       expect(pattern.test(edgeSummary), `server capability copy still claims ${label}`).toBe(false);
+    }
+  });
+
+  it("describes explicit verified Android installs, specialized offline tasks and measurement limits", () => {
+    for (const copy of [mobileCopy, edgeSummary]) {
+      expect(copy).toMatch(/Android/);
+      expect(copy).toMatch(/Needle/);
+      expect(copy).toMatch(/SmolVLM2/);
+      expect(copy).toMatch(/checksum/);
+      expect(copy).toMatch(/pause and resume/i);
+      expect(copy).toMatch(/CPU/);
+      expect(copy).toMatch(/measurement/);
+      expect(copy).toMatch(/web.*(unavailable|does not)/i);
     }
   });
 

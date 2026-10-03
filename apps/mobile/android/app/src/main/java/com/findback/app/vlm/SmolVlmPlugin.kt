@@ -17,10 +17,10 @@ import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 
 /**
@@ -56,11 +56,69 @@ import kotlinx.coroutines.launch
 class SmolVlmPlugin : Plugin() {
 
     private val lock = Any()
+    private val operations = RuntimeOperationGate()
     private var engine: Engine? = null
     private var conversation: Conversation? = null
     private var residentModelId: String? = null
     private val activeJobs = mutableMapOf<String, Job>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @PluginMethod
+    fun collectDeviceFacts(call: PluginCall) {
+        scope.launch {
+            val facts = DeviceProbe.collectFacts(DeviceProbe.RealProviders(context))
+            if (facts == null) { call.reject("device_facts_unavailable"); return@launch }
+            val result = JSObject()
+            result.put("socModel", facts.socModel)
+            result.put("gpuInfo", facts.gpuInfo)
+            result.put("ramMb", facts.ramMb)
+            result.put("osVersion", facts.osVersion)
+            result.put("nnapiStatus", facts.nnapiStatus)
+            result.put("vulkanStatus", facts.vulkanStatus)
+            result.put("openClStatus", facts.openClStatus)
+            call.resolve(result)
+        }
+    }
+
+    @PluginMethod
+    fun measureBackend(call: PluginCall) {
+        val backend = call.getString("backend")
+        val expectedFile = RuntimeTimingRunner.installedFile(context)
+        if (backend !in listOf("cpu", "gpu") ||
+            call.getString("modelId") != RuntimeTimingRunner.MODEL_ID ||
+            call.getString("modelRev") != RuntimeTimingRunner.MODEL_REV ||
+            call.getString("corpusVersion") != RuntimeTimingRunner.CORPUS_VERSION ||
+            call.getString("installedPath") != expectedFile.absolutePath
+        ) { call.reject("invalid_probe_identity"); return }
+        val lease = operations.acquire() ?: run { call.reject("runtime_busy"); return }
+        scope.launch {
+            try {
+                synchronized(lock) {
+                    if (activeJobs.isNotEmpty()) { call.reject("runtime_busy"); return@launch }
+                    unloadLocked()
+                }
+                val record = DeviceProbe.collect(backend!!, RuntimeTimingRunner.MODEL_REV,
+                    RuntimeTimingRunner.CORPUS_VERSION, DeviceProbe.RealProviders(context))
+                val result = JSObject()
+                if (record == null) { call.reject("timing_unavailable"); return@launch }
+                val sample = JSObject()
+                sample.put("socModel", record.socModel)
+                sample.put("gpuInfo", record.gpuInfo)
+                sample.put("ramMb", record.ramMb)
+                sample.put("osVersion", record.osVersion)
+                sample.put("backend", record.backend)
+                sample.put("ttftMs", record.ttftMs)
+                sample.put("tokensPerSec", record.tokensPerSec)
+                sample.put("corpusVersion", record.corpusVersion)
+                sample.put("probeVersion", record.probeVersion)
+                sample.put("modelRev", record.modelRev)
+                sample.put("correctnessPass", record.correctnessPass)
+                result.put("record", sample)
+                call.resolve(result)
+            } catch (_: Exception) { call.reject("timing_unavailable") }
+            finally { lease.close() }
+        }
+    }
 
     @PluginMethod
     fun isVisionAvailable(call: PluginCall) {
@@ -87,6 +145,7 @@ class SmolVlmPlugin : Plugin() {
             call.reject("model_not_installed")
             return
         }
+        val lease = operations.acquire() ?: run { call.reject("runtime_busy"); return }
         call.setKeepAlive(true)
         scope.launch {
             try {
@@ -101,6 +160,8 @@ class SmolVlmPlugin : Plugin() {
                     cacheDir = context.cacheDir.path,
                 )
                 val eng = Engine(config)
+                // Own the engine before initialize: failure must also close partial native allocation.
+                synchronized(lock) { engine = eng }
                 eng.initialize()
                 val conv = eng.createConversation(
                     ConversationConfig(
@@ -112,6 +173,7 @@ class SmolVlmPlugin : Plugin() {
                         maxOutputToken = maxOutputTokens,
                     ),
                 )
+                synchronized(lock) { conversation = conv }
                 // Self-test: resolve READY only after a proven round-trip.
                 conv.sendMessage(Contents.of(Content.Text("ok")))
                 synchronized(lock) {
@@ -125,7 +187,7 @@ class SmolVlmPlugin : Plugin() {
             } catch (e: Exception) {
                 synchronized(lock) { unloadLocked() }
                 call.reject("runtime_load_failed", e.message?.take(400))
-            }
+            } finally { lease.close() }
         }
     }
 
@@ -137,14 +199,16 @@ class SmolVlmPlugin : Plugin() {
             call.reject("generation_failed")
             return
         }
+        val lease = operations.acquire() ?: run { call.reject("runtime_busy"); return }
         val prompt = call.getString("prompt", DEFAULT_VISION_PROMPT) ?: DEFAULT_VISION_PROMPT
         val conv = synchronized(lock) { conversation }
         if (conv == null || conv.isAlive != true) {
+            lease.close()
             call.reject("vision_unsupported")
             return
         }
         call.setKeepAlive(true)
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val bytes = Base64.decode(imageBase64, Base64.DEFAULT)
                 conv.sendMessageAsync(
@@ -152,10 +216,7 @@ class SmolVlmPlugin : Plugin() {
                         Content.ImageBytes(bytes),
                         Content.Text(prompt),
                     ),
-                ).catch { e ->
-                    notifyGeneration(generationId, error = e.message?.take(400))
-                    call.reject("generation_failed")
-                }.collect { message ->
+                ).collect { message ->
                     notifyGeneration(generationId, delta = message.toString())
                 }
                 notifyGeneration(generationId, done = true)
@@ -166,33 +227,39 @@ class SmolVlmPlugin : Plugin() {
             } catch (e: Exception) {
                 notifyGeneration(generationId, error = e.message?.take(400))
                 call.reject("generation_failed")
-            } finally {
-                synchronized(lock) { activeJobs.remove(generationId) }
             }
         }
         synchronized(lock) { activeJobs[generationId] = job }
+        // Also runs when cancellation wins before the lazy coroutine enters its body.
+        job.invokeOnCompletion {
+            synchronized(lock) { activeJobs.remove(generationId) }
+            lease.close()
+        }
+        job.start()
     }
 
     @PluginMethod
     fun cancelGeneration(call: PluginCall) {
         val generationId = call.getString("generationId")
-        synchronized(lock) { activeJobs.remove(generationId) }?.cancel()
-        try {
-            synchronized(lock) { conversation }?.cancelProcess()
-        } catch (_: IllegalStateException) {
-            // No live conversation — nothing to cancel natively.
+        val job = synchronized(lock) { activeJobs[generationId] }
+        scope.launch {
+            if (job != null) {
+                job.cancel()
+                try { synchronized(lock) { conversation }?.cancelProcess() }
+                catch (_: IllegalStateException) { /* Already finished. */ }
+                job.join()
+            }
+            call.resolve()
         }
-        call.resolve()
     }
 
     @PluginMethod
     fun unloadVisionModel(call: PluginCall) {
-        synchronized(lock) {
-            activeJobs.values.forEach { it.cancel() }
-            activeJobs.clear()
-            unloadLocked()
-        }
-        call.resolve()
+        val lease = operations.acquire() ?: run { call.reject("runtime_busy"); return }
+        try {
+            synchronized(lock) { unloadLocked() }
+            call.resolve()
+        } finally { lease.close() }
     }
 
     /**
