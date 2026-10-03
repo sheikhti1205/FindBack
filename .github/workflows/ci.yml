@@ -67,8 +67,10 @@ jobs:
         # Gates the release-script regressions (fingerprint parse order, ABI
         # completeness, full-SHA provenance, SemVer publish type) so an
         # unverified release path can never reach a tag. Also the commit-message
-        # checker (range + enforcement baseline) itself.
-        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-commit-messages.test.mjs
+        # checker (range + enforcement baseline) and the AI release gate
+        # itself (skeleton-tree detectors) — the gate test must run here
+        # because these lists are explicit globs never match new files.
+        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-commit-messages.test.mjs scripts/ai-release-gate.test.mjs
       - name: Sharing and server credential config tests
         run: node --test scripts/check-share-config.test.mjs scripts/check-mobile-build-config.test.mjs scripts/sync-fcm-secrets.test.mjs
       - name: Build mobile web shell
