@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Material 3 Expressive-inspired monochrome tokens (Tailwind v4). */
+/* Soft Utility semantic tokens (Tailwind v4). Accent is never a status color. */
 @theme inline {
   --color-surface: var(--fb-surface);
   --color-surface-container-low: var(--fb-surface-container-low);
@@ -12,6 +12,19 @@
   --color-outline-variant: var(--fb-outline-variant);
   --color-error: var(--fb-error);
   --color-on-error: var(--fb-on-error);
+  --color-primary: var(--fb-primary);
+  --color-on-primary: var(--fb-on-primary);
+  --color-primary-container: var(--fb-primary-container);
+  --color-on-primary-container: var(--fb-on-primary-container);
+  --color-focus: var(--fb-focus);
+  --color-link: var(--fb-link);
+  --color-selection: var(--fb-selection);
+  --color-on-selection: var(--fb-on-selection);
+  --color-control-active: var(--fb-control-active);
+  --color-control-outline: var(--fb-control-outline);
+  --color-progress: var(--fb-progress);
+  --color-success: var(--fb-success);
+  --color-warning: var(--fb-warning);
 
   --radius-m3-xs: 4px;
   --radius-m3-sm: 8px;
@@ -23,14 +36,30 @@
 }
 
 :root {
-  --fb-surface: #ffffff;
-  --fb-surface-container-low: #f7f7f5;
-  --fb-surface-container: #efefec;
-  --fb-surface-container-high: #e5e5e1;
-  --fb-on-surface: #1a1a1a;
-  --fb-on-surface-variant: #494945;
-  --fb-outline: #74746e;
-  --fb-outline-variant: #c9c9c2;
+  --fb-surface: #f6f7f5;
+  --fb-surface-container-low: #ffffff;
+  --fb-surface-container: #eff1ed;
+  --fb-surface-container-high: #e9ece7;
+  --fb-on-surface: #171917;
+  --fb-on-surface-variant: #626761;
+  /* Strong outline for controls; subtle outline for group/divider geometry. */
+  --fb-outline: #626761;
+  --fb-outline-variant: #dce0da;
+  --fb-primary: var(--fb-primary-light, #256c4a);
+  --fb-on-primary: var(--fb-on-primary-light, #ffffff);
+  --fb-primary-container: var(--fb-primary-container-light, #e1f2e8);
+  --fb-on-primary-container: var(--fb-on-primary-container-light, #00391e);
+  --fb-link: var(--fb-link-light, #00391e);
+  --fb-focus: var(--fb-primary);
+  --fb-selection: var(--fb-primary-container);
+  --fb-on-selection: var(--fb-on-primary-container);
+  --fb-control-active: var(--fb-primary);
+  --fb-control-outline: var(--fb-outline);
+  --fb-progress: var(--fb-primary);
+  --fb-accent: var(--fb-primary);
+  --fb-accent-ink: var(--fb-on-primary);
+  --fb-success: #1b5e20;
+  --fb-warning: #755400;
   --fb-error: #ba1a1a;
   --fb-on-error: #ffffff;
   /* U2 hybrid visual rollout: restrained tint for the occasional status card
@@ -63,14 +92,21 @@
 }
 
 .dark {
-  --fb-surface: #121212;
-  --fb-surface-container-low: #1d1d1d;
-  --fb-surface-container: #242424;
-  --fb-surface-container-high: #2f2f2f;
-  --fb-on-surface: #e6e6e0;
-  --fb-on-surface-variant: #c9c9c1;
-  --fb-outline: #8f8f88;
-  --fb-outline-variant: #494944;
+  --fb-surface: #101211;
+  --fb-surface-container-low: #1a1d1b;
+  --fb-surface-container: #202421;
+  --fb-surface-container-high: #282c29;
+  --fb-on-surface: #f0f2ee;
+  --fb-on-surface-variant: #b8bdb7;
+  --fb-outline: #b8bdb7;
+  --fb-outline-variant: #343a35;
+  --fb-primary: var(--fb-primary-dark, #82d5aa);
+  --fb-on-primary: var(--fb-on-primary-dark, #00391e);
+  --fb-primary-container: var(--fb-primary-container-dark, #153c29);
+  --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
+  --fb-link: var(--fb-link-dark, #82d5aa);
+  --fb-success: #a9d6b0;
+  --fb-warning: #e9c46a;
   --fb-error: #ffb4ab;
   --fb-on-error: #690005;
   /* U2: dark-mode tint — charcoal-compatible, still grayscale surroundings. */
@@ -97,15 +133,22 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not(.light) {
-    --fb-surface: #121212;
-    --fb-surface-container-low: #1d1d1d;
-    --fb-surface-container: #242424;
-    --fb-surface-container-high: #2f2f2f;
-    --fb-on-surface: #e6e6e0;
-    --fb-on-surface-variant: #c9c9c1;
-    --fb-outline: #8f8f88;
-    --fb-outline-variant: #494944;
+  :root:not(.light):not(.amoled) {
+    --fb-surface: #101211;
+    --fb-surface-container-low: #1a1d1b;
+    --fb-surface-container: #202421;
+    --fb-surface-container-high: #282c29;
+    --fb-on-surface: #f0f2ee;
+    --fb-on-surface-variant: #b8bdb7;
+    --fb-outline: #b8bdb7;
+    --fb-outline-variant: #343a35;
+    --fb-primary: var(--fb-primary-dark, #82d5aa);
+    --fb-on-primary: var(--fb-on-primary-dark, #00391e);
+    --fb-primary-container: var(--fb-primary-container-dark, #153c29);
+    --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
+    --fb-link: var(--fb-link-dark, #82d5aa);
+    --fb-success: #a9d6b0;
+    --fb-warning: #e9c46a;
     --fb-error: #ffb4ab;
     --fb-on-error: #690005;
     --fb-tint-bg: #1c2620;
@@ -128,10 +171,43 @@
   }
 }
 
+.amoled {
+  --fb-surface: #000000;
+  --fb-surface-container-low: #0b0b0b;
+  --fb-surface-container: #111211;
+  --fb-surface-container-high: #171817;
+  --fb-on-surface: #f4f4f1;
+  --fb-on-surface-variant: #b8bab6;
+  --fb-outline: #b8bab6;
+  --fb-outline-variant: #242624;
+  --fb-primary: var(--fb-primary-dark, #82d5aa);
+  --fb-on-primary: var(--fb-on-primary-dark, #00391e);
+  --fb-primary-container: var(--fb-primary-container-dark, #153c29);
+  --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
+  --fb-link: var(--fb-link-dark, #82d5aa);
+  --composer-surface: #0b0b0b;
+  --user-bubble: #171817;
+  --assistant-surface: #000000;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --skeleton-base: #111211;
+  --skeleton-highlight: #171817;
+  color-scheme: dark;
+}
+
+/* Empty boot viewport is black until the synchronous theme module has read
+ * preferences. This avoids a light CSS paint while a persisted AMOLED user's
+ * React bundle loads; no boot content is rendered in this temporary state. */
+:root:not([data-theme]) {
+  --fb-surface: #000000;
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {
   height: 100%;
+  background: var(--fb-surface);
   /* P1: scroll-lock scopes to .fb-app-viewport (Shell routes only) — auth,
    * splash and verify live OUTSIDE Shell and keep document scrolling. */
 }
@@ -165,8 +241,13 @@ body {
 
 /* Visible but restrained keyboard/pointer focus ring. */
 :focus-visible {
-  outline: 2px solid var(--fb-on-surface);
+  outline: 2px solid var(--fb-focus);
   outline-offset: 2px;
+}
+
+::selection {
+  background: var(--fb-selection);
+  color: var(--fb-on-selection);
 }
 
 /* H1-motion: CSS animations honor the ONE effective motion preference.

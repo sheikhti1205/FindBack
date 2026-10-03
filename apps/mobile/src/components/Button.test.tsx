@@ -6,6 +6,13 @@ import { Button } from "./Button";
 afterEach(cleanup);
 
 describe("Button motion pass", () => {
+  it("uses semantic primary/on-primary without changing error meaning", () => {
+    render(<><Button>Continue</Button><Button variant="error">Delete</Button></>);
+    const primary = screen.getByRole("button", { name: "Continue" });
+    expect(primary.classList.contains("bg-primary")).toBe(true);
+    expect(primary.classList.contains("text-on-primary")).toBe(true);
+    expect(screen.getByRole("button", { name: "Delete" }).classList.contains("bg-error")).toBe(true);
+  });
   it("renders children and stays enabled by default", () => {
     render(<Button>Save</Button>);
     const button = screen.getByRole("button", { name: "Save" });

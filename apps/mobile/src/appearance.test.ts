@@ -26,9 +26,9 @@ afterEach(() => {
 });
 
 describe("appearance settings module (AI-011 Quick Appearance)", () => {
-  it("exposes defaults: ink accent, standard scale, system motion, standard photo", () => {
+  it("exposes defaults: emerald accent, standard scale, system motion, standard photo", () => {
     expect(DEFAULT_APPEARANCE).toEqual({
-      accent: "ink",
+      accent: "emerald",
       textScale: "standard",
       reduceMotion: "system",
       highQualityPhoto: false,
@@ -99,7 +99,8 @@ describe("appearance settings module (AI-011 Quick Appearance)", () => {
     });
     const root = document.documentElement;
     const swatch = ACCENT_OPTIONS.find((a) => a.id === "blue")!.swatch;
-    expect(root.style.getPropertyValue("--fb-accent").trim()).toBe(swatch);
+    expect(root.style.getPropertyValue("--fb-primary-light").trim()).toBe(swatch);
+    expect(root.style.getPropertyValue("--fb-accent").trim()).toBe("var(--fb-primary)");
     expect(root.style.getPropertyValue("--fb-accent-ink").trim().length).toBeGreaterThan(0);
     const large = TEXT_SCALE_OPTIONS.find((t) => t.id === "large")!.percent;
     expect(root.style.fontSize).toBe(`${large}%`);

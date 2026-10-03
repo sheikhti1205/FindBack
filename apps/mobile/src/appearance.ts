@@ -21,20 +21,19 @@
  *   `services/media/importImage.ts` takes an explicit `highQuality` input and
  *   starts its adaptive ladder at the high tier while keeping every byte and
  *   dimension cap hard.
- * - The accent control is hidden (option B): `--fb-accent` /
- *   `--fb-accent-ink` are still applied to the root for forward-compat but
- *   have no production consumers, so no user-facing control saves a value
- *   with no visible effect. See AppearancePanel.
+ * - Accent pairs are emitted for both light and dark so CSS can select the
+ *   active palette without a stale inline color during an OS/theme change.
+ *   Lost/Found/Error/Warning/Success remain independent semantic roles.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export const APPEARANCE_STORAGE_KEY = "findback.appearance.v1";
 
 /** Window event fired on every save so other tabs/mounts re-apply. */
 export const APPEARANCE_EVENT = "findback:appearance";
 
-export type AccentId = "ink" | "blue" | "green" | "plum" | "clay";
+export type AccentId = "emerald" | "blue" | "violet" | "rose" | "amber" | "teal" | "mono";
 
 export interface AccentOption {
   id: AccentId;
@@ -43,16 +42,43 @@ export interface AccentOption {
   swatch: string;
   /** Label/icon color used on top of the swatch, applied as `--fb-accent-ink`. */
   onAccent: string;
+  darkSwatch: string;
+  darkOnAccent: string;
+  container: string;
+  darkContainer: string;
 }
 
 /** Curated set — small on purpose; every swatch keeps AA vs its onAccent. */
 export const ACCENT_OPTIONS: readonly AccentOption[] = [
-  { id: "ink", label: "Ink", swatch: "#1a1a1a", onAccent: "#ffffff" },
-  { id: "blue", label: "Blue", swatch: "#0b57d0", onAccent: "#ffffff" },
-  { id: "green", label: "Green", swatch: "#2e5b34", onAccent: "#ffffff" },
-  { id: "plum", label: "Plum", swatch: "#7b2d8b", onAccent: "#ffffff" },
-  { id: "clay", label: "Clay", swatch: "#b3402a", onAccent: "#ffffff" },
+  { id: "emerald", label: "Emerald", swatch: "#256c4a", onAccent: "#ffffff", darkSwatch: "#82d5aa", darkOnAccent: "#00391e", container: "#e1f2e8", darkContainer: "#153c29" },
+  { id: "blue", label: "Blue", swatch: "#3568d4", onAccent: "#ffffff", darkSwatch: "#adc7ff", darkOnAccent: "#082b60", container: "#e8eeff", darkContainer: "#1c355c" },
+  { id: "violet", label: "Violet", swatch: "#7355b7", onAccent: "#ffffff", darkSwatch: "#cfbdff", darkOnAccent: "#2e1a61", container: "#f0eaff", darkContainer: "#38285c" },
+  { id: "rose", label: "Rose", swatch: "#a34763", onAccent: "#ffffff", darkSwatch: "#ffb2c4", darkOnAccent: "#5b112b", container: "#fbe8ef", darkContainer: "#51283a" },
+  { id: "amber", label: "Amber", swatch: "#7a5700", onAccent: "#ffffff", darkSwatch: "#e9c46a", darkOnAccent: "#3d2d00", container: "#f8edce", darkContainer: "#46391c" },
+  { id: "teal", label: "Teal", swatch: "#006a6a", onAccent: "#ffffff", darkSwatch: "#7bd8d8", darkOnAccent: "#003838", container: "#ddf2f1", darkContainer: "#153c3c" },
+  { id: "mono", label: "Mono", swatch: "#1a1a1a", onAccent: "#ffffff", darkSwatch: "#e6e6e0", darkOnAccent: "#121212", container: "#e9ece7", darkContainer: "#333632" },
 ];
+
+/** Accepts old IDs only at the persistence boundary; UI always uses new IDs. */
+export function migrateAccent(value: unknown): AccentId {
+  if (isAccentId(value)) return value;
+  const legacy: Record<string, AccentId> = { ink: "mono", green: "emerald", plum: "violet", clay: "rose" };
+  return typeof value === "string" && Object.hasOwn(legacy, value)
+    ? legacy[value]!
+    : DEFAULT_APPEARANCE.accent;
+}
+
+export function accentTokensFor(id: AccentId, mode: "light" | "dark" | "amoled") {
+  const accent = ACCENT_OPTIONS.find((a) => a.id === id) ?? ACCENT_OPTIONS[0]!;
+  const dark = mode !== "light";
+  return {
+    primary: dark ? accent.darkSwatch : accent.swatch,
+    onPrimary: dark ? accent.darkOnAccent : accent.onAccent,
+    primaryContainer: dark ? accent.darkContainer : accent.container,
+    onPrimaryContainer: dark ? accent.darkSwatch : accent.darkOnAccent,
+    link: dark ? accent.darkSwatch : accent.darkOnAccent,
+  };
+}
 
 export type TextScaleId = "compact" | "standard" | "large" | "xlarge";
 
@@ -95,7 +121,7 @@ export interface AppearanceSettings {
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
-  accent: "ink",
+  accent: "emerald",
   textScale: "standard",
   reduceMotion: "system",
   highQualityPhoto: false,
@@ -113,24 +139,24 @@ function isReduceMotionOverride(value: unknown): value is ReduceMotionOverride {
   return value === "system" || value === "reduce" || value === "full";
 }
 
+/** Pure field-by-field migration; malformed fields never discard valid peers. */
+export function migrateAppearance(value: unknown): AppearanceSettings {
+  const parsed = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Partial<AppearanceSettings>
+    : {};
+  return {
+    accent: migrateAccent(parsed.accent),
+    textScale: isTextScaleId(parsed.textScale) ? parsed.textScale : DEFAULT_APPEARANCE.textScale,
+    reduceMotion: isReduceMotionOverride(parsed.reduceMotion) ? parsed.reduceMotion : DEFAULT_APPEARANCE.reduceMotion,
+    highQualityPhoto: typeof parsed.highQualityPhoto === "boolean" ? parsed.highQualityPhoto : DEFAULT_APPEARANCE.highQualityPhoto,
+  };
+}
+
 export function loadAppearance(): AppearanceSettings {
   try {
     const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_APPEARANCE };
-    const parsed = JSON.parse(raw) as Partial<AppearanceSettings>;
-    return {
-      accent: isAccentId(parsed.accent) ? parsed.accent : DEFAULT_APPEARANCE.accent,
-      textScale: isTextScaleId(parsed.textScale)
-        ? parsed.textScale
-        : DEFAULT_APPEARANCE.textScale,
-      reduceMotion: isReduceMotionOverride(parsed.reduceMotion)
-        ? parsed.reduceMotion
-        : DEFAULT_APPEARANCE.reduceMotion,
-      highQualityPhoto:
-        typeof parsed.highQualityPhoto === "boolean"
-          ? parsed.highQualityPhoto
-          : DEFAULT_APPEARANCE.highQualityPhoto,
-    };
+    return migrateAppearance(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_APPEARANCE };
   }
@@ -143,7 +169,7 @@ export function saveAppearance(settings: AppearanceSettings): void {
     /* ignore — private-mode storage just means "don't persist" */
   }
   if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
-    window.dispatchEvent(new CustomEvent(APPEARANCE_EVENT));
+    window.dispatchEvent(new CustomEvent(APPEARANCE_EVENT, { detail: settings }));
   }
 }
 
@@ -205,8 +231,17 @@ export function applyAppearance(settings: AppearanceSettings): void {
   const scale =
     TEXT_SCALE_OPTIONS.find((t) => t.id === settings.textScale) ??
     TEXT_SCALE_OPTIONS.find((t) => t.id === DEFAULT_APPEARANCE.textScale)!;
-  root.style.setProperty("--fb-accent", accent.swatch);
-  root.style.setProperty("--fb-accent-ink", accent.onAccent);
+  for (const mode of ["light", "dark"] as const) {
+    const tokens = accentTokensFor(accent.id, mode);
+    root.style.setProperty(`--fb-primary-${mode}`, tokens.primary);
+    root.style.setProperty(`--fb-on-primary-${mode}`, tokens.onPrimary);
+    root.style.setProperty(`--fb-primary-container-${mode}`, tokens.primaryContainer);
+    root.style.setProperty(`--fb-on-primary-container-${mode}`, tokens.onPrimaryContainer);
+    root.style.setProperty(`--fb-link-${mode}`, tokens.link);
+  }
+  root.style.setProperty("--fb-accent", "var(--fb-primary)");
+  root.style.setProperty("--fb-accent-ink", "var(--fb-on-primary)");
+  root.dataset.accent = accent.id;
   root.style.fontSize = `${scale.percent}%`;
   root.dataset.reduceMotionOverride = settings.reduceMotion;
   root.classList.toggle("fb-reduce-motion", resolveReduceMotion(settings.reduceMotion));
@@ -247,13 +282,20 @@ export interface AppearanceApi {
  */
 export function useAppearance(): AppearanceApi {
   const [settings, setSettings] = useState<AppearanceSettings>(loadAppearance);
+  const current = useRef(settings);
 
   useEffect(() => {
     applyAppearance(settings);
   }, [settings]);
 
   useEffect(() => {
-    const sync = () => setSettings(loadAppearance());
+    const sync = (event: Event) => {
+      if (event instanceof StorageEvent && event.key !== APPEARANCE_STORAGE_KEY && event.key !== null) return;
+      const next = event instanceof CustomEvent && event.detail
+        ? migrateAppearance(event.detail) : loadAppearance();
+      current.current = next;
+      setSettings(next);
+    };
     window.addEventListener(APPEARANCE_EVENT, sync);
     window.addEventListener("storage", sync);
     return () => {
@@ -263,12 +305,11 @@ export function useAppearance(): AppearanceApi {
   }, []);
 
   const update = useCallback((patch: Partial<AppearanceSettings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
-      saveAppearance(next);
-      applyAppearance(next);
-      return next;
-    });
+    const next = migrateAppearance({ ...current.current, ...patch });
+    current.current = next;
+    setSettings(next);
+    applyAppearance(next);
+    saveAppearance(next);
   }, []);
 
   return { settings, update };

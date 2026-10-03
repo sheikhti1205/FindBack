@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { AnimatePresence, motion, type HTMLMotionProps } from "framer-motion";
 import { motionDurations, pressFeedback } from "./uiMotion";
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "outline" | "text" | "error";
   size?: "md" | "lg";
   loading?: boolean;
@@ -10,7 +10,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANTS: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "bg-on-surface text-surface hover:opacity-90 active:opacity-80",
+  primary: "bg-primary text-on-primary hover:opacity-90 active:opacity-80",
   outline:
     "border border-outline text-on-surface bg-transparent hover:bg-surface-container",
   text: "text-on-surface hover:bg-surface-container",
