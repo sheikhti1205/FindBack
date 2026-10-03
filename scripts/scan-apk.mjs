@@ -17,9 +17,14 @@ const forbidden = entries.filter((e) => /\.(litertlm|tflite)$/i.test(e) && e !==
 if (forbidden.length) { console.error(`scan-apk: forbidden model asset(s): ${forbidden.join(", ")}`); process.exit(1); }
 if (strict) {
   if (!entries.includes(useAsset)) { console.error(`scan-apk: required USE asset missing: ${useAsset}`); process.exit(1); }
-  // The retired local generative runtime must never come back into the APK.
-  const litert = entries.filter((e) => /liblitert/i.test(e));
-  if (litert.length) { console.error(`scan-apk: retired litertlm JNI present: ${litert.join(", ")}`); process.exit(1); }
+  // The sanctioned on-device vision runtime (SmolVLM2-500M via LiteRT-LM,
+  // `com.google.ai.edge.litertlm:litertlm-android`) must actually ship its
+  // JNI for every ABI this APK carries — same per-ABI rule as the embedding
+  // bridge below. Weights (`.litertlm`) are still never bundled (see the
+  // forbidden-asset rule above); they install post-consent via the
+  // verified downloader.
+  const missingVision = abis.filter((abi) => !entries.includes(`lib/${abi}/liblitertlm_jni.so`));
+  if (missingVision.length) { console.error(`scan-apk: vision JNI missing for ABI(s): ${missingVision.join(", ")}`); process.exit(1); }
   // The retained non-generative similarity bridge must actually ship, for
   // every ABI this APK carries. Release artifacts are ABI-split (one ABI per
   // APK) while debug/universal carry all, so a hardcoded arm64-v8a path wrongly
