@@ -47,22 +47,18 @@ const WEIGHTS = {
   url: `${HF_BASE}/needle3.cact`,
 };
 
-// NDK link engines keyed by Android ABI. arm64-v8a serves devices,
-// x86_64 serves the emulator (linux-x86_64 engine). 32-bit ARM has an
-// upstream android-armv7 engine but no FindBack bridge target: those builds
-// stay Needle-unavailable by explicit policy (same as 64-bit-only vision).
+// NDK link engine for arm64-v8a (devices). Upstream also publishes
+// android-armv7 and a desktop linux-x86_64 engine, but neither links into
+// an Android build: armv7 has no FindBack bridge target (32-bit builds stay
+// Needle-unavailable, same as 64-bit-only vision) and the linux archive
+// targets desktop glibc/libstdc++ (undefined bcmp/locale symbols against
+// Bionic). The x86_64 emulator therefore reports Needle unavailable —
+// measurement happens on arm64 hardware.
 const ENGINES = {
   "arm64-v8a": {
     dir: "android-arm64",
     libBytes: 2128166,
     libSha256: "16752fb75adea7af89bbc435a97d1cda7e71bc74d04578d551d0d3bbd5f9e633",
-    headerBytes: 3322,
-    headerSha256: "90f347f9dca1199de79967ab199a56e0588bd473fe306051f8d80d146976a324",
-  },
-  x86_64: {
-    dir: "linux-x86_64",
-    libBytes: 2143656,
-    libSha256: "5c0ff309dcf9c2238bd07986d9d100069d568596c2378f0bfedc1677cc02f756",
     headerBytes: 3322,
     headerSha256: "90f347f9dca1199de79967ab199a56e0588bd473fe306051f8d80d146976a324",
   },

@@ -4,6 +4,7 @@ import com.findback.app.LocationServicesPlugin;
 import com.findback.app.FindbackNotificationsPlugin;
 import com.findback.app.shortlink.ShortLinkResolverPlugin;
 import com.findback.app.download.ModelDownloadPlugin;
+import com.findback.app.needle.FindbackNeedle;
 import com.findback.app.vlm.FindBackDiagPlugin;
 import com.findback.app.vlm.SmolVlmPlugin;
 import com.findback.app.vlm.EmbeddingPlugin;
@@ -16,6 +17,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ShortLinkResolverPlugin.class);
         registerPlugin(FindBackDiagPlugin.class);
         registerPlugin(ModelDownloadPlugin.class);
+        registerPlugin(FindbackNeedle.class);
         registerPlugin(SmolVlmPlugin.class);
         registerPlugin(OpenRouterKeyPlugin.class);
         registerPlugin(EmbeddingPlugin.class);
