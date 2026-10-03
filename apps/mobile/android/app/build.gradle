@@ -204,7 +204,14 @@ dependencies {
     // Geolocation fix itself comes from @capacitor/geolocation (fused provider).
     implementation "com.google.android.gms:play-services-location:21.3.0"
     implementation "androidx.exifinterface:exifinterface:$androidxExifInterfaceVersion"
-    testImplementation "org.jetbrains.kotlin:kotlin-test-junit:2.2.21"
+    // On-device vision: LiteRT-LM Android (SmolVLM2-500M `.litertlm`).
+    // GPU is selected via EngineConfig backend — no separate GPU-delegate
+    // coordinate exists for the LM path; the natives ship in this AAR.
+    implementation "com.google.ai.edge.litertlm:litertlm-android:$litertLmVersion"
+    // Structured concurrency for the vision plugin's load/infer jobs
+    // (Scope + Flow collection). Aligned with Kotlin 2.2.x.
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
+    testImplementation "org.jetbrains.kotlin:kotlin-test-junit:2.4.0"
     // Real org.json so Capacitor JSObject/JSArray serialization is exercised on
     // the JVM instead of the throwing mockable android.jar stubs.
     testImplementation "org.json:json:20240303"

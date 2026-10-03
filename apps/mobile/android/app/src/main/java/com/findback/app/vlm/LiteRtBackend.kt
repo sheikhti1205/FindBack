@@ -1,10 +1,10 @@
 package com.findback.app.vlm
 
 /**
- * WS3 skeleton: LiteRT stable-path backend record (comment-only, no runtime yet).
+ * LiteRT stable-path backend record (SmolVLM2-500M via LiteRT-LM).
  *
  * Stable-path invariants (mirrors `src/services/ai/vision/backendSelector.ts`,
- * which is the selector of record — this file only documents the native side):
+ * which is the selector of record — this file owns the native side):
  * - CPU-first: both the vision resident (SmolVLM2-500M) and the language
  *   resident default to [LiteRtComputeBackend.CPU].
  * - GPU only after a measured on-device probe-pass record for THAT resident:
@@ -17,13 +17,11 @@ package com.findback.app.vlm
  *   path cannot silently fall back to a hosted provider. The TS adapter
  *   reports it as typed `vision_unsupported` instead.
  *
- * NO NEW GRADLE DEPS YET (deliberate): a real implementation will need the
- * LiteRT artifacts (e.g. `com.google.ai.edge.litert:litert` + the GPU
- * delegate artifact) added to `app/build.gradle` by the follow-up native
- * worker, together with the `.litertlm`/`.tflite` asset wiring, the probe
- * harness that mints the evidence records, and residency management. Until
- * then this stays a pure, dependency-free record type so the skeleton
- * compiles without touching the dependency graph.
+ * Runtime wiring: `com.google.ai.edge.litertlm:litertlm-android` is a real
+ * `app/build.gradle` dependency (`$litertLmVersion` in `variables.gradle`);
+ * [SmolVlmPlugin] maps the resolved [VisionLanguageSplit.visionBackend] to
+ * `Backend.CPU()` / `Backend.GPU()` at load time. This file stays a pure,
+ * dependency-free resolver so its evidence rules remain JVM-testable.
  */
 enum class LiteRtComputeBackend {
     CPU,

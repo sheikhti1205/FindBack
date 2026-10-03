@@ -90,6 +90,14 @@
             android:name=".push.ReplyReceiver"
             android:exported="false" />
 
+        <!--
+          LiteRT-LM GPU path (SmolVLM2 vision resident). Optional shared
+          libraries the GPU delegate loads at runtime; required=false so
+          devices without them install and run the CPU path normally.
+        -->
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+
     </application>
 
     <!-- Permissions -->

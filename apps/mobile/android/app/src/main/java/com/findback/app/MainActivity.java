@@ -4,6 +4,7 @@ import com.findback.app.LocationServicesPlugin;
 import com.findback.app.FindbackNotificationsPlugin;
 import com.findback.app.shortlink.ShortLinkResolverPlugin;
 import com.findback.app.vlm.FindBackDiagPlugin;
+import com.findback.app.vlm.SmolVlmPlugin;
 import com.findback.app.vlm.EmbeddingPlugin;
 import com.findback.app.OpenRouterKeyPlugin;
 import com.getcapacitor.BridgeActivity;
@@ -13,6 +14,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(android.os.Bundle savedInstanceState) {
         registerPlugin(ShortLinkResolverPlugin.class);
         registerPlugin(FindBackDiagPlugin.class);
+        registerPlugin(SmolVlmPlugin.class);
         registerPlugin(OpenRouterKeyPlugin.class);
         registerPlugin(EmbeddingPlugin.class);
         registerPlugin(LocationServicesPlugin.class);
