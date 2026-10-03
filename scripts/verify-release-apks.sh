@@ -47,24 +47,30 @@ SUPPORTED_ABIS="arm64-v8a armeabi-v7a x86_64"
 # (base/lib/<abi>/...).
 so_basenames_for_abi() {
   local abi="$1"
-  grep -E "(^|/)lib/${abi}/[^/]*\\.so$" | sed -E "s#(^|.*/)lib/${abi}/##" | sort -u
+  # `|| true`: an ABI legitimately absent from a listing is data, not an error;
+  # the caller fails closed on an empty reference for a required ABI.
+  { grep -E "(^|/)lib/${abi}/[^/]*\\.so$" || true; } | sed -E "s#(^|.*/)lib/${abi}/##" | sort -u
 }
 
-# Union of .so basenames across every ABI present in a listing on stdin.
-reference_so_set() {
-  grep -Eo '(^|/)lib/[^/]+/[^/]*\.so$' | sed -E 's#(^|.*/)lib/[^/]+/##' | sort -u
-}
-
-# Fail unless every name in the required set (file $1, one per line) ships
-# for $2 in the listing on stdin. Prints missing names on stdout.
-assert_abi_has_set() {
-  local req_file="$1" abi="$2" have missing=0
+# Compare the ABI's .so set in the listing on stdin against that ABI's exact
+# reference set (file $1, one basename per line) for $2. Native engines are
+# deliberately ABI-gated (Needle/llama/vision ship for arm64-v8a only), so the
+# contract is exact per-ABI equality, NOT a cross-ABI union. Prints
+# `missing <name>` / `extra <name>` lines; returns non-zero unless equal.
+assert_abi_matches_set() {
+  local req_file="$1" abi="$2" have req_sorted have_sorted missing extra
   have="$(so_basenames_for_abi "$abi" || true)"
-  while IFS= read -r so; do
-    [[ -n "$so" ]] || continue
-    grep -qxF "$so" <<<"$have" || { echo "$so"; missing=1; }
-  done < "$req_file"
-  return "$missing"
+  req_sorted="$(sort -u "$req_file")"
+  have_sorted="$(printf '%s\n' "$have" | sed '/^[[:space:]]*$/d' | sort -u)"
+  missing="$(comm -23 <(printf '%s\n' "$req_sorted") <(printf '%s\n' "$have_sorted"))"
+  extra="$(comm -13 <(printf '%s\n' "$req_sorted") <(printf '%s\n' "$have_sorted"))"
+  if [[ -z "$missing" && -z "$extra" ]]; then
+    return 0
+  fi
+  # Intentional word-splitting: .so basenames never contain whitespace.
+  [[ -n "$missing" ]] && printf 'missing %s\n' $missing
+  [[ -n "$extra" ]] && printf 'extra %s\n' $extra
+  return 1
 }
 
 # Unit-test hook: sourcing with VERIFY_RELEASE_APKS_TEST=1 exposes the
@@ -114,23 +120,36 @@ mapfile -t APKS < <(find "$APK_DIR" -maxdepth 1 -name '*.apk' | sort)
 [[ "${#APKS[@]}" -gt 0 ]] || { echo "verify-release-apks: no APKs in $APK_DIR" >&2; exit 1; }
 echo "verify-release-apks: ${#APKS[@]} APK variant(s) to verify"
 
-# Reference native-lib inventory (R2): the union of .so basenames shipped in
-# the universal APK (+ the AAB when provided). Every advertised ABI must ship
-# the COMPLETE set — an ABI is never published on filename alone — and the
-# universal APK must carry every supported ABI, each complete. Fail closed.
+# Reference native-lib inventory (R2): the universal APK is the per-ABI
+# reference. Native engines are deliberately ABI-gated — Needle, the
+# llama.cpp lab bridge and the LiteRT-LM vision runtime ship for arm64-v8a
+# only, while 32-bit and x86_64 remain intentionally engine-unavailable (see
+# scripts/fetch-needle-model.mjs and app/src/main/cpp/CMakeLists.txt). A single
+# cross-ABI union is therefore NOT the contract. Instead:
+#   * the universal APK must carry EVERY supported ABI, each with >=1 .so
+#   * each per-ABI split must ship EXACTLY its ABI's universal set
+#   * the AAB (when provided) must agree with the universal set per ABI
+# Fail closed on any missing, extra, or absent ABI.
 UNIVERSAL_APK="$(find "$APK_DIR" -maxdepth 1 -name '*universal*.apk' | sort | head -1)"
 [[ -n "$UNIVERSAL_APK" ]] || { echo "verify-release-apks: FAIL: no universal APK in $APK_DIR (reference inventory required)" >&2; exit 1; }
-REQ_FILE="$(mktemp)"
-trap 'rm -f "$REQ_FILE"' EXIT
-unzip -Z1 "$UNIVERSAL_APK" | reference_so_set > "$REQ_FILE" || true
-[[ -s "$REQ_FILE" ]] || { echo "verify-release-apks: FAIL: no native .so inventory in universal reference $(basename "$UNIVERSAL_APK")" >&2; exit 1; }
+UNIVERSAL_LISTING="$(unzip -Z1 "$UNIVERSAL_APK")"
+REQ_DIR="$(mktemp -d)"
+trap 'rm -rf "$REQ_DIR"' EXIT
+for ABI in $SUPPORTED_ABIS; do
+  so_basenames_for_abi "$ABI" <<<"$UNIVERSAL_LISTING" > "$REQ_DIR/$ABI.txt" || true
+  [[ -s "$REQ_DIR/$ABI.txt" ]] || { echo "verify-release-apks: FAIL: universal $(basename "$UNIVERSAL_APK") ships no native .so for $ABI" >&2; exit 1; }
+done
 if [[ -n "$AAB" ]]; then
   [[ -f "$AAB" ]] || { echo "verify-release-apks: FAIL: AAB not found at $AAB" >&2; exit 1; }
-  unzip -Z1 "$AAB" | reference_so_set >> "$REQ_FILE" || true
-  sort -uo "$REQ_FILE" "$REQ_FILE"
-  [[ -s "$REQ_FILE" ]] || { echo "verify-release-apks: FAIL: no native .so inventory in reference set" >&2; exit 1; }
+  AAB_LISTING="$(unzip -Z1 "$AAB")"
+  for ABI in $SUPPORTED_ABIS; do
+    if ! DIFF="$(assert_abi_matches_set "$REQ_DIR/$ABI.txt" "$ABI" <<<"$AAB_LISTING")"; then
+      echo "verify-release-apks: FAIL: AAB native set differs from universal for $ABI ($(echo "$DIFF" | tr '\n' ' '))" >&2
+      exit 1
+    fi
+  done
 fi
-echo "verify-release-apks: reference native set ($(wc -l <"$REQ_FILE" | tr -d ' ') libs): $(tr '\n' ' ' <"$REQ_FILE")"
+echo "verify-release-apks: per-ABI reference native sets: $(for ABI in $SUPPORTED_ABIS; do printf '%s(%s) ' "$ABI" "$(wc -l <"$REQ_DIR/$ABI.txt" | tr -d ' ')"; done)"
 
 FIRST_FP=""
 for APK in "${APKS[@]}"; do
@@ -170,21 +189,21 @@ for APK in "${APKS[@]}"; do
   echo "$BADGING" | grep -q "targetSdkVersion:'$TARGET_SDK'" || { echo "verify-release-apks: FAIL $NAME: targetSdk mismatch (expected $TARGET_SDK)" >&2; exit 1; }
   echo "verify-release-apks: $NAME identity OK (id, versionName, versionCode, sdk $MIN_SDK->$TARGET_SDK)"
 
-  # 3. ABI completeness: each split claims an ABI by filename, then PROVES
-  # it by shipping the complete reference .so set for that ABI; universal
-  # must carry every supported ABI, each complete.
+  # 3. ABI completeness: each split claims an ABI by filename, then PROVES it
+  # by shipping exactly that ABI's universal reference .so set; universal must
+  # carry every supported ABI, each matching its reference.
   LISTING="$(unzip -Z1 "$APK")"
   LIBS="$(echo "$LISTING" | grep -Eo 'lib/[^/]+/' | cut -d/ -f2 | sort -u | tr '\n' ' ' || true)"
   case "$NAME" in
-    *arm64-v8a*) WANT="arm64-v8a " ;;
-    *armeabi-v7a*) WANT="armeabi-v7a " ;;
-    *x86_64*) WANT="x86_64 " ;;
-    *universal*) WANT="arm64-v8a armeabi-v7a x86_64 " ;;
+    *arm64-v8a*) WANT="arm64-v8a" ;;
+    *armeabi-v7a*) WANT="armeabi-v7a" ;;
+    *x86_64*) WANT="x86_64" ;;
+    *universal*) WANT="$SUPPORTED_ABIS" ;;
     *) echo "verify-release-apks: FAIL $NAME: unexpected APK name (want an ABI or universal split)" >&2; exit 1 ;;
   esac
   for ABI in $WANT; do
-    if ! MISSING="$(echo "$LISTING" | assert_abi_has_set "$REQ_FILE" "$ABI")"; then
-      echo "verify-release-apks: FAIL $NAME: incomplete native set for $ABI (missing: $(echo "$MISSING" | tr '\n' ' '); reference: $(tr '\n' ' ' <"$REQ_FILE"))" >&2
+    if ! DIFF="$(assert_abi_matches_set "$REQ_DIR/$ABI.txt" "$ABI" <<<"$LISTING")"; then
+      echo "verify-release-apks: FAIL $NAME: native set for $ABI differs from reference ($(echo "$DIFF" | tr '\n' ' '); reference: $(tr '\n' ' ' <"$REQ_DIR/$ABI.txt"))" >&2
       exit 1
     fi
   done
@@ -208,7 +227,7 @@ done
 if [[ -n "$AAB" ]]; then
   [[ -f "$AAB" ]] || { echo "verify-release-apks: FAIL: AAB not found at $AAB" >&2; exit 1; }
   TMPD="$(mktemp -d)"
-  trap 'rm -rf "$TMPD" "$REQ_FILE"' EXIT
+  trap 'rm -rf "$TMPD"' EXIT
   unzip -p "$AAB" 'META-INF/*.RSA' > "$TMPD/sig.RSA" 2>/dev/null || true
   RSA="$(find "$TMPD" -name 'sig.RSA' -size +0c | head -1)"
   # Bundletool-style AABs may store the cert under BUNDLE-METADATA or META-INF;

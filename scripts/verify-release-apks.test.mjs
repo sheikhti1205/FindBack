@@ -77,65 +77,36 @@ describe("R1 fingerprint extraction ordering", () => {
 });
 
 // Synthetic `unzip -Z1`-style listings (file lists, not real binaries).
-const UNIVERSAL_LISTING = [
+// Native engines are ABI-gated on purpose: arm64-v8a carries the engines,
+// 32-bit and x86_64 deliberately do not (see fetch-needle-model.mjs / CMake).
+const UNIVERSAL_GATED = [
   "lib/arm64-v8a/libnative.so",
-  "lib/arm64-v8a/libextra.so",
+  "lib/arm64-v8a/libengine.so",
   "lib/armeabi-v7a/libnative.so",
-  "lib/armeabi-v7a/libextra.so",
   "lib/x86_64/libnative.so",
-  "lib/x86_64/libextra.so",
   "classes.dex",
   "assets/public/index.html",
 ].join("\n");
 
-const AAB_LISTING = [
+const AAB_GATED = [
   "base/lib/arm64-v8a/libnative.so",
-  "base/lib/arm64-v8a/libextra.so",
+  "base/lib/arm64-v8a/libengine.so",
   "base/lib/armeabi-v7a/libnative.so",
-  "base/lib/armeabi-v7a/libextra.so",
   "base/lib/x86_64/libnative.so",
-  "base/lib/x86_64/libextra.so",
   "base/manifest/AndroidManifest.xml",
 ].join("\n");
 
-function withReqFile(listing, fn) {
-  const dir = mkdtempSync(join(tmpdir(), "relfix-"));
-  const req = join(dir, "req.txt");
-  writeFileSync(req, sh("reference_so_set", listing) + "\n");
-  return fn(req);
+/** Write the exact per-ABI .so reference set for `abi` from a listing. */
+function refFile(listing, abi) {
+  const dir = mkdtempSync(join(tmpdir(), "relref-"));
+  const file = join(dir, `${abi}.txt`);
+  const set = sh(`so_basenames_for_abi "${abi}"`, listing);
+  writeFileSync(file, set ? `${set}\n` : "");
+  return file;
 }
 
 describe("R2 ABI completeness", () => {
-  it("reference set is the union of .so basenames across ABIs (APK and AAB shapes)", () => {
-    assert.equal(sh("reference_so_set", UNIVERSAL_LISTING), "libextra.so\nlibnative.so");
-    assert.equal(sh("reference_so_set", AAB_LISTING), "libextra.so\nlibnative.so");
-  });
-
-  it("complete per-ABI set passes", () => {
-    withReqFile(UNIVERSAL_LISTING, (req) => {
-      for (const abi of ["arm64-v8a", "armeabi-v7a", "x86_64"]) {
-        sh(`assert_abi_has_set "${req}" "${abi}"`, UNIVERSAL_LISTING);
-      }
-    });
-  });
-
-  it("incomplete ABI fails closed (split ships one .so but not the full set)", () => {
-    const partial = ["lib/arm64-v8a/libnative.so", "classes.dex"].join("\n");
-    withReqFile(UNIVERSAL_LISTING, (req) => {
-      assert.throws(() => sh(`assert_abi_has_set "${req}" "arm64-v8a"`, partial));
-    });
-  });
-
-  it("universal missing an ABI fails (x86_64 dir absent entirely)", () => {
-    const noX86 = UNIVERSAL_LISTING.split("\n")
-      .filter((l) => !l.includes("x86_64"))
-      .join("\n");
-    withReqFile(UNIVERSAL_LISTING, (req) => {
-      assert.throws(() => sh(`assert_abi_has_set "${req}" "x86_64"`, noX86));
-    });
-  });
-
-  it("so_basenames_for_abi ignores non-.so entries and other ABIs", () => {
+  it("so_basenames_for_abi returns that ABI's exact set and ignores non-.so/other ABIs", () => {
     const listing = [
       "lib/arm64-v8a/libnative.so",
       "lib/arm64-v8a/README.txt",
@@ -143,5 +114,51 @@ describe("R2 ABI completeness", () => {
       "classes.dex",
     ].join("\n");
     assert.equal(sh('so_basenames_for_abi "arm64-v8a"', listing), "libnative.so");
+    // APK and AAB entry shapes both resolve for the same ABI.
+    assert.equal(sh('so_basenames_for_abi "arm64-v8a"', UNIVERSAL_GATED), "libengine.so\nlibnative.so");
+    assert.equal(sh('so_basenames_for_abi "arm64-v8a"', AAB_GATED), "libengine.so\nlibnative.so");
+  });
+
+  it("gated ABI with the smaller engine-free set matches its own reference exactly", () => {
+    const ref = refFile(UNIVERSAL_GATED, "armeabi-v7a");
+    sh(`assert_abi_matches_set "${ref}" "armeabi-v7a"`, UNIVERSAL_GATED);
+    const v7aSplit = ["lib/armeabi-v7a/libnative.so", "classes.dex"].join("\n");
+    sh(`assert_abi_matches_set "${ref}" "armeabi-v7a"`, v7aSplit);
+    assert.equal(sh(`so_basenames_for_abi "x86_64"`, UNIVERSAL_GATED), "libnative.so");
+  });
+
+  it("arm64 split missing a gated engine fails closed and reports it", () => {
+    const ref = refFile(UNIVERSAL_GATED, "arm64-v8a");
+    const partial = ["lib/arm64-v8a/libnative.so", "classes.dex"].join("\n");
+    const output = (() => {
+      try {
+        sh(`assert_abi_matches_set "${ref}" "arm64-v8a"`, partial);
+        return "";
+      } catch (error) {
+        return String(error.stdout ?? "");
+      }
+    })();
+    assert.match(output, /missing libengine\.so/);
+    assert.throws(() => sh(`assert_abi_matches_set "${ref}" "arm64-v8a"`, partial));
+  });
+
+  it("an extra .so the reference does not carry fails closed", () => {
+    const ref = refFile(UNIVERSAL_GATED, "armeabi-v7a");
+    const extra = ["lib/armeabi-v7a/libnative.so", "lib/armeabi-v7a/librogue.so"].join("\n");
+    assert.throws(() => sh(`assert_abi_matches_set "${ref}" "armeabi-v7a"`, extra));
+  });
+
+  it("universal missing an ABI yields an empty reference (caller fails closed)", () => {
+    const noX86 = UNIVERSAL_GATED.split("\n")
+      .filter((line) => !line.includes("x86_64"))
+      .join("\n");
+    assert.equal(sh('so_basenames_for_abi "x86_64"', noX86), "");
+  });
+
+  it("AAB per-ABI sets must agree with the universal reference", () => {
+    for (const abi of ["arm64-v8a", "armeabi-v7a", "x86_64"]) {
+      const ref = refFile(UNIVERSAL_GATED, abi);
+      sh(`assert_abi_matches_set "${ref}" "${abi}"`, AAB_GATED);
+    }
   });
 });
