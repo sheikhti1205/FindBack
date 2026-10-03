@@ -138,6 +138,12 @@ jobs:
         run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
+      - name: Install pinned NDK + CMake (findback_probe native lib)
+        # The native VLM/probe build pins NDK 29.0.13113456 + CMake 3.31.6
+        # (variables.gradle). A clean runner has no NDK and no accepted
+        # licenses, so Gradle's auto-install fails closed without this. Keep
+        # byte-identical to ci.yml / local-ai-native.yml.
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6"
       - name: Android JVM tests + debug APK
         run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
       - name: Assert client config in gate APK
@@ -280,6 +286,11 @@ jobs:
           echo "sourcemap strip verified: no .map files, no sourceMappingURL references in dist"
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
+      - name: Install pinned NDK + CMake (findback_probe native lib)
+        # Same pinned toolchain as the gate/CI: the signed build links the
+        # native probe/VLM libraries, so a clean runner must have NDK
+        # 29.0.13113456 + CMake 3.31.6 with accepted licenses.
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6"
       - name: Restore release keystore
         run: |
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_PATH"
