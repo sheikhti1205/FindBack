@@ -19,6 +19,15 @@ import type {
   StreamEvent,
   StreamPhase,
 } from "./providerContract";
+import type { InferenceProvenance } from "./orchestrator/provenance";
+
+/**
+ * Orchestrator call-site hook (WS-A): when the caller routes through
+ * `AiOrchestrator`, it passes its trace/model ids here and receives the
+ * terminal provenance context back. Absent by default — coordination
+ * behavior is unchanged unless the hook is provided.
+ */
+export type CoordinatorProvenance = Pick<InferenceProvenance, "traceId" | "modelId">;
 
 export type CoordinatorOptions = {
   /** The single adapter for all attempts. Never replaced mid-flight. */
@@ -41,6 +50,12 @@ export type CoordinatorOptions = {
     attempt: number,
   ) => number;
   readonly onEvent?: (event: StreamEvent) => void;
+  /** Orchestrator trace id for the provenance call-site (optional). */
+  readonly traceId?: string;
+  /** Orchestrator model id for the provenance call-site (optional). */
+  readonly modelId?: string;
+  /** Terminal provenance hook for the orchestrator call-site (optional). */
+  readonly reportProvenance?: (provenance: CoordinatorProvenance) => void;
 };
 
 const DEFAULT_OVERALL_MS = 120_000;
@@ -79,6 +94,15 @@ function timeoutMessage(kind: TimeoutKind): string {
   return "The provider stream stalled past the idle bound.";
 }
 
+/** Orchestrator call-site: report terminal provenance context, if wired. */
+function reportTerminalProvenance(options: CoordinatorOptions): void {
+  const traceId = options.traceId;
+  const modelId = options.modelId;
+  if (traceId === undefined || traceId.trim() === "") return;
+  if (modelId === undefined || modelId.trim() === "") return;
+  options.reportProvenance?.({ traceId, modelId });
+}
+
 export async function* coordinate(
   request: NormalizedRequest,
   options: CoordinatorOptions,
@@ -101,6 +125,7 @@ export async function* coordinate(
     if (request.signal.aborted) {
       yield* emit({ kind: "phase", phase: "cancelled", attempt });
       yield* emit({ kind: "done", attempt, stopReason: "cancelled" });
+      reportTerminalProvenance(options);
       return;
     }
     const emittedPhases = new Set<StreamPhase>();
@@ -127,6 +152,7 @@ export async function* coordinate(
         await closeIterator(iterator);
         yield* emitPhase("cancelled");
         yield* emit({ kind: "done", attempt, stopReason: "cancelled" });
+        reportTerminalProvenance(options);
         return;
       }
       const now = Date.now();
@@ -189,6 +215,7 @@ export async function* coordinate(
         await closeIterator(iterator);
         yield* emitPhase("cancelled");
         yield* emit({ kind: "done", attempt, stopReason: "cancelled" });
+        reportTerminalProvenance(options);
         return;
       }
       if (event.kind === "phase") {
@@ -240,9 +267,11 @@ export async function* coordinate(
       } else {
         yield* emitPhase("complete");
         yield* emit({ kind: "done", attempt, stopReason: "complete" });
+        reportTerminalProvenance(options);
         return;
       }
     } else if (!attemptFailed) {
+      reportTerminalProvenance(options);
       return;
     }
 
@@ -252,6 +281,7 @@ export async function* coordinate(
       await sleep(getRetryDelayMs(lastError!, attempt));
       continue;
     }
+    reportTerminalProvenance(options);
     return;
   }
 }

@@ -6,6 +6,7 @@
  * caller's `traceId` so allows and denies correlate end to end.
  */
 import { isProposalOp, type Proposal } from "./proposals";
+import { INTENTS } from "../types";
 
 export type GateDenyCode =
   | "UNKNOWN_OP"
@@ -146,6 +147,79 @@ function validateAnswerHelp(args: unknown): boolean {
   return keys.length === 1 && keys[0] === "question" && isBoundedText(args["question"], TEXT_FIELD_MAX);
 }
 
+function validateRouteIntent(args: unknown): boolean {
+  if (!isRecord(args)) return false;
+  const keys = new Set(Object.keys(args));
+  if (keys.size !== 2 || !keys.has("intent") || !keys.has("route")) return false;
+  const intent = args["intent"];
+  if (typeof intent !== "string" || !(INTENTS as readonly string[]).includes(intent)) return false;
+  const route = args["route"];
+  return (
+    isBoundedText(route, TEXT_FIELD_MAX) && !COORDINATE_PATTERN.test(route) && !isDestructiveOp(route)
+  );
+}
+
+function validateEmbedTexts(args: unknown): boolean {
+  if (!isRecord(args)) return false;
+  const keys = Object.keys(args);
+  if (keys.length !== 1 || keys[0] !== "texts") return false;
+  const texts = args["texts"];
+  if (!Array.isArray(texts) || texts.length === 0 || texts.length > 8) return false;
+  return texts.every(
+    (entry): boolean =>
+      isBoundedText(entry, TEXT_FIELD_MAX) &&
+      !COORDINATE_PATTERN.test(entry) &&
+      !isReferenceId(entry),
+  );
+}
+
+function validateGroundObjects(args: unknown): boolean {
+  if (!isRecord(args)) return false;
+  const keys = new Set(Object.keys(args));
+  if (keys.size !== 2 || !keys.has("imageId") || !keys.has("query")) return false;
+  return (
+    isReferenceId(args["imageId"]) &&
+    isBoundedText(args["query"], TEXT_FIELD_MAX) &&
+    !COORDINATE_PATTERN.test(args["query"] as string)
+  );
+}
+
+function validateClassifyCategory(args: unknown): boolean {
+  if (!isRecord(args)) return false;
+  const keys = new Set(Object.keys(args));
+  if (!keys.has("category") || keys.size > 2) return false;
+  if (
+    !isBoundedText(args["category"], TEXT_FIELD_MAX) ||
+    COORDINATE_PATTERN.test(args["category"] as string)
+  ) {
+    return false;
+  }
+  if (keys.has("confidence")) {
+    const confidence = args["confidence"];
+    if (typeof confidence !== "number" || !Number.isFinite(confidence)) return false;
+    if (confidence < 0 || confidence > 1) return false;
+  }
+  return keys.size === 1 || (keys.size === 2 && keys.has("confidence"));
+}
+
+function validateSummarizeLocalContext(args: unknown): boolean {
+  if (!isRecord(args)) return false;
+  const keys = new Set(Object.keys(args));
+  if (!keys.has("summary") || keys.size > 2) return false;
+  if (
+    !isBoundedText(args["summary"], TEXT_FIELD_MAX) ||
+    COORDINATE_PATTERN.test(args["summary"] as string)
+  ) {
+    return false;
+  }
+  if (keys.has("turnIds")) {
+    const turnIds = args["turnIds"];
+    if (!Array.isArray(turnIds) || turnIds.length > 32) return false;
+    if (!turnIds.every((entry): boolean => isReferenceId(entry))) return false;
+  }
+  return keys.size === 1 || (keys.size === 2 && keys.has("turnIds"));
+}
+
 function hasCommentPermission(permissions: GatePermissions): boolean {
   return permissions.accountId !== null && permissions.canProposeComments;
 }
@@ -182,7 +256,12 @@ export function evaluateProposal(raw: unknown, context: GateContext): GateDecisi
   else if (op === "fill_report_fields") argsValid = validateFillReportFields(args);
   else if (op === "propose_comment") argsValid = validateProposeComment(args);
   else if (op === "analyze_photo") argsValid = validateAnalyzePhoto(args);
-  else argsValid = validateAnswerHelp(args);
+  else if (op === "answer_help") argsValid = validateAnswerHelp(args);
+  else if (op === "route_intent") argsValid = validateRouteIntent(args);
+  else if (op === "embed_texts") argsValid = validateEmbedTexts(args);
+  else if (op === "ground_objects") argsValid = validateGroundObjects(args);
+  else if (op === "classify_category") argsValid = validateClassifyCategory(args);
+  else argsValid = validateSummarizeLocalContext(args);
 
   if (!argsValid) {
     return deny("INVALID_ARGS", `Args for op "${op}" failed validation.`, traceId, op);

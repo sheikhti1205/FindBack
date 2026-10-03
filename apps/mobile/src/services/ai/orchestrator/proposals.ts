@@ -12,6 +12,11 @@ import type { ReportSlotFields } from "../types";
 /**
  * Allowlisted proposal ops. Anything outside this list is denied by the
  * gate (`UNKNOWN_OP`, or `DESTRUCTIVE_OP` for known-destructive stems).
+ *
+ * WS-A extensions (`route_intent`, `embed_texts`, `ground_objects`,
+ * `classify_category`, `summarize_local_context`) cover the task-router
+ * vocabulary. Like the original five, they carry data only — coordinates,
+ * inline bytes, and destructive stems are rejected by the gate.
  */
 export const PROPOSAL_OPS = [
   "open_my_reports",
@@ -19,6 +24,11 @@ export const PROPOSAL_OPS = [
   "propose_comment",
   "analyze_photo",
   "answer_help",
+  "route_intent",
+  "embed_texts",
+  "ground_objects",
+  "classify_category",
+  "summarize_local_context",
 ] as const;
 export type ProposalOp = (typeof PROPOSAL_OPS)[number];
 
@@ -49,12 +59,46 @@ export interface AnswerHelpArgs {
   readonly question: string;
 }
 
+/** Args for `route_intent`: the classified intent plus its route key. */
+export interface RouteIntentArgs {
+  readonly intent: string;
+  readonly route: string;
+}
+
+/** Args for `embed_texts`: up to 8 short texts, never inline bytes. */
+export interface EmbedTextsArgs {
+  readonly texts: readonly string[];
+}
+
+/** Args for `ground_objects`: an id reference plus the grounding query. */
+export interface GroundObjectsArgs {
+  readonly imageId: string;
+  readonly query: string;
+}
+
+/** Args for `classify_category`: the suggested category label. */
+export interface ClassifyCategoryArgs {
+  readonly category: string;
+  readonly confidence?: number;
+}
+
+/** Args for `summarize_local_context`: the local extractive summary. */
+export interface SummarizeLocalContextArgs {
+  readonly summary: string;
+  readonly turnIds?: readonly string[];
+}
+
 export type ProposalArgs =
   | OpenMyReportsArgs
   | FillReportFieldsArgs
   | ProposeCommentArgs
   | AnalyzePhotoArgs
-  | AnswerHelpArgs;
+  | AnswerHelpArgs
+  | RouteIntentArgs
+  | EmbedTextsArgs
+  | GroundObjectsArgs
+  | ClassifyCategoryArgs
+  | SummarizeLocalContextArgs;
 
 /**
  * A validated model proposal. `modelId` records which model produced it;

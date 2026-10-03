@@ -223,3 +223,49 @@ export interface PhotoAnalysis {
   readonly suggestedDescription: string | null;
   readonly uncertainFields: readonly string[];
 }
+
+/**
+ * WS-A task-router contract. One `AiTaskSpec` bounds a single routable AI
+ * task: input budgets (`maxBytes`/`maxImages`), the privacy envelope, the
+ * ordered runtime preference list (`runtimes`, first-available wins —
+ * single-path invoke, never fan-out), the per-task timeout, whether explicit
+ * user consent is required before a remote runtime may run, and the schema
+ * tag the task result validates against.
+ */
+export const AI_TASK_IDS = [
+  "classify-intent",
+  "extract-report-fields",
+  "answer-help",
+  "extract-search-filters",
+  "analyze-image",
+  "route-intent",
+  "embed-texts",
+  "ground-objects",
+  "classify-category",
+  "summarize-local-context",
+] as const;
+export type AiTaskId = (typeof AI_TASK_IDS)[number];
+
+export function isAiTaskId(value: unknown): value is AiTaskId {
+  return typeof value === "string" && (AI_TASK_IDS as readonly string[]).includes(value);
+}
+
+export const AI_PRIVACY_CLASSES = ["local-only", "local-first", "consented-remote"] as const;
+export type AiPrivacyClass = (typeof AI_PRIVACY_CLASSES)[number];
+
+export function isAiPrivacyClass(value: unknown): value is AiPrivacyClass {
+  return (
+    typeof value === "string" && (AI_PRIVACY_CLASSES as readonly string[]).includes(value)
+  );
+}
+
+export interface AiTaskSpec {
+  readonly taskId: AiTaskId;
+  readonly maxBytes: number;
+  readonly maxImages: number;
+  readonly privacyClass: AiPrivacyClass;
+  readonly runtimes: readonly string[];
+  readonly timeoutMs: number;
+  readonly needsConsent: boolean;
+  readonly schema: string;
+}
