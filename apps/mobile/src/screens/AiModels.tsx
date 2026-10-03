@@ -25,6 +25,22 @@ import {
   planModelFallback,
 } from "../services/ai/modelPolicy";
 import type { ModelRecord, ProviderId } from "../services/ai/providerContract";
+import {
+  canShowAuto,
+  canShowGpu,
+  canShowNeedle,
+  canShowOffline,
+  type NeedleEvidence,
+} from "../services/ai/uiGates";
+import type { ProbeContext, ProbeRecord } from "../services/ai/deviceProbe";
+import type { OfflineModelStatus } from "../services/ai/offlineModelManager";
+import {
+  getAutoCapabilityCopy,
+  getGpuCapabilityCopy,
+  getNeedleCapabilityCopy,
+  getOfflineCapabilityCopy,
+  type MeasuredCapabilityFlags,
+} from "../services/appCapabilities";
 
 /**
  * Assistant mode (AI-022): which transports the assistant may use.
@@ -178,6 +194,15 @@ export type AiModelsProps = {
   readonly accountId?: string;
   /** Runtime catalogue source; production loads via vault + registry below. */
   readonly listCatalog?: () => Promise<readonly ModelRecord[]>;
+  /**
+   * WS-E measured-evidence inputs (borrowed shapes, never owned logic).
+   * All default to no evidence, so every gated affordance stays hidden
+   * until a fresh, correctness-passing measurement is passed in.
+   */
+  readonly probeRecords?: readonly ProbeRecord[] | null;
+  readonly probeContext?: ProbeContext | null;
+  readonly offlineStatus?: OfflineModelStatus | null;
+  readonly needleEvidence?: NeedleEvidence | null;
 };
 
 type SlotState = {
@@ -193,7 +218,14 @@ type ProbeState = {
 
 const IDLE_PROBE: ProbeState = { phase: "idle", notice: null };
 
-export function AiModels({ accountId, listCatalog }: AiModelsProps) {
+export function AiModels({
+  accountId,
+  listCatalog,
+  probeRecords = null,
+  probeContext = null,
+  offlineStatus = null,
+  needleEvidence = null,
+}: AiModelsProps) {
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
 
@@ -491,6 +523,23 @@ export function AiModels({ accountId, listCatalog }: AiModelsProps) {
     [catalog],
   );
 
+  // WS-E: visibility gates consume measured evidence only (no guessing).
+  // Defaults (null evidence) keep every affordance hidden.
+  const showAuto = canShowAuto(probeRecords, probeContext);
+  const showOfflineGate = canShowOffline(offlineStatus);
+  const showNeedle = canShowNeedle(needleEvidence);
+  const showGpu = canShowGpu(probeRecords, probeContext);
+  const measuredFlags: MeasuredCapabilityFlags = {
+    hasFreshAutoProbe: showAuto,
+    hasVerifiedOfflineModel: showOfflineGate,
+    hasNeedleEvidence: showNeedle,
+    hasFreshGpuProbe: showGpu,
+  };
+  const autoCopy = getAutoCapabilityCopy(measuredFlags).join(" ");
+  const offlineGateCopy = getOfflineCapabilityCopy(measuredFlags).join(" ");
+  const needleCopy = getNeedleCapabilityCopy(measuredFlags).join(" ");
+  const gpuCopy = getGpuCapabilityCopy(measuredFlags).join(" ");
+
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-5">
       <BackButton fallbackTo="/profile" label="Back to profile" />
@@ -572,6 +621,27 @@ export function AiModels({ accountId, listCatalog }: AiModelsProps) {
           >
             Remove on-device model
           </Button>
+        </div>
+      </section>
+
+      <section aria-label="On-device measurements" className="flex flex-col gap-2">
+        <h2 className="text-base font-semibold">On-device measurements</h2>
+        <p className="text-xs text-on-surface-variant">
+          Automatic, offline, Needle, and GPU details appear only with fresh,
+          correctness-passing measurements on this device. Otherwise the safe
+          CPU fallback is served.
+        </p>
+        <div data-testid="ai-gate-auto" className="text-sm text-on-surface-variant">
+          <span className="font-medium text-on-surface">Automatic: </span>{autoCopy}
+        </div>
+        <div data-testid="ai-gate-offline" className="text-sm text-on-surface-variant">
+          <span className="font-medium text-on-surface">Offline: </span>{offlineGateCopy}
+        </div>
+        <div data-testid="ai-gate-needle" className="text-sm text-on-surface-variant">
+          <span className="font-medium text-on-surface">Needle: </span>{needleCopy}
+        </div>
+        <div data-testid="ai-gate-gpu" className="text-sm text-on-surface-variant">
+          <span className="font-medium text-on-surface">GPU: </span>{gpuCopy}
         </div>
       </section>
 
