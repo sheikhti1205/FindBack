@@ -93,6 +93,54 @@ class ModelDownloadPlugin : Plugin() {
         ).start()
     }
 
+    /**
+     * App-private model root (`filesDir/ai-models`, created). TS builds
+     * `<root>/staging|models/<id>/<rev>/<file>` under it via
+     * `buildModelPaths`, so both sides agree without string surgery.
+     */
+    @PluginMethod
+    fun getRootDir(call: PluginCall) {
+        try {
+            val root = File(context.filesDir, "ai-models")
+            root.mkdirs()
+            val ret = JSObject()
+            ret.put("rootDir", root.absolutePath)
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("root_unavailable", e.message?.take(200))
+        }
+    }
+
+    /** Small text read (journal sidecars only — never model bytes). */
+    @PluginMethod
+    fun readTextFile(call: PluginCall) {
+        val path = call.getString("path")
+        if (path.isNullOrBlank()) {
+            call.reject("invalid_request")
+            return
+        }
+        val file = File(path)
+        if (!isUnderAppFiles(file) || !file.isFile) {
+            val ret = JSObject()
+            ret.put("exists", false)
+            call.resolve(ret)
+            return
+        }
+        try {
+            val text = file.readText(Charsets.UTF_8)
+            if (text.length > MAX_TEXT_READ) {
+                call.reject("file_too_large")
+                return
+            }
+            val ret = JSObject()
+            ret.put("exists", true)
+            ret.put("text", text)
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("read_failed", e.message?.take(200))
+        }
+    }
+
     @PluginMethod
     fun cancelDownload(call: PluginCall) {
         val stagingPath = call.getString("stagingPath")
@@ -429,6 +477,7 @@ class ModelDownloadPlugin : Plugin() {
         private const val MAX_REDIRECTS = 3
         private const val DEFAULT_MAX_BYTES = 4L * 1024L * 1024L * 1024L
         private const val USER_AGENT = "FindBack-model-download/1.0"
+        private const val MAX_TEXT_READ = 64 * 1024
         private val REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
     }
 }
