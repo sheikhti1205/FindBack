@@ -159,6 +159,30 @@ export function errorClassForMode(mode: FaultMode): AiErrorClass | null {
       return "MODEL_CORRUPT";
     case "CANCELLED":
       return "CANCELLED";
+    // WS-F mirror of PROPOSED_MODE_ERROR_MAP (testing/FakeAiProvider.ts):
+    // delivery/integrity faults normalize to the model-health classes,
+    // DISK_FULL joins resource-exhaustion LOW_MEMORY, accelerator and
+    // concurrency faults are RUNTIME_ERROR, offline/unsafe requests are
+    // rejected as UNSUPPORTED_REQUEST, and non-well-formed output is
+    // INVALID_OUTPUT.
+    case "HTTP_DROP":
+      return "MODEL_UNAVAILABLE";
+    case "WRONG_CONTENT_RANGE":
+    case "HASH_MISMATCH":
+      return "MODEL_CORRUPT";
+    case "DISK_FULL":
+      return "LOW_MEMORY";
+    case "GPU_INIT_ERROR":
+    case "NPU_ABSENT":
+    case "PROCESS_DEATH":
+    case "TWO_VLM_RACE":
+    case "MODEL_UPDATE_DURING_INFERENCE":
+      return "RUNTIME_ERROR";
+    case "INVALID_UTF8":
+      return "INVALID_OUTPUT";
+    case "CLOUD_OFFLINE":
+    case "PATH_TRAVERSAL":
+      return "UNSUPPORTED_REQUEST";
   }
 }
 

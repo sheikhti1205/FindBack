@@ -11,6 +11,10 @@
       "pattern": "^ws6-v[0-9]+$",
       "description": "Corpus revision pinned into every benchmark record (e.g. ws6-v1)."
     },
+    "license": {
+      "type": "string",
+      "description": "Corpus provenance marker (e.g. \"synthetic-built-in\" for the bundled synthetic corpus). Optional so pre-existing corpora without it still validate."
+    },
     "textMatchPairs": {
       "type": "array",
       "items": { "$ref": "#/$defs/textMatchPair" }

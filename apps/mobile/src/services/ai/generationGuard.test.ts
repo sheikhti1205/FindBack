@@ -127,7 +127,7 @@ describe("output classification", () => {
   });
 });
 
-describe("guardedGenerate over all 19 FakeAiProvider modes", () => {
+describe("guardedGenerate over all 31 FakeAiProvider modes", () => {
   it("maps every mode to its stable class (null = success)", async () => {
     const expected: Record<FaultMode, AiErrorClass | null> = {
       GOOD: null,
@@ -149,11 +149,23 @@ describe("guardedGenerate over all 19 FakeAiProvider modes", () => {
       MODEL_CORRUPT: "MODEL_CORRUPT",
       LOW_MEMORY: "LOW_MEMORY",
       CANCELLED: "CANCELLED",
+      HTTP_DROP: "MODEL_UNAVAILABLE",
+      WRONG_CONTENT_RANGE: "MODEL_CORRUPT",
+      HASH_MISMATCH: "MODEL_CORRUPT",
+      DISK_FULL: "LOW_MEMORY",
+      GPU_INIT_ERROR: "RUNTIME_ERROR",
+      NPU_ABSENT: "RUNTIME_ERROR",
+      INVALID_UTF8: "INVALID_OUTPUT",
+      PROCESS_DEATH: "RUNTIME_ERROR",
+      TWO_VLM_RACE: "RUNTIME_ERROR",
+      MODEL_UPDATE_DURING_INFERENCE: "RUNTIME_ERROR",
+      CLOUD_OFFLINE: "UNSUPPORTED_REQUEST",
+      PATH_TRAVERSAL: "UNSUPPORTED_REQUEST",
     };
-    expect(Object.keys(expected)).toHaveLength(19);
+    expect(Object.keys(expected)).toHaveLength(31);
     for (const mode of FAULT_MODES as FaultMode[]) {
       const provider = new FakeAiProvider({ mode, slowDelayMs: 10, timeoutMs: 10 });
-      const photoKind = mode === "EMPTY" || mode === "INVALID_JSON" || mode === "TRUNCATED_JSON" || mode === "FENCED_JSON" || mode === "PROSE_PLUS_JSON";
+      const photoKind = mode === "EMPTY" || mode === "INVALID_JSON" || mode === "TRUNCATED_JSON" || mode === "FENCED_JSON" || mode === "PROSE_PLUS_JSON" || mode === "INVALID_UTF8";
       const attempt = guardedGenerate({
         provider,
         kind: photoKind ? "photo" : "text",

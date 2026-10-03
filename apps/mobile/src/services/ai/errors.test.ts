@@ -53,8 +53,8 @@ describe("retry policy", () => {
 });
 
 describe("stable mode mapping alignment", () => {
-  it("matches PROPOSED_MODE_ERROR_MAP for all 19 modes", () => {
-    expect(FAULT_MODES).toHaveLength(19);
+  it("matches PROPOSED_MODE_ERROR_MAP for all 31 modes", () => {
+    expect(FAULT_MODES).toHaveLength(31);
     for (const mode of FAULT_MODES) {
       expect(errorClassForMode(mode)).toBe(PROPOSED_MODE_ERROR_MAP[mode]);
     }

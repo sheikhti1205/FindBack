@@ -31,7 +31,19 @@ export type FaultMode =
   | "MODEL_MISSING"
   | "MODEL_CORRUPT"
   | "LOW_MEMORY"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "HTTP_DROP"
+  | "WRONG_CONTENT_RANGE"
+  | "HASH_MISMATCH"
+  | "DISK_FULL"
+  | "GPU_INIT_ERROR"
+  | "NPU_ABSENT"
+  | "INVALID_UTF8"
+  | "PROCESS_DEATH"
+  | "TWO_VLM_RACE"
+  | "MODEL_UPDATE_DURING_INFERENCE"
+  | "CLOUD_OFFLINE"
+  | "PATH_TRAVERSAL";
 
 export const FAULT_MODES: readonly FaultMode[] = [
   "GOOD",
@@ -53,6 +65,18 @@ export const FAULT_MODES: readonly FaultMode[] = [
   "MODEL_CORRUPT",
   "LOW_MEMORY",
   "CANCELLED",
+  "HTTP_DROP",
+  "WRONG_CONTENT_RANGE",
+  "HASH_MISMATCH",
+  "DISK_FULL",
+  "GPU_INIT_ERROR",
+  "NPU_ABSENT",
+  "INVALID_UTF8",
+  "PROCESS_DEATH",
+  "TWO_VLM_RACE",
+  "MODEL_UPDATE_DURING_INFERENCE",
+  "CLOUD_OFFLINE",
+  "PATH_TRAVERSAL",
 ];
 
 /** Planned application error classes. */
@@ -104,6 +128,25 @@ export const PROPOSED_MODE_ERROR_MAP: Record<FaultMode, AiErrorClass | null> = {
   MODEL_CORRUPT: "MODEL_CORRUPT",
   LOW_MEMORY: "LOW_MEMORY",
   CANCELLED: "CANCELLED",
+  // WS-F download/accelerator/runtime/request-guard faults. Delivery and
+  // integrity failures normalize to the model-health classes (reinstall owns
+  // recovery); DISK_FULL joins the resource-exhaustion family with LOW_MEMORY
+  // while diagnostics preserve the distinct DISK_FULL cause; accelerator and
+  // concurrency failures are RUNTIME_ERROR (CPU fallback / serialize+retry
+  // owns recovery); offline/unsafe requests are rejected as
+  // UNSUPPORTED_REQUEST with a reason, never retried blindly.
+  HTTP_DROP: "MODEL_UNAVAILABLE",
+  WRONG_CONTENT_RANGE: "MODEL_CORRUPT",
+  HASH_MISMATCH: "MODEL_CORRUPT",
+  DISK_FULL: "LOW_MEMORY",
+  GPU_INIT_ERROR: "RUNTIME_ERROR",
+  NPU_ABSENT: "RUNTIME_ERROR",
+  INVALID_UTF8: "INVALID_OUTPUT",
+  PROCESS_DEATH: "RUNTIME_ERROR",
+  TWO_VLM_RACE: "RUNTIME_ERROR",
+  MODEL_UPDATE_DURING_INFERENCE: "RUNTIME_ERROR",
+  CLOUD_OFFLINE: "UNSUPPORTED_REQUEST",
+  PATH_TRAVERSAL: "UNSUPPORTED_REQUEST",
 };
 
 /** Error thrown by the fake for transport/runtime failure modes. */
@@ -369,6 +412,28 @@ export class FakeAiProvider {
         throw new FakeAiError("MODEL_UNAVAILABLE", this.mode, `model not installed: ${this.modelId}`);
       case "CANCELLED":
         throw new FakeAiError("CANCELLED", this.mode, "generation cancelled by user");
+      case "HTTP_DROP":
+        throw new FakeAiError("MODEL_UNAVAILABLE", this.mode, "download interrupted: http connection dropped");
+      case "WRONG_CONTENT_RANGE":
+        throw new FakeAiError("MODEL_CORRUPT", this.mode, "download content-range mismatch");
+      case "HASH_MISMATCH":
+        throw new FakeAiError("MODEL_CORRUPT", this.mode, "download hash mismatch");
+      case "DISK_FULL":
+        throw new FakeAiError("LOW_MEMORY", this.mode, "no space left on device");
+      case "GPU_INIT_ERROR":
+        throw new FakeAiError("RUNTIME_ERROR", this.mode, "gpu delegate failed to initialize");
+      case "NPU_ABSENT":
+        throw new FakeAiError("RUNTIME_ERROR", this.mode, "npu delegate absent on this device");
+      case "PROCESS_DEATH":
+        throw new FakeAiError("RUNTIME_ERROR", this.mode, "host process died mid-generation");
+      case "TWO_VLM_RACE":
+        throw new FakeAiError("RUNTIME_ERROR", this.mode, "concurrent vlm sessions conflict");
+      case "MODEL_UPDATE_DURING_INFERENCE":
+        throw new FakeAiError("RUNTIME_ERROR", this.mode, "model revision changed mid-inference");
+      case "CLOUD_OFFLINE":
+        throw new FakeAiError("UNSUPPORTED_REQUEST", this.mode, "cloud request while offline");
+      case "PATH_TRAVERSAL":
+        throw new FakeAiError("UNSUPPORTED_REQUEST", this.mode, "unsafe path rejected");
       case "SLOW":
         await delay(this.slowDelayMs, signal);
         break;
@@ -412,6 +477,8 @@ export class FakeAiProvider {
         return JSON.stringify({ action: "teleport_item_home", args: {} });
       case "REFUSAL":
         return REFUSAL_TEXT;
+      case "INVALID_UTF8":
+        return "Black umbrella \uD800 found near the library \uDFFF hurry";
       case "TIMEOUT":
       case "OOM":
       case "RUNTIME_CRASH":
@@ -419,6 +486,17 @@ export class FakeAiProvider {
       case "MODEL_CORRUPT":
       case "LOW_MEMORY":
       case "CANCELLED":
+      case "HTTP_DROP":
+      case "WRONG_CONTENT_RANGE":
+      case "HASH_MISMATCH":
+      case "DISK_FULL":
+      case "GPU_INIT_ERROR":
+      case "NPU_ABSENT":
+      case "PROCESS_DEATH":
+      case "TWO_VLM_RACE":
+      case "MODEL_UPDATE_DURING_INFERENCE":
+      case "CLOUD_OFFLINE":
+      case "PATH_TRAVERSAL":
         throw new Error("unreachable: throwing modes reject in run()");
     }
   }

@@ -14,8 +14,8 @@ import {
 const ALL_MODES: FaultMode[] = [...FAULT_MODES];
 
 describe("FakeAiProvider scaffolding", () => {
-  it("declares all 19 required modes", () => {
-    expect(ALL_MODES).toHaveLength(19);
+  it("declares all 31 required modes", () => {
+    expect(ALL_MODES).toHaveLength(31);
     for (const mode of [
       "GOOD",
       "SLOW",
@@ -36,6 +36,18 @@ describe("FakeAiProvider scaffolding", () => {
       "MODEL_CORRUPT",
       "LOW_MEMORY",
       "CANCELLED",
+      "HTTP_DROP",
+      "WRONG_CONTENT_RANGE",
+      "HASH_MISMATCH",
+      "DISK_FULL",
+      "GPU_INIT_ERROR",
+      "NPU_ABSENT",
+      "INVALID_UTF8",
+      "PROCESS_DEATH",
+      "TWO_VLM_RACE",
+      "MODEL_UPDATE_DURING_INFERENCE",
+      "CLOUD_OFFLINE",
+      "PATH_TRAVERSAL",
     ] as FaultMode[]) {
       expect(ALL_MODES).toContain(mode);
     }
@@ -61,6 +73,18 @@ describe("FakeAiProvider scaffolding", () => {
     expect(PROPOSED_MODE_ERROR_MAP.MODEL_MISSING).toBe("MODEL_UNAVAILABLE");
     expect(PROPOSED_MODE_ERROR_MAP.MODEL_CORRUPT).toBe("MODEL_CORRUPT");
     expect(PROPOSED_MODE_ERROR_MAP.CANCELLED).toBe("CANCELLED");
+    expect(PROPOSED_MODE_ERROR_MAP.HTTP_DROP).toBe("MODEL_UNAVAILABLE");
+    expect(PROPOSED_MODE_ERROR_MAP.WRONG_CONTENT_RANGE).toBe("MODEL_CORRUPT");
+    expect(PROPOSED_MODE_ERROR_MAP.HASH_MISMATCH).toBe("MODEL_CORRUPT");
+    expect(PROPOSED_MODE_ERROR_MAP.DISK_FULL).toBe("LOW_MEMORY");
+    expect(PROPOSED_MODE_ERROR_MAP.GPU_INIT_ERROR).toBe("RUNTIME_ERROR");
+    expect(PROPOSED_MODE_ERROR_MAP.NPU_ABSENT).toBe("RUNTIME_ERROR");
+    expect(PROPOSED_MODE_ERROR_MAP.INVALID_UTF8).toBe("INVALID_OUTPUT");
+    expect(PROPOSED_MODE_ERROR_MAP.PROCESS_DEATH).toBe("RUNTIME_ERROR");
+    expect(PROPOSED_MODE_ERROR_MAP.TWO_VLM_RACE).toBe("RUNTIME_ERROR");
+    expect(PROPOSED_MODE_ERROR_MAP.MODEL_UPDATE_DURING_INFERENCE).toBe("RUNTIME_ERROR");
+    expect(PROPOSED_MODE_ERROR_MAP.CLOUD_OFFLINE).toBe("UNSUPPORTED_REQUEST");
+    expect(PROPOSED_MODE_ERROR_MAP.PATH_TRAVERSAL).toBe("UNSUPPORTED_REQUEST");
   });
 
   it("GOOD returns deterministic help text and valid photo JSON", async () => {
@@ -173,6 +197,57 @@ describe("FakeAiProvider scaffolding", () => {
     await expect(
       new FakeAiProvider({ mode: "MODEL_CORRUPT" }).generateText({ prompt: "hi" }),
     ).rejects.toMatchObject({ errorClass: "MODEL_CORRUPT", mode: "MODEL_CORRUPT" });
+  });
+
+  it("WS-F download/integrity faults reject with model-health classes", async () => {
+    await expect(new FakeAiProvider({ mode: "HTTP_DROP" }).generateText({ prompt: "hi" })).rejects.toMatchObject({
+      errorClass: "MODEL_UNAVAILABLE",
+      mode: "HTTP_DROP",
+    });
+    for (const mode of ["WRONG_CONTENT_RANGE", "HASH_MISMATCH"] as const) {
+      await expect(new FakeAiProvider({ mode }).generateText({ prompt: "hi" })).rejects.toMatchObject({
+        errorClass: "MODEL_CORRUPT",
+        mode,
+      });
+    }
+    await expect(new FakeAiProvider({ mode: "DISK_FULL" }).generateText({ prompt: "hi" })).rejects.toMatchObject({
+      errorClass: "LOW_MEMORY",
+      mode: "DISK_FULL",
+      detail: "DISK_FULL",
+    });
+    expect(diagnosticCodeForMode("DISK_FULL")).toBe("DISK_FULL");
+  });
+
+  it("WS-F accelerator/runtime/concurrency faults reject with RUNTIME_ERROR", async () => {
+    for (const mode of [
+      "GPU_INIT_ERROR",
+      "NPU_ABSENT",
+      "PROCESS_DEATH",
+      "TWO_VLM_RACE",
+      "MODEL_UPDATE_DURING_INFERENCE",
+    ] as const) {
+      await expect(new FakeAiProvider({ mode }).generateText({ prompt: "hi" })).rejects.toMatchObject({
+        errorClass: "RUNTIME_ERROR",
+        mode,
+      });
+      expect(diagnosticCodeForMode(mode)).toBe(mode);
+    }
+  });
+
+  it("WS-F request-guard faults reject with UNSUPPORTED_REQUEST", async () => {
+    for (const mode of ["CLOUD_OFFLINE", "PATH_TRAVERSAL"] as const) {
+      await expect(new FakeAiProvider({ mode }).generateText({ prompt: "hi" })).rejects.toMatchObject({
+        errorClass: "UNSUPPORTED_REQUEST",
+        mode,
+      });
+    }
+  });
+
+  it("WS-F INVALID_UTF8 resolves non-well-formed text classified as INVALID_OUTPUT", async () => {
+    const text = (await new FakeAiProvider({ mode: "INVALID_UTF8" }).generateText({ prompt: "hi" })).text;
+    expect(text).toContain("umbrella");
+    expect(text).toContain("\uD800");
+    expect(PROPOSED_MODE_ERROR_MAP.INVALID_UTF8).toBe("INVALID_OUTPUT");
   });
 
   it("ambiguous location is ASK_USER, not an error", () => {

@@ -24,6 +24,8 @@
  * Usage:
  *   node tools/bench/runBench.mjs --corpus <corpus.json> --out <record.json>
  *     [--model-rev <rev>] [--runtime-rev <rev>] [--app-sha <sha>]
+ *   node tools/bench/runBench.mjs --out <record.json>
+ *     (uses the bundled synthetic corpus tools/bench/corpus.v1.json)
  *
  * No dependencies. No network. No model downloads.
  */
@@ -31,9 +33,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { scoreCases } from "./score.mjs";
 
 const CONFIGS = ["stub", "fake"];
+
+/** Bundled synthetic corpus: used when --corpus is omitted. */
+const DEFAULT_CORPUS_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "corpus.v1.json");
 
 /** Lowercase alphanumeric tokens of a text. */
 function tokens(text) {
@@ -133,10 +139,10 @@ function runConfig(name, pairs) {
 function main() {
   const argv = globalThis.process.argv.slice(2);
   const log = globalThis.console;
-  const corpusPath = flagValue(argv, "--corpus");
+  const corpusPath = flagValue(argv, "--corpus") ?? DEFAULT_CORPUS_PATH;
   const outPath = flagValue(argv, "--out");
-  if (!corpusPath || !outPath) {
-    log.error("usage: runBench.mjs --corpus <corpus.json> --out <record.json> [--model-rev <rev>] [--runtime-rev <rev>] [--app-sha <sha>]");
+  if (!outPath) {
+    log.error("usage: runBench.mjs [--corpus <corpus.json>] --out <record.json> [--model-rev <rev>] [--runtime-rev <rev>] [--app-sha <sha>]");
     globalThis.process.exitCode = 1;
     return;
   }
@@ -184,6 +190,7 @@ function main() {
   const resolved = resolve(outPath);
   mkdirSync(dirname(resolved), { recursive: true });
   writeFileSync(resolved, JSON.stringify(record, null, 2) + "\n", "utf8");
+  log.log(`[bench] corpus: ${corpusPath} (version ${doc.corpusVersion})`);
   for (const name of CONFIGS) {
     const s = configs[name];
     log.log(

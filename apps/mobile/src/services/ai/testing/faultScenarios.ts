@@ -21,7 +21,9 @@ export interface FaultScenario {
 }
 
 /**
- * Scenario matrix covering the thirteen simulator mode-mapping cases.
+ * Scenario matrix covering the thirteen simulator mode-mapping cases plus the
+ * eight WS-F delivery/integrity/resource/accelerator/encoding/lifecycle/
+ * concurrency/guard cases (21 rows total).
  * `expectedError: null` means the sequence ends in recovery/success.
  */
 export const SCENARIO_MATRIX: readonly FaultScenario[] = [
@@ -142,6 +144,78 @@ export const SCENARIO_MATRIX: readonly FaultScenario[] = [
     expectedError: null,
     expectedUi: "Switch completes with no leaked runtime; old model is released before the new one loads.",
     notes: "Asserted via switchModel() + releasedModels(); switching to a missing model throws MODEL_UNAVAILABLE.",
+  },
+  {
+    id: "download-http-drop-resume",
+    surface: "runtime",
+    title: "Model download → http drop → resume",
+    modes: ["HTTP_DROP"],
+    expectedError: "MODEL_UNAVAILABLE",
+    expectedUi: "Download-interrupted notice with resume/retry action; the model stays uninstallable-blocked until the download completes.",
+    notes: "Stable: HTTP_DROP normalizes to MODEL_UNAVAILABLE; diagnostics preserve the HTTP_DROP cause. No partial file is treated as installed.",
+  },
+  {
+    id: "download-integrity-mismatch-reinstall",
+    surface: "runtime",
+    title: "Model download → range/hash mismatch → reinstall",
+    modes: ["WRONG_CONTENT_RANGE", "HASH_MISMATCH"],
+    expectedError: "MODEL_CORRUPT",
+    expectedUi: "Integrity-failure notice with reinstall action; generation is blocked until reinstall, same as a corrupt on-disk model.",
+    notes: "Stable: both delivery-integrity modes map to MODEL_CORRUPT; diagnostics preserve WRONG_CONTENT_RANGE vs HASH_MISMATCH.",
+  },
+  {
+    id: "disk-full-free-space",
+    surface: "runtime",
+    title: "Disk full during download",
+    modes: ["DISK_FULL"],
+    expectedError: "LOW_MEMORY",
+    expectedUi: "Storage-full notice suggesting freeing space or choosing the smaller model; download/generation is blocked until space is available.",
+    notes: "Stable: DISK_FULL joins the resource-exhaustion family (LOW_MEMORY class) while diagnostics preserve the distinct DISK_FULL cause, mirroring OOM vs preflight LOW_MEMORY.",
+  },
+  {
+    id: "accelerator-unavailable-cpu-fallback",
+    surface: "runtime",
+    title: "GPU init error / NPU absent → CPU fallback",
+    modes: ["GPU_INIT_ERROR", "NPU_ABSENT"],
+    expectedError: "RUNTIME_ERROR",
+    expectedUi: "Accelerator-unavailable notice; inference falls back to CPU with no leaked delegate, mirroring the LiteRT CPU-first stable path.",
+    notes: "Stable: both accelerator modes map to RUNTIME_ERROR; diagnostics preserve GPU_INIT_ERROR vs NPU_ABSENT.",
+  },
+  {
+    id: "invalid-utf8-output-rejected",
+    surface: "report",
+    title: "Report assistant → invalid UTF-8 output rejected",
+    modes: ["INVALID_UTF8"],
+    expectedError: "INVALID_OUTPUT",
+    expectedUi: "Garbled-output state asking the user to rephrase/regenerate; no mojibake is rendered or persisted.",
+    notes: "Stable: INVALID_UTF8 resolves canned non-well-formed text so the normalization layer performs the INVALID_OUTPUT classification, like the other output-shape modes.",
+  },
+  {
+    id: "process-death-twice-fail-closed",
+    surface: "runtime",
+    title: "Host process dies twice → fail closed",
+    modes: ["PROCESS_DEATH", "PROCESS_DEATH"],
+    expectedError: "RUNTIME_ERROR",
+    expectedUi: "Restart notice after the first death with generation retried; a second death fails closed with the draft preserved, never a half-applied side effect.",
+    notes: "Stable: PROCESS_DEATH maps to RUNTIME_ERROR; the doubled mode encodes death-during-retry. Diagnostics preserve the PROCESS_DEATH cause.",
+  },
+  {
+    id: "inference-concurrency-conflict-retry",
+    surface: "runtime",
+    title: "Two VLM sessions race / model updates mid-inference → serialize and retry",
+    modes: ["TWO_VLM_RACE", "MODEL_UPDATE_DURING_INFERENCE"],
+    expectedError: "RUNTIME_ERROR",
+    expectedUi: "Conflict notice explaining the losing generation is retried serially on the settled model revision; no interleaved output is shown.",
+    notes: "Stable: both concurrency modes map to RUNTIME_ERROR; diagnostics preserve TWO_VLM_RACE vs MODEL_UPDATE_DURING_INFERENCE.",
+  },
+  {
+    id: "rejected-request-offline-or-unsafe",
+    surface: "runtime",
+    title: "Cloud request while offline / unsafe path → rejected",
+    modes: ["CLOUD_OFFLINE", "PATH_TRAVERSAL"],
+    expectedError: "UNSUPPORTED_REQUEST",
+    expectedUi: "Request rejected naming the reason (offline / unsafe path) with on-device alternatives offered where applicable; nothing is sent or written.",
+    notes: "Stable: both request-guard modes map to UNSUPPORTED_REQUEST with a reason (well-formed rejection, not malformed output), like REFUSAL.",
   },
 ];
 

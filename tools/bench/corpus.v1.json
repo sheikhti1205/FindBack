@@ -1,0 +1,248 @@
+{
+  "corpusVersion": "ws6-v1",
+  "license": "synthetic-built-in",
+  "textMatchPairs": [
+    {
+      "id": "tm-v1-01",
+      "query": { "title": "lost black umbrella", "description": "wooden handle left near the library", "category": "Umbrellas & Bottles" },
+      "candidates": [
+        { "id": "tm-v1-01-c1", "title": "black umbrella", "description": "wooden handle found by the library steps", "category": "Umbrellas & Bottles" },
+        { "id": "tm-v1-01-c2", "title": "red scarf", "description": "wool scarf on a park bench", "category": "Clothing" },
+        { "id": "tm-v1-01-c3", "title": "blue water bottle", "description": "steel bottle in the gym locker room", "category": "Umbrellas & Bottles" }
+      ],
+      "relevantIds": ["tm-v1-01-c1"],
+      "notes": "Synthetic: exact object + handle + place overlap on the relevant candidate."
+    },
+    {
+      "id": "tm-v1-02",
+      "query": { "title": "missing keys", "description": "blue lanyard with two brass keys", "category": "Keys" },
+      "candidates": [
+        { "id": "tm-v1-02-c1", "title": "brass keys on blue lanyard", "description": "two keys hanging by the cafe counter", "category": "Keys" },
+        { "id": "tm-v1-02-c2", "title": "silver key", "description": "single key in the parking lot", "category": "Keys" },
+        { "id": "tm-v1-02-c3", "title": "blue notebook", "description": "spiral notebook left in lecture hall", "category": "Books & Stationery" }
+      ],
+      "relevantIds": ["tm-v1-02-c1"],
+      "notes": "Synthetic: lanyard color + key count disambiguate the relevant candidate."
+    },
+    {
+      "id": "tm-v1-03",
+      "query": { "title": "lost iphone", "description": "black case cracked corner", "category": "Phones & Tablets" },
+      "candidates": [
+        { "id": "tm-v1-03-c1", "title": "iphone with black case", "description": "cracked corner found on the bus seat", "category": "Phones & Tablets" },
+        { "id": "tm-v1-03-c2", "title": "black tablet sleeve", "description": "empty sleeve in the lounge", "category": "Phones & Tablets" },
+        { "id": "tm-v1-03-c3", "title": "black wallet", "description": "leather wallet near the fountain", "category": "Bags & Wallets" }
+      ],
+      "relevantIds": ["tm-v1-03-c1"],
+      "notes": "Synthetic: case + damage detail beat same-category distractors."
+    },
+    {
+      "id": "tm-v1-04",
+      "query": { "title": "brown leather wallet", "description": "lost with student id inside", "category": "Bags & Wallets" },
+      "candidates": [
+        { "id": "tm-v1-04-c1", "title": "brown leather wallet", "description": "student id visible inside, found at cafeteria", "category": "Bags & Wallets" },
+        { "id": "tm-v1-04-c2", "title": "black leather wallet", "description": "no id, found at the stadium", "category": "Bags & Wallets" },
+        { "id": "tm-v1-04-c3", "title": "brown backpack", "description": "canvas backpack with patches", "category": "Travel & Luggage" }
+      ],
+      "relevantIds": ["tm-v1-04-c1"],
+      "notes": "Synthetic: color + contents beat same-category color distractor."
+    },
+    {
+      "id": "tm-v1-05",
+      "query": { "title": "white earbuds", "description": "left case in the study room", "category": "Audio & Wearables" },
+      "candidates": [
+        { "id": "tm-v1-05-c1", "title": "white wireless earbuds", "description": "charging case on study room table", "category": "Audio & Wearables" },
+        { "id": "tm-v1-05-c2", "title": "white wired earphones", "description": "tangled cable in the drawer", "category": "Audio & Wearables" },
+        { "id": "tm-v1-05-c3", "title": "white mug", "description": "ceramic mug on the windowsill", "category": "Household Items" }
+      ],
+      "relevantIds": ["tm-v1-05-c1"],
+      "notes": "Synthetic: wireless + case detail select the relevant candidate."
+    },
+    {
+      "id": "tm-v1-06",
+      "query": { "title": "lost passport", "description": "blue cover with travel stickers", "category": "Documents & IDs" },
+      "candidates": [
+        { "id": "tm-v1-06-c1", "title": "passport with stickers", "description": "blue cover found at airport terminal", "category": "Documents & IDs" },
+        { "id": "tm-v1-06-c2", "title": "driver license", "description": "card found on the sidewalk", "category": "Documents & IDs" },
+        { "id": "tm-v1-06-c3", "title": "blue folder", "description": "folder with lecture notes", "category": "Office Supplies" }
+      ],
+      "relevantIds": ["tm-v1-06-c1"],
+      "notes": "Synthetic: document type + sticker detail win."
+    },
+    {
+      "id": "tm-v1-07",
+      "query": { "title": "green hoodie", "description": "university logo on the chest", "category": "Clothing" },
+      "candidates": [
+        { "id": "tm-v1-07-c1", "title": "green hoodie", "description": "university logo, left in the bleachers", "category": "Clothing" },
+        { "id": "tm-v1-07-c2", "title": "green t-shirt", "description": "plain tee in lost and found", "category": "Clothing" },
+        { "id": "tm-v1-07-c3", "title": "grey hoodie", "description": "plain hoodie at the dorm laundry", "category": "Clothing" }
+      ],
+      "relevantIds": ["tm-v1-07-c1"],
+      "notes": "Synthetic: garment + logo beat same-category near-duplicates."
+    },
+    {
+      "id": "tm-v1-08",
+      "query": { "title": "silver watch", "description": "metal band scratched clasp", "category": "Watches & Eyewear" },
+      "candidates": [
+        { "id": "tm-v1-08-c1", "title": "silver metal watch", "description": "scratched clasp found by the pool", "category": "Watches & Eyewear" },
+        { "id": "tm-v1-08-c2", "title": "black smartwatch", "description": "rubber strap on the track", "category": "Watches & Eyewear" },
+        { "id": "tm-v1-08-c3", "title": "sunglasses", "description": "aviator style on the dashboard", "category": "Watches & Eyewear" }
+      ],
+      "relevantIds": ["tm-v1-08-c1"],
+      "notes": "Synthetic: material + clasp detail win."
+    },
+    {
+      "id": "tm-v1-09",
+      "query": { "title": "red bicycle helmet", "description": "cracked visor from the fall", "category": "Sports & Fitness" },
+      "candidates": [
+        { "id": "tm-v1-09-c1", "title": "red bike helmet", "description": "cracked visor near the bike rack", "category": "Sports & Fitness" },
+        { "id": "tm-v1-09-c2", "title": "blue bicycle helmet", "description": "mint condition at the shop", "category": "Sports & Fitness" },
+        { "id": "tm-v1-09-c3", "title": "red frisbee", "description": "on the quad lawn", "category": "Toys & Games" }
+      ],
+      "relevantIds": ["tm-v1-09-c1"],
+      "notes": "Synthetic: damage detail is the tie-breaker."
+    },
+    {
+      "id": "tm-v1-10",
+      "query": { "title": "black laptop charger", "description": "usb-c with frayed cable", "category": "Computers & Accessories" },
+      "candidates": [
+        { "id": "tm-v1-10-c1", "title": "usb-c laptop charger", "description": "black, frayed cable in the lab", "category": "Computers & Accessories" },
+        { "id": "tm-v1-10-c2", "title": "phone charger", "description": "white usb-c brick", "category": "Computers & Accessories" },
+        { "id": "tm-v1-10-c3", "title": "black mouse", "description": "wireless mouse under the desk", "category": "Computers & Accessories" }
+      ],
+      "relevantIds": ["tm-v1-10-c1"],
+      "notes": "Synthetic: connector + wear detail win."
+    },
+    {
+      "id": "tm-v1-11",
+      "query": { "title": "tabby cat collar", "description": "red collar with bell missing cat", "category": "Pet Accessories" },
+      "candidates": [
+        { "id": "tm-v1-11-c1", "title": "red cat collar", "description": "bell attached, found in the garden", "category": "Pet Accessories" },
+        { "id": "tm-v1-11-c2", "title": "dog leash", "description": "red nylon leash at the park", "category": "Pet Accessories" },
+        { "id": "tm-v1-11-c3", "title": "tabby cat", "description": "sighting reported, no collar", "category": "Other" }
+      ],
+      "relevantIds": ["tm-v1-11-c1"],
+      "notes": "Synthetic: the object is the collar, not the animal."
+    },
+    {
+      "id": "tm-v1-12",
+      "query": { "title": "wooden chess piece", "description": "black knight from travel set", "category": "Toys & Games" },
+      "candidates": [
+        { "id": "tm-v1-12-c1", "title": "black knight chess piece", "description": "wooden, from a travel set, on the steps", "category": "Toys & Games" },
+        { "id": "tm-v1-12-c2", "title": "white knight chess piece", "description": "wooden, from a club set", "category": "Toys & Games" },
+        { "id": "tm-v1-12-c3", "title": "deck of cards", "description": "travel deck in a tin", "category": "Toys & Games" }
+      ],
+      "relevantIds": ["tm-v1-12-c1"],
+      "notes": "Synthetic: color + piece + set provenance win."
+    }
+  ],
+  "photoCases": [
+    {
+      "id": "ph-v1-01",
+      "imageRef": "synthetic-fixture://umbrella-01",
+      "instruction": "Describe the object for a lost-and-found listing.",
+      "expected": {
+        "objectName": "black umbrella",
+        "suggestedCategory": "Umbrellas & Bottles",
+        "colors": ["black"],
+        "visibleBrand": null,
+        "visibleText": [],
+        "identifyingFeatures": ["curved wooden handle"],
+        "suggestedTitle": "Black umbrella found near the library",
+        "suggestedDescription": "A black umbrella with a curved wooden handle.",
+        "uncertainFields": ["visibleBrand"]
+      },
+      "requiredFields": ["objectName", "suggestedCategory", "colors", "suggestedTitle", "suggestedDescription"],
+      "notes": "Synthetic stub: no real photo; harness counts photo cases as skipped."
+    },
+    {
+      "id": "ph-v1-02",
+      "imageRef": "synthetic-fixture://keys-lanyard-01",
+      "instruction": "Describe the object for a lost-and-found listing.",
+      "expected": {
+        "objectName": "brass keys on blue lanyard",
+        "suggestedCategory": "Keys",
+        "colors": ["blue", "brass"],
+        "visibleBrand": null,
+        "visibleText": [],
+        "identifyingFeatures": ["two brass keys", "woven lanyard"],
+        "suggestedTitle": "Keys on blue lanyard found at the cafe",
+        "suggestedDescription": "Two brass keys on a blue woven lanyard.",
+        "uncertainFields": []
+      },
+      "requiredFields": ["objectName", "suggestedCategory", "colors", "suggestedTitle", "suggestedDescription"],
+      "notes": "Synthetic stub: no real photo; harness counts photo cases as skipped."
+    },
+    {
+      "id": "ph-v1-03",
+      "imageRef": "synthetic-fixture://wallet-01",
+      "instruction": "Describe the object for a lost-and-found listing.",
+      "expected": {
+        "objectName": "brown leather wallet",
+        "suggestedCategory": "Bags & Wallets",
+        "colors": ["brown"],
+        "visibleBrand": null,
+        "visibleText": ["student id"],
+        "identifyingFeatures": ["bifold", "worn corners"],
+        "suggestedTitle": "Brown wallet found at the cafeteria",
+        "suggestedDescription": "A brown bifold leather wallet with worn corners.",
+        "uncertainFields": ["visibleBrand"]
+      },
+      "requiredFields": ["objectName", "suggestedCategory", "colors", "suggestedTitle", "suggestedDescription"],
+      "notes": "Synthetic stub: no real photo; harness counts photo cases as skipped."
+    },
+    {
+      "id": "ph-v1-04",
+      "imageRef": "synthetic-fixture://earbuds-01",
+      "instruction": "Describe the object for a lost-and-found listing.",
+      "expected": {
+        "objectName": "white wireless earbuds",
+        "suggestedCategory": "Audio & Wearables",
+        "colors": ["white"],
+        "visibleBrand": null,
+        "visibleText": [],
+        "identifyingFeatures": ["charging case", "in-ear design"],
+        "suggestedTitle": "White earbuds found in the study room",
+        "suggestedDescription": "White wireless earbuds with their charging case.",
+        "uncertainFields": ["visibleBrand"]
+      },
+      "requiredFields": ["objectName", "suggestedCategory", "colors", "suggestedTitle", "suggestedDescription"],
+      "notes": "Synthetic stub: no real photo; harness counts photo cases as skipped."
+    },
+    {
+      "id": "ph-v1-05",
+      "imageRef": "synthetic-fixture://hoodie-01",
+      "instruction": "Describe the object for a lost-and-found listing.",
+      "expected": {
+        "objectName": "green hoodie",
+        "suggestedCategory": "Clothing",
+        "colors": ["green"],
+        "visibleBrand": null,
+        "visibleText": ["university logo"],
+        "identifyingFeatures": ["kangaroo pocket", "drawstrings"],
+        "suggestedTitle": "Green hoodie found at the bleachers",
+        "suggestedDescription": "A green hoodie with a university logo on the chest.",
+        "uncertainFields": ["visibleBrand"]
+      },
+      "requiredFields": ["objectName", "suggestedCategory", "colors", "suggestedTitle", "suggestedDescription"],
+      "notes": "Synthetic stub: no real photo; harness counts photo cases as skipped."
+    },
+    {
+      "id": "ph-v1-06",
+      "imageRef": "synthetic-fixture://watch-01",
+      "instruction": "Describe the object for a lost-and-found listing.",
+      "expected": {
+        "objectName": "silver metal watch",
+        "suggestedCategory": "Watches & Eyewear",
+        "colors": ["silver"],
+        "visibleBrand": null,
+        "visibleText": [],
+        "identifyingFeatures": ["metal link band", "scratched clasp"],
+        "suggestedTitle": "Silver watch found by the pool",
+        "suggestedDescription": "A silver metal-link watch with a scratched clasp.",
+        "uncertainFields": ["visibleBrand"]
+      },
+      "requiredFields": ["objectName", "suggestedCategory", "colors", "suggestedTitle", "suggestedDescription"],
+      "notes": "Synthetic stub: no real photo; harness counts photo cases as skipped."
+    }
+  ]
+}

@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  KNOWN_PHOTO_FIELDS,
   scorePhotoCase,
   validateGoldenCorpus,
   type ExpectedPhotoFields,
@@ -108,5 +112,53 @@ describe("scorePhotoCase", () => {
 
   it("scores an empty field list as 0, not NaN", () => {
     expect(scorePhotoCase(VALID_PHOTO_EXPECTED, {}, []).mean).toBe(0);
+  });
+});
+
+describe("bundled synthetic corpus (tools/bench/corpus.v1.json)", () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..", "..");
+  const raw = readFileSync(join(repoRoot, "tools", "bench", "corpus.v1.json"), "utf8");
+  const doc = JSON.parse(raw) as GoldenCorpus & { license?: unknown };
+
+  it("loads and validates cleanly", () => {
+    expect(validateGoldenCorpus(doc)).toEqual([]);
+  });
+
+  it("carries the synthetic-built-in license marker", () => {
+    expect(doc.license).toBe("synthetic-built-in");
+  });
+
+  it("holds 12 text-match pairs with cross-referenced relevantIds", () => {
+    expect(doc.textMatchPairs).toHaveLength(12);
+    const ids = new Set(doc.textMatchPairs.map((p) => p.id));
+    expect(ids.size).toBe(12);
+    for (const pair of doc.textMatchPairs) {
+      expect(pair.candidates.length).toBeGreaterThanOrEqual(2);
+      const candidateIds = new Set(pair.candidates.map((c) => c.id));
+      expect(pair.relevantIds.length).toBeGreaterThan(0);
+      for (const rel of pair.relevantIds) expect(candidateIds.has(rel)).toBe(true);
+    }
+  });
+
+  it("holds 6 photo stubs with expected fields and fixture refs, never remote URLs", () => {
+    expect(doc.photoCases).toHaveLength(6);
+    const known = new Set<string>(KNOWN_PHOTO_FIELDS);
+    const ids = new Set(doc.photoCases.map((p) => p.id));
+    expect(ids.size).toBe(6);
+    for (const photo of doc.photoCases) {
+      expect(photo.imageRef).toMatch(/^synthetic-fixture:\/\//);
+      expect(photo.imageRef).not.toMatch(/^https?:\/\//);
+      for (const field of ["objectName", "suggestedCategory", "colors", "suggestedTitle", "suggestedDescription"] as const) {
+        expect(photo.expected[field]).toBeDefined();
+      }
+      expect(photo.expected.colors.length).toBeGreaterThan(0);
+      expect(photo.requiredFields.length).toBeGreaterThan(0);
+      for (const field of photo.requiredFields) expect(known.has(field)).toBe(true);
+    }
+  });
+
+  it("shares no ids between text pairs and photo cases", () => {
+    const all = [...doc.textMatchPairs.map((p) => p.id), ...doc.photoCases.map((p) => p.id)];
+    expect(new Set(all).size).toBe(all.length);
   });
 });
