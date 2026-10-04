@@ -4,8 +4,6 @@ import { ACCENT_OPTIONS, accentTokensFor } from "./appearance";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Button } from "./components/Button";
-import { AppearancePanel } from "./components/AppearancePanel";
-import { ThemeProvider } from "./theme";
 
 const css = readFileSync("src/index.css", "utf8");
 function block(selector: string) {
@@ -38,8 +36,6 @@ function composite(foreground: string, background: string, opacity: number) {
 }
 
 const buttonClasses = renderToStaticMarkup(createElement(Button, { children: "Continue" })).match(/class="([^"]+)"/)![1]!;
-const panelMarkup = renderToStaticMarkup(createElement(ThemeProvider, { children: createElement(AppearancePanel) }));
-const hintClasses = panelMarkup.match(/class="([^"]+)">Bright surfaces<\/span>/)![1]!;
 
 function primaryStateBackground(base: string, source: string, state: "hover" | "active") {
   if (!buttonClasses.includes("fb-button-primary")) return base;
@@ -86,13 +82,10 @@ describe("Soft Utility semantic palette", () => {
         expect(contrast(token(source, "--fb-on-surface-variant"), token(source, surface))).toBeGreaterThanOrEqual(4.5);
       }
     });
-    it(`${mode}: legacy Quick Appearance hints meet AA after actual opacity compositing`, () => {
-      const opacity = Number(hintClasses.match(/(?:^| )opacity-(\d+)/)?.[1] ?? "100") / 100;
-      // Unselected, hovered, and selected legacy cards use these surfaces.
+    it(`${mode}: secondary text meets AA on every surface`, () => {
       for (const surface of ["--fb-surface-container-low", "--fb-surface-container", "--fb-surface"]) {
         const background = token(source, surface);
-        const visibleInk = composite(token(source, "--fb-on-surface-variant"), background, opacity);
-        expect(contrast(visibleInk, background)).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(token(source, "--fb-on-surface-variant"), background)).toBeGreaterThanOrEqual(4.5);
       }
     });
     for (const state of ["hover", "active"] as const) {

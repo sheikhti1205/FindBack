@@ -1,7 +1,8 @@
 /**
  * Quick Appearance settings (AI-011).
  *
- * Single owner for the appearance controls rendered by AppearancePanel:
+ * Single owner for the appearance controls (now rendered by the Settings →
+ * Appearance screen; the legacy AppearancePanel was removed):
  * accent color, text scale (root font size), reduce-motion user override, and
  * the high-quality-photo flag. Everything applies to `document.documentElement`
  * and persists to localStorage immediately — there is no Save step.

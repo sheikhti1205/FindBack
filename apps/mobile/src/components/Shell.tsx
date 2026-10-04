@@ -152,12 +152,12 @@ function BottomNav() {
                 }}
                 whileTap={pressFeedback.iconButton}
                 transition={{ duration: motionDurations.instant }}
-                className={`fb-nav-link ${selected ? "fb-nav-link-active" : ""}`}
+                className={`fb-nav-link ${selected ? "fb-nav-link-active text-on-primary-container" : "text-on-surface-variant"}`}
               >
                 {selected && (
                   <motion.span
                     layoutId="fb-nav-active"
-                    className="fb-nav-active-bg"
+                    className="fb-nav-active-bg bg-primary-container"
                     transition={motionSprings.snappy}
                     aria-hidden="true"
                   />
@@ -195,7 +195,7 @@ function BottomNav() {
           })}
         </div>
         <motion.div className="fb-nav-create-wrap" whileTap={pressFeedback.iconButton}>
-          <Link to="/report" aria-label="Create report" className="fb-nav-create">
+          <Link to="/report" aria-label="Create report" className="fb-nav-create bg-primary text-on-primary">
             <Plus size={26} aria-hidden="true" />
           </Link>
         </motion.div>

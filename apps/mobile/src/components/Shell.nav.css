@@ -1,10 +1,9 @@
 /* The viewport owns the safe-area inset; this in-flow row reserves its own
    height, keeping route content visible and the pill above the gesture bar. */
 .fb-nav-slot {
-  /* Motion pass monochrome: theme-adaptive action fill — near-black behind a
-     white icon in light theme, white behind a black icon in dark theme. */
-  --fb-nav-action-bg: var(--fb-on-surface);
-  --fb-nav-action-ink: var(--fb-surface);
+  /* Consumer accent: selection + create action follow the accent-driven
+     primary tokens (Tailwind-mapped --fb-*), so they track the Appearance
+     accent. Status colors (error badge, Lost/Found) are never recolored. */
   padding: 8px 16px 12px; background: var(--fb-surface);
 }
 .fb-nav-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
@@ -18,13 +17,13 @@
 .fb-nav-link {
   position: relative; display: flex; flex: 1 1 0; min-width: 44px;
   min-height: 48px; align-items: center; justify-content: center;
-  gap: 4px; border-radius: 999px; color: var(--fb-on-surface-variant);
+  gap: 4px; border-radius: 999px;
   text-decoration: none; padding: 4px 2px;
 }
-.fb-nav-link-active { flex: 2 1 0; color: var(--fb-on-surface); font-weight: 600; }
+.fb-nav-link-active { flex: 2 1 0; font-weight: 600; }
 .fb-nav-active-bg {
   position: absolute; inset: 0; border-radius: inherit;
-  background: var(--fb-surface); box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
 }
 .fb-nav-icon, .fb-nav-label { position: relative; z-index: 1; }
 /* Transform-only selected-icon emphasis (compositor thread). */
@@ -49,11 +48,10 @@ html.fb-reduce-motion .fb-nav-link-active .fb-nav-icon { transform: none; }
 .fb-nav-create {
   display: flex; width: 52px; min-height: 52px; align-items: center;
   justify-content: center; border-radius: 50%;
-  color: var(--fb-nav-action-ink); background: var(--fb-nav-action-bg);
   box-shadow: var(--shadow-md); text-decoration: none;
 }
 .fb-nav-create:focus-visible, .fb-nav-link:focus-visible {
-  outline: 3px solid var(--fb-on-surface); outline-offset: 2px;
+  outline: 3px solid var(--fb-focus); outline-offset: 2px;
 }
 /* Fullscreen editor is a body-level portal: never leave shell chrome behind it
    as an extra tab stop, even though the editor itself lives outside Shell. */
