@@ -1,0 +1,75 @@
+/* Co-located styles for Settings → Accessibility. Choice/radio behavior and
+   focus rings come from the settings foundation (settings.css). */
+
+.fb-a11y-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.fb-a11y-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 1rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: var(--fb-surface-container);
+  color: var(--fb-on-surface);
+}
+
+.fb-a11y-preview-status {
+  font-size: 0.8125rem;
+  color: var(--fb-on-surface-variant);
+}
+
+/* Sample content uses rem sizing so the live root text scale shows directly. */
+.fb-a11y-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.875rem 1rem;
+  border-radius: 0.75rem;
+  background: var(--fb-surface);
+}
+
+.fb-a11y-sample-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.fb-a11y-sample-body {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+/* Gentle motion demo: honor the single reduced-motion authority — the
+   `fb-reduce-motion` class on the root and the OS preference both stop it. */
+.fb-a11y-motion-demo {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: var(--fb-primary);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fb-a11y-motion-demo {
+    animation: fb-a11y-drift 2.4s ease-in-out infinite alternate;
+  }
+}
+
+.fb-reduce-motion .fb-a11y-motion-demo {
+  animation: none;
+}
+
+@keyframes fb-a11y-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(4rem); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-a11y-motion-demo {
+    animation: none;
+  }
+}
