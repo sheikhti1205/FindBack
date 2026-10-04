@@ -1,0 +1,95 @@
+/* Settings home additions: account card, sign-out, search empty state.
+   Row/group/search primitives keep their shared foundation styles. */
+
+.fb-account-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 3.75rem;
+  padding: 0.875rem 1rem;
+  border-radius: 1.375rem;
+  background: var(--fb-surface-container-low);
+  color: var(--fb-on-surface);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+a.fb-account-card:hover {
+  background: var(--fb-surface-container);
+}
+
+.fb-account-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.fb-account-initials {
+  background: var(--fb-surface-container);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.fb-account-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.fb-account-name {
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-account-email {
+  font-size: 0.8125rem;
+  color: var(--fb-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-account-manage {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--fb-link);
+}
+
+.fb-settings-signout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.fb-settings-error {
+  font-size: 0.875rem;
+  color: var(--fb-error);
+}
+
+.fb-settings-empty {
+  padding: 0.5rem 1rem;
+}
+
+.fb-settings-empty p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--fb-on-surface-variant);
+}
+
+.fb-settings-empty p:first-child {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--fb-on-surface);
+}
