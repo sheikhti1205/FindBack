@@ -131,12 +131,15 @@ describe("AiModelsRoute consumer cards", () => {
   it("retries a failed download with its notice intact", async () => {
     const { service } = androidService();
     await service.ready;
-    render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
     act(() => {
       service.manager.dispatch(VISION, { type: "FAIL", reason: "transfer failed" });
     });
     expect(await screen.findByRole("button", { name: "Download Photo analysis" })).toBeTruthy();
-    expect(screen.getByText("transfer failed")).toBeTruthy();
+    // Normal tier translates the engineering reason; the raw wording stays out.
+    expect(screen.getByText("The download was interrupted. Try again.")).toBeTruthy();
+    expect(view.container.textContent ?? "").not.toContain("transfer failed");
+    expectNormalTierCopy(view.container);
   });
 
   it("stays honest without native support", async () => {

@@ -8,6 +8,7 @@ import {
   SettingsRow,
   StatusPill,
 } from "../components/settings";
+import { friendlyError } from "../utils/friendlyErrors";
 import "./AccountSettings.css";
 
 function initialsFor(username: string): string {
@@ -33,6 +34,7 @@ function initialsFor(username: string): string {
 export function AccountSettings() {
   const { user, logout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   if (!user) return null;
 
@@ -90,12 +92,22 @@ export function AccountSettings() {
         onClick={() => {
           if (loggingOut) return;
           setLoggingOut(true);
-          void logout().finally(() => setLoggingOut(false));
+          setSignOutError(null);
+          void logout()
+            .catch((err: unknown) => {
+              setSignOutError(friendlyError(err).message);
+            })
+            .finally(() => setLoggingOut(false));
         }}
       >
         <LogOut size={16} aria-hidden />
         Log out
       </Button>
+      {signOutError ? (
+        <p role="alert" className="fb-account-error">
+          {signOutError}
+        </p>
+      ) : null}
     </SettingsPage>
   );
 }

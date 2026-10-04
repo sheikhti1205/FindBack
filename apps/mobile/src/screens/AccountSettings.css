@@ -25,6 +25,12 @@
   word-break: break-word;
 }
 
+/* Sign-out failure: same error treatment as the Settings root sign-out row. */
+.fb-account-error {
+  font-size: 0.875rem;
+  color: var(--fb-error);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .fb-account-avatar {
     transition: none;

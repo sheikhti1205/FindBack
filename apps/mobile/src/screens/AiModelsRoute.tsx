@@ -25,14 +25,37 @@ function isStorageShortfall(reason: string | null): boolean {
 
 /**
  * Translate service-owned outcome copy at the presentation seam so the
- * normal tier never shows engineering wording. Unknown strings pass
- * through verbatim (never invented here).
+ * normal tier never shows engineering wording (raw model ids, checksum /
+ * catalogue terms, transfer jargon). Unknown strings pass through verbatim
+ * (never invented here) — every reason the download/manager layer can emit
+ * today is mapped below.
  */
 export function toConsumerNotice(notice: string | null): string | null {
   if (notice === null) return null;
   if (notice === "Installed and checksum verified.") return null;
   if (notice === "checksum mismatch against catalogue pin") {
     return "The download didn't pass verification. Try again.";
+  }
+  if (notice === "no catalogue checksum pin for this model") {
+    return "The download couldn't be verified. Try again.";
+  }
+  if (notice === "checksum verification failed") {
+    return "The download didn't pass verification. Try again.";
+  }
+  if (notice === "transfer failed") {
+    return "The download was interrupted. Try again.";
+  }
+  if (notice === "not enough free storage for this download") {
+    return "Needs more storage";
+  }
+  if (notice === "downloads start only on explicit user action") {
+    return "Tap Download to start.";
+  }
+  if (notice === "model installed") {
+    return "Already installed.";
+  }
+  if (notice.startsWith("unknown model ")) {
+    return "This tool isn't available in this build.";
   }
   return notice.replaceAll("AI & Models", "On-device AI");
 }
@@ -83,6 +106,9 @@ function ConsumerCard({
           : download === "verifying" || download === "queued"
             ? "Getting ready…"
             : "Not installed";
+  // The status pill already carries the state line; never repeat it as a
+  // notice (e.g. a storage shortfall reads "Needs more storage" once).
+  const showNotice = notice !== null && !ready && notice !== stateLine;
 
   return (
     <article aria-labelledby={`ai-tool-${modelId}`} className="flex flex-col gap-2 p-1">
@@ -113,7 +139,7 @@ function ConsumerCard({
           />
         </div>
       ) : null}
-      {notice !== null && !ready ? (
+      {showNotice ? (
         <p role="status" className="text-sm text-on-surface-variant">
           {notice}
         </p>

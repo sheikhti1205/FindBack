@@ -31,6 +31,7 @@ import {
 } from "../components/settings";
 import { AccountSummaryCard } from "../components/AccountSummaryCard";
 import { searchSettings } from "../services/settingsIndex";
+import { loadAssistantMode, type AssistantMode } from "./AiModels";
 import { fetchNotificationPreferences, type NotificationPreferences } from "../services/notificationPreferences";
 import { pushController } from "../services/pushRuntime";
 import type { PushPermissionState } from "../services/pushNotifications";
@@ -99,6 +100,22 @@ export function connectionSummary(connected: boolean): string {
 }
 
 /**
+ * Consumer-tier AI mode labels (match AiSettings MODE_COPY; a stored
+ * offline-first value is kept verbatim, never offered). Read live from the
+ * assistant-mode store so the row stays truthful when the mode changes.
+ */
+const AI_MODE_LABELS: Record<AssistantMode, string> = {
+  auto: "Automatic",
+  "offline-first": "Offline-first",
+  "offline-only": "On-device only",
+  "cloud-only": "Cloud only",
+};
+
+export function aiModeSummary(mode: AssistantMode): string {
+  return AI_MODE_LABELS[mode];
+}
+
+/**
  * Settings root: account card, search, exact packet groups, sign-out.
  * Every row targets a real route_map.csv route (detail screens land via
  * tasks E–H/G; the links are in place regardless). Live summaries degrade
@@ -111,6 +128,9 @@ export function Settings() {
   const [query, setQuery] = useState("");
   const [notifValue, setNotifValue] = useState<string | null>(null);
   const [cloudValue, setCloudValue] = useState<string | null>(null);
+  const [aiMode, setAiMode] = useState<AssistantMode>(() =>
+    user ? loadAssistantMode(user.id) : "auto",
+  );
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
@@ -135,6 +155,10 @@ export function Settings() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (user) setAiMode(loadAssistantMode(user.id));
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -225,7 +249,7 @@ export function Settings() {
               title="AI & models"
               icon={Sparkles}
               iconTone="ai"
-              value="Automatic"
+              value={aiModeSummary(aiMode)}
               route="/settings/ai"
             />
             <SettingsRow
