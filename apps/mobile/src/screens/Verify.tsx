@@ -1,12 +1,26 @@
 import { useEffect, useState } from "react";
-import { Navigate, useNavigate } from "react-router";
-import { CheckCircle2, Mail, Phone } from "lucide-react";
+import { Link, Navigate, useNavigate } from "react-router";
+import { CheckCircle2, Phone } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
-import { TextField } from "../components/Fields";
+import { motionDurations, motionEasings } from "../components/uiMotion";
+import { motion } from "framer-motion";
 import { sendPendingEmailCode, verifyPendingEmailCode } from "../services/auth";
+import { getPendingReportRoute } from "../utils/pendingReportLink";
+import { AuthShell } from "../components/auth/AuthShell";
+import { OtpField } from "../components/auth/OtpField";
 
 type Channel = "EMAIL" | "PHONE";
+
+function useResendCountdown() {
+  const [resendIn, setResendIn] = useState(0);
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
+  return { resendIn, setResendIn } as const;
+}
 
 function VerifyRow({ channel }: { channel: Channel }) {
   const { user, refreshUser } = useAuth();
@@ -15,13 +29,7 @@ function VerifyRow({ channel }: { channel: Channel }) {
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
-  const [resendIn, setResendIn] = useState(0);
-
-  useEffect(() => {
-    if (resendIn <= 0) return;
-    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendIn]);
+  const { resendIn, setResendIn } = useResendCountdown();
 
   if (!user) return null;
   const verified = channel === "EMAIL" ? user.emailVerified : user.phoneVerified;
@@ -61,9 +69,7 @@ function VerifyRow({ channel }: { channel: Channel }) {
       <div className="flex items-start gap-3 rounded-m3-md border border-outline-variant bg-surface-container-low p-4">
         <CheckCircle2 className="mt-0.5 shrink-0 text-on-surface" size={20} aria-hidden />
         <div>
-          <p className="font-medium">
-            {channel === "EMAIL" ? "Email" : "Phone"} verified
-          </p>
+          <p className="font-medium">{channel === "EMAIL" ? "Email" : "Phone"} verified</p>
           <p className="text-sm text-on-surface-variant">{destination}</p>
         </div>
       </div>
@@ -80,8 +86,7 @@ function VerifyRow({ channel }: { channel: Channel }) {
           <p className="font-medium">Phone · unverified</p>
           <p className="text-sm text-on-surface-variant">{destination}</p>
           <p className="mt-1 text-sm text-on-surface-variant">
-            Phone verification isn't available yet — no SMS provider is configured. Your number
-            is saved but unverified.
+            Your number is saved. Verification for phone numbers isn&apos;t available yet.
           </p>
         </div>
       </div>
@@ -89,47 +94,45 @@ function VerifyRow({ channel }: { channel: Channel }) {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-4">
-      <div className="flex items-center gap-3">
-        <Mail size={20} aria-hidden />
-        <div className="flex-1">
-          <p className="font-medium">Verify email</p>
-          <p className="text-sm text-on-surface-variant">{destination}</p>
-        </div>
-        <Button variant="outline" size="md" onClick={onSend} loading={sending} disabled={resendIn > 0}>
-          {resendIn > 0 ? `Resend in ${resendIn}s` : "Send code"}
-        </Button>
-      </div>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+      className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-4"
+    >
+      <p className="text-sm text-on-surface-variant">
+        Enter the code sent to <span className="font-medium text-on-surface">{destination}</span>.
+      </p>
 
-      {message && <p className="text-sm text-on-surface-variant">{message}</p>}
+      {message && (
+        <p className="text-sm text-on-surface-variant" role="status">
+          {message}
+        </p>
+      )}
       {error && (
         <p className="text-sm text-error" role="alert">
           {error}
         </p>
       )}
 
-      <div className="flex gap-2">
-        <TextField
-          label="Verification code"
-          value={code}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder="00000000"
-          className="flex-1"
-        />
-        <Button onClick={onVerify} loading={verifying} disabled={code.length < 6} className="mt-6">
+      <OtpField value={code} onChange={setCode} />
+
+      <div className="flex flex-col gap-2">
+        <Button onClick={onVerify} loading={verifying} size="lg">
           Verify
         </Button>
+        <Button variant="outline" size="lg" onClick={onSend} loading={sending} disabled={resendIn > 0}>
+          {resendIn > 0 ? `Resend in ${resendIn}s` : "Send code"}
+        </Button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
 /**
  * Pending-signup mode: the user has no session yet, so this uses the public
  * `/auth/email-verification/*` endpoints. On success the first Supabase session
- * is stored and the app is entered.
+ * is stored and the pending destination (usually the shared report) is entered.
  */
 function PendingEmailVerify({ email }: { email: string }) {
   const { verifyPendingEmail, resendPendingEmail } = useAuth();
@@ -141,13 +144,7 @@ function PendingEmailVerify({ email }: { email: string }) {
   );
   const [verifying, setVerifying] = useState(false);
   const [resending, setResending] = useState(false);
-  const [resendIn, setResendIn] = useState(0);
-
-  useEffect(() => {
-    if (resendIn <= 0) return;
-    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendIn]);
+  const { resendIn, setResendIn } = useResendCountdown();
 
   async function onResend() {
     setResending(true);
@@ -169,7 +166,7 @@ function PendingEmailVerify({ email }: { email: string }) {
     setError(null);
     try {
       await verifyPendingEmail(code.trim());
-      navigate("/", { replace: true });
+      navigate(getPendingReportRoute() ?? "/", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
@@ -178,46 +175,53 @@ function PendingEmailVerify({ email }: { email: string }) {
   }
 
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col gap-5 bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Confirm your email</h1>
-        <p className="mt-1 text-sm text-on-surface-variant">
-          Enter the code sent to <span className="font-medium text-on-surface">{email}</span> to
-          finish creating your account.
-        </p>
-      </header>
+    <AuthShell
+      title="Check your email"
+      supporting="Enter the code we sent to finish creating your account."
+    >
+      <p className="rounded-m3-md border border-outline-variant bg-surface-container-low px-4 py-3 text-sm">
+        <span className="font-medium text-on-surface">{email}</span>
+      </p>
 
       <div className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-4">
-        {message && <p className="text-sm text-on-surface-variant">{message}</p>}
+        {message && (
+          <p className="text-sm text-on-surface-variant" role="status">
+            {message}
+          </p>
+        )}
         {error && (
           <p className="text-sm text-error" role="alert">
             {error}
           </p>
         )}
 
-        <TextField
-          label="Verification code"
-          value={code}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder="00000000"
-        />
+        <OtpField value={code} onChange={setCode} />
 
-        <Button onClick={onVerify} loading={verifying} disabled={code.length < 6} size="lg">
+        <Button onClick={onVerify} loading={verifying} size="lg">
           Verify and continue
         </Button>
 
-        <Button
-          variant="outline"
-          onClick={onResend}
-          loading={resending}
-          disabled={resendIn > 0}
-        >
+        <Button variant="outline" size="lg" onClick={onResend} loading={resending} disabled={resendIn > 0}>
           {resendIn > 0 ? `Resend in ${resendIn}s` : "Resend code"}
         </Button>
+
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex min-h-[44px] min-w-[44px] items-center px-2 text-sm font-medium text-on-surface underline focus-visible:outline-2 focus-visible:outline-offset-2"
+          >
+            Back
+          </button>
+          <Link
+            to="/auth"
+            className="flex min-h-[44px] items-center px-2 text-sm font-medium text-on-surface underline focus-visible:outline-2 focus-visible:outline-offset-2"
+          >
+            Use a different email
+          </Link>
+        </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 
@@ -230,18 +234,17 @@ export function Verify() {
   if (!user && pendingEmail) return <PendingEmailVerify email={pendingEmail} />;
 
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col gap-5 bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Verify your contact details</h1>
-        <p className="mt-1 text-sm text-on-surface-variant">
-          Confirm ownership of your email with the code we sent. Phone verification is unavailable in this build.
-        </p>
-      </header>
+    <AuthShell
+      title="Verify your contact details"
+      supporting="Confirm ownership of your email with the code we sent."
+    >
       <div className="flex flex-col gap-3">
         <VerifyRow channel="EMAIL" />
         <VerifyRow channel="PHONE" />
       </div>
-      <Button onClick={() => navigate("/", { replace: true })}>Continue to app</Button>
-    </div>
+      <Button size="lg" onClick={() => navigate(getPendingReportRoute() ?? "/", { replace: true })}>
+        Continue to app
+      </Button>
+    </AuthShell>
   );
 }
