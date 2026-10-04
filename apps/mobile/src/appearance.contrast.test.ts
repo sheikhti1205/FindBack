@@ -113,3 +113,112 @@ describe("Soft Utility semantic palette", () => {
     });
   }
 });
+
+describe("QA I — new consumer-UI token pairings (StatusPill, icons, switches, errors)", () => {
+  const css = readFileSync("src/index.css", "utf8");
+  const settingsCss = readFileSync("src/components/settings/settings.css", "utf8");
+  function blockIn(source: string, selector: string) {
+    const start = source.indexOf(`${selector} {`);
+    expect(start, selector).toBeGreaterThanOrEqual(0);
+    return source.slice(start).split("}")[0]!;
+  }
+  function tokenIn(source: string, name: string) {
+    const value = source.match(new RegExp(`${name}\\s*:\\s*([^;]+);`))?.[1]?.trim();
+    expect(value, name).toBeDefined();
+    return value!;
+  }
+  const rootSource = blockIn(css, ":root");
+  /** Resolve var(--x[, fallback]) through the mode block, then :root. */
+  function resolveToken(modeSource: string, name: string, depth = 0): string {
+    expect(depth, `var() cycle for ${name}`).toBeLessThan(5);
+    const raw = modeSource.match(new RegExp(`${name}\\s*:\\s*([^;]+);`))?.[1]?.trim()
+      ?? rootSource.match(new RegExp(`${name}\\s*:\\s*([^;]+);`))?.[1]?.trim();
+    expect(raw, name).toBeDefined();
+    const ref = raw!.match(/^var\(\s*(--[\w-]+)(?:\s*,\s*(.+))?\)$/);
+    if (!ref) return raw!;
+    const [, target, fallback] = ref;
+    const next = modeSource.match(new RegExp(`${target}\\s*:\\s*([^;]+);`))?.[1]?.trim()
+      ?? rootSource.match(new RegExp(`${target}\\s*:\\s*([^;]+);`))?.[1]?.trim();
+    if (next) return resolveToken(modeSource, target!, depth + 1);
+    expect(fallback, `${name} fallback`).toBeDefined();
+    return fallback!;
+  }
+  function contrastLocal(a: string, b: string) {
+    function luminance(hex: string) {
+      const channels = [1, 3, 5].map((start) => {
+        const c = parseInt(hex.slice(start, start + 2), 16) / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722;
+    }
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi! + 0.05) / (lo! + 0.05);
+  }
+  // AMOLED keeps .dark alongside .amoled, so its semantic text tokens resolve
+  // from the .dark rule (the .amoled block only redefines surfaces).
+  const themeSource: Record<"light" | "dark" | "amoled", string> = {
+    light: blockIn(css, ":root"),
+    dark: blockIn(css, ".dark"),
+    amoled: blockIn(css, ".dark"),
+  };
+  const themeSurfaces: Record<"light" | "dark" | "amoled", string[]> = {
+    light: ["#f6f7f5", "#ffffff", "#eff1ed", "#e9ece7"],
+    dark: ["#101211", "#1a1d1b", "#202421", "#282c29"],
+    amoled: ["#000000", "#0b0b0b", "#111211", "#171817"],
+  };
+
+  it.each(["light", "dark", "amoled"] as const)("%s: error/warning/success text meets AA on every surface", (mode) => {
+    const source = themeSource[mode];
+    for (const surface of themeSurfaces[mode]) {
+      expect(contrastLocal(tokenIn(source, "--fb-error"), surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastLocal(tokenIn(source, "--fb-warning"), surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastLocal(tokenIn(source, "--fb-success"), surface)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it.each(["light", "dark", "amoled"] as const)("%s: StatusPill success/error pairs meet AA", (mode) => {
+    const source = themeSource[mode];
+    expect(
+      contrastLocal(tokenIn(source, "--fb-found-ink"), tokenIn(source, "--fb-found-bg")),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastLocal(tokenIn(source, "--fb-lost-ink"), tokenIn(source, "--fb-lost-bg")),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(["light", "dark", "amoled"] as const)("%s: StatusPill warning (warning ink on container) meets AA", (mode) => {
+    const source = themeSource[mode];
+    const container = themeSurfaces[mode][2]!;
+    expect(contrastLocal(tokenIn(source, "--fb-warning"), container)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(["light", "dark"] as const)("%s: category icon tiles keep AA ink on their own tile", (mode) => {
+    // Selectors are `.fb-setting-icon[data-tone="x"]` (+ `.dark` prefix in dark).
+    for (const tone of ["blue", "lavender", "teal", "amber", "coral", "violet", "green", "sky", "neutral"]) {
+      const selector = mode === "light"
+        ? `.fb-setting-icon[data-tone="${tone}"]`
+        : `.dark .fb-setting-icon[data-tone="${tone}"]`;
+      const rule = blockIn(settingsCss, selector);
+      expect(
+        contrastLocal(tokenIn(rule, "--fb-icon-ink"), tokenIn(rule, "--fb-icon-bg")),
+        tone,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it.each(["light", "dark", "amoled"] as const)("%s: switch track/thumb UI contrast meets 3:1", (mode) => {
+    const source = themeSource[mode];
+    const track = themeSurfaces[mode][3]!;
+    // Unchecked: outline + thumb against the track; checked pairs inherit the
+    // accent primary/onPrimary coverage asserted above.
+    expect(contrastLocal(resolveToken(source, "--fb-control-outline"), track)).toBeGreaterThanOrEqual(3);
+    expect(contrastLocal(resolveToken(source, "--fb-on-surface-variant"), track)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("dark semantic tokens exist so the .dark+.amoled cascade keeps AA text", () => {
+    const dark = blockIn(css, ".dark");
+    for (const name of ["--fb-error", "--fb-warning", "--fb-success", "--fb-on-error", "--fb-found-bg", "--fb-found-ink", "--fb-lost-bg", "--fb-lost-ink"]) {
+      expect(tokenIn(dark, name), name).toBeTruthy();
+    }
+  });
+});

@@ -51,7 +51,7 @@ export function OtpField({
         autoComplete="one-time-code"
         placeholder="Enter the code"
         maxLength={10}
-        className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base tracking-[0.3em] text-on-surface placeholder:tracking-normal placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+        className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base tracking-[0.3em] text-on-surface placeholder:tracking-normal placeholder:text-on-surface-variant focus:border-on-surface"
       />
     </div>
   );

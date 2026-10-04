@@ -123,7 +123,7 @@ function FieldShell({
 }
 
 const baseField =
-  "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base text-on-surface placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none disabled:opacity-50 transition-colors";
+  "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base text-on-surface placeholder:text-on-surface-variant focus:border-on-surface disabled:opacity-50 transition-colors";
 
 interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
@@ -173,7 +173,7 @@ export function TextField({
             whileTap={pressFeedback.iconButton}
             animate={{ opacity: focused ? 1 : 0.7 }}
             transition={motionSprings.snappy}
-            className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-m3-sm text-on-surface-variant focus:outline-none"
+            className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-m3-sm text-on-surface-variant"
           >
             {/* Two stacked glyphs: the icon crossfades and rotates on toggle. */}
             <span className="relative block h-5 w-5">

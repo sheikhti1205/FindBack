@@ -82,7 +82,7 @@ export function AiSettings({ accountId }: { accountId?: string }) {
             return (
               <label
                 key={option}
-                className="flex min-h-[48px] cursor-pointer flex-col justify-center gap-0.5 rounded-m3-sm border border-outline-variant px-3 py-2 hover:bg-surface-container"
+                className="flex min-h-[48px] cursor-pointer flex-col justify-center gap-0.5 rounded-m3-sm border border-outline-variant px-3 py-2 hover:bg-surface-container focus-within:outline-2 focus-within:outline-solid focus-within:outline-offset-2 focus-within:outline-focus"
               >
                 <input
                   type="radio"
