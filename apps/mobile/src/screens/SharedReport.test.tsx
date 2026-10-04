@@ -31,4 +31,14 @@ describe("public shared-report gate", () => {
     expect(screen.getByRole("heading", {name:"Invalid report link"})).toBeTruthy();
     expect(getPendingReportRoute()).toBeNull();
   });
+  it("renders the invalid-link state in the designed surface shell, not bare markup", () => {
+    const {container} = renderLink("/shared/invalid");
+    const main = container.querySelector("main")!;
+    for (const token of ["bg-surface", "text-on-surface"]) {
+      expect(main.className.split(/\s+/)).toContain(token);
+    }
+    const back = screen.getByRole("link", {name: "Back to FindBack"});
+    expect(back.getAttribute("href")).toBe("/");
+    expect(back.className.split(/\s+/)).toContain("bg-on-surface");
+  });
 });

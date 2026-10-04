@@ -16,7 +16,7 @@ export function SharedReport() {
   try { url = `${reportLink(id)}${search}`; } catch { /* invalid config */ }
   const link = parseReportLink(url);
   useEffect(() => { if (!user && parseReportLink(url)) rememberReportLink(url); }, [url, user]);
-  if (!link) return <main className="mx-auto max-w-lg p-6"><h1 className="text-2xl font-semibold">Invalid report link</h1><Link className="mt-4 inline-flex min-h-12 items-center underline" to="/">Back to FindBack</Link></main>;
+  if (!link) return <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center gap-4 bg-surface px-6 py-12 text-on-surface"><p className="text-lg font-semibold">FindBack</p><h1 ref={title} tabIndex={-1} className="text-3xl font-semibold tracking-tight">Invalid report link</h1><p className="leading-relaxed text-on-surface-variant">Check the link and try again, or head back to FindBack.</p><Link className="inline-flex min-h-12 items-center justify-center rounded-m3-md bg-on-surface px-5 font-medium text-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-on-surface" to="/">Back to FindBack</Link></main>;
   if (booting || (bootError && !user)) return <Splash />;
   if (user) return <Navigate to={link.route} replace />;
   return <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center gap-5 bg-surface px-6 py-12 text-on-surface">
