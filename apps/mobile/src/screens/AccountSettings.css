@@ -1,0 +1,32 @@
+/* Account detail: identity tile only. Page chrome comes from the settings primitives. */
+.fb-account-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  overflow: hidden;
+  object-fit: cover;
+}
+
+.fb-account-avatar-initials {
+  background: var(--fb-primary-container);
+  color: var(--fb-on-primary-container);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Identity values can be long (email addresses): always wrap, never clip. */
+.fb-settings-row-value {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-account-avatar {
+    transition: none;
+  }
+}
