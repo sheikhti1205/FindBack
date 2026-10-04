@@ -4,11 +4,12 @@ import type { ReactNode } from "react";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
 import { motionConfigValueFor, useAppearance } from "./appearance";
-import { GuestOnly, RequireAuth } from "./components/Guards";
+import { GuestOnly, OnboardingRoute, RequireAuth } from "./components/Guards";
 import { Shell } from "./components/Shell";
 import { BackButtonHandler } from "./components/BackButtonHandler";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Splash } from "./screens/Splash";
+import { AuthGateway } from "./screens/AuthGateway";
 import { SignIn } from "./screens/SignIn";
 import { Register } from "./screens/Register";
 import { Verify } from "./screens/Verify";
@@ -24,6 +25,17 @@ import { Help } from "./screens/Help";
 import { AiConnection } from "./screens/AiConnection";
 import { AiModelsRoute } from "./screens/AiModelsRoute";
 import { Notifications } from "./screens/Notifications";
+import { Settings } from "./screens/Settings";
+import { AccountSettings } from "./screens/AccountSettings";
+import { AppearanceSettings } from "./screens/AppearanceSettings";
+import { AccessibilitySettings } from "./screens/AccessibilitySettings";
+import { MediaSettings } from "./screens/MediaSettings";
+import { NotificationPreferences } from "./screens/NotificationPreferences";
+import { PrivacySettings } from "./screens/PrivacySettings";
+import { AiSettings } from "./screens/AiSettings";
+import { AiAdvanced } from "./screens/AiAdvanced";
+import { HelpGuide } from "./screens/HelpGuide";
+import { Diagnostics } from "./screens/Diagnostics";
 import { Capacitor } from "@capacitor/core";
 import { ReportLinkHandler } from "./components/ReportLinkHandler";
 import { PublicLanding } from "./screens/PublicLanding";
@@ -66,6 +78,15 @@ export function App() {
                <Route index element={<Home />} />
              </Route>
             <Route path="/splash" element={<Splash />} />
+            <Route path="/onboarding" element={<OnboardingRoute />} />
+            <Route
+              path="/auth"
+              element={
+                <GuestOnly>
+                  <AuthGateway />
+                </GuestOnly>
+              }
+            />
             <Route
               path="/signin"
               element={
@@ -102,6 +123,20 @@ export function App() {
               <Route path="/ai-connection" element={<AiConnection />} />
                <Route path="/ai-models" element={<AiModelsRoute />} />
               <Route path="/offline-ai" element={<Navigate to="/ai-connection" replace />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/settings/account" element={<AccountSettings />} />
+              <Route path="/settings/appearance" element={<AppearanceSettings />} />
+              <Route path="/settings/accessibility" element={<AccessibilitySettings />} />
+              <Route path="/settings/media" element={<MediaSettings />} />
+              <Route path="/settings/notifications" element={<NotificationPreferences />} />
+              <Route path="/settings/privacy" element={<PrivacySettings />} />
+              <Route path="/settings/ai" element={<AiSettings />} />
+              <Route path="/settings/ai/connections" element={<AiConnection />} />
+              <Route path="/settings/ai/models" element={<AiModelsRoute />} />
+              <Route path="/settings/ai/advanced" element={<AiAdvanced />} />
+              <Route path="/settings/help" element={<HelpGuide />} />
+              <Route path="/settings/about" element={<About />} />
+              <Route path="/settings/diagnostics" element={<Diagnostics />} />
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />
           </Routes>

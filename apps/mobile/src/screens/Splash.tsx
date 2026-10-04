@@ -4,6 +4,7 @@ import { useAuth } from "../auth";
 import { motionDurations, motionEasings } from "../components/uiMotion";
 import { getBootDiagnostics } from "../services/bootDiagnostics";
 import { getPendingReportRoute } from "../utils/pendingReportLink";
+import { hasPendingReportLink, isOnboardingComplete } from "../services/onboarding";
 
 /**
  * Boot screen: shows briefly while a stored session hydrates, then redirects.
@@ -62,5 +63,11 @@ export function Splash() {
     );
   }
 
-  return <Navigate to={user ? getPendingReportRoute() ?? "/" : "/signin"} replace />;
+  // Signed-in users resume (a pending shared-report link wins); fresh guests
+  // with incomplete onboarding start there, unless a pending link bypasses
+  // them to auth — the link itself is resumed by ReportLinkHandler/auth flow.
+  if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
+  const guestHome =
+    !isOnboardingComplete() && !hasPendingReportLink() ? "/onboarding" : "/auth";
+  return <Navigate to={guestHome} replace />;
 }

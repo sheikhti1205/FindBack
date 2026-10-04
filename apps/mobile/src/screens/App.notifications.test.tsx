@@ -17,6 +17,7 @@ vi.mock("@capacitor/app", () => ({ App: { getLaunchUrl: async () => undefined, a
   return Promise.resolve({ remove: () => { native.back = null; } });
 } } }));
 vi.mock("./Splash", () => ({ Splash: () => <p>Splash screen</p> }));
+vi.mock("./Onboarding", () => ({ Onboarding: () => <p>Onboarding screen</p>, ONBOARDING_PAGES: [] }));
 vi.mock("./SignIn", () => ({ SignIn: () => <p>Sign in screen</p> }));
 vi.mock("./Register", () => ({ Register: () => null }));
 vi.mock("./Verify", () => ({ Verify: () => null }));
@@ -62,12 +63,13 @@ describe("/notifications", () => {
     expect(screen.queryByText(/minutes ago|yesterday/i)).toBeNull();
   });
 
-  it("requires authentication on a direct deep link", async () => {
+  it("requires authentication on a direct deep link (fresh guests start at onboarding)", async () => {
     auth.user = null;
+    localStorage.clear();
     window.history.replaceState(null, "", "/#/notifications");
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Sign in screen")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Onboarding screen")).toBeTruthy());
     expect(screen.queryByRole("heading", { name: "Notifications" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
   });
