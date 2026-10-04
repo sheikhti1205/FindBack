@@ -1,0 +1,87 @@
+/* Co-located styles for Settings → Appearance. Choice/radio behavior and
+   focus rings come from the settings foundation (settings.css). */
+
+.fb-personal-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.fb-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.fb-accent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+/* Live preview: decorative sample built from the live accent tokens, so it
+   always shows the current selection without extra wiring. */
+.fb-appearance-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  margin: 1rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: var(--fb-surface-container);
+  color: var(--fb-on-surface);
+}
+
+.fb-appearance-preview-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.fb-appearance-preview-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0 1.25rem;
+  border-radius: 999px;
+  background: var(--fb-primary);
+  color: var(--fb-on-primary);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.fb-appearance-preview-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border-radius: 999px;
+  background: var(--fb-primary-container);
+  color: var(--fb-on-primary-container);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.fb-appearance-preview-link {
+  color: var(--fb-link);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-decoration: underline;
+}
+
+.fb-appearance-preview-focus {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border-radius: 0.75rem;
+  background: var(--fb-surface);
+  color: var(--fb-on-surface);
+  font-size: 0.875rem;
+  outline: 2px solid var(--fb-focus);
+  outline-offset: 2px;
+}
