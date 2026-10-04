@@ -1,52 +1,249 @@
 import { useState, useSyncExternalStore } from "react";
-import { AiModels, type OfflineDownloadControls } from "./AiModels";
-import { DOWNLOAD_MODELS, getApplicationAi, type ApplicationAiService } from "../services/ai/applicationAi";
+import { Gauge } from "lucide-react";
 import { Button } from "../components/Button";
+import {
+  SettingsGroup,
+  SettingsPage,
+  SettingsRow,
+  StatusPill,
+} from "../components/settings";
+import {
+  DOWNLOAD_MODELS,
+  getApplicationAi,
+  type ApplicationAiService,
+} from "../services/ai/applicationAi";
+import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
+import { canShowAuto } from "../services/ai/uiGates";
+
+function formatMegabytes(bytes: number): string {
+  return `${Math.round(bytes / 1_000_000)} MB`;
+}
+
+function isStorageShortfall(reason: string | null): boolean {
+  return reason !== null && /storage|free space|free_bytes|out of space/i.test(reason);
+}
+
+/**
+ * Translate service-owned outcome copy at the presentation seam so the
+ * normal tier never shows engineering wording. Unknown strings pass
+ * through verbatim (never invented here).
+ */
+export function toConsumerNotice(notice: string | null): string | null {
+  if (notice === null) return null;
+  if (notice === "Installed and checksum verified.") return null;
+  if (notice === "checksum mismatch against catalogue pin") {
+    return "The download didn't pass verification. Try again.";
+  }
+  return notice.replaceAll("AI & Models", "On-device AI");
+}
+
+function ConsumerCard({
+  modelId,
+  title,
+  detail,
+  service,
+  reportError,
+}: {
+  modelId: string;
+  title: string;
+  detail: string;
+  service: ApplicationAiService;
+  reportError: (message: string) => void;
+}) {
+  const entry = DOWNLOAD_MODELS.find((item) => item.modelId === modelId);
+  const status = service.manager.statusOf(modelId);
+  const totalBytes = entry?.bytes ?? null;
+  const download = status?.download ?? "not-installed";
+  const downloadedBytes = status?.downloadedBytes ?? 0;
+  const lastError = status?.lastError ?? null;
+  const rawNotice = service.notice(modelId);
+  const notice = toConsumerNotice(rawNotice ?? lastError);
+  const busy = service.busy(modelId);
+  const ready = download === "installed" && status?.checksumVerified === true;
+  const percent =
+    totalBytes !== null && totalBytes > 0
+      ? Math.min(100, Math.max(0, Math.round((downloadedBytes / totalBytes) * 100)))
+      : null;
+
+  const run = (work: Promise<unknown>) => {
+    void work.catch((error: unknown) =>
+      reportError(error instanceof Error ? error.message : "On-device operation failed."),
+    );
+  };
+
+  const supported = service.android;
+  const stateLine = ready
+    ? `Ready · ${formatMegabytes(entry?.bytes ?? downloadedBytes)}`
+    : download === "downloading" && percent !== null
+      ? `Downloading ${percent}%`
+      : download === "paused" && percent !== null && downloadedBytes > 0
+        ? `Paused at ${percent}%`
+        : download === "failed" && isStorageShortfall(lastError ?? notice)
+          ? "Needs more storage"
+          : download === "verifying" || download === "queued"
+            ? "Getting ready…"
+            : "Not installed";
+
+  return (
+    <article aria-labelledby={`ai-tool-${modelId}`} className="flex flex-col gap-2 p-1">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-col">
+          <h3 id={`ai-tool-${modelId}`} className="text-sm font-semibold">
+            {title}
+          </h3>
+          <p className="text-xs text-on-surface-variant">{detail}</p>
+        </div>
+        <StatusPill tone={ready ? "success" : download === "failed" ? "error" : "neutral"}>
+          {stateLine}
+        </StatusPill>
+      </div>
+      {download === "downloading" && percent !== null ? (
+        <div
+          role="progressbar"
+          aria-label={`${title} download progress`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          className="h-2 overflow-hidden rounded-full bg-surface-container-high"
+        >
+          <div
+            aria-hidden="true"
+            className="h-full rounded-full bg-control-active"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      ) : null}
+      {notice !== null && !ready ? (
+        <p role="status" className="text-sm text-on-surface-variant">
+          {notice}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {ready ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => run(service.remove(modelId))}
+            aria-label={`Remove ${title}`}
+          >
+            Remove
+          </Button>
+        ) : download === "downloading" ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => run(service.pause(modelId))}
+            aria-label={`Pause ${title}`}
+          >
+            Pause
+          </Button>
+        ) : download === "paused" ? (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!supported || busy}
+              onClick={() => run(service.download(modelId))}
+              aria-label={`Resume ${title}`}
+              title={supported ? undefined : "On-device downloads need the Android app."}
+            >
+              Resume
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => run(service.remove(modelId))}
+              aria-label={`Remove ${title}`}
+            >
+              Remove
+            </Button>
+          </>
+        ) : download === "verifying" || download === "queued" ? null : (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!supported || busy}
+            onClick={() => run(service.download(modelId))}
+            aria-label={`Download ${title}`}
+            title={supported ? undefined : "On-device downloads need the Android app."}
+          >
+            Download
+          </Button>
+        )}
+        {!ready && download !== "downloading" && download !== "paused" && download !== "verifying" && download !== "queued" && download !== "not-installed" ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => run(service.remove(modelId))}
+            aria-label={`Remove ${title}`}
+          >
+            Remove
+          </Button>
+        ) : null}
+      </div>
+    </article>
+  );
+}
 
 /** Real route owns UI subscriptions; application service owns all transfers and residency. */
 export function AiModelsRoute({ service = getApplicationAi() }: { service?: ApplicationAiService }) {
   useSyncExternalStore(service.subscribe, service.snapshot);
-  const [modelId, setModelId] = useState<string>(DOWNLOAD_MODELS[0].modelId);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [measuring, setMeasuring] = useState(false);
-  const model = DOWNLOAD_MODELS.find((item) => item.modelId === modelId)!;
-  const status = service.manager.statusOf(modelId)!;
-  const action = (work: Promise<unknown>) => { void work.catch((error: unknown) => setNotice(error instanceof Error ? error.message : "On-device operation failed.")); };
-  const controls: OfflineDownloadControls | null = service.android ? {
-    modelId, state: status.download, downloadedBytes: status.downloadedBytes, totalBytes: model.bytes,
-    busy: service.busy(modelId), notice: service.notice(modelId),
-    onDownload: () => action(service.download(modelId)), onPause: () => action(service.pause(modelId)),
-    onResume: () => action(service.download(modelId)), onRemove: () => action(service.remove(modelId)),
-  } : null;
-  const measure = async (backend: "cpu" | "gpu") => {
-    setMeasuring(true); setNotice("Measuring installed SmolVLM2. No sample is assumed.");
-    try {
-      const record = await service.measure(backend);
-      setNotice(`${backend.toUpperCase()}: TTFT ${record.ttftMs.toFixed(1)} ms; ${record.tokensPerSec.toFixed(2)} tokens/s; correctness ${record.correctnessPass ? "PASS" : "FAIL"}.`);
-    } catch (error) { setNotice(error instanceof Error ? error.message : "Measurement unavailable."); }
-    finally { setMeasuring(false); }
-  };
-  return <AiModels offlineDownload={controls} offlineStatus={status} probeRecords={service.probeRecords} probeContext={service.probeContext}
-    offlineTools={service.android ? <>
-      <label className="flex flex-col gap-1 text-sm">On-device model
-        <select className="min-h-12 rounded border border-outline-variant bg-surface px-2" value={modelId} onChange={(event) => setModelId(event.target.value)}>
-          {DOWNLOAD_MODELS.map((item) => <option key={item.modelId} value={item.modelId}>{item.label}</option>)}
-        </select>
-      </label>
-      <p className="text-sm" role="status">{status.download} · {model.bytes.toLocaleString()} bytes · {status.checksumVerified ? "checksum verified" : "not verified"}</p>
-      <label className="flex flex-col gap-1 text-sm">Matching engine
-        <select className="min-h-12 rounded border border-outline-variant bg-surface px-2" value={service.matchingBackend} onChange={(event) => {
-          try { service.selectMatchingBackend(event.target.value as "use" | "needle"); } catch (error) { setNotice(error instanceof Error ? error.message : "Matching unavailable."); }
-        }}>
-          <option value="use">USE (default)</option>
-          <option value="needle" disabled={!service.manager.statusOf(DOWNLOAD_MODELS[0].modelId)?.checksumVerified}>Needle (installed challenger, this session)</option>
-        </select>
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" disabled={measuring || !service.manager.statusOf(DOWNLOAD_MODELS[1].modelId)?.checksumVerified} onClick={() => void measure("cpu")}>Measure CPU</Button>
-        <Button type="button" variant="outline" disabled={measuring || !service.manager.statusOf(DOWNLOAD_MODELS[1].modelId)?.checksumVerified} onClick={() => void measure("gpu")}>Measure GPU</Button>
-        <Button type="button" variant="outline" disabled={measuring} onClick={() => action(service.facts().then((facts) => setNotice(JSON.stringify(facts))))}>Inspect hardware</Button>
-      </div>
-      <p role="status" className="text-sm">{notice ?? "Device timings are DEVICE_REQUIRED. CPU is the default; measurements stay on this device for this session."}</p>
-    </> : null} />;
+  const [error, setError] = useState<string | null>(null);
+  const measured = canShowAuto(service.probeRecords, service.probeContext);
+
+  return (
+    <SettingsPage
+      title="On-device AI"
+      description="Tools that run on this phone. No connection needed once downloaded."
+      backTo="/settings/ai"
+      backLabel="Back to AI & intelligence"
+    >
+      {!service.android ? (
+        <p role="note" className="text-sm text-on-surface-variant">
+          On-device AI needs the Android app. Downloads below are unavailable here.
+        </p>
+      ) : null}
+      <SettingsGroup title="Tools">
+        <ConsumerCard
+          modelId={NEEDLE_MODEL_ID}
+          title="Local text tools"
+          detail="Needle"
+          service={service}
+          reportError={setError}
+        />
+        <ConsumerCard
+          modelId={DOWNLOAD_MODELS[1].modelId}
+          title="Photo analysis"
+          detail="SmolVLM2"
+          service={service}
+          reportError={setError}
+        />
+      </SettingsGroup>
+      {error !== null ? (
+        <p role="alert" className="text-sm text-error">
+          {error}
+        </p>
+      ) : null}
+      <SettingsGroup
+        title="Performance"
+        description={
+          measured
+            ? "Performance has been measured on this phone."
+            : "FindBack uses the safest available option until performance has been measured on this phone."
+        }
+      >
+        <SettingsRow
+          title="Measure performance"
+          description="Run speed tests and see technical details."
+          icon={Gauge}
+          iconTone="ai"
+          route="/settings/ai/advanced"
+        />
+      </SettingsGroup>
+    </SettingsPage>
+  );
 }

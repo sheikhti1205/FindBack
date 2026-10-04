@@ -67,8 +67,7 @@ describe("AI connection", () => {
   });
 });
 
-describe("AiConnection motion (Wave E)", () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.currentUserId = "user-1"; });
+describe("AiConnection motion (Wave E)", () => {  beforeEach(() => { vi.clearAllMocks(); mocks.currentUserId = "user-1"; });
   afterEach(cleanup);
 
   it("rises a failure notice in and settles it fully visible", async () => {
@@ -94,5 +93,32 @@ describe("AiConnection motion (Wave E)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitForElementToBeRemoved(() => screen.queryByRole("alert"));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Connected"));
+  });
+});
+
+describe("AiConnection normal tier", () => {
+  beforeEach(() => { vi.clearAllMocks(); mocks.currentUserId = "user-1"; });
+  afterEach(cleanup);
+
+  it("keeps engineering copy off the cloud connections screen", async () => {
+    const view = render(<MemoryRouter><AiConnection /></MemoryRouter>);
+    await waitFor(() => expect(mocks.get).toHaveBeenCalled());
+    await screen.findByText(/cloud connections/i);
+    const text = (view.container.textContent ?? "").toLowerCase();
+    for (const term of [
+      "checksum",
+      "runtime",
+      "backend",
+      "transport",
+      "schema",
+      "device_required",
+      "challenger",
+      "fresh passing measurement",
+      "device required",
+    ]) {
+      expect(text).not.toContain(term);
+    }
+    expect(text).not.toMatch(/[0-9a-f]{16,}/);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 });
