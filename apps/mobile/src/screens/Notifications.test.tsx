@@ -107,6 +107,16 @@ describe("Notifications inbox", () => {
     await waitFor(() => expect(screen.queryByLabelText(/unread/i)).toBeNull());
   });
 
+  it("sends the gear to notification settings instead of inline controls", async () => {
+    fetchMock.mockResolvedValue([item()]);
+    renderNotifications();
+
+    await screen.findByText("bob");
+    const gear = screen.getByRole("link", { name: /notification settings/i });
+    expect(gear.getAttribute("href")).toBe("/settings/notifications");
+    expect(screen.queryByRole("switch", { name: /push notifications/i })).toBeNull();
+  });
+
   it("deletes an item, then restores it from the Undo banner", async () => {
     fetchMock.mockResolvedValue([item()]);
     renderNotifications();

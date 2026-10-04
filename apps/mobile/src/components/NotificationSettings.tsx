@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { AtSign, BellRing, Heart, MessageCircle, PackageCheck } from "lucide-react";
+import { PreferenceSwitchRow, SettingsGroup } from "./settings";
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
   fetchNotificationPreferences,
@@ -9,12 +11,43 @@ import { pushController } from "../services/pushRuntime";
 import type { PushPermissionState } from "../services/pushNotifications";
 import { friendlyError } from "../utils/friendlyErrors";
 
-const TOGGLES: Array<{ key: keyof NotificationPreferences; label: string; hint: string }> = [
-  { key: "pushEnabled", label: "Push notifications", hint: "Send alerts to this device." },
-  { key: "likes", label: "Likes", hint: "Someone likes or dislikes your report." },
-  { key: "comments", label: "Comments", hint: "Someone comments on your report." },
-  { key: "mentions", label: "Mentions", hint: "Someone mentions you in a comment." },
-  { key: "status", label: "Status updates", hint: "A report you follow changes status." },
+interface ToggleDef {
+  key: keyof NotificationPreferences;
+  label: string;
+  hint: string;
+  icon: typeof Heart;
+}
+
+const MASTER_TOGGLE: ToggleDef = {
+  key: "pushEnabled",
+  label: "Push notifications",
+  hint: "Send alerts to this device.",
+  icon: BellRing,
+};
+
+const GROUPS: Array<{ title: string; description: string; toggles: ToggleDef[] }> = [
+  {
+    title: "Comments & mentions",
+    description: "Replies and mentions on your reports.",
+    toggles: [
+      { key: "comments", label: "Comments", hint: "Someone comments on your report.", icon: MessageCircle },
+      { key: "mentions", label: "Mentions", hint: "Someone mentions you in a comment.", icon: AtSign },
+    ],
+  },
+  {
+    title: "Report activity",
+    description: "Reactions to your reports.",
+    toggles: [
+      { key: "likes", label: "Likes", hint: "Someone likes or dislikes your report.", icon: Heart },
+    ],
+  },
+  {
+    title: "Report updates",
+    description: "Followed reports that change status.",
+    toggles: [
+      { key: "status", label: "Status updates", hint: "A report you follow changes status.", icon: PackageCheck },
+    ],
+  },
 ];
 
 /** Per-user push/notification preferences. Saved on each change (optimistic). */
@@ -95,8 +128,21 @@ export function NotificationSettings() {
 
   const pushOff = !prefs.pushEnabled;
 
+  const renderToggle = ({ key, label, hint, icon }: ToggleDef, disabled: boolean) => (
+    <PreferenceSwitchRow
+      key={key}
+      title={label}
+      description={hint}
+      icon={icon}
+      iconTone="notifications"
+      checked={prefs[key]}
+      disabled={disabled}
+      onChange={(value) => void toggle(key, value)}
+    />
+  );
+
   return (
-    <div className="flex flex-col gap-1 px-3 py-2">
+    <div className="flex flex-col gap-1 py-2">
       {permission && permission !== "unsupported" ? (
         <section className="mb-1 rounded-m3-xs border border-outline-variant p-3" aria-label="Device notifications">
           {permission === "granted" ? (
@@ -120,29 +166,19 @@ export function NotificationSettings() {
           )}
         </section>
       ) : null}
-      {TOGGLES.map(({ key, label, hint }) => {
-        const disabled = key !== "pushEnabled" && pushOff;
-        return (
-          <label
-            key={key}
-            className="flex min-h-[52px] items-center gap-3 rounded-m3-xs px-1 py-1"
-          >
-            <span className="flex flex-1 flex-col">
-              <span className="text-sm font-medium text-on-surface">{label}</span>
-              <span className="text-xs text-on-surface-variant">{hint}</span>
-            </span>
-            <input
-              type="checkbox"
-              role="switch"
-              className="h-6 w-6 shrink-0 accent-primary"
-              checked={prefs[key]}
-              disabled={disabled}
-              aria-label={label}
-              onChange={(event) => void toggle(key, event.target.checked)}
-            />
-          </label>
-        );
-      })}
+      <SettingsGroup
+        title="Push notifications"
+        description="Master switch. Turning it off pauses every category below."
+      >
+        {renderToggle(MASTER_TOGGLE, false)}
+      </SettingsGroup>
+      {GROUPS.map((group) => (
+        <SettingsGroup key={group.title} title={group.title} description={group.description}>
+          {group.toggles.map((def) =>
+            renderToggle(def, def.key !== "pushEnabled" && pushOff),
+          )}
+        </SettingsGroup>
+      ))}
       {error ? (
         <p role="alert" className="px-1 pt-1 text-xs text-error">{error}</p>
       ) : null}

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { BackButton } from "../components/BackButton";
+import { Bell, LifeBuoy, Sparkles } from "lucide-react";
+import { AdvancedDisclosure, SettingsGroup, SettingsPage, SettingsRow } from "../components/settings";
 import { readBuildInfo, type BuildInfo } from "../services/buildInfo";
 import { APP_VERSION, BACKEND_SCHEMA_VERSION, CAPABILITIES_VERSION } from "../services/appCapabilities";
+import "./About.css";
 
 function shortSha(sha: string | null | undefined): string {
   if (!sha || sha === "unknown") return "unknown";
@@ -9,9 +11,9 @@ function shortSha(sha: string | null | undefined): string {
 }
 
 /**
- * Profile → About: build identity for release diagnosis. App version comes
- * from package.json; build SHA and versionCode come from the installed native
- * build when available (readBuildInfo fails closed to {} on web).
+ * Settings → About (consumer): brand, mission, live version, and useful
+ * links. Build identity stays available inside the Technical details
+ * disclosure for release diagnosis — disclosed, not deleted.
  */
 export function About() {
   const [info, setInfo] = useState<BuildInfo | null>(null);
@@ -34,47 +36,69 @@ export function About() {
   const fullSha = info?.buildGitSha ?? null;
 
   return (
-    <div className="flex flex-col gap-4 px-4 py-5">
-      <header className="flex min-w-0 items-center gap-2">
-        <BackButton fallbackTo="/profile" label="Back to profile" />
-        <h1 className="min-w-0 break-words text-xl font-semibold tracking-tight">About</h1>
-      </header>
-
-      <dl className="flex min-w-0 flex-col gap-3 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 text-sm">
-        <div className="min-w-0">
-          <dt className="text-xs text-on-surface-variant">App</dt>
-          <dd className="min-w-0 break-words font-medium">FindBack {APP_VERSION}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-on-surface-variant">Build</dt>
-          <dd className="min-w-0 break-words font-medium" title={fullSha ?? undefined}>
-            {shortSha(fullSha)}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-on-surface-variant">Version code</dt>
-          <dd className="min-w-0 break-words font-medium">
-            {typeof info?.versionCode === "number" && info.versionCode > 0 ? info.versionCode : "unknown"}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-on-surface-variant">Expected backend/schema capability</dt>
-          <dd className="min-w-0 break-words font-medium">{BACKEND_SCHEMA_VERSION}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-on-surface-variant">Help capability</dt>
-          <dd className="min-w-0 break-words font-medium">{CAPABILITIES_VERSION}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-on-surface-variant">AI</dt>
-          <dd className="min-w-0 break-words font-medium">
+    <SettingsPage title="About" backTo="/settings">
+      <SettingsGroup title="FindBack">
+        <div className="fb-about-brand">
+          <p className="fb-about-name">FindBack {APP_VERSION}</p>
+          <p className="fb-about-mission">
+            FindBack helps people report, discover and recover lost items without turning the
+            experience into a public-data free-for-all.
+          </p>
+          <p className="fb-about-ai">
             Optional AI features using a provider key you add (Profile → AI Connection).
             OpenRouter is the default and stays on its free route; with
             your consent a selected report photo is sent to your connected provider for suggestions.
             Reports, search and other core features work without AI.
-          </dd>
+          </p>
         </div>
-      </dl>
-    </div>
+      </SettingsGroup>
+
+      <SettingsGroup title="Useful links">
+        <SettingsRow
+          title="Help chat"
+          description="Ask the help assistant a question."
+          icon={LifeBuoy}
+          iconTone="about"
+          route="/help"
+        />
+        <SettingsRow
+          title="Notifications"
+          description="Likes, comments, and mentions on your reports."
+          icon={Bell}
+          iconTone="about"
+          route="/notifications"
+        />
+        <SettingsRow
+          title="AI Connection"
+          description="Connect an AI provider for optional features."
+          icon={Sparkles}
+          iconTone="about"
+          route="/ai-connection"
+        />
+      </SettingsGroup>
+
+      <AdvancedDisclosure>
+        <dl className="fb-about-technical">
+          <div>
+            <dt>Build</dt>
+            <dd title={fullSha ?? undefined}>{shortSha(fullSha)}</dd>
+          </div>
+          <div>
+            <dt>Version code</dt>
+            <dd>
+              {typeof info?.versionCode === "number" && info.versionCode > 0 ? info.versionCode : "unknown"}
+            </dd>
+          </div>
+          <div>
+            <dt>Expected backend/schema capability</dt>
+            <dd>{BACKEND_SCHEMA_VERSION}</dd>
+          </div>
+          <div>
+            <dt>Help capability</dt>
+            <dd>{CAPABILITIES_VERSION}</dd>
+          </div>
+        </dl>
+      </AdvancedDisclosure>
+    </SettingsPage>
   );
 }

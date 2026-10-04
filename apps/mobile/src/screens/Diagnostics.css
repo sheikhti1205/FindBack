@@ -1,0 +1,24 @@
+/* Diagnostics page: read-only state plus a selectable bundle dump. Rows keep
+   the shared 60px target and focus styling. */
+.fb-diagnostics-note {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--fb-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.fb-diagnostics-bundle {
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.75rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

@@ -40,4 +40,33 @@ describe("About", () => {
     expect(screen.getByText(/sent to your connected provider for suggestions/)).toBeTruthy();
     expect(screen.queryByText(/offline|on-device|GPU|download.*model/i)).toBeNull();
   });
+
+  it("shows the consumer mission verbatim with one h1 and real links", async () => {
+    bridge.getBuildInfo.mockResolvedValue({ buildGitSha: "abc123", versionCode: 1 });
+    render(<MemoryRouter><About /></MemoryRouter>);
+    expect(
+      await screen.findByText(
+        "FindBack helps people report, discover and recover lost items without turning the experience into a public-data free-for-all.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href"));
+    expect(hrefs).toContain("/help");
+    expect(hrefs).toContain("/notifications");
+    expect(hrefs).toContain("/ai-connection");
+  });
+
+  it("keeps technical details inside the disclosure", async () => {
+    bridge.getBuildInfo.mockResolvedValue({
+      buildGitSha: "fdbd355abc123def456",
+      versionCode: 1234,
+    });
+    render(<MemoryRouter><About /></MemoryRouter>);
+    const disclosure = await screen.findByText("Technical details");
+    const details = disclosure.closest("details") ?? document.body;
+    expect(details.textContent).toContain("fdbd355abc12");
+    expect(details.textContent).toContain("1234");
+    expect(details.textContent).toContain(BACKEND_SCHEMA_VERSION);
+    expect(details.textContent).toContain(CAPABILITIES_VERSION);
+  });
 });
