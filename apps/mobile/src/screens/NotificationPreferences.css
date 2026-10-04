@@ -1,0 +1,12 @@
+/* Notification preferences page: the shared component owns its own spacing;
+   this only keeps nested group cards inside the page card readable at xlarge
+   text sizes and honours reduced motion (no animation lives here). */
+.fb-notification-preferences {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fb-notification-preferences .fb-settings-group-card {
+  border: 0;
+  background: transparent;
+}

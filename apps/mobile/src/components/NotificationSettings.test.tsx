@@ -32,8 +32,8 @@ describe("NotificationSettings", () => {
     fetchMock.mockResolvedValue(allOn());
     render(<NotificationSettings />);
 
-    const push = (await screen.findByRole("switch", { name: "Push notifications" })) as HTMLInputElement;
-    expect(push.checked).toBe(true);
+    const push = await screen.findByRole("switch", { name: "Push notifications" });
+    expect(push.getAttribute("aria-checked")).toBe("true");
     expect(screen.getAllByRole("switch")).toHaveLength(5);
   });
 
@@ -42,8 +42,8 @@ describe("NotificationSettings", () => {
     saveMock.mockResolvedValue();
     render(<NotificationSettings />);
 
-    const comments = (await screen.findByRole("switch", { name: "Comments" })) as HTMLInputElement;
-    expect(comments.disabled).toBe(true);
+    const comments = await screen.findByRole("switch", { name: "Comments" });
+    expect((comments as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("switch", { name: "Push notifications" }));
 
@@ -55,10 +55,25 @@ describe("NotificationSettings", () => {
     saveMock.mockRejectedValue(new Error("offline"));
     render(<NotificationSettings />);
 
-    const likes = (await screen.findByRole("switch", { name: "Likes" })) as HTMLInputElement;
+    const likes = await screen.findByRole("switch", { name: "Likes" });
     fireEvent.click(likes);
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
-    expect(likes.checked).toBe(true);
+    expect(likes.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("groups switches under Comments & mentions, Report activity, and Report updates", async () => {
+    fetchMock.mockResolvedValue(allOn());
+    render(<NotificationSettings />);
+
+    await screen.findByRole("switch", { name: "Push notifications" });
+    for (const heading of ["Comments & mentions", "Report activity", "Report updates"]) {
+      expect(screen.getByRole("heading", { name: heading })).toBeTruthy();
+    }
+    const group = (name: string) =>
+      screen.getByRole("heading", { name }).closest("section") ?? document.body;
+    expect(group("Comments & mentions").querySelectorAll('[role="switch"]')).toHaveLength(2);
+    expect(group("Report activity").querySelectorAll('[role="switch"]')).toHaveLength(1);
+    expect(group("Report updates").querySelectorAll('[role="switch"]')).toHaveLength(1);
   });
 });

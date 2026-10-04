@@ -1,0 +1,42 @@
+/* Consumer About page: brand block and technical disclosure copy. Rows keep
+   the shared 60px target and focus styling; this only types the prose. */
+.fb-about-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fb-about-name {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.fb-about-mission {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.fb-about-ai {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--fb-on-surface-variant);
+}
+
+.fb-about-technical {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.fb-about-technical dt {
+  color: var(--fb-on-surface-variant);
+}
+
+.fb-about-technical dd {
+  font-weight: 500;
+}
