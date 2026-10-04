@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Capacitor } from "@capacitor/core";
-import { KeyRound } from "lucide-react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "../auth";
-import { BackButton } from "../components/BackButton";
 import { Button } from "../components/Button";
 import { ModelCatalogSheet, priceLineCopy } from "../components/ModelCatalogSheet";
+import {
+  SettingsGroup,
+  SettingsPage,
+  StatusPill,
+} from "../components/settings";
 import { aiCredentials } from "../services/aiCredentials";
 import { createOpenRouterClient } from "../services/openRouter";
 import type { AiSelection, ModelRecord, PaidConsent, ProviderId } from "../services/ai/providerContract";
@@ -17,23 +20,6 @@ import {
 } from "../services/ai/modelCatalog";
 import { resolveSelection } from "../services/ai/modelPolicy";
 import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
-import {
-  canShowAuto,
-  canShowGpu,
-  canShowNeedle,
-  canShowOffline,
-  type NeedleEvidence,
-} from "../services/ai/uiGates";
-import type { ProbeContext, ProbeRecord } from "../services/ai/deviceProbe";
-import type { OfflineModelStatus } from "../services/ai/offlineModelManager";
-import {
-  getAutoCapabilityCopy,
-  getGpuCapabilityCopy,
-  getNeedleCapabilityCopy,
-  getOfflineCapabilityCopy,
-  type MeasuredCapabilityFlags,
-} from "../services/appCapabilities";
-import { exportDiagJson } from "../services/diag";
 
 const validator = createOpenRouterClient(async () => null);
 
@@ -124,20 +110,6 @@ export type AiConnectionProps = {
   readonly staleAfterMs?: number;
   /** Selection mode gate: paid rows need paid-explicit + consent (default free-only). */
   readonly mode?: AiSelection["mode"];
-  /**
-   * WS-E measured-evidence inputs (borrowed shapes, never owned logic).
-   * All default to no evidence, so every gated affordance stays hidden
-   * until a fresh, correctness-passing measurement is passed in.
-   */
-  readonly probeRecords?: readonly ProbeRecord[] | null;
-  readonly probeContext?: ProbeContext | null;
-  readonly offlineStatus?: OfflineModelStatus | null;
-  readonly needleEvidence?: NeedleEvidence | null;
-  /**
-   * User-triggered diagnostics export seam. Defaults to the redacted
-   * `exportDiagJson` ring export; tests inject a mock. Nothing is uploaded.
-   */
-  readonly exportDiagnostics?: () => string;
 };
 
 const PROVIDER_AVAILABILITY: ReadonlyArray<{ provider: ProviderId; copy: string }> = [
@@ -160,11 +132,6 @@ export function AiConnection({
   listModels,
   staleAfterMs = CATALOG_STALE_AFTER_MS,
   mode = "free-only",
-  probeRecords = null,
-  probeContext = null,
-  offlineStatus = null,
-  needleEvidence = null,
-  exportDiagnostics = exportDiagJson,
 }: AiConnectionProps) {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
@@ -202,56 +169,6 @@ export function AiConnection({
   const [consentDraftId, setConsentDraftId] = useState<string | null>(null);
   const [consentChecked, setConsentChecked] = useState(false);
   const [gateMessage, setGateMessage] = useState<string | null>(null);
-  const [diagNotice, setDiagNotice] = useState<string | null>(null);
-
-  // WS-E: visibility gates consume measured evidence only (no guessing).
-  // Defaults (null evidence) keep every affordance hidden.
-  const showAuto = canShowAuto(probeRecords, probeContext);
-  const showOfflineGate = canShowOffline(offlineStatus);
-  const showNeedle = canShowNeedle(needleEvidence);
-  const showGpu = canShowGpu(probeRecords, probeContext);
-  const measuredFlags: MeasuredCapabilityFlags = {
-    hasFreshAutoProbe: showAuto,
-    hasVerifiedOfflineModel: showOfflineGate,
-    hasNeedleEvidence: showNeedle,
-    hasFreshGpuProbe: showGpu,
-  };
-  const autoCopy = getAutoCapabilityCopy(measuredFlags).join(" ");
-  const offlineCopy = getOfflineCapabilityCopy(measuredFlags).join(" ");
-  const needleCopy = getNeedleCapabilityCopy(measuredFlags).join(" ");
-  const gpuCopy = getGpuCapabilityCopy(measuredFlags).join(" ");
-
-  function handleExportDiagnostics() {
-    try {
-      const payload = exportDiagnostics();
-      let count = 0;
-      try {
-        const parsed = JSON.parse(payload) as unknown;
-        if (Array.isArray(parsed)) count = parsed.length;
-      } catch {
-        count = 0;
-      }
-      setDiagNotice(
-        `Exported ${count} ${count === 1 ? "event" : "events"} (redacted). Nothing was uploaded.`,
-      );
-      try {
-        const blob = new Blob([payload], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = "findback-diag.json";
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
-      } catch {
-        // Download is best effort; the export payload + notice already
-        // confirm the user-triggered export happened.
-      }
-    } catch {
-      setDiagNotice("Could not export diagnostics. Try again.");
-    }
-  }
 
   // Account switch: consent never crosses accounts; selection state resets.
   // Provider switch resets the key form the same way: one slot is ever shown.
@@ -503,15 +420,16 @@ export function AiConnection({
   const showCatalogue = catalog.length > 0 || listModels !== undefined || retrievedAt !== null;
 
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-5 px-4 py-5">
-      <BackButton fallbackTo="/profile" label="Back to profile" />
-      <header className="flex items-center gap-3">
-        <KeyRound size={22} aria-hidden />
-        <h1 className="text-xl font-semibold">AI Connection</h1>
-      </header>
-      <p className="text-sm text-on-surface-variant">
-        Connect your own {providerLabel} API key. FindBack uses free models automatically; availability and daily allowance depend on your provider account. Reports, search and other core features work without AI.
-      </p>
+    <SettingsPage
+      title="Cloud connections"
+      description={`Use your own ${providerLabel} key for cloud AI. FindBack uses free models automatically; availability and daily allowance depend on your provider account. Reports, search and other core features work without AI.`}
+      backTo="/settings/ai"
+      backLabel="Back to AI & intelligence"
+    >
+      <SettingsGroup
+        title={providerLabel}
+        description="Your key stays on this device and is only sent to your provider when you use AI."
+      >
       <div className="flex flex-col gap-1">
         <label htmlFor="byok-provider" className="text-sm font-medium">AI provider</label>
         <select
@@ -537,10 +455,15 @@ export function AiConnection({
           </p>
         )}
       </div>
-      <p role="status" className="font-medium">
-        {connected
-          ? `Connected to ${providerLabel}${masked ? ` · key ending ${masked}` : ""}`
-          : `Disconnected · no ${providerLabel} key saved`}
+      <p role="status" className="flex flex-wrap items-center gap-2 font-medium">
+        <StatusPill tone={connected ? "success" : "neutral"}>
+          {connected ? "Connected" : "Not connected"}
+        </StatusPill>
+        <span>
+          {connected
+            ? `Connected to ${providerLabel}${masked ? ` · key ending ${masked}` : ""}`
+            : `Disconnected · no ${providerLabel} key saved`}
+        </span>
       </p>
       {/* "Connected" above is set only after validateKey succeeds for this account;
           the catalogue below is browse-only and never a verified state. */}
@@ -587,9 +510,9 @@ export function AiConnection({
         </div>
       )}
       {(connected || saved) && <Button type="button" variant="outline" disabled={busy} onClick={() => void remove()}>Remove key</Button>}
+      </SettingsGroup>
       {showCatalogue ? (
-        <section aria-label="Model catalogue controls" className="flex flex-col gap-3">
-          <h2 className="text-base font-semibold">Models</h2>
+        <SettingsGroup title="Models">
           <p className="text-xs text-on-surface-variant">
             Selection mode: {mode === "paid-explicit" ? "explicit consent" : "free-only"}.
             Paid models always need explicit per-model, per-price confirmation.
@@ -730,45 +653,8 @@ export function AiConnection({
               {catalog.length === 0 ? "No models loaded." : "No models match this search."}
             </p>
           )}
-        </section>
+        </SettingsGroup>
       ) : null}
-      <section aria-label="On-device measurements" className="flex flex-col gap-2">
-        <h2 className="text-base font-semibold">On-device measurements</h2>
-        <p className="text-xs text-on-surface-variant">
-          Automatic, offline, Needle, and GPU details appear only with fresh,
-          correctness-passing measurements on this device. Otherwise the safe
-          CPU fallback is served.
-        </p>
-        <div data-testid="ai-gate-auto" className="text-sm text-on-surface-variant">
-          <span className="font-medium text-on-surface">Automatic: </span>{autoCopy}
-        </div>
-        <div data-testid="ai-gate-offline" className="text-sm text-on-surface-variant">
-          <span className="font-medium text-on-surface">Offline: </span>{offlineCopy}
-        </div>
-        <div data-testid="ai-gate-needle" className="text-sm text-on-surface-variant">
-          <span className="font-medium text-on-surface">Needle: </span>{needleCopy}
-        </div>
-        <div data-testid="ai-gate-gpu" className="text-sm text-on-surface-variant">
-          <span className="font-medium text-on-surface">GPU: </span>{gpuCopy}
-        </div>
-      </section>
-      <section aria-label="Diagnostics" className="flex flex-col gap-2">
-        <h2 className="text-base font-semibold">Diagnostics</h2>
-        <p className="text-xs text-on-surface-variant">
-          Diagnostic export is manual and redacted. Nothing is uploaded; the
-          file stays with you.
-        </p>
-        <div>
-          <Button type="button" variant="outline" onClick={handleExportDiagnostics}>
-            Export diagnostics
-          </Button>
-        </div>
-        {diagNotice !== null ? (
-          <p role="status" data-testid="ai-diag-export-status" className="text-sm">
-            {diagNotice}
-          </p>
-        ) : null}
-      </section>
-    </main>
+    </SettingsPage>
   );
 }

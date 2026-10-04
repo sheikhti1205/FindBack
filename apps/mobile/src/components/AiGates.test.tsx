@@ -33,7 +33,7 @@ vi.mock("../services/supabaseClient", () => ({
 
 import { PROBE_VERSION } from "../services/ai/deviceProbe";
 import type { ProbeContext, ProbeRecord } from "../services/ai/deviceProbe";
-import { AiConnection } from "../screens/AiConnection";
+import { AiAdvanced } from "../screens/AiAdvanced";
 import { AiModels } from "../screens/AiModels";
 
 afterEach(cleanup);
@@ -65,10 +65,10 @@ function gpuProbe(): ProbeRecord {
 }
 
 describe("WS-E AI UI gates (hidden without evidence, measured with evidence)", () => {
-  it("AiConnection hides Auto/GPU/Needle/offline sections without evidence", () => {
+  it("AiAdvanced hides Auto/GPU/Needle/offline sections without evidence", () => {
     render(
       <MemoryRouter>
-        <AiConnection />
+        <AiAdvanced />
       </MemoryRouter>,
     );
     expect(screen.getByTestId("ai-gate-auto").textContent).toMatch(/hidden/i);
@@ -79,10 +79,10 @@ describe("WS-E AI UI gates (hidden without evidence, measured with evidence)", (
     );
   });
 
-  it("AiConnection shows measured copy with fresh evidence", () => {
+  it("AiAdvanced shows measured copy with fresh evidence", () => {
     render(
       <MemoryRouter>
-        <AiConnection
+        <AiAdvanced
           probeRecords={[cpuProbe(), gpuProbe()]}
           probeContext={CONTEXT}
           needleEvidence={{ measured: true, correctnessPass: true, fresh: true }}
@@ -146,11 +146,11 @@ describe("WS-E AI UI gates (hidden without evidence, measured with evidence)", (
     );
   });
 
-  it("AiConnection diagnostics export button calls the user export", () => {
+  it("AiAdvanced diagnostics export button calls the user export", () => {
     const exportDiagnostics = vi.fn(() => JSON.stringify([{ v: 1 }]));
     render(
       <MemoryRouter>
-        <AiConnection exportDiagnostics={exportDiagnostics} />
+        <AiAdvanced exportDiagnostics={exportDiagnostics} />
       </MemoryRouter>,
     );
     fireEvent.click(

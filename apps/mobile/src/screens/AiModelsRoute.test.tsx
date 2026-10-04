@@ -1,13 +1,39 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act } from "react";
+import { cleanup } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, expect, it, vi } from "vitest";
 import { ApplicationAiService, DOWNLOAD_MODELS } from "../services/ai/applicationAi";
 import { AiModelsRoute } from "./AiModelsRoute";
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 vi.mock("../services/supabaseClient", () => ({ getSupabase: () => ({ auth: { getSession: async () => ({ data: { session: null } }) } }) }));
 afterEach(cleanup);
-it("production route connects progress, Pause, Resume, Verify, Install and Remove to native storage", async () => {
+
+const NEEDLE = DOWNLOAD_MODELS[0].modelId;
+const VISION = DOWNLOAD_MODELS[1].modelId;
+
+const FORBIDDEN = [
+  "checksum",
+  "runtime",
+  "backend",
+  "transport",
+  "schema",
+  "device_required",
+  "challenger",
+  "fresh passing measurement",
+  "device required",
+];
+
+function expectNormalTierCopy(container: HTMLElement) {
+  const text = (container.textContent ?? "").toLowerCase();
+  for (const term of FORBIDDEN) {
+    expect(text).not.toContain(term);
+  }
+  expect(text).not.toMatch(/[0-9a-f]{16,}/);
+}
+
+function androidService() {
   const files = new Map<string, string>();
   let staged = 0;
   const offsets: number[] = [];
@@ -35,18 +61,108 @@ it("production route connects progress, Pause, Resume, Verify, Install and Remov
     loadModel: async () => 2, embeddingDimension: async () => 2, embedNeedleTexts: async () => [],
     initTools: async () => {}, completeJson: async () => "{}",
   } });
-  await service.ready;
-  const transitions: string[] = [];
-  service.manager.subscribe(() => transitions.push(service.manager.statusOf(DOWNLOAD_MODELS[0].modelId)!.download));
-  render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
-  fireEvent.click(screen.getByRole("button", { name: "Download on-device model" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Pause download" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Resume download" }));
-  await screen.findByText("Installed and checksum verified.");
-  expect(offsets).toEqual([0, 1024]);
-  expect(transitions).toContain("verifying");
-  expect(service.manager.statusOf(DOWNLOAD_MODELS[0].modelId)?.checksumVerified).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "Remove on-device model" }));
-  await screen.findByRole("button", { name: "Download on-device model" });
-  expect(service.manager.statusOf(DOWNLOAD_MODELS[0].modelId)?.download).toBe("not-installed");
+  return { service, offsets };
+}
+
+describe("AiModelsRoute consumer cards", () => {
+  it("names consumer tools with model names as secondary detail only", async () => {
+    const { service } = androidService();
+    await service.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/on-device ai/i);
+    expect(screen.getByRole("heading", { name: /local text tools/i })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /photo analysis/i })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /download local text tools/i })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /download photo analysis/i })).toHaveLength(1);
+    expectNormalTierCopy(view.container);
+  });
+
+  it("production route connects progress, Pause, Resume, Ready and Remove to native storage", async () => {
+    const { service, offsets } = androidService();
+    await service.ready;
+    const transitions: string[] = [];
+    service.manager.subscribe(() => transitions.push(service.manager.statusOf(NEEDLE)!.download));
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Download Local text tools" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pause Local text tools" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Local text tools" }));
+    await screen.findByText("Ready · 35 MB");
+    expect(view.container.textContent).not.toContain("Installed and checksum verified.");
+    expect(offsets).toEqual([0, 1024]);
+    expect(transitions).toContain("verifying");
+    expect(service.manager.statusOf(NEEDLE)?.checksumVerified).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Local text tools" }));
+    await screen.findByRole("button", { name: "Download Local text tools" });
+    expect(service.manager.statusOf(NEEDLE)?.download).toBe("not-installed");
+    expectNormalTierCopy(view.container);
+  });
+
+  it("shows downloading percent with pause and ready size without raw bytes", async () => {
+    const { service } = androidService();
+    await service.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    act(() => {
+      service.manager.dispatch(NEEDLE, { type: "QUEUE_DOWNLOAD", userInitiated: true });
+      service.manager.dispatch(NEEDLE, { type: "START" });
+      service.manager.dispatch(NEEDLE, {
+        type: "PROGRESS",
+        downloadedBytes: Math.round(DOWNLOAD_MODELS[0].bytes * 0.42),
+      });
+    });
+    expect(await screen.findByText("Downloading 42%")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Pause Local text tools" })).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: /local text tools download progress/i })).toBeTruthy();
+    expectNormalTierCopy(view.container);
+  });
+
+  it("shows needs more storage instead of a storage failure dump", async () => {
+    const { service } = androidService();
+    await service.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    act(() => {
+      service.manager.dispatch(VISION, { type: "FAIL", reason: "not enough free storage for this download" });
+    });
+    expect(await screen.findByText("Needs more storage")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download Photo analysis" })).toBeTruthy();
+    expectNormalTierCopy(view.container);
+  });
+
+  it("retries a failed download with its notice intact", async () => {
+    const { service } = androidService();
+    await service.ready;
+    render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    act(() => {
+      service.manager.dispatch(VISION, { type: "FAIL", reason: "transfer failed" });
+    });
+    expect(await screen.findByRole("button", { name: "Download Photo analysis" })).toBeTruthy();
+    expect(screen.getByText("transfer failed")).toBeTruthy();
+  });
+
+  it("stays honest without native support", async () => {
+    const webService = new ApplicationAiService({ android: false });
+    await webService.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={webService} /></MemoryRouter>);
+    expect(screen.getByText(/needs the android app/i)).toBeTruthy();
+    for (const button of screen.getAllByRole("button", { name: /download/i })) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    }
+    expectNormalTierCopy(view.container);
+  });
+
+  it("uses the safest-option line until performance is measured on this phone", async () => {
+    const { service } = androidService();
+    await service.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    expect(
+      screen.getByText(
+        /findback uses the safest available option until performance has been measured on this phone/i,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: /measure performance/i }).getAttribute("href")).toBe(
+      "/settings/ai/advanced",
+    );
+    expectNormalTierCopy(view.container);
+    await waitFor(() => expect(view.container.textContent).toContain("Local text tools"));
+  });
 });
