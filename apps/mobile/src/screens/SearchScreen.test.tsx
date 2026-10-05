@@ -168,6 +168,116 @@ describe("SearchScreen URL filters", () => {
     expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
   });
 
+  describe("NL smart filters", () => {
+    function renderWithNl(nlExtract?: (input: string) => Promise<Record<string, string>>) {
+      return render(
+        <MemoryRouter initialEntries={["/search"]}>
+          <SearchScreen nlExtract={nlExtract as never} />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+    }
+
+    it("applies an extracted patch to the ordinary editable controls", async () => {
+      const seen: string[] = [];
+      renderWithNl(async (input: string) => {
+        seen.push(input);
+        return {
+          query: "black wallet",
+          category: "Bags & Wallets",
+          status: "OPEN",
+          dateFrom: "2026-09-18",
+          dateTo: "2026-09-25",
+        };
+      });
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "black wallet lost last week" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(await screen.findByText("Category: Bags & Wallets")).toBeTruthy();
+      expect(await screen.findByText("Status: Open")).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Remove start date filter" })).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Remove end date filter" })).toBeTruthy();
+      await waitFor(() =>
+        expect(fetchFeedMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            q: "black wallet",
+            category: "Bags & Wallets",
+            status: "OPEN",
+            dateFrom: "2026-09-18",
+            dateTo: "2026-09-25",
+          }),
+          undefined,
+        ),
+      );
+      expect(seen).toEqual(["black wallet lost last week"]);
+      // The query lands in the editable search field, not a hidden filter.
+      expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("black wallet");
+    });
+
+    it("leaves filters untouched when nothing confident is extracted", async () => {
+      renderWithNl(async () => ({}));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+      const calls = fetchFeedMock.mock.calls.length;
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "vague" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(await screen.findByText("No confident filters found — nothing changed.")).toBeTruthy();
+      expect(screen.queryByText(/Category:/)).toBeNull();
+      // No new feed fetch carries filters: the last call stays unfiltered.
+      await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/search"));
+      const last = fetchFeedMock.mock.calls[fetchFeedMock.mock.calls.length - 1] as [
+        Record<string, unknown>,
+      ];
+      expect(last[0].category).toBeUndefined();
+      expect(last[0].q).toBeUndefined();
+      expect(fetchFeedMock.mock.calls.length).toBe(calls);
+    });
+
+    it("reports failure without changing filters", async () => {
+      renderWithNl(async () => {
+        throw new Error("boom");
+      });
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "wallet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(await screen.findByText("Smart search failed — nothing changed.")).toBeTruthy();
+      expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("");
+    });
+
+    it("removing a date chip drops the filter", async () => {
+      renderWithNl(async () => ({ dateFrom: "2026-09-18", dateTo: "2026-09-25" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "last week" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+      expect(await screen.findByRole("button", { name: "Remove start date filter" })).toBeTruthy();
+
+      fetchFeedMock.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Remove start date filter" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("location").textContent).not.toContain("dateFrom="),
+      );
+      expect(screen.queryByRole("button", { name: "Remove start date filter" })).toBeNull();
+      // The end-date chip remains editable.
+      expect(screen.getByRole("button", { name: "Remove end date filter" })).toBeTruthy();
+    });
+
+    it("disables smart filters when no extractor is wired", async () => {
+      renderSearch();
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+      const button = screen.getByRole("button", { name: "Smart search" });
+      expect(button.getAttribute("disabled")).not.toBeNull();
+      expect(button.getAttribute("title")).toBe("Smart search unavailable");
+    });
+  });
+
   it("gives the toolbar separation once the results scroll", async () => {
     const { container } = renderSearch();
     await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());

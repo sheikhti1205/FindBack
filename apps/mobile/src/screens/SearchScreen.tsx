@@ -8,6 +8,7 @@ import { useFeed } from "../hooks/useFeed";
 import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 import { AdvancedSearchFilters, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
+import type { NlFilterPatch } from "../services/search/nlFilters";
 import {
   fadeVariants,
   motionDurations,
@@ -20,7 +21,16 @@ import {
 
 type TypeFilter = PostType | "ALL";
 
-export function SearchScreen() {
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+export function SearchScreen({
+  nlExtract,
+}: {
+  /** Injected NL extractor (test fakes or a live extractNlFilters composer).
+   * Absent means smart search is unavailable: the button stays disabled and
+   * nothing is ever guessed. */
+  nlExtract?: (input: string) => Promise<NlFilterPatch>;
+}) {
   const { tapCount } = useTabTap();
   // Imperative travel (scroll-to-top) cannot see MotionConfig — collapse to
   // instant when the OS prefers reduced motion. Read live (not the cached
@@ -35,6 +45,57 @@ export function SearchScreen() {
   const [qParam, setQParam] = useUrlParam("q");
   const [query, setQuery] = useState(qParam);
   const [appliedQuery, setAppliedQuery] = useState(qParam.trim());
+  // NL-derived date bounds. Only well-formed ISO days reach the feed; a
+  // crafted deep-link value never becomes a filter.
+  const [dateFromParam, setDateFromParam] = useUrlParam("dateFrom");
+  const [dateToParam, setDateToParam] = useUrlParam("dateTo");
+  const dateFrom = ISO_DATE_PATTERN.test(dateFromParam) ? dateFromParam : "";
+  const dateTo = ISO_DATE_PATTERN.test(dateToParam) ? dateToParam : "";
+  // NL smart search: extracted values land in the ordinary editable
+  // controls above (query field, filter chips), never applied blindly.
+  const [nlInput, setNlInput] = useState("");
+  const [nlBusy, setNlBusy] = useState(false);
+  const [nlNote, setNlNote] = useState<string | null>(null);
+
+  async function applyNlFilters() {
+    const text = nlInput.trim();
+    if (nlExtract === undefined || nlBusy || text === "") return;
+    setNlBusy(true);
+    setNlNote(null);
+    try {
+      const patch = await nlExtract(text);
+      let applied = 0;
+      if (patch.query !== undefined) {
+        setQuery(patch.query);
+        applied += 1;
+      }
+      if (patch.category !== undefined) {
+        advanced.setCategory(patch.category);
+        applied += 1;
+      }
+      if (patch.status !== undefined) {
+        advanced.setStatus(patch.status);
+        applied += 1;
+      }
+      if (patch.dateFrom !== undefined) {
+        setDateFromParam(patch.dateFrom);
+        applied += 1;
+      }
+      if (patch.dateTo !== undefined) {
+        setDateToParam(patch.dateTo);
+        applied += 1;
+      }
+      setNlNote(
+        applied === 0
+          ? "No confident filters found — nothing changed."
+          : `Applied ${applied} smart filter${applied === 1 ? "" : "s"} — review or remove them below.`,
+      );
+    } catch {
+      setNlNote("Smart search failed — nothing changed.");
+    } finally {
+      setNlBusy(false);
+    }
+  }
   // Search activation: the field rests as a compact affordance and expands
   // into its active state on focus/input; clear/cancel collapse it back.
   const [searchFocused, setSearchFocused] = useState(false);
@@ -63,6 +124,8 @@ export function SearchScreen() {
       status: advanced.status || undefined,
       sort: advanced.sort,
       q: appliedQuery || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
     },
     { cacheKey: "search:feed", scrollRef },
   );
@@ -191,7 +254,63 @@ export function SearchScreen() {
           ]}
         />
 
+        <div className="flex items-center gap-2">
+          <label htmlFor="nl-search" className="sr-only">
+            Describe your search
+          </label>
+          <input
+            id="nl-search"
+            type="text"
+            value={nlInput}
+            onChange={(e) => setNlInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void applyNlFilters();
+            }}
+            placeholder="Try &lsquo;black wallet lost last week&rsquo;&hellip;"
+            aria-label="Describe your search"
+            className="min-w-0 flex-1 rounded-m3-sm border border-outline-variant bg-surface px-3 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => void applyNlFilters()}
+            disabled={nlExtract === undefined || nlBusy || nlInput.trim() === ""}
+            title={nlExtract === undefined ? "Smart search unavailable" : "Apply smart filters"}
+            className="inline-flex min-h-[48px] shrink-0 items-center justify-center rounded-m3-sm border border-outline-variant bg-surface px-4 text-sm font-medium text-on-surface disabled:opacity-50"
+          >
+            {nlBusy ? "Applying…" : "Smart search"}
+          </button>
+        </div>
+        {nlNote !== null && (
+          <p className="text-xs text-on-surface-variant" role="status">
+            {nlNote}
+          </p>
+        )}
+
         <AdvancedSearchFilters filters={advanced} />
+        {(dateFrom !== "" || dateTo !== "") && (
+          <div className="flex flex-wrap items-center gap-2" aria-label="Date filters">
+            {dateFrom !== "" && (
+              <button
+                type="button"
+                onClick={() => setDateFromParam("")}
+                aria-label="Remove start date filter"
+                className="inline-flex min-h-[48px] items-center gap-1.5 rounded-full border border-outline-variant bg-surface-container px-3 text-sm text-on-surface"
+              >
+                From {dateFrom}<X size={14} aria-hidden />
+              </button>
+            )}
+            {dateTo !== "" && (
+              <button
+                type="button"
+                onClick={() => setDateToParam("")}
+                aria-label="Remove end date filter"
+                className="inline-flex min-h-[48px] items-center gap-1.5 rounded-full border border-outline-variant bg-surface-container px-3 text-sm text-on-surface"
+              >
+                To {dateTo}<X size={14} aria-hidden />
+              </button>
+            )}
+          </div>
+        )}
       </section>
 
       <div ref={scrollRef} onScroll={handleResultsScroll} className="flex-1 overflow-y-auto">

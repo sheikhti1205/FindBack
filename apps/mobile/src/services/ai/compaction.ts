@@ -43,6 +43,9 @@ import type {
 } from "./providerContract";
 import { computeContextBudget } from "./contextBudget";
 import type { ContextBudgetInput } from "./contextBudget";
+import type { ModelProfile } from "./modelProfiles";
+import { SUMMARY_NOTES_MAX_CHARS, summarizeLocalContext, type SummaryDensity } from "./ops/summarizeLocalContext";
+import type { GenerateFn } from "./types";
 
 export class CompactionError extends Error {
   constructor(
@@ -353,6 +356,113 @@ export function recompactForModelSwitch(input: RecompactInput): RecompactResult 
     reason: "Prompt exceeds the next model window even compacted; reduce context or pick a larger route.",
     recentTurns: plan.recentTurns,
     approvedImageIds: images,
+  };
+}
+
+const LOCAL_COMPACTION_COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
+
+function nonEmptyText(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value.trim() === "" ? undefined : value;
+}
+
+export interface LongChatCompactionRequest {
+  /** Older turns eligible for summarization (recent turns stay verbatim). */
+  readonly olderTurns: readonly ChatTurn[];
+  readonly generate: GenerateFn;
+  readonly profile: ModelProfile;
+  readonly density?: SummaryDensity;
+  /** Current draft: carried verbatim alongside the summary, never summarized. */
+  readonly draftText?: string;
+  /** Latest user request: carried verbatim, never summarized away. */
+  readonly latestRequestText?: string;
+  /** App policy / current knowledge: redacted before the model sees them. */
+  readonly forbiddenTexts?: readonly string[];
+}
+
+export type LongChatCompactionOutcome =
+  | { readonly action: "skipped"; readonly reason: string }
+  | {
+      readonly action: "compacted";
+      readonly summaryText: string;
+      readonly generatedBy: "local-model" | "local-extractive";
+      readonly sourceTurnIds: readonly string[];
+      readonly preservedDraft?: string;
+      readonly preservedLatestRequest?: string;
+    }
+  | { readonly action: "failed"; readonly reason: string };
+
+/**
+ * Invisible long-chat compaction through the summarize-local-context op.
+ *
+ * Bounds: notes longer than SUMMARY_NOTES_MAX_CHARS take the local
+ * extractive path without calling the model; op output is coordinate- and
+ * poison-scanned defense-in-depth (the op enforces its own max
+ * input/output plus coordinate rejection first). The current draft and the
+ * latest request ride along verbatim and are never summarized. Fail-closed:
+ * when no safe summary exists the transcript is left intact (`failed`),
+ * never a leaky or poisoned checkpoint.
+ */
+export async function compactLongChatLocal(
+  request: LongChatCompactionRequest,
+): Promise<LongChatCompactionOutcome> {
+  if (request.olderTurns.length === 0) {
+    return { action: "skipped", reason: "no-older-turns" };
+  }
+  const forbidden = request.forbiddenTexts ?? [];
+  const sourceTurnIds = request.olderTurns.map((turn) => turn.id);
+  const preservedDraft = nonEmptyText(request.draftText);
+  const preservedLatestRequest = nonEmptyText(request.latestRequestText);
+  const preserved = {
+    ...(preservedDraft !== undefined ? { preservedDraft } : {}),
+    ...(preservedLatestRequest !== undefined ? { preservedLatestRequest } : {}),
+  };
+
+  const extractiveFallback = (): LongChatCompactionOutcome => {
+    const { summaryText } = buildExtractiveSummary(request.olderTurns, { forbiddenTexts: forbidden });
+    if (isSummaryPoisoned(summaryText) || LOCAL_COMPACTION_COORD_PATTERN.test(summaryText)) {
+      return { action: "failed", reason: "no-safe-summary" };
+    }
+    return {
+      action: "compacted",
+      summaryText,
+      generatedBy: "local-extractive",
+      sourceTurnIds,
+      ...preserved,
+    };
+  };
+
+  const scrub = (text: string): string => {
+    let next = text;
+    for (const secret of forbidden) {
+      if (secret !== "" && next.includes(secret)) next = next.split(secret).join("[redacted app text]");
+    }
+    return next;
+  };
+  const notes = request.olderTurns.map((turn) => `[${turn.id} ${turn.role}] ${scrub(turn.text)}`).join("\n");
+  if (notes.length > SUMMARY_NOTES_MAX_CHARS) return extractiveFallback();
+
+  let summaryText: string;
+  try {
+    const result = await summarizeLocalContext(
+      request.generate,
+      { notes, density: request.density ?? "short" },
+      request.profile,
+    );
+    if (!result.ok) return extractiveFallback();
+    summaryText = result.value.summaryText;
+  } catch {
+    return extractiveFallback();
+  }
+  if (isSummaryPoisoned(summaryText) || LOCAL_COMPACTION_COORD_PATTERN.test(summaryText)) {
+    return extractiveFallback();
+  }
+  return {
+    action: "compacted",
+    summaryText,
+    generatedBy: "local-model",
+    sourceTurnIds,
+    ...preserved,
   };
 }
 
