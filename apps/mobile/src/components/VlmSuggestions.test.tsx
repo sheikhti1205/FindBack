@@ -396,6 +396,90 @@ describe("VlmSuggestions — Draft description from photo", () => {
   });
 });
 
+describe("VlmSuggestions engine-aware status line (Lane E)", () => {
+  const makeFile = (name: string, type: string, size = 1000) =>
+    new File([new Uint8Array(size)], name, { type });
+  const consentLabel =
+    "Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it.";
+
+  beforeEach(() => {
+    analyze.mockReset();
+  });
+
+  it("shows 'Analyzed on-device' when the engine is on-device", async () => {
+    analyze.mockResolvedValueOnce({
+      suggestedTitle: "AI Title",
+      suggestedDescription: "AI Description",
+      suggestedCategory: "Electronics",
+      uncertainFields: [],
+      engine: "on-device",
+    });
+    const file = makeFile("photo.jpg", "image/jpeg");
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn(() => true)} /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+    fireEvent.click(screen.getByLabelText(consentLabel));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+    await waitFor(() => expect(screen.getByText("Analyzed on-device")).toBeTruthy());
+    expect(screen.queryByText("Analyzed with OpenRouter")).toBeNull();
+  });
+
+  it("shows 'Analyzed with OpenRouter' when the engine is cloud", async () => {
+    analyze.mockResolvedValueOnce({
+      suggestedTitle: "AI Title",
+      suggestedDescription: "AI Description",
+      suggestedCategory: "Electronics",
+      uncertainFields: [],
+      engine: "cloud",
+    });
+    const file = makeFile("photo.jpg", "image/jpeg");
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn(() => true)} /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+    fireEvent.click(screen.getByLabelText(consentLabel));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+    await waitFor(() => expect(screen.getByText("Analyzed with OpenRouter")).toBeTruthy());
+    expect(screen.queryByText("Analyzed on-device")).toBeNull();
+  });
+
+  it("shows the honest unavailable message when on-device analysis is unavailable", async () => {
+    analyze.mockRejectedValueOnce(
+      Object.assign(new Error("On-device photo analysis isn't available on this device."), {
+        code: "ON_DEVICE_UNAVAILABLE",
+      }),
+    );
+    const file = makeFile("photo.jpg", "image/jpeg");
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn(() => true)} /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+    fireEvent.click(screen.getByLabelText(consentLabel));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+    await waitFor(() =>
+      expect(screen.getByText(/On-device photo analysis isn't available/i)).toBeTruthy(),
+    );
+    expect(screen.queryByText("Analyzed on-device")).toBeNull();
+    expect(screen.queryByText("Analyzed with OpenRouter")).toBeNull();
+  });
+
+  it("renders no engine line for legacy results without an engine tag", async () => {
+    analyze.mockResolvedValueOnce({
+      suggestedTitle: "AI Title",
+      suggestedDescription: "AI Description",
+      suggestedCategory: "Electronics",
+      uncertainFields: [],
+    });
+    const file = makeFile("photo.jpg", "image/jpeg");
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn(() => true)} /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+    fireEvent.click(screen.getByLabelText(consentLabel));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+    await waitFor(() => expect(screen.getByText("Your title")).toBeTruthy());
+    expect(screen.queryByText("Analyzed on-device")).toBeNull();
+    expect(screen.queryByText("Analyzed with OpenRouter")).toBeNull();
+  });
+});
+
 describe("VlmSuggestions motion (Wave E)", () => {
   const makeFile = (name: string, type: string, size = 1000) =>
     new File([new Uint8Array(size)], name, { type });

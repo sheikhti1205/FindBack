@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { findPossibleMatches } from "./possibleMatches";
+import { findPossibleMatches, resolveMatchingBackend } from "./possibleMatches";
 
 const { fetchMatchCandidates } = vi.hoisted(() => ({ fetchMatchCandidates: vi.fn() }));
 vi.mock("./posts", () => ({ MATCH_CANDIDATE_LIMIT: 20, fetchMatchCandidates }));
@@ -83,5 +83,30 @@ describe("findPossibleMatches", () => {
     const emptyPayload = await findPossibleMatches(target, { fetchCandidates, embed: vi.fn().mockResolvedValue([]) });
     expect(emptyPayload.available).toBe(false);
     expect(emptyPayload.unavailableReason).toBe("embed");
+  });
+});
+
+describe("matching engine selection (Lane E)", () => {
+  it("stays on USE by default for missing/unknown backends", () => {
+    expect(resolveMatchingBackend(undefined)).toBe("use");
+    expect(resolveMatchingBackend(null)).toBe("use");
+    expect(resolveMatchingBackend({})).toBe("use");
+    expect(resolveMatchingBackend({ matchingBackend: "bogus" })).toBe("use");
+    expect(resolveMatchingBackend({ matchingBackend: "use" })).toBe("use");
+  });
+
+  it("selects Needle only when explicitly set", () => {
+    expect(resolveMatchingBackend({ matchingBackend: "needle" })).toBe("needle");
+  });
+
+  it("a failing Needle embedder degrades to unavailable, never a silent USE fallback", async () => {
+    const result = await findPossibleMatches(target, {
+      fetchCandidates: async () => [{ id: "found", title: "umbrella", description: "handle", category: "Clothing", eventDate: null, locationLabel: null, locationLat: null, locationLng: null, photoUrl: null }],
+      aiService: {
+        matchingBackend: "needle",
+        embedNeedle: async () => { throw new Error("Model is not installed and verified"); },
+      },
+    });
+    expect(result).toEqual({ matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" });
   });
 });

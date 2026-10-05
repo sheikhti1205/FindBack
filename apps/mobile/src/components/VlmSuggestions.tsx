@@ -21,6 +21,12 @@ interface VlmSuggestionsProps {
 
 const STANDARD_ERROR = "Couldn't draft text from this photo. You can retry or continue writing manually.";
 const MISSING_KEY_ERROR = "Connect your OpenRouter API key to use AI.";
+// Mirrors PHOTO_ON_DEVICE_UNAVAILABLE_MESSAGE in services/analyzeReportPhoto
+// (kept as a literal so the service mock in tests stays a single-function mock).
+const ON_DEVICE_UNAVAILABLE_ERROR =
+  "On-device photo analysis isn't available on this device. Install the local model or choose a different engine.";
+const ON_DEVICE_STATUS = "Analyzed on-device";
+const CLOUD_STATUS = "Analyzed with OpenRouter";
 const DROPPED_CATEGORY_NOTE =
   "The suggested category isn't available yet, so it was left out. Pick a category manually.";
 
@@ -41,6 +47,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [resolved, setResolved] = useState<Record<FieldKey, boolean>>(UNRESOLVED);
+  const [engine, setEngine] = useState<"on-device" | "cloud" | null>(null);
   const [editedTitle, setEditedTitle] = useState("");
   const [editedDescription, setEditedDescription] = useState("");
   const [editedCategory, setEditedCategory] = useState("");
@@ -57,6 +64,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     setError(null);
     setNotice(null);
     setBusy(false);
+    setEngine(null);
     setResolved(UNRESOLVED);
     setEditedTitle("");
     setEditedDescription("");
@@ -82,10 +90,13 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     setError(null);
     setNotice(null);
     setSuggestion(null);
+    setEngine(null);
     setResolved(UNRESOLVED);
     try {
       const result = await analyzeReportPhoto(file, true, { signal: controller.signal });
       if (generation.current !== gen) return; // stale photo: drop, never auto-apply
+      const used = (result as { engine?: unknown }).engine;
+      setEngine(used === "on-device" || used === "cloud" ? used : null);
       // An unreleased category is dropped, not fatal: the title and
       // description are still useful and applying is fully manual.
        if (result.categoryUnavailable || (result.suggestedCategory && !isReleasedCategory(result.suggestedCategory))) {
@@ -103,10 +114,13 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     }
     catch (err) {
       if (generation.current !== gen) return;
+      setEngine(null);
       if (err instanceof Error && err.name === "AbortError") {
         setError("AI request cancelled.");
       } else if ((err as { code?: string } | null)?.code === "MISSING_KEY") {
         setError(MISSING_KEY_ERROR);
+      } else if ((err as { code?: string } | null)?.code === "ON_DEVICE_UNAVAILABLE") {
+        setError(ON_DEVICE_UNAVAILABLE_ERROR);
       } else {
         setError(STANDARD_ERROR);
       }
@@ -274,6 +288,11 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
               transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
             >
               <p className="text-sm font-medium">Review suggestions from AI:</p>
+              {engine ? (
+                <p role="status" className="text-sm text-on-surface-variant">
+                  {engine === "on-device" ? ON_DEVICE_STATUS : CLOUD_STATUS}
+                </p>
+              ) : null}
 
               {/* Title comparison */}
               {!resolved.title && (

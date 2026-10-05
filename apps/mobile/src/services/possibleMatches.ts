@@ -5,6 +5,19 @@ import { stripMarkdown } from "../utils/stripMarkdown";
 import type { PostItem, PostType } from "@findback/shared";
 import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
 
+/** Matching engine selection. USE is the default incumbent; Needle is an
+ * explicit, installed-and-verified challenger only (enforced by
+ * `ApplicationAiService.selectMatchingBackend` + `embedNeedle` throwing while
+ * not installed). Unknown values normalize to USE. No engine is ever claimed
+ * better without measured evidence. */
+export type MatchingBackend = "use" | "needle";
+
+export function resolveMatchingBackend(
+  aiService?: { matchingBackend?: unknown } | null,
+): MatchingBackend {
+  return aiService?.matchingBackend === "needle" ? "needle" : "use";
+}
+
 /** Maximum number of candidate posts to consider: min(OPEN opposite-type, 20). */
 const PAGE_LIMIT = MATCH_CANDIDATE_LIMIT;
 
@@ -51,7 +64,9 @@ export async function findPossibleMatches(
 ): Promise<PossibleMatchesResult> {
   const fetchCandidates = deps?.fetchCandidates ?? defaultFetchCandidates;
   const ai = deps?.aiService ?? getApplicationAi();
-  const embed = deps?.embed ?? (ai.matchingBackend === "needle" ? (texts: string[]) => ai.embedNeedle(texts) : embedTexts);
+  // USE stays the default; explicit Needle only when installed/verified. A
+  // Needle embed failure degrades to unavailable — never a silent USE fallback.
+  const embed = deps?.embed ?? (resolveMatchingBackend(ai) === "needle" ? (texts: string[]) => ai.embedNeedle(texts) : embedTexts);
 
   const oppositeType: PostType = target.type === "LOST" ? "FOUND" : "LOST";
 

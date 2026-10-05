@@ -113,7 +113,7 @@ describe("local-first photo suggestions", () => {
     const send = vi.fn(async () => JSON.stringify(result));
     const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
     const suggestion = await analyzeReportPhoto(file(), true, { deps: { encode, send, analyzeLocally } });
-    expect(suggestion).toEqual(result);
+    expect(suggestion).toMatchObject({ ...result, engine: "on-device" });
     expect(analyzeLocally).toHaveBeenCalledWith(expect.any(File), { signal: undefined });
     expect(send).not.toHaveBeenCalled();
     expect(encode).not.toHaveBeenCalled();
@@ -165,5 +165,149 @@ describe("local-first photo suggestions", () => {
     const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
     await expect(analyzeReportPhoto(file(), true, { deps: { encode, send, analyzeLocally } })).rejects.toMatchObject({ name: "AbortError" });
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("photo engine preference", () => {
+  const file = () => new File(["jpeg"], "item.jpg", { type: "image/jpeg" });
+
+  it("defaults to automatic local-first (local success skips cloud, tags on-device)", async () => {
+    const analyzeLocally = vi.fn(async () => result);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    const suggestion = await analyzeReportPhoto(file(), true, { deps: { encode, send, analyzeLocally } });
+    expect(suggestion).toMatchObject({ engine: "on-device" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("tags cloud fallback results with the cloud engine", async () => {
+    const analyzeLocally = vi.fn(async () => null);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    const suggestion = await analyzeReportPhoto(file(), true, {
+      photoEngine: "automatic",
+      deps: { encode, send, analyzeLocally },
+    });
+    expect(suggestion).toMatchObject({ engine: "cloud", suggestedTitle: "Black umbrella" });
+  });
+
+  it("cloud-only skips local entirely", async () => {
+    const analyzeLocally = vi.fn(async () => result);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    const suggestion = await analyzeReportPhoto(file(), true, {
+      photoEngine: "cloud-only",
+      deps: { encode, send, analyzeLocally },
+    });
+    expect(suggestion).toMatchObject({ engine: "cloud" });
+    expect(analyzeLocally).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("on-device-only returns local without touching cloud", async () => {
+    const analyzeLocally = vi.fn(async () => result);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    const suggestion = await analyzeReportPhoto(file(), true, {
+      photoEngine: "on-device-only",
+      deps: { encode, send, analyzeLocally },
+    });
+    expect(suggestion).toMatchObject({ ...result, engine: "on-device" });
+    expect(send).not.toHaveBeenCalled();
+    expect(encode).not.toHaveBeenCalled();
+  });
+
+  it("on-device-only fails closed when local returns null (never falls back to cloud)", async () => {
+    const analyzeLocally = vi.fn(async () => null);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    await expect(
+      analyzeReportPhoto(file(), true, { photoEngine: "on-device-only", deps: { encode, send, analyzeLocally } }),
+    ).rejects.toMatchObject({ code: "ON_DEVICE_UNAVAILABLE" });
+    expect(send).not.toHaveBeenCalled();
+    expect(encode).not.toHaveBeenCalled();
+  });
+
+  it("on-device-only fails closed when local throws non-abort (never falls back to cloud)", async () => {
+    const analyzeLocally = vi.fn(async () => { throw new Error("model missing"); });
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    await expect(
+      analyzeReportPhoto(file(), true, { photoEngine: "on-device-only", deps: { encode, send, analyzeLocally } }),
+    ).rejects.toMatchObject({ code: "ON_DEVICE_UNAVAILABLE" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("on-device-only propagates abort and never calls cloud", async () => {
+    const analyzeLocally = vi.fn(async () => {
+      const error = new Error("Aborted") as Error & { name: string };
+      error.name = "AbortError";
+      throw error;
+    });
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    await expect(
+      analyzeReportPhoto(file(), true, { photoEngine: "on-device-only", deps: { encode, send, analyzeLocally } }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("reads the preference via the getPhotoEngine seam (Lane A store hook)", async () => {
+    const analyzeLocally = vi.fn(async () => result);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    const getPhotoEngine = vi.fn(() => "cloud-only" as const);
+    await analyzeReportPhoto(file(), true, { deps: { encode, send, analyzeLocally, getPhotoEngine } });
+    expect(getPhotoEngine).toHaveBeenCalledTimes(1);
+    expect(analyzeLocally).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes an unknown engine to automatic local-first", async () => {
+    const analyzeLocally = vi.fn(async () => result);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    const suggestion = await analyzeReportPhoto(file(), true, {
+      photoEngine: "bogus" as never,
+      deps: { encode, send, analyzeLocally },
+    });
+    expect(suggestion).toMatchObject({ engine: "on-device" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("consent and image validation run first regardless of engine", async () => {
+    const analyzeLocally = vi.fn(async () => result);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    await expect(
+      analyzeReportPhoto(file(), false, { photoEngine: "cloud-only", deps: { encode, send, analyzeLocally } }),
+    ).rejects.toMatchObject({ code: "CONSENT_REQUIRED" });
+    expect(analyzeLocally).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    await expect(
+      analyzeReportPhoto(new File(["gif"], "item.gif", { type: "image/gif" }), true, {
+        photoEngine: "on-device-only",
+        deps: { encode, send, analyzeLocally },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_IMAGE" });
+  });
+
+  it("preserves MISSING_KEY and UNUSABLE_RESPONSE on the cloud path", async () => {
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    const missing = vi.fn(async () => {
+      throw Object.assign(new Error("Connect your OpenRouter API key to use AI."), { code: "MISSING_KEY" });
+    });
+    await expect(
+      analyzeReportPhoto(file(), true, { photoEngine: "cloud-only", deps: { encode, send: missing, analyzeLocally: async () => null } }),
+    ).rejects.toMatchObject({ code: "MISSING_KEY" });
+    const unusable = vi.fn(async () => '{"suggestedTitle":"unsafe"}');
+    await expect(
+      analyzeReportPhoto(file(), true, { photoEngine: "cloud-only", deps: { encode, send: unusable, analyzeLocally: async () => null } }),
+    ).rejects.toMatchObject({ code: "UNUSABLE_RESPONSE" });
+  });
+
+  it("getPhotoEngine seam defaults to automatic", async () => {
+    const { getPhotoEngine } = await import("./analyzeReportPhoto");
+    expect(getPhotoEngine()).toBe("automatic");
   });
 });
