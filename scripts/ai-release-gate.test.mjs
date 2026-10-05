@@ -40,6 +40,9 @@ const REAL = {
   probeSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt"),
   timingSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt"),
   pluginSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt"),
+  analyzePhotoSource: read("apps/mobile/src/services/analyzeReportPhoto.ts"),
+  localAnalyzeSource: read("apps/mobile/src/services/analyzeReportPhotoLocal.ts"),
+  suggestionsSource: read("apps/mobile/src/components/VlmSuggestions.tsx"),
 };
 
 describe("validateApplicationIntegration", () => {
@@ -63,6 +66,10 @@ describe("validateApplicationIntegration", () => {
     ["null production timing runner", "probeSource", (source) => source.replace(/RuntimeTimingRunner\.forInstalledSmol\(appContext\)/g, "null")],
     ["synthetic token estimates", "timingSource", (source) => source.replace(/conversation\.getBenchmarkInfo\(\)/g, "wordEstimates()")],
     ["no native timing endpoint", "pluginSource", (source) => source.replace(/fun measureBackend\(/g, "fun disconnectedMeasurement(")],
+    ["photo analyzer stops trying local first", "analyzePhotoSource", (source) => source.replace(/await analyzeLocally\(file/g, "await cloudFirst(file")],
+    ["local analyzer stops routing analyze-image", "localAnalyzeSource", (source) => source.replace(/"analyze-image"/g, '"describe-image"')],
+    ["local analyzer drops imageBase64", "localAnalyzeSource", (source) => source.replace("PHOTO_INSTRUCTION, imageBase64 }", "PHOTO_INSTRUCTION, imageData }")],
+    ["photo suggestions stop using the local-first analyzer", "suggestionsSource", (source) => source.replace(/analyzeReportPhoto\(file/g, "cloudAnalyze(file")],
   ]) {
     it(`fails on ${label}`, () => {
       const broken = mutate(REAL[field]);

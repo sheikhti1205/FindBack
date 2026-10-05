@@ -277,6 +277,9 @@ export const APPLICATION_INTEGRATION_FILES = {
   probeSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt",
   timingSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt",
   pluginSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt",
+  analyzePhotoSource: "apps/mobile/src/services/analyzeReportPhoto.ts",
+  localAnalyzeSource: "apps/mobile/src/services/analyzeReportPhotoLocal.ts",
+  suggestionsSource: "apps/mobile/src/components/VlmSuggestions.tsx",
 };
 
 export function validateApplicationIntegration(sources) {
@@ -303,6 +306,30 @@ export function validateApplicationIntegration(sources) {
     ["timingSource", /conversation\.getBenchmarkInfo\(\)/, "timing must use runtime counters, not synthetic token estimates"],
     ["timingSource", /correctnessPass\s*=\s*correctness/, "timing must report tested correctness"],
     ["pluginSource", /fun measureBackend\([\s\S]+DeviceProbe\.collect\(/, "native plugin must expose measurement runner"],
+    // On-device-first report-photo wiring (owner decision): the local SmolVLM2
+    // analyzer is the DEFAULT engine; cloud is the fallback. These tripwires
+    // fail closed if the local attempt, its image transport, or its UI caller
+    // is ever disconnected.
+    [
+      "analyzePhotoSource",
+      /analyzeLocally\s*=\s*options\?\.deps\?\.analyzeLocally\s*\?\?\s*analyzeReportPhotoLocally/,
+      "photo analyzer must default to the real on-device analyzer",
+    ],
+    [
+      "analyzePhotoSource",
+      /const\s+local\s*=\s*await\s+analyzeLocally\([\s\S]*?(?:deps\?\.send|createOpenRouterClient)/,
+      "photo analyzer must attempt the on-device analyzer before the cloud path",
+    ],
+    [
+      "localAnalyzeSource",
+      /route\(\s*"analyze-image",\s*\{[^}]*imageBase64/,
+      "on-device analyzer must route analyze-image with imageBase64",
+    ],
+    [
+      "suggestionsSource",
+      /await\s+analyzeReportPhoto\(/,
+      "VlmSuggestions must use the local-first analyzeReportPhoto analyzer",
+    ],
   ];
   return requirements.filter(([key, pattern]) => !pattern.test(sources[key] ?? ""))
     .map(([, , message]) => `application-integration: ${message}`);
