@@ -22,7 +22,8 @@ import { loadAppearance } from "../appearance";
 import { loadAuthorizedCatalog } from "../services/ai/modelCatalog";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
 import { getApplicationAi } from "../services/ai/applicationAi";
-import { honestOfflineDetail, loadAssistantMode, OFFLINE_NOT_AVAILABLE, type AssistantMode } from "./AiModels";
+import { honestOfflineDetail, OFFLINE_NOT_AVAILABLE, type AssistantMode } from "./AiModels";
+import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
 import { createOpenRouterAdapter } from "../services/ai/providers/openrouter";
 import { builtInHelp } from "../services/helpFaq";
 import {
@@ -804,7 +805,10 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     const refusal = refuseHelpSend({
       provider: sendProvider,
       record: pickedRecord,
-      mode: loadAssistantMode(accountId),
+      // Single authoritative store: the same aiPreferences.assistantMode
+      // value AiSettings writes (one-time legacy migration inside; safe
+      // local-first default, cloud only with consent as before).
+      mode: loadEffectiveAssistantMode(accountId),
       hasImages,
     });
     if (refusal !== null) {

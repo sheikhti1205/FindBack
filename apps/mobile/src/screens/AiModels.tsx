@@ -45,12 +45,11 @@ import {
   type MeasuredCapabilityFlags,
 } from "../services/appCapabilities";
 import {
-  aiPreferencesKey,
   isNeedleSelectable,
   legacyAssistantModeToPreference,
-  loadAiPreferences,
+  loadSeededAiPreferences as loadSeededAiPreferencesCanonical,
+  preferenceToAssistantMode,
   publishEffectivePhotoEngine,
-  saveAiPreferences,
   updateAiPreferences,
   type AiPreferences,
 } from "../services/ai/aiPreferences";
@@ -94,6 +93,14 @@ const ASSISTANT_MODE_COPY: Record<AssistantMode, { label: string; detail: string
   },
 };
 
+/**
+ * LEGACY migration-source only (P1 single-store fix): the account-scoped
+ * `aiPreferences.assistantMode` store is now authoritative. This key is
+ * read exactly once per account by `loadSeededAiPreferences` (canonical
+ * implementation in services/ai/aiPreferences) and must never gain new
+ * writers — `saveAssistantMode` below is deprecated and unwired from all
+ * production callers. Exported for the migration read + existing tests.
+ */
 export function assistantModeKey(accountId: string): string {
   return `findback.ai.assistantMode.v1.${accountId}`;
 }
@@ -107,6 +114,12 @@ function isAssistantMode(value: unknown): value is AssistantMode {
   );
 }
 
+/**
+ * LEGACY migration-source read only. Prefer `loadSeededAiPreferences` /
+ * `loadEffectiveAssistantMode` (services/ai/aiPreferences): those consult
+ * this key at most once per account (first seeded read) and otherwise serve
+ * the authoritative store.
+ */
 export function loadAssistantMode(accountId: string): AssistantMode {
   try {
     const raw = globalThis.localStorage?.getItem(assistantModeKey(accountId)) ?? null;
@@ -122,6 +135,12 @@ export function isOfflineMode(mode: AssistantMode): boolean {
   return mode === "offline-first" || mode === "offline-only";
 }
 
+/**
+ * DEPRECATED — migration-source only, no production callers. The legacy
+ * key must not gain new values; all mode writes go through
+ * `updateAiPreferences(account, { assistantMode })`. Kept exported so
+ * existing tests can seed the migration source.
+ */
 export function saveAssistantMode(accountId: string, mode: AssistantMode): void {
   try {
     globalThis.localStorage?.setItem(assistantModeKey(accountId), mode);
@@ -131,25 +150,13 @@ export function saveAssistantMode(accountId: string, mode: AssistantMode): void 
 }
 
 /**
- * Lane A: read this account's AI preferences, seeding the assistant mode
- * once from the legacy assistant-mode key when the new store has never been
- * written. Settings owns the result; Help only reads it back.
+ * Backward-compatible re-export: the canonical one-time migration now lives
+ * in services/ai/aiPreferences (single authoritative store). This wrapper
+ * stays so existing importers keep working; new code should import the
+ * canonical helper directly.
  */
 export function loadSeededAiPreferences(accountId: string): AiPreferences {
-  const current = loadAiPreferences(accountId);
-  try {
-    if (globalThis.localStorage?.getItem(aiPreferencesKey(accountId)) !== null) {
-      return current;
-    }
-    const legacyRaw = globalThis.localStorage?.getItem(assistantModeKey(accountId)) ?? null;
-    if (legacyRaw === null) return current;
-    return saveAiPreferences(accountId, {
-      ...current,
-      assistantMode: legacyAssistantModeToPreference(legacyRaw),
-    });
-  } catch {
-    return current;
-  }
+  return loadSeededAiPreferencesCanonical(accountId);
 }
 
 /**
@@ -374,7 +381,9 @@ export function AiModels({
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
 
-  const [mode, setMode] = useState<AssistantMode>(() => loadAssistantMode(account));
+  const [mode, setMode] = useState<AssistantMode>(() =>
+    preferenceToAssistantMode(loadSeededAiPreferences(account).assistantMode),
+  );
   // Lane A: single account-scoped preference source of truth, owned by Settings.
   const [prefs, setPrefs] = useState<AiPreferences>(() => loadSeededAiPreferences(account));
   const [slots, setSlots] = useState<Record<string, SlotState>>({});
@@ -397,8 +406,10 @@ export function AiModels({
   // The freshly loaded account's engines are (re)published to their live
   // consumers so a previous account's choice never leaks into this one.
   useEffect(() => {
-    setMode(loadAssistantMode(account));
     const seeded = loadSeededAiPreferences(account);
+    // Authoritative store drives the radio; the legacy key is migration
+    // source only and is never written back here.
+    setMode(preferenceToAssistantMode(seeded.assistantMode));
     setPrefs(seeded);
     publishEffectivePhotoEngine(seeded);
     applyMatchesEngineToRuntime(seeded.matchesEngine);
@@ -515,10 +526,13 @@ export function AiModels({
   }, [account, listCatalog, offlineStatus?.checksumVerified]);
 
   function chooseMode(next: AssistantMode) {
-    setMode(next);
-    saveAssistantMode(account, next);
-    // Lane A: the legacy chooser writes through to the single source of truth.
-    setPrefs(updateAiPreferences(account, { assistantMode: legacyAssistantModeToPreference(next) }));
+    // Single authoritative write: prefs own the mode. No legacy mirrored
+    // write — the legacy key is migration-source only (P1 single-store fix).
+    const saved = updateAiPreferences(account, {
+      assistantMode: legacyAssistantModeToPreference(next),
+    });
+    setPrefs(saved);
+    setMode(preferenceToAssistantMode(saved.assistantMode));
     announce(`Assistant mode ${ASSISTANT_MODE_COPY[next].label}.`);
   }
 

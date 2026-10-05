@@ -15,7 +15,13 @@ vi.mock("../services/aiCredentials", () => ({
 }));
 
 import { AiSettings } from "./AiSettings";
-import { assistantModeKey } from "./AiModels";
+import { refuseHelpSend } from "./Help";
+import type { ModelRecord } from "../services/ai/providerContract";
+import {
+  aiPreferencesKey,
+  loadEffectiveAssistantMode,
+  loadSeededAiPreferences,
+} from "../services/ai/aiPreferences";
 
 const FORBIDDEN = [
   "checksum",
@@ -44,6 +50,20 @@ function renderSettings() {
     </MemoryRouter>,
   );
 }
+
+const FREE_ROW: ModelRecord = {
+  provider: "openrouter",
+  id: "openrouter/free",
+  input: ["text"],
+  output: ["text"],
+  prices: [
+    { amountDecimal: "0", currency: "USD", unit: "token", dimension: "input", sourceField: "pricing.prompt" },
+    { amountDecimal: "0", currency: "USD", unit: "token", dimension: "output", sourceField: "pricing.completion" },
+  ],
+  priceClass: "free",
+  retrievedAt: "2026-09-26T00:00:00.000Z",
+  entitlement: "untested",
+};
 
 describe("AiSettings consumer root", () => {
   beforeEach(() => {
@@ -75,33 +95,64 @@ describe("AiSettings consumer root", () => {
     expectNormalTierCopy(view.container);
   });
 
-  it("binds AI mode to the real assistant-mode store with honest options only", () => {
+  it("binds AI mode to the single authoritative aiPreferences store with honest options only", () => {
     renderSettings();
     const group = screen.getByRole("radiogroup", { name: /ai mode/i });
     expect(group).toBeTruthy();
-    // Only options this build can honor; offline-first stays hidden.
+    // Only options this build can honor.
     expect(screen.getByRole("radio", { name: /automatic/i })).toBeTruthy();
     expect(screen.getByRole("radio", { name: /on-device only/i })).toBeTruthy();
     expect(screen.getByRole("radio", { name: /cloud only/i })).toBeTruthy();
-    expect(screen.queryByRole("radio", { name: /offline-first/i })).toBeNull();
     // Default with no stored preference.
     expect(
       (screen.getByRole("radio", { name: /automatic/i }) as HTMLInputElement).checked,
     ).toBe(true);
     fireEvent.click(screen.getByRole("radio", { name: /on-device only/i }));
-    expect(globalThis.localStorage?.getItem(assistantModeKey("user-1"))).toBe("offline-only");
+    expect(loadSeededAiPreferences("user-1").assistantMode).toBe("on-device-only");
+    // The legacy key is migration-source only: no new writes land there.
+    expect(globalThis.localStorage?.getItem("findback.ai.assistantMode.v1.user-1")).toBeNull();
     expect(
       (screen.getByRole("radio", { name: /on-device only/i }) as HTMLInputElement).checked,
     ).toBe(true);
   });
 
-  it("keeps a stored offline-first mode without offering it", () => {
-    globalThis.localStorage?.setItem(assistantModeKey("user-1"), "offline-first");
+  it("migrates a legacy stored offline-first mode fail-closed to offered on-device-only", () => {
+    globalThis.localStorage?.setItem("findback.ai.assistantMode.v1.user-1", "offline-first");
     renderSettings();
-    expect(screen.queryByRole("radio", { name: /offline-first/i })).toBeNull();
-    expect(screen.getByText(/offline-first is set/i)).toBeTruthy();
-    // The hidden stored value is never silently relaxed.
-    expect(globalThis.localStorage?.getItem(assistantModeKey("user-1"))).toBe("offline-first");
+    // Migrated (fail closed) to the offered on-device-only option — checked.
+    expect(
+      (screen.getByRole("radio", { name: /on-device only/i }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(loadSeededAiPreferences("user-1").assistantMode).toBe("on-device-only");
+  });
+
+  it("changing mode in AiSettings is observed by the Help send-gate (single store)", () => {
+    renderSettings();
+    fireEvent.click(screen.getByRole("radio", { name: /on-device only/i }));
+    // The exact reader Help uses at send time sees the AiSettings write.
+    expect(loadEffectiveAssistantMode("user-1")).toBe("offline-only");
+    // …and the actual send-gate refuses cloud rows for it (nothing sent).
+    expect(
+      refuseHelpSend({
+        provider: "openrouter",
+        record: FREE_ROW,
+        mode: loadEffectiveAssistantMode("user-1"),
+        hasImages: false,
+      }),
+    ).toMatch(/offline-only mode/i);
+    fireEvent.click(screen.getByRole("radio", { name: /cloud only/i }));
+    expect(loadEffectiveAssistantMode("user-1")).toBe("cloud-only");
+    expect(
+      refuseHelpSend({
+        provider: "offline",
+        record: null,
+        mode: loadEffectiveAssistantMode("user-1"),
+        hasImages: false,
+      }),
+    ).toMatch(/cloud-only mode/i);
+    // A sibling account still reads the safe default (per-account isolation).
+    expect(loadEffectiveAssistantMode("user-2")).toBe("auto");
+    expect(globalThis.localStorage?.getItem(aiPreferencesKey("user-2"))).toBeNull();
   });
 
   it("summarizes the cloud connection without technical detail", async () => {

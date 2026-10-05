@@ -6,7 +6,11 @@ import {
   createAssistantModelBinding,
   EFFECTIVE_PHOTO_ENGINE_KEY,
   isNeedleSelectable,
+  legacyAssistantModeToPreference,
   loadAiPreferences,
+  loadEffectiveAssistantMode,
+  loadSeededAiPreferences,
+  preferenceToAssistantMode,
   publishEffectivePhotoEngine,
   resolvePreferredModelId,
   saveAiPreferences,
@@ -94,5 +98,34 @@ describe("aiPreferences store (Lane A)", () => {
     expect(window.localStorage.getItem(EFFECTIVE_PHOTO_ENGINE_KEY)).toBe("cloud-only");
     publishEffectivePhotoEngine({ ...AI_PREFERENCES_DEFAULTS, photoEngine: "on-device-only" });
     expect(window.localStorage.getItem(EFFECTIVE_PHOTO_ENGINE_KEY)).toBe("on-device-only");
+  });
+
+  it("maps the legacy assistant-mode vocabulary onto preferences (unknown stays automatic)", () => {
+    expect(legacyAssistantModeToPreference("cloud-only")).toBe("cloud-only");
+    expect(legacyAssistantModeToPreference("offline-only")).toBe("on-device-only");
+    expect(legacyAssistantModeToPreference("offline-first")).toBe("on-device-only");
+    expect(legacyAssistantModeToPreference("auto")).toBe("automatic");
+    expect(legacyAssistantModeToPreference("turbo")).toBe("automatic");
+  });
+
+  it("maps preferences back onto the gate vocabulary fail-closed", () => {
+    expect(preferenceToAssistantMode("automatic")).toBe("auto");
+    expect(preferenceToAssistantMode("cloud-only")).toBe("cloud-only");
+    expect(preferenceToAssistantMode("on-device-only")).toBe("offline-only");
+  });
+
+  it("migrates the legacy key once into the authoritative store and never consults it again", () => {
+    window.localStorage.setItem("findback.ai.assistantMode.v1.acct-mig", "cloud-only");
+    expect(loadSeededAiPreferences("acct-mig").assistantMode).toBe("cloud-only");
+    expect(loadEffectiveAssistantMode("acct-mig")).toBe("cloud-only");
+    // A later legacy change is ignored once the new store exists (single source).
+    window.localStorage.setItem("findback.ai.assistantMode.v1.acct-mig", "offline-only");
+    expect(loadSeededAiPreferences("acct-mig").assistantMode).toBe("cloud-only");
+    expect(loadEffectiveAssistantMode("acct-mig")).toBe("cloud-only");
+  });
+
+  it("reads the safe default when neither store has a value", () => {
+    expect(loadSeededAiPreferences("acct-fresh").assistantMode).toBe("automatic");
+    expect(loadEffectiveAssistantMode("acct-fresh")).toBe("auto");
   });
 });

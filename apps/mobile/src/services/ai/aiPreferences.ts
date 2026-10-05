@@ -113,9 +113,67 @@ export function legacyAssistantModeToPreference(mode: unknown): AssistantModePre
   return "automatic";
 }
 
-/** Read this account's preferences; unknown/corrupt storage yields safe defaults. */
-export function loadAiPreferences(accountId: string): AiPreferences {
+/**
+ * Reverse map: preference vocabulary back onto the legacy assistant-mode
+ * vocabulary the Help send-gate (`refuseHelpSend`) still switches on.
+ * `on-device-only` maps to `offline-only` (fail closed: cloud sends stay
+ * blocked); `automatic`/`cloud-only` map to `auto`/`cloud-only`.
+ */
+export function preferenceToAssistantMode(
+  mode: AssistantModePreference,
+): "auto" | "offline-only" | "cloud-only" {
+  if (mode === "cloud-only") return "cloud-only";
+  if (mode === "on-device-only") return "offline-only";
+  return "auto";
+}
+
+/**
+ * Legacy key format (mirrors `assistantModeKey` in screens/AiModels, which
+ * stays the migration-source reader). Kept here so the seeded read below
+ * never imports the screens layer (no UI ↔ store cycle).
+ */
+function legacyAssistantModeKey(accountId: string): string {
+  return `findback.ai.assistantMode.v1.${accountId}`;
+}
+
+/**
+ * Single authoritative read: this account's preferences, with a one-time
+ * migration that adopts the legacy assistant-mode key when the new store
+ * has never been written for this account. After that first adoption the
+ * legacy key is never consulted again for this account (the new store is
+ * present), and production code must never write the legacy key.
+ */
+export function loadSeededAiPreferences(accountId: string): AiPreferences {
+  const current = loadAiPreferences(accountId);
   try {
+    if (globalThis.localStorage?.getItem(aiPreferencesKey(accountId)) !== null) {
+      return current;
+    }
+    const legacyRaw = globalThis.localStorage?.getItem(legacyAssistantModeKey(accountId)) ?? null;
+    if (legacyRaw === null) return current;
+    return saveAiPreferences(accountId, {
+      ...current,
+      assistantMode: legacyAssistantModeToPreference(legacyRaw),
+    });
+  } catch {
+    return current;
+  }
+}
+
+/**
+ * The mode value the Help send-gate must switch on: the seeded authoritative
+ * preference mapped back onto the gate vocabulary. Safe by construction —
+ * unknown/corrupt storage reads as `auto` (local-first default), cloud-only
+ * consent semantics unchanged.
+ */
+export function loadEffectiveAssistantMode(
+  accountId: string,
+): "auto" | "offline-only" | "cloud-only" {
+  return preferenceToAssistantMode(loadSeededAiPreferences(accountId).assistantMode);
+}
+
+/** Read this account's preferences; unknown/corrupt storage yields safe defaults. */
+export function loadAiPreferences(accountId: string): AiPreferences {  try {
     const raw = globalThis.localStorage?.getItem(aiPreferencesKey(accountId)) ?? null;
     if (raw === null) return { ...AI_PREFERENCES_DEFAULTS };
     return sanitize(JSON.parse(raw));

@@ -88,11 +88,14 @@ describe("AiModels control center (AI-022)", () => {
     expect(screen.getByText(/default route: openrouter\/free/i)).toBeTruthy();
   });
 
-  it("persists the assistant mode per account and restores it", async () => {
+  it("persists the assistant mode per account in the authoritative store (no legacy writes)", async () => {
     renderModels();
     const cloudOnly = screen.getByRole("radio", { name: /cloud-only/i });
     fireEvent.click(cloudOnly);
-    expect(window.localStorage.getItem(assistantModeKey("u1"))).toBe("cloud-only");
+    expect(loadAiPreferences("u1").assistantMode).toBe("cloud-only");
+    // The legacy key is migration-source only: choosing a mode must not
+    // (re)write it.
+    expect(window.localStorage.getItem(assistantModeKey("u1"))).toBeNull();
     expect(cloudOnly.getAttribute("aria-checked")).toBe("true");
     cleanup();
     renderModels();

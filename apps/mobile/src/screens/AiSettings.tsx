@@ -10,28 +10,32 @@ import {
 } from "../components/settings";
 import { aiCredentials } from "../services/aiCredentials";
 import {
-  loadAssistantMode,
-  saveAssistantMode,
-  type AssistantMode,
-} from "./AiModels";
+  loadSeededAiPreferences,
+  updateAiPreferences,
+  type AssistantModePreference,
+} from "../services/ai/aiPreferences";
 
 type CloudState = "unknown" | "connected" | "not-connected";
 
 /**
  * Consumer AI root (`/settings/ai`). Presentation only: the AI mode radios
- * read/write the real assistant-mode store (`AiModels.loadAssistantMode` /
- * `saveAssistantMode`, no new semantics), the cloud summary is a read-only
- * look at the OpenRouter vault slot, and every row routes to a detail
- * screen the integrator mounts. Offline-first is never offered here.
+ * read/write the single authoritative account-scoped store
+ * (`aiPreferences.assistantMode`, no new semantics), the cloud summary is a
+ * read-only look at the OpenRouter vault slot, and every row routes to a
+ * detail screen the integrator mounts. Offline-first is never offered here.
+ * A legacy stored offline-first value migrates to on-device-only (fail
+ * closed), which IS offered, so no hidden-value note is needed.
  */
 export function AiSettings({ accountId }: { accountId?: string }) {
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
-  const [mode, setMode] = useState<AssistantMode>(() => loadAssistantMode(account));
+  const [mode, setMode] = useState<AssistantModePreference>(
+    () => loadSeededAiPreferences(account).assistantMode,
+  );
   const [cloud, setCloud] = useState<CloudState>("unknown");
 
   useEffect(() => {
-    setMode(loadAssistantMode(account));
+    setMode(loadSeededAiPreferences(account).assistantMode);
   }, [account]);
 
   useEffect(() => {
@@ -57,8 +61,9 @@ export function AiSettings({ accountId }: { accountId?: string }) {
   }, [account]);
 
   function chooseMode(next: OfferedMode) {
-    setMode(next);
-    saveAssistantMode(account, next);
+    // Single authoritative write: the same store the Help send-gate reads.
+    // No legacy mirrored write — the legacy key is migration-source only.
+    setMode(updateAiPreferences(account, { assistantMode: next }).assistantMode);
     announce(`AI mode ${MODE_COPY[next].label}.`);
   }
 
@@ -103,12 +108,6 @@ export function AiSettings({ accountId }: { accountId?: string }) {
             );
           })}
         </div>
-        {mode === "offline-first" ? (
-          <p role="note" className="text-xs text-on-surface-variant">
-            Offline-first is set on this account but is not offered in this
-            build, so it stays exactly as it is.
-          </p>
-        ) : null}
       </SettingsGroup>
 
       <SettingsGroup title="Options">
@@ -152,17 +151,18 @@ export function AiSettings({ accountId }: { accountId?: string }) {
 }
 
 /**
- * Modes this build can honor. Offline-first stays hidden until policy
- * enables it; a stored offline-first value is kept, never offered.
+ * Every preference mode is offered here: a legacy stored offline-first
+ * value migrates (fail closed) to on-device-only, which is selectable, so
+ * there is no hidden-value case to preserve.
  */
-type OfferedMode = Exclude<AssistantMode, "offline-first">;
+type OfferedMode = AssistantModePreference;
 
 const MODE_COPY: Record<OfferedMode, { label: string; detail: string }> = {
-  auto: {
+  automatic: {
     label: "Automatic",
     detail: "FindBack picks the safest available option.",
   },
-  "offline-only": {
+  "on-device-only": {
     label: "On-device only",
     detail: "Answers stay on this phone. Needs downloaded on-device tools.",
   },

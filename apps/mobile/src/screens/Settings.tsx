@@ -31,7 +31,8 @@ import {
 } from "../components/settings";
 import { AccountSummaryCard } from "../components/AccountSummaryCard";
 import { searchSettings } from "../services/settingsIndex";
-import { loadAssistantMode, type AssistantMode } from "./AiModels";
+import { type AssistantMode } from "./AiModels";
+import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
 import { fetchNotificationPreferences, type NotificationPreferences } from "../services/notificationPreferences";
 import { pushController } from "../services/pushRuntime";
 import type { PushPermissionState } from "../services/pushNotifications";
@@ -100,9 +101,10 @@ export function connectionSummary(connected: boolean): string {
 }
 
 /**
- * Consumer-tier AI mode labels (match AiSettings MODE_COPY; a stored
- * offline-first value is kept verbatim, never offered). Read live from the
- * assistant-mode store so the row stays truthful when the mode changes.
+ * Consumer-tier AI mode labels (match AiSettings MODE_COPY; a legacy stored
+ * offline-first value migrates fail-closed to on-device-only, which is an
+ * offered mode). Read live from the authoritative aiPreferences store (via
+ * the effective gate mode) so the row stays truthful when the mode changes.
  */
 const AI_MODE_LABELS: Record<AssistantMode, string> = {
   auto: "Automatic",
@@ -129,7 +131,7 @@ export function Settings() {
   const [notifValue, setNotifValue] = useState<string | null>(null);
   const [cloudValue, setCloudValue] = useState<string | null>(null);
   const [aiMode, setAiMode] = useState<AssistantMode>(() =>
-    user ? loadAssistantMode(user.id) : "auto",
+    user ? loadEffectiveAssistantMode(user.id) : "auto",
   );
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
@@ -157,7 +159,7 @@ export function Settings() {
   }, []);
 
   useEffect(() => {
-    if (user) setAiMode(loadAssistantMode(user.id));
+    if (user) setAiMode(loadEffectiveAssistantMode(user.id));
   }, [user]);
 
   useEffect(() => {
