@@ -13,6 +13,8 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkAiReleaseGate,
+  validatePhotoAnalysisTruth,
+  validatePhotoGroundingDeferred,
   validateRuntimeWiring,
   validateVisionTruth,
   validateApplicationIntegration,
@@ -28,6 +30,8 @@ const REAL = {
   orchestratorSource: read("apps/mobile/src/services/ai/orchestrator/AiOrchestrator.ts"),
   offlineSource: read("apps/mobile/src/services/ai/providers/offline.ts"),
   capabilitiesSource: read("apps/mobile/src/services/appCapabilities.ts"),
+  clientCapabilitiesSource: read("apps/mobile/src/services/appCapabilities.ts"),
+  serverCapabilitiesSource: read("supabase/functions/ai-help/capabilities.ts"),
   mainSource: read("apps/mobile/src/main.tsx"),
   appSource: read("apps/mobile/src/App.tsx"),
   serviceSource: read("apps/mobile/src/services/ai/applicationAi.ts"),
@@ -102,12 +106,69 @@ describe("validateApplicationIntegration", () => {
     ["route-intent CTA no longer validated", "intentRouterSource", (source) => source.replace(/export function ctaForRoute/g, "export function droppedCta")],
     ["summary consumer disconnects from compaction", "chatControllerSource", (source) => source.replace(/from "\.\/compaction"/g, 'from "./missing"')],
     ["summary grounding guard disconnected", "chatStoreSource", (source) => source.replace(/isSummaryPoisoned/g, "isSummaryIgnored")],
-    ["photo grounding consumer unwired", "photoGroundingSource", (source) => source.replace(/from "\.\/ai\/ops\/groundObjects"/g, 'from "./ai/ops/missing"')],
   ]) {
     it(`fails on ${label}`, () => {
       const broken = mutate(REAL[field]);
       ok(broken !== REAL[field], `${label}: mutation must change its input`);
       ok(validateApplicationIntegration({ ...REAL, [field]: broken }).length > 0, label);
+    });
+  }
+});
+
+describe("validatePhotoGroundingDeferred", () => {
+  const deferredInput = () => ({
+    photoGroundingSource: REAL.photoGroundingSource,
+    uiSources: {
+      createReportSource: REAL.createReportSource,
+      suggestionsSource: REAL.suggestionsSource,
+      helpSource: REAL.helpSource,
+      searchScreenSource: REAL.searchScreenSource,
+    },
+  });
+
+  it("passes while the service is ready and no UI consumes it", () => {
+    deepStrictEqual(validatePhotoGroundingDeferred(deferredInput()), []);
+  });
+
+  for (const [label, mutate] of [
+    ["op import removed", (input) => ({
+      ...input,
+      photoGroundingSource: input.photoGroundingSource.replace(
+        /from "\.\/ai\/ops\/groundObjects"/g, 'from "./ai/ops/missing"',
+      ),
+    })],
+    ["op call removed", (input) => ({
+      ...input,
+      photoGroundingSource: input.photoGroundingSource.replace(/await groundObjects\(/g, "await missingOp("),
+    })],
+    ["consent gate removed", (input) => ({
+      ...input,
+      photoGroundingSource: input.photoGroundingSource.replace(
+        /input\.imageConsent !== true/g, "input.imageConsent !== false",
+      ),
+    })],
+    ["deferred marker removed", (input) => ({
+      ...input,
+      photoGroundingSource: input.photoGroundingSource.replace(
+        /service-ready \/ UI-deferred/g, "wired everywhere",
+      ),
+    })],
+    ["report UI imports the service while deferred", (input) => ({
+      ...input,
+      uiSources: {
+        ...input.uiSources,
+        createReportSource: `${input.uiSources.createReportSource}\nimport { requestGroundedOptions } from "../services/photoGrounding";\n`,
+      },
+    })],
+  ]) {
+    it(`fails on ${label}`, () => {
+      const broken = mutate(deferredInput());
+      ok(
+        broken.photoGroundingSource !== REAL.photoGroundingSource ||
+          broken.uiSources.createReportSource !== REAL.createReportSource,
+        `${label}: mutation must change its input`,
+      );
+      ok(validatePhotoGroundingDeferred(broken).length > 0, label);
     });
   }
 });
@@ -182,6 +243,54 @@ describe("validateVisionTruth", () => {
       capabilitiesSource: "export const vision = 'on-device vision is ready for everyone';",
     });
     ok(errors.some((e) => e.includes("ready")), `expected ready-claim complaint, got: ${errors}`);
+  });
+});
+
+describe("validatePhotoAnalysisTruth", () => {
+  it("passes on the real tree", () => {
+    deepStrictEqual(
+      validatePhotoAnalysisTruth({
+        clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+        serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      }),
+      [],
+    );
+  });
+
+  it("fails on the stale never-claim-offline-inference instruction", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource:
+        `${REAL.serverCapabilitiesSource}\nNever claim the create-report Analyze photo button uses offline inference; its consented path is the connected cloud provider.`,
+    });
+    ok(errors.some((e) => e.includes("stale cloud-only")), `expected stale-claim complaint, got: ${errors}`);
+  });
+
+  it("fails on the stale connected-provider-as-the-photo-path copy", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource:
+        "With that consent the selected photo is sent to your connected AI provider for that one request.",
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+    });
+    ok(errors.some((e) => e.includes("stale cloud-only")), `expected stale-claim complaint, got: ${errors}`);
+  });
+
+  it("fails when local-first engine truth is missing", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(/local-first/gi, "cloud"),
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+    });
+    ok(errors.some((e) => e.includes("missing required photo truth")), `expected missing-truth complaint, got: ${errors}`);
+  });
+
+  it("fails when on-device-only/cloud-only semantics are missing", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource
+        .replace(/on-device-only/gi, "offline")
+        .replace(/cloud-only/gi, "remote"),
+    });
+    ok(errors.some((e) => e.includes("missing required photo truth")), `expected missing-truth complaint, got: ${errors}`);
   });
 });
 

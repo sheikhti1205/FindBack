@@ -28,7 +28,12 @@
  *   8. needle-telemetry — Needle telemetry defaults ON or bypasses the global
  *                        diag gate (must be off unless BOTH the global diag
  *                        gate and the explicit per-seam opt-in are set)
- *   9. secrets        — delegates to scripts/scan-secrets.mjs (non-zero fails)
+ *   9. photo-analysis-truth — the shipped Analyze-photo capability copy
+ *                        (client + server) still carries the stale cloud-only
+ *                        claim, or lost the local-first / engine truth
+ *                        (local-first, automatic fallback, on-device-only,
+ *                        cloud-only)
+ *   10. secrets        — delegates to scripts/scan-secrets.mjs (non-zero fails)
  *
  * Lab/challenger/test skeletons (needle bench, testing fakes,
  * generationGuard rewire note) are deliberately OUTSIDE the
@@ -248,6 +253,66 @@ function checkVisionTruth() {
   return validateVisionTruth({ offlineSource: offline, runtimesSource: runtimes, capabilitiesSource: capabilities });
 }
 
+/**
+ * Photo-analysis truth detector for the Analyze-photo capability copy.
+ * Fails when either truth source (client `appCapabilities.ts` or server
+ * `supabase/functions/ai-help/capabilities.ts`):
+ * - still carries the stale cloud-only claim (the "never claim offline
+ *   inference" instruction or the connected-cloud-provider-as-the-photo-path
+ *   copy), or
+ * - lost the local-first / engine truth: Analyze photo is local-first on
+ *   Android when the verified SmolVLM2 runtime is available; automatic mode
+ *   may fall back to the connected provider after local failure;
+ *   on-device-only never sends the photo to cloud; cloud-only skips local.
+ */
+export const STALE_PHOTO_ANALYSIS_CLAIM_RES = [
+  /never claim[^.]{0,200}offline inference/i,
+  /consented path is the connected cloud provider/i,
+  /selected photo is sent to (your connected|the connected) AI provider/i,
+];
+
+export const REQUIRED_PHOTO_ANALYSIS_TRUTH_RES = [
+  /local-first/i,
+  /on-device-only/i,
+  /cloud-only/i,
+  /fall\s?back/i,
+];
+
+export function validatePhotoAnalysisTruth({ clientCapabilitiesSource, serverCapabilitiesSource }) {
+  const errors = [];
+  for (const [label, source] of [
+    ["client", clientCapabilitiesSource],
+    ["server", serverCapabilitiesSource],
+  ]) {
+    for (const pattern of STALE_PHOTO_ANALYSIS_CLAIM_RES) {
+      if (pattern.test(source ?? "")) {
+        errors.push(`photo-analysis-truth: stale cloud-only photo claim in ${label} capabilities (${pattern})`);
+      }
+    }
+    for (const pattern of REQUIRED_PHOTO_ANALYSIS_TRUTH_RES) {
+      if (!pattern.test(source ?? "")) {
+        errors.push(`photo-analysis-truth: ${label} capabilities missing required photo truth (${pattern})`);
+      }
+    }
+  }
+  return errors;
+}
+
+function checkPhotoAnalysisTruth() {
+  let client;
+  let server;
+  try {
+    client = read("apps/mobile/src/services/appCapabilities.ts");
+    server = read("supabase/functions/ai-help/capabilities.ts");
+  } catch (error) {
+    return [`photo-analysis-truth: cannot read capability source (${error.message})`];
+  }
+  return validatePhotoAnalysisTruth({
+    clientCapabilitiesSource: client,
+    serverCapabilitiesSource: server,
+  });
+}
+
 function checkRuntimeWiring() {
   let registry;
   let runtimes;
@@ -294,6 +359,67 @@ export const APPLICATION_INTEGRATION_FILES = {
   chatStoreSource: "apps/mobile/src/services/ai/chatStore.ts",
   photoGroundingSource: "apps/mobile/src/services/photoGrounding.ts",
 };
+
+/**
+ * Photo-grounding deferred invariant (P1/P2 audit: the service is unwired).
+ *
+ * There is deliberately NO product-integration tripwire for photo
+ * grounding: no report/help/search UI imports the service, so a check
+ * named like "photo grounding consumer/integration" would pass on the
+ * mere op import and falsely claim product integration. Instead this
+ * validator asserts exactly the deferred status:
+ *   1. service-readiness — photoGrounding.ts stays wired to the validated
+ *      ground-objects op (import + call, never invented boxes) behind the
+ *      image-consent gate, and
+ *   2. UI-deferred — the `service-ready / UI-deferred` marker is present
+ *      AND no report-flow UI file imports the service.
+ * Fail-closed both ways: wiring a UI consumer without updating the status
+ * marker fails the gate, as does dropping the marker. When the Create
+ * Report / report UI flow is reviewed and lands, replace this validator
+ * with consumer call-site tripwires (match the call, not the import).
+ */
+export const PHOTO_GROUNDING_DEFERRED_MARKER = "service-ready / UI-deferred";
+
+/** Report-flow UI surfaces where a future grounding consumer would land. */
+export const PHOTO_GROUNDING_UI_SCOPE = [
+  "createReportSource",
+  "suggestionsSource",
+  "helpSource",
+  "searchScreenSource",
+];
+
+const PHOTO_GROUNDING_UI_IMPORT_RE = /photoGrounding|requestGroundedOptions/;
+
+export function validatePhotoGroundingDeferred({ photoGroundingSource, uiSources }) {
+  const errors = [];
+  const service = photoGroundingSource ?? "";
+  if (!service.includes(PHOTO_GROUNDING_DEFERRED_MARKER)) {
+    errors.push(
+      "application-integration: photo grounding deferred marker missing (service must declare service-ready / UI-deferred until a report-flow consumer lands)",
+    );
+  }
+  if (!service.includes('from "./ai/ops/groundObjects"')) {
+    errors.push(
+      "application-integration: photo grounding service is no longer wired to the ground-objects op (import absent)",
+    );
+  }
+  if (!/await groundObjects\(/.test(service)) {
+    errors.push(
+      "application-integration: photo grounding service no longer calls the validated op (invented boxes risk)",
+    );
+  }
+  if (!service.includes("input.imageConsent !== true")) {
+    errors.push("application-integration: photo grounding service lost its image-consent gate");
+  }
+  for (const key of PHOTO_GROUNDING_UI_SCOPE) {
+    if (PHOTO_GROUNDING_UI_IMPORT_RE.test(uiSources?.[key] ?? "")) {
+      errors.push(
+        `application-integration: photo grounding is UI-deferred but ${key} imports the service (update the status marker and wire consumer tripwires)`,
+      );
+    }
+  }
+  return errors;
+}
 
 export function validateApplicationIntegration(sources) {
   const requirements = [
@@ -486,30 +612,24 @@ export function validateApplicationIntegration(sources) {
       /isSummaryPoisoned/,
       "summary grounding guard must stay connected to compaction",
     ],
-    [
-      "photoGroundingSource",
-      /from "\.\/ai\/ops\/groundObjects"/,
-      "photo grounding consumer must stay wired to the ground-objects op",
-    ],
-    [
-      "photoGroundingSource",
-      /await groundObjects\(/,
-      "photo grounding consumer must call the validated op (not invent boxes)",
-    ],
-    [
-      "photoGroundingSource",
-      /input\.imageConsent !== true/,
-      "photo grounding must keep the image-consent gate",
-    ],
   ];
   return requirements.filter(([key, pattern]) => !pattern.test(sources[key] ?? ""))
     .map(([, , message]) => `application-integration: ${message}`);
 }
 
 function checkApplicationIntegration() {
-  return validateApplicationIntegration(Object.fromEntries(
+  const sources = Object.fromEntries(
     Object.entries(APPLICATION_INTEGRATION_FILES).map(([key, file]) => [key, read(file)]),
-  ));
+  );
+  return [
+    ...validateApplicationIntegration(sources),
+    ...validatePhotoGroundingDeferred({
+      photoGroundingSource: sources.photoGroundingSource,
+      uiSources: Object.fromEntries(
+        PHOTO_GROUNDING_UI_SCOPE.map((key) => [key, sources[key]]),
+      ),
+    }),
+  ];
 }
 
 function checkEndpointPin() {
@@ -564,6 +684,7 @@ export const GATE_CHECKS = [
   { id: "license-bundle", run: checkLicenseBundle },
   { id: "abi-artifacts", run: checkAbiArtifacts },
   { id: "vision-truth", run: checkVisionTruth },
+  { id: "photo-analysis-truth", run: checkPhotoAnalysisTruth },
   { id: "runtime-wiring", run: checkRuntimeWiring },
   { id: "application-integration", run: checkApplicationIntegration },
   { id: "endpoint-pin", run: checkEndpointPin },
@@ -613,7 +734,8 @@ checks (any failure exits 1):
   manifest-pins     modelProfiles rev+sha pins, LFM catalogOnly
   license-bundle    lfm1.0 arms blocked on the bundle channel
   abi-artifacts     ABI split config carries every supported ABI
-  vision-truth      production vision seam + registration present, copy honest
+   vision-truth      production vision seam + registration present, copy honest
+   photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim
   runtime-wiring    every spec runtime has a production adapter, no lab routes
   application-integration  real boot, provider, controls, matching and timing path
   endpoint-pin      generic endpoint pinned (no invented default)

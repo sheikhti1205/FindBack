@@ -1,10 +1,17 @@
 /**
  * Report-photo disambiguation over the ground-objects op.
  *
- * Hook-ready service (no UI wired yet): given a report photo plus a
- * referring expression, it returns validated selector options for a
- * "Which item are you reporting?" prompt. Boxes are presentation-only —
- * this module never crops, writes, or otherwise acts on coordinates.
+ * Status: service-ready / UI-deferred (no UI consumer yet).
+ * Intended future flow: the Create Report / report UI "Which item are you
+ * reporting?" prompt — import these helpers in the report flow only after
+ * review. Until that review lands, no screen or component may import this
+ * module; the release gate fails closed if this marker is removed or a
+ * report-flow UI file imports this service while the status is deferred.
+ *
+ * Given a report photo plus a referring expression, this service returns
+ * validated selector options for the disambiguation prompt. Boxes are
+ * presentation-only — this module never crops, writes, or otherwise acts
+ * on coordinates.
  *
  * Fail-closed throughout: without explicit image consent, on invalid
  * boxes, or on op failure, callers get an error or zero options — never
