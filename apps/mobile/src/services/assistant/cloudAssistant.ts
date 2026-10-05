@@ -12,6 +12,7 @@ import {
   isInstructionOverride,
 } from "../ai/appKnowledge";
 import type { ReportSlotFields, SearchFilterFields } from "../ai/types";
+import { classifyAssistantIntent } from "../ai/ops/intentRouter";
 import { resolveAssistantCategory, resolveReportTurn } from "./reportTurnResolver";
 import {
   applyReportFields,
@@ -398,13 +399,23 @@ export async function executeCloudAssistantMessage(
   return reportTurnFromStart(current.flow, input, generate);
 }
 
-/** Same flow inference the fresh-chat route has always used. */
+/**
+ * Fresh-chat entry router: classify-intent is the standard (deterministic
+ * first). A question about the app is an app-question (ask), never a report
+ * or search flow; vague input clarifies via ask. The bespoke prompt paths
+ * below stay until answer-help parity tests prove same-or-better grounding.
+ */
 function inferFlow(input: string): "search" | "found" | "lost" | "ask" {
-  return /\bsearch|find|look for\b/i.test(input)
-    ? "search"
-    : /\b(found|find owner)\b/i.test(input)
-      ? "found"
-      : /\b(lost|report)\b/i.test(input)
-        ? "lost"
-        : "ask";
+  switch (classifyAssistantIntent(input)) {
+    case "REPORT_LOST":
+      return "lost";
+    case "REPORT_FOUND":
+      return "found";
+    case "SEARCH":
+      return "search";
+    case "APP_QUESTION":
+    case "OPEN_QUESTION":
+    case "UNKNOWN":
+      return "ask";
+  }
 }

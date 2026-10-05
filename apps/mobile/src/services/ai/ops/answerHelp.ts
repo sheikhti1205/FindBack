@@ -1,13 +1,15 @@
 /**
- * Narrow op: answer-help.
+ * Narrow op: answer-help — the single app-help op, grounded in the current
+ * FindBack capability knowledge (appKnowledge.ts).
  *
- * Prose path: no JSON required. Output is thought-stripped (R2, Qwen
- * profile only), refusal/empty-checked (R4), bounded, and echo-checked
- * (R6). Hallucinated app features are out of scope here: no
- * APP_CAPABILITIES list exists in evidence, so this op does not judge
- * factuality — it normalizes shape only.
+ * Prose path: no JSON required. The prompt carries the versioned knowledge
+ * block so the model answers from shipped capabilities; output is
+ * thought-stripped (R2, Qwen profile only), refusal/empty-checked (R4),
+ * bounded, echo-checked (R6), and screened for SQL/private-data/model-claim
+ * leakage (groundAppAnswer) before it is shown.
  */
 import type { ModelProfile } from "../modelProfiles";
+import { getCurrentKnowledge, groundAppAnswer } from "../appKnowledge";
 import { normalizeProse, type NormalizeOptions } from "../normalize";
 import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import type { AiResult, GenerateFn, HelpAnswer } from "../types";
@@ -18,7 +20,12 @@ export const HELP_INSTRUCTION =
   "Do not wrap the answer in JSON or markdown fences.";
 
 export function buildHelpPrompt(userMessage: string): string {
-  return `${HELP_INSTRUCTION}\nUser question: ${userMessage}`;
+  const knowledge = getCurrentKnowledge();
+  return (
+    `${HELP_INSTRUCTION}\n` +
+    `[knowledge version=${knowledge.version}]\n${knowledge.text}\n` +
+    `User question: ${userMessage}`
+  );
 }
 
 export async function answerHelp(
@@ -37,7 +44,14 @@ export async function answerHelp(
   };
   const parsed = normalizeProse(rawText, profile, { ...options, context });
   if (!parsed.ok) return parsed;
-  return { ok: true, value: { answerText: parsed.value, action: { action: "NONE" } } };
+  // Screen before showing: SQL, private data and model-identity claims are
+  // replaced with the honest grounded reply (same contract as the Help
+  // ask-path screening). Safe answers pass through untouched.
+  const grounded = groundAppAnswer(parsed.value);
+  if (!grounded.safe) {
+    return { ok: true, value: { answerText: grounded.reply, action: { action: "NONE" } } };
+  }
+  return { ok: true, value: { answerText: grounded.text, action: { action: "NONE" } } };
 }
 
 export const answerHelpTaskSpec: AiTaskSpec = taskSpecFor("answer-help");

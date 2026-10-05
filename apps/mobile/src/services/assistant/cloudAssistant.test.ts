@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { executeCloudAssistantMessage } from "./cloudAssistant";
 import { applySearchFields, startFlow } from "./guidedAssistantController";
 import { MAX_CHAT_INPUT_CHARS } from "../ai/appKnowledge";
+import { answerHelp } from "../ai/ops/answerHelp";
+import { mustProfile } from "../ai/ops/testSupport";
 
 describe("OpenRouter guided assistant", () => {
   it("accepts only bounded supported search filters for the existing search route", async () => {
@@ -154,6 +156,41 @@ describe("intent safety and grounding (A1)", () => {
     expect(result.snapshot.searchFilters).toBeUndefined();
     expect(result.replySource).toBe("grounded");
     expect(result.reply.toLowerCase()).toMatch(/shorten|too long|not send/);
+  });
+
+  it("routes fresh chats through classify-intent (app-questions ask, tasks flow)", async () => {
+    const noKey = async () => { throw new Error("not connected"); };
+    const ask = await executeCloudAssistantMessage(null, "how do I report a lost item?", noKey);
+    expect(ask.snapshot.flow).toBe("ask");
+    const lost = await executeCloudAssistantMessage(null, "lost black wallet", noKey);
+    expect(lost.snapshot.flow).toBe("lost");
+    const found = await executeCloudAssistantMessage(null, "found keys in the park", noKey);
+    expect(found.snapshot.flow).toBe("found");
+    const search = await executeCloudAssistantMessage(null, "search red backpack", noKey);
+    expect(search.snapshot.flow).toBe("search");
+  });
+
+  it("matches answer-help grounding parity: same canned answer stays safe in both", async () => {
+    const canned = "Open the Report tab, choose Lost, fill the form, then Publish.";
+    const cloud = await executeCloudAssistantMessage(null, "How do I report a lost item?", async () => canned);
+    const op = await answerHelp(async () => canned, "How do I report a lost item?", mustProfile("smolvlm2-500m-text"));
+    expect(op.ok).toBe(true);
+    if (op.ok) expect(op.value.answerText).toContain("Report tab");
+    // Parity bar for removing the bespoke ask path: grounded in both, no
+    // leakage in either, app capability named in both.
+    for (const reply of [cloud.reply, op.ok ? op.value.answerText : ""]) {
+      expect(reply.toUpperCase()).not.toContain("SELECT");
+      expect(reply).toMatch(/Report/i);
+    }
+  });
+
+  it("matches answer-help refusal parity: SQL is screened in both paths", async () => {
+    const sql = "SELECT email, phone FROM profiles WHERE id = 1";
+    const cloud = await executeCloudAssistantMessage(null, "how do I search?", async () => sql);
+    const op = await answerHelp(async () => sql, "how do I search?", mustProfile("smolvlm2-500m-text"));
+    expect(cloud.reply.toUpperCase()).not.toContain("SELECT");
+    expect(op.ok).toBe(true);
+    if (op.ok) expect(op.value.answerText.toUpperCase()).not.toContain("SELECT");
   });
 
   it("keeps extraction prompts honest when the message carries listing-style poison", async () => {

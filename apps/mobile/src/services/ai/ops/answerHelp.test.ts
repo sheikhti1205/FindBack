@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HELP_INSTRUCTION, answerHelp } from "./answerHelp";
+import { HELP_INSTRUCTION, answerHelp, buildHelpPrompt } from "./answerHelp";
+import { getCurrentKnowledge } from "../appKnowledge";
 import { FakeAiProvider } from "../testing/FakeAiProvider";
 import { fakeGenerate, mustProfile, stubGenerate } from "./testSupport";
 
@@ -63,6 +64,29 @@ describe("answer-help op", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
+  });
+
+  it("grounds the prompt in current FindBack capability knowledge", () => {
+    const prompt = buildHelpPrompt("How do I report a lost item?");
+    const knowledge = getCurrentKnowledge();
+    expect(prompt).toContain(HELP_INSTRUCTION);
+    expect(prompt).toContain(`[knowledge version=${knowledge.version}]`);
+    expect(prompt).toContain("/report");
+    expect(prompt).toContain("User question: How do I report a lost item?");
+  });
+
+  it("screens model SQL leakage into the honest grounded refusal", async () => {
+    const result = await answerHelp(
+      stubGenerate("SELECT email, phone FROM profiles WHERE id = 1"),
+      "how do I search?",
+      mustProfile("lfm2.5-1.2b-q4_0"),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.answerText.toUpperCase()).not.toContain("SELECT");
+      expect(result.value.answerText.toLowerCase()).not.toContain("profiles");
+      expect(result.value.action).toEqual({ action: "NONE" });
+    }
   });
 
   it("rejects echo of explicitly supplied context", async () => {

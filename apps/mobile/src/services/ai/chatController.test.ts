@@ -8,7 +8,7 @@ import type {
 } from "./providerContract";
 import { ChatStore } from "./chatStore";
 import type { ChatPersistenceAdapter, StoredChat } from "./chatStore";
-import { ChatController } from "./chatController";
+import { ChatController, proposeIntentAction } from "./chatController";
 import type { VersionedText } from "./requestAssembler";
 
 function makeAdapter() {
@@ -410,5 +410,39 @@ describe("chatController send lifecycle (CTX-06, CTX-09)", () => {
     const builtB = controllerB.buildOutgoingContext(other.id, "hi");
     expect(builtB.request.summary).toBeUndefined();
     expect(builtB.request.selection.accountId).toBe("acct-b");
+  });
+});
+
+describe("intent-routing seam (Lane B)", () => {
+  it("proposes validated CTAs for task intents without side effects", () => {
+    const lost = proposeIntentAction("I lost my keys");
+    expect(lost.intent).toBe("REPORT_LOST");
+    expect(lost.route).toBe("OPEN_REPORT_LOST");
+    expect(lost.cta).toMatchObject({ target: "/report" });
+
+    const search = proposeIntentAction("search red backpack");
+    expect(search.route).toBe("OPEN_SEARCH");
+    expect(search.cta).toMatchObject({ target: "/search" });
+  });
+
+  it("clarifies instead of navigating when ambiguous, keeping the map precondition", () => {
+    const vague = proposeIntentAction("I lost something.");
+    expect(vague.cta).toBeNull();
+    expect(vague.clarification).toMatch(/lost report|found report|search/i);
+  });
+
+  it("leaves controller state untouched (advise-only seam)", async () => {
+    const { store } = await seedStore();
+    const controller = new ChatController({
+      store,
+      selection,
+      adapter: fakeAdapter(),
+      systemPolicy: policy,
+      knowledge,
+      budget: budgetTerms(),
+    });
+    const before = controller.getState();
+    proposeIntentAction("I lost my keys");
+    expect(controller.getState()).toEqual(before);
   });
 });

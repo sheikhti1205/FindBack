@@ -51,6 +51,10 @@ import {
   type PhotoChoice,
 } from "../services/assistant/guidedAssistantController";
 import { executeCloudAssistantMessage, type CloudGenerate } from "../services/assistant/cloudAssistant";
+import {
+  getAssistantDefault,
+  resolveAssistantIntent,
+} from "../services/ai/ops/intentRouter";
 import { RECOVERY_COPY, type RecoveryAction } from "../services/ai/errors";
 import type { AiErrorClass } from "../services/ai/types";
 import {
@@ -281,6 +285,23 @@ interface IncomingAssistantState {
 }
 
 /**
+ * Lane B: persisted Assistant default read (Lane A owns the store).
+ * Fallback-safe: Lane A's getter is not implemented yet, so a missing store
+ * reads as null and the free default applies — never throws, never blocks.
+ */
+function readPersistedAssistantDefault(accountId: string): string | null {
+  try {
+    const value = getAssistantDefault(accountId);
+    return typeof value === "string" && value !== "" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** In-app targets an intent CTA may propose. Model output never navigates. */
+const INTENT_CTA_TARGETS: ReadonlySet<string> = new Set([...Object.values(ACTION_ROUTES), "/help"]);
+
+/**
  * Canvas transcode for photo intake: decodes the picked bytes, draws them at
  * the requested size and re-encodes. Browser-only; throws an honest error
  * elsewhere instead of inventing bytes.
@@ -408,7 +429,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   // free route). The controller still takes its selection at construction
   // time, so the binding is rebuilt whenever the choice changes (never a
   // stale controller, never header-only).
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(() =>
+    readPersistedAssistantDefault(accountId),
+  );
   // Authorized picker catalogue: pinned free seed until the picker opens and
   // the vault+registry binder resolves. Never invents rows on failure.
   const [catalog, setCatalog] = useState<readonly ModelRecord[]>(HELP_MODEL_CATALOG);
@@ -536,7 +559,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     let alive = true;
     setEphemeral([]);
     setFailedSend(null);
-    setSelectedModelId(null);
+    setSelectedModelId(readPersistedAssistantDefault(accountId));
     setCatalog(HELP_MODEL_CATALOG);
     setOfflineDetail(null);
     setModelOpen(false);
@@ -1266,6 +1289,21 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   // P1: starter suggestions and guided shortcuts only start an EMPTY
   // conversation — once chatting the transcript owns the space.
   const isEmptyConversation = freeMessages.length <= 1;
+  // Lane B intent proposal: classify-intent → route-intent → validated CTA.
+  // Advisory only — rendered as a visible chip, followed solely through the
+  // validated allowlist on tap. Never auto-navigates, never sends.
+  const intentProposal = useMemo(
+    () =>
+      guided !== null || input.trim() === "" ? null : resolveAssistantIntent(input.trim()),
+    [guided, input],
+  );
+  function followIntentCta() {
+    const cta = intentProposal?.cta;
+    if (cta === null || cta === undefined) return;
+    if (!INTENT_CTA_TARGETS.has(cta.target)) return;
+    announce(`${cta.label}.`);
+    navigate(cta.target);
+  }
   const guidedQuestion = guided === null ? null : nextMissingQuestion(guided);
   const guidedHandoff = guided === null ? null : buildAssistantReportHandoff(guided);
   const composerBusy = busy || guidedBusy;
@@ -1525,6 +1563,20 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           </div>
         )}
 
+        {/* Lane B intent CTA: the proposed destination renders visibly and is
+            followed only on tap through validated application actions. */}
+        {guided === null && intentProposal?.cta !== null && intentProposal?.cta !== undefined && (
+          <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
+            <button
+              type="button"
+              data-testid={`intent-cta-${intentProposal.cta.id}`}
+              onClick={followIntentCta}
+              className="min-h-[48px] rounded-full border border-outline bg-surface-container px-3 text-xs font-medium text-on-surface hover:bg-surface-container-high"
+            >
+              {intentProposal.cta.label}
+            </button>
+          </div>
+        )}
         {guided === null && isEmptyConversation && (
           <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
             {(GUIDED_FLOWS.filter((f) => f !== "ask") as GuidedFlow[]).map((flow) => (

@@ -46,6 +46,10 @@ import {
   recompactForModelSwitch,
 } from "./compaction";
 import { ChatStore, HistoryDisabledError } from "./chatStore";
+import {
+  resolveAssistantIntent,
+  type ResolvedAssistantIntent,
+} from "./ops/intentRouter";
 
 export class ControllerError extends Error {
   constructor(
@@ -683,3 +687,18 @@ export class ChatController {
 /** Re-export for callers that budget around the controller. */
 export { computeContextBudget, estimateTextTokens };
 export type { ContextBudgetInput };
+
+/**
+ * Lane B intent-routing seam: classify-intent → route-intent → validated app
+ * action CTA. Pure and side-effect free: it proposes a visible CTA (or a
+ * clarification when ambiguous) and never navigates, sends, or persists.
+ * The send() path is untouched — this seam only advises the UI.
+ */
+export type IntentProposal = ResolvedAssistantIntent;
+
+export function proposeIntentAction(
+  text: string,
+  options?: { readonly hasLocation?: boolean },
+): IntentProposal {
+  return resolveAssistantIntent(text, options);
+}
