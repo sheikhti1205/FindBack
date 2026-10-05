@@ -19,6 +19,8 @@ vi.mock("../services/openRouter", () => ({
 }));
 
 import { AiConnection } from "./AiConnection";
+import { aiPreferencesKey, loadAiPreferences, updateAiPreferences } from "../services/ai/aiPreferences";
+import type { ModelRecord } from "../services/ai/providerContract";
 
 describe("AI connection", () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.currentUserId = "user-1"; });
@@ -93,6 +95,55 @@ describe("AiConnection motion (Wave E)", () => {  beforeEach(() => { vi.clearAll
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitForElementToBeRemoved(() => screen.queryByRole("alert"));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Connected"));
+  });
+});
+
+describe("AiConnection persistent Assistant default (Lane A)", () => {
+  const freeRow: ModelRecord = {
+    provider: "openrouter",
+    id: "openrouter/free-a",
+    input: ["text"],
+    output: ["text"],
+    prices: [
+      { amountDecimal: "0", currency: "USD", unit: "token", dimension: "input", sourceField: "pricing.prompt" },
+      { amountDecimal: "0", currency: "USD", unit: "token", dimension: "output", sourceField: "pricing.completion" },
+    ],
+    priceClass: "free",
+    retrievedAt: "2026-09-26T00:00:00.000Z",
+    entitlement: "untested",
+  };
+  const retrievedAt = "2026-09-26T00:00:00.000Z";
+  beforeEach(() => { vi.clearAllMocks(); mocks.currentUserId = "user-1"; window.localStorage.clear(); });
+  afterEach(() => { cleanup(); window.localStorage.clear(); });
+
+  it("persists a permitted free-model choice to exactly that account's Assistant default", () => {
+    render(<MemoryRouter><AiConnection models={[freeRow]} modelsRetrievedAt={retrievedAt} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    expect(loadAiPreferences("user-1").preferredAssistantModel).toBe("openrouter/free-a");
+    // Never crosses accounts: the storage key is per account.
+    expect(window.localStorage.getItem(aiPreferencesKey("user-2"))).toBeNull();
+    expect(loadAiPreferences("user-2").preferredAssistantModel).toBeNull();
+  });
+
+  it("reads back the persisted default as the selected row and isolates accounts", () => {
+    updateAiPreferences("user-1", { preferredAssistantModel: "openrouter/free-a" });
+    const view = render(<MemoryRouter><AiConnection models={[freeRow]} modelsRetrievedAt={retrievedAt} /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: "Selected" }).getAttribute("aria-pressed")).toBe("true");
+    mocks.currentUserId = "user-2";
+    view.rerender(<MemoryRouter><AiConnection models={[freeRow]} modelsRetrievedAt={retrievedAt} /></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: "Selected" })).toBeNull();
+  });
+
+  it("an explicit onSelectModel owns the choice: it is called and nothing is persisted here", () => {
+    const onSelectModel = vi.fn();
+    render(
+      <MemoryRouter>
+        <AiConnection models={[freeRow]} modelsRetrievedAt={retrievedAt} onSelectModel={onSelectModel} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    expect(onSelectModel).toHaveBeenCalledWith("openrouter/free-a");
+    expect(loadAiPreferences("user-1").preferredAssistantModel).toBeNull();
   });
 });
 

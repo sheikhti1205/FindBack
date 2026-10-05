@@ -19,6 +19,7 @@ import {
   priceFingerprint,
 } from "../services/ai/modelCatalog";
 import { resolveSelection } from "../services/ai/modelPolicy";
+import { loadAiPreferences, updateAiPreferences } from "../services/ai/aiPreferences";
 import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
 
 const validator = createOpenRouterClient(async () => null);
@@ -90,9 +91,21 @@ export type AiConnectionProps = {
   readonly models?: readonly ModelRecord[];
   readonly modelsRetrievedAt?: string | null;
   readonly modelsStale?: boolean;
-  /** Live selection binding (G06 fix): the currently selected model id. */
+  /**
+   * Live selection binding (G06 fix): the currently selected model id.
+   * Lane A: when omitted, the persisted Assistant default for this account
+   * (Settings-owned `aiPreferences.preferredAssistantModel`, null =
+   * Automatic) is shown, so the sheet always reflects the account default.
+   */
   readonly selectedId?: string | null;
-  /** Called with a model id ONLY after it passes the consent/entitlement gates. */
+  /**
+   * Called with a model id ONLY after it passes the consent/entitlement
+   * gates. Lane A: when omitted, a permitted choice is persisted straight to
+   * this account's Assistant default (same gated call sites, so paid-model
+   * consent + price-fingerprint rules are preserved). Pass an explicit
+   * callback to own the choice yourself (e.g. a session-only override) —
+   * then nothing is persisted here.
+   */
   readonly onSelectModel?: (modelId: string) => void;
   /** Explicit scoped paid consent produced by the consent panel (B stores it for send-time use). */
   readonly onPaidConsent?: (consent: PaidConsent) => void;
@@ -245,6 +258,17 @@ export function AiConnection({
 
   const consentDraft = consentDraftId === null ? null : (catalog.find((r) => r.id === consentDraftId) ?? null);
 
+  // Lane A persistent binding: Settings owns the default via aiPreferences.
+  // An explicit selectedId wins; otherwise the persisted default is shown.
+  // An explicit onSelectModel wins; otherwise a permitted choice is persisted
+  // for exactly this account (gated call sites only — consent rules hold).
+  const persistedDefault = loadAiPreferences(account).preferredAssistantModel;
+  const effectiveSelectedId = selectedId ?? persistedDefault;
+  function persistDefault(modelId: string): void {
+    if (onSelectModel !== undefined) return;
+    updateAiPreferences(account, { preferredAssistantModel: modelId });
+  }
+
   function handleSelect(modelId: string) {
     setGateMessage(null);
     const record = catalog.find((entry) => entry.id === modelId);
@@ -282,6 +306,7 @@ export function AiConnection({
         return;
       }
       onSelectModel?.(record.id);
+      persistDefault(record.id);
       return;
     }
     // Paid/variable: explicit scoped consent required — open the consent panel,
@@ -320,6 +345,7 @@ export function AiConnection({
     setGateMessage(null);
     onPaidConsent?.(candidate);
     onSelectModel?.(consentDraft.id);
+    persistDefault(consentDraft.id);
   }
 
   useEffect(() => {
@@ -645,8 +671,8 @@ export function AiConnection({
               models={filtered}
               retrievedAt={retrievedAt}
               stale={stale}
-              selectedId={selectedId}
-              onSelect={onSelectModel === undefined ? undefined : handleSelect}
+              selectedId={effectiveSelectedId}
+              onSelect={handleSelect}
             />
           ) : (
             <p className="text-sm text-on-surface-variant">

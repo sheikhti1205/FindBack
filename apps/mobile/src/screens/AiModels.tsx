@@ -44,6 +44,17 @@ import {
   getOfflineCapabilityCopy,
   type MeasuredCapabilityFlags,
 } from "../services/appCapabilities";
+import {
+  aiPreferencesKey,
+  isNeedleSelectable,
+  legacyAssistantModeToPreference,
+  loadAiPreferences,
+  publishEffectivePhotoEngine,
+  saveAiPreferences,
+  updateAiPreferences,
+  type AiPreferences,
+} from "../services/ai/aiPreferences";
+import { getApplicationAi } from "../services/ai/applicationAi";
 
 /**
  * Assistant mode (AI-022): which transports the assistant may use.
@@ -116,6 +127,43 @@ export function saveAssistantMode(accountId: string, mode: AssistantMode): void 
     globalThis.localStorage?.setItem(assistantModeKey(accountId), mode);
   } catch {
     // Persistence is best effort; the in-memory choice still applies.
+  }
+}
+
+/**
+ * Lane A: read this account's AI preferences, seeding the assistant mode
+ * once from the legacy assistant-mode key when the new store has never been
+ * written. Settings owns the result; Help only reads it back.
+ */
+export function loadSeededAiPreferences(accountId: string): AiPreferences {
+  const current = loadAiPreferences(accountId);
+  try {
+    if (globalThis.localStorage?.getItem(aiPreferencesKey(accountId)) !== null) {
+      return current;
+    }
+    const legacyRaw = globalThis.localStorage?.getItem(assistantModeKey(accountId)) ?? null;
+    if (legacyRaw === null) return current;
+    return saveAiPreferences(accountId, {
+      ...current,
+      assistantMode: legacyAssistantModeToPreference(legacyRaw),
+    });
+  } catch {
+    return current;
+  }
+}
+
+/**
+ * Push the persisted matches-engine choice into the live matching runtime.
+ * Returns true when the runtime accepted it. "use" always applies; "needle"
+ * requires Android + an installed model, so on web (or before install) this
+ * fails closed and the caller must say so honestly. Never throws.
+ */
+export function applyMatchesEngineToRuntime(choice: AiPreferences["matchesEngine"]): boolean {
+  try {
+    getApplicationAi().selectMatchingBackend(choice);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -327,6 +375,8 @@ export function AiModels({
   const account = accountId ?? user?.id ?? "local";
 
   const [mode, setMode] = useState<AssistantMode>(() => loadAssistantMode(account));
+  // Lane A: single account-scoped preference source of truth, owned by Settings.
+  const [prefs, setPrefs] = useState<AiPreferences>(() => loadSeededAiPreferences(account));
   const [slots, setSlots] = useState<Record<string, SlotState>>({});
   const [slotsLoading, setSlotsLoading] = useState(true);
   const [catalog, setCatalog] = useState<readonly ModelRecord[]>([]);
@@ -343,9 +393,15 @@ export function AiModels({
   const [genericNotice, setGenericNotice] = useState<string | null>(null);
   const [genericBusy, setGenericBusy] = useState(false);
 
-  // Account switch: mode and slots never cross accounts.
+  // Account switch: mode, preferences, and slots never cross accounts.
+  // The freshly loaded account's engines are (re)published to their live
+  // consumers so a previous account's choice never leaks into this one.
   useEffect(() => {
     setMode(loadAssistantMode(account));
+    const seeded = loadSeededAiPreferences(account);
+    setPrefs(seeded);
+    publishEffectivePhotoEngine(seeded);
+    applyMatchesEngineToRuntime(seeded.matchesEngine);
     setProbes({});
     setGenericEndpoint(loadGenericEndpoint(account));
     setGenericDraft("");
@@ -461,7 +517,21 @@ export function AiModels({
   function chooseMode(next: AssistantMode) {
     setMode(next);
     saveAssistantMode(account, next);
+    // Lane A: the legacy chooser writes through to the single source of truth.
+    setPrefs(updateAiPreferences(account, { assistantMode: legacyAssistantModeToPreference(next) }));
     announce(`Assistant mode ${ASSISTANT_MODE_COPY[next].label}.`);
+  }
+
+  /** Lane A: persist one preference patch for exactly this account. */
+  function choosePrefs(patch: Partial<AiPreferences>, notice: string) {
+    const next = updateAiPreferences(account, patch);
+    setPrefs(next);
+    if (patch.photoEngine !== undefined) publishEffectivePhotoEngine(next);
+    if (patch.matchesEngine !== undefined && !applyMatchesEngineToRuntime(next.matchesEngine)) {
+      announce("Matches engine saved. The on-device Needle runtime is unavailable here, so matching stays on USE until the model is installed and verified.");
+      return;
+    }
+    announce(notice);
   }
 
   async function refreshSlots() {
@@ -621,6 +691,12 @@ export function AiModels({
     [catalog],
   );
 
+  // Lane A: free-only rows selectable as the persisted Assistant default.
+  // Paid rows are never offered here — they need explicit per-model consent
+  // on the AI Connection screen, which persists the choice on confirm.
+  const assistantFreeRows = catalog.filter((record) => record.priceClass === "free");
+  const needleReady = isNeedleSelectable(needleEvidence);
+
   // WS-E: visibility gates consume measured evidence only (no guessing).
   // Defaults (null evidence) keep every affordance hidden.
   const showAuto = canShowAuto(probeRecords, probeContext);
@@ -691,6 +767,90 @@ export function AiModels({
                : `${ASSISTANT_MODE_COPY[mode].label} is set. Pick an installed on-device row in Help; Offline-only never sends to cloud.`}
           </p>
         ) : null}
+      </section>
+
+      <section aria-label="Assistant defaults" className="flex flex-col gap-2">
+        <h2 className="text-base font-semibold">Assistant defaults</h2>
+        <p className="text-sm text-on-surface-variant">
+          These apply to this account only and never cross accounts. Help starts
+          each chat from the Assistant default below; picking a different model
+          there is a session-only override.
+        </p>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="ai-pref-model" className="text-sm font-medium">
+            Assistant default model
+          </label>
+          <select
+            id="ai-pref-model"
+            value={prefs.preferredAssistantModel ?? "automatic"}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value === "automatic") {
+                choosePrefs({ preferredAssistantModel: null }, "Assistant default model: Automatic.");
+                return;
+              }
+              choosePrefs({ preferredAssistantModel: value }, `Assistant default model ${value}.`);
+            }}
+            className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
+          >
+            <option value="automatic">Automatic ({DEFAULT_MODEL_ID}, free only)</option>
+            {assistantFreeRows.map((record) => (
+              <option key={record.id} value={record.id}>
+                {record.id} (free)
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-on-surface-variant">
+            Paid models are picked on the AI Connection screen; confirming
+            explicit consent there updates this account&apos;s default.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="ai-pref-photo" className="text-sm font-medium">
+            Photo engine
+          </label>
+          <select
+            id="ai-pref-photo"
+            value={prefs.photoEngine}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value !== "automatic" && value !== "on-device-only" && value !== "cloud-only") {
+                return;
+              }
+              choosePrefs({ photoEngine: value }, `Photo engine ${value}.`);
+            }}
+            className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
+          >
+            <option value="automatic">Automatic (on-device first, cloud fallback)</option>
+            <option value="on-device-only">On-device only</option>
+            <option value="cloud-only">Cloud only</option>
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="ai-pref-matches" className="text-sm font-medium">
+            Matches engine
+          </label>
+          <select
+            id="ai-pref-matches"
+            value={prefs.matchesEngine}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value !== "use" && value !== "needle") return;
+              choosePrefs({ matchesEngine: value }, `Matches engine ${value}.`);
+            }}
+            className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
+          >
+            <option value="use">Use (default)</option>
+            <option value="needle" disabled={!needleReady}>
+              Needle (needs an installed, verified on-device model)
+            </option>
+          </select>
+          {needleReady ? null : (
+            <p className="text-xs text-on-surface-variant">
+              Needle unlocks after an on-device model is installed and verified on this device.
+            </p>
+          )}
+        </div>
       </section>
 
       <section aria-label="On-device AI" className="flex flex-col gap-2">

@@ -13,7 +13,8 @@ vi.mock("../services/supabaseClient", () => ({
   }),
 }));
 
-import { AiModels, assistantModeKey, computeProviderPricingUnknown } from "./AiModels";
+import { AiModels, applyMatchesEngineToRuntime, assistantModeKey, computeProviderPricingUnknown } from "./AiModels";
+import { aiPreferencesKey, loadAiPreferences } from "../services/ai/aiPreferences";
 import type { ModelRecord } from "../services/ai/providerContract";
 import { SUPPORTED_AI_PROVIDERS } from "../services/aiCredentials";
 
@@ -134,6 +135,51 @@ describe("AiModels control center (AI-022)", () => {
     expect(screen.getByTestId("ai-provider-experimental-groq")).toBeTruthy();
   });
 
+  it("owns Lane A assistant defaults: Automatic safe defaults, per-account persistence", async () => {
+    renderModels();
+    const modelSelect = screen.getByLabelText("Assistant default model") as HTMLSelectElement;
+    const photoSelect = screen.getByLabelText("Photo engine") as HTMLSelectElement;
+    const matchesSelect = screen.getByLabelText("Matches engine") as HTMLSelectElement;
+    // Safe defaults: Automatic (null), automatic photo engine, use matches.
+    expect(modelSelect.value).toBe("automatic");
+    expect(photoSelect.value).toBe("automatic");
+    expect(matchesSelect.value).toBe("use");
+    // Only free rows are offered as the persisted default — paid never is.
+    expect(modelSelect.textContent).toContain("openrouter/free");
+    expect(modelSelect.textContent).not.toContain("groq/paid-model");
+    // Needle stays locked without installed/verified evidence.
+    const needleOption = within(matchesSelect).getByText(/needle/i) as HTMLOptionElement;
+    expect(needleOption.disabled).toBe(true);
+    // Persist choices for exactly this account (after the catalogue rows load).
+    await waitFor(() => {
+      const values = Array.from(modelSelect.querySelectorAll("option")).map((o) => o.value);
+      expect(values).toContain("openrouter/free");
+    });
+    fireEvent.change(photoSelect, { target: { value: "cloud-only" } });
+    fireEvent.change(modelSelect, { target: { value: "openrouter/free" } });
+    expect(loadAiPreferences("u1").photoEngine).toBe("cloud-only");
+    expect(loadAiPreferences("u1").preferredAssistantModel).toBe("openrouter/free");
+    expect(window.localStorage.getItem(aiPreferencesKey("u2"))).toBeNull();
+    await screen.findByTestId("ai-provider-openai");
+  });
+
+  it("unlocks the needle matches engine only with installed/verified evidence", () => {
+    renderModels({
+      needleEvidence: { measured: true, correctnessPass: true, fresh: true },
+    });
+    const matchesSelect = screen.getByLabelText("Matches engine") as HTMLSelectElement;
+    const needleOption = within(matchesSelect).getByText(/needle/i) as HTMLOptionElement;
+    expect(needleOption.disabled).toBe(false);
+    fireEvent.change(matchesSelect, { target: { value: "needle" } });
+    expect(loadAiPreferences("u1").matchesEngine).toBe("needle");
+  });
+
+  it("seeds the preference assistant mode once from a legacy stored mode", () => {
+    window.localStorage.setItem(assistantModeKey("u1"), "cloud-only");
+    renderModels();
+    expect(loadAiPreferences("u1").assistantMode).toBe("cloud-only");
+  });
+
   it("flags a provider whose whole catalogue is unknown-priced", () => {
     const unknown: ModelRecord = { ...PAID_ROW, provider: "xai", id: "xai/unknown", priceClass: "unknown" };
     expect(computeProviderPricingUnknown([unknown])).toMatchObject({ xai: true, groq: false, openrouter: false });
@@ -142,5 +188,14 @@ describe("AiModels control center (AI-022)", () => {
       groq: false,
     });
     expect(computeProviderPricingUnknown([])).toMatchObject({ xai: false });
+  });
+
+  it("applies the matches engine to the live runtime, failing closed off-device", () => {
+    // "use" always applies (the safe default, no native requirement).
+    expect(applyMatchesEngineToRuntime("use")).toBe(true);
+    // "needle" needs Android + an installed model: in jsdom it must fail
+    // closed (false, never throw) so the caller can say so honestly.
+    expect(applyMatchesEngineToRuntime("needle")).toBe(false);
+    expect(applyMatchesEngineToRuntime("use")).toBe(true);
   });
 });
