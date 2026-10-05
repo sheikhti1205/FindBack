@@ -107,3 +107,54 @@ describe("Help intent convergence (Lane B): input → intent → CTA → visible
     expect(screen.queryByTestId(/^intent-cta-/)).toBeNull();
   });
 });
+
+describe("Help guided-search tap gate (P0-3): ready stages a CTA, never auto-navigates", () => {
+  function send(text: string) {
+    fireEvent.change(screen.getByLabelText("Ask the Help & FAQ"), { target: { value: text } });
+    fireEvent.submit(screen.getByTestId("chat-composer"));
+  }
+
+  it("completing guided search does NOT navigate; tapping the CTA does", async () => {
+    renderHelp({ guidedGenerate: async () => '{"query":"keys","status":"LOST"}' });
+    fireEvent.click(screen.getByTestId("guided-shortcut-search"));
+    await screen.findByTestId("guided-panel");
+    send("find lost keys");
+    // Ready stages the explicit CTA instead of leaving Help.
+    const cta = await screen.findByTestId("guided-open-search");
+    expect(cta.textContent).toMatch(/open search with these filters/i);
+    expect(screen.queryByText("Search screen")).toBeNull();
+    expect(screen.queryByText("Report screen")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
+    fireEvent.click(cta);
+    await screen.findByText("Search screen");
+  });
+});
+
+describe("Help paid-default notice (P1-2): persisted default absent from catalogue", () => {
+  function send(text: string) {
+    fireEvent.change(screen.getByLabelText("Ask the Help & FAQ"), { target: { value: text } });
+    fireEvent.submit(screen.getByTestId("chat-composer"));
+  }
+
+  it("shows an honest notice and sends still go through the free route", async () => {
+    const key = "findback.ai.preferences.v1.u-intent";
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        assistantMode: "automatic",
+        preferredAssistantModel: "groq/paid-row",
+        photoEngine: "automatic",
+        matchesEngine: "use",
+      }),
+    );
+    try {
+      renderHelp({ createAdapter: () => cannedAdapter("free answer"), getKey: async () => "test-key" });
+      const notice = await screen.findByTestId("model-default-unavailable");
+      expect(notice.textContent).toMatch(/saved default unavailable.*free default/i);
+      send("How do I report?");
+      await screen.findByText("free answer");
+    } finally {
+      window.localStorage.removeItem(key);
+    }
+  });
+});

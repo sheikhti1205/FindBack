@@ -488,6 +488,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const [guided, setGuided] = useState<GuidedSnapshot | null>(null);
   const [guidedTranscript, setGuidedTranscript] = useState<readonly GuidedEntry[]>([]);
   const [guidedBusy, setGuidedBusy] = useState(false);
+  // P0-3 tap gate: a ready guided search never navigates by itself. The
+  // validated target waits here until the explicit CTA below is tapped.
+  const [pendingSearchTarget, setPendingSearchTarget] = useState<string | null>(null);
   // M2 request-state UI: controller phase (subscribe/getState), throttled
   // partial text, and per-question attempt history. No fabricated steps.
   const [controllerPhase, setControllerPhase] = useState<ControllerState["phase"]>("idle");
@@ -568,6 +571,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setNotice(null);
     setGuided(null);
     setGuidedTranscript([]);
+    setPendingSearchTarget(null);
     void store.restore(accountId).then(() => {
       if (!alive) return;
       const chats = store.listChats(accountId);
@@ -1062,6 +1066,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       return;
     }
     generation.current += 1;
+    setPendingSearchTarget(null);
     setGuided(startFlow(flow));
     setGuidedTranscript([]);
     announce(`${SHORTCUT_LABELS[flow]}. Answer the questions to continue.`);
@@ -1069,9 +1074,29 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
 
   function endGuided() {
     generation.current += 1;
+    setPendingSearchTarget(null);
     setGuided(null);
     setGuidedTranscript([]);
     setGuidedBusy(false);
+  }
+
+  // P0-3 tap gate: the pending guided-search target is followed only here,
+  // through the validated ACTION_ROUTES allowlist. Typing or completing the
+  // guided flow never calls this by itself.
+  function openPendingSearch() {
+    if (pendingSearchTarget === null) return;
+    let pathname = pendingSearchTarget;
+    try {
+      pathname = new URL(pendingSearchTarget, "http://localhost").pathname;
+    } catch {
+      return;
+    }
+    const allowed = new Set(Object.values(ACTION_ROUTES));
+    if (!allowed.has(pathname)) return;
+    const target = pendingSearchTarget;
+    announce("Opening search with these filters.");
+    endGuided();
+    navigate(target);
   }
 
   async function submitGuided(text: string) {
@@ -1094,9 +1119,10 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         result.snapshot.state === "ready" &&
         result.snapshot.searchFilters !== undefined
       ) {
+        // P0-3 tap gate: hold the validated target for the explicit CTA.
+        // Never auto-navigate — completing the flow only stages the button.
         const target = mapAssistantSearchFilters(result.snapshot.searchFilters).path;
-        endGuided();
-        navigate(target);
+        setPendingSearchTarget(target);
       }
     } finally {
       if (generation.current === gen) setGuidedBusy(false);
@@ -1307,6 +1333,11 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const guidedQuestion = guided === null ? null : nextMissingQuestion(guided);
   const guidedHandoff = guided === null ? null : buildAssistantReportHandoff(guided);
   const composerBusy = busy || guidedBusy;
+  // P1-2 honest fallback: the persisted default is raw and may name a paid
+  // row absent from this catalogue (free seed + authorized load). Never crash
+  // and never silently drop it — sends already fall back to the free route.
+  const savedDefaultUnavailable =
+    selectedModelId !== null && catalog.find((row) => row.id === selectedModelId) === undefined;
 
   // Real request-state row: controller phase + attempt history only — never
   // fabricated reasoning steps.
@@ -1412,6 +1443,15 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             {selectedModelId ?? "Free default"}
           </button>
         </div>
+        {savedDefaultUnavailable && (
+          <p
+            data-testid="model-default-unavailable"
+            role="status"
+            className="pl-12 pt-1 text-xs text-on-surface-variant"
+          >
+            Saved default unavailable — using Free default.
+          </p>
+        )}
       </header>
 
       <main aria-label="Help conversation" className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1542,6 +1582,23 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
                 </p>
               </div>
             )}
+            {pendingSearchTarget !== null &&
+              guided.flow === "search" &&
+              guided.state === "ready" && (
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    data-testid="guided-open-search"
+                    onClick={openPendingSearch}
+                    className="min-h-[48px] rounded-full bg-on-surface px-3 text-xs font-medium text-surface"
+                  >
+                    Open search with these filters
+                  </button>
+                  <p className="text-xs text-on-surface-variant">
+                    Review the filters above, then open search. Nothing navigates until you tap.
+                  </p>
+                </div>
+              )}
             </motion.section>
           )}
         </AnimatePresence>

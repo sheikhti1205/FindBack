@@ -191,11 +191,15 @@ describe("Help full-screen assistant", () => {
     expect(screen.getByText("first question")).toBeTruthy();
   });
 
-  it("routes a ready guided search to ordinary search with context intact", async () => {
+  it("routes a ready guided search to ordinary search only after an explicit tap", async () => {
     renderHelp({ guidedGenerate: async () => '{"query":"keys","status":"LOST"}' });
     fireEvent.click(screen.getByTestId("guided-shortcut-search"));
     await screen.findByTestId("guided-panel");
     send("find lost keys");
+    // Ready snapshot must NOT navigate by itself: an explicit CTA appears.
+    await screen.findByTestId("guided-open-search");
+    expect(screen.queryByText("Search screen")).toBeNull();
+    fireEvent.click(screen.getByTestId("guided-open-search"));
     await screen.findByText("Search screen");
   });
 
