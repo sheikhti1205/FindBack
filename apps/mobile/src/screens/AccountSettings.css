@@ -31,6 +31,18 @@
   color: var(--fb-error);
 }
 
+/* Key-removal notice shown before a confirmed sign-out. */
+.fb-account-notice {
+  font-size: 0.875rem;
+}
+
+.fb-account-confirm-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .fb-account-avatar {
     transition: none;

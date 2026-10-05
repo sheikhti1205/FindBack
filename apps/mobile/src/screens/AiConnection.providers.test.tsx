@@ -161,7 +161,7 @@ describe("AiConnection per-provider BYOK slots", () => {
     expect(screen.queryByLabelText("Unlock phrase")).toBeNull();
     fireEvent.click(screen.getByLabelText("Remember on this device"));
     expect(screen.getByLabelText("Unlock phrase")).toBeTruthy();
-    expect(screen.getByText(/session-only keys/i)).toBeTruthy();
+    expect(screen.getByText(/removed when you sign out/i)).toBeTruthy();
   });
 
   it("honors the provider prop for the mistral slot", async () => {

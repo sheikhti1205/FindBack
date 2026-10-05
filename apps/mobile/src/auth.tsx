@@ -206,6 +206,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [pendingEmail]);
 
   const logout = useCallback(async () => {
+    // Capture the account before clearing state: signing out wipes that
+    // account's AI provider credentials (session + persisted/remembered
+    // keys) from this device by default.
+    const accountId = user?.id ?? null;
     // Unregister this device's push token while the session is still valid,
     // then clear auth. The user->null effect's stop() is then a no-op.
     await stopPushNotifications();
@@ -215,12 +219,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* best effort: local state is cleared regardless */
     }
     clearAllAuth();
+    if (accountId) {
+      try {
+        await aiCredentials.removeAccountCredentials(accountId);
+      } catch {
+        /* fail-closed: a purge failure must not block logout */
+      }
+    }
     aiCredentials.clearSession();
     setPendingEmailState(null);
     disconnectRealtime();
     clearUserScopedLocalState();
     setUserState(null);
-  }, []);
+  }, [user]);
 
   const value = useMemo(
     () => ({

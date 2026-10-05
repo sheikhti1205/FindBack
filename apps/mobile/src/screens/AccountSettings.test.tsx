@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicUser } from "@findback/shared";
@@ -20,6 +20,7 @@ vi.mock("../auth", () => ({
 }));
 
 import { AccountSettings } from "./AccountSettings";
+import { aiCredentials } from "../services/aiCredentials";
 
 const verifiedUser: PublicUser = {
   id: "u1",
@@ -41,7 +42,15 @@ function renderAccount() {
   return utils;
 }
 
-afterEach(cleanup);
+const F08_SESSION_KEY = "F08-SESSION-ONLY-u1-KEY";
+const F08_SAVED_KEY = "F08-REMEMBERED-u1-KEY";
+const F08_PHRASE = "f08 unlock phrase";
+
+afterEach(async () => {
+  cleanup();
+  await aiCredentials.removeAccountCredentials("u1");
+  aiCredentials.clearSession();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -111,10 +120,59 @@ describe("AccountSettings", () => {
     expect(img?.src).toBe("https://example.com/a.png");
   });
 
-  it("signs out with the same semantics as the profile screen", () => {
+  it("signs out with the same semantics as the profile screen", async () => {
     renderAccount();
     fireEvent.click(screen.getByRole("button", { name: /log out/i }));
-    expect(mockLogout).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
+  });
+
+  it("logs out immediately with no removal notice when no credentials are stored", async () => {
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /log out/i }));
+    await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: /remove keys and log out/i })).toBeNull();
+  });
+
+  it("shows the key-removal notice and requires confirm when a session key is stored", async () => {
+    await aiCredentials.connect("u1", F08_SESSION_KEY, { remember: false, provider: "openai" });
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /log out/i }));
+    const notice = await screen.findByRole("status");
+    expect(notice.textContent).toMatch(/remove.*stored AI provider keys/i);
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain(F08_SESSION_KEY);
+    fireEvent.click(screen.getByRole("button", { name: /remove keys and log out/i }));
+    await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
+    expect(document.body.textContent).not.toContain(F08_SESSION_KEY);
+  });
+
+  it("shows the key-removal notice for a remembered (persisted) key after a session wipe", async () => {
+    await aiCredentials.connect("u1", F08_SAVED_KEY, {
+      remember: true,
+      passphrase: F08_PHRASE,
+      provider: "openai",
+    });
+    aiCredentials.clearSession();
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /log out/i }));
+    const notice = await screen.findByRole("status");
+    expect(notice.textContent).toMatch(/remove.*stored AI provider keys/i);
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain(F08_SAVED_KEY);
+    fireEvent.click(screen.getByRole("button", { name: /remove keys and log out/i }));
+    await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
+  });
+
+  it("cancelling the removal notice aborts the sign-out", async () => {
+    await aiCredentials.connect("u1", F08_SESSION_KEY, { remember: false, provider: "openai" });
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /log out/i }));
+    await screen.findByRole("status");
+    expect(mockLogout).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(mockLogout).not.toHaveBeenCalled();
   });
 
   it("renders nothing when there is no signed-in user", () => {

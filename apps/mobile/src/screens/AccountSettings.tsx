@@ -8,6 +8,7 @@ import {
   SettingsRow,
   StatusPill,
 } from "../components/settings";
+import { describeCloudConnections } from "../services/aiCredentials";
 import { friendlyError } from "../utils/friendlyErrors";
 import "./AccountSettings.css";
 
@@ -34,9 +35,57 @@ function initialsFor(username: string): string {
 export function AccountSettings() {
   const { user, logout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [checkingKeys, setCheckingKeys] = useState(false);
+  const [confirmKeyRemoval, setConfirmKeyRemoval] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
   if (!user) return null;
+  const userId = user.id;
+
+  function runLogout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setSignOutError(null);
+    void logout()
+      .catch((err: unknown) => {
+        setSignOutError(friendlyError(err).message);
+      })
+      .finally(() => setLoggingOut(false));
+  }
+
+  function handleSignOut() {
+    if (loggingOut || checkingKeys) return;
+    // A confirmed notice logs out immediately; the first click only probes
+    // credential presence (provider ids, never key material).
+    if (confirmKeyRemoval) {
+      runLogout();
+      return;
+    }
+    setCheckingKeys(true);
+    void describeCloudConnections(userId).then(
+      (connections) => {
+        const hasStored =
+          connections.connected ||
+          connections.providers.length > 0 ||
+          (connections.summary !== "" && connections.summary !== "Not connected");
+        if (hasStored) {
+          setConfirmKeyRemoval(true);
+        } else {
+          runLogout();
+        }
+      },
+      () => {
+        // A probe failure must never strand the user signed in; the logout
+        // path purges stored keys regardless.
+        runLogout();
+      },
+    ).finally(() => setCheckingKeys(false));
+  }
+
+  function cancelSignOut() {
+    setConfirmKeyRemoval(false);
+    setSignOutError(null);
+  }
 
   return (
     <SettingsPage
@@ -88,21 +137,32 @@ export function AccountSettings() {
 
       <Button
         variant="outline"
-        loading={loggingOut}
-        onClick={() => {
-          if (loggingOut) return;
-          setLoggingOut(true);
-          setSignOutError(null);
-          void logout()
-            .catch((err: unknown) => {
-              setSignOutError(friendlyError(err).message);
-            })
-            .finally(() => setLoggingOut(false));
-        }}
+        loading={loggingOut || checkingKeys}
+        onClick={handleSignOut}
       >
         <LogOut size={16} aria-hidden />
         Log out
       </Button>
+      {confirmKeyRemoval ? (
+        <div>
+          <p role="status" className="fb-account-notice">
+            Signing out will remove your stored AI provider keys from this
+            device. You will need to enter them again after signing back in.
+          </p>
+          <div className="fb-account-confirm-row">
+            <Button
+              variant="outline"
+              loading={loggingOut}
+              onClick={runLogout}
+            >
+              Remove keys and log out
+            </Button>
+            <Button variant="text" disabled={loggingOut} onClick={cancelSignOut}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {signOutError ? (
         <p role="alert" className="fb-account-error">
           {signOutError}

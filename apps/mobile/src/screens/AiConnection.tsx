@@ -524,7 +524,7 @@ export function AiConnection({
           <div className="flex flex-col gap-1">
             <label htmlFor="byok-phrase" className="text-sm font-medium">Unlock phrase</label>
             <input id="byok-phrase" type="password" value={phrase} onChange={(event) => setPhrase(event.target.value)} autoComplete="new-password" minLength={12} className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface" />
-            <p className="text-xs text-on-surface-variant">On the web, choose at least 12 characters. You will need this phrase again to unlock your encrypted {providerLabel} key. Session-only keys (remember off) are kept in memory and cleared on sign-out. Android secures the key with your device.</p>
+            <p className="text-xs text-on-surface-variant">On the web, choose at least 12 characters. You will need this phrase again to unlock your encrypted {providerLabel} key. All keys on this device — session-only and remembered — are removed when you sign out. Android secures the key with your device.</p>
           </div>
         )}
         <Button type="submit" disabled={busy || !key.trim()} loading={busy}>Connect</Button>
