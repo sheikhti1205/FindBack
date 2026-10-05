@@ -150,3 +150,38 @@ describe("AiOrchestrator.route", () => {
     }
   });
 });
+
+describe("AiOrchestrator.route image budget", () => {
+  function visionRegistry(value: unknown = { text: "described" }) {
+    const vision = modelRuntime("local-vision", value);
+    const registry = new RuntimeRegistry();
+    registry.register(vision.runtime);
+    return { registry, vision };
+  }
+
+  it("routes an inline base64 image past the byte guard — images are bounded by maxImages, not the text budget", async () => {
+    const { registry, vision } = visionRegistry();
+    const orchestrator = new AiOrchestrator();
+    const result = await orchestrator.route(
+      "analyze-image",
+      { prompt: "describe", imageBase64: "A".repeat(200_000) },
+      { traceId: "trace-image-budget-001", registry },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.provenance.actualBackend).toBe("local-vision");
+    expect(vision.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("still fails INPUT_BOUNDS when the non-image text exceeds the task budget", async () => {
+    const { registry, vision } = visionRegistry();
+    const orchestrator = new AiOrchestrator();
+    const result = await orchestrator.route(
+      "analyze-image",
+      { prompt: "x".repeat(4_096), imageBase64: "aGVsbG8=" },
+      { traceId: "trace-image-budget-002", registry },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.denialReason).toBe("INPUT_BOUNDS");
+    expect(vision.invoke).not.toHaveBeenCalled();
+  });
+});

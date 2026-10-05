@@ -73,8 +73,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Text-budget measure for a route input. Image payloads (`images` array,
+ * `imageBase64` string) are deliberately EXCLUDED: images are bounded by the
+ * task's `maxImages`, not by `maxBytes`, so an inline base64 of a legitimate
+ * photo can never trip the text guard and make the vision route unreachable.
+ * Every non-image field is still measured, so the text bound is intact.
+ */
 function inputBytes(input: unknown): number {
   if (typeof input === "string") return input.length;
+  if (isRecord(input)) {
+    const textOnly: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(input)) {
+      if (key === "images" || key === "imageBase64") continue;
+      textOnly[key] = value;
+    }
+    try {
+      return JSON.stringify(textOnly)?.length ?? 0;
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  }
   try {
     return JSON.stringify(input)?.length ?? 0;
   } catch {

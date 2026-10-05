@@ -147,6 +147,26 @@ describe("application-owned AI", () => {
     expect(p.calls).toContain("vision-describe");
   });
 
+  it("surfaces a real vision load failure as runtime_load_failed while the model is installed", async () => {
+    const p = platform();
+    p.smol.loadVisionModel = async () => { throw new Error("GPU initialize failed hard"); };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    const modelId = DOWNLOAD_MODELS[1]!.modelId;
+    await service.download(modelId);
+    const adapter = service.offlineAdapter(async () => "approved-bytes");
+    const events: { kind: string; code?: string; message?: string }[] = [];
+    for await (const event of adapter.complete({
+      selection: { accountId: "u", provider: "offline", modelId, mode: "free-only" },
+      task: "app-help", policyVersion: "p", knowledgeVersion: "k", recentTurns: [],
+      currentText: "Describe", approvedImageIds: ["img-1"], authorizedResultIds: [], maxOutputTokens: 64,
+      signal: new AbortController().signal,
+    })) events.push(event as { kind: string; code?: string; message?: string });
+    const failure = events.find((event) => event.kind === "error");
+    expect(failure?.code).toBe("runtime_load_failed");
+    expect(failure?.message).toContain("GPU initialize failed hard");
+  });
+
   it("fails closed on web without constructing or contacting native seams", async () => {
     const service = new ApplicationAiService({ android: false });
     await service.ready;

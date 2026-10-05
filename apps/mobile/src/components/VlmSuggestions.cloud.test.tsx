@@ -10,7 +10,7 @@ import { VlmSuggestions } from "./VlmSuggestions";
 afterEach(cleanup);
 
 const CONSENT_LABEL =
-  "Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it.";
+  "Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it.";
 
 function expandPanel(): void {
   const expand = screen.queryByRole("button", { name: /Expand photo suggestions/i });

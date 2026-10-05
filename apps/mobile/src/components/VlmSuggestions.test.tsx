@@ -39,7 +39,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     expect(screen.getByText("Draft description from photo")).toBeTruthy();
     expect(screen.getByText("Use one of your photos to suggest a title, description and category.")).toBeTruthy();
     // Should be collapsed - no consent checkbox or button visible initially
-    expect(screen.queryByLabelText(/Send this selected photo to OpenRouter/)).toBeNull();
+    expect(screen.queryByLabelText(/Analyze this photo on your device/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Suggest title & description" })).toBeNull();
   });
 
@@ -49,7 +49,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
 
     expandPanel();
     expect(screen.getByText("Add a photo to draft text")).toBeTruthy();
-    expect(screen.queryByLabelText(/Send this selected photo to OpenRouter/)).toBeNull();
+    expect(screen.queryByLabelText(/Analyze this photo on your device/)).toBeNull();
   });
 
   it("expands on click showing consent checkbox unchecked by default", () => {
@@ -57,7 +57,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn()} /></MemoryRouter>);
 
     expandPanel();
-    const checkbox = screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it.") as HTMLInputElement;
+    const checkbox = screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it.") as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
     expect((screen.getByRole("button", { name: "Suggest title & description" }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -79,7 +79,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     expect(analyze).not.toHaveBeenCalled(); // consent not checked
 
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(analyze).toHaveBeenCalledWith(file, true, expect.any(Object)));
   });
@@ -96,7 +96,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     const { rerender } = render(<MemoryRouter><VlmSuggestions file={first} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
 
@@ -106,7 +106,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
 
     // Consent should be unchecked again - need to expand again after rerender
     expandPanel();
-    const checkbox = screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it.") as HTMLInputElement;
+    const checkbox = screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it.") as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
     expect((screen.getByRole("button", { name: "Suggest title & description" }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -119,7 +119,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
 
     await waitFor(() => expect(screen.getByText("Analyzing photo…")).toBeTruthy());
@@ -148,7 +148,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Your title")).toBeTruthy());
 
@@ -182,7 +182,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="Kept title" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Your title")).toBeTruthy());
 
@@ -206,7 +206,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
       <MemoryRouter><VlmSuggestions file={file} currentTitle="Saved title" currentDescription="Saved description" currentCategory="Bags & Wallets" onApply={apply} /></MemoryRouter>,
     );
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Review suggestions from AI:")).toBeTruthy());
 
@@ -237,7 +237,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Your title")).toBeTruthy());
 
@@ -261,7 +261,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Your description")).toBeTruthy());
 
@@ -279,7 +279,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Couldn't draft text from this photo. You can retry or continue writing manually.")).toBeTruthy());
 
@@ -298,7 +298,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Connect your OpenRouter API key to use AI.")).toBeTruthy());
 
@@ -312,7 +312,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
 
     await waitFor(() => expect(screen.getByText("Analyzing photo…")).toBeTruthy());
@@ -333,7 +333,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Your title")).toBeTruthy());
 
@@ -352,7 +352,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     const { rerender } = render(<MemoryRouter><VlmSuggestions file={first} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
 
@@ -384,7 +384,7 @@ describe("VlmSuggestions — Draft description from photo", () => {
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={apply} /></MemoryRouter>);
 
     expandPanel();
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
     await waitFor(() => expect(screen.getByText("Your title")).toBeTruthy());
 
@@ -414,13 +414,13 @@ describe("VlmSuggestions motion (Wave E)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
     expect(screen.getByRole("button", { name: /Collapse photo suggestions/i }).getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByLabelText(/Send this selected photo to OpenRouter/)).toBeTruthy();
+    expect(screen.getByLabelText(/Analyze this photo on your device/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Collapse photo suggestions/i }));
     expect(screen.getByRole("button", { name: /Expand photo suggestions/i }).getAttribute("aria-expanded")).toBe("false");
     // The panel plays its exit instead of vanishing in the same frame.
     await waitForElementToBeRemoved(() =>
-      screen.queryByLabelText(/Send this selected photo to OpenRouter/),
+      screen.queryByLabelText(/Analyze this photo on your device/),
     );
   });
 
@@ -439,7 +439,7 @@ describe("VlmSuggestions motion (Wave E)", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
-    fireEvent.click(screen.getByLabelText("Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it."));
+    fireEvent.click(screen.getByLabelText("Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it."));
     fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
 
     const region = await screen.findByRole("region", { name: "Review AI suggestions" });

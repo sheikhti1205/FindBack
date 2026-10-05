@@ -596,8 +596,17 @@ async function* completeOffline(
     if (visionBridge !== undefined) {
       try {
         visionBridgeReady = await visionBridge.isVisionAvailable();
-      } catch {
-        visionBridgeReady = false;
+      } catch (error) {
+        // A throwing probe means the model is installed but a real load
+        // (GPU/OOM/init) failed. Report that honestly instead of collapsing
+        // the failure into the "not proven" refusal. A plain `false` stays
+        // `vision_unsupported` below.
+        const message =
+          error instanceof Error && error.message.trim() !== ""
+            ? error.message.slice(0, 400)
+            : "the on-device vision runtime failed to load the model";
+        yield* failureEvents("runtime_load_failed", message, false);
+        return;
       }
     }
     const verdict = describeOfflineVision({ modelReady: true, visionBridgeReady });

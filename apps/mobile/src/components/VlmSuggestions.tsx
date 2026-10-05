@@ -233,7 +233,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
               checked={consented}
               onChange={(event) => setConsented(event.target.checked)}
             />
-            Send this selected photo to OpenRouter to suggest report text. Nothing is published or applied until I review it.
+            Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it.
           </label>
 
           <Button

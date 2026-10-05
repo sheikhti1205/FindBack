@@ -321,15 +321,16 @@ function canPreview(): boolean {
 }
 
 /**
- * Derivative MIME types the import pipeline can produce; only these are ever
- * encoded for upload. Anything else resolves null so the adapter fails loudly
+ * Derivative MIME types the import pipeline can produce and every AI path
+ * accepts. GIF is deliberately absent: the offline image resolver and the
+ * report-photo analyzers only ever accept jpeg/png/webp, so offering a GIF
+ * would dead-end. Anything else resolves null so the adapter fails loudly
  * (draft kept) instead of sending unexpected content.
  */
 const TRAY_IMAGE_MIME_ALLOWLIST: ReadonlySet<string> = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
-  "image/gif",
 ]);
 
 /** DOM-free data-URL encoder over one approved derivative (chunked btoa). */

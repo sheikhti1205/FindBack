@@ -565,7 +565,7 @@ describe("offline vision path (native seam)", () => {
     expect(vision.loads).toEqual([]);
   });
 
-  it("fails closed on a throwing availability probe", async () => {
+  it("surfaces a throwing availability probe as runtime_load_failed, never vision_unsupported", async () => {
     const textBridge = controllableBridge(["must not stream"]);
     const vision = visionBridge({ availableThrows: true });
     const manager = installedManager({ resident: true });
@@ -574,7 +574,11 @@ describe("offline vision path (native seam)", () => {
     );
     const { request } = baseRequest({ approvedImageIds: ["photo-1"] });
     const events = await collect(adapter.complete(request));
-    expect(errorOf(events).code).toBe("vision_unsupported");
+    const error = errorOf(events);
+    expect(error.code).toBe("runtime_load_failed");
+    // The real load error is carried through (truncated), not collapsed to "not proven".
+    const errorEvent = events.find((event) => event.kind === "error") as Extract<StreamEvent, { kind: "error" }>;
+    expect(errorEvent.message).toContain("bridge down");
     expect(vision.describes).toBe(0);
   });
 

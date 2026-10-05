@@ -161,7 +161,13 @@ export class ApplicationAiService {
     await this.loadingNeedle; return true;
   }
   private async ensureVision(): Promise<boolean> {
-    await this.ready; this.requireInstalled(DOWNLOAD_MODELS[1].modelId);
+    await this.ready;
+    // Readiness is a fact, not a load failure: an absent/unverified model
+    // resolves false so the offline adapter keeps `vision_unsupported`.
+    // Once the model is installed, a throwing native load propagates so the
+    // adapter can report the honest `runtime_load_failed` class instead of
+    // collapsing a GPU/OOM/init failure into "vision not proven".
+    if (!describeOfflineReadiness(this.manager, DOWNLOAD_MODELS[1].modelId).ready) return false;
     if (!this.smol) return false;
     await this.needle!.unload(); this.embedder = undefined;
     const decision = selectBackend(this.probeRecords, this.probeContext);

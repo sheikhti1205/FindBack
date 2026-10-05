@@ -1,12 +1,21 @@
-import { CATEGORIES, CATEGORY_CATALOG } from "@findback/shared";
 import { createOpenRouterClient, OpenRouterError } from "./openRouter";
 import { getConnectedOpenRouterKey } from "./aiCredentials";
 import { normalizeImage } from "./image";
 import { parseVlmOutput, type VlmAnalysis } from "./vlmParser";
+import {
+  analyzeReportPhotoLocally,
+  PHOTO_CATEGORY_CANONICALS,
+  PHOTO_INSTRUCTION,
+} from "./analyzeReportPhotoLocal";
 
 interface PhotoDeps {
   encode(file: File): Promise<string>;
   send(prompt: string, image: string, consent: boolean, options?: { signal?: AbortSignal }): Promise<string>;
+  /**
+   * On-device analyzer seam. Defaults to the real local analyzer; tests inject
+   * a fake so the cloud path can be exercised deterministically.
+   */
+  analyzeLocally?(file: File, opts?: { signal?: AbortSignal }): Promise<VlmAnalysis | null>;
 }
 
 async function encodePhoto(file: File): Promise<string> {
@@ -22,11 +31,18 @@ async function encodePhoto(file: File): Promise<string> {
   return `data:${normalized.mimeType};base64,${btoa(binary)}`;
 }
 
-const PROMPT = `Analyze only what is visible in this lost-and-found item photo. Do not guess personal details.
-Return one JSON object with ALL of these fields: objectName (string|null), suggestedCategory (string|null), colors (string[]), visibleBrand (string|null), visibleText (string[]), identifyingFeatures (string[]), suggestedTitle (string|null), suggestedDescription (string|null), uncertainFields (string[]).
-Allowed suggestedCategory: ${JSON.stringify(CATEGORIES)}. Mark uncertain details in uncertainFields. Never invent identifying text.`;
+function isAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
 
-/** Suggestions only. Form application is an independent, confirmed UI action. */
+/**
+ * Suggestions only. Form application is an independent, confirmed UI action.
+ *
+ * Local-first (owner decision): the on-device SmolVLM2 vision model is the
+ * DEFAULT engine; cloud OpenRouter is the fallback. A local null or non-abort
+ * failure falls through to cloud; an abort propagates and never hits the
+ * network. Consent and image validation run first and are engine-independent.
+ */
 export async function analyzeReportPhoto(
   file: File,
   consent: boolean,
@@ -36,14 +52,25 @@ export async function analyzeReportPhoto(
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8_000_000) {
     throw new OpenRouterError("INVALID_IMAGE");
   }
+
+  const analyzeLocally = options?.deps?.analyzeLocally ?? analyzeReportPhotoLocally;
+  try {
+    const local = await analyzeLocally(file, { signal: options?.signal });
+    if (local !== null) return local;
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    // Any other local failure (no Android runtime, model absent, load failure,
+    // unparseable output) falls through to the cloud fallback below.
+  }
+
   const image = await (options?.deps?.encode ?? encodePhoto)(file);
   const text = await (options?.deps?.send ?? ((
     prompt: string,
     data: string,
     confirmed: boolean,
     opts?: { signal?: AbortSignal }
-  ) => createOpenRouterClient(getConnectedOpenRouterKey).image(prompt, data, confirmed, opts)))(PROMPT, image, consent, options);
-  const parsed = parseVlmOutput(text, CATEGORY_CATALOG.map((option) => option.canonical));
+  ) => createOpenRouterClient(getConnectedOpenRouterKey).image(prompt, data, confirmed, opts)))(PHOTO_INSTRUCTION, image, consent, options);
+  const parsed = parseVlmOutput(text, PHOTO_CATEGORY_CANONICALS);
   if (parsed === null) throw new OpenRouterError("UNUSABLE_RESPONSE");
   // Every catalog category is released (migration 20260926000001 applied),
   // and parseVlmOutput already constrains suggestions to the catalog, so a
