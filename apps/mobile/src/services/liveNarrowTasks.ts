@@ -53,17 +53,14 @@ export async function generateLocalFirst(
   opts?: LocalFirstOptions,
 ): Promise<string> {
   if (opts?.signal?.aborted) throw abortError();
-  let result: Awaited<ReturnType<import("./ai/applicationAi").ApplicationAiService["route"]>>;
-  try {
-    result = await getApplicationAi().route(
+  // No catch here: route rejections (including AbortError on user cancel)
+  // propagate to the caller, which decides fallback vs fail-closed.
+  const result: Awaited<ReturnType<import("./ai/applicationAi").ApplicationAiService["route"]>> =
+    await getApplicationAi().route(
       taskId,
       { prompt },
       { traceId: crypto.randomUUID(), consent: true },
     );
-  } catch (error) {
-    // AbortError (user cancel) must stop the whole request, never fall back.
-    throw error;
-  }
   if (opts?.signal?.aborted) throw abortError();
   if (!result.ok) throw new Error(result.error);
   const value = (result as { value?: unknown }).value;
