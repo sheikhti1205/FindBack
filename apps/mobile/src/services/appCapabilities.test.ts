@@ -72,6 +72,23 @@ describe("capability docs", () => {
     expect(APP_CAPABILITIES.privacy.join(" ")).toMatch(/until you publish/i);
   });
 
+  it("states local-first photo analysis with on-device-only/cloud-only semantics", () => {
+    const photoCopy = APP_CAPABILITIES.photoAnalysis.join(" ");
+    expect(photoCopy).toMatch(/local-first/i);
+    expect(photoCopy).toMatch(/SmolVLM2/);
+    expect(photoCopy).toMatch(/automatic mode/i);
+    expect(photoCopy).toMatch(/fall ?back/i);
+    expect(photoCopy).toMatch(/on-device-only/i);
+    expect(photoCopy).toMatch(/cloud-only/i);
+    expect(photoCopy).toMatch(/never sends the photo to/i);
+    expect(photoCopy).toMatch(/skips local inference/i);
+    for (const copy of [photoCopy, edgeSummary]) {
+      expect(copy).toMatch(/local-first/i);
+      expect(copy).toMatch(/on-device-only/i);
+      expect(copy).toMatch(/cloud-only/i);
+    }
+  });
+
   it("never describes a removed inference-mode selector", () => {
     expect(mobileCopy).not.toMatch(/\bAUTO\b|\bQUALITY\b/);
     expect(edgeSummary).not.toMatch(/Model modes: AUTO/);

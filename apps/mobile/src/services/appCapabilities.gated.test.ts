@@ -26,7 +26,7 @@ const PREMATURE_CLAIMS: Array<[RegExp, string]> = [
 
 describe("measured-state-gated capability copy", () => {
   it("versions the application integration facts", () => {
-    expect(CAPABILITIES_VERSION).toBe("1.8.0-integration");
+    expect(CAPABILITIES_VERSION).toBe("1.9.0-integration");
   });
 
   it("defaults every gate to no-evidence", () => {
