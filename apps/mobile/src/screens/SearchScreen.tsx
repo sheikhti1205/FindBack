@@ -9,6 +9,7 @@ import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 import { AdvancedSearchFilters, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
 import type { NlFilterPatch } from "../services/search/nlFilters";
+import { nlExtractLive } from "../services/liveNarrowTasks";
 import {
   fadeVariants,
   motionDurations,
@@ -23,14 +24,16 @@ type TypeFilter = PostType | "ALL";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export function SearchScreen({
-  nlExtract,
-}: {
+export function SearchScreen(props: {
   /** Injected NL extractor (test fakes or a live extractNlFilters composer).
-   * Absent means smart search is unavailable: the button stays disabled and
-   * nothing is ever guessed. */
+   * Absent means the live transport. Explicit undefined keeps smart search
+   * unavailable: the button stays disabled and nothing is ever guessed. */
   nlExtract?: (input: string) => Promise<NlFilterPatch>;
 }) {
+  // Default-on live transport: a bare mount (App.tsx) gets nlExtractLive.
+  // An explicit prop — including explicit undefined — always wins so tests
+  // can inject fakes or pin the disabled copy.
+  const nlExtract = "nlExtract" in props ? props.nlExtract : nlExtractLive;
   const { tapCount } = useTabTap();
   // Imperative travel (scroll-to-top) cannot see MotionConfig — collapse to
   // instant when the OS prefers reduced motion. Read live (not the cached

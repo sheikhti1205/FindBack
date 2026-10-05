@@ -3,7 +3,10 @@ import { Link } from "react-router";
 import { motion } from "framer-motion";
 import type { PostItem } from "@findback/shared";
 import { ImageOff, MapPin } from "lucide-react";
+import { useAuth } from "../auth";
 import { EmptyState, Spinner } from "./PostCard";
+import { loadAiPreferences } from "../services/ai/aiPreferences";
+import { applyMatchesEngineToRuntime } from "../screens/AiModels";
 import { findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
 import { listItemVariants, motionDurations, motionEasings, motionStagger } from "./uiMotion";
 import type { MatchCandidate } from "../services/similarity";
@@ -27,6 +30,14 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
   const [result, setResult] = useState<PossibleMatchesResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  // Account for the persisted matches-engine choice. Best effort and never
+  // throwing: outside an AuthProvider (some test mounts) this stays "local".
+  let account = "local";
+  try {
+    account = useAuth().user?.id ?? "local";
+  } catch {
+    account = "local";
+  }
 
   // Rerun only when the match-relevant content changes, not on every
   // realtime social update that replaces the post object. Ranking depends on
@@ -49,6 +60,13 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
     setResult(null);
     async function load() {
       try {
+        // Apply the persisted matches engine at query time (Settings owns
+        // the choice; this surface only borrows it). Best effort, never throws.
+        try {
+          applyMatchesEngineToRuntime(loadAiPreferences(account).matchesEngine);
+        } catch {
+          // A failed engine switch must never block matching itself.
+        }
         const data = await findPossibleMatches(post);
         if (mounted) {
           setResult(data);

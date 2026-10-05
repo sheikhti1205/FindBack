@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { analyzeReportPhoto } from "../services/analyzeReportPhoto";
+import { analyzeReportPhoto, type PhotoEnginePreference } from "../services/analyzeReportPhoto";
 import { isReleasedCategory, type Category } from "@findback/shared";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { Button } from "./Button";
@@ -17,6 +17,11 @@ interface VlmSuggestionsProps {
    * stays visible instead of disappearing as though Apply succeeded.
    */
   onApply: (patch: Partial<VlmAnalysis>) => boolean;
+  /**
+   * Photo-engine preference forwarded to `analyzeReportPhoto`. Absent keeps
+   * the analyzer's own default (the persisted global slot, `automatic`).
+   */
+  photoEngine?: PhotoEnginePreference;
 }
 
 const STANDARD_ERROR = "Couldn't draft text from this photo. You can retry or continue writing manually.";
@@ -39,7 +44,7 @@ const UNRESOLVED: Record<FieldKey, boolean> = {
 };
 
 /** User-selected photo analysis: explicit cloud consent, then explicit report review. */
-export function VlmSuggestions({ file, currentTitle, currentDescription, currentCategory, onApply }: VlmSuggestionsProps) {
+export function VlmSuggestions({ file, currentTitle, currentDescription, currentCategory, onApply, photoEngine }: VlmSuggestionsProps) {
   const [expanded, setExpanded] = useState(false);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -93,7 +98,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     setEngine(null);
     setResolved(UNRESOLVED);
     try {
-      const result = await analyzeReportPhoto(file, true, { signal: controller.signal });
+      const result = await analyzeReportPhoto(file, true, { signal: controller.signal, photoEngine });
       if (generation.current !== gen) return; // stale photo: drop, never auto-apply
       const used = (result as { engine?: unknown }).engine;
       setEngine(used === "on-device" || used === "cloud" ? used : null);

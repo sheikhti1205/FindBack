@@ -40,6 +40,11 @@ import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
 import { profileFor } from "../services/ai/modelProfiles";
 import type { GenerateFn } from "../services/ai/types";
+import { loadAiPreferences } from "../services/ai/aiPreferences";
+import {
+  generateForCategoryLive,
+  generateForFieldsLive,
+} from "../services/liveNarrowTasks";
 import {
   DROPPED_CATEGORY_NOTE,
   suggestReportFields,
@@ -198,25 +203,17 @@ function findPendingNativeRestores(
 
 /**
  * Injectable AI transports for the suggestion panel below (Lane C).
- * Defaults fail closed with NOT_CONFIGURED: no network, no side effects, no
- * silent model calls. Tests inject fakes (vi.mock on the service modules);
- * production wiring of a real GenerateFn is a follow-up and must keep the
- * suggestions-only contract (never publish, never auto-apply).
+ * Defaults are the live local-first composers (on-device route with
+ * OpenRouter fallback); the seam stays overridable so tests can inject
+ * fakes. Suggestions-only contract is unchanged (never publish, never
+ * auto-apply).
  */
 export const aiSuggestDeps: {
   generateForFields: GenerateFn;
   generateForCategory: GenerateFn;
 } = {
-  generateForFields: async () => {
-    throw Object.assign(new Error("AI field suggestions are not configured yet."), {
-      code: "NOT_CONFIGURED",
-    });
-  },
-  generateForCategory: async () => {
-    throw Object.assign(new Error("AI field suggestions are not configured yet."), {
-      code: "NOT_CONFIGURED",
-    });
-  },
+  generateForFields: generateForFieldsLive,
+  generateForCategory: generateForCategoryLive,
 };
 
 export function CreateReport() {
@@ -1832,6 +1829,7 @@ function ReportForm() {
           currentDescription={description}
           currentCategory={category}
           onApply={applyVlmSuggestion}
+          photoEngine={loadAiPreferences(user?.id ?? "local").photoEngine}
         />
       )}
 

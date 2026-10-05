@@ -3,14 +3,16 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchFeedMock, tabTapState } = vi.hoisted(() => ({
+const { fetchFeedMock, tabTapState, nlExtractLiveMock } = vi.hoisted(() => ({
   fetchFeedMock: vi.fn(),
   tabTapState: { tapCount: 0 },
+  nlExtractLiveMock: vi.fn(),
 }));
 
 vi.mock("../services/posts", () => ({ fetchFeed: fetchFeedMock }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../components/TabTap", () => ({ useTabTap: () => tabTapState }));
+vi.mock("../services/liveNarrowTasks", () => ({ nlExtractLive: nlExtractLiveMock }));
 
 import { SearchScreen } from "./SearchScreen";
 import { clearFeedCaches } from "../hooks/feedCache";
@@ -32,6 +34,8 @@ function renderSearch(entry = "/search") {
 describe("SearchScreen URL filters", () => {
   beforeEach(() => {
     fetchFeedMock.mockReset();
+    nlExtractLiveMock.mockReset();
+    nlExtractLiveMock.mockResolvedValue({});
     tabTapState.tapCount = 0;
     clearFeedCaches();
     fetchFeedMock.mockResolvedValue({ items: [], nextCursor: null, total: 0 });
@@ -270,11 +274,53 @@ describe("SearchScreen URL filters", () => {
     });
 
     it("disables smart filters when no extractor is wired", async () => {
-      renderSearch();
+      render(
+        <MemoryRouter initialEntries={["/search"]}>
+          <SearchScreen nlExtract={undefined} />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
       await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
       const button = screen.getByRole("button", { name: "Smart search" });
       expect(button.getAttribute("disabled")).not.toBeNull();
       expect(button.getAttribute("title")).toBe("Smart search unavailable");
+    });
+
+    it("defaults a bare mount to the live transport", async () => {
+      nlExtractLiveMock.mockReset();
+      nlExtractLiveMock.mockResolvedValue({ query: "black wallet" });
+      renderSearch();
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      const button = screen.getByRole("button", { name: "Smart search" });
+      expect(button.getAttribute("title")).toBe("Apply smart filters");
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "black wallet lost last week" },
+      });
+      expect(button.getAttribute("disabled")).toBeNull();
+      fireEvent.click(button);
+
+      await waitFor(() =>
+        expect(nlExtractLiveMock).toHaveBeenCalledWith("black wallet lost last week"),
+      );
+      expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("black wallet");
+    });
+
+    it("an explicit extractor still wins over the live default", async () => {
+      nlExtractLiveMock.mockReset();
+      renderWithNl(async () => ({ query: "explicit" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "explicit query" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      await waitFor(() =>
+        expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("explicit"),
+      );
+      expect(nlExtractLiveMock).not.toHaveBeenCalled();
     });
   });
 
