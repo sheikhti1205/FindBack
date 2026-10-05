@@ -89,21 +89,22 @@ server-secret workflow. Notification delivery and device-level App Links proof
 remain pending for the v0.3 feature wave; see
 [`docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md`](docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md).
 
-**AI (optional):** Cloud Help and consented create-report photo suggestions use
-the user's connected provider directly; OpenRouter's `openrouter/free` is the
-default. Keys stay on the device, paid routes require explicit consent, and no
-FindBack server relays inference. Without a cloud connection or a selected
-compatible offline model, Help uses built-in answers.
+**AI (optional):** Help chat is cloud (OpenRouter's `openrouter/free` default,
+user's connected provider directly) plus installed Needle/SmolVLM2 where wired;
+the create-report photo assistant is consented SmolVLM2 on-device default with
+OpenRouter cloud fallback. Keys stay on the device, paid routes require explicit
+consent, and no FindBack server relays inference. Without a cloud connection or
+a selected compatible offline model, Help uses built-in answers.
 
 On Android, **Profile → AI & Models** starts explicit pinned downloads for
 Needle (structured item-detail extraction / matching challenger) and SmolVLM2-500M
 (approved image descriptions). Download progress, Pause, Resume, checksum verify,
 install and Remove use the app-owned native storage driver. Startup rehashes
 existing installs, without downloading or measuring automatically. Installed
-models appear in the Help picker and need no provider key; they are specialized
-tasks, not a general offline support chatbot. The web build fails closed for
-offline inference. The create-report **Analyze photo** flow remains consented
-cloud analysis.
+ models appear in the Help picker and need no provider key; they are specialized
+ tasks, not a general offline support chatbot. The web build fails closed for
+ offline inference. The create-report **Analyze photo** flow is consented
+ SmolVLM2 local-first (on-device default) with OpenRouter cloud fallback.
 
 Possible Matches uses USE on-device embeddings by default (top-3 cosine, never a
 probability). AI & Models can explicitly select installed Needle for this

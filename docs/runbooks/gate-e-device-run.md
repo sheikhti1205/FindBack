@@ -21,7 +21,8 @@ and does not validate this integration wave. Run only when device work is author
   revokes its record, announces an explicit CPU retry, and never routes to cloud.
 - **Inspect hardware** discovers NNAPI/Vulkan/OpenCL; discovery is not proof that
   those APIs execute Smol or Needle. There is no NNAPI timing arm.
-- Report → Analyze photo remains the consented cloud provider path. Do not use
+- Report → Analyze photo is the consented SmolVLM2 local-first path (on-device
+  default with OpenRouter cloud fallback). Do not use
   the retired GPU-preferred `vlmPlugin.ts` flow or retired `scripts/devprep` harnesses.
 - The web build must refuse native inference/downloads. LFM/llama.cpp are lab-only.
 

@@ -280,6 +280,19 @@ export const APPLICATION_INTEGRATION_FILES = {
   analyzePhotoSource: "apps/mobile/src/services/analyzeReportPhoto.ts",
   localAnalyzeSource: "apps/mobile/src/services/analyzeReportPhotoLocal.ts",
   suggestionsSource: "apps/mobile/src/components/VlmSuggestions.tsx",
+  aiConnectionSource: "apps/mobile/src/screens/AiConnection.tsx",
+  aiPreferencesSource: "apps/mobile/src/services/ai/aiPreferences.ts",
+  searchScreenSource: "apps/mobile/src/screens/SearchScreen.tsx",
+  nlFiltersSource: "apps/mobile/src/services/search/nlFilters.ts",
+  searchMappingSource: "apps/mobile/src/services/assistant/searchFilterMapping.ts",
+  createReportSource: "apps/mobile/src/screens/CreateReport.tsx",
+  categorySuggestionSource: "apps/mobile/src/services/categorySuggestion.ts",
+  actionGateSource: "apps/mobile/src/services/ai/orchestrator/actionGate.ts",
+  routeIntentSource: "apps/mobile/src/services/ai/ops/routeIntent.ts",
+  intentRouterSource: "apps/mobile/src/services/ai/ops/intentRouter.ts",
+  chatControllerSource: "apps/mobile/src/services/ai/chatController.ts",
+  chatStoreSource: "apps/mobile/src/services/ai/chatStore.ts",
+  photoGroundingSource: "apps/mobile/src/services/photoGrounding.ts",
 };
 
 export function validateApplicationIntegration(sources) {
@@ -299,7 +312,7 @@ export function validateApplicationIntegration(sources) {
     ["advancedSource", /service\.measure\(/, "advanced screen must connect measure"],
     ["helpSource", /createProviderAdapter\("offline",/, "Help must list installed offline models through registry"],
     ["helpSource", /sendProvider\s*===\s*"offline"\s*\?\s*null/, "offline sends must bypass credential lookup"],
-    ["matchesSource", /ai\.matchingBackend\s*===\s*"needle"[\s\S]{0,100}ai\.embedNeedle\(/, "matching must reach selected Needle service"],
+    ["matchesSource", /resolveMatchingBackend\([^)]*\)\s*===\s*"needle"[\s\S]{0,200}embedNeedle\(/, "matching must reach selected Needle service"],
     ["visionNativeSource", /registerPlugin<SmolPlugin>\("FindbackSmolVlm"\)/, "Smol TS bridge must bind registered native plugin"],
     ["visionNativeSource", /this\.plugin\(\)\.measureBackend\(args\)/, "TS measurement must invoke native runner"],
     ["probeSource", /override fun timing\(\): TimingRunner\s*=\s*RuntimeTimingRunner\.forInstalledSmol\(appContext\)/, "production timing provider cannot be null"],
@@ -317,7 +330,7 @@ export function validateApplicationIntegration(sources) {
     ],
     [
       "analyzePhotoSource",
-      /const\s+local\s*=\s*await\s+analyzeLocally\([\s\S]*?(?:deps\?\.send|createOpenRouterClient)/,
+      /await\s+analyzeLocally\([\s\S]{0,2000}runCloud\(\)/,
       "photo analyzer must attempt the on-device analyzer before the cloud path",
     ],
     [
@@ -329,6 +342,164 @@ export function validateApplicationIntegration(sources) {
       "suggestionsSource",
       /await\s+analyzeReportPhoto\(/,
       "VlmSuggestions must use the local-first analyzeReportPhoto analyzer",
+    ],
+    // Feature-truth tripwires (v0.6): each fails closed if its product seam
+    // is ever disconnected. Patterns match the shipped call sites, not bare
+    // imports a stub could satisfy.
+    [
+      "aiPreferencesSource",
+      /export function createAssistantModelBinding/,
+      "settings must own a persistent Assistant-model binding (selectedId/onSelectModel)",
+    ],
+    [
+      "aiPreferencesSource",
+      /selectedId: loadAiPreferences\(accountId\)\.preferredAssistantModel/,
+      "binding selectedId must read the persisted per-account default",
+    ],
+    [
+      "aiConnectionSource",
+      /loadAiPreferences\(account\)\.preferredAssistantModel/,
+      "AiConnection must show the persisted default when no explicit selection wins",
+    ],
+    [
+      "aiConnectionSource",
+      /selectedId=\{effectiveSelectedId\}/,
+      "AiConnection must forward the effective persisted selection to the catalogue sheet",
+    ],
+    [
+      "aiConnectionSource",
+      /onSelectModel\?\.\(record\.id\)/,
+      "AiConnection must persist the gated selection via onSelectModel",
+    ],
+    [
+      "helpSource",
+      /defaultSelection\(accountId\)/,
+      "Help must read the persisted default-selection seam (ignoring the default is a regression)",
+    ],
+    [
+      "analyzePhotoSource",
+      /CONSENT_REQUIRED/,
+      "photo analyzer must require explicit consent before either engine",
+    ],
+    [
+      "analyzePhotoSource",
+      /export function getPhotoEngine/,
+      "photo analyzer must keep the engine-preference seam (automatic local-first default)",
+    ],
+    [
+      "analyzePhotoSource",
+      /createOpenRouterClient\(getConnectedOpenRouterKey\)/,
+      "photo analyzer must keep the OpenRouter cloud fallback behind local-first",
+    ],
+    [
+      "searchScreenSource",
+      /from "\.\.\/services\/search\/nlFilters"/,
+      "SearchScreen must import the validated nlFilters seam",
+    ],
+    [
+      "searchScreenSource",
+      /applyNlFilters/,
+      "SearchScreen must route smart search through the validated apply path",
+    ],
+    [
+      "nlFiltersSource",
+      /export function toValidatedPatch/,
+      "nlFilters must expose the validated-patch composer",
+    ],
+    [
+      "helpSource",
+      /mapAssistantSearchFilters\(/,
+      "Help NL search must consume validated assistant filters (unvalidated search is a regression)",
+    ],
+    [
+      "searchMappingSource",
+      /export function mapAssistantSearchFilters/,
+      "validated-filter mapper must exist for NL search",
+    ],
+    [
+      "searchMappingSource",
+      /export function navigateToAssistantSearch/,
+      "validated-filter navigation must exist for NL search",
+    ],
+    [
+      "searchScreenSource",
+      /useUrlParam\("q"\)/,
+      "SearchScreen must consume validated query filters from the URL",
+    ],
+    [
+      "suggestionsSource",
+      /handleApplyTitle/,
+      "report-field AI must apply only through reviewed Apply handlers (bypass is a regression)",
+    ],
+    [
+      "suggestionsSource",
+      /handleKeepTitle/,
+      "report-field AI must offer Keep (review, never auto-apply)",
+    ],
+    [
+      "createReportSource",
+      /window\.confirm\("Replace the existing title, description or category/,
+      "category suggestions must confirm before overwriting manual fields",
+    ],
+    [
+      "createReportSource",
+      /isReleasedCategory\(patch\.suggestedCategory\)/,
+      "category suggestions must respect the released-category guard",
+    ],
+    [
+      "categorySuggestionSource",
+      /export function resolveCategorySuggestion/,
+      "category suggestions must resolve through the confirm-or-override module",
+    ],
+    [
+      "categorySuggestionSource",
+      /confirms or overrides/,
+      "category suggestions must stay suggestion-only (user confirms or overrides)",
+    ],
+    [
+      "actionGateSource",
+      /function validateRouteIntent/,
+      "route-intent args must have a validator (unvalidated navigation is a regression)",
+    ],
+    [
+      "routeIntentSource",
+      /export function validateRouteIntent/,
+      "route-intent op must expose its validator",
+    ],
+    [
+      "intentRouterSource",
+      /export function ctaForRoute/,
+      "route-intent must resolve only validated CTA targets (unvalidated navigation is a regression)",
+    ],
+    [
+      "intentRouterSource",
+      /export function resolveAssistantIntent/,
+      "assistant intent chain must stay classify-route-validated-CTA",
+    ],
+    [
+      "chatControllerSource",
+      /from "\.\/compaction"/,
+      "summary consumer must stay connected to compaction",
+    ],
+    [
+      "chatStoreSource",
+      /isSummaryPoisoned/,
+      "summary grounding guard must stay connected to compaction",
+    ],
+    [
+      "photoGroundingSource",
+      /from "\.\/ai\/ops\/groundObjects"/,
+      "photo grounding consumer must stay wired to the ground-objects op",
+    ],
+    [
+      "photoGroundingSource",
+      /await groundObjects\(/,
+      "photo grounding consumer must call the validated op (not invent boxes)",
+    ],
+    [
+      "photoGroundingSource",
+      /input\.imageConsent !== true/,
+      "photo grounding must keep the image-consent gate",
     ],
   ];
   return requirements.filter(([key, pattern]) => !pattern.test(sources[key] ?? ""))
