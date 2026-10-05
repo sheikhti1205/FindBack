@@ -6,7 +6,7 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: vi.fn(),
 }));
 
-import { aiCredentials } from "./aiCredentials";
+import { aiCredentials, cloudConnectionsSummary, describeCloudConnections } from "./aiCredentials";
 
 const TEN_PROVIDERS: readonly ProviderId[] = [
   "openrouter",
@@ -180,5 +180,94 @@ describe("aiCredentials AI-024a slots: backward compat + five new providers", ()
         provider === "groq" ? fakeKey(provider, "new1") : null,
       );
     }
+  });
+});
+
+describe("describeCloudConnections (F03 credential summary)", () => {
+  it("reports a saved OpenRouter key as connected after a session wipe", async () => {
+    const id = user("f03saved");
+    const raw = fakeKey("openrouter", "f03saved");
+    await aiCredentials.connect(id, raw, { remember: true, passphrase: K1_PHRASE, provider: "openrouter" });
+    aiCredentials.clearSession();
+    const result = await describeCloudConnections(id);
+    expect(result.connected).toBe(true);
+    expect(result.count).toBe(1);
+    expect(result.providers).toEqual(["openrouter"]);
+    expect(result.summary).toBe("OpenRouter connected");
+    expect(cloudConnectionsSummary(result.providers)).toBe("OpenRouter connected");
+    expect(result.summary).not.toContain(raw);
+    expect(JSON.stringify(result)).not.toContain(raw);
+  });
+
+  it("reports a session-only OpenRouter key as connected", async () => {
+    const id = user("f03session");
+    const raw = fakeKey("openrouter", "f03sess");
+    await aiCredentials.connect(id, raw, { remember: false });
+    expect(await aiCredentials.hasSaved(id)).toBe(false);
+    const result = await describeCloudConnections(id);
+    expect(result.connected).toBe(true);
+    expect(result.count).toBe(1);
+    expect(result.providers).toEqual(["openrouter"]);
+    expect(result.summary).toBe("OpenRouter connected");
+    expect(JSON.stringify(result)).not.toContain(raw);
+  });
+
+  it("reports a non-default provider-only connection as connected", async () => {
+    const id = user("f03nondefault");
+    const raw = fakeKey("openai", "f03nd");
+    await aiCredentials.connect(id, raw, { remember: false, provider: "openai" });
+    const result = await describeCloudConnections(id);
+    expect(result.connected).toBe(true);
+    expect(result.count).toBe(1);
+    expect(result.providers).toEqual(["openai"]);
+    expect(result.summary).toBe("OpenAI connected");
+    expect(result.summary).not.toContain(raw);
+    expect(JSON.stringify(result)).not.toContain(raw);
+  });
+
+  it("reports multiple providers with a truthful count summary", async () => {
+    const id = user("f03multi");
+    const rawA = fakeKey("openai", "f03m1");
+    const rawB = fakeKey("anthropic", "f03m2");
+    await aiCredentials.connect(id, rawA, { remember: false, provider: "openai" });
+    await aiCredentials.connect(id, rawB, { remember: false, provider: "anthropic" });
+    const result = await describeCloudConnections(id);
+    expect(result.connected).toBe(true);
+    expect(result.count).toBe(2);
+    expect(result.providers).toEqual(["openai", "anthropic"]);
+    expect(result.summary).toBe("2 connections");
+    expect(cloudConnectionsSummary(result.providers)).toBe("2 connections");
+    expect(JSON.stringify(result)).not.toContain(rawA);
+    expect(JSON.stringify(result)).not.toContain(rawB);
+  });
+
+  it("reports no credentials as not connected", async () => {
+    const result = await describeCloudConnections(user("f03ghost"));
+    expect(result.connected).toBe(false);
+    expect(result.count).toBe(0);
+    expect(result.providers).toEqual([]);
+    expect(result.summary).toBe("Not connected");
+  });
+
+  it("isolates sibling accounts", async () => {
+    const alice = user("f03alice");
+    const bob = user("f03bob");
+    const rawAlice = fakeKey("openai", "f03alice");
+    await aiCredentials.connect(alice, rawAlice, { remember: false, provider: "openai" });
+    const forAlice = await describeCloudConnections(alice);
+    const forBob = await describeCloudConnections(bob);
+    expect(forAlice.connected).toBe(true);
+    expect(forAlice.providers).toEqual(["openai"]);
+    expect(forBob.connected).toBe(false);
+    expect(forBob.summary).toBe("Not connected");
+    expect(JSON.stringify(forAlice)).not.toContain(rawAlice);
+  });
+
+  it("returns an empty summary for a missing account without secrets", async () => {
+    const result = await describeCloudConnections("");
+    expect(result.connected).toBe(false);
+    expect(result.count).toBe(0);
+    expect(result.providers).toEqual([]);
+    expect(result.summary).toBe("Not connected");
   });
 });

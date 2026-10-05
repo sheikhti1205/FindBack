@@ -103,6 +103,10 @@ vi.mock("../services/pushRuntime", () => ({
 
 vi.mock("../services/aiCredentials", () => ({
   aiCredentials: { hasSaved: (...args: unknown[]) => mockHasSaved(...args) },
+  describeCloudConnections: async (...args: unknown[]) => {
+    const has = await mockHasSaved(...args);
+    return { summary: has ? "OpenRouter connected" : "Not connected", providers: [] };
+  },
 }));
 
 import { assistantModeKey } from "./AiModels";

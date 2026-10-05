@@ -36,7 +36,7 @@ import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
 import { fetchNotificationPreferences, type NotificationPreferences } from "../services/notificationPreferences";
 import { pushController } from "../services/pushRuntime";
 import type { PushPermissionState } from "../services/pushNotifications";
-import { aiCredentials } from "../services/aiCredentials";
+import { describeCloudConnections } from "../services/aiCredentials";
 import { APP_VERSION } from "../services/appCapabilities";
 import { friendlyError } from "../utils/friendlyErrors";
 import "./Settings.css";
@@ -165,10 +165,9 @@ export function Settings() {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    aiCredentials
-      .hasSaved(user.id)
-      .then((connected) => {
-        if (!cancelled) setCloudValue(connectionSummary(connected));
+    describeCloudConnections(user.id)
+      .then((result) => {
+        if (!cancelled) setCloudValue(result.summary);
       })
       .catch(() => {
         // Fail closed: an unreadable slot reads as not connected.

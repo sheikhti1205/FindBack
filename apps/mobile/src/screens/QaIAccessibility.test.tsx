@@ -88,6 +88,7 @@ vi.mock("../services/aiCredentials", () => ({
     get: async () => null,
     hasSaved: async () => false,
   },
+  describeCloudConnections: async () => ({ summary: "Not connected", providers: [] }),
 }));
 
 import { TextField } from "../components/Fields";

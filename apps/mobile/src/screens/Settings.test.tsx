@@ -3,11 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockLogout, mockFetchPrefs, mockPermission, mockHasSaved } = vi.hoisted(() => ({
+const { mockLogout, mockFetchPrefs, mockPermission, mockDescribeCloudConnections } = vi.hoisted(() => ({
   mockLogout: vi.fn(),
   mockFetchPrefs: vi.fn(),
   mockPermission: vi.fn(),
-  mockHasSaved: vi.fn(),
+  mockDescribeCloudConnections: vi.fn(),
 }));
 
 vi.mock("../auth", () => ({
@@ -55,9 +55,13 @@ vi.mock("../services/pushRuntime", () => ({
   pushController: () => ({ permission: (...args: unknown[]) => mockPermission(...args) }),
 }));
 
-vi.mock("../services/aiCredentials", () => ({
-  aiCredentials: { hasSaved: (...args: unknown[]) => mockHasSaved(...args) },
-}));
+vi.mock("../services/aiCredentials", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/aiCredentials")>();
+  return {
+    ...actual,
+    describeCloudConnections: (...args: unknown[]) => mockDescribeCloudConnections(...args),
+  };
+});
 
 import {
   accessibilitySummary,
@@ -65,6 +69,7 @@ import {
   mediaSummary,
   notificationSummary,
 } from "./Settings";
+import { cloudConnectionsSummary } from "../services/aiCredentials";
 import { Settings } from "./Settings";
 
 afterEach(cleanup);
@@ -73,7 +78,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFetchPrefs.mockResolvedValue({ pushEnabled: true, likes: true, comments: true, mentions: true, status: true });
   mockPermission.mockResolvedValue("granted");
-  mockHasSaved.mockResolvedValue(true);
+  mockDescribeCloudConnections.mockResolvedValue({
+    connected: true,
+    count: 1,
+    providers: ["openrouter"],
+    summary: "OpenRouter connected",
+  });
   mockLogout.mockResolvedValue(undefined);
 });
 
@@ -158,7 +168,7 @@ describe("Settings home", () => {
   it("shows honest fallbacks when live sources are unreadable", async () => {
     mockFetchPrefs.mockRejectedValueOnce(new Error("offline"));
     mockPermission.mockRejectedValueOnce(new Error("offline"));
-    mockHasSaved.mockRejectedValueOnce(new Error("offline"));
+    mockDescribeCloudConnections.mockRejectedValueOnce(new Error("offline"));
     renderSettings();
     expect(await screen.findByText("Review settings")).toBeTruthy();
     expect(await screen.findByText("Not connected")).toBeTruthy();
@@ -208,5 +218,123 @@ describe("Settings home", () => {
     for (const row of within(group).getAllByRole("link")) {
       expect(row.querySelectorAll("button,a,input").length).toBe(0);
     }
+  });
+});
+
+describe("cloud connections summary (F03)", () => {
+  it("summarizes a single default-provider connection truthfully", () => {
+    expect(cloudConnectionsSummary(["openrouter"])).toBe("OpenRouter connected");
+  });
+
+  it("summarizes a single non-default provider as connected", () => {
+    expect(cloudConnectionsSummary(["openai"])).toBe("OpenAI connected");
+    expect(cloudConnectionsSummary(["anthropic"])).toBe("Anthropic connected");
+  });
+
+  it("summarizes multiple providers with a truthful count", () => {
+    expect(cloudConnectionsSummary(["openai", "anthropic"])).toBe("2 connections");
+    expect(cloudConnectionsSummary(["openrouter", "openai", "google"])).toBe("3 connections");
+  });
+
+  it("summarizes no connections as not connected", () => {
+    expect(cloudConnectionsSummary([])).toBe("Not connected");
+  });
+
+  it("never exposes raw key material in the summary text", () => {
+    const secret = "sk-live-F03-PROBE-SECRET-9f8e7d6c5b4a";
+    expect(cloudConnectionsSummary(["openrouter"])).not.toContain(secret);
+    expect(cloudConnectionsSummary(["openai"])).not.toContain(secret);
+    expect(cloudConnectionsSummary(["openai", "anthropic"])).not.toContain(secret);
+    expect(cloudConnectionsSummary([])).not.toContain(secret);
+  });
+
+  it("renders a saved OpenRouter connection as connected", async () => {
+    mockDescribeCloudConnections.mockResolvedValueOnce({
+      connected: true,
+      count: 1,
+      providers: ["openrouter"],
+      summary: "OpenRouter connected",
+    });
+    renderSettings();
+    expect(await screen.findByText("OpenRouter connected")).toBeTruthy();
+    expect(mockDescribeCloudConnections).toHaveBeenCalledWith("u1");
+  });
+
+  it("renders a session-only OpenRouter connection as connected", async () => {
+    mockDescribeCloudConnections.mockResolvedValueOnce({
+      connected: true,
+      count: 1,
+      providers: ["openrouter"],
+      summary: "OpenRouter connected",
+    });
+    renderSettings();
+    expect(await screen.findByText("OpenRouter connected")).toBeTruthy();
+    expect(screen.queryByText("Not connected")).toBeNull();
+  });
+
+  it("renders a non-default provider-only connection as connected", async () => {
+    mockDescribeCloudConnections.mockResolvedValueOnce({
+      connected: true,
+      count: 1,
+      providers: ["openai"],
+      summary: "OpenAI connected",
+    });
+    renderSettings();
+    expect(await screen.findByText("OpenAI connected")).toBeTruthy();
+    expect(screen.queryByText("Not connected")).toBeNull();
+  });
+
+  it("renders multiple providers with a truthful summary", async () => {
+    mockDescribeCloudConnections.mockResolvedValueOnce({
+      connected: true,
+      count: 2,
+      providers: ["openai", "anthropic"],
+      summary: "2 connections",
+    });
+    renderSettings();
+    expect(await screen.findByText("2 connections")).toBeTruthy();
+    expect(screen.queryByText("Not connected")).toBeNull();
+  });
+
+  it("renders no connections as not connected", async () => {
+    mockDescribeCloudConnections.mockResolvedValueOnce({
+      connected: false,
+      count: 0,
+      providers: [],
+      summary: "Not connected",
+    });
+    renderSettings();
+    expect(await screen.findByText("Not connected")).toBeTruthy();
+  });
+
+  it("queries the current account id (sibling-account isolation)", async () => {
+    mockDescribeCloudConnections.mockResolvedValueOnce({
+      connected: true,
+      count: 1,
+      providers: ["openai"],
+      summary: "OpenAI connected",
+    });
+    renderSettings();
+    expect(await screen.findByText("OpenAI connected")).toBeTruthy();
+    expect(mockDescribeCloudConnections).toHaveBeenCalledWith("u1");
+    expect(mockDescribeCloudConnections).not.toHaveBeenCalledWith("sibling-account");
+  });
+
+  it("never renders raw key material in the cloud row", async () => {
+    const secret = "sk-live-F03-PROBE-SECRET-9f8e7d6c5b4a";
+    mockDescribeCloudConnections.mockResolvedValueOnce({
+      connected: true,
+      count: 1,
+      providers: ["openrouter"],
+      summary: "OpenRouter connected",
+    });
+    const { container } = render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("OpenRouter connected")).toBeTruthy();
+    expect(container.textContent ?? "").not.toContain(secret);
+    expect(JSON.stringify(mockDescribeCloudConnections.mock.results)).not.toContain(secret);
   });
 });

@@ -12,6 +12,47 @@ import { getSupabase } from "./supabaseClient";
 export { SUPPORTED_AI_PROVIDERS };
 export type { CredentialHandle, ProviderId };
 
+/** Display labels for the cloud-connection summary. No key material. */
+export const CLOUD_PROVIDER_LABELS: Record<ProviderId, string> = {
+  openrouter: "OpenRouter",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  google: "Google",
+  deepseek: "DeepSeek",
+  mistral: "Mistral",
+  groq: "Groq",
+  xai: "xAI",
+  cohere: "Cohere",
+  generic: "Custom endpoint",
+  offline: "On-device",
+};
+
+/** Credential-presence summary. Carries provider ids + display text only. */
+export type CloudConnectionSummary = {
+  connected: boolean;
+  count: number;
+  providers: readonly ProviderId[];
+  summary: string;
+};
+
+/**
+ * Truthful display text for a set of connected providers. Input is provider
+ * ids only — never key material — so the output cannot leak secrets.
+ */
+export function cloudConnectionsSummary(providers: readonly ProviderId[]): string {
+  const unique: ProviderId[] = [];
+  for (const provider of providers) {
+    if ((SUPPORTED_AI_PROVIDERS as readonly string[]).includes(provider) && !unique.includes(provider)) {
+      unique.push(provider);
+    }
+  }
+  if (unique.length === 0) return "Not connected";
+  const [first] = unique;
+  if (unique.length === 1 && first !== undefined) return `${CLOUD_PROVIDER_LABELS[first]} connected`;
+  if (unique.length === 1) return "Not connected";
+  return `${unique.length} connections`;
+}
+
 interface NativeKeyBridge {
   set(options: { userId: string; key: string; provider?: string }): Promise<void>;
   get(options: { userId: string; provider?: string }): Promise<{ key: string | null }>;
@@ -150,4 +191,29 @@ export const aiCredentials = {
 export async function getConnectedOpenRouterKey(): Promise<string | null> {
   const { data } = await getSupabase().auth.getSession();
   return data.session?.user.id ? aiCredentials.get(data.session.user.id) : null;
+}
+
+/**
+ * Credential-presence probe across every supported provider (session-available
+ * OR persisted). Returns provider ids + display text only — never key
+ * material, never logs secrets. Fail-closed and strictly per-account.
+ */
+export async function describeCloudConnections(userId: string): Promise<CloudConnectionSummary> {
+  if (!userId) return { connected: false, count: 0, providers: [], summary: "Not connected" };
+  const found: ProviderId[] = [];
+  for (const provider of SUPPORTED_AI_PROVIDERS) {
+    try {
+      if (await aiCredentials.hasCredential(aiCredentials.credentialHandle(userId, provider))) {
+        found.push(provider);
+      }
+    } catch {
+      /* fail-closed: skip the unreadable slot */
+    }
+  }
+  return {
+    connected: found.length > 0,
+    count: found.length,
+    providers: found,
+    summary: cloudConnectionsSummary(found),
+  };
 }
