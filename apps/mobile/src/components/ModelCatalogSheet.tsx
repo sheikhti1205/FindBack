@@ -92,7 +92,7 @@ export function ModelCatalogSheet({
     else setInternalFilter(next);
   }
   const offlineStatus =
-    offlineDetail ?? (offlineAvailable ? "No offline models are ready yet." : "Offline AI is not available in this build.");
+    offlineDetail ?? (offlineAvailable ? "No offline models are ready yet." : "On-device AI requires the Android app.");
   return (
     <section aria-label="Model catalogue" className="flex flex-col gap-3">
       <header className="flex flex-col gap-1">

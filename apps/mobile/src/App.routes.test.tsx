@@ -171,10 +171,10 @@ describe("consumer route map", () => {
     expect(screen.getByText("About screen")).toBeTruthy();
   });
 
-  it("keeps the /offline-ai redirect", () => {
+  it("keeps the /offline-ai redirect on the canonical on-device settings area", () => {
     signedIn();
     renderAt("/offline-ai");
-    expect(screen.getByText("AiConnection screen")).toBeTruthy();
+    expect(screen.getByText("AiModelsRoute screen")).toBeTruthy();
   });
 
   it("renders the public shared report without auth", () => {

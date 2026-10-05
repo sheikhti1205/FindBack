@@ -58,7 +58,7 @@ describe("ModelCatalogSheet filters (AI-024b)", () => {
       />,
     );
     expect(screen.getByText("No models match this filter.")).toBeTruthy();
-    expect(screen.getByTestId("offline-status").textContent).toMatch(/not available in this build/i);
+    expect(screen.getByTestId("offline-status").textContent).toMatch(/requires the android app/i);
   });
 
   it("drives chips in uncontrolled mode", () => {
@@ -77,12 +77,12 @@ describe("ModelCatalogSheet filters (AI-024b)", () => {
       <ModelCatalogSheet
         models={[freeRecord("groq", "a"), freeRecord("groq", "b")]}
         onSelect={onSelect}
-        offlineDetail="Offline AI is not available in this build."
+        offlineDetail="On-device AI requires the Android app."
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Offline" }));
     expect(screen.getByTestId("offline-status").textContent).toBe(
-      "Offline AI is not available in this build.",
+      "On-device AI requires the Android app.",
     );
     fireEvent.click(screen.getByRole("button", { name: "All" }));
     fireEvent.click(screen.getAllByRole("button", { name: /^select$/i })[1]!);

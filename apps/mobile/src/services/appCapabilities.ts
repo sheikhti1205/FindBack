@@ -84,7 +84,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Android shows a system notification for report activity when push is allowed; comment notifications can be answered directly from the notification.",
   ],
   aiConnection: [
-    "AI is optional: connect a cloud AI provider key under Profile → AI Connection, or explicitly install on-device models under AI & Models on Android.",
+    "AI is optional: connect a cloud AI provider key under Settings → AI & intelligence → Cloud connections (/settings/ai/connections), or explicitly install on-device models under Settings → AI & models → On-device AI (/settings/ai/models) on Android.",
     "OpenRouter is the default and uses only its free route (openrouter/free); it never switches to a paid model. Keys you add — OpenRouter, Anthropic, Google, Mistral, Groq, xAI, Cohere, OpenAI, DeepSeek or a custom endpoint — stay on the device and are never sent to FindBack's servers.",
     "Free-only by default: a paid or variable-price route is never selected without explicit per-model, per-price confirmation, and an unknown price is never treated as free.",
     "Android model downloads start only when you tap Download. You can pause and resume, and remove the model; only checksum-verified files become installed. The web build does not offer on-device downloads or inference.",

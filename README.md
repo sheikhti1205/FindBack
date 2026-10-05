@@ -96,7 +96,7 @@ OpenRouter cloud fallback. Keys stay on the device, paid routes require explicit
 consent, and no FindBack server relays inference. Without a cloud connection or
 a selected compatible offline model, Help uses built-in answers.
 
-On Android, **Profile → AI & Models** starts explicit pinned downloads for
+On Android, **Settings → AI & models → On-device AI** (`/settings/ai/models`) starts explicit pinned downloads for
 Needle (structured item-detail extraction / matching challenger) and SmolVLM2-500M
 (approved image descriptions). Download progress, Pause, Resume, checksum verify,
 install and Remove use the app-owned native storage driver. Startup rehashes
@@ -107,7 +107,7 @@ existing installs, without downloading or measuring automatically. Installed
  SmolVLM2 local-first (on-device default) with OpenRouter cloud fallback.
 
 Possible Matches uses USE on-device embeddings by default (top-3 cosine, never a
-probability). AI & Models can explicitly select installed Needle for this
+probability). On-device AI (**Settings → AI & models → On-device AI**) can explicitly select installed Needle for this
 session. Smol uses CPU by default; **Measure CPU / Measure GPU** runs two pinned
 color fixtures with correctness checks and real LiteRT TTFT/tokens-per-second
 counters. Only the vision backend differs; the language decoder is CPU on both

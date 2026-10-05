@@ -122,7 +122,7 @@ export function App() {
               <Route path="/help" element={<Help />} />
               <Route path="/ai-connection" element={<AiConnection />} />
                <Route path="/ai-models" element={<AiModelsRoute />} />
-              <Route path="/offline-ai" element={<Navigate to="/ai-connection" replace />} />
+              <Route path="/offline-ai" element={<Navigate to="/settings/ai/models" replace />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/account" element={<AccountSettings />} />
               <Route path="/settings/appearance" element={<AppearanceSettings />} />

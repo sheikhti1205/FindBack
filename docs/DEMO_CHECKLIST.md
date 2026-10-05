@@ -35,7 +35,7 @@ _Signup and login now go directly from the app to Supabase Auth (publishable key
    up to 3 open opposite-type reports ranked by text similarity — local sentence embeddings via the
    native bridge to the MediaPipe TextEmbedder asset plus cosine similarity (never a probability, no
    vector DB, no server AI); this similarity computation is on-device (req 12).
-4. On the create-report screen press **Analyze photo**: confirm the consent notice and the SmolVLM2 on-device default attempts the photo first, falling back to OpenRouter's free route with your connected key (Profile → **AI Connection**) when the local model is absent or fails; suggestions return as review-only title/category/description cards with per-field Apply/Keep and a replace-confirm before touching typed fields (req 23). With no key connected and no local model, Help falls back to a built-in answer.
+4. On the create-report screen press **Analyze photo**: confirm the consent notice and the SmolVLM2 on-device default attempts the photo first, falling back to OpenRouter's free route with your connected key (**Settings → AI & intelligence → Cloud connections** (`/settings/ai/connections`)) when the local model is absent or fails; suggestions return as review-only title/category/description cards with per-field Apply/Keep and a replace-confirm before touching typed fields (req 23). With no key connected and no local model, Help falls back to a built-in answer.
 5. Paste a YouTube link and watch the embedded player render live (req 9).
 6. Publish → open the post (tailwind-styled, animated card entrance — req 16/15).
 
@@ -87,8 +87,8 @@ server below is kept as a Docker/coursework reference.
 4. Show `docker-compose.yml` / `Dockerfile` and the GitHub Actions workflow
    (req 22) — CI runs the same lint/typecheck/tests/web build, plus a Docker job
    that builds the image, runs it and passes the `/health` check.
-5. **Profile → Help Assistant**: connect your own OpenRouter key (Profile → AI
-   Connection) and ask "How do I report a lost item?" — answers come from
+5. **Settings → Help & guide → Chat with help**: connect your own OpenRouter key (**Settings → AI
+   & intelligence → Cloud connections** (`/settings/ai/connections`)) and ask "How do I report a lost item?" — answers come from
    OpenRouter's free route, or from the built-in answer when no key is connected (req 23).
 
 ## 8 · Show the deliverable (req 17, 21, 24)

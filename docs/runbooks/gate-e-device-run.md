@@ -9,7 +9,7 @@ and does not validate this integration wave. Run only when device work is author
 - Startup → `initializeApplicationAi` → shared `ApplicationAiService` →
   `bootProductionAi` manager/orchestrator. Startup rehashes installed pins, but
   does not download, load inference weights, or benchmark automatically.
-- Profile → **AI & Models** (`/ai-models`) owns real native download controls.
+- Settings → **AI & models → On-device AI** (`/settings/ai/models`, alias `/ai-models`) owns real native download controls.
   Installed Needle and SmolVLM2 appear in the Help model picker without BYOK keys.
 - Needle: structured item-detail extraction and explicitly selected Possible
   Matches challenger; USE stays the default. Matching selection lasts this session.
@@ -63,7 +63,7 @@ screenshots/logs and reason; do not fill performance values before measuring.
 
 | ID | Path / procedure | Acceptance / evidence |
 |---|---|---|
-| I1 | Clean install, sign in, open AI & Models without a provider key. Inspect before any tap. | No model auto-download/load/probe; no fabricated installed state. Build/About identity and initial screenshot. |
+| I1 | Clean install, sign in, open On-device AI (Settings → AI & models → On-device AI) without a provider key. Inspect before any tap. | No model auto-download/load/probe; no fabricated installed state. Build/About identity and initial screenshot. |
 | D1 | Select Needle → Download; record progress → Pause → Resume. Repeat with SmolVLM2. | Real byte counts, responsive pause, retained staged bytes, HTTPS Range resume, full checksum verification before installed. Record transferred offsets and transitions, not invented percentages. |
 | D2 | Kill/relaunch during a partial download, resume; restart after a completed install. | Partial bytes recover as resumable; completed installs rehash against current pin. Corrupt/truncated weights must not enter the picker. Never restore resident state from disk. |
 | D3 | Remove each model, repeat; attempt removal during inference or measurement. | Runtime ownership prevents deletion while busy; remove releases resident then staged/installed/journal files and revokes availability. Missing files are idempotent; failures remain visible. |
@@ -77,7 +77,7 @@ screenshots/logs and reason; do not fill performance values before measuring.
 | L1 | Smol stream → Stop; switch screen/model, background/foreground, rotate, force-stop/relaunch. Retry after cancellation/error. | Correct generation-ID isolation, no stale chunks, listener cleanup, no double engines/native crash; restored verified files require a fresh runtime load. Needle Stop must suppress late output; its bounded native call has no token-level cancellation API. |
 | T1 | Fixed repeated CPU/GPU workload; capture initial/final thermal and battery state, durations and charging condition. | Battery delta/thermal throttling evidence, UI responsiveness and sustained-rate range; no broad battery or acceleration claims from one run. |
 | U1 | Keyboard/screen reader, large text, navigation and touch controls; unplug network during download. | Labeled model/matching selectors, progress and notices announced, usable Pause/Resume/Remove, clear recovery paths. Offline-only never sends to cloud; unsupported model/task preserves the draft. |
-| W1 | Open web build → AI & Models / Help; choose stale offline selection if possible. | No native downloads/inference, honest refusal, cloud and built-in fallback still function within their selected mode. |
+| W1 | Open web build → On-device AI (Settings → AI & models → On-device AI) / Help; choose stale offline selection if possible. | No native downloads/inference, honest refusal, cloud and built-in fallback still function within their selected mode. |
 
 ## Evidence and close-out
 

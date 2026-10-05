@@ -74,7 +74,7 @@ describe("AiModels control center (AI-022)", () => {
       /requires the Android app.*checksum-verified/i,
     );
     // Web offline honesty: no native bridge may be invoked here.
-    expect(screen.getByTestId("ai-offline-status").textContent).toMatch(/not available/i);
+    expect(screen.getByTestId("ai-offline-status").textContent).toMatch(/requires the android app/i);
     await screen.findByTestId("ai-provider-openai");
     for (const provider of SUPPORTED_AI_PROVIDERS) {
       expect(screen.getByTestId(`ai-provider-${provider}`)).toBeTruthy();

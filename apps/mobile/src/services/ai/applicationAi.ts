@@ -109,7 +109,7 @@ export class ApplicationAiService {
       }
     }
   }
-  private requireAndroid() { if (!this.android || !this.driver) throw new Error("Offline AI is not available in this build. On-device AI requires Android."); }
+  private requireAndroid() { if (!this.android || !this.driver) throw new Error("On-device AI requires the Android app."); }
   private requireInstalled(modelId: string) {
     if (!describeOfflineReadiness(this.manager, modelId).ready) throw new Error("Model is not installed and verified");
   }

@@ -230,18 +230,43 @@ export function maskKeyTail(value: string | null): string | null {
 }
 
 /**
- * Honest offline status copy. Native Android uses the shared service without
- * a vault slot; web refuses. Only a not-available refusal is verbatim, everything
- * else normalizes to the fixed not-available line (never an internal
- * unknown-provider message).
+ * Honest offline status copy, contextual by cause (F05: never an absolute
+ * "not available in this build" line).
+ * - Web / builds without the native driver: on-device AI requires Android.
+ * - Model absent or unverified: install/verify a model.
+ * - Native load/generate failure: local AI could not start.
  */
-export const OFFLINE_NOT_AVAILABLE = "Offline AI is not available in this build.";
+export const OFFLINE_NEEDS_ANDROID = "On-device AI requires the Android app.";
+export const OFFLINE_MODEL_MISSING =
+  "No on-device model is installed and verified yet. Install and verify a model to use on-device AI.";
+export const OFFLINE_RUNTIME_FAILED = "Local AI could not start. Try again.";
+
+/**
+ * Deprecated alias: preserved so existing importers (Help send-gate) keep
+ * compiling. Maps to the Android-required line; new code should import the
+ * specific constant for its cause.
+ */
+export const OFFLINE_NOT_AVAILABLE = OFFLINE_NEEDS_ANDROID;
 
 export function honestOfflineDetail(error: unknown): string {
-  if (error instanceof Error && /not available in this build/i.test(error.message)) {
-    return error.message;
+  if (error instanceof Error) {
+    const message = error.message;
+    if (/requires the Android app/i.test(message)) {
+      return message;
+    }
+    if (/not installed and verified|install and verify|no on-device model/i.test(message)) {
+      return OFFLINE_MODEL_MISSING;
+    }
+    if (/could not start|runtime|failed to load|generation failed|busy/i.test(message)) {
+      return OFFLINE_RUNTIME_FAILED;
+    }
+    // Legacy absolute line from before the F05 fix: normalize to the
+    // contextual Android-required copy, never repeat it verbatim.
+    if (/not available in this build/i.test(message)) {
+      return OFFLINE_NEEDS_ANDROID;
+    }
   }
-  return OFFLINE_NOT_AVAILABLE;
+  return OFFLINE_NEEDS_ANDROID;
 }
 
 export type AiModelsProps = {
@@ -707,7 +732,8 @@ export function AiModels({
 
   // Lane A: free-only rows selectable as the persisted Assistant default.
   // Paid rows are never offered here — they need explicit per-model consent
-  // on the AI Connection screen, which persists the choice on confirm.
+  // on the Cloud connections screen (Settings → AI & intelligence → Cloud
+  // connections), which persists the choice on confirm.
   const assistantFreeRows = catalog.filter((record) => record.priceClass === "free");
   const needleReady = isNeedleSelectable(needleEvidence);
 
@@ -815,7 +841,8 @@ export function AiModels({
             ))}
           </select>
           <p className="text-xs text-on-surface-variant">
-            Paid models are picked on the AI Connection screen; confirming
+            Paid models are picked on the Cloud connections screen (Settings → AI
+            &amp; intelligence → Cloud connections); confirming
             explicit consent there updates this account&apos;s default.
           </p>
         </div>
@@ -943,7 +970,7 @@ export function AiModels({
                     pricingUnknown ? " — chat unavailable until pricing can be verified." : ""
                   }`
                 : slot.saved
-                  ? "A saved key is locked. Manage it on the AI Connection screen to unlock."
+                  ? "A saved key is locked. Manage it on the Cloud connections screen (Settings → AI & intelligence → Cloud connections) to unlock."
                   : "Not connected.";
               const genericSuffix =
                 generic && genericEndpoint === null
@@ -1106,7 +1133,8 @@ export function AiModels({
         ) : null}
         {!catalogLoading && catalogError === null && catalog.length === 0 ? (
           <p className="text-sm text-on-surface-variant">
-            No models loaded. Connect a key on the AI Connection screen to unlock its catalogue.
+            No models loaded. Connect a key on the Cloud connections screen
+            (Settings → AI &amp; intelligence → Cloud connections) to unlock its catalogue.
           </p>
         ) : null}
         {catalog.length > 0 ? (
