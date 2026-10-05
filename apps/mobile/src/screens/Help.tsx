@@ -99,9 +99,13 @@ const SUGGESTIONS = [
  * once chatting it collapses behind an accessible disclosure so the
  * transcript keeps the viewport (screenshot 10). Photos stay opt-in:
  * nothing here auto-attaches — each photo is chosen per send.
+ *
+ * Truth-complete across transports: cloud answers leave the device through
+ * the connected provider; on-device answers stay on the device; Analyze
+ * photo is local-first on Android with a consented cloud fallback.
  */
 const PRIVACY_COPY =
-  "With an AI provider connected (Profile → AI Connection), answers are generated with that provider's models and need an internet connection; your question text is sent to that provider and answers may vary. OpenRouter stays on its free route. Photos are never attached automatically. Without a connected provider — or when AI is unavailable — you get a built-in answer instead.";
+  "With an AI provider connected (Settings → AI & intelligence → Cloud connections), cloud answers are generated with that provider's models and need an internet connection; your question text is sent to that provider and answers may vary. OpenRouter stays on its free route. On-device answers run locally on approved inputs without a provider key and never leave this device: on-device-only never sends anything to the cloud. Analyze photo is local-first on Android when the verified SmolVLM2 runtime is available — automatic mode tries on-device inference first and may fall back to the connected OpenRouter provider only after local failure and with your consent; cloud-only skips local inference. On-device AI requires the Android app and an installed, checksum-verified model — install and verify one in Settings → AI & models → On-device AI; if local AI could not start you get the built-in answer instead. Photos are never attached automatically. Without a connected provider — or when AI is unavailable — you get a built-in answer instead.";
 
 /**
  * Pinned free-route seed (P4b origin, AI-024b unpinned): the catalogue opens
@@ -145,8 +149,8 @@ const ACTION_ROUTES: Record<string, string> = {
   OPEN_REPORT: "/report",
   OPEN_PROFILE: "/profile",
   OPEN_AI_CONNECTION: "/ai-connection",
-  // Legacy id from before the OpenRouter pivot; the connection route now redirects.
-  OPEN_OFFLINE_AI: "/ai-connection",
+  // Legacy id from before the OpenRouter pivot; now lands on the on-device area.
+  OPEN_OFFLINE_AI: "/settings/ai/models",
   OPEN_VERIFY: "/verify",
 };
 
@@ -240,15 +244,15 @@ export function refuseHelpSend(input: {
   if (input.mode === "offline-only" && input.provider !== "offline") {
     return (
       "Offline-only mode is on, so this cloud model was not contacted — nothing left this device. " +
-      "Switch modes in AI & Models to send it."
+      "Switch modes in Settings → AI & models to send it."
     );
   }
   if (input.mode === "cloud-only" && input.provider === "offline") {
-    return "Cloud-only mode is on, so the on-device row was not run. Switch modes in AI & Models to use it.";
+    return "Cloud-only mode is on, so the on-device row was not run. Switch modes in Settings → AI & models to use it.";
   }
   if (input.provider === "offline") {
     if (!getApplicationAi().android || input.record === null) return honestOfflineDetail(new Error(OFFLINE_NOT_AVAILABLE));
-    if (!getApplicationAi().manager.statusOf(input.record.id)?.checksumVerified) return "Install and verify this on-device model in AI & Models first.";
+    if (!getApplicationAi().manager.statusOf(input.record.id)?.checksumVerified) return "Install and verify this on-device model in Settings → AI & models → On-device AI first.";
     if (input.hasImages && !input.record.input.includes("image")) return "This on-device model accepts text only; select SmolVLM2 for an approved image.";
     if (!input.hasImages && input.record.input.includes("image")) return "SmolVLM2 requires one approved image. Select Needle for structured text extraction.";
   }
@@ -286,9 +290,9 @@ interface IncomingAssistantState {
 }
 
 /**
- * Lane B: persisted Assistant default read (Lane A owns the store).
- * Fallback-safe: Lane A's getter is not implemented yet, so a missing store
- * reads as null and the free default applies — never throws, never blocks.
+ * Persisted Assistant default read (aiPreferences owns the store).
+ * Fallback-safe: a missing store reads as null and the free default
+ * applies — never throws, never blocks.
  */
 function readPersistedAssistantDefault(accountId: string): string | null {
   try {

@@ -45,10 +45,13 @@ export function About() {
             experience into a public-data free-for-all.
           </p>
           <p className="fb-about-ai">
-            Optional AI features using a provider key you add (Profile → AI Connection).
-            OpenRouter is the default and stays on its free route; with
-            your consent a selected report photo is sent to your connected provider for suggestions.
-            Reports, search and other core features work without AI.
+            Optional AI features using a provider key you add (Settings → AI & intelligence → Cloud connections).
+            OpenRouter is the default and stays on its free route. Analyze photo is
+            local-first on Android when the verified SmolVLM2 runtime is available:
+            automatic mode tries on-device inference first and may fall back to the
+            connected OpenRouter provider only after local failure and with your
+            consent; on-device-only never sends the photo to the cloud, and cloud-only
+            skips local inference. Reports, search and other core features work without AI.
           </p>
         </div>
       </SettingsGroup>

@@ -33,9 +33,13 @@ describe("Help product naming", () => {
     // P1: the header carries the short honest mode note; the full consent
     // copy below keeps the detailed wording on first use. With multiple
     // providers supported, the note names the connected AI provider.
+    // F02: the privacy explainer is truth-complete across transports.
     expect(screen.getByText(/AI provider when connected/)).toBeTruthy();
     expect(screen.getByText(/built-in answer instead/)).toBeTruthy();
+    expect(screen.getByText(/local-first/)).toBeTruthy();
+    expect(screen.getByText(/on-device-only/)).toBeTruthy();
+    expect(screen.getByText(/cloud-only/)).toBeTruthy();
+    expect(screen.getByText(/fall back/)).toBeTruthy();
     expect(screen.queryByText(/answered by (our|FindBack's) server/)).toBeNull();
-    expect(screen.queryByText(/offline/i)).toBeNull();
   });
 });

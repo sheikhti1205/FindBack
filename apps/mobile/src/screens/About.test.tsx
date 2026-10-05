@@ -33,12 +33,15 @@ describe("About", () => {
     expect(screen.getAllByText("unknown")).toHaveLength(2);
   });
 
-  it("discloses the optional AI routes without offline claims", async () => {
+  it("states local-first photo semantics without the stale cloud-only claim", async () => {
     bridge.getBuildInfo.mockResolvedValue({ buildGitSha: "abc123", versionCode: 1 });
     render(<MemoryRouter><About /></MemoryRouter>);
     expect(await screen.findByText(/provider key you add/)).toBeTruthy();
-    expect(screen.getByText(/sent to your connected provider for suggestions/)).toBeTruthy();
-    expect(screen.queryByText(/offline|on-device|GPU|download.*model/i)).toBeNull();
+    expect(screen.getByText(/local-first/)).toBeTruthy();
+    expect(screen.getByText(/on-device-only/)).toBeTruthy();
+    expect(screen.getByText(/cloud-only/)).toBeTruthy();
+    expect(screen.getByText(/fall back/)).toBeTruthy();
+    expect(screen.queryByText(/selected report photo is sent to your connected provider/)).toBeNull();
   });
 
   it("shows the consumer mission verbatim with one h1 and real links", async () => {

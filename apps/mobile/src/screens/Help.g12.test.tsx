@@ -139,7 +139,7 @@ describe("refuseHelpSend gate (G12)", () => {
     ).toMatch(/cloud-only mode/i);
     expect(
       refuseHelpSend({ provider: "offline", record: null, mode: "auto", hasImages: false }),
-    ).toMatch(/not available/i);
+    ).toMatch(/requires the android app/i);
   });
 
   it("never sends paid or unknown-price rows silently", () => {
