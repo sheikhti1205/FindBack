@@ -38,6 +38,18 @@ import {
 } from "../services/photoStore";
 import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
+import { profileFor } from "../services/ai/modelProfiles";
+import type { GenerateFn } from "../services/ai/types";
+import {
+  DROPPED_CATEGORY_NOTE,
+  suggestReportFields,
+  type ReportFieldSuggestion,
+} from "../services/reportFieldSuggestions";
+import {
+  DROPPED_CATEGORY_SUGGESTION_NOTE,
+  suggestCategoryForText,
+  type CategorySuggestion,
+} from "../services/categorySuggestion";
 import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
 import { PublishOutcomeUncertainError } from "../services/publishOutcome";
 import { isAssistantReportHandoff, type AssistantReportHandoff } from "../services/assistant/assistantHandoff";
@@ -183,6 +195,29 @@ function findPendingNativeRestores(
   }
   return pending;
 }
+
+/**
+ * Injectable AI transports for the suggestion panel below (Lane C).
+ * Defaults fail closed with NOT_CONFIGURED: no network, no side effects, no
+ * silent model calls. Tests inject fakes (vi.mock on the service modules);
+ * production wiring of a real GenerateFn is a follow-up and must keep the
+ * suggestions-only contract (never publish, never auto-apply).
+ */
+export const aiSuggestDeps: {
+  generateForFields: GenerateFn;
+  generateForCategory: GenerateFn;
+} = {
+  generateForFields: async () => {
+    throw Object.assign(new Error("AI field suggestions are not configured yet."), {
+      code: "NOT_CONFIGURED",
+    });
+  },
+  generateForCategory: async () => {
+    throw Object.assign(new Error("AI field suggestions are not configured yet."), {
+      code: "NOT_CONFIGURED",
+    });
+  },
+};
 
 export function CreateReport() {
   const { user } = useAuth();
@@ -352,6 +387,148 @@ function ReportForm() {
     Array<{ field: "type" | "title" | "description" | "category" | "eventDate" | "location"; label: string; incoming: string }>
   >([]);
   const [handoffAdded, setHandoffAdded] = useState<string[]>([]);
+  // --- AI field suggestions (Lane C, additive only) -----------------------
+  // extract-report-fields + classify-category surface here as reviewable
+  // per-field patches (source-labelled, Apply/Keep each). Suggestions only:
+  // Apply writes exactly one field after an explicit confirm when it would
+  // replace existing text; Keep sends nothing (no setter, no network).
+  // Nothing here publishes, auto-applies, or touches draft/photo lifecycle.
+  const [aiSuggestInput, setAiSuggestInput] = useState("");
+  const [aiFieldPatches, setAiFieldPatches] = useState<ReportFieldSuggestion[]>([]);
+  const [aiFieldDroppedCategory, setAiFieldDroppedCategory] = useState(false);
+  const [aiCatSuggestion, setAiCatSuggestion] = useState<CategorySuggestion | null>(null);
+  const [aiCatDropped, setAiCatDropped] = useState(false);
+  const [aiSuggestBusy, setAiSuggestBusy] = useState(false);
+  const [aiSuggestError, setAiSuggestError] = useState<string | null>(null);
+  const [aiSuggestResolved, setAiSuggestResolved] = useState<Record<string, boolean>>({});
+  // Generation token (mirrors VlmSuggestions): a response that resolves after
+  // a newer request started — or after unmount — is stale and dropped, never
+  // rendered into another request's panel.
+  const aiSuggestGen = useRef(0);
+  const aiSuggestAbort = useRef<AbortController | null>(null);
+
+  function aiSuggestResolve(key: string): void {
+    setAiSuggestResolved((previous) => ({ ...previous, [key]: true }));
+  }
+
+  function aiSuggestApplyField(patch: ReportFieldSuggestion): void {
+    if (patch.field === "title") {
+      if (title.trim() && patch.suggestedValue !== title) {
+        if (!window.confirm("Replace the existing title with this reviewed AI suggestion?")) return;
+      }
+      setTitle(patch.suggestedValue);
+      aiSuggestResolve(`field:${patch.field}`);
+    } else if (patch.field === "description") {
+      if (description.trim() && patch.suggestedValue !== description) {
+        if (!window.confirm("Replace the existing description with this reviewed AI suggestion?")) return;
+      }
+      descriptionLiveRef.current = patch.suggestedValue;
+      setDescription(patch.suggestedValue);
+      aiSuggestResolve(`field:${patch.field}`);
+    } else if (patch.field === "date") {
+      // Validation gates are preserved: only a real, non-future calendar date
+      // may land in the form. Free-text date hints ("yesterday") stay manual.
+      if (!isValidCalendarDate(patch.suggestedValue) || isFutureDate(patch.suggestedValue)) return;
+      if (eventDate !== patch.suggestedValue) {
+        if (!window.confirm("Replace the existing date with this reviewed AI suggestion?")) return;
+      }
+      setEventDate(patch.suggestedValue);
+      aiSuggestResolve(`field:${patch.field}`);
+    } else if (patch.field === "category") {
+      // Double-guard: built patches are released, but the form never accepts
+      // an unreleased value even if a service regresses.
+      if (!isReleasedCategory(patch.suggestedValue)) return;
+      if (category && patch.suggestedValue !== category) {
+        if (!window.confirm("Replace the existing category with this reviewed AI suggestion?")) return;
+      }
+      setCategory(patch.suggestedValue as Category);
+      aiSuggestResolve(`field:${patch.field}`);
+    }
+  }
+
+  function aiSuggestApplyCategory(suggestion: CategorySuggestion): void {
+    if (!isReleasedCategory(suggestion.suggestedCategory)) return;
+    if (category && suggestion.suggestedCategory !== category) {
+      if (!window.confirm("Replace the existing category with this reviewed AI suggestion?")) return;
+    }
+    setCategory(suggestion.suggestedCategory);
+    aiSuggestResolve("categorySuggestion");
+  }
+
+  function aiSuggestStop(): void {
+    aiSuggestAbort.current?.abort();
+  }
+
+  async function aiSuggestRequest(): Promise<void> {
+    const text = aiSuggestInput.trim() || `${title} ${description}`.trim();
+    if (!text) {
+      setAiSuggestError("Describe the item first — in the box above or in your title and description.");
+      return;
+    }
+    const profile = profileFor("qwen3-0.6b-dynamic-int4");
+    if (!profile) {
+      setAiSuggestError("AI suggestions are unavailable right now. Continue writing manually.");
+      return;
+    }
+    aiSuggestAbort.current?.abort();
+    const gen = ++aiSuggestGen.current;
+    const controller = new AbortController();
+    aiSuggestAbort.current = controller;
+    setAiSuggestBusy(true);
+    setAiSuggestError(null);
+    setAiFieldPatches([]);
+    setAiFieldDroppedCategory(false);
+    setAiCatSuggestion(null);
+    setAiCatDropped(false);
+    setAiSuggestResolved({});
+    try {
+      const [fieldsResult, categoryResult] = await Promise.all([
+        suggestReportFields(aiSuggestDeps.generateForFields, text, profile, {
+          signal: controller.signal,
+        }),
+        suggestCategoryForText(aiSuggestDeps.generateForCategory, text.slice(0, 280), profile, {
+          signal: controller.signal,
+        }),
+      ]);
+      if (aiSuggestGen.current !== gen) return; // stale: drop, never render
+      if (fieldsResult.ok) {
+        setAiFieldPatches([...fieldsResult.value.suggestions]);
+        setAiFieldDroppedCategory(fieldsResult.value.droppedCategory);
+      } else if (fieldsResult.error.errorClass === "CANCELLED") {
+        setAiSuggestError("AI request cancelled.");
+      } else {
+        setAiSuggestError("Couldn't draft suggestions from that text. You can retry or continue writing manually.");
+      }
+      if (categoryResult.ok) {
+        setAiCatSuggestion(categoryResult.value.suggestion);
+        setAiCatDropped(categoryResult.value.dropped);
+      } else if (categoryResult.error.errorClass === "CANCELLED") {
+        setAiSuggestError("AI request cancelled.");
+      } else if (fieldsResult.ok) {
+        // A failed category op never blocks field patches; the failure shows
+        // only when there is nothing else to review.
+        setAiCatDropped(false);
+      } else {
+        setAiSuggestError("Couldn't draft suggestions from that text. You can retry or continue writing manually.");
+      }
+    } catch {
+      if (aiSuggestGen.current !== gen) return; // stale: drop
+      setAiSuggestError("Couldn't draft suggestions from that text. You can retry or continue writing manually.");
+    } finally {
+      if (aiSuggestGen.current === gen) {
+        setAiSuggestBusy(false);
+        aiSuggestAbort.current = null;
+      }
+    }
+  }
+
+  // Unmount (or StrictMode remount) invalidates any in-flight suggestion
+  // request: its late resolution is stale and must never populate the panel.
+  useEffect(() => () => {
+    aiSuggestGen.current++;
+    aiSuggestAbort.current?.abort();
+  }, []);
+
   const formSnapshotRef = useRef({ type, title, description, category, eventDate, location });
   // Post-commit snapshot of the latest committed form; layout timing closes
   // the commit-to-passive-effect gap for synchronous external handoffs.
@@ -1426,6 +1603,128 @@ function ReportForm() {
         }}
         error={fieldErrors.category}
       />
+
+      {/* AI field suggestions (Lane C, additive): extract-report-fields +
+          classify-category as reviewable per-field patches. Suggestions only:
+          each chip shows its source with Apply/Keep; applying one field keeps
+          the others reviewable; Keep sends nothing. Never publishes,
+          auto-applies, or touches draft/photo lifecycle. */}
+      <section
+        aria-label="AI field suggestions"
+        className="flex flex-col gap-2 rounded-m3-md border border-outline-variant p-3"
+      >
+        <p className="text-sm font-medium">AI field suggestions</p>
+        <p className="text-sm text-on-surface-variant">
+          Draft title, description, date and category from your words. Review each one — nothing is
+          applied or published automatically.
+        </p>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Describe the item in your own words</span>
+          <textarea
+            aria-label="Describe the item for AI suggestions"
+            value={aiSuggestInput}
+            onChange={(e) => setAiSuggestInput(e.target.value)}
+            placeholder="e.g. Black umbrella lost yesterday near the central market"
+            className={`${inputCls} min-h-[60px]`}
+            rows={2}
+          />
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="md"
+            onClick={() => void aiSuggestRequest()}
+          >
+            {aiSuggestBusy ? "Suggesting…" : "Suggest fields"}
+          </Button>
+          {aiSuggestBusy && (
+            <Button type="button" variant="text" size="md" onClick={aiSuggestStop}>
+              Stop
+            </Button>
+          )}
+        </div>
+        {aiSuggestError && (
+          <p role="alert" className="text-sm text-error">
+            {aiSuggestError}
+          </p>
+        )}
+        {aiFieldDroppedCategory && (
+          <p role="status" className="text-sm text-on-surface-variant">
+            {DROPPED_CATEGORY_NOTE}
+          </p>
+        )}
+        {aiCatDropped && !aiFieldDroppedCategory && (
+          <p role="status" className="text-sm text-on-surface-variant">
+            {DROPPED_CATEGORY_SUGGESTION_NOTE}
+          </p>
+        )}
+        {aiFieldPatches
+          .filter((patch) => !aiSuggestResolved[`field:${patch.field}`])
+          .map((patch) => {
+            const dateApplicable =
+              patch.field !== "date" ||
+              (isValidCalendarDate(patch.suggestedValue) && !isFutureDate(patch.suggestedValue));
+            return (
+              <div
+                key={`ai-field-${patch.field}`}
+                className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant p-2"
+              >
+                <p className="text-xs text-on-surface-variant">
+                  Suggested {patch.field} · via {patch.source}
+                </p>
+                <p className="text-sm">{patch.suggestedValue}</p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="md"
+                    onClick={() => aiSuggestApplyField(patch)}
+                    disabled={!dateApplicable}
+                  >
+                    Apply {patch.field}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="md"
+                    onClick={() => aiSuggestResolve(`field:${patch.field}`)}
+                  >
+                    Keep mine
+                  </Button>
+                </div>
+                {!dateApplicable && (
+                  <p className="text-xs text-on-surface-variant">
+                    That date needs a calendar date — pick it in the date field instead.
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        {aiCatSuggestion && !aiSuggestResolved.categorySuggestion && (
+          <div className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant p-2">
+            <p className="text-xs text-on-surface-variant">
+              Suggested category · via {aiCatSuggestion.source}
+            </p>
+            <p className="text-sm">{aiCatSuggestion.suggestedCategory}</p>
+            <div className="flex gap-2">
+              <Button type="button" variant="primary" size="md" onClick={() => aiSuggestApplyCategory(aiCatSuggestion)}>
+                Apply category
+              </Button>
+              <Button type="button" variant="outline" size="md" onClick={() => aiSuggestResolve("categorySuggestion")}>
+                Keep mine
+              </Button>
+            </div>
+          </div>
+        )}
+        {(aiFieldPatches.length > 0 || aiCatSuggestion) &&
+          aiFieldPatches.every((patch) => aiSuggestResolved[`field:${patch.field}`]) &&
+          (!aiCatSuggestion || aiSuggestResolved.categorySuggestion) && (
+            <p role="status" className="text-xs text-on-surface-variant">
+              All suggestions reviewed. Nothing was published automatically.
+            </p>
+          )}
+      </section>
 
       <div className="block">
         <span id="report-event-date-label" className="mb-1 block text-sm font-medium">
