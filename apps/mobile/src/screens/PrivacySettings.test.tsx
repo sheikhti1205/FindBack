@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,13 +36,21 @@ function renderPrivacy() {
   );
 }
 
+/** Scope status assertions to the Location group; other rows also use pills. */
+async function locationGroup() {
+  const heading = await screen.findByRole("heading", { name: "Location" });
+  const group = heading.closest("section");
+  if (!group) throw new Error("Location group not found");
+  return within(group);
+}
+
 describe("PrivacySettings", () => {
   it("renders one h1 backed to /settings and shows the real location state", async () => {
     enabledMock.mockResolvedValue(true);
     renderPrivacy();
 
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    expect(await screen.findByText("On")).toBeTruthy();
+    expect(await (await locationGroup()).findByText("On")).toBeTruthy();
     expect(screen.queryByText(/precise location/i)).toBeNull();
   });
 
@@ -51,9 +59,10 @@ describe("PrivacySettings", () => {
     requestEnableMock.mockResolvedValue(true);
     renderPrivacy();
 
+    const location = await locationGroup();
     fireEvent.click(await screen.findByRole("button", { name: /turn on location services/i }));
     await waitFor(() => expect(requestEnableMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByText("On")).toBeTruthy());
+    await waitFor(() => expect(location.getByText("On")).toBeTruthy());
   });
 
   it("says honestly when location state is unknown", async () => {

@@ -95,8 +95,13 @@ describe("BottomSheet", () => {
         body
       </BottomSheet>,
     );
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(document.body.style.overflow).toBe("");
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // Passive effect cleanup can follow DOM removal under full-suite load.
+      expect(document.body.style.overflow).toBe("");
+    }, {
+      timeout: 3000,
+    });
   });
 
   it("closes on the header close button", () => {
