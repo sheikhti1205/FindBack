@@ -43,10 +43,10 @@ function isPhotoEnginePreference(value: unknown): value is PhotoEnginePreference
 }
 
 /**
- * Narrow preference seam. Lane A implements the real persisted store; until it
- * lands, this reads a tolerant fallback (test/global override, then the future
- * localStorage slot) and defaults to 'automatic' so the v0.6 local-first
- * default stays intact.
+ * Narrow preference seam. Reads the published effective engine slot (fed by
+ * the persisted aiPreferences store; see publishEffectivePhotoEngine), with a
+ * tolerant fallback (test/global override, then the localStorage slot), and
+ * defaults to 'automatic' so the local-first default stays intact.
  */
 export function getPhotoEngine(): PhotoEnginePreference {
   try {

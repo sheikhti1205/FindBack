@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import {
   checkAiReleaseGate,
   validatePhotoAnalysisTruth,
+  validateUserFacingPhotoTruth,
   validatePhotoGroundingDeferred,
   validateRuntimeWiring,
   validateVisionTruth,
@@ -32,6 +33,7 @@ const REAL = {
   capabilitiesSource: read("apps/mobile/src/services/appCapabilities.ts"),
   clientCapabilitiesSource: read("apps/mobile/src/services/appCapabilities.ts"),
   serverCapabilitiesSource: read("supabase/functions/ai-help/capabilities.ts"),
+  aboutSource: read("apps/mobile/src/screens/About.tsx"),
   mainSource: read("apps/mobile/src/main.tsx"),
   appSource: read("apps/mobile/src/App.tsx"),
   serviceSource: read("apps/mobile/src/services/ai/applicationAi.ts"),
@@ -291,6 +293,54 @@ describe("validatePhotoAnalysisTruth", () => {
         .replace(/cloud-only/gi, "remote"),
     });
     ok(errors.some((e) => e.includes("missing required photo truth")), `expected missing-truth complaint, got: ${errors}`);
+  });
+});
+
+describe("validateUserFacingPhotoTruth", () => {
+  it("passes on the real About/Help tree", () => {
+    deepStrictEqual(
+      validateUserFacingPhotoTruth({
+        aboutSource: REAL.aboutSource,
+        helpSource: REAL.helpSource,
+      }),
+      [],
+    );
+  });
+
+  it("fails on stale cloud-only photo phrasing in About copy", () => {
+    const errors = validateUserFacingPhotoTruth({
+      aboutSource:
+        "With your consent a selected report photo is sent to your connected AI provider for suggestions.",
+      helpSource: REAL.helpSource,
+    });
+    ok(errors.some((e) => e.includes("About") && e.includes("stale cloud-only")), `expected About stale-claim complaint, got: ${errors}`);
+  });
+
+  it("fails on stale cloud-only photo phrasing in Help copy", () => {
+    const errors = validateUserFacingPhotoTruth({
+      aboutSource: REAL.aboutSource,
+      helpSource:
+        "Its consented path is the connected cloud provider for that one request.",
+    });
+    ok(errors.some((e) => e.includes("Help") && e.includes("stale cloud-only")), `expected Help stale-claim complaint, got: ${errors}`);
+  });
+
+  it("fails when About copy loses local-first/fallback semantics", () => {
+    const errors = validateUserFacingPhotoTruth({
+      aboutSource: REAL.aboutSource.replace(/local-first/gi, "cloud"),
+      helpSource: REAL.helpSource,
+    });
+    ok(errors.some((e) => e.includes("About") && e.includes("missing required photo truth")), `expected About missing-truth complaint, got: ${errors}`);
+  });
+
+  it("fails when Help copy loses on-device-only/cloud-only semantics", () => {
+    const errors = validateUserFacingPhotoTruth({
+      aboutSource: REAL.aboutSource,
+      helpSource: REAL.helpSource
+        .replace(/on-device-only/gi, "offline")
+        .replace(/cloud-only/gi, "remote"),
+    });
+    ok(errors.some((e) => e.includes("Help") && e.includes("missing required photo truth")), `expected Help missing-truth complaint, got: ${errors}`);
   });
 });
 

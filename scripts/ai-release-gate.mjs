@@ -32,7 +32,9 @@
  *                        (client + server) still carries the stale cloud-only
  *                        claim, or lost the local-first / engine truth
  *                        (local-first, automatic fallback, on-device-only,
- *                        cloud-only)
+ *                        cloud-only); the same truth is required on the
+ *                        user-facing surfaces (About + Help privacy copy),
+ *                        which must not carry cloud-only photo phrasing
  *   10. secrets        — delegates to scripts/scan-secrets.mjs (non-zero fails)
  *
  * Lab/challenger/test skeletons (needle bench, testing fakes,
@@ -298,19 +300,66 @@ export function validatePhotoAnalysisTruth({ clientCapabilitiesSource, serverCap
   return errors;
 }
 
+/**
+ * User-facing photo-truth detector for the About + Help explainer copy.
+ * Fails when either surface:
+ * - still carries cloud-only photo phrasing (a selected photo sent straight
+ *   to the connected provider as the whole story), or
+ * - lost the local-first / engine truth markers (local-first, automatic
+ *   fallback, on-device-only, cloud-only).
+ */
+export const STALE_USER_FACING_PHOTO_CLAIM_RES = [
+  /selected (report )?photo is sent to (your connected|the connected) AI provider/i,
+  /consented path is the connected cloud provider/i,
+];
+
+export const REQUIRED_USER_FACING_PHOTO_TRUTH_RES = [
+  /local-first/i,
+  /on-device-only/i,
+  /cloud-only/i,
+  /fall\s?back/i,
+];
+
+export function validateUserFacingPhotoTruth({ aboutSource, helpSource }) {
+  const errors = [];
+  for (const [label, source] of [
+    ["About", aboutSource],
+    ["Help", helpSource],
+  ]) {
+    for (const pattern of STALE_USER_FACING_PHOTO_CLAIM_RES) {
+      if (pattern.test(source ?? "")) {
+        errors.push(`photo-analysis-truth: stale cloud-only photo claim in ${label} copy (${pattern})`);
+      }
+    }
+    for (const pattern of REQUIRED_USER_FACING_PHOTO_TRUTH_RES) {
+      if (!pattern.test(source ?? "")) {
+        errors.push(`photo-analysis-truth: ${label} copy missing required photo truth (${pattern})`);
+      }
+    }
+  }
+  return errors;
+}
+
 function checkPhotoAnalysisTruth() {
   let client;
   let server;
+  let about;
+  let help;
   try {
     client = read("apps/mobile/src/services/appCapabilities.ts");
     server = read("supabase/functions/ai-help/capabilities.ts");
+    about = read("apps/mobile/src/screens/About.tsx");
+    help = read("apps/mobile/src/screens/Help.tsx");
   } catch (error) {
     return [`photo-analysis-truth: cannot read capability source (${error.message})`];
   }
-  return validatePhotoAnalysisTruth({
-    clientCapabilitiesSource: client,
-    serverCapabilitiesSource: server,
-  });
+  return [
+    ...validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: client,
+      serverCapabilitiesSource: server,
+    }),
+    ...validateUserFacingPhotoTruth({ aboutSource: about, helpSource: help }),
+  ];
 }
 
 function checkRuntimeWiring() {
@@ -735,7 +784,7 @@ checks (any failure exits 1):
   license-bundle    lfm1.0 arms blocked on the bundle channel
   abi-artifacts     ABI split config carries every supported ABI
    vision-truth      production vision seam + registration present, copy honest
-   photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim
+   photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim (capabilities + About/Help)
   runtime-wiring    every spec runtime has a production adapter, no lab routes
   application-integration  real boot, provider, controls, matching and timing path
   endpoint-pin      generic endpoint pinned (no invented default)
