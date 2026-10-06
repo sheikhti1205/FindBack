@@ -44,7 +44,7 @@ pending actual-send evidence; adapters/catalogues/probes are not delivery proof.
 | Baseline privacy/navigation/credential fixes (FBA-027–031) | AUDIT_REPORTED: truth copy, boolean connection summaries, corrected routes/comments, fail-closed account credential purge. | Certification after further changes; keep regressions and rerun at final SHA. |
 | Earlier Auth/Storage/Realtime/REST/GraphQL live runs | HISTORICAL_LIVE: references in API demo and archived report. | Fresh hosted RLS/grants review or candidate phone/media/realtime proof. |
 | `docs/runbooks/gate-e-device-run.md` | Prepared procedures; every device row starts NOT_EXECUTED. | An executed Gate-E pass or any device availability claim. |
-| Published beta.2 @ `088d9774f11818a7cdeef410320e246e00e71e5d` | Audit reports complete multi-variant asset set, five commits behind baseline; root/mobile still beta.2. | Inclusion of b472a24 fixes or final install/upgrade proof. No release mutation performed here. |
+| Closure-review wave (evidence block below; exact-commit CI + Web green on the shipped tree) | CI-EXECUTED: mobile/API suites, AI gate 12/12, completion integrity green, `--final` RED only on genuine external/waiver items. | Whole-app completeness, flake elimination or physical Android. |
 | This documentation work | Source/path review and documentation-only verification; exact local checks recorded below. | Code tests/live/SMS/Crystal/device/build/security/release acceptance. |
 
 No automated test count is a count of completed teacher requirements. See the
