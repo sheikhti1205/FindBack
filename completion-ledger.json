@@ -1,44 +1,311 @@
 {
   "version": 1,
-  "generatedFor": "b472a247ae593b8eb4e9585bb8947a87ccfaf6c7",
+  "generatedFor": "ceea14abd0eb20163232d568b4e989e1fdd45153",
   "releaseStatus": "HOLD",
-  "statusVocabulary": ["DONE", "VERIFIED", "OK", "IN_PROGRESS", "BLOCKED_EXTERNAL", "VERIFIED_WITH_LIMITATION"],
-  "closedStatuses": ["DONE", "VERIFIED", "OK"],
-  "note": "Machine-readable completion ledger (audit FBA-023/024). The completion gate fails while any P0/P1 item is not in closedStatuses. BLOCKED_EXTERNAL items require physical-device, live-provider, evaluator-acceptance or licensed-tooling evidence that cannot be produced from the repository alone.",
+  "statusVocabulary": [
+    "DONE",
+    "VERIFIED",
+    "OK",
+    "WAIVED",
+    "IN_PROGRESS",
+    "BLOCKED_EXTERNAL",
+    "VERIFIED_WITH_LIMITATION"
+  ],
+  "closedStatuses": [
+    "DONE",
+    "VERIFIED",
+    "OK",
+    "WAIVED"
+  ],
+  "note": "Machine-readable completion ledger (audit FBA-023/024, closure review 2026-10-06). The completion gate --final fails while any item is not DONE/VERIFIED/OK/WAIVED. BLOCKED_EXTERNAL items require physical-device, live-provider, evaluator-acceptance or licensed-tooling evidence that cannot be produced from the repository alone. generatedFor is stamped to the reconciliation commit by the final ledger commit of a wave (gate binds HEAD: only the ledger may change after it).",
   "items": [
-    { "id": "FBA-001", "severity": "P0", "area": "ai/photo-grounding", "status": "DONE", "evidence": "CreateReport mounts PhotoGrounding; live local-first transport binds the approved image; consent + explicit Apply/Keep review; tests components/PhotoGrounding.test.tsx, services/livePhotoGrounding.test.ts, screens/CreateReport.grounding.test.tsx; ai-release-gate application-integration tripwires", "blocker": "device/runtime proof tracked by FBA-026" },
-    { "id": "FBA-002", "severity": "P0", "area": "android/device-gate", "status": "BLOCKED_EXTERNAL", "evidence": "", "blocker": "no authorized physical ARM64 device attached (adb devices empty); Gate-E matrix remains NOT EXECUTED" },
-    { "id": "FBA-003", "severity": "P1", "area": "ai/assistant-modes", "status": "DONE", "evidence": "automatic/on-device-only/cloud-only enforced end-to-end; assistantMode authoritative for photo grounding via effectivePhotoEngine; legacy modes migrated once; tests aiPreferences.test.ts, liveNarrowTasks.transport.test.ts, Help.*.test.tsx", "blocker": "" },
-    { "id": "FBA-004", "severity": "P1", "area": "ai/byok-providers", "status": "DONE", "evidence": "providerStatus.ts: only openrouter live-tested; other adapters behind default-OFF account-scoped Experimental toggle; AiConnection filters/persists accordingly; providerStatus.test.ts", "blocker": "live end-to-end sends per provider still unproven (external credential/consent)" },
-    { "id": "FBA-005", "severity": "P1", "area": "auth/phone-verification", "status": "DONE", "evidence": "Verify.tsx/ProfileEdit.tsx authenticated phone-change OTP flow; auth.ts send/resend/verify/cooldown; server-sync migration 20261006120000; behavioral SQL test wired into CI job phone-verification-sql", "blocker": "live SMS delivery proof needs hosted provider config (external)" },
-    { "id": "FBA-006", "severity": "P2", "area": "coursework/reporting", "status": "BLOCKED_EXTERNAL", "evidence": "", "blocker": "genuine .rpt requires licensed Windows Crystal Reports tooling; reporting API/CSV substitute documented" },
-    { "id": "FBA-007", "severity": "P0", "area": "release", "status": "IN_PROGRESS", "evidence": "fix wave committed to main; release intentionally HOLD until P0/P1 external items close", "blocker": "do not tag while device/push/proof items remain open" },
-    { "id": "FBA-008", "severity": "P0", "area": "release/versioning", "status": "IN_PROGRESS", "evidence": "versions remain 0.7.0-beta.2 pending closure", "blocker": "synchronized bump deferred until closure" },
-    { "id": "FBA-009", "severity": "P1", "area": "documentation", "status": "DONE", "evidence": "DEFERRED_DECISIONS.md rewritten to current local-first architecture", "blocker": "" },
-    { "id": "FBA-010", "severity": "P1", "area": "documentation/requirements", "status": "DONE", "evidence": "docs/REQUIREMENTS_MATRIX.md regenerated (24 rows, separate implementation vs verification status)", "blocker": "" },
-    { "id": "FBA-011", "severity": "P1", "area": "documentation/acceptance", "status": "DONE", "evidence": "historical report archived to docs/history/; docs/FINAL_ACCEPTANCE_REPORT.md replaced with current verification/closure report", "blocker": "" },
-    { "id": "FBA-012", "severity": "P3", "area": "ai/lab-code", "status": "DONE", "evidence": "generationGuard ownership documented as lab/non-shipping with explicit caller deadline policy; obsolete TBD rewire note removed", "blocker": "" },
-    { "id": "FBA-013", "severity": "P2", "area": "matching/similarity", "status": "VERIFIED_WITH_LIMITATION", "evidence": "frozen default policy + labeled regression fixtures (tools/bench, docs/bench); metrics documented", "blocker": "representative-device calibration still needs native embedding probe (external)" },
-    { "id": "FBA-014", "severity": "P1", "area": "ai/native-tests", "status": "BLOCKED_EXTERNAL", "evidence": "", "blocker": "device AI runtime/perf it.todo requires a physical device" },
-    { "id": "FBA-015", "severity": "P1", "area": "telemetry/build-boundary", "status": "BLOCKED_EXTERNAL", "evidence": "", "blocker": "release-build/device telemetry skips need signed artifact + device" },
-    { "id": "FBA-016", "severity": "P2", "area": "media/motion-photo", "status": "DONE", "evidence": "generated deterministic JPEG/XMP/MP4 fixture runs in CI; optional real Xiaomi sample supplemental", "blocker": "" },
-    { "id": "FBA-017", "severity": "P0", "area": "push/fcm", "status": "BLOCKED_EXTERNAL", "evidence": "", "blocker": "real FCM delivery/tap/direct-reply needs release-signed device + queued notification" },
-    { "id": "FBA-018", "severity": "P2", "area": "push/dispatcher", "status": "VERIFIED_WITH_LIMITATION", "evidence": "scheduled dispatcher wired and callable (scanned=0 run)", "blocker": "green run is not delivery proof" },
-    { "id": "FBA-019", "severity": "P1", "area": "sharing/app-links", "status": "BLOCKED_EXTERNAL", "evidence": "", "blocker": "cold/warm/background App Links verification needs release-signed device" },
-    { "id": "FBA-020", "severity": "P1", "area": "notifications/direct-reply", "status": "BLOCKED_EXTERNAL", "evidence": "", "blocker": "notification-shade direct reply needs physical proof" },
-    { "id": "FBA-021", "severity": "P2", "area": "ci/flakiness", "status": "DONE", "evidence": "MapPickerSheet timing test made deterministic (controlled motion/layout/event readiness); 10/10 clean runs recorded", "blocker": "" },
-    { "id": "FBA-022", "severity": "P3", "area": "ci/native-ai", "status": "IN_PROGRESS", "evidence": "all release-critical workflows triggered at exact final commit on push", "blocker": "final release SHA not yet cut" },
-    { "id": "FBA-023", "severity": "P2", "area": "process/release-gates", "status": "DONE", "evidence": "completion-ledger.json + scripts/completion-gate.mjs fail closed on any open P0/P1 or unallowlisted debt", "blocker": "" },
-    { "id": "FBA-024", "severity": "P2", "area": "process/tracking", "status": "DONE", "evidence": "completion-ledger.json tracks every finding to closure", "blocker": "" },
-    { "id": "FBA-025", "severity": "P2", "area": "security/history", "status": "BLOCKED_EXTERNAL", "evidence": "repo secret scan runs in CI", "blocker": "full-history Gitleaks/TruffleHog + SAST/dependency scan must run on the final clone/SHA" },
-    { "id": "FBA-026", "severity": "P0", "area": "android/release-artifact", "status": "BLOCKED_EXTERNAL", "evidence": "", "blocker": "final release-signed install/upgrade/launch proof needs a physical device" },
-    { "id": "FBA-027", "severity": "OK", "area": "ai/privacy-truth", "status": "OK", "evidence": "About/Help truth + gate coverage (commits 41e0a21, 5079a16)", "blocker": "" },
-    { "id": "FBA-028", "severity": "OK", "area": "ai/credentials", "status": "OK", "evidence": "describeCloudConnections boolean-only, account-scoped (commit 54ce450)", "blocker": "" },
-    { "id": "FBA-029", "severity": "OK", "area": "navigation/offline-ai", "status": "OK", "evidence": "/offline-ai reconciled to /settings/ai/models (commit 7de6581)", "blocker": "" },
-    { "id": "FBA-030", "severity": "OK", "area": "code-hygiene", "status": "OK", "evidence": "false lane-era AI comments removed (commit 5babd18)", "blocker": "" },
-    { "id": "FBA-031", "severity": "OK", "area": "auth/credential-lifecycle", "status": "OK", "evidence": "logout clears session + remembered keys with conditional confirmation (commit b472a24)", "blocker": "" },
-    { "id": "FBA-032", "severity": "OK", "area": "ci", "status": "OK", "evidence": "exact-head CI + Web green at b472a24; flake fixed by FBA-021", "blocker": "" },
-    { "id": "FBA-033", "severity": "OK", "area": "release", "status": "VERIFIED_WITH_LIMITATION", "evidence": "published beta.2 asset set complete", "blocker": "superseded by next release" },
-    { "id": "FBA-034", "severity": "OK", "area": "repository-state", "status": "OK", "evidence": "no open PRs/issues; tracking via ledger", "blocker": "" }
+    {
+      "id": "FBA-001",
+      "severity": "P0",
+      "area": "ai/photo-grounding",
+      "status": "DONE",
+      "evidence": "CreateReport mounts PhotoGrounding (apps/mobile/src/screens/CreateReport.tsx); consented local-first transport apps/mobile/src/services/livePhotoGrounding.ts; validated selector apps/mobile/src/services/photoGrounding.ts over apps/mobile/src/services/ai/ops/groundObjects.ts; account-bound cloud key via resolveAccountOpenRouterKey in apps/mobile/src/services/aiCredentials.ts (single session lookup, fail closed; pinned by apps/mobile/src/services/aiCredentials.test.ts); mode-honest consent in apps/mobile/src/components/PhotoGrounding.tsx and apps/mobile/src/components/VlmSuggestions.tsx. Tests: apps/mobile/src/components/PhotoGrounding.test.tsx, apps/mobile/src/services/livePhotoGrounding.test.ts (account-switch races), apps/mobile/src/services/analyzeReportPhoto.test.ts (account-switch races), apps/mobile/src/screens/CreateReport.grounding.test.tsx. Gate: scripts/ai-release-gate.mjs application-integration tripwires. Limitation: on-device runtime proof tracked by FBA-026.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-002",
+      "severity": "P0",
+      "area": "android/device-gate",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "Not executed. Procedure: docs/runbooks/gate-e-device-run.md; track manual:gate-e-device-run.",
+      "blocker": "no authorized physical ARM64 device attached (adb devices empty); Gate-E matrix remains NOT EXECUTED"
+    },
+    {
+      "id": "FBA-003",
+      "severity": "P1",
+      "area": "ai/assistant-modes",
+      "status": "DONE",
+      "evidence": "automatic/on-device-only/cloud-only enforced end-to-end (apps/mobile/src/services/ai/aiPreferences.ts effectivePhotoEngine; apps/mobile/src/services/liveNarrowTasks.ts; apps/mobile/src/screens/AiModels.tsx; apps/mobile/src/screens/Help.tsx; apps/mobile/src/services/analyzeReportPhoto.ts getPhotoEngine is account-scoped, no global slot). Tests: apps/mobile/src/services/ai/aiPreferences.test.ts, apps/mobile/src/services/liveNarrowTasks.transport.test.ts, apps/mobile/src/screens/Help.offlineIntegration.test.tsx. Gate: scripts/ai-release-gate.mjs.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-004",
+      "severity": "P1",
+      "area": "ai/byok-providers",
+      "status": "DONE",
+      "evidence": "Only openrouter live-tested; other adapters behind default-OFF account-scoped experimental toggle (apps/mobile/src/services/ai/providerStatus.ts; apps/mobile/src/services/aiCredentials.test.ts façades). Tests: apps/mobile/src/services/ai/providerStatus.test.ts. Limitation: live end-to-end sends per provider still unproven (needs owner credentials + consent; external).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-005",
+      "severity": "P1",
+      "area": "auth/phone-verification",
+      "status": "DONE",
+      "evidence": "Authenticated phone-change OTP flow (apps/mobile/src/services/auth.ts; apps/mobile/src/screens/Verify.tsx; apps/mobile/src/screens/ProfileEdit.tsx); server-sync migration supabase/migrations/20261006120000_auth_phone_verification_sync.sql with behavioral test supabase/tests/auth_phone_verification_sync.test.sql executed in CI job phone-verification-sql (.github/workflows/ci.yml). Limitation: live SMS delivery proof needs hosted provider config (external).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-006",
+      "severity": "P2",
+      "area": "coursework/reporting",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "Substitute surfaces exist: docs/reporting/REPORTING.md plus API/SQL/CSV. No genuine .rpt producible in-repo.",
+      "blocker": "genuine .rpt requires licensed Windows Crystal Reports tooling; reporting API/CSV substitute needs evaluator acceptance"
+    },
+    {
+      "id": "FBA-007",
+      "severity": "P0",
+      "area": "release",
+      "status": "IN_PROGRESS",
+      "evidence": "Fix waves committed on main through commit 24e962f3334d39706e249f9974b7cab4d2d20e93; exact-commit CI run 37395801580 and Web run 37395800685 green. Release intentionally HOLD until P0/P1 external items close.",
+      "blocker": "do not tag while device/push/proof items remain open"
+    },
+    {
+      "id": "FBA-008",
+      "severity": "P0",
+      "area": "release/versioning",
+      "status": "IN_PROGRESS",
+      "evidence": "Root package.json and apps/mobile/package.json both 0.7.0-beta.2 (scripts/check-version-sync.mjs passes); schema metadata parity test apps/mobile/src/services/appCapabilities.test.ts pins BACKEND_SCHEMA_VERSION to newest migration.",
+      "blocker": "synchronized bump deferred until closure"
+    },
+    {
+      "id": "FBA-009",
+      "severity": "P1",
+      "area": "documentation",
+      "status": "DONE",
+      "evidence": "DEFERRED_DECISIONS.md rewritten to the current local-first architecture with explicit account-deletion scope decision; closure-review wave reconciled.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-010",
+      "severity": "P1",
+      "area": "documentation/requirements",
+      "status": "DONE",
+      "evidence": "docs/REQUIREMENTS_MATRIX.md reconciled to shipped code with ledger-agreeing implementation/verification status; closure-review wave reconciled.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-011",
+      "severity": "P1",
+      "area": "documentation/acceptance",
+      "status": "DONE",
+      "evidence": "Historical report archived to docs/history/FINAL_ACCEPTANCE_REPORT_2026-09-15_e813028_as-of-b472a24.md; docs/FINAL_ACCEPTANCE_REPORT.md is the current verification/closure HOLD report; closure-review wave reconciled.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-012",
+      "severity": "P3",
+      "area": "ai/lab-code",
+      "status": "DONE",
+      "evidence": "apps/mobile/src/services/ai/generationGuard.ts documented as lab/non-shipping with explicit caller deadline policy (commit 24e962f3334d39706e249f9974b7cab4d2d20e93 tree).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-013",
+      "severity": "P2",
+      "area": "matching/similarity",
+      "status": "VERIFIED_WITH_LIMITATION",
+      "evidence": "Frozen default policy + labeled regression fixtures (tools/bench/matching-ranking-fixtures.v1.json; tools/bench/run-matching-regression.mjs with vendored-copy drift guard; docs/bench/matching-policy.md). Limitation: representative-device calibration still needs native embedding probe (external).",
+      "blocker": "representative-device calibration still needs native embedding probe (external)"
+    },
+    {
+      "id": "FBA-014",
+      "severity": "P1",
+      "area": "ai/native-tests",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "Device-only profiling shells remain it.todo in apps/mobile/src/test-wiring-pulltorefresh-profile.test.ts (allowlisted FBA-014, Gate-E).",
+      "blocker": "device AI runtime/perf it.todo requires a physical device"
+    },
+    {
+      "id": "FBA-015",
+      "severity": "P1",
+      "area": "telemetry/build-boundary",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "Automatable SEN-01 boundaries are real CI tests now (apps/mobile/src/test-wiring-sen01-gates.test.ts: synthetic-DSN bundle asserts, scrubbed-env preflight failure; .github/workflows/ci.yml negative stale-assets step for verifyBundledClientConfig). Remaining: signed-APK + release telemetry device proof.",
+      "blocker": "release-build/device telemetry skips need signed artifact + device"
+    },
+    {
+      "id": "FBA-016",
+      "severity": "P2",
+      "area": "media/motion-photo",
+      "status": "DONE",
+      "evidence": "Generated deterministic JPEG/XMP/MP4 fixture runs in CI (apps/mobile/src/services/__tests__/motionPhotoFixture.ts; apps/mobile/src/services/__tests__/motionPhotoParser.test.ts); Xiaomi file kept as labeled MANUAL-ONLY optional suite (apps/mobile/src/services/media/motionPhoto.real.test.ts).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-017",
+      "severity": "P0",
+      "area": "push/fcm",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md; track manual:gate-e-device-run for delivery proof.",
+      "blocker": "real FCM delivery/tap/direct-reply needs release-signed device + queued notification"
+    },
+    {
+      "id": "FBA-018",
+      "severity": "P2",
+      "area": "push/dispatcher",
+      "status": "VERIFIED_WITH_LIMITATION",
+      "evidence": "Scheduled dispatcher wired and callable (supabase/functions/push-dispatch; dispatch run 37317074620 scanned=0/sent=0 — wiring only). Limitation: zero sends are not delivery proof (see FBA-017).",
+      "blocker": "positive-work delivery result pending (see FBA-017)"
+    },
+    {
+      "id": "FBA-019",
+      "severity": "P1",
+      "area": "sharing/app-links",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md; route map covered by apps/mobile/src/App.routes.test.tsx.",
+      "blocker": "cold/warm/background App Links verification needs release-signed device"
+    },
+    {
+      "id": "FBA-020",
+      "severity": "P1",
+      "area": "notifications/direct-reply",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md.",
+      "blocker": "notification-shade direct reply needs physical proof"
+    },
+    {
+      "id": "FBA-021",
+      "severity": "P2",
+      "area": "ci/flakiness",
+      "status": "DONE",
+      "evidence": "MapPickerSheet timing deterministic (apps/mobile/src/components/MapPickerSheet.test.tsx); raster tile duplicate-key production bug fixed with min-zoom regression (apps/mobile/src/components/MapPickerSheet.tsx; apps/mobile/src/services/location/rasterTiles.test.ts). Route smoke hardened against error-boundary false-greens (apps/mobile/src/App.routes.test.tsx).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-022",
+      "severity": "P3",
+      "area": "ci/native-ai",
+      "status": "IN_PROGRESS",
+      "evidence": "Exact-commit CI run 37395801580 (5/5 jobs incl. Docker + phone-verification-sql) and Web run 37395800685 green at commit 24e962f3334d39706e249f9974b7cab4d2d20e93; native/model-smoke green at commit fb213a210948b442a1b037c74c36a596938ae2e0 (path-filtered).",
+      "blocker": "final release SHA not yet cut; native/model-smoke must rerun at the final SHA"
+    },
+    {
+      "id": "FBA-023",
+      "severity": "P2",
+      "area": "process/release-gates",
+      "status": "DONE",
+      "evidence": "completion-ledger.json + scripts/completion-gate.mjs with --final (every-severity closure, evidence references, docs agreement, HEAD binding, skip inventory) enforced in .github/workflows/ci.yml (integrity) and .github/workflows/release.yml (--release). Tests: scripts/completion-gate.test.mjs (25 cases).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-024",
+      "severity": "P2",
+      "area": "process/tracking",
+      "status": "DONE",
+      "evidence": "completion-ledger.json tracks every finding to closure (36 ids incl. FBA-035/FBA-036); docs/COMPLETION_AUDIT.md register agrees cell-by-cell (scripts/completion-gate.mjs docs-consistency check).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-025",
+      "severity": "P2",
+      "area": "security/history",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "Repo secret scan runs in CI (.github/workflows/ci.yml via scripts/scan-secrets.mjs). Full-history scan pending on the final SHA.",
+      "blocker": "full-history Gitleaks/TruffleHog + SAST/dependency scan must run on the final clone/SHA"
+    },
+    {
+      "id": "FBA-026",
+      "severity": "P0",
+      "area": "android/release-artifact",
+      "status": "BLOCKED_EXTERNAL",
+      "evidence": "No signed candidate cut yet; track manual:gate-e-device-run.",
+      "blocker": "final release-signed install/upgrade/launch proof needs a physical device"
+    },
+    {
+      "id": "FBA-027",
+      "severity": "OK",
+      "area": "ai/privacy-truth",
+      "status": "OK",
+      "evidence": "About/Help truth + gate coverage (commit 41e0a21; scripts/ai-release-gate.mjs photo-analysis-truth).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-028",
+      "severity": "OK",
+      "area": "ai/credentials",
+      "status": "OK",
+      "evidence": "describeCloudConnections boolean-only, account-scoped (commit 54ce450; apps/mobile/src/services/aiCredentials.ts).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-029",
+      "severity": "OK",
+      "area": "navigation/offline-ai",
+      "status": "OK",
+      "evidence": "/offline-ai reconciled to /settings/ai/models (commit 7de6581; apps/mobile/src/App.routes.test.tsx).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-030",
+      "severity": "OK",
+      "area": "code-hygiene",
+      "status": "OK",
+      "evidence": "False lane-era AI comments removed (commit 5babd18); completion gate scans shipped source incl. Android (scripts/completion-gate.mjs).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-031",
+      "severity": "OK",
+      "area": "auth/credential-lifecycle",
+      "status": "OK",
+      "evidence": "Logout clears session + remembered keys with conditional confirmation (commit b472a24; apps/mobile/src/services/auth.test.ts).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-032",
+      "severity": "OK",
+      "area": "ci",
+      "status": "OK",
+      "evidence": "Exact-head CI + Web green at commit b472a24 (CI run 37348171843); superseded by exact-commit CI run 37395801580 at commit 24e962f3334d39706e249f9974b7cab4d2d20e93.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-033",
+      "severity": "OK",
+      "area": "release",
+      "status": "OK",
+      "evidence": "Published beta.2 tag v0.7.0-beta.2 @ commit 088d9774f11818a7cdeef410320e246e00e71e5d with ABI/universal/AAB/manifest/checksums; superseded by next release.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-034",
+      "severity": "OK",
+      "area": "repository-state",
+      "status": "OK",
+      "evidence": "No open PRs/issues; tracking via completion-ledger.json; remote state rechecked at release review.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-035",
+      "severity": "P1",
+      "area": "auth/password-recovery",
+      "status": "DONE",
+      "evidence": "Forgot-password → reset email → verified /recovery deep link → new password, anti-enumeration throughout (apps/mobile/src/services/auth.ts requestPasswordReset/exchangeRecoveryCode/updatePassword; apps/mobile/src/screens/ForgotPassword.tsx; apps/mobile/src/screens/Recovery.tsx; /forgot + /recovery routes in apps/mobile/src/App.tsx; link in apps/mobile/src/components/auth/SignInForm.tsx). Tests: apps/mobile/src/services/auth.test.ts, apps/mobile/src/screens/PasswordRecovery.test.tsx, apps/mobile/src/App.routes.test.tsx. Limitation: live email delivery needs hosted redirect-URL allowlisting + real inbox (external).",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-036",
+      "severity": "P2",
+      "area": "auth/account-deletion",
+      "status": "IN_PROGRESS",
+      "evidence": "Explicit scope decision recorded in DEFERRED_DECISIONS.md (account-deletion section): self-serve deletion is tracked follow-up, not silently absent; capability manifest still declares it unavailable (apps/mobile/src/services/appCapabilities.ts).",
+      "blocker": "owner-approved deletion design + implementation (server-side purge function, storage cleanup, RLS, UI confirm, hosted proof) not yet scheduled; recovery (FBA-035) ships first"
+    }
   ]
 }
