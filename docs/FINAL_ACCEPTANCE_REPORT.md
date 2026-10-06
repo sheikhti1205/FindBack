@@ -1,276 +1,180 @@
-# FindBack — Final Acceptance Report
+# FindBack — current verification and closure report
 
-Status vocabulary: `DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
-`DEFERRED_EXTERNAL_TOOL` · `NOT_DONE`.
+**Decision: HOLD — NOT COMPLETE.** Updated 2026-10-06.
 
-## Repository / release
+Audit/source baseline: `b472a247ae593b8eb4e9585bb8947a87ccfaf6c7` (`b472a24`,
+2026-10-05). This is a documentation reconciliation, **not** a final release
+certificate. Main-owned photo grounding, mode and phone integration is
+**IN_PROGRESS**; no returned worker execution evidence has been accepted in this
+report. Uncommitted source changes from other owners do not establish completion.
 
-1. **Starting HEAD** (this continuation): `3334905`.
-2. **Final HEAD**: the commit that adds this report (`git log -1 --oneline`); the
-   last code/doc commit before it is `f9bb0e7`.
-3. **origin/main equality**: `main == origin/main` (verified with
-   `git rev-parse HEAD origin/main`).
-4. **Final git status**: clean except untracked Playwright snapshot artifacts under
-   `.playwright-mcp/` (left uncommitted; the directory is git-ignored and not tracked).
-5. **Commits by block**
-   - 10H Storage: `e9a959b` (db), `23da899` (mobile), `cc61ca8` (docs)
-   - 10I REST/GraphQL: `a3e2fac` (db + docs)
-   - 10J AI Edge Function: `1e86640` (mobile + function + docs)
-   - 10K Supabase-only mobile: `1ce7026` (mobile/scripts), `3009f62` (docs)
-   - 10M Docker/CI: `3ae3372` (ci + Dockerfile), `f9bb0e7` (docs)
-6. **Migrations added**: `20260914220000_direct_storage_uploads.sql`,
-   `20260914230000_enable_pg_graphql.sql`. All 18 migrations are **local == remote**
-   (`supabase migration list`).
+## Current architecture
 
-## Final architecture
+Android React/Capacitor → hosted Supabase Auth/Data API/GraphQL/private Broadcast/
+Storage; Node/SQLite/Docker remains coursework/reference only. Report-photo
+automatic analysis is SmolVLM2 local-first with **consented OpenRouter fallback**;
+on-device-only never sends, cloud-only skips local. Help uses direct BYOK and
+installed specialized local models where wired, with built-in answers when
+appropriate to the selected mode. No server relay is part of mobile inference.
 
-7. **Runtime diagram**
-   ```
-   Android APK (React/Capacitor WebView)
-     ├─ Supabase Auth (email + password; rotating refresh)          https
-     ├─ Supabase Data API  /rest/v1  (feed RPC, table reads, writes) https
-     ├─ Supabase GraphQL   /graphql/v1 (pg_graphql)                  https
-     ├─ Supabase Realtime  private Broadcast channels                wss
-     ├─ Supabase Storage   findback-images (on-device normalized)    https
-     ├─ Supabase Edge Fn   ai-help (JWT-verified)                    https
-     └─ On-device AI       text embeddings (cosine top-3) + VLM (GPU)  local
-   Node Express + GraphQL-Yoga + Socket.IO  → Docker/coursework reference only
-   ```
-8. **Android does not require Node**: confirmed — no `apiBase`/`apiFetch`,
-   no `VITE_API_URL`, no `socket.io-client`; a browser run with the Node server
-   stopped performed sign-in, session restore, feed RPC and AI Help against
-   `*.supabase.co` only.
-9. **No VITE_API_URL / LAN / localhost / port-4000 dependency**: confirmed by
-   source grep, built-`dist` grep and APK bundle grep.
-10. **On-device AI — no CPU fallback (policy + build property)**: the VLM path
-     uses the LiteRT GPU delegate exclusively; there is **no CPU delegate**, no
-     XNNPACK, and no `TfLiteRuntime` fallback path in the build. The text
-     embeddings path runs in the WebView (TF.js/WASM) with no server fallback.
-11. **Runtime GPU proof and 256M readiness are BLOCKED on the ARM64 phone pass**:
-     they must not be claimed from a host `x86_64` build. The phone-pass items
-     (real 500M GPU generation, the 256M diagnostic outcome, and the final
-     photo-picker → VLM walkthrough) are recorded in `DEFERRED_DECISIONS.md`.
-12. **Remaining purpose of `services/api`**: Docker image + local demo and the
-     retained Node tests/reference (reporting, legacy REST/GraphQL, auth provider
-     adapters). Not used by the app.
-13. **Remaining purpose of Docker**: a working containerized reference/demo
-     (web shell + Node REST/GraphQL, SQLite mode) for the Docker/CI requirement.
+CPU is first-class/default. Measured GPU vision selection requires fresh
+correctness evidence; both arms retain a CPU language decoder. GPU load failure
+announces CPU retry. USE is default for Possible Matches; installed Needle is an
+explicit session challenger, not proven superior. Physical backend/performance,
+lifecycle, memory, battery and thermal results remain **NOT_EXECUTED**.
 
-## Direct Supabase capabilities
+Grounding's baseline service-only state is being corrected by main-owned UI work,
+not intentionally deferred. Assistant modes and phone flows are being reconciled;
+real SMS still needs configured hosted provider and live proof. OpenRouter alone
+is marked live-tested in baseline UI. All other BYOK providers remain experimental
+pending actual-send evidence; adapters/catalogues/probes are not delivery proof.
 
-12. **Auth** — email + password via `supabase.auth` (publishable key); real emailed
-    OTP (8-digit) at signup; session restore + refresh; logout. Live-verified.
-13. **Username availability** — anon read of the `username` column only
-    (case-insensitive, `_` literal). Live 14/14 + mobile unit tests.
-14. **Feed/search** — `findback_query_posts_client` RPC (keyset pagination,
-    filters, clamp ≤ 20). Live + unit tests.
-15. **Post detail** — single-post RPC + comments/social state; hydrate own
-    reaction/rating. Live + UI.
-16. **My Posts** — `p_user_id` filter on the same RPC. Live + UI.
-17. **Post create/edit/status/delete** — `findback_create_post_client`,
-    `findback_change_post_status_client` (edit/delete remain legacy Node only,
-    no mobile UI). Live + unit tests.
-18. **Comments** — list/add/delete RPCs (post owner may also delete). Live + UI.
-19. **Reactions** — like/dislike/remove RPC, aggregate-only reads. Live + UI.
-20. **Ratings** — 1–5 upsert RPC, live average/count. Live + UI.
-21. **Realtime** — private Broadcast on `feed` and `post:<id>`; two-client live
-    proof 15/15; anon receives nothing.
-22. **Storage** — direct upload to `findback-images` under `<uid>/<uuid>.<ext>`,
-    owner-scoped RLS. Live 20/20.
-23. **REST** — PostgREST/Data API (`/rest/v1`) examples verified (anon + auth).
-24. **GraphQL** — `pg_graphql` at `/graphql/v1`; role-filtered schema. Live 14/14.
-25. **AI Help / Edge Function** — `ai-help` (JWT-verified) → provider or
-    deterministic fallback. Live 9/9.
+## Evidence inventory and provenance
 
-## Security
+| Evidence | Status / proves | Does not prove |
+|---|---|---|
+| Human audit packet `FindBack_completion_audit_b472a24_2026-10-05` (README, 00–18, checklist, readiness, prompts, evidence summaries) | Read in full for this reconciliation; 34 findings retained in [COMPLETION_AUDIT](COMPLETION_AUDIT.md). | Runtime success of newly edited code. |
+| Baseline CI 37348171843 and Web 37348171827 | AUDIT_REPORTED: green at b472a24; mobile 3330/API 156 passes and AI gate 12/12 + 64/64 reported. | Fresh execution here, whole-app completeness, flake elimination or physical Android. |
+| Push dispatch 37317074620 | AUDIT_REPORTED: scheduler/function callable, `scanned=0/sent=0/pruned=0/failed=0`. | Any delivered FCM message, notification tap or direct reply. |
+| Baseline privacy/navigation/credential fixes (FBA-027–031) | AUDIT_REPORTED: truth copy, boolean connection summaries, corrected routes/comments, fail-closed account credential purge. | Certification after further changes; keep regressions and rerun at final SHA. |
+| Earlier Auth/Storage/Realtime/REST/GraphQL live runs | HISTORICAL_LIVE: references in API demo and archived report. | Fresh hosted RLS/grants review or candidate phone/media/realtime proof. |
+| `docs/runbooks/gate-e-device-run.md` | Prepared procedures; every device row starts NOT_EXECUTED. | An executed Gate-E pass or any device availability claim. |
+| Published beta.2 @ `088d9774f11818a7cdeef410320e246e00e71e5d` | Audit reports complete multi-variant asset set, five commits behind baseline; root/mobile still beta.2. | Inclusion of b472a24 fixes or final install/upgrade proof. No release mutation performed here. |
+| This documentation work | Source/path review and documentation-only verification; exact local checks recorded below. | Code tests/live/SMS/Crystal/device/build/security/release acceptance. |
 
-26. **RLS summary** — enabled on all 8 public tables; deny-by-default; owner
-    predicates on writes; `UPDATE` uses `USING` + `WITH CHECK`; `(select auth.uid())`
-    to avoid per-row re-evaluation.
-27. **Public/private boundary** — posts/comments expose a public author profile
-    only (`username`, verification flags, avatar, created_at); `email`/`phone`/
-    `password_hash` are never readable by `anon`/`authenticated`.
-28. **Cross-user write denial** — verified live: another user cannot bind a
-    staging upload (`22023`), cannot write another user's posts/comments/
-    reactions/ratings, cannot delete another user's Storage object or comment.
-29. **Anon access** — denied feed tables, write RPCs, Storage, `findback_report`
-    and `ai-help`; allowed only the `username` lookup.
-30. **Storage ownership** — INSERT/DELETE/SELECT restricted to the caller's own
-    `<uid>/` folder; public bucket is read via public URLs.
-31. **Security advisors (final)** — 9 WARN + 1 INFO: `auth_leaked_password_protection`
-    (project setting), 7× `pg_graphql_*_table_exposed` (expected consequence of
-    requirement #18; exposure bounded by grants + RLS), 1× `rls_enabled_no_policy`
-    on `verification_challenges` (backend-only). Performance: 5× unindexed FK +
-    1× unused index (INFO).
-32. **Publishable-key confirmation** — the APK/bundle ships only
-    `VITE_SUPABASE_PUBLISHABLE_KEY`; the build script refuses a secret-looking key.
-33. **Secret scan** — tracked-file scan PASS; built-output scan PASS; APK bundle
-    contains no secret (only supabase-js's own `service_role`/`sb_secret_`
-    client-side safety-check strings).
-34. **No service_role/secret in mobile/APK** — confirmed.
+No automated test count is a count of completed teacher requirements. See the
+[24-row requirements matrix](REQUIREMENTS_MATRIX.md) for independent implementation
+and verification statuses, and [decisions/prerequisites](../DEFERRED_DECISIONS.md).
 
-## Automated verification
+## Closure authority
 
-35. **API tests** — 15 files / **134 passed**.
-36. **Mobile tests** — 8 files / **89 passed**.
-37. **Lint** — clean (`eslint .`).
-38. **Typecheck** — clean (shared + api + mobile).
-39. **Full build** — success (shared + api + mobile web).
-40. **APK build** — success: `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`
-    (~6.8 MB), Supabase-only config.
-41. **CI result** — GitHub Actions run `34880534686` green: `check`
-    (lint/typecheck/API tests/mobile tests/web build) and `docker`
-    (image build + container run + `/health`).
+Main owns the upcoming **`completion-ledger.json`** and its whole-app gate.
+This report points to that planned ledger but does not create it, claim it is
+present, invent its schema/location beyond the supplied name, or certify a pass.
+The ledger must reconcile every FBA ID with owner, real state, closure criterion,
+exact evidence SHA/artifact/hash, manual evidence IDs and outstanding blockers.
+A green work wave or the AI gate cannot mark rows complete without their evidence.
+When the ledger exists, the main owner must align these human docs to its reviewed
+evidence. Missing/failed mandatory evidence keeps the gate and release on HOLD.
 
-## Physical Android
+### Required before release/submission acceptance
 
-**BLOCKED (10L) — not performed.** `adb` is not installed and no physical device
-is attached. All of items 42–63 are therefore **NOT verified on a physical
-device** (implementation and desktop/browser equivalents are covered above).
+1. Return/review grounding and mode UI/runtime regression evidence; finish phone
+   flows and hosted SMS configuration with actual send/resend/verification proof.
+2. Prove every advertised provider or explicitly gate unproven ones as owner-
+   approved labs. Resolve lab TODO ownership, similarity calibration/baseline,
+   Xiaomi fixture support and MapPickerSheet repeat-run reliability.
+3. Resolve every required device/build `todo`/`skip` with executable tests or
+   explicit manual row evidence, not a deleted marker.
+4. Run clean lint/typecheck/suites/AI gate and every release-critical native/model/
+   web/security workflow on **one exact final candidate SHA**. Run full-history
+   secret scan, dependency/SAST policy, hosted RLS/grants/advisors, mobile/bundle
+   credential boundary and real release telemetry scrubbing.
+5. Build only after asserting nonempty public Supabase URL/publishable key from
+   canonical environment; prove bundle/APK URL with release-config check. Verify
+   signing, version metadata, ABI assets, no stale Gradle web assets and hashes.
+6. Execute all Gate-E rows on an authorized physical ARM64 device, plus clean
+   install, beta.2 upgrade, core flows, photo/grounding/modes/phone, accessibility,
+   App Links cold/warm/background, actual FCM delivery/taps and shade reply.
+7. Create/open/render genuine Crystal `.rpt` using licensed tooling and permitted
+   data access, or attach explicit evaluator acceptance of the CSV/API substitute.
+   A fabricated `.rpt` is never an acceptable closure path.
+8. Freeze after fixes, synchronize version/versionCode, rerun exact-SHA gates,
+   tag immutably only with owner approval, publish ABI/universal APKs + AAB +
+   manifest/checksums, verify downloaded signatures/hashes and post-publish
+   fresh-install/upgrade. Only then issue a final acceptance report.
 
-42–45. Device model / Android version / APK install / launch — not performed.
-46. Session restore — verified in the browser (reload) only.
-47. Feed/search/filter/pagination — verified live/server + browser.
-48–51. Photo picker / direct Storage upload / MobileNet suggestion / offline ML —
-    implementation + unit tests + live Storage API only; **offline device proof
-    pending**. (Superseded: the legacy MobileNet suggestion was retired and
-    replaced by on-device VLM suggestions; this line records the state at the
-    time of the audit.)
-52–53. Location permission / map — not performed on device.
-54. YouTube — implementation only.
-55–58. Publish/detail, comments, reactions, rating — verified live/server + browser.
-59. Realtime two-client — verified with two live clients (not on the phone).
-60. My Posts/status — verified live/server.
-61. AI Help — verified via browser + Edge Function.
-62. Logout/relogin — verified in the browser.
-63. **Network proof (no Node/laptop traffic)** — browser run with Node stopped
-    showed only `*.supabase.co` traffic; APK bundle has no Node URL.
+## Historical report preserved
 
-## Docker / CI evidence
+The former current-path report was first frozen **2026-09-15**, commit
+`e813028eb350b5fa9ff2edf82d64383fd2d5013e`; it names starting HEAD `3334905` and
+last prior code/doc HEAD `f9bb0e7`, not today's candidate. It also contains the
+2026-09-16 `89f0e35` non-device gate and subsequent edits through `7e33787`
+(2026-09-22). Its **exact bytes as read at b472a24** are preserved unchanged in
+[history/FINAL_ACCEPTANCE_REPORT_2026-09-15_e813028_as-of-b472a24.md](history/FINAL_ACCEPTANCE_REPORT_2026-09-15_e813028_as-of-b472a24.md).
+The archive is evidence of those dates/commits, not current final truth. Its
+GPU-only policy, server `ai-help` path, count arithmetic and old release claims
+must not be reused as present acceptance.
 
-64. **Docker engine (local)** — absent (CLI not installed).
-65. **Image build** — succeeded on GitHub-hosted runners (`34880260112`).
-66. **Container health** — log line `container healthy`; `/health` returned OK.
-67. **Container cleanup** — the CI runner is ephemeral (container and image are
-    torn down with the runner); no local container was created.
-68. **Docker is coursework/reference, not Android runtime** — documented.
-69. **GitHub Actions result** — final run `34880534686` green.
+## Documentation verification record
 
-## Data cleanup
+Documentation diff/path/ID checks and targeted truth search are the acceptance
+scope of this work. No web/APK build, device test, live-provider send, SMS,
+Crystal designer, security scan, release/tag, or commit is performed by this
+documentation owner.
 
-70–73. Each block created uniquely-named temp users/posts/uploads/objects, recorded
-    exact ids, and deleted exactly those; post-run queries confirmed **0 temp rows**
-    remained. Temp scripts were moved out of the repo.
-74. **Pre-existing data unchanged** — the production account
-    `qrtmp_808580@example.com` and its rows were never touched.
+### Executed local checks (2026-10-06)
 
-## Teacher requirement truth table
+- `git diff --check` — exit 0; whitespace/conflict-marker checks clean at run time.
+- `git diff --check -- DEFERRED_DECISIONS.md README.md docs/REQUIREMENTS_MATRIX.md docs/FINAL_ACCEPTANCE_REPORT.md docs/DEMO_CHECKLIST.md`
+  — exit 0; owned tracked-doc diff clean. New docs were also structurally checked.
+- `git diff --no-index --check /dev/null docs/COMPLETION_AUDIT.md` and the same
+  command for the archive — exit 0; new register/archive whitespace checks clean.
+- `npm run lint` — exit 0 (`eslint .`).
+- `npm run typecheck -w @findback/mobile` — earlier invocations exit 0; **latest
+  final invocation failed (exit 2)** in the concurrently edited
+  `src/services/similarity.test.ts(42,24)`, TS2345: heterogeneous fixture
+  `candidates` union is not assignable to the inferred fixture parameter type
+  (`title: undefined` not assignable to `string`). The combined
+  `npm run lint && npm run typecheck -w @findback/mobile` had lint exit 0 then
+  typecheck failure. This source is outside the documentation owner's scope;
+  main/test owner must fix and rerun. No web/APK build/shared-output regeneration.
+- Read-only inline documentation assertions — exit 0: **24 unique requirement
+  rows**, separate allowed implementation/verification columns, **34 unique FBA
+  rows** with explicit closure criteria, **20 valid local document links**, selected
+  source references present, all current owned docs retain HOLD, and historical
+  archive **byte-identical** to `b472a24:docs/FINAL_ACCEPTANCE_REPORT.md`.
+- Targeted current-doc truth searches reviewed: old-status/pivot phrases survive
+  only as explicit historical/baseline/disposition text, not active architecture
+  or accepted device/SMS/Crystal claims. No current matrix `DONE_DEMO_PROVIDER`,
+  `DEFERRED_EXTERNAL_TOOL` or placeholder deliverable row remains. Grounding/phone/
+  modes stay in progress. Archive is intentionally excluded from truth rewriting.
 
-| # | Status | Evidence | Limitation |
-|---|---|---|---|
-| 1 | DONE | `docs/erd/ERD.pdf` vector + Mermaid | — |
-| 2 | DONE | Supabase Realtime broadcast; live two-client 15/15 | — |
-| 3 | DONE | Realtime reaction counts; live | — |
-| 4 | DONE | anon `username` lookup; live + unit | — |
-| 5 | DONE_DEMO_PROVIDER | real Supabase email OTP (live) | phone SMS deferred (no provider) |
-| 6 | DONE | create-report form | — |
-| 7 | DONE | Realtime rating; live | — |
-| 8 | DONE | keyset-paginated feed RPC | — |
-| 9 | DONE | YouTube embed | — |
-| 10 | DONE | location picker + map embed | — |
-| 11 | DONE | Supabase Auth session/JWT; browser restore proof | — |
-| 12 | DONE | local sentence embeddings + cosine top-3 (unit tests) | **GPU VLM proof blocked on ARM64 phone pass** |
-| 13 | DONE | direct Storage upload; live 20/20 | — |
-| 14 | DONE | date picker | — |
-| 15 | DONE | Framer Motion | — |
-| 16 | DONE | Tailwind v4 | — |
-| 17 | DONE | git + Vite build | — |
-| 18 | DONE | `pg_graphql` live query evidence (`docs/API_DEMO.md`) | introspection disabled |
-| 19 | DONE | PostgREST live evidence (`docs/API_DEMO.md`) | — |
-| 20 | DEFERRED_EXTERNAL_TOOL | reporting RPC + SQL + CSV | no genuine `.rpt` (needs licensed tool) |
-| 21 | DONE | React 19 shell | — |
-| 22 | DONE | CI Docker build + run + `/health` (run `34880260112`) | no local engine; proof is CI |
-| 23 | DONE_DEMO_PROVIDER | local VLM (LiteRT-LM/SmolVLM2 on GPU) + Edge Function fallback | **GPU proof & 256M readiness blocked on ARM64 phone pass** |
-| 24 | **NOT_DONE** | APK builds + bundle inspected | physical install/run not observed (10L blocked) |
+These lint/typecheck checks ran over a **shared, concurrently changing worktree**;
+they are observations at invocation time, not final worker or exact-SHA release
+certification. This owner changed only seven documentation paths (including the
+new register and archive). Source/migration diffs shown by git status belong to
+other owners and were neither edited nor claimed verified here.
 
-## Remaining limitations
+### Command / inspection provenance
 
-75. **Known limitations** — (a) no physical-device run yet; (b) phone SMS not
-    configured; (c) Crystal `.rpt` needs licensed Windows tooling; (d) no external
-    LLM key, so AI Help runs the deterministic fallback; (e) 7 intentional
-    `pg_graphql_*_table_exposed` advisor warnings; (f) no local Docker engine;
-    (g) **on-device VLM GPU delegate proof and 256M readiness are BLOCKED on the ARM64 phone pass** (no CPU fallback by policy).
-76. **Deferred external/manual items** — phone provider, Crystal `.rpt`, optional
-    LLM key, **ARM64 phone pass for on-device AI (GPU delegate, 256M diagnostic, photo-picker → VLM walkthrough)**.
-77. **User actions before submission** — install `adb` (`android-tools`) and
-    connect/authorize a physical Android phone, then run 10L to complete #24 and
-    the #12 offline proof. Optionally set `LLM_BASE_URL`/`LLM_API_KEY` or an SMS
-    provider. **The ARM64 phone pass is required to unblock GPU VLM proof and 256M readiness.**
+Exact shell commands executed (inspection/diff checks exit 0; latest combined
+lint/typecheck failed as detailed above):
 
-## Final recommendation
-
-78. **Not fully ready for a 100 %-accepted submission**: 22/24 requirements are
-    `DONE`, 2 are `DONE_DEMO_PROVIDER`, 1 is `DEFERRED_EXTERNAL_TOOL`, and **#24 is
-    `NOT_DONE`** solely because the physical install/run walkthrough is blocked.
-    **#12 and #23 on-device AI GPU proofs remain BLOCKED on the ARM64 phone pass.**
-79. **Exact minimal remaining actions** — (1) provide an authorized physical
-    Android device + `adb`, then execute 10L (install, launch, offline text
-    embeddings proof, realtime two-client, network proof) — this flips #12's device
-    proof and #24 to `DONE`; (2) **ARM64 phone pass for on-device VLM (GPU delegate,
-    real 500M generation, 256M diagnostic, photo-picker → VLM walkthrough)** — this
-    unblocks #23's GPU proof and 256M readiness; (3) optionally configure an SMS
-    provider and/or an LLM key; the Crystal `.rpt` may stay `DEFERRED_EXTERNAL_TOOL`.
-
-## Non-device verification gate (Task 22) — 2026-09-16
-
-**Base commit**: `89f0e35` (docs(ai): record on-device AI architecture and evidence)
-
-### Step 1: Full JS/TS gate
 ```bash
-npm ci && npm run build -w @findback/shared && npm run typecheck && npm run lint && npm test -w @findback/api && npm test -w @findback/mobile && npm run scan:secrets
+git status --short && git rev-parse HEAD
+git log --follow --format='%h %cs %s' -- docs/FINAL_ACCEPTANCE_REPORT.md
+git show -s --format='%H %cs %s' e813028 7e33787 b472a24 && git status --short
+git diff --check && git diff --stat && git status --short
+git diff --check -- DEFERRED_DECISIONS.md README.md docs/REQUIREMENTS_MATRIX.md docs/FINAL_ACCEPTANCE_REPORT.md docs/DEMO_CHECKLIST.md && git diff --numstat -- DEFERRED_DECISIONS.md README.md docs/REQUIREMENTS_MATRIX.md docs/FINAL_ACCEPTANCE_REPORT.md docs/DEMO_CHECKLIST.md && git diff -- README.md
+git diff --check -- DEFERRED_DECISIONS.md README.md docs/REQUIREMENTS_MATRIX.md docs/FINAL_ACCEPTANCE_REPORT.md docs/DEMO_CHECKLIST.md && git status --short -- DEFERRED_DECISIONS.md README.md docs/REQUIREMENTS_MATRIX.md docs/FINAL_ACCEPTANCE_REPORT.md docs/DEMO_CHECKLIST.md docs/COMPLETION_AUDIT.md docs/history
+npm run lint && npm run typecheck -w @findback/mobile
+git diff --no-index --check /dev/null docs/COMPLETION_AUDIT.md && git diff --no-index --check /dev/null docs/history/FINAL_ACCEPTANCE_REPORT_2026-09-15_e813028_as-of-b472a24.md && git diff --check -- DEFERRED_DECISIONS.md README.md docs/REQUIREMENTS_MATRIX.md docs/FINAL_ACCEPTANCE_REPORT.md docs/DEMO_CHECKLIST.md
 ```
-**Result**: PASS
-- `npm ci`: 510 packages installed, 3 moderate vulns (no fix without breaking changes)
-- `npm run build -w @findback/shared`: TypeScript compilation successful
-- `npm run typecheck`: clean (shared + api + mobile)
-- `npm run lint`: clean (`eslint .`)
-- `npm test -w @findback/api`: 16 test files, **136 tests passed**
-- `npm test -w @findback/mobile`: 18 test files, **127 tests passed**
-- `npm run scan:secrets`: **clean (284 file(s))**
 
-### Step 2: Fetch assets, sync and build the APK
+The first status was clean and HEAD was b472a24; later statuses included other
+owners' concurrent code changes. History established original report commit/date
+and subsequent revisions. Owned diff review confirmed README edits were limited
+to feature/status truth and current-doc pointers. No source/workflow/version/
+machine-ledger edits, git commit, reset, push, tag or publication by this owner.
+
+Exact read-only assertion command (uses no env/credential files):
+
 ```bash
-node scripts/fetch-use-model.mjs && npm run cap:sync -w @findback/mobile && cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
+node --input-type=module -e 'import assert from "node:assert/strict"; import fs from "node:fs"; import path from "node:path"; import {execFileSync} from "node:child_process"; const files=["DEFERRED_DECISIONS.md","README.md","docs/REQUIREMENTS_MATRIX.md","docs/FINAL_ACCEPTANCE_REPORT.md","docs/DEMO_CHECKLIST.md","docs/COMPLETION_AUDIT.md"]; const matrix=fs.readFileSync(files[2],"utf8"); const rows=[...matrix.matchAll(/^\| (\d+) \|/gm)]; assert.deepEqual(rows.map(r=>Number(r[1])),Array.from({length:24},(_,i)=>i+1)); for(const r of matrix.split("\n").filter(l=>/^\| \d+ \|/.test(l))){const c=r.split("|"); assert.equal(c.length,7); assert.match(c[4],/^ (IMPLEMENTED|PARTIAL|IN_PROGRESS|EXTERNAL_BLOCKED) $/); assert.match(c[5],/SOURCE_REVIEWED|AUDIT_REPORTED|HISTORICAL_LIVE|NOT_EXECUTED|BLOCKED/);} const audit=fs.readFileSync(files[5],"utf8"); assert.deepEqual([...audit.matchAll(/^\| FBA-(\d{3}) \|/gm)].map(r=>Number(r[1])),Array.from({length:34},(_,i)=>i+1)); for(const r of audit.split("\n").filter(l=>/^\| FBA-/.test(l))){assert.equal(r.split("|").length,7); assert.ok(r.split("|")[5].trim().length>40);} const archive="docs/history/FINAL_ACCEPTANCE_REPORT_2026-09-15_e813028_as-of-b472a24.md"; assert.deepEqual(fs.readFileSync(archive),execFileSync("git",["show","b472a24:docs/FINAL_ACCEPTANCE_REPORT.md"])); let links=0; for(const f of files){const s=fs.readFileSync(f,"utf8"); assert.match(s,/HOLD/); for(const m of s.matchAll(/\]\(([^)]+)\)/g)){if(/^https?:/.test(m[1]))continue; const target=m[1].split("#")[0]; if(!target)continue; assert.ok(fs.existsSync(path.resolve(path.dirname(f),target)),`${f}: broken link ${target}`); links++;}} for(const p of ["components/ReportDatePicker.tsx","components/YouTubeEmbed.tsx","components/CategoryField.tsx","components/PostList.tsx","services/posts.test.ts","services/realtime.test.ts","vite.config.ts"]){assert.ok(fs.existsSync(p==="vite.config.ts"?`apps/mobile/${p}`:`apps/mobile/src/${p}`),p);} console.log(`PASS: 24 unique requirements with independent status columns; 34 unique FBA rows with closure criteria; archive byte-identical to b472a24; ${links} local doc links valid; selected source references exist; current docs HOLD.`);'
 ```
-**Result**: PASS
-- `fetch-use-model.mjs`: **Asset already verified** at `apps/mobile/android/app/src/main/assets/models/use/universal_sentence_encoder.tflite` (6120274 bytes, SHA-256 `89ad3c74175dd8caa398cc22b657296d94302d20c525c12b58b29420f7249749`)
-- `cap:sync`: Sync finished in 0.231s; 1 Capacitor plugin (@capacitor/camera@8.2.4)
-- `./gradlew :app:testDebugUnitTest :app:assembleDebug`: **BUILD SUCCESSFUL** (103 actionable tasks, 58 executed, 45 up-to-date)
 
-### Step 3: Strict APK gate
-```bash
-npm run scan:apk -- --strict
-```
-**Result**: PASS
-- APK: `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`
-- **1022 entries**, **16 KiB aligned** (zipalign verification passed)
-- Required USE asset present: `assets/models/use/universal_sentence_encoder.tflite`
-- **No forbidden model assets** (no `.litertlm`/`.tflite` except the pinned USE asset)
-- **Both `arm64-v8a` and `x86_64` LiteRT-LM JNI libraries present** (`liblitertlm` in both ABIs)
-- **DEX/assets secret scan clean** (no `sb_secret_`, `SUPABASE_SERVICE_ROLE_KEY`, or JWT patterns)
+Tool-based truth search parameters: current-doc include
+`{REQUIREMENTS_MATRIX,FINAL_ACCEPTANCE_REPORT,DEMO_CHECKLIST,COMPLETION_AUDIT}.md`,
+pattern `OpenRouter-only|local generative runtime.*removed|no CPU fallback|RETIRED 2026-09-25|DONE_DEMO_PROVIDER|DEFERRED_EXTERNAL_TOOL|TBD|grounding.*deferred|grounding.*IN_PROGRESS`;
+root status include `{README,DEFERRED_DECISIONS}.md`, pattern
+`SmolVLM2|consented|CPU|Needle|experimental|IN_PROGRESS|HOLD|licensed|completion-ledger`.
+Matches were reviewed in context, not treated as an automatic no-drift certificate.
 
-### Step 4: Prove nothing generated is tracked
-```bash
-git ls-files | grep -E "\.(litertlm|tflite|part)$" ; git status --porcelain
-```
-**Result**: PASS
-- `grep` prints **nothing** (no weight files tracked in Git)
-- `git status --porcelain` is **clean** (no untracked/modified files in product repo)
-
-### BLOCKED items (require ARM64 physical device)
-The following remain **BLOCKED**, not failed — they cannot be verified on this `x86_64` host:
-- Real SmolVLM2-500M text generation on GPU (the 500M `.litertlm` runtime ships `arm64-v8a` + `x86_64`; only the device proves the GPU path)
-- The 256M diagnostic verdict: prove or refute a complete image-to-text generation through a small, proven runtime; otherwise record `GPU_UNAVAILABLE_ON_CURRENT_RUNTIME`
-- The end-to-end walkthrough: photo select → local VLM analyze → apply suggestions → publish-only upload → Possible Matches
-- `runGpuSelfTest` with a real selected photo (never a bundled or synthetic image)
-- Network/offline checks on a real device
+**Next action:** main fixes/reverifies the observed concurrent similarity test
+type error, consumes returned implementation/test evidence, populates
+the completion ledger, and runs remaining external/candidate gates. Full external
+prerequisites are enumerated in [COMPLETION_AUDIT](COMPLETION_AUDIT.md): device/ADB,
+SMS, provider keys/consent, licensed Crystal tooling/evaluator decision, FCM/domain/
+certificate access, telemetry/signing/security/hosted review authority, permitted
+matching dataset/vendor fixture. No final completion claim is authorized here.

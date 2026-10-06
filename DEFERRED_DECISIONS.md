@@ -1,23 +1,63 @@
-# Deferred decisions — FindBack
+# Decisions and remaining prerequisites — FindBack
 
-This log is maintained as implementation proceeds. Never let a deferred choice block the build:
-use an interface/abstraction + working local/demo adapter now, isolate production
-provider wiring, and document the exact files to change later.
+Updated 2026-10-06 against audit baseline `b472a247ae593b8eb4e9585bb8947a87ccfaf6c7`.
+Latest owner directives override historical pivot/deferment text. A working demo
+adapter does **not** remove a completion or release blocker.
 
-| Decision | Temporary choice | Options later | Files to change later | Must not block now |
-|---|---|---|---|---|
-| Backend/cloud platform | Supabase (project provisioned); Node/TS API reaches data via the Supabase Data API (`SupabaseStore`); SQLite is the test-only backend | Supabase / Firebase / hybrid | `docs/DATABASE_MIGRATION.md`, `supabase/migrations/` | Yes |
-| Auth provider | Supabase Auth when `DB_PROVIDER=supabase`; Local JWT for tests/local SQLite | Supabase Auth / Firebase Auth | `services/api/src/auth`, mobile `src/services/auth.ts` | Yes |
-| Email verification | Supabase email OTP via custom SMTP in production; dev adapter for local/tests | Supabase / Firebase / email provider | `services/api/src/auth`, `services/api/src/domain/verificationService.ts` | Yes |
-| Phone verification | Deferred — no SMS provider configured; the app shows the stored phone as unverified and calls no verification service (the Node dev OTP adapter is local-demo/reference only) | Firebase Phone Auth / SMS provider (Twilio, Vonage, ...) | `services/api/src/auth` (reference), mobile `screens/Verify.tsx` | Yes |
-| Cloud storage | Supabase Storage, **uploaded directly by the app** (on-device normalization → public `findback-images` bucket under the caller's `<uid>/` folder, owner-scoped RLS); the Node `/uploads` + `sharp` path is retained for the reference API and tests; local disk for `DB_PROVIDER=sqlite` | Supabase Storage / Firebase Storage / Cloudinary / S3 | `apps/mobile/src/services/image.ts`, `supabase/migrations/`, `services/api/src/storage` (legacy) | Yes |
-| Realtime provider | Supabase Realtime Broadcast (private channels, DB triggers send sanitized payloads); Node Socket.IO source retained as reference | Supabase Realtime / Firebase listeners | `services/api/src/realtime`, mobile `src/services/realtime.ts` | Yes |
-| REST/GraphQL API | Supabase PostgREST (`/rest/v1`) + `pg_graphql` (`/graphql/v1`) are the runtime API; Node Express + GraphQL-Yoga retained as a Docker/coursework reference | Supabase / Node | `supabase/migrations/`, `docs/API_DEMO.md`, `services/api/src/{app.ts,graphql}` (legacy) | Yes |
-| Generative AI | **OpenRouter free route with the user's own key** (BYOK): Help answers and consented report-photo suggestions go to `openrouter/free`; a built-in answer covers the no-key/unavailable case; the key is stored on-device only. The retired local generative VLM and the server-side `ai-help` / `LLM_*` path are no longer used by the mobile app (the Node provider is reference-only) | DeepSeek / Gemini / OpenAI | `apps/mobile/src/services/openRouter.ts`, `services/assistant/cloudAssistant.ts`, `services/aiCredentials.ts` (legacy reference: `supabase/functions/ai-help`, `services/api/src/providers/ai`) | Yes |
-| Hosting | Local + Docker reference image (SQLite mode) + GitHub Actions CI (lint/typecheck/tests/web build + Docker build/run/health-check); the Android app itself connects directly to hosted Supabase and needs no Docker | Render/Railway/Fly | `docker-compose.yml`, `Dockerfile`, `.github/workflows/ci.yml` | Yes |
-| Package ID / signing | Provisional `com.findback.app` debug | Final package + keystore | `apps/mobile/android/...`, RELEASE_SIGNING.md | Yes |
-| Crystal Reports designer artifact | Data source + query + setup docs (no SAP tooling here) | Real `.rpt` via SAP tooling on Windows/VS | `docs/reporting/` | Yes — only external artifact |
-| LLM provider/model | Runtime is the fixed OpenRouter free route (`openrouter/free`) with the user's key; the legacy Node OpenAI-compatible env vars are reference-only | any | `apps/mobile/src/services/openRouter.ts`; reference `services/api/.env.example` | Yes |
-| Google Maps key | Keyless Google Maps embed (`maps?q=…&output=embed`) + one-time browser geolocation; no API key or billing needed | Production Maps API key (only if a richer map is required) | mobile map feature | Yes |
-| ~~ARM64 phone pass — on-device VLM GPU delegate~~ | **RETIRED 2026-09-25** — the on-device generative VLM (and its GPU-delegate / 256M model-readiness proof) was removed in the OpenRouter pivot; this gate no longer applies. The live OpenRouter key pass replaces it as the outstanding owner check | n/a | `docs/REQUIREMENTS_MATRIX.md` #23 | n/a |
-| **ARM64 phone pass — on-device text embeddings (Possible Matches)** | **BLOCKED** — no authorized physical ARM64 device attached; `adb` not available. The retained on-device cosine top-3 proof requires a physical device | Provide authorized ARM64 phone + `adb`; run 10L | `apps/mobile/src/services/embeddings.ts` (native bridge to the MediaPipe TextEmbedder asset), `docs/FINAL_ACCEPTANCE_REPORT.md` | **No — #12 device proof depends on this** |
+**Release: HOLD.** See [completion audit](docs/COMPLETION_AUDIT.md) for all 34
+findings and [current verification report](docs/FINAL_ACCEPTANCE_REPORT.md).
+The main owner is implementing photo grounding, mode reconciliation and phone
+flows; these remain **IN_PROGRESS**, not accepted, until returned implementation
+and verification evidence is reviewed. They are not intentionally deferred scope.
+
+## Settled architecture (not deferred decisions)
+
+- Android React/Capacitor talks directly to hosted Supabase Auth, PostgREST,
+  `pg_graphql`, private Realtime Broadcast and Storage. The Node Express,
+  GraphQL-Yoga and Socket.IO API is a Docker/coursework reference, not a mobile
+  runtime dependency; SQLite is local/reference/test-only.
+- Report-photo **automatic** analysis attempts SmolVLM2 locally first; only the
+  consented cloud leg uses the connected OpenRouter key (`openrouter/free`).
+  **On-device-only** fails closed without sending; **cloud-only** skips local.
+  `services/analyzeReportPhoto.ts` is the transport authority. Help has direct
+  BYOK providers, built-in answers and installed specialized local models where
+  wired; it must not be described as a general offline support chatbot.
+- CPU is first-class and the Smol default. Measurement can select a vision
+  backend for the session only with fresh correctness evidence; the language
+  decoder is CPU on both measurement arms. GPU initialization failure announces
+  an explicit CPU retry, not silent cloud escalation. Hardware discovery is not
+  acceleration proof. No physical performance claim is accepted yet.
+- Possible Matches defaults to local USE embeddings, top-3 cosine plus transparent
+  bonuses, not probability. Installed Needle is an explicitly selected challenger,
+  not an automatically promoted replacement. LFM/llama.cpp remain non-shipping labs.
+- Model downloads are explicit and checksum-verified; startup rehashes installs
+  but does not auto-download, load inference or benchmark. Web refuses native AI.
+- Mobile builds must assert nonempty `VITE_SUPABASE_URL` and
+  `VITE_SUPABASE_PUBLISHABLE_KEY` derived from the canonical local env before
+  building, reject secret/service-role keys, and prove the URL in bundled assets
+  with `scripts/check-release-config.mjs` or equivalent before handover.
+
+## Open decisions / prerequisites
+
+| Item / audit IDs | Owner | Current truth / blocker | Required closure evidence |
+|---|---|---|---|
+| Photo grounding UI — FBA-001 | Main implementation owner | IN_PROGRESS. Baseline service had tests but no production consumer. Owner now requires integration, not feature removal. | Returned UI diff + interaction/consent/invalid-box/no-result tests; reviewed selection preserves draft; exact-candidate device walkthrough. |
+| Assistant/photo mode truth — FBA-003 | Main implementation owner | IN_PROGRESS. Baseline Auto/Cloud-only UI and legacy offline modes need reconciliation across persistence, Help and photo flow. Photo transport semantics already exist; that does not close assistant UX. | Returned code/tests for exposed modes, migrated/stale selection, unsupported model/task, no-cloud on-device-only, no-local cloud-only, plus device evidence. |
+| Phone verification — FBA-005 / requirement 5 | Main implementation owner + hosted Auth/SMS operator | IN_PROGRESS. Baseline email OTP works historically; phone remained stored/unverified. New send/resend/verify UI alone cannot prove SMS delivery. | Configure approved real SMS provider in hosted Supabase; test phone change/reverification, cooldown, invalid/expired code, throttling and isolation; live SMS receipt + verification on candidate. |
+| BYOK provider promotion — FBA-004 | Provider verification owner | OpenRouter is the only provider marked live-tested in baseline UI. OpenAI, Anthropic, Google, DeepSeek, Mistral, Groq, xAI, Cohere and custom endpoint remain experimental/unproven; native provider requires Gate-E. Connection/catalogue/probe success is not real-send proof. | Authorized user-owned keys/endpoints and explicit paid-route consent if needed; redacted actual-send success/error evidence per provider/model/SHA, or owner-approved explicit lab-only visibility. No automatic promotion. |
+| Physical ARM64 gate — FBA-002/014/026, requirements 12/23/24 | Authorized device operator | NOT_EXECUTED. Runbook prepared, not a passing run; no current device/ADB availability is inferred from an old report. | Authorized physical ARM64 phone, working ADB, exact signed candidate/hash/model pins, every Gate-E row and fresh-install/upgrade/core-flow artifacts. |
+| Push / App Links / direct reply — FBA-017/019/020 | Infrastructure + device operator | Backend callable historically; zero-work dispatch is not delivery. | Real queued notification, registered physical device, release certificate/domain association, foreground/background/cold delivery/tap/link routes and shade reply with backend mutation/isolation proof. |
+| Telemetry — FBA-015 | Release/security + device operator | Build-boundary skips and real release synthetic-event proof unresolved. | Approved telemetry project access, exact signed assets, synthetic event received with scrubbed payload; no stale Gradle assets or credential leakage. |
+| Crystal Reports artifact — FBA-006 / requirement 20 | Licensed Windows designer operator + evaluator | EXTERNAL_BLOCKED: JSON/CSV/SQL exist, no genuine `.rpt`. Reporting guide's old "out of scope" language is not a current waiver. | Produce/open/render a genuine `.rpt` with licensed Crystal Reports tooling and permitted data access, attach artifact/hash/render evidence; alternatively obtain explicit evaluator acceptance of CSV/API substitute. Never fabricate or rename a file to `.rpt`. |
+| Similarity acceptance baseline — FBA-013 | Matching owner + device evaluator | Source cutoff/weights are implemented but representative calibration is unverified. | Dataset/version, measured metrics/rankings, accepted cutoff/weights and regression fixtures; explicit baseline freeze must explain limits. |
+| Motion-photo vendor support — FBA-016 | Media owner | Optional Xiaomi fixture is not guaranteed coverage. | Licensed/consented deterministic fixture or valid generated equivalent run in CI, or explicit supported-scope decision and copy update. |
+| Final security / release — FBA-007/008/022/025/026/033 | Main/release owner | Current baseline package versions beta.2; published beta.2 predates five fixes. No final candidate accepted. | Full-history secret/dependency/SAST + hosted RLS/grants/advisors, exact-SHA critical workflows, synchronized versions, signed multi-variant assets/checksums and post-publish install/upgrade. |
+| Completion ledger / debt tracking — FBA-023/024 | Main implementation owner | Planned `completion-ledger.json`; creation and gate wiring are outside this documentation work. | All findings with owner/state, exact evidence SHA/hash/path and blockers; gate must fail on missing mandatory evidence. Record real dispositions, not green-wave completion. |
+
+## Superseded decisions
+
+The 2026-09-25 cloud-only pivot, local-VLM retirement, retired ARM64 VLM gate,
+GPU-only/no-CPU policy and server `ai-help` mobile routing are **historical, not
+current architecture**. Phone/grounding/mode work cannot be scoped away by that
+old log. Debug package/signing assumptions do not establish a release certificate.
+Historical evidence is preserved separately under `docs/history/`.

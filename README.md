@@ -11,6 +11,21 @@ only the Node reference/demo test backend. Monorepo layout below.
 See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 `docs/DEMO_CHECKLIST.md` for the teacher-demo walkthrough.
 
+**Current completion status (2026-10-06, audit baseline `b472a24`): release HOLD,
+not complete.** Implementation and verification are separate in the matrix.
+Photo grounding UI, assistant-mode reconciliation and phone flows are main-owned
+**in progress**, not intentionally deferred; returned worker evidence and real
+SMS/device acceptance have not been accepted by this documentation pass.
+OpenRouter alone is marked live-tested in the baseline provider UI; other BYOK
+adapters are experimental until actual-send proof. Physical Gate-E, signed App
+Links/FCM delivery/direct reply, release telemetry and genuine Crystal `.rpt`
+(licensed tooling or explicit evaluator substitute acceptance) remain unclosed.
+See [all 34 audit findings](docs/COMPLETION_AUDIT.md) and the
+[current verification/closure report](docs/FINAL_ACCEPTANCE_REPORT.md).
+Main owns the upcoming `completion-ledger.json`; no green wave/AI gate is a
+whole-app completion certificate. Historical acceptance is archived under
+`docs/history/`, not reused as current proof.
+
 ## Stack
 
 | Area | Choice |
@@ -21,7 +36,7 @@ See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 | Database | Supabase PostgreSQL (Data API) in production; SQLite `node:sqlite` for tests/local |
 | Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
 | Storage | Supabase Storage (public `findback-images` bucket) — the app normalizes images on-device and uploads directly under its own `<uid>/` folder (owner-scoped RLS); local uploads dir for tests/local |
-| AI | Optional direct BYOK cloud providers (default `openrouter/free`), plus explicit Android downloads for Needle structured text and SmolVLM2 image descriptions via LiteRT-LM. Shared app-owned manager/orchestrator; verified installs only. No server relay or automatic paid/cloud fallback. |
+| AI | Report-photo automatic analysis: SmolVLM2 local-first with consented OpenRouter fallback (`openrouter/free`); on-device-only never sends, cloud-only skips local. Help: direct BYOK and installed specialized Needle/SmolVLM2 where wired, built-in fallback. Shared app-owned manager/orchestrator, explicit checksum-verified downloads. No server relay or silent paid route. Only OpenRouter marked live-tested; other BYOK adapters experimental pending actual sends. |
 | ML | USE on-device embeddings default for Possible Matches; explicitly selected installed Needle challenger for this session. CPU default; measured GPU vision selection only with fresh correctness evidence, CPU language decoder on both arms. Device performance remains unmeasured. |
 | CI | GitHub Actions |
 
@@ -85,16 +100,21 @@ Android builds declare verified HTTPS App Links for the same host; the public
 with pre-build validation and post-build bundle/APK checks. Firebase Android
 client configuration is ignored locally and restored from a GitHub secret in
 Android CI. FCM server credentials are confined to the separately dispatched
-server-secret workflow. Notification delivery and device-level App Links proof
-remain pending for the v0.3 feature wave; see
+server-secret workflow. Actual notification delivery, shade direct reply and
+release-signed device-level App Links proof remain pending for the exact final
+candidate (zero-work dispatch success is not delivery); see
 [`docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md`](docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md).
 
-**AI (optional):** Help chat is cloud (OpenRouter's `openrouter/free` default,
+**AI (optional; verification incomplete):** Help chat is cloud (OpenRouter's `openrouter/free` default,
 user's connected provider directly) plus installed Needle/SmolVLM2 where wired;
 the create-report photo assistant is consented SmolVLM2 on-device default with
 OpenRouter cloud fallback. Keys stay on the device, paid routes require explicit
 consent, and no FindBack server relays inference. Without a cloud connection or
-a selected compatible offline model, Help uses built-in answers.
+a selected compatible offline model, Help uses built-in answers where the chosen
+mode permits. Photo grounding UI and assistant-mode reconciliation are being
+implemented on main; service/transport tests are not proof of accepted UI/device
+behavior. Phone verification is also in progress; baseline phone was stored and
+unverified and live SMS needs approved hosted provider configuration and receipt.
 
 On Android, **Settings → AI & models → On-device AI** (`/settings/ai/models`) starts explicit pinned downloads for
 Needle (structured item-detail extraction / matching challenger) and SmolVLM2-500M
@@ -137,8 +157,10 @@ through the app (real email OTP) — there are no seeded production accounts.
 ## Demo/dev credentials & provider mode
 
 The real production stack is hosted Supabase — Auth, the Data API, Realtime and
-Storage — used directly by the app, plus optional OpenRouter AI with the user's
-own key. The Node Express API (`services/api`, `DB_PROVIDER=supabase|sqlite`)
+Storage — used directly by the app, plus local-first photo AI and optional direct
+BYOK cloud legs with the user's own key. OpenRouter is the only baseline
+live-tested provider; other adapters remain experimental. The Node Express API
+(`services/api`, `DB_PROVIDER=supabase|sqlite`)
 remains as a Docker/coursework reference and for the local demo mode:
 verification codes are returned by the server (`devCode`) instead of SMS,
 uploads are stored on local disk, and the reference server's AI Help answers
@@ -150,6 +172,9 @@ and never commit `.env`.
 
 - `docs/REQUIREMENTS_MATRIX.md` — 24 teacher requirements → implementation
 - `docs/DEMO_CHECKLIST.md` — teacher walkthrough
+- `docs/COMPLETION_AUDIT.md` — all 34 FBA findings, evidence boundaries and blockers
+- `docs/FINAL_ACCEPTANCE_REPORT.md` — current HOLD / verification and closure report
+- `docs/history/` — dated historical acceptance, not current certification
 - `docs/erd/ERD.md` + `docs/erd/ERD.pdf` — schema & entity relationship diagram
 - `docs/reporting/REPORTING.md` — reporting API, report queries, Crystal import
 - `DEFERRED_DECISIONS.md` — provider decisions & their swap points

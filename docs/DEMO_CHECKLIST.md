@@ -1,115 +1,164 @@
-# FindBack — teacher demo checklist
+# FindBack — teacher demo and acceptance checklist
 
-A 10–15 minute walkthrough mapping demo steps to the 24 course requirements.
-The app runs against hosted Supabase only; the optional Node reference API is
-only needed for the reporting/legacy-API steps.
+Updated 2026-10-06; baseline `b472a24`. **Release: HOLD.** This is a procedure,
+not a checked-off device or live-provider run. Use the independent implementation/
+verification statuses in [REQUIREMENTS_MATRIX](REQUIREMENTS_MATRIX.md) and all
+34 findings in [COMPLETION_AUDIT](COMPLETION_AUDIT.md). Grounding, mode and phone
+work is main-owned **IN_PROGRESS**, not intentionally deferred or accepted.
 
-## 0 · Prepare
+A 10–15 minute class demo is not enough for Gate-E, SMS, provider breadth, push,
+telemetry or release acceptance. Record exact candidate SHA/diff, APK hash,
+version/certificate, device/OS and model pins before claiming any result.
 
-1. Open the mobile app (Android APK on a device with ordinary internet, or the
-   web shell at http://localhost:5173 built with the public Supabase URL +
-   publishable key). No laptop API server is required for any app flow.
-2. (Optional, reporting/legacy REST only) start the Node reference API:
-   `npm run dev:api` → http://localhost:4000.
-3. Register a new account and finish the real emailed Supabase OTP — there are no
-   seeded production users. The seeded `rafi_cu` / `password123` accounts exist
-   only in the local SQLite demo backend.
+## 0 · Prepare (do not build blind)
 
-## 1 · Auth & verification (req 5, 11, 4)
+1. Use a candidate with nonempty `VITE_SUPABASE_URL` and
+   `VITE_SUPABASE_PUBLISHABLE_KEY` derived from canonical local env **before**
+   any web/APK build. Only publishable keys; never service-role/secret keys.
+   Require post-build `scripts/check-release-config.mjs` (or equivalent) URL/
+   bundle/APK proof, share-origin/signing/config checks before handover/install.
+2. Mobile connects directly to hosted Supabase. No Node/laptop API is required
+   for app flows; Node/Docker is reference/reporting coursework only. A web demo
+   cannot prove native inference, device permissions or signed App Links.
+3. Use authorized test accounts/email inboxes and permitted photos. Register two
+   actual hosted accounts for realtime/isolation; reference SQLite seeded logins
+   are not production accounts. Do not expose credentials in captured evidence.
+4. Native proof requires an authorized physical ARM64 phone + working ADB, pinned
+   downloads and signed exact candidate. Get main-owner authorization for live
+   sends, published test data, notifications and device mutations.
+5. OpenRouter alone is marked live-tested in baseline UI. Other BYOK providers
+   are experimental pending authorized actual sends; a connected key/catalogue
+   does not prove send success. Prepare approved SMS/FCM/telemetry access and
+   licensed Crystal tooling for the separate mandatory gates, not fake substitutes.
 
-| What to do | What the teacher sees |
-| --- | --- |
-| Register a fresh account (username, email, phone + password) | #4: while typing the username it live-reports "available/taken" |
-| Register → check the email inbox → enter the emailed code on the **Verify** screen | #5: production email is a real Supabase Auth OTP (8 digits) sent via SMTP; the local demo (SQLite) shows the code on screen instead. Phone verification still needs an SMS provider. |
-| Log out and log back in | #11: Supabase access session + rotating refresh token; guarded routes remain authenticated across reloads |
+## 1 · Auth, username and verification (requirements 4, 5, 11)
 
-_Signup and login now go directly from the app to Supabase Auth (publishable key); login is email + password (username stays the public profile identity), the live username availability check is also direct to Supabase, and email confirmation remains a real emailed OTP. Browsing the feed, opening a post and viewing My Posts, creating/editing reports, comments/reactions/ratings, and photo uploads now also go directly to Supabase (a public-author-only payload — email/phone never travel with a post; reaction/rating user lists are never exposed; each image is normalized on-device and stored under the uploader's own Storage folder); live updates (comments, reactions, ratings, status changes) arrive via Supabase Realtime, AI Help runs through the user's own OpenRouter key on the free route (`openrouter/free`) with a built-in fallback when no key is connected, and reporting still goes through the Node API for now._
+- [ ] Register: username available/taken, case/underscore/race behavior; email,
+  password and phone inputs; no private email/phone in public post payloads.
+- [ ] Receive actual emailed Supabase OTP; verify/resend/error paths. Email proof
+  is historically reported, not a fresh candidate result.
+- [ ] Phone: main integration is IN_PROGRESS. Once code is returned and hosted
+  real SMS configured, receive actual SMS, resend with cooldown, verify, reject
+  invalid/expired/rate-limited codes, change number/reverify, prove isolation.
+  Until then show truthful unverified state; do not count #5 complete.
+- [ ] Login/session restore/refresh/logout/relogin. Remembered AI-key removal
+  confirmation appears only when stored keys exist; purge failure cannot trap
+  logout; sibling account's credentials remain isolated.
 
-## 2 · Create a report (req 6, 13, 12, 14, 9, 10, 16)
+## 2 · Create, review and publish (requirements 6, 9, 10, 13–16, 23)
 
-1. **Report** tab → choose *I lost something / I found something* (req 6).
-2. Fill multiple text boxes (title/description), pick a **category dropdown**
-   and the **date picker** (req 14), and capture an approximate location with the
-   one-time "Use my location" button plus a free-text label (req 10).
-3. Attach a photo (req 13); on the published post, **Possible Matches (on-device text embeddings)** shows
-   up to 3 open opposite-type reports ranked by text similarity — local sentence embeddings via the
-   native bridge to the MediaPipe TextEmbedder asset plus cosine similarity (never a probability, no
-   vector DB, no server AI); this similarity computation is on-device (req 12).
-4. On the create-report screen press **Analyze photo**: confirm the consent notice and the SmolVLM2 on-device default attempts the photo first, falling back to OpenRouter's free route with your connected key (**Settings → AI & intelligence → Cloud connections** (`/settings/ai/connections`)) when the local model is absent or fails; suggestions return as review-only title/category/description cards with per-field Apply/Keep and a replace-confirm before touching typed fields (req 23). With no key connected and no local model, Help falls back to a built-in answer.
-5. Paste a YouTube link and watch the embedded player render live (req 9).
-6. Publish → open the post (tailwind-styled, animated card entrance — req 16/15).
+- [ ] Report tab: Lost/Found, title/description, category dropdown, calendar date
+  (invalid/future refusal), rich text and draft recovery/validation.
+- [ ] Attach permitted photo(s) via picker/camera; preview/order/remove, permission
+  denial/normalization/error handling. Photos upload to owner Storage only on
+  publish; capture final image and isolation evidence.
+- [ ] Location: optional one-time fix, denied/services-off/coarse recovery, manual
+  label/coordinates/Maps link, approximate/exact selection and map preview/pin.
+- [ ] **Analyze photo**: explicit consent and review-only suggestions. Automatic
+  attempts installed SmolVLM2 first, then consented OpenRouter fallback if absent/
+  failed; on-device-only never sends, cloud-only skips local. No silent paid route.
+  Review Apply/Keep; replacement confirmation protects typed fields. No auto-apply.
+- [ ] **Photo grounding**: execute only once main returns integrated UI/tests.
+  Select photo/describe target, review valid selectable regions, no-match/invalid
+  result, cancel/stale response, selection/draft preservation and consent. Baseline
+  service unit tests alone do not satisfy this in-progress UI acceptance.
+- [ ] Valid YouTube link renders/plays; invalid link rejected. Show animated card
+  entrance, Tailwind light/dark/AMOLED/accent and reduced-motion/large-text behavior.
+- [ ] Publish → post detail; source/device/backend evidence for each failure path.
 
-## 3 · Realtime engagement (req 2, 3, 7, 8)
+## 3 · Matching, AI models and modes (requirements 12, 23)
 
-1. Open the same post in a **second session** (second browser tab logged in as
-   `nusrat`, or a second device on the same network).
-2. In session A post a **comment** (req 2) → appears instantly in session B.
-3. In session B press **like/dislike** (req 3) → live count in session A.
-4. In session A tap a **1–5 star rating** (req 7) → live average updates in B.
-5. Back on the feed, scroll to see **pagination/infinite scroll** load more
-   (req 8).
+- [ ] Open an OPEN report: Possible Matches shows up to three OPEN opposite-type
+  reports, native USE embeddings + cosine/transparent bonuses, never probability.
+  Candidate retrieval needs available backend data; local scoring is not full
+  offline data access. Capture actual native rankings and dataset/metrics.
+- [ ] Settings → AI & models → On-device AI (`/settings/ai/models`): explicit
+  Needle/Smol downloads, progress/Pause/Resume/checksum/install/remove/corruption/
+  kill-relaunch. Startup must not auto-download/load/benchmark.
+- [ ] CPU is first-class/default; Measure CPU/GPU correctness/real counters, GPU
+  unavailable/error and explicit CPU retry. Decoder stays CPU on both arms;
+  hardware discovery is not proof of acceleration or performance.
+- [ ] Explicit installed Needle challenger selection for session only; fixed
+  candidate comparison to USE, remove/restart defaults, no automatic promotion.
+- [ ] Help uses chosen direct BYOK model or installed specialized model where
+  wired; built-in fallback is not live AI. Needle structured extraction and Smol
+  approved-image description are not a general offline support chatbot.
+- [ ] Mode reconciliation is IN_PROGRESS: check returned UI/persistence/migration,
+  on-device-only no-cloud, cloud-only no-local, unsupported model/task and stale
+  web offline refusal. Do not demo hidden/unhonored legacy modes as complete.
+- [ ] Per promoted BYOK provider capture real send/error/consent evidence with
+  approved keys. Leave unproven adapters explicitly experimental/lab-only.
+- [ ] Run **every** row in [Gate-E](runbooks/gate-e-device-run.md), including
+  lifecycle/cancel, memory/thermal/battery, accessibility and web refusal. Host
+  tests are wiring proof, not substituted device results.
 
-## 4 · Search & filters (cross-cutting)
+## 4 · Engagement, pagination, search and recovery (requirements 2, 3, 7, 8)
 
-Use the **Search** tab: filter by Lost/Found + category + status + query; show
-results update live as posts are added elsewhere.
+- [ ] Two hosted accounts: comment/nested reply → second client live update;
+  like/dislike/remove count; rating upsert/live average; no cross-account writes.
+- [ ] Feed/search Lost/Found/category/status/query/nearby filters, infinite scroll,
+  page order/deduplication, refresh/reconnect. Use only authorized test reports.
+- [ ] Owner My Reports/status OPEN → MATCHED → RECOVERED; ownership guard.
+- [ ] Inbox read/unread/undo, restore after process death/relaunch, reply routing
+  and stale-state recovery. Link/push device proof is a separate mandatory step.
 
-## 5 · Recovery flow (owner status)
+## 5 · Sharing, push and release telemetry (final acceptance)
 
-Open one of *your own* posts → **Update status** segmented control
-(OPEN → MATCHED → RECOVERED) — shown to the owner only.
+- [ ] Exact release-signed device: verified domain association and App Links from
+  browser/messages cold/warm/background, sign-in resume and report/reply focus.
+- [ ] Real pending notification: backend attempt/sent proof and actual registered
+  physical device receipt, foreground/background/cold tap routing; token refresh/
+  pruning on reinstall/logout/account switch and two-account authorization.
+- [ ] Receive reply-capable notification; shade direct reply → backend comment →
+  in-app thread/inbox update; expiry/replay/isolation checks. Zero-work dispatcher
+  success and validate-only FCM cannot tick these boxes.
+- [ ] Exact release synthetic telemetry event received/scrubbed, asset freshness,
+  no secret/BYOK leakage; approved telemetry project/operator required.
+See [sharing/push runbook](runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md).
 
-## 6 · Reporting & the "Crystal Report" story (req 20)
+## 6 · Reporting, ERD and modern APIs (requirements 1, 18–20, 22)
 
-```bash
-node scripts/report-activity.mjs                     # live summary table
-node scripts/report-activity.mjs --csv report.csv    # CSV for Excel/Crystal
-```
+- [ ] Open `docs/erd/ERD.pdf`, zoom/vector quality and compare to final schema.
+- [ ] Supabase PostgREST username/feed RPC and `pg_graphql` role-filtered queries;
+  final RLS/grants/advisors/privacy/isolation. `docs/API_DEMO.md` live counts are
+  historical; its server `ai-help` section is reference, not mobile AI routing.
+- [ ] Show Node reference `/reports/activity`, SQL/JSON/CSV in
+  `docs/reporting/REPORTING.md`; Docker build/run/health evidence on final SHA.
+  Reporting data access is server/operator-only, never bundled secret access.
+- [ ] **Crystal:** licensed Windows designer creates, opens and renders genuine
+  `.rpt` with artifact/hash/output evidence, or attach explicit evaluator-approved
+  substitute. API/CSV demo alone does not complete #20; never fabricate `.rpt`.
 
-Show the vector ERD: `docs/erd/ERD.pdf` (zoom in — it stays crisp) (req 1).
-Point to `docs/reporting/REPORTING.md` with the ready-made SQL queries for the
-Crystal Reports designer.
+## 7 · Deliverable and final gate (requirements 17, 21, 24)
 
-## 7 · Modern API layer (req 18, 19, 22, 23)
+- [ ] Show Git/Vite/React workflow and final-SHA clean lint/typecheck/tests/AI gate,
+  native/model/web/CI/security results, with no rerun-dependent flake acceptance.
+- [ ] Assert public build env; prove final URL/config, synchronized versionCode/
+  versionName/certificate/hash, fresh release install **and beta.2 upgrade** on
+  physical ARM64. Debug APK/emulator/class demo is not final signed acceptance.
+- [ ] Complete main-owned upcoming `completion-ledger.json` with reviewed evidence
+  for all findings. Record blockers instead of ticking unexecuted rows.
+- [ ] With owner approval only after closure: immutable next tag, ABI/universal
+  APKs + AAB + manifest/checksums; download/hash/signature verify and post-publish
+  fresh-install/upgrade; replace current HOLD with exact released-SHA report.
 
-The runtime API is the hosted Supabase project (see `docs/API_DEMO.md`); the Node
-server below is kept as a Docker/coursework reference.
+## Requirement → demo map
 
-1. **REST (PostgREST)** — anon username lookup (req 19):
-   `curl "$SUPABASE_URL/rest/v1/users?select=username&username=eq.rafi_cu" -H "apikey: $SUPABASE_PUBLISHABLE_KEY"`,
-   then the authenticated feed RPC
-   `POST /rest/v1/rpc/findback_query_posts_client` with an access token.
-2. **GraphQL (`pg_graphql`)** — `POST /graphql/v1` with
-   `{ item_postsCollection(first: 1) { edges { node { id title status } } } }`
-   (req 18); the schema is role-filtered, so `users { email }` is not a field.
-3. Legacy reference server: http://localhost:4000/graphql (GraphiQL) and
-   `curl http://localhost:4000/reports/activity?days=7`.
-4. Show `docker-compose.yml` / `Dockerfile` and the GitHub Actions workflow
-   (req 22) — CI runs the same lint/typecheck/tests/web build, plus a Docker job
-   that builds the image, runs it and passes the `/health` check.
-5. **Settings → Help & guide → Chat with help**: connect your own OpenRouter key (**Settings → AI
-   & intelligence → Cloud connections** (`/settings/ai/connections`)) and ask "How do I report a lost item?" — answers come from
-   OpenRouter's free route, or from the built-in answer when no key is connected (req 23).
-
-## 8 · Show the deliverable (req 17, 21, 24)
-
-- `git log --oneline` (req 17) and `npm run build -w @findback/mobile`.
-- Install `app-debug.apk` (apps/mobile/android/app/build/outputs/apk/debug/)
-  on an emulator or phone and repeat step 1–3 on-device (req 21, 24).
-
-## Requirement → demo map (quick reference)
-
-| # | Req | # | Req |
+| # | Section | # | Section |
 |---|---|---|---|
 | 1 | §6 | 13 | §2 |
-| 2 | §3 | 14 | §2 |
-| 3 | §3 | 15 | §2 |
+| 2 | §4 | 14 | §2 |
+| 3 | §4 | 15 | §2 |
 | 4 | §1 | 16 | §2 |
-| 5 | §1 | 17 | §8 |
-| 6 | §2 | 18 | §7 |
-| 7 | §3 | 19 | §7 |
-| 8 | §3 | 20 | §6 |
-| 9 | §2 | 21 | §8 |
-| 10 | §2 | 22 | §7 |
-| 11 | §1 | 23 | §2 |
-| 12 | §2 | 24 | §8 |
+| 5 | §1 | 17 | §7 |
+| 6 | §2 | 18 | §6 |
+| 7 | §4 | 19 | §6 |
+| 8 | §4 | 20 | §6 |
+| 9 | §2 | 21 | §7 |
+| 10 | §2 | 22 | §6 |
+| 11 | §1 | 23 | §2–3 |
+| 12 | §3 | 24 | §5/7 + all Gate-E |
+
+All boxes start **NOT_EXECUTED** for the eventual candidate. Retain PASS/FAIL/
+BLOCKED, exact steps, artifacts and failure notes. Missing SMS/tool/provider/
+device/signing/hosted access remains a blocker, never a simulated success.

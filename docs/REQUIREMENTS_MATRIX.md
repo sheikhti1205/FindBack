@@ -1,74 +1,75 @@
 # Requirements matrix — FindBack
 
-Traceability for the 24 teacher requirements of the Mobile App Development Lab.
+24 teacher requirements, reconciled 2026-10-06 against source/audit baseline
+`b472a247ae593b8eb4e9585bb8947a87ccfaf6c7`. Concurrent main-owned implementation
+is **IN_PROGRESS** until its returned evidence is reviewed. **Release: HOLD.**
 
-Status vocabulary (from the project brief):
-`DONE` · `DONE_DEMO_PROVIDER` · `DEFERRED_EXTERNAL_PROVIDER` ·
-`DEFERRED_EXTERNAL_TOOL` · `NOT_DONE` · `TODO`
+## Status vocabulary (two independent axes)
 
-Last updated: 2026-09-25 (OpenRouter-only pivot: the active build removed the
-local generative runtime — no bundled/on-device VLM, no SmolVLM2 downloads, no
-GPU/CPU model modes — and routes optional AI through the OpenRouter free route
-(`openrouter/free`) with the user's own key. On-device **text embeddings** for
-Possible Matches are retained. Verified local gates at that commit: typecheck,
-lint, mobile + API unit suites, web build, Android JVM + `assembleDebug`, strict
-APK scan and release-config check. Live OpenRouter key and physical-device
-passes remain owner-run.)
-Statuses are only non-TODO when verifiable end-to-end (API tests green + live
-mobile/UI flow exercised).
+- Implementation: **IMPLEMENTED** (source/artifact exists), **PARTIAL** (required
+  capability missing), **IN_PROGRESS** (owner implementing; not accepted),
+  **EXTERNAL_BLOCKED** (required proprietary deliverable/tool unavailable).
+- Verification: **SOURCE_REVIEWED** (paths checked, not execution),
+  **AUDIT_REPORTED** (automated evidence supplied in 2026-10-05 audit, not rerun
+  here), **HISTORICAL_LIVE** (earlier live proof, not final-candidate proof),
+  **NOT_EXECUTED** (required acceptance run absent), **BLOCKED** (specific
+  prerequisite absent). The verification column identifies each applicable scope.
 
-| # | Teacher requirement | FindBack implementation | Code path | Demo steps | Tests | Status |
-|---|---|---|---|---|---|---|
-| 1 | ERD as scalable PDF | Vector PDF (reportlab) + Mermaid source | `docs/erd/ERD.pdf`, `docs/erd/ERD.md`, `tools/render_erd.py` | open PDF, zoom (vector) | — | DONE |
-| 2 | Real-time comments (own DB) | Supabase Realtime Broadcast (private `post:<id>` channel) + direct comment RPCs | `supabase/migrations/20260914210000_realtime_broadcast.sql`; mobile `services/realtime.ts`, `screens/PostDetail.tsx` | two sessions, comment appears live | `realtime.test.ts`, `social.test.ts` | DONE |
-| 3 | Like/dislike live count | reactions upsert + Supabase Realtime broadcast (aggregate counts, no user ids) | `supabase/migrations/20260914210000_realtime_broadcast.sql`, `20260914200000_social_client_rpcs.sql` | two sessions | `social.test.ts`, `realtime.test.ts` | DONE |
-| 4 | Live unique username check | debounced direct Supabase username lookup in the register form (anon, `username` column only) | mobile `screens/Register.tsx`, `services/auth.ts`; Supabase grants + RLS instead of `/users/check-username` | type username, see taken/free | `services/auth.test.ts` | DONE |
-| 5 | Email + phone verification | Email: real Supabase Auth OTP via custom SMTP (live). Phone: deferred — no SMS provider configured, so the app shows the stored number as **unverified** and calls no verification service (the Node dev phone route is reference-only and no longer used by mobile) | mobile `screens/Verify.tsx`, `services/auth.ts`; `services/api/src/domain/verificationService.ts` (reference) | register → verify email (real emailed OTP); phone shown unverified | mobile `auth.test.ts`, api `supabaseAuthProvider.test.ts` | DONE_DEMO_PROVIDER |
-| 6 | Multiple text boxes + dropdowns | create-report form: text, textarea, date, selects | mobile `screens/CreateReport.tsx`, components | fill form, change dropdowns | posts API tests | DONE |
-| 7 | Interactive real-time rating | 1–5 stars, upsert via RPC, live average via Supabase Realtime broadcast | `supabase/migrations/20260914200000_social_client_rpcs.sql`, `20260914210000_realtime_broadcast.sql` | rate; second session updates | `social.test.ts`, `realtime.test.ts` | DONE |
-| 8 | Pagination | cursor-based feed + infinite scroll; mobile reads pages directly from Supabase (`findback_query_posts_client`, keyset cursor) | `supabase/migrations/20260914180000_client_post_reads.sql`, mobile `services/posts.ts`, `hooks/useFeed.ts`, `components/PostList.tsx` | scroll feed, load more | `posts.test.ts`, mobile `services/posts.test.ts` | DONE |
-| 9 | Embedded external audio/video | YouTube URL, id extraction + iframe embed | mobile `components/YouTubeEmbed.tsx`, shared `extractYouTubeId` | paste YouTube link, play in post | unit validation tests | DONE |
-| 10 | Google Maps / embedded map | one-time location picker + embedded map on post | mobile `components/LocationPicker.tsx`, `MapEmbed.tsx` | pin approximate location | — | DONE |
-| 11 | Session/JWT auth | Mobile authenticates directly with Supabase Auth (email + password, publishable key) for the access JWT + rotating refresh token; the Node API retains Supabase token validation. Boot restore, single-flight 401 refresh/retry, logout; local JWT for tests/local | mobile `auth.tsx`, `services/auth.ts`, `services/supabaseClient.ts`, `services/api.ts`; API `auth/*`, `middleware/http.ts` | login/logout, restore session, inspect stored token | `auth.test.ts`, `authCutover.test.ts`, mobile `services/auth.test.ts` | DONE |
-| 12 | On-device text-semantic Possible Matches | Local sentence embeddings via the native bridge to the MediaPipe TextEmbedder asset (`models/use/universal_sentence_encoder.tflite`) + local cosine similarity (top 3, never a probability, no vector DB, no server AI). This non-generative similarity bridge is **retained** by the pivot and is independent of cloud AI; generative suggestions moved off-device (see #23). "Possible Matches" renders on the post-detail screen for open posts | mobile `services/embeddings.ts` (native bridge), native `UniversalSentenceEmbedder.kt`; post-detail "Possible Matches" | attach photo → publish → open the post to see top-3 semantic matches | `possibleMatches.test.ts`, `PossibleMatches.test.tsx`, embedding + cosine unit tests | DONE |
-| 13 | Image upload + cloud storage | On-device normalization (`apps/mobile/src/services/image.ts`) → direct Supabase Storage upload (`findback-images`, `<uid>/<uuid>.<ext>`) → owner-scoped `uploads` staging row bound by the create-post RPC; the legacy Node `/uploads` + `sharp` path is retained for the reference API and its tests | `apps/mobile/src/services/{image.ts,posts.ts}`; `supabase/migrations/20260914220000_direct_storage_uploads.sql`; `services/api/src/storage/*` (legacy) | attach photo, preview, publish; public image URL | mobile `image.test.ts`, `postsUpload.test.ts`; api `uploads.test.ts`, `supabaseStorageProvider.test.ts`, `imageNormalizer.test.ts` | DONE |
-| 14 | Datepicker | native date input in create report | mobile `screens/CreateReport.tsx` | choose date | — | DONE |
-| 15 | GSAP/Framer Motion animations | Framer Motion entrance + transitions | mobile `components/PostCard.tsx`, `screens/Splash.tsx`, `index.css` | open app, feed card entrance | — | DONE |
-| 16 | SASS/Tailwind | Tailwind v4 theme tokens + utility classes | mobile `src/theme.tsx`, `index.css` | inspect classes/theme switch | — | DONE |
-| 17 | Git + Vite workflow | Git repo + Vite web shell | repo root, `apps/mobile` | `git log`, `npm run build -w @findback/mobile` | — | DONE |
-| 18 | GraphQL or modern API | Supabase GraphQL (`pg_graphql`) at `/graphql/v1`, resolving as the JWT role (grant- and RLS-filtered schema; no `users.email`/`phone`, anon sees no `item_postsCollection`); legacy GraphQL-Yoga retained as reference | `supabase/migrations/20260914230000_enable_pg_graphql.sql`; `docs/API_DEMO.md`; `services/api/src/graphql/*` (legacy) | GraphQL query for `item_postsCollection` / `usersCollection` with an access token | `docs/API_DEMO.md` live verification (14/14) | DONE |
-| 19 | RESTful API | Supabase PostgREST / Data API (`/rest/v1`) — anon username lookup, authenticated feed RPC and table reads, RLS-enforced; legacy Express REST retained as reference | `docs/API_DEMO.md`; `services/api/src/app.ts` (legacy) | `GET /rest/v1/users?select=username&username=eq.…`; `POST /rest/v1/rpc/findback_query_posts_client` | `docs/API_DEMO.md` live verification (14/14) | DONE |
-| 20 | Crystal Report | Reporting API (JSON/CSV) over Supabase PostgreSQL + ready-to-run report queries + setup doc; no `.rpt` (needs licensed Windows Crystal Reports) | `docs/reporting/REPORTING.md`, `/reports/activity`, `scripts/report-activity.mjs` | generate CSV → open in Excel/Crystal | `reporting.test.ts` | DEFERRED_EXTERNAL_TOOL |
-| 21 | Modern frontend framework | React 19 web shell (Capacitor → APK) | `apps/mobile` | run app | mobile unit tests | DONE |
-| 22 | Docker / CI/CD | Working Dockerized reference/demo image (legacy web shell + Node REST/GraphQL, SQLite mode) + compose; GitHub Actions CI on `main` runs lint/typecheck/tests/web build **and** a Docker job that builds the image, runs the container and passes the `/health` check (observed green). The Android app connects directly to hosted Supabase and does not require Docker. No local Docker engine in this environment, so the build/run proof is the CI job's | `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` | `docker compose up`; CI runs the same checks + Docker health check | GitHub Actions run `34880260112` (both jobs green) | DONE |
-| 23 | Local VLM report assistant | **v0.6 truth (replaces the 2026-09-25 cloud-only pivot note).** The create-report photo assistant is consented SmolVLM2 on-device default with OpenRouter free-route (`openrouter/free`) cloud fallback (user's own key): photo suggestions return review-only title/category/description cards with per-field Apply/Keep and a replace-confirm before touching typed fields; unreleased categories are dropped, never auto-applied. Help chat is cloud (OpenRouter free default, built-in fallback when no key) plus installed Needle/SmolVLM2 where wired. Matching stays USE on-device default with installed Needle as the explicit session challenger. Physical-device proof remains NOT EXECUTED (see gate-e runbook) | mobile `services/analyzeReportPhoto.ts`, `services/analyzeReportPhotoLocal.ts`, `services/openRouter.ts`, `services/assistant/cloudAssistant.ts`, `services/aiCredentials.ts`, `components/VlmSuggestions.tsx`; create-report "Analyze photo" | install SmolVLM2 → attach photo → "Analyze photo" → consent → local-first suggestions with Apply/Keep review; without the local model, cloud fallback with key; ask AI Help | `openRouter.test.ts`, `cloudAssistant.test.ts`, `noLegacyAiRoute.test.ts`, `appCapabilities.test.ts` | DONE_DEMO_PROVIDER (live key + device pass owner-pending) |
-| 24 | Task-specific deliverable | **TBD** (reserved; the only permitted `TBD` in the plan) — Android debug APK with **on-device text embeddings** (Possible Matches) and optional **cloud** generative AI via the OpenRouter free route with the user's own key; no bundled/on-device generative model | `apps/mobile/android/`, `npm run apk` | install `app-debug.apk` on a physical ARM64 device and run the walkthrough (core flows without a key; connect key for Help/photo AI) | APK build + release-config + strict APK scan gates; **physical install + live-key pass pending owner** | NOT_DONE |
+There is no unqualified `DONE` status. Source, mocked tests, old live proof and
+device acceptance are different evidence classes. An IMPLEMENTED row is not a
+completed release requirement. See [current report](FINAL_ACCEPTANCE_REPORT.md),
+[all findings](COMPLETION_AUDIT.md) and [demo/evidence steps](DEMO_CHECKLIST.md).
+Main owns the upcoming `completion-ledger.json`; this document does not claim it
+exists or that a whole-app completion gate has run.
 
-## Notes
-- Allowed statuses are only `DONE`, `DONE_DEMO_PROVIDER`,
-  `DEFERRED_EXTERNAL_PROVIDER`, `DEFERRED_EXTERNAL_TOOL`, `TODO`, `TBD`.
-- `DONE_DEMO_PROVIDER` rows work end-to-end; the remaining non-production
-   pieces are documented in `DEFERRED_DECISIONS.md` — currently **phone/SMS**,
-   the licensed **Crystal `.rpt`**, the **live OpenRouter key** pass, and the
-   **ARM64 phone pass** for on-device **text embeddings** device proof, plus the
-   Civi 3 native AI device matrix (SmolVLM2/Needle install, CPU/GPU measure,
-   matching arms) which remains NOT EXECUTED per the gate-e runbook.
-- #20's `.rpt` design file needs the licensed Windows-only Crystal Reports
-  designer; FindBack commits the reporting API, SQL queries, and CSV export so it
-  imports cleanly against the Supabase PostgreSQL database (or the local SQLite
-  demo).
-- #24 is the only permitted `TBD` in the plan (reserved for the ARM64 phone pass).
-- Verification evidence: API test suites, mobile unit suites, full
-  typecheck/lint, the mobile production build, a locally built Android debug APK
-  with the strict APK scan and release-config check, and live E2E passes for
-  Supabase Auth email OTP and direct-to-Supabase Storage image upload. The
-  OpenRouter responses in automated tests are mocked; a **live-key pass** and a
-  **physical-device walkthrough** remain owner-run and unverified here.
-- Persistence has a Store seam: `SupabaseStore` (Data API) is the real
-  application backend; in-memory SQLite is the test/local-demo backend. See
-  `docs/DATABASE_MIGRATION.md`.
-- The mobile app has **zero Node runtime dependency**: it is built with only
-  `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY` and talks exclusively to
-  hosted Supabase. The Node Express/GraphQL/Socket.IO server is retained for the
-  Docker image and as reference, not as an app dependency.
-- **Overall deliverable**: the Android APK with on-device **text-embedding** Possible Matches and optional cloud AI through the OpenRouter free route (user-owned key).
+Paths below are repo-relative; mobile paths use `apps/mobile/src/`.
+Test filenames identify available coverage, **not fresh passing executions**.
+
+| # | Teacher requirement | Current implementation / source paths | Implementation | Verification and exact remaining acceptance |
+|---|---|---|---|---|
+| 1 | ERD as scalable PDF | `docs/erd/ERD.pdf`, Mermaid `docs/erd/ERD.md`, `tools/render_erd.py`. Vector artifact present. | IMPLEMENTED | SOURCE_REVIEWED: files present. NOT_EXECUTED: fresh visual/vector zoom and schema-convergence review for submission. |
+| 2 | Real-time comments (own DB) | Mobile `services/posts.ts` comment RPCs, `services/realtime.ts` private post/inbox Broadcast, `screens/PostDetail.tsx`; migrations `20260914210000_realtime_broadcast.sql`, `20261002030000_nested_comments.sql`. Tests: `realtime.test.ts`, post/detail suites. | IMPLEMENTED | HISTORICAL_LIVE: two-client proof in archived report. NOT_EXECUTED: final two-account/device comments, nested replies, reconnect and authorization smoke. |
+| 3 | Like/dislike live count | `services/posts.ts` → `findback_react_client`, aggregate social state; `services/realtime.ts`; social RPC/Broadcast migrations. Tests: `services/posts.test.ts`, `services/realtime.test.ts`. | IMPLEMENTED | HISTORICAL_LIVE: earlier aggregate updates. NOT_EXECUTED: final two-client counts/remove/account isolation. |
+| 4 | Live unique username check | `screens/Register.tsx`, `services/auth.ts` debounced anonymous username-only lookup; `20260914170000_username_availability_lookup.sql`. Tests: `Register.test.tsx`, `services/auth.test.ts`. | IMPLEMENTED | HISTORICAL_LIVE: API demo 14/14 includes lookup. NOT_EXECUTED: final register race, taken/free, case and literal-underscore behavior. |
+| 5 | Email + phone verification | Email Supabase OTP/session via `services/auth.ts`, `auth.tsx`, `screens/Verify.tsx`. Baseline PHONE is stored/unverified; main-owned phone send/resend/verify integration is being implemented. Reference Node dev OTP does not satisfy SMS. | IN_PROGRESS | HISTORICAL_LIVE: real email OTP only. BLOCKED: hosted SMS provider/configuration and authorized number; live send/resend/verify/invalid-expired/cooldown/throttle/change/isolation proof missing (FBA-005). |
+| 6 | Multiple text boxes + dropdowns | `screens/CreateReport.tsx`, `components/Fields.tsx`, `CategoryField.tsx`, rich-text description, title/type/category/date/location inputs. Tests: CreateReport suites, `Fields.test.tsx`, `CategoryField.test.tsx`. | IMPLEMENTED | SOURCE_REVIEWED. NOT_EXECUTED: final device validation, keyboard, category and draft preservation walkthrough. |
+| 7 | Interactive real-time rating | `services/posts.ts` → `findback_rate_client`, social-state RPC; PostDetail stars and private Broadcast; social migrations. Tests: posts/realtime/PostDetail suites. | IMPLEMENTED | HISTORICAL_LIVE: earlier rating/average updates. NOT_EXECUTED: final two-account upsert/average/reconnect smoke. |
+| 8 | Pagination | `services/posts.ts` keyset feed RPC (including nearby), `hooks/useFeed.ts`, `components/PostList.tsx`; client-post-read/feed migrations. Tests: `services/posts.test.ts`, `hooks/useFeed.test.ts`. | IMPLEMENTED | SOURCE_REVIEWED; HISTORICAL_LIVE: feed RPC. NOT_EXECUTED: final device filters, page boundaries, refresh and duplicate/order checks. |
+| 9 | Embedded external audio/video | `components/YouTubeEmbed.tsx`, shared `extractYouTubeId`, CreateReport/PostDetail. Tests: embed/shared validation suites. This is YouTube video, not a generic arbitrary-media player. | IMPLEMENTED | SOURCE_REVIEWED. NOT_EXECUTED: valid/invalid URL, playback and WebView external-media behavior. |
+| 10 | Google Maps / embedded map | `components/LocationPicker.tsx`, `MapPickerSheet.tsx`, keyless Google `MapEmbed.tsx`; native/browser location adapter, approximate/exact pin and manual/Maps-link input. Tests: LocationPicker/MapPickerSheet/location suites. | IMPLEMENTED | SOURCE_REVIEWED. NOT_EXECUTED: device permissions/services-off/coarse/manual paths; FBA-021 timing flake needs repeated deterministic proof. |
+| 11 | Session/JWT auth | Direct Supabase Auth access/rotating refresh session; `auth.tsx`, `services/auth.ts`, `supabaseClient.ts`, `screens/AccountSettings.tsx`, `services/aiCredentials.ts` logout purge. Tests: auth/AccountSettings/credential suites. Node JWT is reference-only. | IMPLEMENTED | HISTORICAL_LIVE: restore/login/email. AUDIT_REPORTED: b472a24 logout session/remembered-key purge, failure resilience, sibling isolation (FBA-031). NOT_EXECUTED: final device restore/logout/relogin/account switch. |
+| 12 | On-device text-semantic Possible Matches | `services/embeddings.ts` → native `UniversalSentenceEmbedder.kt` / pinned USE asset; `services/possibleMatches.ts`, `similarity.ts`, `components/PossibleMatches.tsx`. USE default; installed Needle explicit session challenger, no server inference/vector DB; top 3, never probability. Tests: possibleMatches/embedding/similarity/component suites. | IMPLEMENTED | SOURCE_REVIEWED. NOT_EXECUTED: physical native vectors/ranking/offline proof and accepted calibration/baseline (FBA-002/013/014). Fetching candidates still requires data connectivity or available cache; local scoring is not full offline data access. |
+| 13 | Image upload + cloud storage | `services/image.ts`, `postsUpload.ts`, `posts.ts`; direct normalized photos to owner `<uid>/` Storage staging, publish/reorder/remove; direct-storage/multi-image migrations. Node sharp/upload remains reference. Tests: image/postsUpload/CreateReport multi-image suites. | IMPLEMENTED | HISTORICAL_LIVE: earlier Storage 20/20, not current multi-image/device proof. NOT_EXECUTED: final picker/camera/permissions/normalization/upload failures/ownership; Xiaomi fixture gap FBA-016 remains. |
+| 14 | Datepicker | `screens/CreateReport.tsx` → `components/ReportDatePicker.tsx`, calendar date validation and future-date refusal. Tests: ReportDatePicker/CreateReport/date utilities. | IMPLEMENTED | SOURCE_REVIEWED. NOT_EXECUTED: device picker, locale, keyboard and invalid/future date smoke. |
+| 15 | GSAP/Framer Motion animations | Framer Motion `components/PostCard.tsx`, `RouteTransition.tsx`, `screens/Splash.tsx`, shared `uiMotion` + reduced-motion preference. GSAP not required as second library. Tests: motion/appearance/component suites. | IMPLEMENTED | SOURCE_REVIEWED. NOT_EXECUTED: reduced-motion, focus and device transition acceptance; no flake-free claim (FBA-021). |
+| 16 | SASS/Tailwind | Tailwind v4 import/tokens in `index.css`, `theme.tsx`, appearance settings/utilities. Tests: appearance/theme/contrast suites. | IMPLEMENTED | SOURCE_REVIEWED. NOT_EXECUTED: device light/dark/AMOLED/accent/large-text contrast and accessibility pass. |
+| 17 | Git + Vite workflow | Git repository, Vite workspace `apps/mobile/package.json`, `vite.config.ts`. | IMPLEMENTED | AUDIT_REPORTED: exact baseline Web run 37348171827 green. NOT_EXECUTED: final-SHA config-asserted build and bundle URL proof; never build without nonempty public Supabase URL/publishable key. |
+| 18 | GraphQL or modern API | Supabase `/graphql/v1` `pg_graphql`, JWT-role grants/RLS; `20260914230000_enable_pg_graphql.sql`, `docs/API_DEMO.md`. GraphQL-Yoga is reference-only. | IMPLEMENTED | HISTORICAL_LIVE: API demo 14/14. NOT_EXECUTED: final grants/schema/privacy/advisor recheck after migrations; no phone/email exposure. |
+| 19 | RESTful API | Supabase PostgREST `/rest/v1`, authenticated feed/write RPCs, anonymous username lookup; mobile `services/posts.ts`/`auth.ts`, client RPC migrations, `docs/API_DEMO.md`. Express reference only. | IMPLEMENTED | HISTORICAL_LIVE: API demo 14/14. NOT_EXECUTED: final role/ownership checks and core device/data walkthrough. |
+| 20 | Crystal Report | `services/api/src/domain/reportingService.ts`, reporting route/tests, `scripts/report-activity.mjs`, `docs/reporting/REPORTING.md`: JSON/CSV/SQL only. No genuine `.rpt`. | EXTERNAL_BLOCKED | BLOCKED: licensed Windows Crystal Reports designer/operator and permitted dataset/connection required to create/open/render real artifact (FBA-006), or explicit evaluator acceptance of substitute. Renaming CSV to `.rpt` is not evidence. |
+| 21 | Modern frontend framework | React 19 + TypeScript/Vite shell, Capacitor Android packaging; `apps/mobile/src/App.tsx` and workspace dependencies. | IMPLEMENTED | AUDIT_REPORTED: baseline mobile suite 3330 reported passes. NOT_EXECUTED: final framework/build/device shell smoke; test count is dated evidence, not completion. |
+| 22 | Docker / CI/CD | `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml`; Docker reference/demo + Node/SQLite, not APK runtime dependency. | IMPLEMENTED | HISTORICAL_LIVE: Docker build/run/health CI run 34880260112 in old report. AUDIT_REPORTED: b472a24 CI run 37348171843. NOT_EXECUTED: all final-SHA critical workflows/security/release checks (FBA-022/023). |
+| 23 | Local VLM report assistant | `services/analyzeReportPhoto.ts`, `analyzeReportPhotoLocal.ts`, AI application manager, `components/VlmSuggestions.tsx`, CreateReport. Automatic SmolVLM2 local-first with consented OpenRouter fallback; on-device-only never sends; cloud-only skips local. CPU default/first-class, GPU vision measured only, CPU decoder on both arms. Review Apply/Keep/replace-confirm. Photo grounding UI and assistant modes are main-owned integration work, not deferred scope. | IN_PROGRESS | SOURCE_REVIEWED: photo transport/review paths. AUDIT_REPORTED: AI gate 12/12 + 64/64, OpenRouter-only live-tested marker. NOT_EXECUTED: returned grounding/mode UI regression evidence, actual device/model lifecycle/performance and all advertised-provider real sends (FBA-001/002/003/004). |
+| 24 | Task-specific Android deliverable | Exact release-signed ARM64 candidate with core Supabase flows, local USE + installed SmolVLM2/Needle, consented cloud legs, phone/grounding/modes, App Links/push/reply and telemetry acceptance. `apps/mobile/android/`, `docs/runbooks/gate-e-device-run.md`, sharing/push runbook. Not an obsolete cloud-only debug-APK placeholder. | IN_PROGRESS | NOT_EXECUTED: final candidate build identity/signature/hash, fresh install + beta.2 upgrade, every Gate-E/core-flow/link/push/reply/telemetry row and post-publish smoke (FBA-002/017/019/020/026). BLOCKED pending authorized physical ARM64 device/operator and approved signed candidate. |
+
+## Evidence boundaries and closure
+
+- Audit baseline: CI 37348171843, Web 37348171827, mobile 3330/API 156 reported
+  passes, AI gate 12/12 + 64/64. FBA-021 records a retry-dependent MapPickerSheet
+  flake; native/model-smoke proof is from earlier relevant commits. These results
+  are neither a fresh run of this documentation diff nor final-candidate proof.
+- Original acceptance report frozen 2026-09-15 at `e813028` (with later edits and
+  2026-09-16 non-device evidence) is archived unchanged as
+  [historical report](history/FINAL_ACCEPTANCE_REPORT_2026-09-15_e813028_as-of-b472a24.md).
+  Its Edge Function AI, GPU-only/no-CPU and old test counts are not current truth.
+- Actual OpenRouter send proof is historical/reported for that provider only.
+  Other BYOK adapters remain experimental until per-provider send proof; cloud
+  pricing/consent gates do not certify delivery. Local specialized models require
+  native proof and are not general offline chat capability.
+- Requirement 5 is not complete because email works; 20 is not complete because
+  CSV works; 23/24 are not complete because a host build or AI gate is green.
+  Latest owner implementation directives take precedence over older scope waivers.
+- Final acceptance needs dated evidence tied to exact SHA (and dirty diff if any),
+  artifact hashes/signature, device/model identity and executed row results. Missing
+  prerequisites remain blockers. No device/live/SMS/Crystal success was asserted
+  by this documentation reconciliation.
