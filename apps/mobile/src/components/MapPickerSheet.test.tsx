@@ -1,11 +1,29 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MapPickerSheet } from "./MapPickerSheet";
 import type { LocationValue } from "./LocationPicker";
 import type { LocationAdapter } from "../services/locationAdapter";
 
 vi.mock("./LiveRegion", () => ({ announce: vi.fn() }));
+
+// Test map behavior, not Motion's global RAF/exit scheduler. Keep real sheet
+// semantics, refs and handlers, but mount/unmount motion DOM synchronously.
+vi.mock("framer-motion", async () => {
+  const { createElement } = await import("react");
+  const motionProps = new Set([
+    "initial", "animate", "exit", "transition", "whileTap", "whileHover",
+    "layout", "drag", "dragListener", "dragControls", "dragConstraints",
+    "dragElastic", "dragSnapToOrigin", "onDragEnd",
+  ]);
+  const staticElement = (tag: string) => (props: Record<string, unknown>) =>
+    createElement(tag, Object.fromEntries(Object.entries(props).filter(([key]) => !motionProps.has(key))));
+  return {
+    motion: { div: staticElement("div"), button: staticElement("button"), span: staticElement("span") },
+    AnimatePresence: ({ children }: { children: import("react").ReactNode }) => children,
+    useDragControls: () => ({ start: vi.fn() }),
+  };
+});
 
 vi.mock("../services/location/rasterTiles", async (importOriginal) => {
   const actual =
@@ -15,6 +33,7 @@ vi.mock("../services/location/rasterTiles", async (importOriginal) => {
 });
 
 const behavior = vi.hoisted(() => ({
+  loadDeadline: undefined as (() => void) | undefined,
   workerUrl: null as string | null,
   workerConfiguredAtConstruction: [] as boolean[],
   throwOnConstruct: false,
@@ -84,11 +103,36 @@ function moveEnd(index: number, lat: number, lng: number): void {
   const instance = behavior.instances[index];
   if (!instance) throw new Error("no map instance");
   instance.center = { lat, lng };
-  instance.handlers.moveend?.();
+  act(() => instance.handlers.moveend?.());
 }
+
+/** Host mounted ≠ map ready. Require event registration before camera work. */
+async function awaitMapEvents(index = 0): Promise<void> {
+  await waitFor(() => {
+    expect(behavior.instances[index]?.handlers.moveend).toBeTypeOf("function");
+    expect(behavior.instances[index]?.handlers.load).toBeTypeOf("function");
+  });
+}
+
+beforeEach(() => {
+  // jsdom has no layout engine: provide a measured host instead of racing
+  // the production two-frame 0x0 fallback against async search results.
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return new DOMRect(0, 0, this.dataset.testid === "map-picker-map" ? 360 : 0, 320);
+  });
+  const setTimeout = window.setTimeout.bind(window);
+  vi.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
+    if (timeout === 500 && typeof handler === "function") {
+      behavior.loadDeadline = () => handler(...args);
+      return -1 as unknown as ReturnType<typeof globalThis.setTimeout>;
+    }
+    return setTimeout(handler, timeout, ...args) as unknown as ReturnType<typeof globalThis.setTimeout>;
+  });
+});
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   delete (navigator as unknown as Record<string, unknown>).geolocation;
   behavior.throwOnConstruct = false;
@@ -96,6 +140,7 @@ afterEach(() => {
   behavior.instances.length = 0;
   behavior.workerUrl = null;
   behavior.workerConfiguredAtConstruction.length = 0;
+  behavior.loadDeadline = undefined;
 });
 
 /** Captures the callbacks the sheet hands to navigator.geolocation. */
@@ -167,6 +212,38 @@ const empty: LocationValue = {
 };
 
 describe("MapPickerSheet", () => {
+  it("constructs only after the controlled two-frame zero-layout fallback", async () => {
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue(new DOMRect());
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+    render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />);
+    await waitFor(() => expect(frames).toHaveLength(1));
+    expect(behavior.instances).toHaveLength(0);
+    act(() => frames.shift()!(16));
+    expect(frames).toHaveLength(1);
+    expect(behavior.instances).toHaveLength(0);
+    act(() => frames.shift()!(32));
+    await awaitMapEvents();
+    expect(behavior.instances).toHaveLength(1);
+  });
+
+  it("does not construct a closed sheet when its pending layout frames complete", async () => {
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue(new DOMRect());
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+    const props = { onClose: vi.fn(), value: pinned, onConfirm: vi.fn() };
+    const { rerender } = render(<MapPickerSheet {...props} open />);
+    await waitFor(() => expect(frames).toHaveLength(1));
+    rerender(<MapPickerSheet {...props} open={false} />);
+    await act(async () => {
+      frames.shift()!(16);
+      frames.shift()!(32);
+      await Promise.resolve();
+    });
+    expect(behavior.instances).toHaveLength(0);
+    expect(screen.queryByTestId("map-picker-map")).toBeNull();
+  });
+
   it("configures a bundled worker before constructing the map and waits for load to be ready", async () => {
     render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />);
     await waitFor(() => expect(behavior.instances).toHaveLength(1));
@@ -174,7 +251,7 @@ describe("MapPickerSheet", () => {
     expect(behavior.workerUrl).toBeTruthy();
     expect(screen.getByText("Loading map…")).toBeTruthy();
     expect(screen.queryByText(/Map tiles are unavailable/)).toBeNull();
-    behavior.instances[0]?.handlers.load?.();
+    act(() => behavior.instances[0]?.handlers.load?.());
     await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
     expect(behavior.instances[0]?.resizeCalls).toBeGreaterThan(0);
   });
@@ -183,7 +260,7 @@ describe("MapPickerSheet", () => {
     const onConfirm = vi.fn();
     render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />);
     await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    behavior.instances[0]?.handlers.error?.();
+    act(() => behavior.instances[0]?.handlers.error?.());
     expect(await screen.findByText(/Map tiles are unavailable/)).toBeTruthy();
     // Load never arrives: the sheet must not stay stuck on "starting" forever.
     await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
@@ -199,7 +276,7 @@ describe("MapPickerSheet", () => {
     fireEvent.click(screen.getByRole("button", { name: /retry map tiles/i }));
     await waitFor(() => expect(behavior.instances).toHaveLength(2));
     expect(behavior.workerConfiguredAtConstruction).toEqual([true, true]);
-    behavior.instances[1]?.handlers.load?.();
+    act(() => behavior.instances[1]?.handlers.load?.());
     await waitFor(() => expect(screen.getByTestId("map-picker-pin")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
@@ -215,7 +292,7 @@ describe("MapPickerSheet", () => {
     const onConfirm = vi.fn();
     render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
     await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    behavior.instances[0]?.handlers.error?.();
+    act(() => behavior.instances[0]?.handlers.error?.());
     expect(await screen.findByText(/Map tiles are unavailable/)).toBeTruthy();
     await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
     fireEvent.change(screen.getByLabelText("Search for a place"), {
@@ -309,6 +386,10 @@ describe("MapPickerSheet", () => {
       <MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />,
     );
     await screen.findByTestId("map-picker-map");
+
+    // A DOM host alone does not prove the async map/event wiring is ready.
+    await awaitMapEvents();
+    expect(behavior.instances[0]?.handlers.moveend).toBeTypeOf("function");
 
     // Keystrokes alone must not hit the network.
     fireEvent.change(screen.getByLabelText("Search for a place"), {
@@ -417,7 +498,7 @@ describe("MapPickerSheet one-time approximate location", () => {
     await waitFor(() => expect(behavior.instances).toHaveLength(1));
     moveEnd(0, 24.123, 91.123);
     resolveFix({ latitude: 23.810332, longitude: 90.412518, accuracyMeters: 42 });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await act(async () => { await Promise.resolve(); });
     expect(screen.getByText("24.123, 91.123")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
     expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ latitude: 24.123, longitude: 91.123 }));
@@ -589,7 +670,10 @@ describe("MapPickerSheet fallback and camera", () => {
     render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />);
     await waitFor(() => expect(behavior.instances).toHaveLength(1));
     // Neither load nor error ever arrives: the timeout must rescue the sheet.
-    expect(await screen.findByText(/taking a while to load/, undefined, { timeout: 3000 })).toBeTruthy();
+    expect(screen.getByText("Loading map…")).toBeTruthy();
+    expect(behavior.loadDeadline).toBeTypeOf("function");
+    act(() => behavior.loadDeadline!());
+    expect(screen.getByText(/taking a while to load/)).toBeTruthy();
     await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
     expect(screen.getByTestId("map-picker-map")).toBeTruthy();
     expect(screen.getByTestId("map-picker-pin")).toBeTruthy();
@@ -613,6 +697,7 @@ describe("MapPickerSheet fallback and camera", () => {
       vi.stubGlobal("fetch", fetchMock);
       render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
       await screen.findByTestId("map-picker-map");
+      await awaitMapEvents();
       fireEvent.change(screen.getByLabelText("Search for a place"), {
         target: { value: "mirpur" },
       });

@@ -1,0 +1,70 @@
+{
+  "version": "matching-policy-regression-v1",
+  "evidenceKind": "hand-labeled synthetic mapped scores; not model/device embeddings",
+  "target": {
+    "id": "query", "title": "black umbrella wooden handle", "description": null,
+    "category": "Clothing", "eventDate": null, "locationLabel": null,
+    "locationLat": null, "locationLng": null
+  },
+  "cases": [
+    {
+      "id": "semantic-over-category", "relevantIds": ["relevant"],
+      "notes": "Semantic score can beat a same-category distractor; categories do not gate relevance.",
+      "candidates": [
+        { "id": "relevant", "category": "Other", "mappedScore": 0.9 },
+        { "id": "distractor", "title": "black jacket", "mappedScore": 0.6 }
+      ],
+      "expectedIds": ["relevant", "distractor"]
+    },
+    {
+      "id": "context-can-reorder", "relevantIds": ["relevant"],
+      "notes": "Full date/location/category context beats higher semantic-only score.",
+      "target": { "eventDate": "2026-09-10", "locationLat": 23.81, "locationLng": 90.412 },
+      "candidates": [
+        { "id": "distractor", "title": "black beach parasol", "category": "Other", "mappedScore": 0.8 },
+        { "id": "relevant", "eventDate": "2026-09-10", "locationLat": 23.81, "locationLng": 90.412, "mappedScore": 0.62 }
+      ],
+      "expectedIds": ["relevant", "distractor"]
+    },
+    {
+      "id": "negative-not-rescued-by-context", "relevantIds": ["relevant"],
+      "notes": "The pre-bonus raw cosine cutoff must reject a negative candidate despite full bonuses.",
+      "target": { "eventDate": "2026-09-10", "locationLat": 23.81, "locationLng": 90.412 },
+      "candidates": [
+        { "id": "negative", "title": "wooden desk", "eventDate": "2026-09-10", "locationLat": 23.81, "locationLng": 90.412, "mappedScore": 0.49 },
+        { "id": "relevant", "mappedScore": 0.5 }
+      ],
+      "expectedIds": ["relevant"]
+    },
+    {
+      "id": "inclusive-zero-boundary", "relevantIds": ["boundary"],
+      "notes": "Raw cosine zero is included; just-negative cosine is not.",
+      "candidates": [
+        { "id": "below", "title": "blue raincoat", "mappedScore": 0.499999 },
+        { "id": "boundary", "mappedScore": 0.5 }
+      ],
+      "expectedIds": ["boundary"]
+    },
+    {
+      "id": "saturation-id-tie-limitation", "relevantIds": ["z-relevant"],
+      "notes": "Clamping loses semantic distinctions: both saturate at 1, so id order puts the nonrelevant first. This is a known limitation, not a perfect benchmark.",
+      "target": { "eventDate": "2026-09-10", "locationLat": 23.81, "locationLng": 90.412 },
+      "candidates": [
+        { "id": "z-relevant", "eventDate": "2026-09-10", "locationLat": 23.81, "locationLng": 90.412, "mappedScore": 0.9 },
+        { "id": "a-distractor", "title": "black umbrella metal handle", "eventDate": "2026-09-10", "locationLat": 23.81, "locationLng": 90.412, "mappedScore": 0.8 }
+      ],
+      "expectedIds": ["a-distractor", "z-relevant"]
+    },
+    {
+      "id": "top-three-recall-limitation", "relevantIds": ["relevant-fourth"],
+      "notes": "A relevant fourth candidate is omitted from the three-card result: freeze the miss honestly.",
+      "candidates": [
+        { "id": "d1", "title": "black raincoat", "category": "Other", "mappedScore": 0.89 },
+        { "id": "d2", "title": "blue umbrella", "category": "Other", "mappedScore": 0.8 },
+        { "id": "d3", "title": "wooden walking stick", "category": "Other", "mappedScore": 0.7 },
+        { "id": "relevant-fourth", "category": "Other", "mappedScore": 0.6 }
+      ],
+      "expectedIds": ["d1", "d2", "d3"]
+    }
+  ]
+}

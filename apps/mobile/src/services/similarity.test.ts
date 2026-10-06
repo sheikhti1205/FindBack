@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cosineSimilarity, rankMatches } from "./similarity";
+import { averageRankingMetrics, CATEGORY_BONUS, cosineSimilarity, MIN_COSINE_CUTOFF, rankMatches, rankingMetrics, type MatchCandidate } from "./similarity";
+import fixtures from "../../../../tools/bench/matching-ranking-fixtures.v1.json";
 
 const target = { id: "lost-1", type: "LOST" as const, title: "black umbrella", description: "wooden handle", category: "Clothing" as const, eventDate: "2026-09-10", locationLat: 1.3, locationLng: 103.8, locationLabel: "Test Location" };
 
@@ -12,6 +13,44 @@ describe("cosineSimilarity", () => {
     expect(cosineSimilarity([1, 2], [1, 2])).toBeCloseTo(1);
     expect(cosineSimilarity([1, 0], [0, 1])).toBe(0);
     expect(cosineSimilarity([0, 0], [1, 1])).toBe(0);
+  });
+});
+
+describe("frozen default matching policy (synthetic labeled score regression, not device calibration)", () => {
+  type FixtureRow = (typeof fixtures.cases)[number];
+  function rankFixture(row: { target?: FixtureRow["target"]; candidates: FixtureRow["candidates"][number][] }) {
+    const query = { ...fixtures.target, ...row.target } as MatchCandidate;
+    const candidates = row.candidates.map((c) => ({ ...fixtures.target, ...c })) as MatchCandidate[];
+    return rankMatches(query, candidates, new Map(row.candidates.map((c) => [c.id, c.mappedScore])), MIN_COSINE_CUTOFF);
+  }
+
+  it("freezes the conservative raw cutoff and category bonus", () => {
+    expect(MIN_COSINE_CUTOFF).toBe(0);
+    expect(CATEGORY_BONUS).toBe(0.15);
+  });
+
+  it("freezes full-context bonuses and the clamped saturation tie", () => {
+    const context = rankFixture(fixtures.cases.find((c) => c.id === "context-can-reorder")!);
+    expect(context[0]!.score).toBeCloseTo(0.62 + 0.15 + 0.10 + 0.10, 10);
+    expect(context[0]!.reasons).toEqual(["same category", "similar date", "close location"]);
+    const saturated = rankFixture(fixtures.cases.find((c) => c.id === "saturation-id-tie-limitation")!);
+    expect(saturated.map((m) => m.score)).toEqual([1, 1]);
+  });
+
+  it.each(fixtures.cases)("$id: $notes", (row) => {
+    expect(rankFixture(row).map((m) => m.post.id)).toEqual(row.expectedIds);
+    // Candidate enumeration cannot change tie-breaking or the three-card cap.
+    expect(rankFixture({ ...row, candidates: [...row.candidates].reverse() }).map((m) => m.post.id)).toEqual(row.expectedIds);
+  });
+
+  it("freezes macro metrics including the known tie and three-card misses", () => {
+    const metrics = averageRankingMetrics(fixtures.cases.map((row) =>
+      rankingMetrics(rankFixture(row).map((m) => m.post.id), row.relevantIds),
+    ));
+    expect(metrics.recallAt1).toBeCloseTo(4 / 6, 10);
+    expect(metrics.recallAt3).toBeCloseTo(5 / 6, 10);
+    expect(metrics.mrr).toBeCloseTo(0.75, 10);
+    expect(metrics.ndcgAt3).toBeCloseTo((4 + 1 / Math.log2(3)) / 6, 10);
   });
 });
 

@@ -1,0 +1,137 @@
+{
+  "benchmark": "matching-policy-regression-v1",
+  "evidenceKind": "hand-labeled synthetic mapped scores; not model/device embeddings",
+  "fixturePath": "tools/bench/matching-ranking-fixtures.v1.json",
+  "policy": {
+    "rawCosineCutoff": 0,
+    "categoryBonus": 0.15,
+    "maxResults": 3
+  },
+  "count": 6,
+  "metrics": {
+    "recallAt1": 0.6666666666666666,
+    "recallAt3": 0.8333333333333334,
+    "mrr": 0.75,
+    "ndcgAt3": 0.7718216255952429
+  },
+  "rows": [
+    {
+      "id": "semantic-over-category",
+      "relevantIds": [
+        "relevant"
+      ],
+      "rankedIds": [
+        "relevant",
+        "distractor"
+      ],
+      "scores": [
+        0.9,
+        0.75
+      ],
+      "metrics": {
+        "recallAt1": 1,
+        "recallAt3": 1,
+        "mrr": 1,
+        "ndcgAt3": 1
+      }
+    },
+    {
+      "id": "context-can-reorder",
+      "relevantIds": [
+        "relevant"
+      ],
+      "rankedIds": [
+        "relevant",
+        "distractor"
+      ],
+      "scores": [
+        0.97,
+        0.8
+      ],
+      "metrics": {
+        "recallAt1": 1,
+        "recallAt3": 1,
+        "mrr": 1,
+        "ndcgAt3": 1
+      }
+    },
+    {
+      "id": "negative-not-rescued-by-context",
+      "relevantIds": [
+        "relevant"
+      ],
+      "rankedIds": [
+        "relevant"
+      ],
+      "scores": [
+        0.65
+      ],
+      "metrics": {
+        "recallAt1": 1,
+        "recallAt3": 1,
+        "mrr": 1,
+        "ndcgAt3": 1
+      }
+    },
+    {
+      "id": "inclusive-zero-boundary",
+      "relevantIds": [
+        "boundary"
+      ],
+      "rankedIds": [
+        "boundary"
+      ],
+      "scores": [
+        0.65
+      ],
+      "metrics": {
+        "recallAt1": 1,
+        "recallAt3": 1,
+        "mrr": 1,
+        "ndcgAt3": 1
+      }
+    },
+    {
+      "id": "saturation-id-tie-limitation",
+      "relevantIds": [
+        "z-relevant"
+      ],
+      "rankedIds": [
+        "a-distractor",
+        "z-relevant"
+      ],
+      "scores": [
+        1,
+        1
+      ],
+      "metrics": {
+        "recallAt1": 0,
+        "recallAt3": 1,
+        "mrr": 0.5,
+        "ndcgAt3": 0.6309297535714575
+      }
+    },
+    {
+      "id": "top-three-recall-limitation",
+      "relevantIds": [
+        "relevant-fourth"
+      ],
+      "rankedIds": [
+        "d1",
+        "d2",
+        "d3"
+      ],
+      "scores": [
+        0.89,
+        0.8,
+        0.7
+      ],
+      "metrics": {
+        "recallAt1": 0,
+        "recallAt3": 0,
+        "mrr": 0,
+        "ndcgAt3": 0
+      }
+    }
+  ]
+}

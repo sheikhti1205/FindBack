@@ -1,0 +1,335 @@
+{
+  "benchmark": "ws6-golden-corpus",
+  "corpusVersion": "ws6-v1",
+  "modelRev": "skeleton-fake",
+  "runtimeRev": "skeleton-stub",
+  "appSha": "b472a24",
+  "createdAt": "2026-10-05T18:16:45.434Z",
+  "configs": {
+    "stub": {
+      "count": 12,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "mrr": 1,
+      "ndcgAt3": 1,
+      "meanLatencyMs": 0.9166666666666666,
+      "cases": [
+        {
+          "id": "tm-v1-01",
+          "rankedIds": [
+            "tm-v1-01-c1",
+            "tm-v1-01-c3",
+            "tm-v1-01-c2"
+          ],
+          "relevantIds": [
+            "tm-v1-01-c1"
+          ],
+          "latencyMs": 1
+        },
+        {
+          "id": "tm-v1-02",
+          "rankedIds": [
+            "tm-v1-02-c1",
+            "tm-v1-02-c3",
+            "tm-v1-02-c2"
+          ],
+          "relevantIds": [
+            "tm-v1-02-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-03",
+          "rankedIds": [
+            "tm-v1-03-c1",
+            "tm-v1-03-c2",
+            "tm-v1-03-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-03-c1"
+          ],
+          "latencyMs": 10
+        },
+        {
+          "id": "tm-v1-04",
+          "rankedIds": [
+            "tm-v1-04-c1",
+            "tm-v1-04-c2",
+            "tm-v1-04-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-04-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-05",
+          "rankedIds": [
+            "tm-v1-05-c1",
+            "tm-v1-05-c2",
+            "tm-v1-05-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-05-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-06",
+          "rankedIds": [
+            "tm-v1-06-c1",
+            "tm-v1-06-c3",
+            "tm-v1-06-c2"
+          ],
+          "relevantIds": [
+            "tm-v1-06-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-07",
+          "rankedIds": [
+            "tm-v1-07-c1",
+            "tm-v1-07-c3",
+            "tm-v1-07-c2"
+          ],
+          "relevantIds": [
+            "tm-v1-07-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-08",
+          "rankedIds": [
+            "tm-v1-08-c1",
+            "tm-v1-08-c2",
+            "tm-v1-08-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-08-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-09",
+          "rankedIds": [
+            "tm-v1-09-c1",
+            "tm-v1-09-c2",
+            "tm-v1-09-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-09-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-10",
+          "rankedIds": [
+            "tm-v1-10-c1",
+            "tm-v1-10-c2",
+            "tm-v1-10-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-10-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-11",
+          "rankedIds": [
+            "tm-v1-11-c1",
+            "tm-v1-11-c3",
+            "tm-v1-11-c2"
+          ],
+          "relevantIds": [
+            "tm-v1-11-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-12",
+          "rankedIds": [
+            "tm-v1-12-c1",
+            "tm-v1-12-c2",
+            "tm-v1-12-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-12-c1"
+          ],
+          "latencyMs": 0
+        }
+      ]
+    },
+    "fake": {
+      "count": 12,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "mrr": 1,
+      "ndcgAt3": 1,
+      "meanLatencyMs": 0.08333333333333333,
+      "cases": [
+        {
+          "id": "tm-v1-01",
+          "rankedIds": [
+            "tm-v1-01-c1",
+            "tm-v1-01-c3",
+            "tm-v1-01-c2"
+          ],
+          "relevantIds": [
+            "tm-v1-01-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-02",
+          "rankedIds": [
+            "tm-v1-02-c1",
+            "tm-v1-02-c2",
+            "tm-v1-02-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-02-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-03",
+          "rankedIds": [
+            "tm-v1-03-c1",
+            "tm-v1-03-c2",
+            "tm-v1-03-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-03-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-04",
+          "rankedIds": [
+            "tm-v1-04-c1",
+            "tm-v1-04-c2",
+            "tm-v1-04-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-04-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-05",
+          "rankedIds": [
+            "tm-v1-05-c1",
+            "tm-v1-05-c2",
+            "tm-v1-05-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-05-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-06",
+          "rankedIds": [
+            "tm-v1-06-c1",
+            "tm-v1-06-c2",
+            "tm-v1-06-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-06-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-07",
+          "rankedIds": [
+            "tm-v1-07-c1",
+            "tm-v1-07-c3",
+            "tm-v1-07-c2"
+          ],
+          "relevantIds": [
+            "tm-v1-07-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-08",
+          "rankedIds": [
+            "tm-v1-08-c1",
+            "tm-v1-08-c2",
+            "tm-v1-08-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-08-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-09",
+          "rankedIds": [
+            "tm-v1-09-c1",
+            "tm-v1-09-c2",
+            "tm-v1-09-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-09-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-10",
+          "rankedIds": [
+            "tm-v1-10-c1",
+            "tm-v1-10-c2",
+            "tm-v1-10-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-10-c1"
+          ],
+          "latencyMs": 1
+        },
+        {
+          "id": "tm-v1-11",
+          "rankedIds": [
+            "tm-v1-11-c1",
+            "tm-v1-11-c2",
+            "tm-v1-11-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-11-c1"
+          ],
+          "latencyMs": 0
+        },
+        {
+          "id": "tm-v1-12",
+          "rankedIds": [
+            "tm-v1-12-c1",
+            "tm-v1-12-c2",
+            "tm-v1-12-c3"
+          ],
+          "relevantIds": [
+            "tm-v1-12-c1"
+          ],
+          "latencyMs": 0
+        }
+      ]
+    }
+  },
+  "photoCases": {
+    "total": 6,
+    "executed": 8,
+    "status": "executed",
+    "report": {
+      "modelRev": "dad030b6e56756201d670cfb4d042736a2ce3a5c",
+      "runtimeRev": "litert-lm-cpu-host",
+      "meanOcrRecallTranscribe": 0.5724489795918367,
+      "loops": 2,
+      "forbiddenHits": 0
+    }
+  },
+  "memoryNote": "Harness note, not a device measurement: RSS/heap sampled from the Node bench process at end of run. On-device RAM budgets are owned by ModelProfile + evaluation measurements.",
+  "memory": {
+    "rssBytes": 53723136,
+    "heapUsedBytes": 5608440
+  }
+}

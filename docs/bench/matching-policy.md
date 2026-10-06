@@ -1,0 +1,71 @@
+# Frozen default matching policy — b472a24
+
+This is a transparent conservative default and a score-policy regression, **not
+device calibration, an accuracy probability, or a real-world quality claim**.
+No production ranking behavior or threshold changed in this pass.
+
+## Shipping policy
+
+`possibleMatches.ts` obtains/validates embeddings, calls `cosineSimilarity`, maps
+raw cosine `c` to `(c + 1) / 2`, and explicitly passes `MIN_COSINE_CUTOFF = 0.0`
+to `rankMatches`. The pre-bonus filter includes raw zero and rejects negative
+cosine even if context bonuses would otherwise rescue it. The standalone
+`rankMatches` utility preserves its legacy behavior: omitting a cutoff disables
+filtering. Do not mistake that utility default for the shipping caller policy.
+
+Scores are mapped cosine plus transparent bonuses:
+
+| Component | Frozen value / rule |
+|---|---|
+| Category | +0.15 on exact category equality |
+| Date | Up to +0.10; linear decay from same day to zero at 30 days |
+| Location | +0.10 within 5 km; linear decay to zero at 20 km (Haversine) |
+| Missing date/coordinates | No corresponding bonus |
+| Final score | Clamp to [0, 1]; similarity, never probability |
+| Sort / cap | Descending final score, ascending id on ties; at most 3 |
+
+Saturation can erase semantic distinctions and favor an unrelated lower id.
+The three-card cap can omit a relevant fourth candidate. The conservative
+cutoff also admits raw-zero candidates: these are **possible matches**, not
+verified matches. These limitations are deliberately retained and measured in
+the synthetic regressions rather than masked with perfect-fixture scores.
+
+## Evidence tiers
+
+1. Existing `tools/bench/corpus.v1.json` contains labeled synthetic text pairs
+   (object/color/identifying-detail distractors). Run the existing `runBench.mjs`
+   unchanged to compare its token-overlap `stub` and category-boosted `fake`
+   rankers. These are not the shipping ranker or native embeddings. Its photo
+   section aggregates a historical report; it is **not fresh execution** here.
+2. `tools/bench/matching-ranking-fixtures.v1.json` pins six hand-labeled
+   synthetic score cases: semantic-vs-category, context reorder, pre-bonus
+   rejection, inclusive zero boundary, saturation tie, and top-three miss.
+   `run-matching-regression.mjs` executes the actual TS ranker and metric
+   functions. Tests also reverse candidate order to check determinism.
+   Expected macro metrics: Recall@1 = 4/6, Recall@3 = 5/6, MRR = 0.75,
+   nDCG@3 = `(4 + 1/log2(3))/6`. Scores are chosen test inputs, not measurements
+   from a model. CI regression cannot validate embedding quality.
+3. Device/native calibration remains outstanding. The tracked probe source
+   `tools/bench/embed-probe.c` emits dimensions, norms and only the first three
+   coordinates, not full vectors. The local model and static engine exist,
+   but no runnable embedding probe is provisioned; `needle-cli --help` exposes
+   completion/tool-index operations, not a full-vector embedding operation.
+   Compiling a new bridge/probe is outside this no-build pass. No real native
+   ranking vectors were measured here. **The DEVICE-CALIBRATION TODO remains.**
+
+Before raising the cutoff: provision a full-vector adapter, record model and
+runtime revisions and vector validity, run diverse labeled positives/hard
+negatives (including language, missing-context and category-mismatch cases),
+compare cutoff sweeps against the pinned default, and measure on the target
+device. Do not substitute hand-authored vectors or desktop resource figures.
+
+## Reproduce without building
+
+```sh
+node tools/bench/runBench.mjs --corpus tools/bench/corpus.v1.json --out docs/bench/corpus-v1-comparison.json --app-sha b472a24
+node --experimental-strip-types tools/bench/run-matching-regression.mjs docs/bench/matching-regression-v1.json
+npm run test -w apps/mobile -- src/services/similarity.test.ts src/services/similarity.metrics.test.ts
+```
+
+Node's type stripping runs the real TS module without compiling an app or
+emitting build output. Reports are checked into this evidence directory only.
