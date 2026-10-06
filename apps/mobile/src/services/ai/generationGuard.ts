@@ -13,10 +13,17 @@
  * - Output-pattern taxonomy: sentence_loop = same sentence 3+ times,
  *   paragraph_loop = same block 2+ times.
  *
- * The guard owns the generation deadline, but the production timeout budget
- * is an explicit TBD (evaluation measurements + ModelProfile): `deadlineMs`
- * has NO default and must be supplied by the caller. SLOW is latency only,
- * never an error.
+ * Ownership: fault-lab/test orchestration only. At b472a24 no production
+ * module imports this guard; shipping narrow ops use normalize.ts and their
+ * own AiResult/AiError/action contracts. GuardResult/GuardError below are
+ * deliberately the lab provider/exception seam, not a shipping AiResult API.
+ *
+ * Deadline policy: the caller owns the budget and explicitly opts into a
+ * guard timer with `deadlineMs`. Omission disables ONLY this guard's timer
+ * (provider deadlines still apply). There is no inferred device/model budget.
+ * A future production caller must choose a measured task budget and adapt the
+ * shared AiResult/AiError/action contract before importing this lab module.
+ * SLOW is latency only, never an error.
  */
 import { GuardError, errorClassForMode } from "./errors";
 import type { AiErrorClass } from "./testing/FakeAiProvider";
@@ -24,9 +31,8 @@ import { FakeAiError, REFUSAL_TEXT, diagnosticCodeForMode, extractSingleJsonObje
 import type { FaultMode } from "./testing/FakeAiProvider";
 
 /**
- * TODO: rewire to services/ai/types.ts (contract module now available).
- * Minimal local seam for the action allowlist the application contract will
- * own. Absent a policy the guard fails closed: any `action` field the
+ * Lab-owned caller policy, not the shipping ACTIONS/AssistantAction contract.
+ * Absent a policy the guard fails closed: any `action` field the
  * caller cannot vouch for is UNSUPPORTED_ACTION with no side effects.
  */
 export interface GuardActionPolicy {
@@ -261,9 +267,9 @@ export function isRefusal(text: string): boolean {
 export interface ClassifyOptions {
   /** True for photo/structured requests expecting one JSON object. */
   expectStructured: boolean;
-   /** Strict schema/enum check on the extracted object (contract shape TBD). */
+   /** Caller-owned schema/enum check on the extracted object. */
   validate?: (value: unknown) => boolean;
-   /** Action allowlist seam; absent fails closed (TODO above). */
+   /** Lab action allowlist seam; absent fails closed. */
   actionPolicy?: GuardActionPolicy;
 }
 
@@ -429,9 +435,9 @@ export interface GuardedCallOptions extends ClassifyOptions {
   maxOutputTokens?: number;
   temperature?: number;
   /**
-   * Guard-owned generation deadline. No default: the production budget is
-   * TBD (evaluation measurements + ModelProfile) — callers pass it
-   * explicitly. Omitted means no guard timeout.
+   * Caller-selected deadline enforced by the guard, per attempt. No default:
+   * omitted means no guard timeout. A guard deadline aborts with TIMEOUT and
+   * suppresses automatic retry; a provider TIMEOUT can still get one retry.
    */
   deadlineMs?: number;
   signal?: AbortSignal;

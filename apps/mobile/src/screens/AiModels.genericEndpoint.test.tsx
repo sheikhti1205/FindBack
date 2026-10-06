@@ -25,6 +25,7 @@ afterEach(() => {
 });
 
 function renderModels(accountId: string) {
+  localStorage.setItem(`findback.ai.experimentalProviders.v1.${accountId}`, "true");
   return render(
     <MemoryRouter>
       <AiModels accountId={accountId} listCatalog={async () => []} />

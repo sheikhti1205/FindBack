@@ -164,7 +164,9 @@ describe("AiConnection catalogue (M2)", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText(/Not yet tested on this account/i)).toBeTruthy();
-    // OpenAI, Anthropic, Google and DeepSeek all advertise BYOK on this screen.
+    expect(screen.queryByText(/bring-your-own-key is supported/i)).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Experimental providers" }));
+    // Unproven adapters are only advertised after explicit opt-in.
     expect(screen.getAllByText(/bring-your-own-key is supported/i)).toHaveLength(4);
   });
 

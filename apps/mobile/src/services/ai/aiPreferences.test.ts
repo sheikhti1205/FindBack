@@ -5,6 +5,7 @@ import {
   aiPreferencesKey,
   createAssistantModelBinding,
   EFFECTIVE_PHOTO_ENGINE_KEY,
+  effectivePhotoEngine,
   isNeedleSelectable,
   legacyAssistantModeToPreference,
   loadAiPreferences,
@@ -23,6 +24,12 @@ afterEach(() => {
 });
 
 describe("aiPreferences store (Lane A)", () => {
+  it("a first model edit preserves the legacy on-device privacy pin", () => {
+    localStorage.setItem("findback.ai.assistantMode.v1.acct-legacy", "offline-only");
+    updateAiPreferences("acct-legacy", { preferredAssistantModel: "openrouter/free" });
+    expect(loadEffectiveAssistantMode("acct-legacy")).toBe("offline-only");
+    expect(loadAiPreferences("acct-legacy").preferredAssistantModel).toBe("openrouter/free");
+  });
   it("defaults to automatic engines with no preferred model (Automatic → free-only default)", () => {
     const prefs = loadAiPreferences("acct-new");
     expect(prefs).toEqual(AI_PREFERENCES_DEFAULTS);
@@ -127,5 +134,17 @@ describe("aiPreferences store (Lane A)", () => {
   it("reads the safe default when neither store has a value", () => {
     expect(loadSeededAiPreferences("acct-fresh").assistantMode).toBe("automatic");
     expect(loadEffectiveAssistantMode("acct-fresh")).toBe("auto");
+  });
+
+  it("lets the assistant mode override the photo engine (on-device-only forbids cloud fallback)", () => {
+    updateAiPreferences("acct-photo", { assistantMode: "on-device-only", photoEngine: "automatic" });
+    expect(effectivePhotoEngine("acct-photo")).toBe("on-device-only");
+    updateAiPreferences("acct-photo", { assistantMode: "cloud-only", photoEngine: "on-device-only" });
+    expect(effectivePhotoEngine("acct-photo")).toBe("cloud-only");
+    // Under automatic the account's own photoEngine choice applies.
+    updateAiPreferences("acct-photo", { assistantMode: "automatic", photoEngine: "cloud-only" });
+    expect(effectivePhotoEngine("acct-photo")).toBe("cloud-only");
+    // Never crosses accounts.
+    expect(effectivePhotoEngine("acct-other-photo")).toBe("automatic");
   });
 });

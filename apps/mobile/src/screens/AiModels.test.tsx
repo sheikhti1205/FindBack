@@ -50,7 +50,8 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-function renderModels(extra: Record<string, unknown> = {}) {
+function renderModels(extra: Record<string, unknown> = {}, experimental = true) {
+  if (experimental) localStorage.setItem("findback.ai.experimentalProviders.v1.u1", "true");
   return render(
     <MemoryRouter>
       <AiModels accountId="u1" listCatalog={async () => [FREE_ROW, PAID_ROW]} {...extra} />
@@ -59,17 +60,26 @@ function renderModels(extra: Record<string, unknown> = {}) {
 }
 
 describe("AiModels control center (AI-022)", () => {
+  it("offers all three truthful modes and keeps unproven remote providers off by default", async () => {
+    renderModels({}, false);
+    expect(screen.getByRole("radio", { name: /on-device only/i })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /automatic/i })).toBeTruthy();
+    await screen.findByTestId("ai-provider-openrouter");
+    expect(screen.queryByTestId("ai-provider-openai")).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Experimental providers" }));
+    expect(await screen.findByTestId("ai-provider-openai")).toBeTruthy();
+    expect(screen.queryByText(/offline-first remains hidden/i)).toBeNull();
+  });
   it("renders assistant modes, honest offline status, one card per vault slot, and the price-visible catalogue", async () => {
     renderModels();
     expect(screen.getByRole("radiogroup", { name: /assistant mode/i })).toBeTruthy();
-    // Beta scope: only the two modes this build can honor are selectable.
-    for (const label of ["Auto", "Cloud-only"]) {
+    for (const label of ["Automatic", "On-device only", "Cloud only"]) {
       expect(screen.getByRole("radio", { name: new RegExp(label) })).toBeTruthy();
     }
     for (const label of ["Offline-first", "Offline-only"]) {
       expect(screen.queryByRole("radio", { name: new RegExp(label) })).toBeNull();
     }
-    // Offline modes are shown as an informational, non-actionable note.
+    // Platform requirements are still disclosed alongside usable mode controls.
     expect(screen.getByTestId("ai-offline-mode-note").textContent).toMatch(
       /requires the Android app.*checksum-verified/i,
     );
@@ -90,7 +100,7 @@ describe("AiModels control center (AI-022)", () => {
 
   it("persists the assistant mode per account in the authoritative store (no legacy writes)", async () => {
     renderModels();
-    const cloudOnly = screen.getByRole("radio", { name: /cloud-only/i });
+    const cloudOnly = screen.getByRole("radio", { name: /cloud only/i });
     fireEvent.click(cloudOnly);
     expect(loadAiPreferences("u1").assistantMode).toBe("cloud-only");
     // The legacy key is migration-source only: choosing a mode must not
@@ -100,7 +110,7 @@ describe("AiModels control center (AI-022)", () => {
     cleanup();
     renderModels();
     expect(
-      screen.getByRole("radio", { name: /cloud-only/i }).getAttribute("aria-checked"),
+      screen.getByRole("radio", { name: /cloud only/i }).getAttribute("aria-checked"),
     ).toBe("true");
   });
 
@@ -110,7 +120,7 @@ describe("AiModels control center (AI-022)", () => {
     expect(screen.getByTestId("ai-offline-mode-active").textContent).toMatch(/not\s+available/i);
     // The privacy choice is preserved, never rewritten to a network mode.
     expect(window.localStorage.getItem(assistantModeKey("u1"))).toBe("offline-only");
-    expect(screen.queryByRole("radio", { name: /cloud-only/i })?.getAttribute("aria-checked")).toBe(
+    expect(screen.queryByRole("radio", { name: /cloud only/i })?.getAttribute("aria-checked")).toBe(
       "false",
     );
   });

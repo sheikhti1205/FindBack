@@ -198,12 +198,26 @@ export function updateAiPreferences(
   accountId: string,
   patch: Partial<AiPreferences>,
 ): AiPreferences {
-  return saveAiPreferences(accountId, { ...loadAiPreferences(accountId), ...patch });
+  return saveAiPreferences(accountId, { ...loadSeededAiPreferences(accountId), ...patch });
 }
 
 /** Clear this account's preferences back to the safe defaults. */
 export function resetAiPreferences(accountId: string): AiPreferences {
   return saveAiPreferences(accountId, { ...AI_PREFERENCES_DEFAULTS });
+}
+
+/**
+ * The photo engine a send must actually honor for this account: the
+ * assistant mode is authoritative, so `on-device-only` forbids the photo
+ * cloud fallback and `cloud-only` skips local inference. Under `automatic`
+ * the account's own `photoEngine` choice applies (local-first with consented
+ * fallback). Keeps UI consent copy and the real transport in agreement.
+ */
+export function effectivePhotoEngine(accountId: string): PhotoEnginePreference {
+  const prefs = loadSeededAiPreferences(accountId);
+  if (prefs.assistantMode === "on-device-only") return "on-device-only";
+  if (prefs.assistantMode === "cloud-only") return "cloud-only";
+  return prefs.photoEngine;
 }
 
 /**
@@ -269,7 +283,7 @@ export type AssistantModelBinding = {
  */
 export function createAssistantModelBinding(accountId: string): AssistantModelBinding {
   return {
-    selectedId: loadAiPreferences(accountId).preferredAssistantModel,
+    selectedId: loadSeededAiPreferences(accountId).preferredAssistantModel,
     onSelectModel: (modelId: string) => {
       if (!isModelId(modelId)) return;
       updateAiPreferences(accountId, { preferredAssistantModel: modelId });

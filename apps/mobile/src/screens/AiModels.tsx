@@ -7,6 +7,8 @@ import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
 import { announce } from "../components/LiveRegion";
 import { aiCredentials, SUPPORTED_AI_PROVIDERS } from "../services/aiCredentials";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
+import { EXPERIMENTAL_PROVIDER_NOTICE, experimentalProvidersEnabled, isExperimentalProvider, isProviderEnabled, setExperimentalProvidersEnabled } from "../services/ai/providerStatus";
+export { LIVE_TESTED_PROVIDERS, isExperimentalProvider } from "../services/ai/providerStatus";
 import {
   GENERIC_ENDPOINT_MISSING_COPY,
   GENERIC_HTTP_LOOPBACK_COPY,
@@ -60,35 +62,30 @@ import { getApplicationAi } from "../services/ai/applicationAi";
  * Persisted per account; Help honors it at send time (offline-only fails
  * closed with no network). Unknown stored values fall back to `auto`.
  *
- * Android offers offline-only for explicitly installed compatible models.
- * Offline-first stays hidden; stored offline modes are never silently relaxed
- * to permit network sends. Web exposes Auto and Cloud-only with honest refusal
- * for a stale offline selection.
+ * Legacy vocabulary is retained only for migration compatibility. The UI
+ * offers three modes, with on-device-only failing closed on unsupported web.
  */
 export type AssistantMode = "auto" | "offline-first" | "offline-only" | "cloud-only";
+type EffectiveAssistantMode = ReturnType<typeof preferenceToAssistantMode>;
 
-/** Selectable modes in this build. Offline modes are informational only (see OFFLINE_BETA_COPY). */
-export const ASSISTANT_MODES: readonly AssistantMode[] = ["auto", "cloud-only"];
+/** Three transport modes; offline-first is a legacy migration value only. */
+export const ASSISTANT_MODES: readonly EffectiveAssistantMode[] = ["auto", "offline-only", "cloud-only"];
 
-/** Informational (non-actionable) stand-in for the offline modes this build cannot honor. */
+/** Honest platform requirement; no dormant fourth mode is advertised. */
 export const OFFLINE_BETA_COPY =
-  "On-device AI requires the Android app and an installed, checksum-verified model. Offline-first remains hidden pending product validation; Offline-only blocks cloud sends. Web on-device AI is not available.";
+  "On-device AI requires the Android app and an installed, checksum-verified model. On-device only never sends to cloud; on web it refuses instead. Needle extracts structured text; SmolVLM2 answers approved image questions.";
 
-const ASSISTANT_MODE_COPY: Record<AssistantMode, { label: string; detail: string }> = {
+const ASSISTANT_MODE_COPY: Record<EffectiveAssistantMode, { label: string; detail: string }> = {
   auto: {
-    label: "Auto",
-    detail: "The picked model decides. No transport is forced or refused.",
-  },
-  "offline-first": {
-    label: "Offline-first",
-    detail: "On-device answers are preferred wherever one is ready.",
+    label: "Automatic",
+    detail: "Uses a compatible installed on-device model first. Text may fall back to a connected cloud model if local AI is unavailable or fails; cancellation never falls back.",
   },
   "offline-only": {
-    label: "Offline-only",
+    label: "On-device only",
     detail: "Never uses the network for answers. Cloud models refuse without sending anything.",
   },
   "cloud-only": {
-    label: "Cloud-only",
+    label: "Cloud only",
     detail: "Never attempts on-device answers. Offline rows refuse without running anything.",
   },
 };
@@ -130,7 +127,7 @@ export function loadAssistantMode(accountId: string): AssistantMode {
   return "auto";
 }
 
-/** True for the on-device modes this build cannot honor yet. */
+/** Legacy-mode classifier retained for migration callers. */
 export function isOfflineMode(mode: AssistantMode): boolean {
   return mode === "offline-first" || mode === "offline-only";
 }
@@ -187,17 +184,6 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   generic: "Custom endpoint",
   offline: "On-device",
 };
-
-/**
- * Providers whose end-to-end send path has been live-verified for this beta.
- * Everything else is surfaced with an "Experimental" marker so testers know the
- * adapter is wired and vault-backed but a real-key send is not yet proven.
- */
-export const LIVE_TESTED_PROVIDERS: readonly ProviderId[] = ["openrouter"];
-
-export function isExperimentalProvider(provider: ProviderId): boolean {
-  return !LIVE_TESTED_PROVIDERS.includes(provider);
-}
 
 /**
  * Providers whose ENTIRE loaded catalogue is unknown-priced. Unknown price is
@@ -405,8 +391,11 @@ export function AiModels({
 }: AiModelsProps) {
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
+  const [, refreshExperimental] = useState(0);
+  const experimental = experimentalProvidersEnabled(account);
+  const enabledProviders = SUPPORTED_AI_PROVIDERS.filter((provider) => isProviderEnabled(account, provider));
 
-  const [mode, setMode] = useState<AssistantMode>(() =>
+  const [mode, setMode] = useState<EffectiveAssistantMode>(() =>
     preferenceToAssistantMode(loadSeededAiPreferences(account).assistantMode),
   );
   // Lane A: single account-scoped preference source of truth, owned by Settings.
@@ -449,7 +438,7 @@ export function AiModels({
     setSlotsLoading(true);
     const read = async () => {
       const next: Record<string, SlotState> = {};
-      for (const provider of SUPPORTED_AI_PROVIDERS) {
+      for (const provider of SUPPORTED_AI_PROVIDERS.filter((provider) => isProviderEnabled(account, provider))) {
         try {
           const handle = aiCredentials.credentialHandle(account, provider);
           const [key, saved] = await Promise.all([
@@ -474,7 +463,7 @@ export function AiModels({
     return () => {
       alive = false;
     };
-  }, [account]);
+  }, [account, experimental]);
 
   // Platform availability comes from the actual registry seam; normalize web
   // refusal so internal errors never leak into user-facing status.
@@ -498,14 +487,14 @@ export function AiModels({
         if (listCatalog !== undefined) {
           const records = await listCatalog();
           if (alive) {
-            setCatalog(records);
+            setCatalog(records.filter((record) => isProviderEnabled(account, record.provider)));
             setRetrievedAt(records[0]?.retrievedAt ?? new Date().toISOString());
           }
           return;
         }
         const cloudRecords = await loadAuthorizedCatalog({
           accountId: account,
-          providers: SUPPORTED_AI_PROVIDERS,
+          providers: SUPPORTED_AI_PROVIDERS.filter((provider) => isProviderEnabled(account, provider)),
           hasCredential: async (provider: ProviderId) => {
             try {
               return await aiCredentials.hasCredential(
@@ -548,9 +537,9 @@ export function AiModels({
     return () => {
       alive = false;
     };
-  }, [account, listCatalog, offlineStatus?.checksumVerified]);
+  }, [account, listCatalog, offlineStatus?.checksumVerified, experimental]);
 
-  function chooseMode(next: AssistantMode) {
+  function chooseMode(next: EffectiveAssistantMode) {
     // Single authoritative write: prefs own the mode. No legacy mirrored
     // write — the legacy key is migration-source only (P1 single-store fix).
     const saved = updateAiPreferences(account, {
@@ -575,7 +564,7 @@ export function AiModels({
 
   async function refreshSlots() {
     const next: Record<string, SlotState> = {};
-    for (const provider of SUPPORTED_AI_PROVIDERS) {
+    for (const provider of enabledProviders) {
       try {
         const handle = aiCredentials.credentialHandle(account, provider);
         const [key, saved] = await Promise.all([
@@ -734,7 +723,8 @@ export function AiModels({
   // Paid rows are never offered here — they need explicit per-model consent
   // on the Cloud connections screen (Settings → AI & intelligence → Cloud
   // connections), which persists the choice on confirm.
-  const assistantFreeRows = catalog.filter((record) => record.priceClass === "free");
+  const visibleCatalog = catalog.filter((record) => isProviderEnabled(account, record.provider));
+  const assistantFreeRows = visibleCatalog.filter((record) => record.priceClass === "free");
   const needleReady = isNeedleSelectable(needleEvidence);
 
   // WS-E: visibility gates consume measured evidence only (no guessing).
@@ -767,7 +757,7 @@ export function AiModels({
       <section aria-label="Assistant mode" className="flex flex-col gap-2">
         <h2 className="text-base font-semibold">Assistant mode</h2>
         <div role="radiogroup" aria-label="Assistant mode" className="flex flex-col gap-2">
-           {(offlineDownload === null ? ASSISTANT_MODES : ["auto", "offline-only", "cloud-only"] as const).map((option) => {
+           {ASSISTANT_MODES.map((option) => {
             const checked = mode === option;
             return (
               <button
@@ -803,8 +793,8 @@ export function AiModels({
             className="text-xs text-error"
           >
              {offlineDownload === null
-               ? `${ASSISTANT_MODE_COPY[mode].label} is set on this account, but on-device AI is not available here; cloud sends remain blocked in Offline-only.`
-               : `${ASSISTANT_MODE_COPY[mode].label} is set. Pick an installed on-device row in Help; Offline-only never sends to cloud.`}
+                ? `${ASSISTANT_MODE_COPY[mode].label} is set on this account, but on-device AI is not available here; cloud sends remain blocked.`
+                : `${ASSISTANT_MODE_COPY[mode].label} is set. Help automatically picks a compatible installed on-device model; cloud sends remain blocked.`}
           </p>
         ) : null}
       </section>
@@ -952,13 +942,22 @@ export function AiModels({
 
       <section aria-label="Cloud providers" className="flex flex-col gap-3">
         <h2 className="text-base font-semibold">Cloud providers</h2>
+        <label className="flex min-h-[48px] items-center gap-3 text-sm">
+          <input type="checkbox" checked={experimental} aria-describedby="models-experimental-notice" onChange={(event) => {
+            setExperimentalProvidersEnabled(account, event.target.checked);
+            refreshExperimental((value) => value + 1);
+            announce(`Experimental providers ${event.target.checked ? "enabled" : "disabled"}.`);
+          }} />
+          Experimental providers
+        </label>
+        <p id="models-experimental-notice" className="text-xs text-on-surface-variant">{EXPERIMENTAL_PROVIDER_NOTICE}</p>
         {slotsLoading ? (
           <p role="status" className="text-sm text-on-surface-variant">
             Reading saved keys…
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {SUPPORTED_AI_PROVIDERS.map((provider) => {
+             {enabledProviders.map((provider) => {
               const slot = slots[provider] ?? { connected: false, saved: false, masked: null };
               const probe = probes[provider] ?? IDLE_PROBE;
               const generic = provider === "generic";
@@ -1138,7 +1137,7 @@ export function AiModels({
           </p>
         ) : null}
         {catalog.length > 0 ? (
-          <ModelCatalogSheet models={catalog} retrievedAt={retrievedAt} offlineDetail={offlineDetail} />
+          <ModelCatalogSheet models={visibleCatalog} retrievedAt={retrievedAt} offlineDetail={offlineDetail} />
         ) : null}
       </section>
     </main>

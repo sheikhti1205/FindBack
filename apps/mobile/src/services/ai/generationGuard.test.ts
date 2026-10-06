@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   SessionHealthTracker,
   classifyTextOutput,
@@ -410,6 +410,29 @@ describe("session health", () => {
 });
 
 describe("R3 interrupt", () => {
+  it("omitting deadlineMs never invents a guard budget", async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (result: GuardResult) => void;
+      let signal: AbortSignal | undefined;
+      const provider = textProvider("unused");
+      provider.generateText = (_request, nextSignal) => {
+        signal = nextSignal;
+        return new Promise((resolve) => { finish = resolve; });
+      };
+      let settled = false;
+      const pending = guardedGenerate({ provider, kind: "text", expectStructured: false });
+      void pending.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(settled).toBe(false);
+      expect(signal?.aborted).toBe(false);
+      finish({ text: "Open the Report tab.", modelId: "lab" });
+      await expect(pending).resolves.toMatchObject({ attempts: 1, retried: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("interrupts via AbortSignal where the runtime allows it", () => {
     const linked = new AbortController();
     const guard = createGuardController(linked.signal);

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Help, refuseHelpSend } from "./Help";
 import { assistantModeKey } from "./AiModels";
+import { updateAiPreferences } from "../services/ai/aiPreferences";
 import { resetBackInterceptors } from "../components/backNavigation";
 import type { ModelRecord, ProviderAdapter, StreamEvent } from "../services/ai/providerContract";
 
@@ -162,7 +163,36 @@ describe("refuseHelpSend gate (G12)", () => {
 });
 
 describe("Help G12 per-send binding", () => {
+  it("revoking experimental opt-in disables an already-picked remote model before any key read", async () => {
+    localStorage.setItem("findback.ai.experimentalProviders.v1.u-g12", "true");
+    const getKey = vi.fn(async () => "forbidden");
+    renderHelp({ getKey, listCatalog: async () => [FREE_ROW, GROQ_FREE_ROW], createAdapter: () => cannedAdapter("must not send") });
+    await pickRow(1);
+    localStorage.setItem("findback.ai.experimentalProviders.v1.u-g12", "false");
+    send("Private text");
+    await screen.findByText(/experimental provider is disabled/i);
+    expect(getKey).not.toHaveBeenCalled();
+  });
+
+  it("Help hides unproven remote picker rows when experimental providers are off", async () => {
+    renderHelp({ listCatalog: async () => [FREE_ROW, GROQ_FREE_ROW] });
+    fireEvent.click(screen.getByRole("button", { name: /choose model/i }));
+    await waitFor(() => expect(screen.queryByText(/refreshing the catalogue/i)).toBeNull());
+    expect(screen.queryByText("groq/free-row")).toBeNull();
+    expect(screen.getByText("openrouter/free")).toBeTruthy();
+  });
+  it("a persisted paid model cannot bypass catalogue/price checks when the picker never opened", async () => {
+    localStorage.setItem("findback.ai.experimentalProviders.v1.u-g12", "true");
+    updateAiPreferences("u-g12", { assistantMode: "cloud-only", preferredAssistantModel: PAID_ROW.id });
+    const getKey = vi.fn(async () => "must not read");
+    renderHelp({ getKey, createAdapter: () => cannedAdapter("must never send"), listCatalog: async () => [FREE_ROW, PAID_ROW] });
+    send("Hello?");
+    await screen.findByText(/needs explicit per-model/i);
+    expect(getKey).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Ask the Help & FAQ")).toHaveProperty("value", "Hello?");
+  });
   it("sends a non-openrouter row with that row's provider and model (never the stale openrouter hardwire)", async () => {
+    localStorage.setItem("findback.ai.experimentalProviders.v1.u-g12", "true");
     const seen: unknown[] = [];
     const spy: ProviderAdapter = {
       ...cannedAdapter("Groq says hi."),

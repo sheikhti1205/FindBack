@@ -1,25 +1,26 @@
 /**
  * Live narrow-task transport (local-first with cloud fallback).
  *
- * Mirrors the shipped photo path (analyzeReportPhoto.ts /
- * analyzeReportPhotoLocal.ts): on-device `route(...)` is the DEFAULT engine
- * and OpenRouter cloud text is the fallback. Suggestions only — nothing here
- * publishes, writes drafts, or auto-applies.
+ * Automatic tries on-device `route(...)` before OpenRouter cloud text.
+ * On-device only never reads a cloud key; cloud only skips local inference.
+ * Suggestions only — nothing here publishes, writes drafts, or auto-applies.
  *
  * - `generateLocalFirst(taskId, prompt)`: routes one task via
  *   `getApplicationAi().route(taskId, { prompt }, { traceId, consent: true })`.
  *   A non-ok route throws `Error(result.error)`; a string value passes
  *   through as-is, any other value is JSON-stringified for the op parsers.
  *   AbortError always propagates (never swallowed, never falls back).
- * - Cloud `GenerateFn`: `createOpenRouterClient(getConnectedOpenRouterKey)`
- *   `.text(prompt, { signal })`. A missing key surfaces honestly as
- *   MISSING_KEY from the transport.
- * - `liveGenerateFor(taskId)`: try local; on non-abort failure fall back to
- *   cloud; an abort never touches the network.
+ * - Cloud transport captures the authenticated account, checks privacy and
+ *   cancellation around asynchronous key access, then uses the free route.
+ *   A missing key surfaces honestly as MISSING_KEY from the transport.
+ * - `liveGenerateFor(taskId)` resolves the current account's mode each call;
+ *   cancellation and account changes never authorize cloud fallback.
  */
 import { getApplicationAi } from "./ai/applicationAi";
 import { createOpenRouterClient } from "./openRouter";
-import { getConnectedOpenRouterKey } from "./aiCredentials";
+import { aiCredentials } from "./aiCredentials";
+import { getSupabase } from "./supabaseClient";
+import { loadSeededAiPreferences } from "./ai/aiPreferences";
 import { profileFor } from "./ai/modelProfiles";
 import type { AiTaskId, GenerateFn } from "./ai/types";
 import { extractNlFilters, type NlFilterPatch } from "./search/nlFilters";
@@ -62,7 +63,10 @@ export async function generateLocalFirst(
       { traceId: crypto.randomUUID(), consent: true },
     );
   if (opts?.signal?.aborted) throw abortError();
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) {
+    if (/cancel|abort/i.test(result.error) || /cancel|abort/i.test(result.state)) throw abortError();
+    throw new Error(result.error);
+  }
   const value = (result as { value?: unknown }).value;
   return typeof value === "string" ? value : JSON.stringify(value);
 }
@@ -70,8 +74,34 @@ export async function generateLocalFirst(
 /** Cloud text transport. Missing keys surface honestly (MISSING_KEY). */
 export const generateCloud: GenerateFn = async (prompt, genOpts) => {
   const signal = (genOpts as unknown as { signal?: AbortSignal } | undefined)?.signal;
-  return createOpenRouterClient(getConnectedOpenRouterKey).text(prompt, { signal });
+  const account = await authenticatedAccount();
+  return generateCloudForAccount(account, prompt, signal);
 };
+
+async function authenticatedAccount(): Promise<string | null> {
+  const { data, error } = await getSupabase().auth.getSession();
+  if (error) throw error;
+  return data.session?.user.id ?? null;
+}
+
+/** Capture the owning account before asynchronous local work; never retarget a send. */
+export async function generateCloudForAccount(account: string | null, prompt: string, signal?: AbortSignal): Promise<string> {
+  const assertCloudAllowed = async () => {
+    if (signal?.aborted) throw abortError();
+    const currentAccount = await authenticatedAccount();
+    if (signal?.aborted) throw abortError();
+    if (!account || currentAccount !== account) throw new Error("AI account changed or is not authenticated.");
+    if (loadSeededAiPreferences(account).assistantMode === "on-device-only") throw new Error("On-device only: cloud is disabled.");
+  };
+  await assertCloudAllowed();
+  if (!account) throw new Error("AI account is not authenticated.");
+  return createOpenRouterClient(async () => {
+    await assertCloudAllowed();
+    const key = await aiCredentials.get(account, "openrouter");
+    await assertCloudAllowed();
+    return key;
+  }).text(prompt, { signal });
+}
 
 /**
  * Live `GenerateFn` for one narrow task: local first, cloud fallback on any
@@ -82,11 +112,16 @@ export function liveGenerateFor(taskId: LiveNarrowTaskId): GenerateFn {
   return async (prompt, genOpts) => {
     const signal = (genOpts as unknown as { signal?: AbortSignal } | undefined)?.signal;
     if (signal?.aborted) throw abortError();
+    const account = await authenticatedAccount();
+    if (signal?.aborted) throw abortError();
+    const mode = loadSeededAiPreferences(account ?? "local").assistantMode;
+    if (mode === "cloud-only") return generateCloudForAccount(account, prompt, signal);
     try {
       return await generateLocalFirst(taskId, prompt, { signal });
     } catch (error) {
-      if (isAbort(error) || signal?.aborted) throw error;
-      return generateCloud(prompt, genOpts);
+      if (signal?.aborted) throw abortError();
+      if (isAbort(error) || mode === "on-device-only") throw error;
+      return generateCloudForAccount(account, prompt, signal);
     }
   };
 }

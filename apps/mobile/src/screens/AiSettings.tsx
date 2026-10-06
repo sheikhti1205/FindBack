@@ -22,7 +22,7 @@ type CloudState = "unknown" | "connected" | "not-connected";
  * read/write the single authoritative account-scoped store
  * (`aiPreferences.assistantMode`, no new semantics), the cloud summary is a
  * read-only look at the OpenRouter vault slot, and every row routes to a
- * detail screen the integrator mounts. Offline-first is never offered here.
+ * detail screen the integrator mounts. Automatic is local-first.
  * A legacy stored offline-first value migrates to on-device-only (fail
  * closed), which IS offered, so no hidden-value note is needed.
  */
@@ -70,7 +70,7 @@ export function AiSettings({ accountId }: { accountId?: string }) {
   return (
     <SettingsPage
       title="AI & intelligence"
-      description="On-device tools and cloud connections. Everything here works without technical setup."
+      description="Downloaded on-device tools and optional cloud connections. Core features work without AI setup."
       backTo="/settings"
     >
       <SettingsGroup
@@ -160,11 +160,11 @@ type OfferedMode = AssistantModePreference;
 const MODE_COPY: Record<OfferedMode, { label: string; detail: string }> = {
   automatic: {
     label: "Automatic",
-    detail: "FindBack picks the safest available option.",
+    detail: "On-device first when compatible tools are downloaded. Text can fall back to a connected cloud model if local AI is unavailable or fails. Stopping never sends to cloud.",
   },
   "on-device-only": {
     label: "On-device only",
-    detail: "Answers stay on this phone. Needs downloaded on-device tools.",
+    detail: "Answers stay on this phone. Needs the Android app and downloaded on-device tools; otherwise the request is refused. Never sends to cloud.",
   },
   "cloud-only": {
     label: "Cloud only",

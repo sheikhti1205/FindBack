@@ -60,8 +60,18 @@ function gpuProbe(): ProbeRecord {
 describe("AiAdvanced diagnostics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
   });
   afterEach(cleanup);
+
+  it("advanced provider checks also require default-off experimental opt-in", () => {
+    render(<MemoryRouter><AiAdvanced /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: /test openrouter/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /test openai/i })).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Experimental providers" }));
+    expect(screen.getByRole("button", { name: /test openai/i })).toBeTruthy();
+    expect(screen.getByText(/not live-send verified/i)).toBeTruthy();
+  });
 
   it("renders one h1 and links back to the AI root", () => {
     render(

@@ -20,6 +20,7 @@ import {
 } from "../services/ai/modelCatalog";
 import { resolveSelection } from "../services/ai/modelPolicy";
 import { loadAiPreferences, updateAiPreferences } from "../services/ai/aiPreferences";
+import { EXPERIMENTAL_PROVIDER_NOTICE, experimentalProvidersEnabled, isProviderEnabled, setExperimentalProvidersEnabled } from "../services/ai/providerStatus";
 import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
 
 const validator = createOpenRouterClient(async () => null);
@@ -147,16 +148,21 @@ export function AiConnection({
   mode = "free-only",
 }: AiConnectionProps) {
   const { user } = useAuth();
+  const userId = user?.id ?? "";
+  const account = accountId ?? userId;
+  const [, refreshExperimental] = useState(0);
+  const experimental = experimentalProvidersEnabled(account);
   const [searchParams] = useSearchParams();
   const routedProvider = searchParams.get("provider");
-  const [selectedProvider, setSelectedProvider] = useState<ByokProvider>(() =>
+  const [requestedProvider, setSelectedProvider] = useState<ByokProvider>(() =>
     resolveByokProvider(provider, routedProvider),
   );
+  const selectedProvider = isProviderEnabled(account, requestedProvider) ? requestedProvider : "openrouter";
   // Deep-link / prop sync: AiModels Manage actions land here with
   // `?provider=<id>` so the form manages THAT provider's slot.
   useEffect(() => {
     setSelectedProvider(resolveByokProvider(provider, routedProvider));
-  }, [provider, routedProvider]);
+  }, [provider, routedProvider, account]);
   const providerLabel = BYOK_LABELS[selectedProvider];
   // The default OpenRouter slot keeps the legacy provider-less call shape;
   // every other slot passes its exact provider so reads/writes hit only it.
@@ -169,8 +175,6 @@ export function AiConnection({
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const userId = user?.id ?? "";
-  const account = accountId ?? userId;
 
   const [catalog, setCatalog] = useState<readonly ModelRecord[]>(models);
   const [retrievedAt, setRetrievedAt] = useState<string | null>(modelsRetrievedAt);
@@ -243,18 +247,19 @@ export function AiConnection({
 
   const providersPresent = useMemo(() => {
     const seen = new Set<ProviderId>();
-    for (const record of catalog) seen.add(record.provider);
+    for (const record of catalog) if (isProviderEnabled(account, record.provider)) seen.add(record.provider);
     return [...seen];
-  }, [catalog]);
+  }, [catalog, account, experimental]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return catalog.filter((record) => {
+      if (!isProviderEnabled(account, record.provider)) return false;
       if (providerFilter !== "all" && record.provider !== providerFilter) return false;
       if (needle !== "" && !record.id.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [catalog, query, providerFilter]);
+  }, [catalog, query, providerFilter, account, experimental]);
 
   const consentDraft = consentDraftId === null ? null : (catalog.find((r) => r.id === consentDraftId) ?? null);
 
@@ -265,6 +270,8 @@ export function AiConnection({
   const persistedDefault = loadAiPreferences(account).preferredAssistantModel;
   const effectiveSelectedId = selectedId ?? persistedDefault;
   function persistDefault(modelId: string): void {
+    const record = catalog.find((row) => row.id === modelId);
+    if (record && !isProviderEnabled(account, record.provider)) return;
     if (onSelectModel !== undefined) return;
     updateAiPreferences(account, { preferredAssistantModel: modelId });
   }
@@ -452,6 +459,16 @@ export function AiConnection({
       backTo="/settings/ai"
       backLabel="Back to AI & intelligence"
     >
+      <label className="flex min-h-[48px] items-center gap-3 text-sm">
+        <input type="checkbox" checked={experimental} aria-describedby="connection-experimental-notice" disabled={busy} onChange={(event) => {
+          setExperimentalProvidersEnabled(account, event.target.checked);
+          refreshExperimental((value) => value + 1);
+          setProviderFilter("all");
+          setConsent(null); setConsentDraftId(null); setConsentChecked(false);
+        }} />
+        Experimental providers
+      </label>
+      <p id="connection-experimental-notice" className="text-xs text-on-surface-variant">{EXPERIMENTAL_PROVIDER_NOTICE}</p>
       <SettingsGroup
         title={providerLabel}
         description="Your key stays on this device and is only sent to your provider when you use AI."
@@ -470,7 +487,7 @@ export function AiConnection({
           }}
           className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
         >
-          {(BYOK_PROVIDERS as readonly ByokProvider[]).map((entry) => (
+          {BYOK_PROVIDERS.filter((entry) => isProviderEnabled(account, entry)).map((entry) => (
             <option key={entry} value={entry}>{BYOK_LABELS[entry]}</option>
           ))}
         </select>
@@ -544,7 +561,7 @@ export function AiConnection({
             Paid models always need explicit per-model, per-price confirmation.
           </p>
           <ul className="flex flex-col gap-1">
-            {PROVIDER_AVAILABILITY.map((entry) => (
+             {PROVIDER_AVAILABILITY.filter((entry) => isProviderEnabled(account, entry.provider)).map((entry) => (
               <li key={entry.provider} className="text-xs text-on-surface-variant">{entry.copy}</li>
             ))}
           </ul>

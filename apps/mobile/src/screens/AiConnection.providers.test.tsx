@@ -80,8 +80,21 @@ describe("AiConnection per-provider BYOK slots", () => {
     mocks.currentUserId = "user-1";
     mocks.get.mockResolvedValue(null);
     mocks.hasSaved.mockResolvedValue(false);
+    localStorage.setItem("findback.ai.experimentalProviders.v1.user-1", "true");
   });
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  it("unproven remote adapters require explicit account opt-in, including deep links", async () => {
+    localStorage.clear();
+    await renderSettledConnection("anthropic");
+    expect((screen.getByLabelText("AI provider") as HTMLSelectElement).value).toBe("openrouter");
+    expect(screen.queryByRole("option", { name: "Anthropic" })).toBeNull();
+    const toggle = screen.getByRole("checkbox", { name: "Experimental providers" });
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(toggle);
+    expect(screen.getByRole("option", { name: "Anthropic" })).toBeTruthy();
+    expect(screen.getByText(/not live-send verified/i)).toBeTruthy();
+  });
 
   for (const { provider, label } of BYOK_CASES) {
     it(`saves ${provider} through its exact slot (Manage landing works)`, async () => {
@@ -186,7 +199,9 @@ describe("AiConnection per-provider BYOK slots", () => {
       </MemoryRouter>,
     );
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Disconnected"));
-    expect(mocks.get).toHaveBeenCalledWith("user-2", "google");
+    expect(mocks.get).toHaveBeenCalledWith("user-2");
+    expect(mocks.get).not.toHaveBeenCalledWith("user-2", "google");
+    expect(screen.getByRole("checkbox", { name: "Experimental providers" })).toHaveProperty("checked", false);
   });
 });
 
@@ -200,6 +215,7 @@ describe("AiModels Manage actions deep-link to the provider's slot", () => {
   afterEach(cleanup);
 
   it("links every BYOK provider to its own connection form", async () => {
+    localStorage.setItem("findback.ai.experimentalProviders.v1.u1", "true");
     render(
       <MemoryRouter>
         <AiModels accountId="u1" listCatalog={async () => []} />

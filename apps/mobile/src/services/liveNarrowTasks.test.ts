@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   route: vi.fn(),
   text: vi.fn(),
+  account: "account-a" as string | null,
+  keyReads: vi.fn(),
 }));
 
 vi.mock("./ai/applicationAi", () => ({
@@ -11,12 +13,17 @@ vi.mock("./ai/applicationAi", () => ({
 }));
 
 vi.mock("./openRouter", () => ({
-  createOpenRouterClient: () => ({ text: state.text }),
+  createOpenRouterClient: (getKey: () => Promise<string | null>) => ({ text: async (...args: unknown[]) => { await getKey(); return state.text(...args); } }),
 }));
 
 vi.mock("./aiCredentials", () => ({
   getConnectedOpenRouterKey: async () => "test-key",
+  aiCredentials: { get: state.keyReads },
 }));
+vi.mock("./supabaseClient", () => ({
+  getSupabase: () => ({ auth: { getSession: async () => ({ data: { session: state.account ? { user: { id: state.account } } : null } }) } }),
+}));
+import { updateAiPreferences } from "./ai/aiPreferences";
 
 import {
   generateCloud,
@@ -55,6 +62,48 @@ function abortErr(): Error {
 beforeEach(() => {
   state.route.mockReset();
   state.text.mockReset();
+  state.keyReads.mockReset().mockResolvedValue("test-key");
+  state.account = "account-a";
+  localStorage.clear();
+});
+
+describe("account-scoped mode enforcement", () => {
+  it.each(["extract-report-fields", "classify-category", "extract-search-filters"] as const)("%s on-device-only refuses cloud even after local failure", async (task) => {
+    updateAiPreferences("account-a", { assistantMode: "on-device-only" });
+    state.route.mockResolvedValue(failRoute("MODEL_NOT_READY"));
+    state.text.mockResolvedValue("must not send");
+    await expect(liveGenerateFor(task)("private", { maxOutputTokens: 8, temperature: 0 })).rejects.toThrow("MODEL_NOT_READY");
+    expect(state.keyReads).not.toHaveBeenCalled();
+    expect(state.text).not.toHaveBeenCalled();
+  });
+  it("cloud-only skips local and reads only the authenticated account slot", async () => {
+    updateAiPreferences("account-a", { assistantMode: "cloud-only" });
+    state.route.mockResolvedValue(okRoute("wrong local answer"));
+    state.text.mockResolvedValue("cloud answer");
+    await expect(generateForFieldsLive("p", { maxOutputTokens: 8, temperature: 0 })).resolves.toBe("cloud answer");
+    expect(state.route).not.toHaveBeenCalled();
+    expect(state.keyReads).toHaveBeenCalledWith("account-a", "openrouter");
+  });
+  it("ready-made composers resolve the current account on every invocation", async () => {
+    updateAiPreferences("account-a", { assistantMode: "cloud-only" });
+    updateAiPreferences("account-b", { assistantMode: "on-device-only" });
+    state.text.mockResolvedValue("cloud"); state.route.mockResolvedValue(okRoute("local"));
+    await expect(generateForCategoryLive("p", { maxOutputTokens: 8, temperature: 0 })).resolves.toBe("cloud");
+    state.account = "account-b";
+    await expect(generateForCategoryLive("p", { maxOutputTokens: 8, temperature: 0 })).resolves.toBe("local");
+    expect(state.keyReads.mock.calls).toEqual([["account-a", "openrouter"]]);
+  });
+  it("structured cancellation is not a cloud fallback", async () => {
+    state.route.mockResolvedValue({ ...failRoute("cancelled"), state: "CANCELLED" });
+    await expect(generateForFieldsLive("p", { maxOutputTokens: 8, temperature: 0 })).rejects.toMatchObject({ name: "AbortError" });
+    expect(state.text).not.toHaveBeenCalled();
+  });
+  it("account switch during local failure cannot send to the new account's cloud", async () => {
+    state.route.mockImplementation(async () => { state.account = "account-b"; return failRoute("runtime failed"); });
+    await expect(generateForFieldsLive("p", { maxOutputTokens: 8, temperature: 0 })).rejects.toThrow(/account/i);
+    expect(state.keyReads).not.toHaveBeenCalled();
+    expect(state.text).not.toHaveBeenCalled();
+  });
 });
 
 describe("generateLocalFirst", () => {

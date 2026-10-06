@@ -101,6 +101,7 @@ describe("AiSettings consumer root", () => {
     expect(group).toBeTruthy();
     // Only options this build can honor.
     expect(screen.getByRole("radio", { name: /automatic/i })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /automatic/i }).closest("label")?.textContent).toMatch(/on-device first.*cloud/i);
     expect(screen.getByRole("radio", { name: /on-device only/i })).toBeTruthy();
     expect(screen.getByRole("radio", { name: /cloud only/i })).toBeTruthy();
     // Default with no stored preference.

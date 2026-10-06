@@ -33,6 +33,7 @@ import {
 } from "../services/appCapabilities";
 import { exportDiagJson } from "../services/diag";
 import { BYOK_LABELS } from "./AiConnection";
+import { EXPERIMENTAL_PROVIDER_NOTICE, experimentalProvidersEnabled, isProviderEnabled, setExperimentalProvidersEnabled } from "../services/ai/providerStatus";
 
 export type AiAdvancedProps = {
   readonly service?: ApplicationAiService;
@@ -75,6 +76,8 @@ export function AiAdvanced({
   useSyncExternalStore(service.subscribe, service.snapshot);
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
+  const [, refreshExperimental] = useState(0);
+  const experimental = experimentalProvidersEnabled(account);
   const [measuring, setMeasuring] = useState(false);
   const [perfNotice, setPerfNotice] = useState<string | null>(null);
   const [probes, setProbes] = useState<Record<string, ProbeState>>({});
@@ -125,6 +128,7 @@ export function AiAdvanced({
   }
 
   async function testProvider(provider: (typeof SUPPORTED_AI_PROVIDERS)[number]) {
+    if (!isProviderEnabled(account, provider)) return;
     if (busyProvider !== null) return;
     const controller = new AbortController();
     setBusyProvider(provider);
@@ -310,10 +314,18 @@ export function AiAdvanced({
 
       <SettingsGroup
         title="Provider tests"
-        description="Live list checks against each provider with your saved key."
+        description="Catalogue checks with your saved key. Some adapters return static rows; these checks are not real-send proof."
       >
+        <label className="flex min-h-[48px] items-center gap-3 text-sm">
+          <input type="checkbox" checked={experimental} aria-describedby="advanced-experimental-notice" disabled={busyProvider !== null} onChange={(event) => {
+            setExperimentalProvidersEnabled(account, event.target.checked);
+            refreshExperimental((value) => value + 1);
+          }} />
+          Experimental providers
+        </label>
+        <p id="advanced-experimental-notice" className="text-xs text-on-surface-variant">{EXPERIMENTAL_PROVIDER_NOTICE}</p>
         <ul className="flex flex-col gap-2">
-          {SUPPORTED_AI_PROVIDERS.map((provider) => {
+          {SUPPORTED_AI_PROVIDERS.filter((provider) => isProviderEnabled(account, provider)).map((provider) => {
             const probe = probes[provider] ?? IDLE_PROBE;
             const label = BYOK_LABELS[provider as keyof typeof BYOK_LABELS] ?? provider;
             return (

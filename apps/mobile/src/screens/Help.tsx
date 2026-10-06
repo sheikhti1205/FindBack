@@ -21,6 +21,8 @@ import { loadGenericEndpoint } from "../services/ai/genericEndpoint";
 import { loadAppearance } from "../appearance";
 import { loadAuthorizedCatalog } from "../services/ai/modelCatalog";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
+import { isProviderEnabled } from "../services/ai/providerStatus";
+import { generateCloudForAccount, generateLocalFirst } from "../services/liveNarrowTasks";
 import { getApplicationAi } from "../services/ai/applicationAi";
 import { honestOfflineDetail, OFFLINE_NOT_AVAILABLE, type AssistantMode } from "./AiModels";
 import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
@@ -206,9 +208,10 @@ async function loadHelpCatalog(
     // Web or unavailable Android storage: surface honest availability, never internals.
     offlineDetail = honestOfflineDetail(e);
   }
+  if (loadEffectiveAssistantMode(accountId) === "offline-only") return { records: offlineRecords, offlineDetail };
   const records = await loadAuthorizedCatalog({
     accountId,
-    providers: SUPPORTED_AI_PROVIDERS,
+    providers: SUPPORTED_AI_PROVIDERS.filter((provider) => isProviderEnabled(accountId, provider)),
     hasCredential: async (provider: ProviderId) => {
       try {
         return await aiCredentials.hasCredential(aiCredentials.credentialHandle(accountId, provider));
@@ -274,7 +277,7 @@ export function refuseHelpSend(input: {
 
 export interface HelpAssistantDeps {
   createStore?: () => ChatStore;
-  createAdapter?: () => ProviderAdapter;
+  createAdapter?: (provider?: ProviderId) => ProviderAdapter;
   getKey?: () => Promise<string | null>;
   /** Test seam for the picker catalogue; production loads via vault + registry below. */
   listCatalog?: () => Promise<readonly ModelRecord[]>;
@@ -466,7 +469,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         // as a per-request override, so this binding is never the stale one
         // that decides a send.
         adapter:
-          deps?.createAdapter?.() ??
+          deps?.createAdapter?.(selection.provider) ??
           createOpenRouterAdapter({ getApiKey: () => aiCredentials.get(accountId, "openrouter") }),
         systemPolicy: getSystemPolicy(),
         knowledge: getCurrentKnowledge(),
@@ -513,7 +516,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       try {
         if (deps?.listCatalog !== undefined) {
           const records = await deps.listCatalog();
-          if (alive && records.length > 0) setCatalog(records);
+          if (alive && records.length > 0) setCatalog(records.filter((row) => isProviderEnabled(accountId, row.provider)));
           return;
         }
         const { records, offlineDetail: detail } = await loadHelpCatalog(accountId);
@@ -801,12 +804,61 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     // runs the on-device row, and paid/unknown-price rows are never sent
     // silently from a screen with no consent UI. Refusals keep the draft and
     // photos for Retry.
-    const pickedRecord =
+    const gen = ++generation.current;
+    sendGenRef.current = gen;
+    abortRef.current?.abort();
+    const controllerAbort = new AbortController();
+    abortRef.current = controllerAbort;
+    inflightRef.current = question;
+    setBusy(true);
+    const mode = loadEffectiveAssistantMode(accountId);
+    let pickedRecord =
       catalog.find((row) => row.id === (selectedModelId ?? defaultSelection(accountId).modelId)) ??
       null;
+    let cloudRecord = pickedRecord?.provider === "offline" ? HELP_MODEL_CATALOG[0]! : pickedRecord;
+    const resolvePinnedRecord = async (): Promise<ModelRecord | null> => {
+      if (selectedModelId === null || selectedModelId === DEFAULT_MODEL_ID) return HELP_MODEL_CATALOG[0]!;
+      const records = deps?.listCatalog ? await deps.listCatalog() : (await loadHelpCatalog(accountId)).records;
+      return records.find((row) => row.id === selectedModelId && isProviderEnabled(accountId, row.provider)) ?? null;
+    };
+    // Discover installed models at send time, not only when the picker opens.
+    // Automatic is genuinely local-first; an explicit cloud row is a fallback,
+    // never permission to bypass the account's on-device-only transport pin.
+    if (mode !== "cloud-only") {
+      try {
+        const localRows = deps?.listCatalog
+          ? await deps.listCatalog()
+          : await createProviderAdapter("offline", { accountId, resolveKey: async () => null }).listModels?.() ?? [];
+        if (generation.current !== gen || controllerAbort.signal.aborted) return;
+        const compatible = localRows.filter((row) => row.provider === "offline" && refuseHelpSend({ provider: "offline", record: row, mode, hasImages }) === null);
+        pickedRecord = compatible.find((row) => row.id === selectedModelId) ?? compatible[0] ?? pickedRecord;
+      } catch (error) {
+        if (generation.current !== gen || controllerAbort.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+          if (generation.current === gen) setBusy(false);
+          return;
+        }
+        // No usable native runtime: only automatic may proceed to cloud.
+      }
+    }
+    if (pickedRecord === null && mode !== "offline-only") {
+      try { pickedRecord = await resolvePinnedRecord(); cloudRecord = pickedRecord; }
+      catch { /* Unknown catalogue means no permission to send a pinned model. */ }
+      if (generation.current !== gen || controllerAbort.signal.aborted) return;
+      if (pickedRecord === null && !hasImages) {
+        // A missing default is not permission to invent its price/provider.
+        // Match the visible notice by falling back to the known free route.
+        pickedRecord = HELP_MODEL_CATALOG[0]!;
+        cloudRecord = pickedRecord;
+        setNotice("Saved default unavailable — using the free OpenRouter route after checking on-device availability.");
+      }
+    }
     const sendProvider = pickedRecord?.provider ?? selection.provider;
     const sendModelId = pickedRecord?.id ?? selection.modelId;
-    const refusal = refuseHelpSend({
+    const refusal = pickedRecord === null && selectedModelId !== null && selectedModelId !== DEFAULT_MODEL_ID && mode !== "offline-only"
+      ? "That model is not in the enabled catalogue. Choose a listed model; your draft is kept."
+      : !isProviderEnabled(accountId, sendProvider)
+      ? "This experimental provider is disabled. Enable Experimental providers in Cloud connections first. Your draft is kept."
+      : refuseHelpSend({
       provider: sendProvider,
       record: pickedRecord,
       // Single authoritative store: the same aiPreferences.assistantMode
@@ -819,20 +871,16 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       setInput(question);
       setFailedSend({ text: question });
       setSendError(refusal);
+      setBusy(false);
+      sendGenRef.current = null;
       announce("Send refused. Your message and photos were kept.");
       return;
     }
-    const gen = ++generation.current;
-    sendGenRef.current = gen;
     const attemptN = ++attemptRef.current;
     setAttempts((prev) =>
       opts.isRetry ? [...prev, { n: attemptN, status: "retrying" }] : [{ n: attemptN, status: "sending" }],
     );
     setPartial(null);
-    abortRef.current?.abort();
-    const controllerAbort = new AbortController();
-    abortRef.current = controllerAbort;
-    inflightRef.current = question;
     setInput("");
     setFailedSend(null);
     setSendError(null);
@@ -889,9 +937,21 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       }
       clearTray();
     };
+    const assertCloudKeyAllowed = (id: string, provider: ProviderId) => {
+      if (generation.current !== gen || controllerAbort.signal.aborted) throw new ControllerError("cancelled", "Send was cancelled.");
+      if (id !== accountId) throw new Error("AI account changed.");
+      if (loadEffectiveAssistantMode(accountId) === "offline-only") throw new Error("On-device only: cloud is disabled. Your draft is kept.");
+      if (!isProviderEnabled(accountId, provider)) throw new Error("Experimental provider is disabled. Your draft is kept.");
+    };
+    const readCloudKey = async (id: string, provider: ProviderId) => {
+      assertCloudKeyAllowed(id, provider);
+      const key = await (deps?.getKey?.() ?? aiCredentials.get(id, provider));
+      assertCloudKeyAllowed(id, provider);
+      return key;
+    };
     try {
       // Cloud rows need a vault slot; installed offline rows do not.
-      const key = sendProvider === "offline" ? null : await (deps?.getKey?.() ?? aiCredentials.get(accountId, sendProvider));
+      const key = sendProvider === "offline" ? null : await readCloudKey(accountId, sendProvider);
       if (generation.current !== gen) return;
       if (key === null && sendProvider !== "offline") {
         // No connected key: honest built-in answer, kept like any turn.
@@ -910,11 +970,11 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       };
       let sendAdapter: ProviderAdapter;
       if (deps?.createAdapter !== undefined) {
-        sendAdapter = deps.createAdapter();
+        sendAdapter = deps.createAdapter(sendProvider);
       } else {
         sendAdapter = createProviderAdapter(sendProvider, {
           accountId,
-          resolveKey: (id, slot) => aiCredentials.get(id, slot),
+          resolveKey: readCloudKey,
           // Generic custom endpoint rides along so a configured generic
           // provider sends with the same URL catalogue/test used.
           resolveGenericEndpoint: (id) => loadGenericEndpoint(id),
@@ -924,12 +984,45 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           resolveImageUrl: createChatTrayImageResolver(tray.items),
         });
       }
-      const result = await controller.send(chatId ?? `transient-${gen}`, question, {
-        selection: sendSelection,
-        adapter: sendAdapter,
-        approvedImageIds: toApprovedImageIds(tray.items),
-        signal: controllerAbort.signal,
-      });
+      const run = (adapter: ProviderAdapter, selection: typeof sendSelection) => {
+        if (generation.current !== gen || controllerAbort.signal.aborted) throw new ControllerError("cancelled", "Send was cancelled.");
+        const currentRecord = selection.provider === "offline" ? pickedRecord : cloudRecord;
+        const latestRefusal = refuseHelpSend({ provider: selection.provider, record: currentRecord, mode: loadEffectiveAssistantMode(accountId), hasImages });
+        if (latestRefusal || !isProviderEnabled(accountId, selection.provider)) throw new Error(latestRefusal ?? "Experimental provider is disabled.");
+        return controller.send(chatId ?? `transient-${gen}`, question, {
+          selection, adapter, approvedImageIds: toApprovedImageIds(tray.items), signal: controllerAbort.signal,
+        });
+      };
+      let result;
+      try {
+        result = await run(sendAdapter, sendSelection);
+      } catch (error) {
+        // Cancellation, account switch and on-device-only ALWAYS fail closed.
+        // Image requests never silently cross providers on a local failure.
+        if (mode !== "auto" || sendProvider !== "offline" || hasImages || controllerAbort.signal.aborted || generation.current !== gen || (error instanceof Error && /abort|cancel/i.test(`${error.name} ${error.message}`))) throw error;
+        if (cloudRecord === null) {
+          cloudRecord = await resolvePinnedRecord();
+          if (generation.current !== gen || controllerAbort.signal.aborted) return;
+          if (cloudRecord === null) cloudRecord = HELP_MODEL_CATALOG[0]!;
+          if (cloudRecord.provider === "offline") throw new Error("Choose a listed cloud model for fallback. Your draft is kept.");
+        }
+        const fallbackProvider = cloudRecord?.provider ?? "openrouter";
+        const fallbackRefusal = !isProviderEnabled(accountId, fallbackProvider)
+          ? "Experimental provider is disabled."
+          : refuseHelpSend({ provider: fallbackProvider, record: cloudRecord, mode: loadEffectiveAssistantMode(accountId), hasImages: false });
+        if (fallbackRefusal) throw new Error(fallbackRefusal);
+        const fallbackKey = await readCloudKey(accountId, fallbackProvider);
+        if (generation.current !== gen || controllerAbort.signal.aborted) return;
+        if (fallbackKey === null) {
+          finishFallback(persistFallback(chatId, historyOn, question), builtInHelp(question));
+          return;
+        }
+        setNotice("On-device AI could not answer. Trying the connected cloud model.");
+        const fallbackAdapter = deps?.createAdapter?.(fallbackProvider) ?? createProviderAdapter(fallbackProvider, {
+          accountId, resolveKey: readCloudKey, resolveGenericEndpoint: (id) => loadGenericEndpoint(id),
+        });
+        result = await run(fallbackAdapter, { ...defaultSelection(accountId), provider: fallbackProvider, modelId: cloudRecord?.id ?? DEFAULT_MODEL_ID });
+      }
       if (generation.current !== gen) return;
       if (result.answer.trim() === "") {
         throw new Error("The assistant returned an empty response.");
@@ -966,9 +1059,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       const safeMessage = sanitizeControllerError(message, [question]);
       setPartial(null);
       setAttempts((prev) => [...prev, { n: attemptN, status: "failed" }]);
-      if (sendProvider === "offline" || isGeneralNonAppQuestion(question)) {
-        // G07 fix: general-chat failures NEVER get an FAQ substitution — the
-        // draft and the tray photos are preserved for Retry.
+      if (sendProvider === "offline" || loadEffectiveAssistantMode(accountId) === "offline-only" || !isProviderEnabled(accountId, sendProvider) || isGeneralNonAppQuestion(question)) {
+        // Privacy refusals and general-chat failures never get an FAQ
+        // substitution — the draft and tray photos are preserved for Retry.
         setInput(question);
         setFailedSend({ text: question });
         setSendError(safeMessage);
@@ -1082,6 +1175,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
 
   function endGuided() {
     generation.current += 1;
+    abortRef.current?.abort();
     setPendingSearchTarget(null);
     setGuided(null);
     setGuidedTranscript([]);
@@ -1112,10 +1206,30 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     if (trimmed === "" || guidedBusy) return;
     if (guided !== null && guided.state === "recovering") return;
     const gen = ++generation.current;
+    const abort = new AbortController();
+    abortRef.current?.abort();
+    abortRef.current = abort;
     setGuidedTranscript((prev) => [...prev, { role: "user", text: trimmed }]);
     setGuidedBusy(true);
     try {
-      const result = await executeCloudAssistantMessage(guided, trimmed, deps?.guidedGenerate);
+      const mode = loadEffectiveAssistantMode(accountId);
+      const task = guided?.flow === "search" ? "extract-search-filters" : "extract-report-fields";
+      const generate: CloudGenerate = async (prompt) => {
+        if (mode !== "cloud-only") {
+          try {
+            const local = await generateLocalFirst(task, prompt, { signal: abort.signal });
+            // Native extraction returns validated slots under `fields`, while
+            // this guided consumer expects the flat object cloud returns.
+            try { const value = JSON.parse(local) as { fields?: unknown }; return value.fields ? JSON.stringify(value.fields) : local; }
+            catch { return local; }
+          } catch (error) {
+            if (mode === "offline-only" || abort.signal.aborted || generation.current !== gen || (error instanceof Error && /abort|cancel/i.test(`${error.name} ${error.message}`))) throw error;
+          }
+        }
+        if (abort.signal.aborted || generation.current !== gen || loadEffectiveAssistantMode(accountId) === "offline-only") throw new Error("AI request cancelled; cloud was not contacted.");
+        return deps?.guidedGenerate ? deps.guidedGenerate(prompt) : generateCloudForAccount(accountId, prompt, abort.signal);
+      };
+      const result = await executeCloudAssistantMessage(guided, trimmed, generate);
       if (generation.current !== gen) return; // closed/superseded: drop the stale reply
       setGuided(result.snapshot);
       setGuidedTranscript((prev) => [
