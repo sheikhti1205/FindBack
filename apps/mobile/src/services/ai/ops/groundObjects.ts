@@ -18,7 +18,7 @@ import {
   type NormalizeOptions,
 } from "../normalize";
 import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
-import { makeAiError, type AiResult, type GenerateFn } from "../types";
+import { makeAiError, type AiResult, type GenerateOptions } from "../types";
 
 export const GROUND_COORDINATE_SPACES = ["relative-0-1000"] as const;
 export type GroundCoordinateSpace = (typeof GROUND_COORDINATE_SPACES)[number];
@@ -57,6 +57,12 @@ export interface GroundObjectsInput {
   readonly imageUri: string;
   readonly referringExpression: string;
 }
+
+/** Vision transports must bind this approved image, not send a text-only prompt. */
+export type GroundGenerateFn = (prompt: string, options: GenerateOptions & {
+  readonly imageUri: string;
+  readonly signal?: AbortSignal;
+}) => Promise<string>;
 
 export type GroundObjectsOptions = NormalizeOptions & {
   readonly signal?: AbortSignal;
@@ -154,8 +160,9 @@ export function validateGroundObjects(
 function raceWithSignal(task: Promise<string>, signal: AbortSignal | undefined): Promise<string> {
   if (signal === undefined) return task;
   return new Promise<string>((resolve, reject) => {
-    const onAbort = (): void => reject(new Error("aborted"));
+    const onAbort = (): void => reject(new DOMException("Aborted", "AbortError"));
     signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
     task.then(
       (text) => {
         signal.removeEventListener("abort", onAbort);
@@ -170,7 +177,7 @@ function raceWithSignal(task: Promise<string>, signal: AbortSignal | undefined):
 }
 
 export async function groundObjects(
-  generate: GenerateFn,
+  generate: GroundGenerateFn,
   input: GroundObjectsInput,
   profile: ModelProfile,
   options?: GroundObjectsOptions,
@@ -194,18 +201,22 @@ export async function groundObjects(
   if (input.referringExpression.trim().length > GROUND_EXPRESSION_MAX_CHARS) {
     return { ok: false, error: makeAiError("INVALID_OUTPUT", "R5_INPUT_TOO_LONG:referringExpression") };
   }
-  void input.imageUri;
   let rawText: string;
   try {
     rawText = await raceWithSignal(
       generate(buildGroundObjectsPrompt(input), {
+        imageUri: input.imageUri,
+        signal,
         maxOutputTokens: profile.maxOutputTokensVision ?? profile.maxOutputTokensText,
         temperature: profile.defaultTemperature,
       }),
       signal,
     );
-  } catch {
-    return { ok: false, error: makeAiError("CANCELLED", "ABORT_MID_GENERATION") };
+  } catch (error) {
+    if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+      return { ok: false, error: makeAiError("CANCELLED", "ABORT_MID_GENERATION") };
+    }
+    return { ok: false, error: makeAiError("RUNTIME_ERROR", "GROUND_GENERATION_FAILED") };
   }
   if (signal !== undefined && signal.aborted) {
     return { ok: false, error: makeAiError("CANCELLED", "ABORT_MID_GENERATION") };

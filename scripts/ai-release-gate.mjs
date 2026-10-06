@@ -407,65 +407,51 @@ export const APPLICATION_INTEGRATION_FILES = {
   chatControllerSource: "apps/mobile/src/services/ai/chatController.ts",
   chatStoreSource: "apps/mobile/src/services/ai/chatStore.ts",
   photoGroundingSource: "apps/mobile/src/services/photoGrounding.ts",
+  photoGroundingComponentSource: "apps/mobile/src/components/PhotoGrounding.tsx",
+  livePhotoGroundingSource: "apps/mobile/src/services/livePhotoGrounding.ts",
+  groundObjectsSource: "apps/mobile/src/services/ai/ops/groundObjects.ts",
 };
 
 /**
- * Photo-grounding deferred invariant (P1/P2 audit: the service is unwired).
+ * Photo-grounding product-integration invariant (audit FBA-001).
  *
- * There is deliberately NO product-integration tripwire for photo
- * grounding: no report/help/search UI imports the service, so a check
- * named like "photo grounding consumer/integration" would pass on the
- * mere op import and falsely claim product integration. Instead this
- * validator asserts exactly the deferred status:
- *   1. service-readiness — photoGrounding.ts stays wired to the validated
- *      ground-objects op (import + call, never invented boxes) behind the
- *      image-consent gate, and
- *   2. UI-deferred — the `service-ready / UI-deferred` marker is present
- *      AND no report-flow UI file imports the service.
- * Fail-closed both ways: wiring a UI consumer without updating the status
- * marker fails the gate, as does dropping the marker. When the Create
- * Report / report UI flow is reviewed and lands, replace this validator
- * with consumer call-site tripwires (match the call, not the import).
+ * Grounding is now a real, reviewed user-facing flow: CreateReport mounts
+ * <PhotoGrounding>, which runs a consented item search over the validated
+ * ground-objects op through the live local-first transport, then requires
+ * explicit selection and separate Apply/Keep review. These tripwires match
+ * shipped CALL SITES, not bare imports, so an unwired stub cannot satisfy
+ * them. They prove the CODE seam only — device/runtime proof is tracked
+ * separately in completion-ledger.json (this gate is not device evidence).
  */
-export const PHOTO_GROUNDING_DEFERRED_MARKER = "service-ready / UI-deferred";
-
-/** Report-flow UI surfaces where a future grounding consumer would land. */
-export const PHOTO_GROUNDING_UI_SCOPE = [
-  "createReportSource",
-  "suggestionsSource",
-  "helpSource",
-  "searchScreenSource",
-];
-
-const PHOTO_GROUNDING_UI_IMPORT_RE = /photoGrounding|requestGroundedOptions/;
-
-export function validatePhotoGroundingDeferred({ photoGroundingSource, uiSources }) {
+export function validatePhotoGroundingWired(sources) {
   const errors = [];
-  const service = photoGroundingSource ?? "";
-  if (!service.includes(PHOTO_GROUNDING_DEFERRED_MARKER)) {
-    errors.push(
-      "application-integration: photo grounding deferred marker missing (service must declare service-ready / UI-deferred until a report-flow consumer lands)",
-    );
+  const service = sources?.photoGroundingSource ?? "";
+  const component = sources?.photoGroundingComponentSource ?? "";
+  const transport = sources?.livePhotoGroundingSource ?? "";
+  const op = sources?.groundObjectsSource ?? "";
+  const createReport = sources?.createReportSource ?? "";
+
+  const required = [
+    ["service", service, /from "\.\/ai\/ops\/groundObjects"/, "grounding service must use the validated ground-objects op"],
+    ["service", service, /await groundObjects\(/, "grounding service must call the validated op (invented boxes risk)"],
+    ["service", service, /input\.imageConsent !== true/, "grounding service must keep its image-consent gate"],
+    ["op", op, /CONSENT_REQUIRED:image/, "ground-objects op must refuse without image consent"],
+    ["component", component, /groundReportPhoto\(/, "PhotoGrounding must call the live grounding transport"],
+    ["component", component, /toCssPercentRect\(/, "PhotoGrounding must render validated boxes as percentage overlays"],
+    ["component", component, /Which item are you reporting\?/, "PhotoGrounding must show the disambiguation question"],
+    ["component", component, /Apply item title/, "PhotoGrounding must require explicit Apply review"],
+    ["component", component, /Keep my title/, "PhotoGrounding must offer Keep (review, never auto-apply)"],
+    ["transport", transport, /normalizeImage\(/, "live grounding must normalize the approved image"],
+    ["transport", transport, /requestGroundedOptions\(/, "live grounding must route through the validated selector service"],
+    ["transport", transport, /transport\.imageUri !== imageUrl/, "live grounding must bind the exact approved image (no URI swap)"],
+    ["transport", transport, /getConnectedOpenRouterKey/, "live grounding must keep the consented OpenRouter fallback behind local-first"],
+    ["createReport", createReport, /<PhotoGrounding/, "CreateReport must mount the reviewed grounding component"],
+  ];
+  for (const [, source, pattern, message] of required) {
+    if (!pattern.test(source)) errors.push(`application-integration: ${message}`);
   }
-  if (!service.includes('from "./ai/ops/groundObjects"')) {
-    errors.push(
-      "application-integration: photo grounding service is no longer wired to the ground-objects op (import absent)",
-    );
-  }
-  if (!/await groundObjects\(/.test(service)) {
-    errors.push(
-      "application-integration: photo grounding service no longer calls the validated op (invented boxes risk)",
-    );
-  }
-  if (!service.includes("input.imageConsent !== true")) {
-    errors.push("application-integration: photo grounding service lost its image-consent gate");
-  }
-  for (const key of PHOTO_GROUNDING_UI_SCOPE) {
-    if (PHOTO_GROUNDING_UI_IMPORT_RE.test(uiSources?.[key] ?? "")) {
-      errors.push(
-        `application-integration: photo grounding is UI-deferred but ${key} imports the service (update the status marker and wire consumer tripwires)`,
-      );
-    }
+  if (/void\s+input\.imageUri/.test(op)) {
+    errors.push("application-integration: ground-objects op discards the image (imageUri voided)");
   }
   return errors;
 }
@@ -528,12 +514,12 @@ export function validateApplicationIntegration(sources) {
     ],
     [
       "aiPreferencesSource",
-      /selectedId: loadAiPreferences\(accountId\)\.preferredAssistantModel/,
+      /selectedId: load(?:Seeded)?AiPreferences\(accountId\)\.preferredAssistantModel/,
       "binding selectedId must read the persisted per-account default",
     ],
     [
       "aiConnectionSource",
-      /loadAiPreferences\(account\)\.preferredAssistantModel/,
+      /load(?:Seeded)?AiPreferences\(account\)\.preferredAssistantModel/,
       "AiConnection must show the persisted default when no explicit selection wins",
     ],
     [
@@ -672,12 +658,7 @@ function checkApplicationIntegration() {
   );
   return [
     ...validateApplicationIntegration(sources),
-    ...validatePhotoGroundingDeferred({
-      photoGroundingSource: sources.photoGroundingSource,
-      uiSources: Object.fromEntries(
-        PHOTO_GROUNDING_UI_SCOPE.map((key) => [key, sources[key]]),
-      ),
-    }),
+    ...validatePhotoGroundingWired(sources),
   ];
 }
 
@@ -786,7 +767,7 @@ checks (any failure exits 1):
    vision-truth      production vision seam + registration present, copy honest
    photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim (capabilities + About/Help)
   runtime-wiring    every spec runtime has a production adapter, no lab routes
-  application-integration  real boot, provider, controls, matching and timing path
+  application-integration  real boot, provider, controls, matching, timing and reviewed grounding path
   endpoint-pin      generic endpoint pinned (no invented default)
   needle-telemetry  Needle telemetry default-OFF behind the diag gate
   promotion-policy  lab-only runtimes never promotable/routable

@@ -12,6 +12,7 @@ import type { Editor } from "@tiptap/react";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { VlmSuggestions } from "../components/VlmSuggestions";
+import { PhotoGrounding } from "../components/PhotoGrounding";
 import { announce } from "../components/LiveRegion";
 import { MAX_REPORT_PHOTOS, publishReport, publishReportWithPhotos } from "../services/posts";
 import { clearDraft, draftGeneration, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
@@ -40,7 +41,7 @@ import type { VlmAnalysis } from "../services/vlmParser";
 import { todayInputValue, isFutureDate } from "../utils/dates";
 import { profileFor } from "../services/ai/modelProfiles";
 import type { GenerateFn } from "../services/ai/types";
-import { loadAiPreferences } from "../services/ai/aiPreferences";
+import { aiPreferencesKey, effectivePhotoEngine } from "../services/ai/aiPreferences";
 import {
   generateForCategoryLive,
   generateForFieldsLive,
@@ -228,6 +229,16 @@ function ReportForm() {
   const navigate = useNavigate();
   // Per-account draft: each signed-in account restores only its own report.
   const accountId = user?.id ?? null;
+  const [, refreshPhotoEngine] = useState(0);
+  useEffect(() => {
+    const refresh = () => refreshPhotoEngine((version) => version + 1);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === aiPreferencesKey(accountId ?? "local")) refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", refresh);
+    return () => { window.removeEventListener("storage", onStorage); window.removeEventListener("focus", refresh); };
+  }, [accountId]);
   const renderGeneration = draftGeneration(accountId);
   const [initialDraft] = useState(() => loadDraft(accountId));
   const [type, setType] = useState<PostType>(initialDraft?.type ?? "LOST");
@@ -245,6 +256,7 @@ function ReportForm() {
     },
   );
   const [youtubeUrl, setYoutubeUrl] = useState(initialDraft?.youtubeUrl ?? "");
+  const [groundingPhotoId, setGroundingPhotoId] = useState<string | null>(null);
   /** Ordered report photos (0–5), restored from the durable per-account draft. */
   interface ReportPhoto {
     id: string;
@@ -280,6 +292,7 @@ function ReportForm() {
     return restored;
   }
   const [photos, setPhotos] = useState<ReportPhoto[]>(() => initialPhotos(initialDraft));
+  const groundingPhoto = photos.find((photo) => photo.id === groundingPhotoId) ?? photos[0];
   const photosRef = useRef(photos);
   const [photoRecoveryReady, setPhotoRecoveryReady] = useState(() => draftPhotoIds(initialDraft).length === 0);
   const restorePromiseRef = useRef<Promise<void>>(Promise.resolve());
@@ -1823,14 +1836,31 @@ function ReportForm() {
       />
 
       {photos.length > 0 && (
+        <>
+        {photos.length > 1 && <label className="flex flex-col gap-2 text-sm font-medium">
+          Photo for item selection
+          <select value={photos.some((photo) => photo.id === groundingPhotoId) ? groundingPhotoId! : photos[0]!.id}
+            className={inputCls} onChange={(event) => setGroundingPhotoId(event.target.value)}>
+            {photos.map((photo, index) => <option key={photo.id} value={photo.id}>Photo {index + 1}: {photo.file.name}</option>)}
+          </select>
+        </label>}
+        <PhotoGrounding
+          file={groundingPhoto!.file}
+          previewUrl={groundingPhoto!.previewUrl}
+          currentTitle={title}
+          accountId={user?.id ?? "local"}
+          photoEngine={effectivePhotoEngine(user?.id ?? "local")}
+          onApply={(reviewedTitle) => applyVlmSuggestion({ suggestedTitle: reviewedTitle })}
+        />
         <VlmSuggestions
           file={photos[0]!.file}
           currentTitle={title}
           currentDescription={description}
           currentCategory={category}
           onApply={applyVlmSuggestion}
-          photoEngine={loadAiPreferences(user?.id ?? "local").photoEngine}
+          photoEngine={effectivePhotoEngine(user?.id ?? "local")}
         />
+        </>
       )}
 
       {/* Optional external YouTube media */}

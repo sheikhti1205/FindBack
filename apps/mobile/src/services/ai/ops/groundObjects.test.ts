@@ -12,6 +12,16 @@ function groundPayload(boxes: readonly unknown[], coordinateSpace = "relative-0-
 const INPUT = { imageUri: "backpack.jpg", referringExpression: "the red backpack" };
 
 describe("ground-objects op", () => {
+  it("distinguishes an inference failure from user cancellation", async () => {
+    const result = await groundObjects(async () => { throw new Error("runtime failed"); }, INPUT, mustProfile(VISION), CONSENT);
+    expect(result).toEqual({ ok: false, error: { errorClass: "RUNTIME_ERROR", diagnostic: "GROUND_GENERATION_FAILED" } });
+  });
+  it("passes the actual image and abort signal to the vision transport, rather than discarding imageUri", async () => {
+    const signal = new AbortController().signal;
+    let seen: unknown;
+    await groundObjects(async (_prompt, options) => { seen = options; return groundPayload([]); }, INPUT, mustProfile(VISION), { ...CONSENT, signal });
+    expect(seen).toMatchObject({ imageUri: INPUT.imageUri, signal });
+  });
   it("grounds a referring expression to boxes", async () => {
     const result = await groundObjects(
       stubGenerate(groundPayload([{ x: 10, y: 20, w: 300, h: 200, label: "red backpack" }])),

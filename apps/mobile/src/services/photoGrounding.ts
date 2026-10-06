@@ -1,12 +1,7 @@
 /**
  * Report-photo disambiguation over the ground-objects op.
  *
- * Status: service-ready / UI-deferred (no UI consumer yet).
- * Intended future flow: the Create Report / report UI "Which item are you
- * reporting?" prompt — import these helpers in the report flow only after
- * review. Until that review lands, no screen or component may import this
- * module; the release gate fails closed if this marker is removed or a
- * report-flow UI file imports this service while the status is deferred.
+ * Used by CreateReport's explicitly consented, reviewed item selector.
  *
  * Given a report photo plus a referring expression, this service returns
  * validated selector options for the disambiguation prompt. Boxes are
@@ -18,8 +13,8 @@
  * invented boxes.
  */
 import type { ModelProfile } from "./ai/modelProfiles";
-import { groundObjects, type GroundBox } from "./ai/ops/groundObjects";
-import { makeAiError, type AiResult, type GenerateFn } from "./ai/types";
+import { groundObjects, type GroundBox, type GroundGenerateFn } from "./ai/ops/groundObjects";
+import { makeAiError, type AiResult } from "./ai/types";
 
 export interface GroundedOption {
   readonly id: string;
@@ -39,6 +34,7 @@ export interface PhotoGroundingInput {
   readonly referringExpression: string;
   /** Must be true: grounding describes user-photo content. */
   readonly imageConsent?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 /** Selector copy for the disambiguation prompt. */
@@ -53,11 +49,10 @@ export function groundingQuestion(optionCount: number): string {
 /**
  * Ground a referring expression in a report photo. Returns selector-ready
  * options; an empty match set yields zero options (not invented boxes).
- * UI wiring is intentionally absent: import these helpers in the report
- * flow only after review.
+ * The consumer owns explicit selection and separate field review.
  */
 export async function requestGroundedOptions(
-  generate: GenerateFn,
+  generate: GroundGenerateFn,
   profile: ModelProfile,
   input: PhotoGroundingInput,
 ): Promise<AiResult<GroundedOptions>> {
@@ -77,7 +72,7 @@ export async function requestGroundedOptions(
     generate,
     { imageUri: input.imageUri, referringExpression: input.referringExpression },
     profile,
-    { imageConsent: true },
+    { imageConsent: true, signal: input.signal },
   );
   if (!grounded.ok) return grounded;
   const options: GroundedOption[] = grounded.value.boxes.map((box, index) => ({

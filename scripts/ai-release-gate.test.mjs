@@ -15,7 +15,7 @@ import {
   checkAiReleaseGate,
   validatePhotoAnalysisTruth,
   validateUserFacingPhotoTruth,
-  validatePhotoGroundingDeferred,
+  validatePhotoGroundingWired,
   validateRuntimeWiring,
   validateVisionTruth,
   validateApplicationIntegration,
@@ -62,6 +62,9 @@ const REAL = {
   chatControllerSource: read("apps/mobile/src/services/ai/chatController.ts"),
   chatStoreSource: read("apps/mobile/src/services/ai/chatStore.ts"),
   photoGroundingSource: read("apps/mobile/src/services/photoGrounding.ts"),
+  photoGroundingComponentSource: read("apps/mobile/src/components/PhotoGrounding.tsx"),
+  livePhotoGroundingSource: read("apps/mobile/src/services/livePhotoGrounding.ts"),
+  groundObjectsSource: read("apps/mobile/src/services/ai/ops/groundObjects.ts"),
 };
 
 describe("validateApplicationIntegration", () => {
@@ -117,60 +120,56 @@ describe("validateApplicationIntegration", () => {
   }
 });
 
-describe("validatePhotoGroundingDeferred", () => {
-  const deferredInput = () => ({
-    photoGroundingSource: REAL.photoGroundingSource,
-    uiSources: {
-      createReportSource: REAL.createReportSource,
-      suggestionsSource: REAL.suggestionsSource,
-      helpSource: REAL.helpSource,
-      searchScreenSource: REAL.searchScreenSource,
-    },
-  });
-
-  it("passes while the service is ready and no UI consumes it", () => {
-    deepStrictEqual(validatePhotoGroundingDeferred(deferredInput()), []);
+describe("validatePhotoGroundingWired", () => {
+  it("passes on the real reviewed grounding flow", () => {
+    deepStrictEqual(validatePhotoGroundingWired(REAL), []);
   });
 
   for (const [label, mutate] of [
-    ["op import removed", (input) => ({
-      ...input,
-      photoGroundingSource: input.photoGroundingSource.replace(
-        /from "\.\/ai\/ops\/groundObjects"/g, 'from "./ai/ops/missing"',
-      ),
+    ["service drops the op import", (s) => ({
+      ...s,
+      photoGroundingSource: s.photoGroundingSource.replace(/from "\.\/ai\/ops\/groundObjects"/g, 'from "./ai/ops/missing"'),
     })],
-    ["op call removed", (input) => ({
-      ...input,
-      photoGroundingSource: input.photoGroundingSource.replace(/await groundObjects\(/g, "await missingOp("),
+    ["service drops the op call", (s) => ({
+      ...s,
+      photoGroundingSource: s.photoGroundingSource.replace(/await groundObjects\(/g, "await missingOp("),
     })],
-    ["consent gate removed", (input) => ({
-      ...input,
-      photoGroundingSource: input.photoGroundingSource.replace(
-        /input\.imageConsent !== true/g, "input.imageConsent !== false",
-      ),
+    ["service drops the consent gate", (s) => ({
+      ...s,
+      photoGroundingSource: s.photoGroundingSource.replace(/input\.imageConsent !== true/g, "input.imageConsent !== false"),
     })],
-    ["deferred marker removed", (input) => ({
-      ...input,
-      photoGroundingSource: input.photoGroundingSource.replace(
-        /service-ready \/ UI-deferred/g, "wired everywhere",
-      ),
+    ["op voids the approved image", (s) => ({
+      ...s,
+      groundObjectsSource: `${s.groundObjectsSource}\nvoid input.imageUri;\n`,
     })],
-    ["report UI imports the service while deferred", (input) => ({
-      ...input,
-      uiSources: {
-        ...input.uiSources,
-        createReportSource: `${input.uiSources.createReportSource}\nimport { requestGroundedOptions } from "../services/photoGrounding";\n`,
-      },
+    ["CreateReport unmounts the grounding component", (s) => ({
+      ...s,
+      createReportSource: s.createReportSource.replace(/<PhotoGrounding/g, "<RemovedGrounding"),
+    })],
+    ["component stops calling the live transport", (s) => ({
+      ...s,
+      photoGroundingComponentSource: s.photoGroundingComponentSource.replace(/groundReportPhoto\(/g, "fakeGround("),
+    })],
+    ["component drops percentage overlays", (s) => ({
+      ...s,
+      photoGroundingComponentSource: s.photoGroundingComponentSource.replace(/toCssPercentRect\(/g, "toRawRect("),
+    })],
+    ["component drops Keep review", (s) => ({
+      ...s,
+      photoGroundingComponentSource: s.photoGroundingComponentSource.replace(/Keep my title/g, "Drop my title"),
+    })],
+    ["transport stops binding the approved image", (s) => ({
+      ...s,
+      livePhotoGroundingSource: s.livePhotoGroundingSource.replace(/transport\.imageUri !== imageUrl/g, "false"),
+    })],
+    ["transport drops the consented cloud fallback", (s) => ({
+      ...s,
+      livePhotoGroundingSource: s.livePhotoGroundingSource.replace(/getConnectedOpenRouterKey/g, "noKey"),
     })],
   ]) {
     it(`fails on ${label}`, () => {
-      const broken = mutate(deferredInput());
-      ok(
-        broken.photoGroundingSource !== REAL.photoGroundingSource ||
-          broken.uiSources.createReportSource !== REAL.createReportSource,
-        `${label}: mutation must change its input`,
-      );
-      ok(validatePhotoGroundingDeferred(broken).length > 0, label);
+      const broken = mutate(REAL);
+      ok(validatePhotoGroundingWired(broken).length > 0, label);
     });
   }
 });

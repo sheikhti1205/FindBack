@@ -17,6 +17,14 @@ function payload(boxes: readonly unknown[]): string {
 const INPUT = { imageUri: "report-photo.jpg", referringExpression: "the black wallet" };
 
 describe("photoGrounding (report-photo disambiguation)", () => {
+  it("forwards cancellation through the selector service before inference", async () => {
+    const controller = new AbortController(); controller.abort();
+    const generate = stubGenerate(payload([]));
+    const result = await requestGroundedOptions(generate, mustProfile(VISION), { ...INPUT, ...CONSENT, signal: controller.signal });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.errorClass).toBe("CANCELLED");
+    expect(generate.calls).toBe(0);
+  });
   it("returns selectable options for grounded boxes", async () => {
     const result = await requestGroundedOptions(
       stubGenerate(payload([{ x: 10, y: 20, w: 300, h: 200, label: "black wallet" }])),
