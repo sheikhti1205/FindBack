@@ -272,10 +272,27 @@ describe("completion-gate on the real repository", () => {
     const { passed, errors } = checkCompletionGate({ files: collectShippedSources(REPO_ROOT) });
     ok(passed, errors.join("\n"));
   });
-  it("stays RED in final/release mode while external blockers remain (the HOLD)", () => {
-    const { passed, errors } = checkCompletionGate({ release: true, files: collectShippedSources(REPO_ROOT) });
+  it("stays RED in final/release mode while external blockers remain (fixture HOLD)", () => {
+    // Fail-closed property, independent of the live repo disposition: an
+    // unwaived external blocker plus HOLD must refuse release.
+    const held = fullLedger(
+      { "FBA-002": { status: "BLOCKED_EXTERNAL", blocker: "no authorized device" } },
+      { releaseStatus: "HOLD" },
+    );
+    const { passed, errors } = checkCompletionGate({ release: true, ledger: held, files: {}, testFiles: {} });
     equal(passed, false);
-    ok(errors.some((e) => /final blocked|releaseStatus/.test(e)));
+    ok(errors.some((e) => /final blocked|releaseStatus/.test(e)), errors.join("\n"));
+  });
+  it("goes GREEN in release mode once waivers are written and status is READY (v8 beta disposition)", () => {
+    const { passed, errors } = checkCompletionGate({ release: true, files: collectShippedSources(REPO_ROOT) });
+    ok(passed, errors.join("\n"));
+    // The green must rest on written owner waivers, never on an emptied manifest.
+    const waived = loadLedger(REPO_ROOT).items.filter((item) => item.status === "WAIVED");
+    ok(waived.length > 0, "release-green with zero waivers means the manifest was emptied");
+    ok(
+      waived.every((item) => typeof item.waiver === "string" && item.waiver.trim() !== ""),
+      "every WAIVED item needs written waiver text",
+    );
   });
   it("scans production Android source but no third-party or test-only trees", () => {
     const files = collectShippedSources(REPO_ROOT);
