@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { APP_CAPABILITIES, CAPABILITIES_VERSION } from "./appCapabilities";
+import { APP_CAPABILITIES, BACKEND_SCHEMA_VERSION, CAPABILITIES_VERSION } from "./appCapabilities";
 
 // The server-side mirror lives outside the Vite root, so compare by source:
 // the contract is strict version parity + accurate, platform-scoped product facts.
@@ -92,5 +92,21 @@ describe("capability docs", () => {
   it("never describes a removed inference-mode selector", () => {
     expect(mobileCopy).not.toMatch(/\bAUTO\b|\bQUALITY\b/);
     expect(edgeSummary).not.toMatch(/Model modes: AUTO/);
+  });
+});
+
+describe("backend schema version parity", () => {
+  it("matches the newest data-contract migration prefix (About/Diagnostics never go stale)", () => {
+    const migrations = readdirSync(join(repoRoot, "supabase", "migrations")).filter((name) => name.endsWith(".sql"));
+    expect(migrations.length).toBeGreaterThan(0);
+    const newest = migrations
+      .map((name) => name.match(/^(\d{14})_/)?.[1])
+      .filter((prefix): prefix is string => prefix !== undefined)
+      .sort()
+      .at(-1);
+    expect(newest).toBeDefined();
+    // Landing a new migration without bumping the advertised version fails
+    // here instead of shipping stale About/Diagnostics metadata.
+    expect(BACKEND_SCHEMA_VERSION).toBe(newest);
   });
 });
