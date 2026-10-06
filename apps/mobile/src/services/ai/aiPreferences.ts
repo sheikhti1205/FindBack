@@ -221,27 +221,6 @@ export function effectivePhotoEngine(accountId: string): PhotoEnginePreference {
 }
 
 /**
- * Global slot the photo analyzer reads when it has no account context.
- * Settings publishes the current account's effective photo engine here on
- * every preference change and account load, so the persisted choice actually
- * drives `analyzeReportPhoto` instead of sitting display-only in the store.
- */
-export const EFFECTIVE_PHOTO_ENGINE_KEY = "findback.photoEngine";
-
-/**
- * Publish this preference set's photo engine to the global slot the photo
- * analyzer reads. Best effort; never throws. The analyzer defaults to
- * 'automatic' (SmolVLM2 local-first) when the slot is absent or invalid.
- */
-export function publishEffectivePhotoEngine(prefs: AiPreferences): void {
-  try {
-    globalThis.localStorage?.setItem(EFFECTIVE_PHOTO_ENGINE_KEY, prefs.photoEngine);
-  } catch {
-    // Persistence is best effort; the persisted per-account choice still applies.
-  }
-}
-
-/**
  * Resolve the effective Assistant model id: the persisted choice, or null
  * (Automatic) → the safe free-only route. Help reads this for its
  * session-only override seed; Settings writes the underlying choice.

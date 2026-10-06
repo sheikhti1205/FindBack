@@ -4,7 +4,6 @@ import {
   AI_PREFERENCES_DEFAULTS,
   aiPreferencesKey,
   createAssistantModelBinding,
-  EFFECTIVE_PHOTO_ENGINE_KEY,
   effectivePhotoEngine,
   isNeedleSelectable,
   legacyAssistantModeToPreference,
@@ -12,7 +11,6 @@ import {
   loadEffectiveAssistantMode,
   loadSeededAiPreferences,
   preferenceToAssistantMode,
-  publishEffectivePhotoEngine,
   resolvePreferredModelId,
   saveAiPreferences,
   updateAiPreferences,
@@ -100,11 +98,13 @@ describe("aiPreferences store (Lane A)", () => {
     expect(loadAiPreferences("acct-other").preferredAssistantModel).toBeNull();
   });
 
-  it("publishes the effective photo engine to the slot the photo analyzer reads", () => {
-    publishEffectivePhotoEngine({ ...AI_PREFERENCES_DEFAULTS, photoEngine: "cloud-only" });
-    expect(window.localStorage.getItem(EFFECTIVE_PHOTO_ENGINE_KEY)).toBe("cloud-only");
-    publishEffectivePhotoEngine({ ...AI_PREFERENCES_DEFAULTS, photoEngine: "on-device-only" });
-    expect(window.localStorage.getItem(EFFECTIVE_PHOTO_ENGINE_KEY)).toBe("on-device-only");
+  it("derives the photo engine per account with no global slot (assistant mode wins)", () => {
+    // No global/localStorage slot is consulted: each account reads its own store.
+    updateAiPreferences("acct-photo-a", { assistantMode: "on-device-only", photoEngine: "automatic" });
+    updateAiPreferences("acct-photo-b", { assistantMode: "cloud-only", photoEngine: "on-device-only" });
+    expect(effectivePhotoEngine("acct-photo-a")).toBe("on-device-only");
+    expect(effectivePhotoEngine("acct-photo-b")).toBe("cloud-only");
+    expect(window.localStorage.getItem("findback.photoEngine")).toBeNull();
   });
 
   it("maps the legacy assistant-mode vocabulary onto preferences (unknown stays automatic)", () => {

@@ -534,3 +534,49 @@ describe("VlmSuggestions motion (Wave E)", () => {
     expect((screen.getByLabelText("Suggested title") as HTMLInputElement).value).toBe("Blue wallet");
   });
 });
+
+describe("VlmSuggestions — mode-honest consent copy", () => {
+  const makeFile = () => new File([new Uint8Array(1000)], "photo.jpg", { type: "image/jpeg" });
+  function renderWithEngine(photoEngine?: "automatic" | "on-device-only" | "cloud-only") {
+    render(
+      <MemoryRouter>
+        <VlmSuggestions file={makeFile()} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn()} photoEngine={photoEngine} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+  }
+
+  it("promises local-first with fallback under automatic (and by default)", () => {
+    renderWithEngine();
+    expect(screen.getByLabelText(/otherwise it is sent to OpenRouter with your key/)).toBeTruthy();
+  });
+
+  it("promises never-sent under on-device-only", () => {
+    renderWithEngine("on-device-only");
+    expect(screen.getByLabelText(/never sent to OpenRouter/)).toBeTruthy();
+    expect(screen.queryByLabelText(/otherwise it is sent to OpenRouter/)).toBeNull();
+  });
+
+  it("promises the send under cloud-only", () => {
+    renderWithEngine("cloud-only");
+    expect(screen.getByLabelText(/^Send this photo to OpenRouter/)).toBeTruthy();
+    expect(screen.queryByLabelText(/otherwise it is sent to OpenRouter/)).toBeNull();
+    expect(screen.queryByLabelText(/never sent to OpenRouter/)).toBeNull();
+  });
+
+  it("forwards the owning account to the analyzer so the send stays bound", async () => {
+    analyze.mockResolvedValueOnce({
+      suggestedTitle: "T", suggestedDescription: "D", suggestedCategory: null, uncertainFields: [],
+    });
+    render(
+      <MemoryRouter>
+        <VlmSuggestions file={makeFile()} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn(() => true)} accountId="owner-7" />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+    fireEvent.click(screen.getByLabelText(/otherwise it is sent to OpenRouter/));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+    await screen.findByRole("region", { name: "Review AI suggestions" });
+    expect(analyze).toHaveBeenCalledWith(expect.any(File), true, expect.objectContaining({ accountId: "owner-7" }));
+  });
+});

@@ -5,8 +5,7 @@ import { profileFor } from "./ai/modelProfiles";
 import { GROUND_EXPRESSION_MAX_CHARS, type GroundGenerateFn } from "./ai/ops/groundObjects";
 import { makeAiError, type AiResult } from "./ai/types";
 import { createOpenRouterClient, OpenRouterError } from "./openRouter";
-import { aiCredentials, getConnectedOpenRouterKey } from "./aiCredentials";
-import { getSupabase } from "./supabaseClient";
+import { resolveAccountOpenRouterKey } from "./aiCredentials";
 import { normalizeImage } from "./image";
 import { requestGroundedOptions, type GroundedOptions } from "./photoGrounding";
 import { throwIfAborted, withTimeout } from "./timeout";
@@ -68,24 +67,12 @@ function isAbort(error: unknown): boolean {
 }
 
 /**
- * Resolve the OpenRouter key for a specific account and never retarget a
- * send: when a Supabase session is present it must match `accountId`.
- * Without a session (web/local) fall back to the shared connected key.
+ * Account-bound key resolution for grounding sends. Delegates to the shared
+ * fail-closed resolver: exactly one session lookup, no "currently signed in"
+ * fallback, so an account switch mid-request can never retarget the send.
  */
 async function resolveGroundingKey(accountId: string): Promise<string | null> {
-  if (accountId === "local") return getConnectedOpenRouterKey();
-  let current: string | null = null;
-  try {
-    const { data } = await getSupabase().auth.getSession();
-    current = data.session?.user.id ?? null;
-  } catch {
-    current = null;
-  }
-  if (current !== null) {
-    if (current !== accountId) throw new Error("AI account changed or is not authenticated.");
-    return aiCredentials.get(accountId, "openrouter");
-  }
-  return getConnectedOpenRouterKey();
+  return resolveAccountOpenRouterKey(accountId);
 }
 
 /** Never crops, infers location, writes the draft, publishes, or auto-applies. */

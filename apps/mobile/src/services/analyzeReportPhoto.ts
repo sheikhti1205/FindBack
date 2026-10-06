@@ -1,5 +1,6 @@
 import { createOpenRouterClient, OpenRouterError } from "./openRouter";
-import { getConnectedOpenRouterKey } from "./aiCredentials";
+import { resolveAccountOpenRouterKey } from "./aiCredentials";
+import { effectivePhotoEngine } from "./ai/aiPreferences";
 import { normalizeImage } from "./image";
 import { parseVlmOutput, type VlmAnalysis } from "./vlmParser";
 import {
@@ -10,7 +11,13 @@ import {
 
 interface PhotoDeps {
   encode(file: File): Promise<string>;
-  send(prompt: string, image: string, consent: boolean, options?: { signal?: AbortSignal }): Promise<string>;
+  /**
+   * Cloud-send seam. Optional: when absent the real account-bound OpenRouter
+   * client runs (key resolved for `options.accountId`, fail-closed). Tests
+   * inject a fake to avoid the network; the account-binding suite omits it
+   * deliberately to exercise the real resolver.
+   */
+  send?(prompt: string, image: string, consent: boolean, options?: { signal?: AbortSignal }): Promise<string>;
   /**
    * On-device analyzer seam. Defaults to the real local analyzer; tests inject
    * a fake so the cloud path can be exercised deterministically.
@@ -43,21 +50,19 @@ function isPhotoEnginePreference(value: unknown): value is PhotoEnginePreference
 }
 
 /**
- * Narrow preference seam. Reads the published effective engine slot (fed by
- * the persisted aiPreferences store; see publishEffectivePhotoEngine), with a
- * tolerant fallback (test/global override, then the localStorage slot), and
- * defaults to 'automatic' so the local-first default stays intact.
+ * Engine preference seam, now account-scoped. Reads the owning account's
+ * effective engine (assistant mode is authoritative) from the persisted
+ * per-account store — never a global/localStorage slot, so one account's
+ * choice can never leak into another's send. Absent/unreadable store falls
+ * back to 'automatic' (SmolVLM2 local-first). Kept as a function (not a bare
+ * import) so tests keep the single-function injection seam via `deps`.
  */
-export function getPhotoEngine(): PhotoEnginePreference {
+export function getPhotoEngine(accountId = "local"): PhotoEnginePreference {
   try {
-    const scope = globalThis as { __findbackPhotoEngine?: unknown; localStorage?: Storage };
-    if (isPhotoEnginePreference(scope.__findbackPhotoEngine)) return scope.__findbackPhotoEngine;
-    const stored = scope.localStorage?.getItem("findback.photoEngine");
-    if (isPhotoEnginePreference(stored)) return stored;
+    return effectivePhotoEngine(accountId);
   } catch {
-    // Storage/global access must never break analysis; fall through to default.
+    return "automatic";
   }
-  return "automatic";
 }
 
 function onDeviceUnavailable(): Error & { code: string } {
@@ -98,15 +103,27 @@ function isAbort(error: unknown): boolean {
 export async function analyzeReportPhoto(
   file: File,
   consent: boolean,
-  options?: { signal?: AbortSignal; deps?: PhotoDeps; photoEngine?: PhotoEnginePreference }
+  options?: {
+    signal?: AbortSignal;
+    deps?: PhotoDeps;
+    photoEngine?: PhotoEnginePreference;
+    /**
+     * Owning account for the cloud leg. The key resolver is fail-closed and
+     * account-bound: a session owned by anyone else (or no session) refuses
+     * the send instead of resolving another account's key. Defaults to
+     * "local" (legacy unbound behavior) only when the caller has no account.
+     */
+    accountId?: string;
+  }
 ): Promise<PhotoAnalysis> {
   if (!consent) throw new OpenRouterError("CONSENT_REQUIRED");
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8_000_000) {
     throw new OpenRouterError("INVALID_IMAGE");
   }
 
+  const accountId = options?.accountId ?? "local";
   const rawEngine =
-    options?.photoEngine ?? options?.deps?.getPhotoEngine?.() ?? getPhotoEngine();
+    options?.photoEngine ?? options?.deps?.getPhotoEngine?.() ?? getPhotoEngine(accountId);
   const engine: PhotoEnginePreference = isPhotoEnginePreference(rawEngine) ? rawEngine : "automatic";
 
   const analyzeLocally = options?.deps?.analyzeLocally ?? analyzeReportPhotoLocally;
@@ -118,7 +135,7 @@ export async function analyzeReportPhoto(
       data: string,
       confirmed: boolean,
       opts?: { signal?: AbortSignal }
-    ) => createOpenRouterClient(getConnectedOpenRouterKey).image(prompt, data, confirmed, opts)))(PHOTO_INSTRUCTION, image, consent, options);
+    ) => createOpenRouterClient(() => resolveAccountOpenRouterKey(accountId)).image(prompt, data, confirmed, opts)))(PHOTO_INSTRUCTION, image, consent, options);
     const parsed = parseVlmOutput(text, PHOTO_CATEGORY_CANONICALS);
     if (parsed === null) throw new OpenRouterError("UNUSABLE_RESPONSE");
     // Every catalog category is released (migration 20260926000001 applied),

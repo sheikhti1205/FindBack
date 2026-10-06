@@ -98,13 +98,17 @@ describe("validateApplicationIntegration", () => {
     ["Help ignores persisted default selection", "helpSource", (source) => source.replace(/defaultSelection\(accountId\)/g, "null")],
     ["photo analyzer drops explicit consent", "analyzePhotoSource", (source) => source.replace(/CONSENT_REQUIRED/g, "CONSENT_OPTIONAL")],
     ["photo analyzer drops engine-preference seam", "analyzePhotoSource", (source) => source.replace(/export function getPhotoEngine/g, "export function droppedEngine")],
-    ["photo analyzer drops cloud fallback", "analyzePhotoSource", (source) => source.replace(/createOpenRouterClient\(getConnectedOpenRouterKey\)/g, "fakeCloud()")],
+    ["photo analyzer drops cloud fallback", "analyzePhotoSource", (source) => source.replace(/resolveAccountOpenRouterKey/g, "fakeCloud")],
+    ["photo analyzer retargets cloud key to session lookup", "analyzePhotoSource", (source) => source.replace(/resolveAccountOpenRouterKey/g, "getConnectedOpenRouterKey")],
     ["NL search stops importing the validated seam", "searchScreenSource", (source) => source.replace(/services\/search\/nlFilters/g, "services/search/missing")],
     ["NL search stops consuming validated filters", "helpSource", (source) => source.replace(/mapAssistantSearchFilters\(/g, "unvalidatedSearch(")],
     ["validated-filter mapper removed", "searchMappingSource", (source) => source.replace(/export function mapAssistantSearchFilters/g, "export function droppedMapper")],
     ["SearchScreen stops consuming validated URL query", "searchScreenSource", (source) => source.replace(/useUrlParam\("q"\)/g, 'useUrlParam("zzz")')],
     ["report-field AI bypasses Apply review", "suggestionsSource", (source) => source.replace(/handleApplyTitle/g, "handleAutoApplyTitle")],
     ["report-field AI drops Keep review", "suggestionsSource", (source) => source.replace(/handleKeepTitle/g, "handleDropTitle")],
+    ["draft-from-photo consent stops being mode-derived", "suggestionsSource", (source) => source.replace(/VLM_CONSENT_COPY/g, "STATIC_COPY")],
+    ["draft-from-photo drops the on-device-only no-send promise", "suggestionsSource", (source) => source.replace(/never sent to OpenRouter/g, "sometimes sent")],
+    ["draft-from-photo drops the cloud-only send promise", "suggestionsSource", (source) => source.replace(/Send this photo to OpenRouter/g, "Maybe send this photo")],
     ["category suggestions overwrite manual selection", "createReportSource", (source) => source.replace(/window\.confirm\("Replace the existing title, description or category/g, 'window.confirm("OK')],
     ["category confirm-or-override module removed", "categorySuggestionSource", (source) => source.replace(/export function resolveCategorySuggestion/g, "export function droppedResolver")],
     ["route-intent navigates without validation", "actionGateSource", (source) => source.replace(/function validateRouteIntent/g, "function droppedValidator")],
@@ -162,9 +166,9 @@ describe("validatePhotoGroundingWired", () => {
       ...s,
       livePhotoGroundingSource: s.livePhotoGroundingSource.replace(/transport\.imageUri !== imageUrl/g, "false"),
     })],
-    ["transport drops the consented cloud fallback", (s) => ({
+    ["transport drops the account-bound key resolver", (s) => ({
       ...s,
-      livePhotoGroundingSource: s.livePhotoGroundingSource.replace(/getConnectedOpenRouterKey/g, "noKey"),
+      livePhotoGroundingSource: s.livePhotoGroundingSource.replace(/resolveAccountOpenRouterKey/g, "getConnectedOpenRouterKey"),
     })],
   ]) {
     it(`fails on ${label}`, () => {

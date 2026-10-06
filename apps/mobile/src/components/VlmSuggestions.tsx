@@ -19,9 +19,18 @@ interface VlmSuggestionsProps {
   onApply: (patch: Partial<VlmAnalysis>) => boolean;
   /**
    * Photo-engine preference forwarded to `analyzeReportPhoto`. Absent keeps
-   * the analyzer's own default (the persisted global slot, `automatic`).
+   * the analyzer's own default (`automatic`: on-device first, consented
+   * cloud fallback). The consent copy below is derived from the SAME value
+   * so the UI never promises a path the effective mode forbids.
    */
   photoEngine?: PhotoEnginePreference;
+  /**
+   * Owning account for the cloud leg. Forwarded to `analyzeReportPhoto`,
+   * whose key resolver is fail-closed and account-bound: a foreign or
+   * missing session refuses the send instead of resolving another
+   * account's key. Callers with a signed-in user pass its id.
+   */
+  accountId?: string;
 }
 
 const STANDARD_ERROR = "Couldn't draft text from this photo. You can retry or continue writing manually.";
@@ -35,6 +44,21 @@ const CLOUD_STATUS = "Analyzed with OpenRouter";
 const DROPPED_CATEGORY_NOTE =
   "The suggested category isn't available yet, so it was left out. Pick a category manually.";
 
+/**
+ * Mode-honest consent copy. The transport honors the effective photo engine
+ * exactly (on-device-only never sends; cloud-only never runs local), so the
+ * checkbox must promise exactly that path — never the automatic wording
+ * under a pinned mode. Mirrors the PhotoGrounding per-engine copy.
+ */
+export const VLM_CONSENT_COPY: Record<PhotoEnginePreference, string> = {
+  "on-device-only":
+    "Analyze this photo only on this device. It is never sent to OpenRouter. Nothing is published or applied until I review it.",
+  "cloud-only":
+    "Send this photo to OpenRouter with my connected key to draft the title and description. Nothing is published or applied until I review it.",
+  automatic:
+    "Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it.",
+};
+
 type FieldKey = "title" | "description" | "category";
 
 const UNRESOLVED: Record<FieldKey, boolean> = {
@@ -44,7 +68,7 @@ const UNRESOLVED: Record<FieldKey, boolean> = {
 };
 
 /** User-selected photo analysis: explicit cloud consent, then explicit report review. */
-export function VlmSuggestions({ file, currentTitle, currentDescription, currentCategory, onApply, photoEngine }: VlmSuggestionsProps) {
+export function VlmSuggestions({ file, currentTitle, currentDescription, currentCategory, onApply, photoEngine, accountId }: VlmSuggestionsProps) {
   const [expanded, setExpanded] = useState(false);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -98,7 +122,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     setEngine(null);
     setResolved(UNRESOLVED);
     try {
-      const result = await analyzeReportPhoto(file, true, { signal: controller.signal, photoEngine });
+      const result = await analyzeReportPhoto(file, true, { signal: controller.signal, photoEngine, accountId });
       if (generation.current !== gen) return; // stale photo: drop, never auto-apply
       const used = (result as { engine?: unknown }).engine;
       setEngine(used === "on-device" || used === "cloud" ? used : null);
@@ -252,7 +276,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
               checked={consented}
               onChange={(event) => setConsented(event.target.checked)}
             />
-            Analyze this photo on your device when the local model is installed; otherwise it is sent to OpenRouter with your key. Nothing is published or applied until I review it.
+            {VLM_CONSENT_COPY[photoEngine ?? "automatic"]}
           </label>
 
           <Button

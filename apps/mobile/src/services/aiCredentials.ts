@@ -194,6 +194,31 @@ export async function getConnectedOpenRouterKey(): Promise<string | null> {
 }
 
 /**
+ * Fail-closed account-bound OpenRouter key resolver for photo AI sends.
+ *
+ * Exactly ONE session lookup happens here. A non-"local" accountId with an
+ * absent/unreadable session, or a session owned by a different account, fails
+ * closed instead of falling back to "whoever is currently signed in" — a
+ * second lookup after the first could resolve a newly-signed-in account's key
+ * for a request another account started (account-switch race). Returns key
+ * MATERIAL for the requested account only, never a re-resolving accessor.
+ */
+export async function resolveAccountOpenRouterKey(accountId: string): Promise<string | null> {
+  if (accountId === "local") return getConnectedOpenRouterKey();
+  let current: string | null = null;
+  try {
+    const { data } = await getSupabase().auth.getSession();
+    current = data.session?.user.id ?? null;
+  } catch {
+    current = null;
+  }
+  if (current === null || current !== accountId) {
+    throw new Error("AI account changed or is not authenticated.");
+  }
+  return aiCredentials.get(accountId, "openrouter");
+}
+
+/**
  * Credential-presence probe across every supported provider (session-available
  * OR persisted). Returns provider ids + display text only — never key
  * material, never logs secrets. Fail-closed and strictly per-account.

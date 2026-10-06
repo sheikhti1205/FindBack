@@ -6,7 +6,25 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: vi.fn(),
 }));
 
-import { aiCredentials, cloudConnectionsSummary, describeCloudConnections } from "./aiCredentials";
+const { photoSession } = vi.hoisted(() => ({
+  photoSession: { user: null as string | null, throws: false, calls: 0 },
+}));
+vi.mock("./supabaseClient", () => ({
+  getSupabase: () => ({
+    auth: {
+      getSession: async () => {
+        photoSession.calls += 1;
+        if (photoSession.throws) throw new Error("session read failed");
+        return {
+          data: { session: photoSession.user ? { user: { id: photoSession.user } } : null },
+          error: null,
+        };
+      },
+    },
+  }),
+}));
+
+import { aiCredentials, cloudConnectionsSummary, describeCloudConnections, resolveAccountOpenRouterKey } from "./aiCredentials";
 
 const TEN_PROVIDERS: readonly ProviderId[] = [
   "openrouter",
@@ -269,5 +287,52 @@ describe("describeCloudConnections (F03 credential summary)", () => {
     expect(result.count).toBe(0);
     expect(result.providers).toEqual([]);
     expect(result.summary).toBe("Not connected");
+  });
+});
+
+describe("resolveAccountOpenRouterKey (fail-closed account binding)", () => {
+  beforeEach(() => {
+    photoSession.user = null;
+    photoSession.throws = false;
+    photoSession.calls = 0;
+  });
+
+  it("returns the requesting account's key on session match with exactly one session lookup", async () => {
+    const id = user("resolver");
+    const raw = fakeKey("openrouter", "rk");
+    await aiCredentials.connect(id, raw, { remember: false, provider: "openrouter" });
+    photoSession.user = id;
+    await expect(resolveAccountOpenRouterKey(id)).resolves.toBe(raw);
+    expect(photoSession.calls).toBe(1);
+  });
+
+  it("returns null (never another account's key) when the owner has no key", async () => {
+    const id = user("resolver-nokey");
+    photoSession.user = id;
+    await expect(resolveAccountOpenRouterKey(id)).resolves.toBeNull();
+    expect(photoSession.calls).toBe(1);
+  });
+
+  it("fails closed on session mismatch without a second whoever-is-signed-in lookup", async () => {
+    const a = user("rkA");
+    const b = user("rkB");
+    await aiCredentials.connect(b, fakeKey("openrouter", "rkB"), { remember: false, provider: "openrouter" });
+    photoSession.user = b;
+    await expect(resolveAccountOpenRouterKey(a)).rejects.toThrow(/account changed/i);
+    expect(photoSession.calls).toBe(1);
+  });
+
+  it("fails closed on an absent session instead of falling back to the connected key", async () => {
+    const id = user("rkGhost");
+    await aiCredentials.connect(id, fakeKey("openrouter", "rkGhost"), { remember: false, provider: "openrouter" });
+    photoSession.user = null;
+    await expect(resolveAccountOpenRouterKey(id)).rejects.toThrow(/account changed/i);
+    expect(photoSession.calls).toBe(1);
+  });
+
+  it("fails closed when the session read itself throws", async () => {
+    photoSession.throws = true;
+    await expect(resolveAccountOpenRouterKey(user("rkBoom"))).rejects.toThrow(/account changed/i);
+    expect(photoSession.calls).toBe(1);
   });
 });

@@ -11,9 +11,20 @@ vi.mock("./ai/applicationAi", async (original) => ({
   ...await original<typeof import("./ai/applicationAi")>(), getApplicationAi: () => application.current,
 }));
 // Credentials are a test boundary only; the real image HTTP client is exercised.
+// resolveAccountOpenRouterKey mirrors the production contract exactly (single
+// session lookup, fail closed on absent/mismatched session — pinned for real
+// in aiCredentials.test.ts) so transport tests prove no-send on switch; the
+// credentialGet spy proves a foreign account's slot is never even read.
+const { credentialGet } = vi.hoisted(() => ({ credentialGet: vi.fn(async (_accountId: string, _provider: string) => "test-only-placeholder") }));
 vi.mock("./aiCredentials", () => ({
   getConnectedOpenRouterKey: async () => "test-only-placeholder",
-  aiCredentials: { get: async () => "test-only-placeholder" },
+  aiCredentials: { get: credentialGet },
+  resolveAccountOpenRouterKey: async (accountId: string) => {
+    if (accountId === "local") return "test-only-placeholder";
+    const current = sessionUser.current;
+    if (current === null || current !== accountId) throw new Error("AI account changed or is not authenticated.");
+    return credentialGet(accountId, "openrouter");
+  },
 }));
 const { sessionUser } = vi.hoisted(() => ({ sessionUser: { current: null as string | null } }));
 vi.mock("./supabaseClient", () => ({
@@ -23,7 +34,7 @@ const raw = JSON.stringify({ coordinateSpace: "relative-0-1000", boxes: [{ x: 10
 const file = new File(["original"], "photo.jpg", { type: "image/jpeg" });
 const data = "data:image/jpeg;base64,cGhvdG8=";
 const encoded = { blob: new Blob(["photo"], { type: "image/jpeg" }), mimeType: "image/jpeg", width: 100, height: 200 };
-beforeEach(() => { normalized.mockReset(); normalized.mockResolvedValue(encoded); sessionUser.current = null; vi.unstubAllGlobals(); });
+beforeEach(() => { normalized.mockReset(); normalized.mockResolvedValue(encoded); credentialGet.mockClear(); sessionUser.current = null; vi.unstubAllGlobals(); });
 afterEach(() => vi.unstubAllGlobals());
 
 function deps(localText: string | null = raw) {
@@ -100,10 +111,9 @@ describe("live photo grounding transport", () => {
     expect(body.model).toBe("openrouter/free");
     expect(body.messages[0].content).toContainEqual({ type: "image_url", image_url: { url: data } });
   });
-  it("reads the owning account's photo engine rather than an unrelated global override", async () => {
+  it("reads the owning account's photo engine with per-account isolation (no global slot)", async () => {
     const d = deps(null);
     vi.stubGlobal("localStorage", { getItem: (key: string) => key === aiPreferencesKey("owner") ? JSON.stringify({ photoEngine: "on-device-only" }) : null });
-    vi.stubGlobal("__findbackPhotoEngine", "cloud-only");
     expect((await groundReportPhoto(file, "bag", true, { accountId: "owner", deps: d })).ok).toBe(false);
     expect(d.local).toHaveBeenCalledTimes(1); expect(d.cloud).not.toHaveBeenCalled();
   });
@@ -114,6 +124,33 @@ describe("live photo grounding transport", () => {
     await expect(groundReportPhoto(file, "bag", true, { photoEngine: "cloud-only", accountId: "someone-else" }))
       .rejects.toThrow(/account changed/i);
     expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("fails closed when the session vanishes before the cloud leg (no signed-in fallback)", async () => {
+    // No session at all: the resolver must refuse rather than resolve
+    // "whoever is currently signed in", and must never read any key slot.
+    sessionUser.current = null;
+    const fetcher = vi.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(groundReportPhoto(file, "bag", true, { photoEngine: "cloud-only", accountId: "account-a" }))
+      .rejects.toThrow(/account changed/i);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(credentialGet).not.toHaveBeenCalled();
+  });
+  it("an account switch between normalization and the cloud leg aborts before any network call", async () => {
+    // Session owns the request while the photo normalizes, then switches to
+    // account-b before the cloud key resolves: the send must die and
+    // account-b's key slot must never be read.
+    sessionUser.current = "account-a";
+    normalized.mockImplementation(async (_file: File) => {
+      sessionUser.current = "account-b";
+      return encoded;
+    });
+    const fetcher = vi.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(groundReportPhoto(file, "bag", true, { photoEngine: "cloud-only", accountId: "account-a" }))
+      .rejects.toThrow(/account changed/i);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(credentialGet).not.toHaveBeenCalledWith("account-b", expect.anything());
   });
   it("propagates abort into the real cloud HTTP request and returns no usable selectors", async () => {
     let entered!: () => void; let httpSignal: AbortSignal | undefined;

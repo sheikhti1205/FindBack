@@ -51,7 +51,6 @@ import {
   legacyAssistantModeToPreference,
   loadSeededAiPreferences as loadSeededAiPreferencesCanonical,
   preferenceToAssistantMode,
-  publishEffectivePhotoEngine,
   updateAiPreferences,
   type AiPreferences,
 } from "../services/ai/aiPreferences";
@@ -417,15 +416,16 @@ export function AiModels({
   const [genericBusy, setGenericBusy] = useState(false);
 
   // Account switch: mode, preferences, and slots never cross accounts.
-  // The freshly loaded account's engines are (re)published to their live
-  // consumers so a previous account's choice never leaks into this one.
+  // The freshly loaded account's preferences are read from the per-account
+  // store on every account change, so a previous account's choice never
+  // leaks into this one. Photo consumers read the same store via
+  // effectivePhotoEngine(account) — no global slot is published.
   useEffect(() => {
     const seeded = loadSeededAiPreferences(account);
     // Authoritative store drives the radio; the legacy key is migration
     // source only and is never written back here.
     setMode(preferenceToAssistantMode(seeded.assistantMode));
     setPrefs(seeded);
-    publishEffectivePhotoEngine(seeded);
     applyMatchesEngineToRuntime(seeded.matchesEngine);
     setProbes({});
     setGenericEndpoint(loadGenericEndpoint(account));
@@ -554,7 +554,6 @@ export function AiModels({
   function choosePrefs(patch: Partial<AiPreferences>, notice: string) {
     const next = updateAiPreferences(account, patch);
     setPrefs(next);
-    if (patch.photoEngine !== undefined) publishEffectivePhotoEngine(next);
     if (patch.matchesEngine !== undefined && !applyMatchesEngineToRuntime(next.matchesEngine)) {
       announce("Matches engine saved. The on-device Needle runtime is unavailable here, so matching stays on USE until the model is installed and verified.");
       return;

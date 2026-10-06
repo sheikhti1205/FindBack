@@ -444,7 +444,7 @@ export function validatePhotoGroundingWired(sources) {
     ["transport", transport, /normalizeImage\(/, "live grounding must normalize the approved image"],
     ["transport", transport, /requestGroundedOptions\(/, "live grounding must route through the validated selector service"],
     ["transport", transport, /transport\.imageUri !== imageUrl/, "live grounding must bind the exact approved image (no URI swap)"],
-    ["transport", transport, /getConnectedOpenRouterKey/, "live grounding must keep the consented OpenRouter fallback behind local-first"],
+    ["transport", transport, /resolveAccountOpenRouterKey/, "live grounding must resolve its cloud key through the fail-closed account-bound resolver"],
     ["createReport", createReport, /<PhotoGrounding/, "CreateReport must mount the reviewed grounding component"],
   ];
   for (const [, source, pattern, message] of required) {
@@ -549,8 +549,8 @@ export function validateApplicationIntegration(sources) {
     ],
     [
       "analyzePhotoSource",
-      /createOpenRouterClient\(getConnectedOpenRouterKey\)/,
-      "photo analyzer must keep the OpenRouter cloud fallback behind local-first",
+      /resolveAccountOpenRouterKey/,
+      "photo analyzer must resolve its cloud key through the fail-closed account-bound resolver (a session lookup at send time retargets on account switch)",
     ],
     [
       "searchScreenSource",
@@ -596,6 +596,21 @@ export function validateApplicationIntegration(sources) {
       "suggestionsSource",
       /handleKeepTitle/,
       "report-field AI must offer Keep (review, never auto-apply)",
+    ],
+    [
+      "suggestionsSource",
+      /VLM_CONSENT_COPY/,
+      "draft-from-photo consent copy must be mode-derived (static local-first wording lies under pinned modes)",
+    ],
+    [
+      "suggestionsSource",
+      /never sent to OpenRouter/,
+      "draft-from-photo must carry the on-device-only no-send consent promise",
+    ],
+    [
+      "suggestionsSource",
+      /Send this photo to OpenRouter/,
+      "draft-from-photo must carry the cloud-only send consent promise",
     ],
     [
       "createReportSource",

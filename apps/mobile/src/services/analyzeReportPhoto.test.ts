@@ -1,5 +1,45 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { analyzeReportPhoto } from "./analyzeReportPhoto";
+
+// Session + credential boundary for the real-send account-binding tests.
+// resolveAccountOpenRouterKey mirrors the production contract exactly
+// (single session lookup, fail closed — pinned for real in
+// aiCredentials.test.ts); the credentialGet spy proves a foreign account's
+// slot is never even read on a switch.
+const { analyzeSession, analyzeCredentialGet } = vi.hoisted(() => ({
+  analyzeSession: { current: null as string | null, throws: false },
+  analyzeCredentialGet: vi.fn(async (_accountId: string, _provider: string) => "test-only-placeholder"),
+}));
+vi.mock("./supabaseClient", () => ({
+  getSupabase: () => ({
+    auth: {
+      getSession: async () => {
+        if (analyzeSession.throws) throw new Error("session read failed");
+        return {
+          data: { session: analyzeSession.current ? { user: { id: analyzeSession.current } } : null },
+          error: null,
+        };
+      },
+    },
+  }),
+}));
+vi.mock("./aiCredentials", () => ({
+  getConnectedOpenRouterKey: async () => "test-only-placeholder",
+  aiCredentials: { get: analyzeCredentialGet },
+  resolveAccountOpenRouterKey: async (accountId: string) => {
+    if (accountId === "local") return "test-only-placeholder";
+    const current = analyzeSession.current;
+    if (current === null || current !== accountId) throw new Error("AI account changed or is not authenticated.");
+    return analyzeCredentialGet(accountId, "openrouter");
+  },
+}));
+
+beforeEach(() => {
+  analyzeSession.current = null;
+  analyzeSession.throws = false;
+  analyzeCredentialGet.mockClear();
+});
+afterEach(() => vi.unstubAllGlobals());
 
 const result = {
   objectName: "umbrella", suggestedCategory: null, colors: ["black"], visibleBrand: null,
@@ -309,5 +349,77 @@ describe("photo engine preference", () => {
   it("getPhotoEngine seam defaults to automatic", async () => {
     const { getPhotoEngine } = await import("./analyzeReportPhoto");
     expect(getPhotoEngine()).toBe("automatic");
+  });
+});
+
+describe("account-bound cloud sends (real transport, stubbed HTTP)", () => {
+  const file = () => new File(["jpeg"], "item.jpg", { type: "image/jpeg" });
+  const envelope = () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) }, finish_reason: "stop" }] }),
+      { status: 200 },
+    );
+  // Local fails so the automatic engine reaches the cloud leg; encode is the
+  // last step before key resolution, so flipping the session inside it models
+  // an account switch mid-flight. `send` is omitted on purpose: reaching for
+  // it would bypass the real account-bound resolver under test.
+  const localFails = { analyzeLocally: async () => null as null };
+
+  it("sends for the session-owning account and reports the cloud engine", async () => {
+    analyzeSession.current = "account-a";
+    const fetcher = vi.fn(async () => envelope());
+    vi.stubGlobal("fetch", fetcher);
+    const suggestion = await analyzeReportPhoto(file(), true, {
+      accountId: "account-a",
+      deps: { encode: async () => "data:image/jpeg;base64,/9g=", ...localFails },
+    });
+    expect(suggestion).toMatchObject({ suggestedTitle: "Black umbrella", engine: "cloud" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(analyzeCredentialGet).toHaveBeenCalledWith("account-a", "openrouter");
+  });
+
+  it("an account switch before the cloud leg aborts before any network call", async () => {
+    analyzeSession.current = "account-a";
+    const fetcher = vi.fn(async () => envelope());
+    vi.stubGlobal("fetch", fetcher);
+    const encode = vi.fn(async () => {
+      analyzeSession.current = "account-b";
+      return "data:image/jpeg;base64,/9g=";
+    });
+    await expect(
+      analyzeReportPhoto(file(), true, { accountId: "account-a", deps: { encode, ...localFails } }),
+    ).rejects.toThrow(/account changed/i);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(analyzeCredentialGet).not.toHaveBeenCalledWith("account-b", expect.anything());
+  });
+
+  it("an absent session fails closed even if another account appears mid-flight", async () => {
+    analyzeSession.current = null;
+    const fetcher = vi.fn(async () => envelope());
+    vi.stubGlobal("fetch", fetcher);
+    const encode = vi.fn(async () => {
+      analyzeSession.current = "account-b";
+      return "data:image/jpeg;base64,/9g=";
+    });
+    await expect(
+      analyzeReportPhoto(file(), true, { accountId: "account-a", deps: { encode, ...localFails } }),
+    ).rejects.toThrow(/account changed/i);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(analyzeCredentialGet).not.toHaveBeenCalled();
+  });
+
+  it("a throwing session read fails closed without touching any key slot", async () => {
+    analyzeSession.throws = true;
+    const fetcher = vi.fn(async () => envelope());
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      analyzeReportPhoto(file(), true, {
+        photoEngine: "cloud-only",
+        accountId: "account-a",
+        deps: { encode: async () => "data:image/jpeg;base64,/9g=", ...localFails },
+      }),
+    ).rejects.toThrow(/account changed/i);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(analyzeCredentialGet).not.toHaveBeenCalled();
   });
 });

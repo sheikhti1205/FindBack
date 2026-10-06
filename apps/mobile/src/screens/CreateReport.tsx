@@ -1858,6 +1858,7 @@ function ReportForm() {
           currentDescription={description}
           currentCategory={category}
           onApply={applyVlmSuggestion}
+          accountId={user?.id ?? "local"}
           photoEngine={effectivePhotoEngine(user?.id ?? "local")}
         />
         </>
