@@ -11,20 +11,25 @@ only the Node reference/demo test backend. Monorepo layout below.
 See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 `docs/DEMO_CHECKLIST.md` for the teacher-demo walkthrough.
 
-**Current completion status (2026-10-06, audit baseline `b472a24`): release HOLD,
+**Current completion status (reconciled 2026-10-06, closure-review wave): release HOLD,
 not complete.** Implementation and verification are separate in the matrix.
-Photo grounding UI, assistant-mode reconciliation and phone flows are main-owned
-**in progress**, not intentionally deferred; returned worker evidence and real
-SMS/device acceptance have not been accepted by this documentation pass.
-OpenRouter alone is marked live-tested in the baseline provider UI; other BYOK
-adapters are experimental until actual-send proof. Physical Gate-E, signed App
-Links/FCM delivery/direct reply, release telemetry and genuine Crystal `.rpt`
-(licensed tooling or explicit evaluator substitute acceptance) remain unclosed.
-See [all 34 audit findings](docs/COMPLETION_AUDIT.md) and the
-[current verification/closure report](docs/FINAL_ACCEPTANCE_REPORT.md).
-Main owns the upcoming `completion-ledger.json`; no green wave/AI gate is a
-whole-app completion certificate. Historical acceptance is archived under
-`docs/history/`, not reused as current proof.
+Shipped and reviewed since the audit baseline: photo-grounding UI with
+consent-gated selection, account-bound photo sends, mode-honest consent copy,
+assistant-mode reconciliation, phone-verification flow with CI-executed SQL,
+matching regression fixtures, SEN-01 build-boundary automation, route/map QA
+hardening, schema-version parity, and password recovery. OpenRouter alone is
+marked live-tested in the provider UI; other BYOK adapters are experimental
+until actual-send proof. Remaining open work is the external acceptance set:
+physical Gate-E, live SMS delivery, signed App Links/FCM delivery/direct reply,
+release telemetry, genuine Crystal `.rpt` (licensed tooling or explicit
+evaluator substitute acceptance), and the final signed release. See [all
+findings](docs/COMPLETION_AUDIT.md) (state cells agree with the ledger),
+the [current verification/closure report](docs/FINAL_ACCEPTANCE_REPORT.md),
+and the machine source of truth [`completion-ledger.json`](completion-ledger.json)
+(`generatedFor` names the exact reconciliation commit; the completion gate
+binds it to HEAD). No green wave/AI gate is a whole-app completion
+certificate. Historical acceptance is archived under `docs/history/`, not
+reused as current proof.
 
 ## Stack
 
@@ -34,7 +39,7 @@ whole-app completion certificate. Historical acceptance is archived under
 | Android packaging | Capacitor → Gradle debug APK |
 | API | Hosted Supabase: PostgREST/Data API (REST) + `pg_graphql` (GraphQL); the Node/TS Express + GraphQL-Yoga + Socket.IO server is retained as a Docker/coursework reference |
 | Database | Supabase PostgreSQL (Data API) in production; SQLite `node:sqlite` for tests/local |
-| Auth | Supabase Auth (email OTP via custom SMTP) in production; local JWT for tests/local |
+| Auth | Supabase Auth (email OTP via custom SMTP, phone OTP for number changes, password recovery via verified deep link) in production; local JWT for tests/local |
 | Storage | Supabase Storage (public `findback-images` bucket) — the app normalizes images on-device and uploads directly under its own `<uid>/` folder (owner-scoped RLS); local uploads dir for tests/local |
 | AI | Report-photo automatic analysis: SmolVLM2 local-first with consented OpenRouter fallback (`openrouter/free`); on-device-only never sends, cloud-only skips local. Help: direct BYOK and installed specialized Needle/SmolVLM2 where wired, built-in fallback. Shared app-owned manager/orchestrator, explicit checksum-verified downloads. No server relay or silent paid route. Only OpenRouter marked live-tested; other BYOK adapters experimental pending actual sends. |
 | ML | USE on-device embeddings default for Possible Matches; explicitly selected installed Needle challenger for this session. CPU default; measured GPU vision selection only with fresh correctness evidence, CPU language decoder on both arms. Device performance remains unmeasured. |
@@ -108,13 +113,14 @@ candidate (zero-work dispatch success is not delivery); see
 **AI (optional; verification incomplete):** Help chat is cloud (OpenRouter's `openrouter/free` default,
 user's connected provider directly) plus installed Needle/SmolVLM2 where wired;
 the create-report photo assistant is consented SmolVLM2 on-device default with
-OpenRouter cloud fallback. Keys stay on the device, paid routes require explicit
+OpenRouter cloud fallback bound to the requesting account (fail-closed on
+account switch). Keys stay on the device, paid routes require explicit
 consent, and no FindBack server relays inference. Without a cloud connection or
 a selected compatible offline model, Help uses built-in answers where the chosen
-mode permits. Photo grounding UI and assistant-mode reconciliation are being
-implemented on main; service/transport tests are not proof of accepted UI/device
-behavior. Phone verification is also in progress; baseline phone was stored and
-unverified and live SMS needs approved hosted provider configuration and receipt.
+mode permits. Photo grounding selection, account-bound sends, assistant modes,
+phone verification (code seam; live SMS needs approved hosted provider
+configuration and receipt) and password recovery are shipped and reviewed;
+device acceptance remains external.
 
 On Android, **Settings → AI & models → On-device AI** (`/settings/ai/models`) starts explicit pinned downloads for
 Needle (structured item-detail extraction / matching challenger) and SmolVLM2-500M

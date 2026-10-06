@@ -466,3 +466,12 @@ intentionally not used — it would also block the owner.
 - `services/api/src/domain/storageService.ts` — `recordUpload` (normalize → persist → record → rollback).
 - `apps/mobile/src/services/image.ts` — client-side image normalization (injectable decode/encode) used by the direct-Storage upload.
 - `supabase/migrations/*.sql` — schema, RLS hardening, RPCs, and the `findback-images` bucket.
+- `supabase/migrations/20261006120000_auth_phone_verification_sync.sql` — phone
+  verification badge sync: normalizes `auth.users.phone`, mirrors
+  `phone`/`phone_verified` onto `public.users` via insert/update triggers, and
+  grants the least-privilege roles. The app reads only safe public columns plus
+  its own Auth record (`services/auth.ts` `fetchMe`). Behavioral coverage:
+  `supabase/tests/auth_phone_verification_sync.test.sql`, executed against real
+  Postgres in CI (`phone-verification-sql` job). Expected backend schema marker:
+  `BACKEND_SCHEMA_VERSION = "20261006120000"` (`services/appCapabilities.ts`,
+  parity-enforced by `appCapabilities.test.ts`).

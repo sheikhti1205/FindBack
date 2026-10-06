@@ -1,10 +1,12 @@
 # FindBack — teacher demo and acceptance checklist
 
-Updated 2026-10-06; baseline `b472a24`. **Release: HOLD.** This is a procedure,
+Updated 2026-10-06 (closure-review wave; exact reconciliation commit in
+`completion-ledger.json` `generatedFor`). **Release: HOLD.** This is a procedure,
 not a checked-off device or live-provider run. Use the independent implementation/
 verification statuses in [REQUIREMENTS_MATRIX](REQUIREMENTS_MATRIX.md) and all
-34 findings in [COMPLETION_AUDIT](COMPLETION_AUDIT.md). Grounding, mode and phone
-work is main-owned **IN_PROGRESS**, not intentionally deferred or accepted.
+36 findings in [COMPLETION_AUDIT](COMPLETION_AUDIT.md). Grounding, modes, phone
+and recovery are shipped code seams awaiting external acceptance, not
+intentionally deferred or accepted.
 
 A 10–15 minute class demo is not enough for Gate-E, SMS, provider breadth, push,
 telemetry or release acceptance. Record exact candidate SHA/diff, APK hash,
@@ -37,10 +39,13 @@ version/certificate, device/OS and model pins before claiming any result.
   password and phone inputs; no private email/phone in public post payloads.
 - [ ] Receive actual emailed Supabase OTP; verify/resend/error paths. Email proof
   is historically reported, not a fresh candidate result.
-- [ ] Phone: main integration is IN_PROGRESS. Once code is returned and hosted
+- [ ] Phone: code seam shipped (send/resend/verify/cooldown + server sync + CI-executed SQL). With hosted
   real SMS configured, receive actual SMS, resend with cooldown, verify, reject
   invalid/expired/rate-limited codes, change number/reverify, prove isolation.
   Until then show truthful unverified state; do not count #5 complete.
+- [ ] Password recovery: request reset email (same message whether or not the
+  address exists), follow the `/recovery` link, exchange code, set a new
+  password, land signed in. Live email needs hosted redirect allowlisting.
 - [ ] Login/session restore/refresh/logout/relogin. Remembered AI-key removal
   confirmation appears only when stored keys exist; purge failure cannot trap
   logout; sibling account's credentials remain isolated.
@@ -83,7 +88,7 @@ version/certificate, device/OS and model pins before claiming any result.
 - [ ] Help uses chosen direct BYOK model or installed specialized model where
   wired; built-in fallback is not live AI. Needle structured extraction and Smol
   approved-image description are not a general offline support chatbot.
-- [ ] Mode reconciliation is IN_PROGRESS: check returned UI/persistence/migration,
+- [ ] Modes shipped: check UI/persistence/migration,
   on-device-only no-cloud, cloud-only no-local, unsupported model/task and stale
   web offline refusal. Do not demo hidden/unhonored legacy modes as complete.
 - [ ] Per promoted BYOK provider capture real send/error/consent evidence with
@@ -136,8 +141,8 @@ See [sharing/push runbook](runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md).
 - [ ] Assert public build env; prove final URL/config, synchronized versionCode/
   versionName/certificate/hash, fresh release install **and beta.2 upgrade** on
   physical ARM64. Debug APK/emulator/class demo is not final signed acceptance.
-- [ ] Complete main-owned upcoming `completion-ledger.json` with reviewed evidence
-  for all findings. Record blockers instead of ticking unexecuted rows.
+- [ ] `completion-ledger.json` reconciled with reviewed evidence
+  for all findings (gate binds it to HEAD). Record blockers instead of ticking unexecuted rows.
 - [ ] With owner approval only after closure: immutable next tag, ABI/universal
   APKs + AAB + manifest/checksums; download/hash/signature verify and post-publish
   fresh-install/upgrade; replace current HOLD with exact released-SHA report.

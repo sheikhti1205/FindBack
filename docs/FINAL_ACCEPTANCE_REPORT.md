@@ -1,12 +1,16 @@
 # FindBack — current verification and closure report
 
-**Decision: HOLD — NOT COMPLETE.** Updated 2026-10-06.
+**Decision: HOLD — NOT COMPLETE.** Reconciled 2026-10-06 (closure-review wave).
 
-Audit/source baseline: `b472a247ae593b8eb4e9585bb8947a87ccfaf6c7` (`b472a24`,
-2026-10-05). This is a documentation reconciliation, **not** a final release
-certificate. Main-owned photo grounding, mode and phone integration is
-**IN_PROGRESS**; no returned worker execution evidence has been accepted in this
-report. Uncommitted source changes from other owners do not establish completion.
+The 2026-10-05 audit baseline below is historical provenance. The active source
+of truth is [`completion-ledger.json`](../completion-ledger.json) (`generatedFor`
+names the exact reconciliation commit; the completion gate binds it to HEAD).
+This is a verification reconciliation, **not** a final release certificate.
+Photo grounding, account-bound sends, mode-honest consent, assistant modes,
+phone verification, matching fixtures, SEN-01 automation, route/map QA, schema
+parity and password recovery are shipped, reviewed and CI-executed; device,
+live-provider and licensed-tooling acceptance remain external. See the
+[register](COMPLETION_AUDIT.md) (state cells agree with the ledger).
 
 ## Current architecture
 
@@ -23,18 +27,19 @@ announces CPU retry. USE is default for Possible Matches; installed Needle is an
 explicit session challenger, not proven superior. Physical backend/performance,
 lifecycle, memory, battery and thermal results remain **NOT_EXECUTED**.
 
-Grounding's baseline service-only state is being corrected by main-owned UI work,
-not intentionally deferred. Assistant modes and phone flows are being reconciled;
-real SMS still needs configured hosted provider and live proof. OpenRouter alone
-is marked live-tested in baseline UI. All other BYOK providers remain experimental
+Grounding ships as a reviewed consumer with fail-closed account-bound sends and
+per-engine consent copy. Assistant modes, phone flows and password recovery are
+reconciled and tested; real SMS still needs configured hosted provider and live
+proof, and live email delivery needs hosted redirect allowlisting. OpenRouter alone
+is marked live-tested in the provider UI. All other BYOK providers remain experimental
 pending actual-send evidence; adapters/catalogues/probes are not delivery proof.
 
 ## Evidence inventory and provenance
 
 | Evidence | Status / proves | Does not prove |
 |---|---|---|
-| Human audit packet `FindBack_completion_audit_b472a24_2026-10-05` (README, 00–18, checklist, readiness, prompts, evidence summaries) | Read in full for this reconciliation; 34 findings retained in [COMPLETION_AUDIT](COMPLETION_AUDIT.md). | Runtime success of newly edited code. |
-| Baseline CI 37348171843 and Web 37348171827 | AUDIT_REPORTED: green at b472a24; mobile 3330/API 156 passes and AI gate 12/12 + 64/64 reported. | Fresh execution here, whole-app completeness, flake elimination or physical Android. |
+| Human audit packet `FindBack_completion_audit_b472a24_2026-10-05` (README, 00–18, checklist, readiness, prompts, evidence summaries) | Read in full; 34 findings retained in [COMPLETION_AUDIT](COMPLETION_AUDIT.md), plus FBA-035/036 from the closure review. | Runtime success of newly edited code. |
+| Closure-review wave CI (exact-commit CI + Web green; Docker, phone-verification-sql, SEN-01, stale-assets gate) | CI-EXECUTED on the shipped tree; mobile/API suites, AI gate 12/12, completion integrity green, `--final` RED only on genuine external/waiver items. | Whole-app completeness, flake elimination or physical Android. |
 | Push dispatch 37317074620 | AUDIT_REPORTED: scheduler/function callable, `scanned=0/sent=0/pruned=0/failed=0`. | Any delivered FCM message, notification tap or direct reply. |
 | Baseline privacy/navigation/credential fixes (FBA-027–031) | AUDIT_REPORTED: truth copy, boolean connection summaries, corrected routes/comments, fail-closed account credential purge. | Certification after further changes; keep regressions and rerun at final SHA. |
 | Earlier Auth/Storage/Realtime/REST/GraphQL live runs | HISTORICAL_LIVE: references in API demo and archived report. | Fresh hosted RLS/grants review or candidate phone/media/realtime proof. |
@@ -48,14 +53,13 @@ and verification statuses, and [decisions/prerequisites](../DEFERRED_DECISIONS.m
 
 ## Closure authority
 
-Main owns the upcoming **`completion-ledger.json`** and its whole-app gate.
-This report points to that planned ledger but does not create it, claim it is
-present, invent its schema/location beyond the supplied name, or certify a pass.
-The ledger must reconcile every FBA ID with owner, real state, closure criterion,
-exact evidence SHA/artifact/hash, manual evidence IDs and outstanding blockers.
-A green work wave or the AI gate cannot mark rows complete without their evidence.
-When the ledger exists, the main owner must align these human docs to its reviewed
-evidence. Missing/failed mandatory evidence keeps the gate and release on HOLD.
+`completion-ledger.json` is the machine source of truth with its whole-app
+gate (`scripts/completion-gate.mjs`: integrity in CI, `--final` pre-release,
+`--release` refusing to sign on HOLD). The ledger reconciles every FBA ID with
+owner, real state, evidence references, manual evidence IDs and outstanding
+blockers; this report and the register agree with it cell-by-cell. A green work
+wave or the AI gate cannot mark rows complete without their evidence.
+Missing/failed mandatory evidence keeps the gate and release on HOLD.
 
 ### Required before release/submission acceptance
 

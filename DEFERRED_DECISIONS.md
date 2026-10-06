@@ -1,14 +1,18 @@
 # Decisions and remaining prerequisites — FindBack
 
-Updated 2026-10-06 against audit baseline `b472a247ae593b8eb4e9585bb8947a87ccfaf6c7`.
+Reconciled 2026-10-06 against the shipped tree and `completion-ledger.json`
+(which names the exact reconciliation commit). The 2026-10-05 audit baseline is
+historical provenance below, not the active baseline.
 Latest owner directives override historical pivot/deferment text. A working demo
 adapter does **not** remove a completion or release blocker.
 
-**Release: HOLD.** See [completion audit](docs/COMPLETION_AUDIT.md) for all 34
-findings and [current verification report](docs/FINAL_ACCEPTANCE_REPORT.md).
-The main owner is implementing photo grounding, mode reconciliation and phone
-flows; these remain **IN_PROGRESS**, not accepted, until returned implementation
-and verification evidence is reviewed. They are not intentionally deferred scope.
+**Release: HOLD.** See [completion audit](docs/COMPLETION_AUDIT.md) for all 36
+findings (state cells agree with the ledger) and
+[current verification report](docs/FINAL_ACCEPTANCE_REPORT.md).
+Photo grounding, account-bound sends, assistant modes, phone verification and
+password recovery are shipped, reviewed and CI-executed; device, live-provider
+and licensed-tooling acceptance remain external. Nothing here is intentionally
+deferred scope without a named owner and blocker in the ledger.
 
 ## Settled architecture (not deferred decisions)
 
@@ -17,11 +21,14 @@ and verification evidence is reviewed. They are not intentionally deferred scope
   GraphQL-Yoga and Socket.IO API is a Docker/coursework reference, not a mobile
   runtime dependency; SQLite is local/reference/test-only.
 - Report-photo **automatic** analysis attempts SmolVLM2 locally first; only the
-  consented cloud leg uses the connected OpenRouter key (`openrouter/free`).
-  **On-device-only** fails closed without sending; **cloud-only** skips local.
-  `services/analyzeReportPhoto.ts` is the transport authority. Help has direct
-  BYOK providers, built-in answers and installed specialized local models where
-  wired; it must not be described as a general offline support chatbot.
+  consented cloud leg sends, with the key resolved for the requesting account
+  (fail-closed on account switch or absent session). **On-device-only** fails
+  closed without sending; **cloud-only** skips local. Consent copy is derived
+  from the effective engine, never static local-first wording.
+  `services/analyzeReportPhoto.ts` and `services/livePhotoGrounding.ts` are the
+  transport authorities. Help has direct BYOK providers, built-in answers and
+  installed specialized local models where wired; it must not be described as a
+  general offline support chatbot.
 - CPU is first-class and the Smol default. Measurement can select a vision
   backend for the session only with fresh correctness evidence; the language
   decoder is CPU on both measurement arms. GPU initialization failure announces
@@ -41,18 +48,20 @@ and verification evidence is reviewed. They are not intentionally deferred scope
 
 | Item / audit IDs | Owner | Current truth / blocker | Required closure evidence |
 |---|---|---|---|
-| Photo grounding UI — FBA-001 | Main implementation owner | IN_PROGRESS. Baseline service had tests but no production consumer. Owner now requires integration, not feature removal. | Returned UI diff + interaction/consent/invalid-box/no-result tests; reviewed selection preserves draft; exact-candidate device walkthrough. |
-| Assistant/photo mode truth — FBA-003 | Main implementation owner | IN_PROGRESS. Baseline Auto/Cloud-only UI and legacy offline modes need reconciliation across persistence, Help and photo flow. Photo transport semantics already exist; that does not close assistant UX. | Returned code/tests for exposed modes, migrated/stale selection, unsupported model/task, no-cloud on-device-only, no-local cloud-only, plus device evidence. |
-| Phone verification — FBA-005 / requirement 5 | Main implementation owner + hosted Auth/SMS operator | IN_PROGRESS. Baseline email OTP works historically; phone remained stored/unverified. New send/resend/verify UI alone cannot prove SMS delivery. | Configure approved real SMS provider in hosted Supabase; test phone change/reverification, cooldown, invalid/expired code, throttling and isolation; live SMS receipt + verification on candidate. |
+| Photo grounding UI — FBA-001 | Main implementation owner | SHIPPED (code seam). Reviewed consumer with consent-gated selection, account-bound sends and per-engine consent. Remaining: exact-candidate device walkthrough. | Interaction/consent/invalid-box/no-result tests (shipped); reviewed selection preserves draft; exact-candidate device walkthrough. |
+| Assistant/photo mode truth — FBA-003 | Main implementation owner | SHIPPED (code seam). Modes enforced end-to-end; engine account-scoped with no global slot. Remaining: device evidence. | Exposed modes, migrated/stale selection, unsupported model/task, no-cloud on-device-only, no-local cloud-only (shipped + tested), plus device evidence. |
+| Phone verification — FBA-005 / requirement 5 | Main implementation owner + hosted Auth/SMS operator | SHIPPED (code seam). Send/resend/verify/cooldown + server sync + CI-executed SQL. Remaining: live SMS receipt. | Configure approved real SMS provider in hosted Supabase; test phone change/reverification, cooldown, invalid/expired code, throttling and isolation; live SMS receipt + verification on candidate. |
+| Password recovery — FBA-035 | Main implementation owner + hosted Auth operator | SHIPPED (code seam). Forgot-password entry, reset email, verified `/recovery` deep link, new password; anti-enumeration throughout. Remaining: live email delivery (hosted redirect allowlisting + inbox). | Hosted redirect-URL allowlisting; real reset email receipt + link exchange + password update on candidate. |
+| Account deletion — FBA-036 (explicit scope decision) | Owner + main implementation owner | DECIDED, NOT IMPLEMENTED. Self-serve account deletion (server-side purge function, storage cleanup, RLS, confirm UI, hosted proof) is tracked follow-up with this named owner/blocker — not silently absent. The capability manifest still declares it unavailable, which is truthful until shipped. Recovery (FBA-035) ships first by explicit priority. | Owner-approved deletion design + implementation + hosted proof, or a written waiver keeping it out of supported scope. Do not rediscover this after "final completion". |
 | BYOK provider promotion — FBA-004 | Provider verification owner | OpenRouter is the only provider marked live-tested in baseline UI. OpenAI, Anthropic, Google, DeepSeek, Mistral, Groq, xAI, Cohere and custom endpoint remain experimental/unproven; native provider requires Gate-E. Connection/catalogue/probe success is not real-send proof. | Authorized user-owned keys/endpoints and explicit paid-route consent if needed; redacted actual-send success/error evidence per provider/model/SHA, or owner-approved explicit lab-only visibility. No automatic promotion. |
 | Physical ARM64 gate — FBA-002/014/026, requirements 12/23/24 | Authorized device operator | NOT_EXECUTED. Runbook prepared, not a passing run; no current device/ADB availability is inferred from an old report. | Authorized physical ARM64 phone, working ADB, exact signed candidate/hash/model pins, every Gate-E row and fresh-install/upgrade/core-flow artifacts. |
 | Push / App Links / direct reply — FBA-017/019/020 | Infrastructure + device operator | Backend callable historically; zero-work dispatch is not delivery. | Real queued notification, registered physical device, release certificate/domain association, foreground/background/cold delivery/tap/link routes and shade reply with backend mutation/isolation proof. |
-| Telemetry — FBA-015 | Release/security + device operator | Build-boundary skips and real release synthetic-event proof unresolved. | Approved telemetry project access, exact signed assets, synthetic event received with scrubbed payload; no stale Gradle assets or credential leakage. |
+| Telemetry — FBA-015 | Release/security + device operator | Build boundaries automated in CI (synthetic-DSN bundle asserts, scrubbed-env preflight failure, stale-assets packaging refusal); release synthetic-event receipt and signed-device proof unresolved. | Approved telemetry project access, exact signed assets, synthetic event received with scrubbed payload; no stale Gradle assets or credential leakage. |
 | Crystal Reports artifact — FBA-006 / requirement 20 | Licensed Windows designer operator + evaluator | EXTERNAL_BLOCKED: JSON/CSV/SQL exist, no genuine `.rpt`. Reporting guide's old "out of scope" language is not a current waiver. | Produce/open/render a genuine `.rpt` with licensed Crystal Reports tooling and permitted data access, attach artifact/hash/render evidence; alternatively obtain explicit evaluator acceptance of CSV/API substitute. Never fabricate or rename a file to `.rpt`. |
 | Similarity acceptance baseline — FBA-013 | Matching owner + device evaluator | Source cutoff/weights are implemented but representative calibration is unverified. | Dataset/version, measured metrics/rankings, accepted cutoff/weights and regression fixtures; explicit baseline freeze must explain limits. |
-| Motion-photo vendor support — FBA-016 | Media owner | Optional Xiaomi fixture is not guaranteed coverage. | Licensed/consented deterministic fixture or valid generated equivalent run in CI, or explicit supported-scope decision and copy update. |
-| Final security / release — FBA-007/008/022/025/026/033 | Main/release owner | Current baseline package versions beta.2; published beta.2 predates five fixes. No final candidate accepted. | Full-history secret/dependency/SAST + hosted RLS/grants/advisors, exact-SHA critical workflows, synchronized versions, signed multi-variant assets/checksums and post-publish install/upgrade. |
-| Completion ledger / debt tracking — FBA-023/024 | Main implementation owner | Planned `completion-ledger.json`; creation and gate wiring are outside this documentation work. | All findings with owner/state, exact evidence SHA/hash/path and blockers; gate must fail on missing mandatory evidence. Record real dispositions, not green-wave completion. |
+| Motion-photo vendor support — FBA-016 | Media owner | SHIPPED. Deterministic generated fixture runs in CI; Xiaomi file kept as labeled MANUAL-ONLY optional suite. | Licensed/consented deterministic fixture or valid generated equivalent run in CI (done), or explicit supported-scope decision and copy update. |
+| Final security / release — FBA-007/008/022/025/026/033 | Main/release owner | Root/mobile versions beta.2; no final candidate accepted. Exact-commit CI/Web/Docker/phone-SQL green on the closure-review wave. | Full-history secret/dependency/SAST + hosted RLS/grants/advisors, exact-SHA critical workflows, synchronized versions, signed multi-variant assets/checksums and post-publish install/upgrade. |
+| Completion ledger / debt tracking — FBA-023/024 | Main implementation owner | SHIPPED. `completion-ledger.json` exists with 36 findings; `scripts/completion-gate.mjs` enforces integrity in CI, `--final` pre-release and `--release` (final + READY) in the release workflow. | Ledger keeps every finding with owner/state, evidence references and blockers; gate fails on missing mandatory evidence. Record real dispositions, not green-wave completion. |
 
 ## Superseded decisions
 
