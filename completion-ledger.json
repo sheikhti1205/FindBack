@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedFor": "52de6ec0942b5e589e64137c8933bf5c8cc7ddd9",
+  "generatedFor": "a55f68c9644e3a4c1e645fb544f6bd674f734ddf",
   "releaseStatus": "HOLD",
   "statusVocabulary": [
     "DONE",
@@ -190,9 +190,8 @@
       "id": "FBA-022",
       "severity": "P3",
       "area": "ci/native-ai",
-      "status": "IN_PROGRESS",
-      "evidence": "Exact-commit CI run 37395801580 (5/5 jobs incl. Docker + phone-verification-sql) and Web run 37395800685 green at commit 24e962f3334d39706e249f9974b7cab4d2d20e93; native/model-smoke green at commit fb213a210948b442a1b037c74c36a596938ae2e0 (path-filtered).",
-      "blocker": "final release SHA not yet cut; native/model-smoke must rerun at the final SHA"
+      "status": "DONE",
+      "evidence": "Exact-commit reruns green on BOTH final SHAs. Beta.1 11db2b5: CI 37421224699, native 37421228091, model-smoke 37421232102, Web 37421236159. Beta.2 a55f68c: CI 37420008645, native 37420139057, model-smoke 37420143013, Web 37420008674. All success."
     },
     {
       "id": "FBA-023",
