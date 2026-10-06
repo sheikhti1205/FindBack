@@ -66,10 +66,11 @@ describe("builtInHelp", () => {
     expect(push).not.toMatch(/does not have|not available|not in this build/i);
   });
 
-  it("gives a negative claim for a feature this build does not have", () => {
+  it("answers the shipped account-deletion flow and keeps negatives for the rest", () => {
     const deletion = builtInHelp("How do I delete my FindBack account?");
-    expect(deletion.toLowerCase()).toContain("account");
-    expect(deletion).toMatch(/does not have|not available|not in this build/i);
+    expect(deletion).toMatch(/Settings.*Account.*Delete account/i);
+    expect(deletion).toMatch(/type your email/i);
+    expect(deletion).toMatch(/permanently removes/i);
 
     const messaging = builtInHelp("Can I message another user privately?");
     expect(messaging.toLowerCase()).toMatch(/private messag|direct messag/);

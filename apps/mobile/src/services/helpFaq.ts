@@ -70,6 +70,9 @@ export function builtInHelp(question: string): string {
   if (/location|map|gps/.test(q)) {
     return "Choose an approximate location from the map when reporting an item. FindBack does not track you in the background.";
   }
+  if (/delete.{0,20}account|account.{0,20}delet/.test(q)) {
+    return "To delete your account, open Settings, then Account, then Delete account, and type your email to confirm. Deletion permanently removes your account, its reports and photos, and its data on our servers.";
+  }
 
   // 6. A claim about the app that the knowledge does not cover: do not invent it.
   if (checkAppClaim(question).status === "unknown" && mentionsAppDomain(question)) {

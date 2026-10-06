@@ -185,7 +185,7 @@ describe("deterministic intent checks", () => {
     expect(notifications.status === "supported" && notifications.topics).toContain("notifications");
 
     const deleteAccount = checkAppClaim("How do I delete my FindBack account?");
-    expect(deleteAccount.status).toBe("unavailable");
+    expect(deleteAccount.status).toBe("supported");
 
     expect(checkAppClaim("Does FindBack have a Pets category?").status).toBe("unknown");
     expect(checkAppClaim("what is the capital of France?").status).toBe("unknown");

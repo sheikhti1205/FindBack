@@ -23,7 +23,7 @@ export interface VersionedText {
 }
 
 export const SYSTEM_POLICY_VERSION = "policy-2026-09-25.1";
-export const KNOWLEDGE_VERSION = "kb-2026-10-02.1";
+export const KNOWLEDGE_VERSION = "kb-2026-10-06.1";
 
 /** Mirrors `MAX_PROMPT` in services/openRouter.ts (checkedPrompt). */
 export const MAX_PROMPT_CHARS = 2_400;
@@ -59,10 +59,6 @@ export const UNAVAILABLE_FEATURES: ReadonlyArray<{
   readonly label: string;
   readonly pattern: RegExp;
 }> = [
-  {
-    label: "account deletion",
-    pattern: /\b(?:delete|remov\w+)\s+(?:my\s+)?(?:findback\s+)?account\b|\bdelete my account\b/i,
-  },
   {
     label: "private messaging",
     pattern: /\b(?:private|direct)\s+messag\w*\b|\bdms?\b|\bmessage\s+(?:another|other)\s+(?:user|person)\b/i,
@@ -103,6 +99,7 @@ export const CURRENT_KNOWLEDGE_FACTS: KnowledgeFacts = Object.freeze({
     "Comments, 1–5 star ratings, one like/dislike; up to 3 Possible Matches by similarity, not probability",
     "Notifications for likes, dislikes, comments, mentions, status changes; mark read/unread or delete; swipe right toggles read, swipe left deletes",
     "Photo analysis only on consent",
+    "Account deletion under Settings",
     "Search: listing text, category, status, sort, Lost/Found; results are listings, not AI",
   ]),
   privacy: Object.freeze([

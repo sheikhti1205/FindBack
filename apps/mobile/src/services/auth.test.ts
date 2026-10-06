@@ -14,6 +14,7 @@ import {
   sendPendingEmailCode,
   verifyPendingEmailCode,
   sendPhoneChangeCode,
+  requestAccountDeletion,
   updatePassword,
   verifyPhoneChangeCode,
   saveProfilePhone,
@@ -729,5 +730,39 @@ describe("password recovery (Forgot password → reset email → verified deep l
     clientMock.auth.updateUser.mockResolvedValue({ data: {}, error: null });
     await expect(updatePassword("new-password-123")).resolves.toBeUndefined();
     expect(clientMock.auth.updateUser).toHaveBeenCalledWith({ password: "new-password-123" });
+  });
+});
+
+describe("account deletion (Settings → Account → typed-email confirm → purge)", () => {
+  it("invokes delete-account and returns the server-confirmed removal count", async () => {
+    clientMock.functions.invoke.mockResolvedValue({ data: { storageRemoved: 3 }, error: null });
+    await expect(requestAccountDeletion()).resolves.toEqual({ storageRemoved: 3 });
+    expect(clientMock.functions.invoke).toHaveBeenCalledWith("delete-account", { method: "POST" });
+  });
+
+  it("refuses an unconfirmed server response instead of claiming deletion", async () => {
+    clientMock.functions.invoke.mockResolvedValue({ data: {}, error: null });
+    await expect(requestAccountDeletion()).rejects.toThrow(/did not confirm/i);
+  });
+
+  it("maps an expired session to a sign-in-again message", async () => {
+    clientMock.functions.invoke.mockResolvedValue({
+      data: null,
+      error: { message: "invalid JWT: expired", status: 401 },
+    });
+    await expect(requestAccountDeletion()).rejects.toThrow(/sign in again/i);
+  });
+
+  it("surfaces the server reason on a partway purge failure", async () => {
+    clientMock.functions.invoke.mockResolvedValue({
+      data: null,
+      error: { message: "purge failed", status: 502, context: { error: "storage list failed: boom" } },
+    });
+    await expect(requestAccountDeletion()).rejects.toThrow(/storage list failed: boom/i);
+  });
+
+  it("fails closed on transport errors without claiming anything", async () => {
+    clientMock.functions.invoke.mockRejectedValue(new Error("network down"));
+    await expect(requestAccountDeletion()).rejects.toThrow(/Account deletion failed: network down/i);
   });
 });

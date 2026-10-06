@@ -42,6 +42,7 @@ export interface AppCapabilities {
   privacy: string[];
   emailVerification: string;
   phoneVerification: string;
+  accountDeletion: string;
   unavailable: string[];
 }
 
@@ -113,8 +114,9 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "After registering, verify your email from the Verify screen with the real one-time code.",
   phoneVerification:
     "Phone verification is not enabled in this build because no SMS provider is configured.",
+  accountDeletion:
+    "Delete your account from Settings > Account. Typing your email confirms permanent deletion of the account, its reports and photos, and its server data.",
   unavailable: [
-    "account deletion",
     "private messaging",
     "face recognition",
     "automatic background matching",

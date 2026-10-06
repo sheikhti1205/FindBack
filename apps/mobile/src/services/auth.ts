@@ -311,6 +311,51 @@ export async function updatePassword(password: string): Promise<void> {
   if (error) throw mapAuthError(error);
 }
 
+/** Server-reported result of self-serve account deletion (FBA-036). */
+export interface AccountDeletionResult {
+  storageRemoved: number;
+}
+
+/**
+ * Delete the signed-in account via the `delete-account` edge function. The
+ * session JWT travels automatically; the function resolves the uid from it,
+ * so one account can never delete another. The session is dead afterwards —
+ * the caller must run the normal logout wipe next. Throws ApiError with the
+ * server's reason when the purge refuses or fails partway.
+ */
+export async function requestAccountDeletion(): Promise<AccountDeletionResult> {
+  let data: unknown;
+  try {
+    const invoked = await getSupabase().functions.invoke("delete-account", { method: "POST" });
+    if (invoked.error) throw invoked.error;
+    data = invoked.data;
+  } catch (err) {
+    throw mapDeletionError(err);
+  }
+  const removed = (data as { storageRemoved?: unknown } | null)?.storageRemoved;
+  if (typeof removed !== "number") {
+    throw new ApiError("Account deletion did not confirm. Please try again.", 502);
+  }
+  return { storageRemoved: removed };
+}
+
+function mapDeletionError(err: unknown): ApiError {
+  const like = (err ?? {}) as { message?: unknown; status?: unknown; context?: unknown };
+  const contextMessage =
+    like.context && typeof like.context === "object"
+      ? (like.context as { error?: unknown }).error
+      : undefined;
+  const message =
+    (typeof contextMessage === "string" && contextMessage) ||
+    (typeof like.message === "string" && like.message) ||
+    "";
+  if (/session|credential|auth|jwt|token|expired/i.test(message)) {
+    return new ApiError("Your session expired. Sign in again, then delete your account.", 401);
+  }
+  if (message) return new ApiError(`Account deletion failed: ${message}`, 502);
+  return new ApiError("Account deletion failed. Check your connection and try again.", 502);
+}
+
 function requirePhone(phone: string): string {
   const normalized = normalizePhone(phone);
   if (!normalized) throw new ApiError("Enter a valid Bangladesh mobile number (e.g., 01812345678).", 400);

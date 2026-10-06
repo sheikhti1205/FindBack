@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { LogOut } from "lucide-react";
 import { useAuth } from "../auth";
+import { requestAccountDeletion } from "../services/auth";
 import { Button } from "../components/Button";
 import {
   SettingsGroup,
@@ -38,6 +39,25 @@ export function AccountSettings() {
   const [checkingKeys, setCheckingKeys] = useState(false);
   const [confirmKeyRemoval, setConfirmKeyRemoval] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const [deleteEmail, setDeleteEmail] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleted, setDeleted] = useState(false);
+
+  // After a confirmed deletion the logout wipe signs the user out; the
+  // success panel stays mounted so the outcome is never a silent landing.
+  if (deleted) {
+    return (
+      <SettingsPage title="Account" description="Your sign-in details." backTo="/settings">
+        <p role="status" className="fb-account-notice">
+          Your account was permanently deleted, including its reports, photos,
+          and data on our servers. This device has been signed out and its
+          stored keys removed.
+        </p>
+      </SettingsPage>
+    );
+  }
 
   if (!user) return null;
   const userId = user.id;
@@ -85,6 +105,29 @@ export function AccountSettings() {
   function cancelSignOut() {
     setConfirmKeyRemoval(false);
     setSignOutError(null);
+  }
+
+  /** Server-confirmed deletion, then the normal logout wipe. */
+  function runDeleteAccount() {
+    if (deleting || !user) return;
+    setDeleting(true);
+    setDeleteError(null);
+    void requestAccountDeletion()
+      .then(async () => {
+        setDeleted(true);
+        setDeleteArmed(false);
+        await logout();
+      })
+      .catch((err: unknown) => {
+        setDeleteError(friendlyError(err).message);
+      })
+      .finally(() => setDeleting(false));
+  }
+
+  function cancelDeleteAccount() {
+    setDeleteArmed(false);
+    setDeleteEmail("");
+    setDeleteError(null);
   }
 
   return (
@@ -166,6 +209,50 @@ export function AccountSettings() {
       {signOutError ? (
         <p role="alert" className="fb-account-error">
           {signOutError}
+        </p>
+      ) : null}
+
+      <SettingsGroup title="Delete account">
+        <p className="fb-account-notice">
+          Permanently deletes your account, its reports and photos, and its
+          data on our servers. This cannot be undone.
+        </p>
+        {!deleteArmed ? (
+          <Button variant="error" onClick={() => { setDeleteArmed(true); setDeleteError(null); }}>
+            Delete account…
+          </Button>
+        ) : (
+          <div>
+            <label htmlFor="fb-delete-confirm-email">
+              Type your email address ({user.email}) to confirm deletion.
+            </label>
+            <input
+              id="fb-delete-confirm-email"
+              type="email"
+              autoComplete="off"
+              value={deleteEmail}
+              disabled={deleting}
+              onChange={(event) => setDeleteEmail(event.target.value)}
+            />
+            <div className="fb-account-confirm-row">
+              <Button
+                variant="error"
+                loading={deleting}
+                disabled={deleteEmail.trim().toLowerCase() !== user.email.toLowerCase()}
+                onClick={runDeleteAccount}
+              >
+                Permanently delete my account
+              </Button>
+              <Button variant="text" disabled={deleting} onClick={cancelDeleteAccount}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </SettingsGroup>
+      {deleteError ? (
+        <p role="alert" className="fb-account-error">
+          {deleteError}
         </p>
       ) : null}
     </SettingsPage>

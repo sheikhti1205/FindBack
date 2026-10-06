@@ -4,8 +4,9 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicUser } from "@findback/shared";
 
-const { mockLogout, mockUser } = vi.hoisted(() => ({
+const { mockLogout, mockUser, mockRequestDeletion } = vi.hoisted(() => ({
   mockLogout: vi.fn(),
+  mockRequestDeletion: vi.fn(),
   mockUser: {
     value: null as PublicUser | null,
   },
@@ -17,6 +18,10 @@ vi.mock("../auth", () => ({
     logout: mockLogout,
     refreshUser: vi.fn(),
   }),
+}));
+
+vi.mock("../services/auth", () => ({
+  requestAccountDeletion: (...args: unknown[]) => mockRequestDeletion(...args),
 }));
 
 import { AccountSettings } from "./AccountSettings";
@@ -179,5 +184,60 @@ describe("AccountSettings", () => {
     mockUser.value = null;
     const { container } = renderAccount();
     expect(container.textContent).toBe("");
+  });
+
+  it("shows the delete section unarmed with no confirm input", () => {
+    renderAccount();
+    expect(screen.getByRole("button", { name: /delete account/i })).toBeTruthy();
+    expect(screen.queryByLabelText(/type your email address/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /permanently delete/i })).toBeNull();
+  });
+
+  it("requires the exact account email before the permanent delete button enables", () => {
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /delete account/i }));
+    const input = screen.getByLabelText(/type your email address/i) as HTMLInputElement;
+    const confirm = screen.getByRole("button", { name: /permanently delete/i }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "someone-else@example.com" } });
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "TESTER@example.com" } });
+    expect(confirm.disabled).toBe(false);
+  });
+
+  it("deletes on the server, shows the success panel, then runs the logout wipe", async () => {
+    mockRequestDeletion.mockResolvedValue({ storageRemoved: 2 });
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/type your email address/i), {
+      target: { value: "tester@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /permanently delete/i }));
+    await waitFor(() => expect(mockRequestDeletion).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("status").textContent).toMatch(/permanently deleted/i);
+  });
+
+  it("keeps the account and shows an alert when the server purge fails", async () => {
+    mockRequestDeletion.mockRejectedValue(new Error("Account deletion failed: storage list failed: boom"));
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/type your email address/i), {
+      target: { value: "tester@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /permanently delete/i }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/storage list failed/i));
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("cancelling the delete confirm disarms without calling the server", () => {
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /delete account/i }));
+    expect(screen.getByLabelText(/type your email address/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(screen.queryByLabelText(/type your email address/i)).toBeNull();
+    expect(mockRequestDeletion).not.toHaveBeenCalled();
+    expect(mockLogout).not.toHaveBeenCalled();
   });
 });
