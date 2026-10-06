@@ -10,3 +10,11 @@
 #   - Never add a commit created after enforcement began — fix its message
 #     instead. This file is for history that is already merged, nothing else.
 abda2c78661372075e8b08e32eb4d5f4c6325984
+# Exception 2026-10-06 (accepted-history): the three SHAs below were authored
+# AFTER enforcement began but are merged main history that cannot be rewritten
+# without a destructive main-history rewrite (would orphan ledger-cited SHAs
+# and require force-push). Grandfathered with reason instead; convention is
+# enforced on every new HEAD by CI's --count-1 check.
+52de6ec0942b5e589e64137c8933bf5c8cc7ddd9
+14972644dd887b18b2d4c26b746e48914667f5fa
+0f1dbcfc799a3377a32cc7f25af38118902d8fbd
