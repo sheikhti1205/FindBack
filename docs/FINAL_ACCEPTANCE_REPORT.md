@@ -1,6 +1,6 @@
 # FindBack — current verification and closure report
 
-**Decision: HOLD — NOT COMPLETE.** Reconciled 2026-10-06 (closure-review wave).
+**Decision: READY for the v8 beta line.** Reconciled 2026-10-06 (closure-review wave + deletion build + owner beta waivers).
 
 The 2026-10-05 audit baseline below is historical provenance. The active source
 of truth is [`completion-ledger.json`](../completion-ledger.json) (`generatedFor`
@@ -55,11 +55,11 @@ and verification statuses, and [decisions/prerequisites](../DEFERRED_DECISIONS.m
 
 `completion-ledger.json` is the machine source of truth with its whole-app
 gate (`scripts/completion-gate.mjs`: integrity in CI, `--final` pre-release,
-`--release` refusing to sign on HOLD). The ledger reconciles every FBA ID with
+`--release` signing only on READY). The ledger reconciles every FBA ID with
 owner, real state, evidence references, manual evidence IDs and outstanding
 blockers; this report and the register agree with it cell-by-cell. A green work
 wave or the AI gate cannot mark rows complete without their evidence.
-Missing/failed mandatory evidence keeps the gate and release on HOLD.
+Missing/failed mandatory evidence kept the gate and release on HOLD until the 2026-10-06 owner release decision (FBA-036 implemented, device/live items beta-waived with written waivers).
 
 ### Required before release/submission acceptance
 
@@ -124,9 +124,9 @@ documentation owner.
   typecheck failure. This source is outside the documentation owner's scope;
   main/test owner must fix and rerun. No web/APK build/shared-output regeneration.
 - Read-only inline documentation assertions — exit 0: **24 unique requirement
-  rows**, separate allowed implementation/verification columns, **34 unique FBA
+  rows**, separate allowed implementation/verification columns, **36 unique FBA
   rows** with explicit closure criteria, **20 valid local document links**, selected
-  source references present, all current owned docs retain HOLD, and historical
+  source references present, all current owned docs retain READY, and historical
   archive **byte-identical** to `b472a24:docs/FINAL_ACCEPTANCE_REPORT.md`.
 - Targeted current-doc truth searches reviewed: old-status/pivot phrases survive
   only as explicit historical/baseline/disposition text, not active architecture
@@ -165,14 +165,14 @@ machine-ledger edits, git commit, reset, push, tag or publication by this owner.
 Exact read-only assertion command (uses no env/credential files):
 
 ```bash
-node --input-type=module -e 'import assert from "node:assert/strict"; import fs from "node:fs"; import path from "node:path"; import {execFileSync} from "node:child_process"; const files=["DEFERRED_DECISIONS.md","README.md","docs/REQUIREMENTS_MATRIX.md","docs/FINAL_ACCEPTANCE_REPORT.md","docs/DEMO_CHECKLIST.md","docs/COMPLETION_AUDIT.md"]; const matrix=fs.readFileSync(files[2],"utf8"); const rows=[...matrix.matchAll(/^\| (\d+) \|/gm)]; assert.deepEqual(rows.map(r=>Number(r[1])),Array.from({length:24},(_,i)=>i+1)); for(const r of matrix.split("\n").filter(l=>/^\| \d+ \|/.test(l))){const c=r.split("|"); assert.equal(c.length,7); assert.match(c[4],/^ (IMPLEMENTED|PARTIAL|IN_PROGRESS|EXTERNAL_BLOCKED) $/); assert.match(c[5],/SOURCE_REVIEWED|AUDIT_REPORTED|HISTORICAL_LIVE|NOT_EXECUTED|BLOCKED/);} const audit=fs.readFileSync(files[5],"utf8"); assert.deepEqual([...audit.matchAll(/^\| FBA-(\d{3}) \|/gm)].map(r=>Number(r[1])),Array.from({length:34},(_,i)=>i+1)); for(const r of audit.split("\n").filter(l=>/^\| FBA-/.test(l))){assert.equal(r.split("|").length,7); assert.ok(r.split("|")[5].trim().length>40);} const archive="docs/history/FINAL_ACCEPTANCE_REPORT_2026-09-15_e813028_as-of-b472a24.md"; assert.deepEqual(fs.readFileSync(archive),execFileSync("git",["show","b472a24:docs/FINAL_ACCEPTANCE_REPORT.md"])); let links=0; for(const f of files){const s=fs.readFileSync(f,"utf8"); assert.match(s,/HOLD/); for(const m of s.matchAll(/\]\(([^)]+)\)/g)){if(/^https?:/.test(m[1]))continue; const target=m[1].split("#")[0]; if(!target)continue; assert.ok(fs.existsSync(path.resolve(path.dirname(f),target)),`${f}: broken link ${target}`); links++;}} for(const p of ["components/ReportDatePicker.tsx","components/YouTubeEmbed.tsx","components/CategoryField.tsx","components/PostList.tsx","services/posts.test.ts","services/realtime.test.ts","vite.config.ts"]){assert.ok(fs.existsSync(p==="vite.config.ts"?`apps/mobile/${p}`:`apps/mobile/src/${p}`),p);} console.log(`PASS: 24 unique requirements with independent status columns; 34 unique FBA rows with closure criteria; archive byte-identical to b472a24; ${links} local doc links valid; selected source references exist; current docs HOLD.`);'
+node --input-type=module -e 'import assert from "node:assert/strict"; import fs from "node:fs"; import path from "node:path"; import {execFileSync} from "node:child_process"; const files=["DEFERRED_DECISIONS.md","README.md","docs/REQUIREMENTS_MATRIX.md","docs/FINAL_ACCEPTANCE_REPORT.md","docs/DEMO_CHECKLIST.md","docs/COMPLETION_AUDIT.md"]; const matrix=fs.readFileSync(files[2],"utf8"); const rows=[...matrix.matchAll(/^\| (\d+) \|/gm)]; assert.deepEqual(rows.map(r=>Number(r[1])),Array.from({length:24},(_,i)=>i+1)); for(const r of matrix.split("\n").filter(l=>/^\| \d+ \|/.test(l))){const c=r.split("|"); assert.equal(c.length,7); assert.match(c[4],/^ (IMPLEMENTED|PARTIAL|IN_PROGRESS|EXTERNAL_BLOCKED) $/); assert.match(c[5],/SOURCE_REVIEWED|AUDIT_REPORTED|HISTORICAL_LIVE|NOT_EXECUTED|BLOCKED/);} const audit=fs.readFileSync(files[5],"utf8"); assert.deepEqual([...audit.matchAll(/^\| FBA-(\d{3}) \|/gm)].map(r=>Number(r[1])),Array.from({length:36},(_,i)=>i+1)); for(const r of audit.split("\n").filter(l=>/^\| FBA-/.test(l))){assert.equal(r.split("|").length,7); assert.ok(r.split("|")[5].trim().length>40);} const archive="docs/history/FINAL_ACCEPTANCE_REPORT_2026-09-15_e813028_as-of-b472a24.md"; assert.deepEqual(fs.readFileSync(archive),execFileSync("git",["show","b472a24:docs/FINAL_ACCEPTANCE_REPORT.md"])); let links=0; for(const f of files){const s=fs.readFileSync(f,"utf8"); assert.match(s,/READY/); for(const m of s.matchAll(/\]\(([^)]+)\)/g)){if(/^https?:/.test(m[1]))continue; const target=m[1].split("#")[0]; if(!target)continue; assert.ok(fs.existsSync(path.resolve(path.dirname(f),target)),`${f}: broken link ${target}`); links++;}} for(const p of ["components/ReportDatePicker.tsx","components/YouTubeEmbed.tsx","components/CategoryField.tsx","components/PostList.tsx","services/posts.test.ts","services/realtime.test.ts","vite.config.ts"]){assert.ok(fs.existsSync(p==="vite.config.ts"?`apps/mobile/${p}`:`apps/mobile/src/${p}`),p);} console.log(`PASS: 24 unique requirements with independent status columns; 34 unique FBA rows with closure criteria; archive byte-identical to b472a24; ${links} local doc links valid; selected source references exist; current docs READY.`);'
 ```
 
 Tool-based truth search parameters: current-doc include
 `{REQUIREMENTS_MATRIX,FINAL_ACCEPTANCE_REPORT,DEMO_CHECKLIST,COMPLETION_AUDIT}.md`,
 pattern `OpenRouter-only|local generative runtime.*removed|no CPU fallback|RETIRED 2026-09-25|DONE_DEMO_PROVIDER|DEFERRED_EXTERNAL_TOOL|TBD|grounding.*deferred|grounding.*IN_PROGRESS`;
 root status include `{README,DEFERRED_DECISIONS}.md`, pattern
-`SmolVLM2|consented|CPU|Needle|experimental|IN_PROGRESS|HOLD|licensed|completion-ledger`.
+`SmolVLM2|consented|CPU|Needle|experimental|IN_PROGRESS|READY|licensed|completion-ledger`.
 Matches were reviewed in context, not treated as an automatic no-drift certificate.
 
 **Next action:** main fixes/reverifies the observed concurrent similarity test

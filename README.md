@@ -11,8 +11,8 @@ only the Node reference/demo test backend. Monorepo layout below.
 See `docs/REQUIREMENTS_MATRIX.md` for the full traceability matrix and
 `docs/DEMO_CHECKLIST.md` for the teacher-demo walkthrough.
 
-**Current completion status (reconciled 2026-10-06, closure-review wave): release HOLD,
-not complete.** Implementation and verification are separate in the matrix.
+**Current completion status (reconciled 2026-10-06, closure-review wave + deletion build): release READY
+for the v8 beta line** (owner beta waivers 2026-10-06 for device/live-bound items). Implementation and verification are separate in the matrix.
 Shipped and reviewed since the audit baseline: photo-grounding UI with
 consent-gated selection, account-bound photo sends, mode-honest consent copy,
 assistant-mode reconciliation, phone-verification flow with CI-executed SQL,
@@ -178,8 +178,8 @@ and never commit `.env`.
 
 - `docs/REQUIREMENTS_MATRIX.md` — 24 teacher requirements → implementation
 - `docs/DEMO_CHECKLIST.md` — teacher walkthrough
-- `docs/COMPLETION_AUDIT.md` — all 34 FBA findings, evidence boundaries and blockers
-- `docs/FINAL_ACCEPTANCE_REPORT.md` — current HOLD / verification and closure report
+- `docs/COMPLETION_AUDIT.md` — all 36 FBA findings, evidence boundaries and blockers
+- `docs/FINAL_ACCEPTANCE_REPORT.md` — current READY (v8 beta) / verification and closure report
 - `docs/history/` — dated historical acceptance, not current certification
 - `docs/erd/ERD.md` + `docs/erd/ERD.pdf` — schema & entity relationship diagram
 - `docs/reporting/REPORTING.md` — reporting API, report queries, Crystal import

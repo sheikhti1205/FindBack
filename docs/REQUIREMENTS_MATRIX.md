@@ -3,7 +3,7 @@
 24 teacher requirements, reconciled 2026-10-06 against the shipped tree and
 `completion-ledger.json` (which names the exact reconciliation commit in
 `generatedFor`). The audit baseline below is historical provenance, not the
-active baseline. **Release: HOLD.**
+active baseline. **Release: READY (v8 beta line, owner waivers 2026-10-06).**
 
 ## Status vocabulary (two independent axes)
 

@@ -1,7 +1,7 @@
 # FindBack — teacher demo and acceptance checklist
 
 Updated 2026-10-06 (closure-review wave; exact reconciliation commit in
-`completion-ledger.json` `generatedFor`). **Release: HOLD.** This is a procedure,
+`completion-ledger.json` `generatedFor`). **Release: READY (v8 beta line).** This is a procedure,
 not a checked-off device or live-provider run. Use the independent implementation/
 verification statuses in [REQUIREMENTS_MATRIX](REQUIREMENTS_MATRIX.md) and all
 36 findings in [COMPLETION_AUDIT](COMPLETION_AUDIT.md). Grounding, modes, phone
@@ -145,7 +145,7 @@ See [sharing/push runbook](runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md).
   for all findings (gate binds it to HEAD). Record blockers instead of ticking unexecuted rows.
 - [ ] With owner approval only after closure: immutable next tag, ABI/universal
   APKs + AAB + manifest/checksums; download/hash/signature verify and post-publish
-  fresh-install/upgrade; replace current HOLD with exact released-SHA report.
+  fresh-install/upgrade; replace current READY statement with exact released-SHA report.
 
 ## Requirement → demo map
 

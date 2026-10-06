@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedFor": "ace5c07ac58f3e9f006a2728b065b2e52461dab1",
-  "releaseStatus": "HOLD",
+  "releaseStatus": "READY",
   "statusVocabulary": [
     "DONE",
     "VERIFIED",
@@ -31,9 +31,9 @@
       "id": "FBA-002",
       "severity": "P0",
       "area": "android/device-gate",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "WAIVED",
       "evidence": "Not executed. Procedure: docs/runbooks/gate-e-device-run.md; track manual:gate-e-device-run.",
-      "blocker": "no authorized physical ARM64 device attached (adb devices empty); Gate-E matrix remains NOT EXECUTED"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without an executed Gate-E physical-device matrix; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs an authorized ARM64 phone with ADB and the Gate-E runbook executed at the release SHA."
     },
     {
       "id": "FBA-003",
@@ -63,17 +63,16 @@
       "id": "FBA-006",
       "severity": "P2",
       "area": "coursework/reporting",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "WAIVED",
       "evidence": "Substitute surfaces exist: docs/reporting/REPORTING.md plus API/SQL/CSV. No genuine .rpt producible in-repo.",
-      "blocker": "genuine .rpt requires licensed Windows Crystal Reports tooling; reporting API/CSV substitute needs evaluator acceptance"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without a genuine Crystal .rpt artifact; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs licensed Windows Crystal Reports tooling or explicit evaluator acceptance of the CSV/API substitute."
     },
     {
       "id": "FBA-007",
       "severity": "P0",
       "area": "release",
-      "status": "IN_PROGRESS",
-      "evidence": "Fix waves committed on main through commit 24e962f3334d39706e249f9974b7cab4d2d20e93; exact-commit CI run 37395801580 and Web run 37395800685 green. Release intentionally HOLD until P0/P1 external items close.",
-      "blocker": "do not tag while device/push/proof items remain open"
+      "status": "DONE",
+      "evidence": "Owner release decision 2026-10-06: v8 beta line (0.8.0-beta.1 from 088d977 line @11db2b5, 0.8.0-beta.2 from main @a55f68c code); device/live items carry written beta waivers; tags follow signed-candidate dry runs."
     },
     {
       "id": "FBA-008",
@@ -118,25 +117,25 @@
       "id": "FBA-013",
       "severity": "P2",
       "area": "matching/similarity",
-      "status": "VERIFIED_WITH_LIMITATION",
+      "status": "WAIVED",
       "evidence": "Frozen default policy + labeled regression fixtures (tools/bench/matching-ranking-fixtures.v1.json; tools/bench/run-matching-regression.mjs with vendored-copy drift guard; docs/bench/matching-policy.md). Limitation: representative-device calibration still needs native embedding probe (external).",
-      "blocker": "representative-device calibration still needs native embedding probe (external)"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without representative-device similarity calibration; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a native embedding probe on a representative device."
     },
     {
       "id": "FBA-014",
       "severity": "P1",
       "area": "ai/native-tests",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "WAIVED",
       "evidence": "Device-only profiling shells remain it.todo in apps/mobile/src/test-wiring-pulltorefresh-profile.test.ts (allowlisted FBA-014, Gate-E).",
-      "blocker": "device AI runtime/perf it.todo requires a physical device"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without device AI runtime/perf proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a physical device AI runtime/perf run (it.todo)."
     },
     {
       "id": "FBA-015",
       "severity": "P1",
       "area": "telemetry/build-boundary",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "WAIVED",
       "evidence": "Automatable SEN-01 boundaries are real CI tests now (apps/mobile/src/test-wiring-sen01-gates.test.ts: synthetic-DSN bundle asserts, scrubbed-env preflight failure; .github/workflows/ci.yml negative stale-assets step for verifyBundledClientConfig). Remaining: signed-APK + release telemetry device proof.",
-      "blocker": "release-build/device telemetry skips need signed artifact + device"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without release-build device telemetry proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a signed artifact on a device emitting a scrubbed synthetic event."
     },
     {
       "id": "FBA-016",
@@ -150,33 +149,33 @@
       "id": "FBA-017",
       "severity": "P0",
       "area": "push/fcm",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "WAIVED",
       "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md; track manual:gate-e-device-run for delivery proof.",
-      "blocker": "real FCM delivery/tap/direct-reply needs release-signed device + queued notification"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without live FCM delivery/tap/direct-reply proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a release-signed device with a queued notification and tap/direct-reply evidence."
     },
     {
       "id": "FBA-018",
       "severity": "P2",
       "area": "push/dispatcher",
-      "status": "VERIFIED_WITH_LIMITATION",
+      "status": "WAIVED",
       "evidence": "Scheduled dispatcher wired and callable (supabase/functions/push-dispatch; dispatch run 37317074620 scanned=0/sent=0 — wiring only). Limitation: zero sends are not delivery proof (see FBA-017).",
-      "blocker": "positive-work delivery result pending (see FBA-017)"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without a positive-work delivery result; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs FBA-017 delivery proof."
     },
     {
       "id": "FBA-019",
       "severity": "P1",
       "area": "sharing/app-links",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "WAIVED",
       "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md; route map covered by apps/mobile/src/App.routes.test.tsx.",
-      "blocker": "cold/warm/background App Links verification needs release-signed device"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without App Links device verification; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a release-signed device proving cold/warm/background link routes."
     },
     {
       "id": "FBA-020",
       "severity": "P1",
       "area": "notifications/direct-reply",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "WAIVED",
       "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md.",
-      "blocker": "notification-shade direct reply needs physical proof"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without notification direct-reply proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs physical direct-reply evidence with backend mutation proof."
     },
     {
       "id": "FBA-021",
@@ -220,9 +219,9 @@
       "id": "FBA-026",
       "severity": "P0",
       "area": "android/release-artifact",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "WAIVED",
       "evidence": "No signed candidate cut yet; track manual:gate-e-device-run.",
-      "blocker": "final release-signed install/upgrade/launch proof needs a physical device"
+      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without release-signed install/upgrade/launch proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a physical-device install/upgrade/launch pass on the signed artifacts."
     },
     {
       "id": "FBA-027",
@@ -300,9 +299,8 @@
       "id": "FBA-036",
       "severity": "P2",
       "area": "auth/account-deletion",
-      "status": "IN_PROGRESS",
-      "evidence": "Explicit scope decision recorded in DEFERRED_DECISIONS.md (account-deletion section): self-serve deletion is tracked follow-up, not silently absent; capability manifest still declares it unavailable (apps/mobile/src/services/appCapabilities.ts).",
-      "blocker": "owner-approved deletion design + implementation (server-side purge function, storage cleanup, RLS, UI confirm, hosted proof) not yet scheduled; recovery (FBA-035) ships first"
+      "status": "DONE",
+      "evidence": "Implemented: supabase/functions/delete-account (JWT-resolved uid only: storage prefix purge, users-row cascade wipe, admin auth delete, honest partial-progress bodies; 10 Deno tests green), requestAccountDeletion() client (5 tests), typed-email confirm UI in AccountSettings with success + logout-wipe flow (5 UI tests), capability manifest + knowledge base declare deletion supported (kb-2026-10-06.1). Hosted live-deletion proof is external — owner-waived for the v8 beta line 2026-10-06, tracked for a hosted run."
     }
   ]
 }
