@@ -6,6 +6,10 @@ import { rankMatches, rankingMetrics, averageRankingMetrics, MIN_COSINE_CUTOFF, 
 
 const source = new URL("./matching-ranking-fixtures.v1.json", import.meta.url);
 const fixture = JSON.parse(readFileSync(source, "utf8"));
+// The vitest suite imports a vendored copy (Docker build context excludes
+// tools/), so fail loudly on drift between the canonical fixture and the copy.
+const vendored = new URL("../../apps/mobile/src/services/__tests__/fixtures/matching-ranking-fixtures.v1.json", import.meta.url);
+deepStrictEqual(JSON.parse(readFileSync(vendored, "utf8")), fixture, "vendored fixture drifted from tools/bench canonical");
 const rows = fixture.cases.map((row) => {
   const target = { ...fixture.target, ...row.target };
   const candidates = row.candidates.map(({ mappedScore: _score, ...c }) => ({ ...fixture.target, ...c }));

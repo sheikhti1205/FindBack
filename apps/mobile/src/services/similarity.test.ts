@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { averageRankingMetrics, CATEGORY_BONUS, cosineSimilarity, MIN_COSINE_CUTOFF, rankMatches, rankingMetrics, type MatchCandidate } from "./similarity";
-import fixtures from "../../../../tools/bench/matching-ranking-fixtures.v1.json";
+import fixtures from "./__tests__/fixtures/matching-ranking-fixtures.v1.json";
 
 const target = { id: "lost-1", type: "LOST" as const, title: "black umbrella", description: "wooden handle", category: "Clothing" as const, eventDate: "2026-09-10", locationLat: 1.3, locationLng: 103.8, locationLabel: "Test Location" };
 
