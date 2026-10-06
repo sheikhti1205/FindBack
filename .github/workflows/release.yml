@@ -84,6 +84,11 @@ jobs:
           else
             node scripts/check-commit-messages.mjs --count 1
           fi
+      - name: Completion gate (fail closed while any P0/P1 is open)
+        # The audit's central failure was tagging a release while P0/P1 findings
+        # and deferrals stayed open. This refuses to sign unless the completion
+        # ledger is READY with every P0/P1 closed (audit FBA-023/024).
+        run: node scripts/completion-gate.mjs --release
 
   gate:
     name: Full release gate

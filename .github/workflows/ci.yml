@@ -59,6 +59,10 @@ jobs:
         run: npm run lint
       - name: Secret scan
         run: npm run scan:secrets
+      - name: Completion ledger integrity gate
+        # Keeps "green CI" from meaning "complete": fails on malformed ledger
+        # state or an unallowlisted TODO/FIXME in shipped source (audit FBA-023/024).
+        run: node scripts/completion-gate.mjs
       - name: API tests
         run: npm test -w @findback/api
       - name: Mobile tests
@@ -70,7 +74,7 @@ jobs:
         # checker (range + enforcement baseline) and the AI release gate
         # itself (skeleton-tree detectors) — the gate test must run here
         # because these lists are explicit globs never match new files.
-        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-commit-messages.test.mjs scripts/ai-release-gate.test.mjs
+        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-commit-messages.test.mjs scripts/ai-release-gate.test.mjs scripts/completion-gate.test.mjs
       - name: Sharing and server credential config tests
         run: node --test scripts/check-share-config.test.mjs scripts/check-mobile-build-config.test.mjs scripts/sync-fcm-secrets.test.mjs
       - name: Build mobile web shell
@@ -79,6 +83,43 @@ jobs:
           CI: true
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+
+  phone-verification-sql:
+    name: Phone verification SQL behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v5
+      # Executes the migration's trigger logic against a real Postgres so the
+      # phone-badge invariant is proven BEHAVIORALLY, not by grep. The vitest
+      # companion remains only a static vocabulary guard.
+      - name: Ensure psql client
+        run: command -v psql >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y postgresql-client; }
+      - name: Apply harness + phone-verification migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          PG="psql -h localhost -U postgres -v ON_ERROR_STOP=1"
+          $PG -c "create database findback_test;"
+          $PG -d findback_test -f supabase/tests/_phone_verification_harness.sql
+          $PG -d findback_test -f supabase/migrations/20261006120000_auth_phone_verification_sync.sql
+      - name: Run behavioral phone-verification assertions
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d findback_test -v ON_ERROR_STOP=1 -f supabase/tests/auth_phone_verification_sync.test.sql
 
   android:
     name: Android build & JVM tests
