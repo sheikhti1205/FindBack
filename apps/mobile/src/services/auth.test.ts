@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearAllAuth, getToken } from "./session";
+import { clearAllAuth, getToken, setToken } from "./session";
 import {
   askAiHelp,
   checkUsername,
@@ -10,38 +10,41 @@ import {
   restoreSession,
   sendPendingEmailCode,
   verifyPendingEmailCode,
+  sendPhoneChangeCode,
+  verifyPhoneChangeCode,
+  saveProfilePhone,
 } from "./auth";
 import { isLikelySecretKey, SupabaseConfigError, validateSupabaseConfig } from "./supabaseClient";
 import { aiCredentials } from "./aiCredentials";
 
-const { clientMock, singleMock, ilikeMock, limitMock, selectMock } = vi.hoisted(() => {
+const { clientMock, singleMock, ilikeMock, limitMock, selectMock, isolatedClientMock } = vi.hoisted(() => {
   const singleMock = vi.fn();
   const limitMock = vi.fn();
   const ilikeMock = vi.fn(() => ({ limit: limitMock }));
   const selectMock = vi.fn();
+  const clientMock = {
+    auth: {
+      signUp: vi.fn(), signInWithPassword: vi.fn(), getSession: vi.fn(), getUser: vi.fn(),
+      signOut: vi.fn(), resend: vi.fn(), verifyOtp: vi.fn(), refreshSession: vi.fn(),
+      onAuthStateChange: vi.fn(), updateUser: vi.fn(), setSession: vi.fn(),
+      dispose: vi.fn(),
+    },
+    rpc: vi.fn(), from: vi.fn(), functions: { invoke: vi.fn() },
+  };
   return {
     singleMock,
     limitMock,
     ilikeMock,
     selectMock,
-    clientMock: {
-      auth: {
-        signUp: vi.fn(),
-        signInWithPassword: vi.fn(),
-        getSession: vi.fn(),
-        getUser: vi.fn(),
-        signOut: vi.fn(),
-        resend: vi.fn(),
-        verifyOtp: vi.fn(),
-        refreshSession: vi.fn(),
-        onAuthStateChange: vi.fn(),
-      },
-      rpc: vi.fn(),
-      from: vi.fn(),
-      functions: { invoke: vi.fn() },
-    },
+    clientMock,
+    isolatedClientMock: vi.fn((_url: string, _key: string, _options?: Parameters<typeof import("@supabase/supabase-js").createClient>[2]) => ({ auth: clientMock.auth })),
   };
 });
+
+vi.mock("@supabase/supabase-js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@supabase/supabase-js")>(),
+  createClient: isolatedClientMock,
+}));
 
 vi.mock("./supabaseClient", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./supabaseClient")>();
@@ -82,6 +85,7 @@ function mockProfile(): void {
 }
 
 beforeEach(() => {
+  isolatedClientMock.mockClear();
   clearAllAuth();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -297,6 +301,19 @@ describe("session lifecycle", () => {
 });
 
 describe("fetchMe", () => {
+  it("uses the confirmed auth phone when metadata is absent, never a metadata verified flag", async () => {
+    mockProfile();
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: { ...USER, phone: "8801812345678", phone_confirmed_at: "2026-10-06", user_metadata: { phoneVerified: true } } }, error: null });
+    singleMock.mockResolvedValue({ data: { ...PROFILE_ROW, phone_verified: 1 }, error: null });
+    expect(await fetchMe()).toMatchObject({ phone: "+8801812345678", phoneVerified: true });
+  });
+
+  it("fails closed for an edited number even if a stale public row says verified", async () => {
+    mockProfile();
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: { ...USER, phone: "8801912345678", phone_confirmed_at: "2026-10-06" } }, error: null });
+    singleMock.mockResolvedValue({ data: { ...PROFILE_ROW, phone_verified: 1 }, error: null });
+    expect((await fetchMe()).phoneVerified).toBe(false);
+  });
   it("reads safe profile columns and sources identity from the session", async () => {
     mockProfile();
     const u = await fetchMe();
@@ -322,6 +339,158 @@ describe("fetchMe", () => {
   it("throws when there is no authenticated user", async () => {
     clientMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: null });
     await expect(fetchMe()).rejects.toThrow("Not authenticated");
+  });
+});
+
+describe("authenticated phone change", () => {
+  beforeEach(() => {
+    mockProfile();
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: { ...USER, new_phone: "8801812345678" } }, error: null });
+    clientMock.auth.updateUser.mockResolvedValue({ data: { user: USER }, error: null });
+    clientMock.auth.resend.mockResolvedValue({ data: {}, error: null });
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: USER, access_token: "original", refresh_token: "original-refresh" } }, error: null });
+    clientMock.auth.setSession.mockResolvedValue({ data: {}, error: null });
+  });
+
+  it("isolates mutations from persistent account state with refresh disabled", async () => {
+    await sendPhoneChangeCode("u1", "01812345678");
+    expect(isolatedClientMock).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ auth: expect.objectContaining({ persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }) }));
+    expect(clientMock.auth.setSession).toHaveBeenCalledWith({ access_token: "original", refresh_token: "original-refresh" });
+    expect(clientMock.auth.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("disposes transient auth even when session initialization fails", async () => {
+    clientMock.auth.setSession.mockResolvedValue({ data: {}, error: { code: "invalid_grant", message: "Invalid grant" } });
+    await expect(sendPhoneChangeCode("u1", "01812345678")).rejects.toThrow();
+    expect(clientMock.auth.dispose).toHaveBeenCalledOnce();
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it.each(["01812345678", "8801812345678", "+8801812345678", "018-1234 5678"])("sends a real phone change request normalized from %s", async (phone) => {
+    await sendPhoneChangeCode("u1", phone);
+    expect(clientMock.auth.updateUser).toHaveBeenCalledWith({ phone: "+8801812345678" });
+    expect(clientMock.auth.resend).not.toHaveBeenCalled();
+  });
+
+  it("resends only the existing matching phone change challenge", async () => {
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: { ...USER, new_phone: "8801812345678" } }, error: null });
+    await sendPhoneChangeCode("u1", "01812345678", true);
+    expect(clientMock.auth.resend).toHaveBeenCalledWith({ type: "phone_change", phone: "+8801812345678" });
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("verifies phone_change and reloads the server-owned public badge", async () => {
+    const confirmed = { ...USER, phone: "8801812345678", phone_confirmed_at: "2026-10-06" };
+    clientMock.auth.getUser.mockResolvedValueOnce({ data: { user: { ...USER, new_phone: "8801812345678" } }, error: null }).mockResolvedValueOnce({ data: { user: { ...USER, new_phone: "8801812345678" } }, error: null }).mockResolvedValue({ data: { user: confirmed }, error: null });
+    clientMock.auth.verifyOtp.mockResolvedValue({ data: { user: confirmed, session: { access_token: "phone-tok" } }, error: null });
+    singleMock.mockResolvedValue({ data: { ...PROFILE_ROW, phone_verified: 1 }, error: null });
+    const result = await verifyPhoneChangeCode("u1", "01812345678", "123456");
+    expect(clientMock.auth.verifyOtp).toHaveBeenCalledWith({ phone: "+8801812345678", token: "123456", type: "phone_change" });
+    expect(result.phoneVerified).toBe(true);
+    expect(getToken()).toBeNull(); // The existing global session is never replaced.
+  });
+
+  it("saves an edited number without sending SMS or setting a verified boolean", async () => {
+    await saveProfilePhone("u1", "01912345678");
+    expect(clientMock.auth.updateUser).toHaveBeenCalledWith({ data: { phone: "+8801912345678" } });
+    expect(clientMock.auth.verifyOtp).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid numbers and malformed codes before any OTP request", async () => {
+    await expect(sendPhoneChangeCode("u1", "01212345678")).rejects.toThrow(/valid Bangladesh/i);
+    for (const code of ["12345", "12345678901", "abcdef"]) {
+      await expect(verifyPhoneChangeCode("u1", "01812345678", code)).rejects.toThrow(/invalid or expired/i);
+    }
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+    expect(clientMock.auth.verifyOtp).not.toHaveBeenCalled();
+  });
+
+  it("rejects a switched account before sending or saving", async () => {
+    await expect(sendPhoneChangeCode("other", "01812345678")).rejects.toThrow(/account changed/i);
+    await expect(saveProfilePhone("other", "01912345678")).rejects.toThrow(/account changed/i);
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects a destination mismatch and a missing or changed challenge", async () => {
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
+    await expect(sendPhoneChangeCode("u1", "01912345678")).rejects.toThrow(/number changed/i);
+    await expect(verifyPhoneChangeCode("u1", "01812345678", "123456")).rejects.toThrow(/send a new code/i);
+    await expect(sendPhoneChangeCode("u1", "01812345678", true)).rejects.toThrow(/send a new code/i);
+    expect(clientMock.auth.verifyOtp).not.toHaveBeenCalled();
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+    expect(clientMock.auth.resend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["otp_expired", 400, /invalid or expired/i],
+    ["over_sms_send_rate_limit", 429, /too many/i],
+    ["sms_send_failed", 500, /SMS.*could not.*sent/i],
+    ["phone_provider_disabled", 400, /SMS.*not enabled/i],
+    ["phone_exists", 400, /already.*account/i],
+  ])("maps phone provider error %s without exposing internals", async (code, status, message) => {
+    clientMock.auth.updateUser.mockResolvedValue({ data: { user: null }, error: { code, status, message: "private provider internals" } });
+    await expect(sendPhoneChangeCode("u1", "01812345678")).rejects.toThrow(message);
+  });
+
+  it("does not return another account's profile after a request race", async () => {
+    clientMock.auth.getUser.mockResolvedValueOnce({ data: { user: USER }, error: null }).mockResolvedValue({ data: { user: { ...USER, id: "other" } }, error: null });
+    await expect(sendPhoneChangeCode("u1", "01812345678")).rejects.toThrow(/account changed/i);
+  });
+
+  it("rechecks the destination after establishing the isolated session", async () => {
+    clientMock.auth.getUser.mockResolvedValueOnce({ data: { user: USER }, error: null }).mockResolvedValue({ data: { user: { ...USER, user_metadata: { phone: "01912345678" } } }, error: null });
+    await expect(sendPhoneChangeCode("u1", "01812345678")).rejects.toThrow(/number changed/i);
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("does not claim SMS was sent when Auth did not create a phone-change challenge", async () => {
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: USER }, error: null });
+    await expect(sendPhoneChangeCode("u1", "01812345678")).rejects.toThrow(/no SMS confirmation is pending/i);
+  });
+
+  it("rejects a switched local session before creating a mutation client", async () => {
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: { id: "other" } } }, error: null });
+    await expect(sendPhoneChangeCode("u1", "01812345678")).rejects.toThrow(/account changed/i);
+    expect(isolatedClientMock).not.toHaveBeenCalled();
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it.each(["otp_expired", "invalid_otp", "over_request_rate_limit"])("surfaces %s on verification without modifying the global token", async (code) => {
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: { ...USER, new_phone: "8801812345678" } }, error: null });
+    clientMock.auth.verifyOtp.mockResolvedValue({ data: { user: null }, error: { code, message: "internal" } });
+    await expect(verifyPhoneChangeCode("u1", "01812345678", "123456")).rejects.toThrow(code === "over_request_rate_limit" ? /too many/i : /invalid or expired/i);
+    expect(getToken()).toBeNull();
+  });
+
+  it("fails closed if the returned identity differs, even with a successful OTP response", async () => {
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: { ...USER, new_phone: "8801812345678" } }, error: null });
+    clientMock.auth.verifyOtp.mockResolvedValue({ data: { user: { id: "other" }, session: { access_token: "other" } }, error: null });
+    await expect(verifyPhoneChangeCode("u1", "01812345678", "123456")).rejects.toThrow(/account changed/i);
+    expect(getToken()).toBeNull();
+  });
+
+  it("exercises real SDK phone_change serialization with a fake HTTP transport and no persistent session replacement", async () => {
+    const { createClient } = await vi.importActual<typeof import("@supabase/supabase-js")>("@supabase/supabase-js");
+    const pending = { ...USER, new_phone: "8801812345678" };
+    const confirmed = { ...USER, phone: "8801812345678", phone_confirmed_at: "2026-10-06T12:00:00Z" };
+    const jwt = `${base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }))}.${base64url(JSON.stringify({ sub: "u1", exp: Math.floor(Date.now() / 1000) + 3600 }))}.${base64url("synthetic-signature")}`;
+    clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: pending, access_token: jwt, refresh_token: "synthetic-refresh" } }, error: null });
+    clientMock.auth.getUser.mockResolvedValueOnce({ data: { user: pending }, error: null }).mockResolvedValueOnce({ data: { user: pending }, error: null }).mockResolvedValue({ data: { user: confirmed }, error: null });
+    singleMock.mockResolvedValue({ data: { ...PROFILE_ROW, phone_verified: 1 }, error: null });
+    const http = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(url).endsWith("/verify")) {
+        return new Response(JSON.stringify({ user: confirmed, access_token: jwt, refresh_token: "otp-refresh", token_type: "bearer", expires_in: 3600 }), { status: 200 });
+      }
+      return new Response(JSON.stringify(pending), { status: 200 });
+    });
+    isolatedClientMock.mockImplementationOnce((_url, _key, options) => createClient("https://example.invalid", "sb_publishable_test", { ...options, global: { fetch: http } }) as unknown as ReturnType<typeof isolatedClientMock>);
+    setToken("existing-global-token");
+    const result = await verifyPhoneChangeCode("u1", "01812345678", "123456");
+    expect(result.phoneVerified).toBe(true);
+    const request = http.mock.calls.find(([url]) => String(url).endsWith("/verify"));
+    expect(JSON.parse(request![1]!.body as string)).toMatchObject({ phone: "+8801812345678", token: "123456", type: "phone_change" });
+    expect(clientMock.auth.verifyOtp).not.toHaveBeenCalled();
+    expect(getToken()).toBe("existing-global-token");
   });
 });
 

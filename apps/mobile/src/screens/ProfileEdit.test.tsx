@@ -4,10 +4,11 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicUser } from "@findback/shared";
 
-const { mockLogout, mockRefreshUser, mockUpdateUser, mockUser } = vi.hoisted(() => ({
+const { mockLogout, mockRefreshUser, mockUpdateUser, mockSetUser, mockUser } = vi.hoisted(() => ({
   mockLogout: vi.fn(),
   mockRefreshUser: vi.fn(),
   mockUpdateUser: vi.fn(),
+  mockSetUser: vi.fn(),
   mockUser: {
     value: null as PublicUser | null,
   },
@@ -18,12 +19,11 @@ vi.mock("../auth", () => ({
     user: mockUser.value,
     logout: mockLogout,
     refreshUser: mockRefreshUser,
+    setUser: mockSetUser,
   }),
 }));
 
-vi.mock("../services/supabaseClient", () => ({
-  getSupabase: () => ({ auth: { updateUser: mockUpdateUser } }),
-}));
+vi.mock("../services/auth", () => ({ saveProfilePhone: mockUpdateUser }));
 
 import { ProfileEdit } from "./ProfileEdit";
 
@@ -51,7 +51,7 @@ afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
   mockUser.value = { ...baseUser };
-  mockUpdateUser.mockResolvedValue({ data: { user: null }, error: null });
+  mockUpdateUser.mockResolvedValue({ ...baseUser, phone: "+8801912345678", phoneVerified: false });
   mockRefreshUser.mockResolvedValue(undefined);
 });
 
@@ -77,8 +77,7 @@ describe("ProfileEdit rework", () => {
   it("carries no unsupported-flow warning copy", () => {
     renderEdit();
     expect(screen.queryByText(/isn't available in this build/i)).toBeNull();
-    expect(screen.queryByText(/re-verification/i)).toBeNull();
-    expect(screen.queryByText(/phone verification/i)).toBeNull();
+    expect(screen.getByText(/verify.*new.*number/i)).toBeTruthy();
   });
 
   it("keeps Save disabled until the number changes, including reverting", () => {
@@ -113,17 +112,26 @@ describe("ProfileEdit rework", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() =>
-      expect(mockUpdateUser).toHaveBeenCalledWith({ data: { phone: "+8801912345678" } }),
+      expect(mockUpdateUser).toHaveBeenCalledWith("u1", "+8801912345678"),
     );
-    await waitFor(() => expect(mockRefreshUser).toHaveBeenCalled());
+    await waitFor(() => expect(mockSetUser).toHaveBeenCalledWith(expect.objectContaining({ phone: "+8801912345678", phoneVerified: false })));
     expect(await screen.findByRole("status")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /verify mobile number/i }).getAttribute("href")).toBe("/verify");
+  });
+
+  it("keeps the saved announcement after the auth profile updates to the new number", async () => {
+    mockSetUser.mockImplementation((user: PublicUser) => { mockUser.value = user; });
+    const view = renderEdit();
+    fireEvent.change(screen.getByRole("textbox", { name: /mobile/i }), { target: { value: "01912345678" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mockSetUser).toHaveBeenCalled());
+    view.rerender(<MemoryRouter><ProfileEdit /></MemoryRouter>);
+    expect(screen.getByRole("status").textContent).toContain("Mobile number saved");
+    expect((screen.getByRole("textbox", { name: /mobile/i }) as HTMLInputElement).value).toBe("+8801912345678");
   });
 
   it("surfaces save failures as human copy in a live alert, never raw errors", async () => {
-    mockUpdateUser.mockResolvedValueOnce({
-      data: { user: null },
-      error: { message: "Network request failed" },
-    });
+    mockUpdateUser.mockRejectedValueOnce(new Error("Network request failed"));
     renderEdit();
     fireEvent.change(screen.getByRole("textbox", { name: /mobile/i }), {
       target: { value: "01912345678" },

@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import { normalizePhone } from "@findback/shared";
 import { useAuth } from "../auth";
-import { getSupabase } from "../services/supabaseClient";
+import { saveProfilePhone } from "../services/auth";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import {
@@ -21,27 +22,44 @@ import {
  *   rendered as information — never an editable-looking input.
  * - email: read-only (no email-change flow ships in this build), rendered
  *   as information. Unsupported actions/statuses are omitted, not warned
- *   about — hence no verification copy here at all.
+ *   about.
  * - phone: editable — `PublicUser.phone` is read from Auth user metadata
  *   (`fetchMe`), which `supabase.auth.updateUser({ data })` can write
  *   client-side. Validated with the same Bangladesh rule the backend
- *   trigger enforces, then `refreshUser()` re-reads the profile.
+ *   trigger enforces. Saving does not send SMS; the server clears the badge
+ *   unless the desired number matches the confirmed Auth phone. `/verify`
+ *   explicitly starts the authenticated phone-change challenge.
  */
 export function ProfileEdit() {
-  const { user, refreshUser } = useAuth();
+  const { user } = useAuth();
+  const [savedFor, setSavedFor] = useState<string | null>(null);
+  if (!user) return null;
+  const identity = `${user.id}:${user.phone}`;
+  return <ProfilePhoneEditor key={identity} initialSaved={savedFor === identity}
+    onSaved={(phone) => setSavedFor(`${user.id}:${phone}`)} />;
+}
+
+function ProfilePhoneEditor({ initialSaved, onSaved }: { initialSaved: boolean; onSaved: (phone: string) => void }) {
+  const { user, setUser } = useAuth();
   const [phone, setPhone] = useState(user?.phone ?? "");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState(initialSaved);
   const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  const busy = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   if (!user) return null;
 
-  const unchanged = phone.trim() === user.phone || normalizePhone(phone) === user.phone;
+  const unchanged = phone.trim() === user.phone || normalizePhone(phone) === normalizePhone(user.phone);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (saving) return;
+    if (busy.current) return;
     setSaveError(null);
     setSaved(false);
     const normalized = normalizePhone(phone);
@@ -51,18 +69,22 @@ export function ProfileEdit() {
     }
     setFieldError(null);
     setSaving(true);
+    busy.current = true;
     try {
-      const { error } = await getSupabase().auth.updateUser({ data: { phone: normalized } });
-      if (error) throw error;
-      await refreshUser();
+      const profile = await saveProfilePhone(user!.id, normalized);
+      if (!alive.current) return;
+      onSaved(profile.phone);
+      setUser(profile);
       setPhone(normalized);
       setSaved(true);
     } catch {
+      if (!alive.current) return;
       // Human error (what happened + what to do): never surface raw
       // provider messages on this screen.
       setSaveError("Could not save your mobile number. Check your connection and try again.");
     } finally {
-      setSaving(false);
+      busy.current = false;
+      if (alive.current) setSaving(false);
     }
   }
 
@@ -83,6 +105,7 @@ export function ProfileEdit() {
           onSubmit={(e) => void onSubmit(e)}
           noValidate
         >
+          <p className="text-sm text-on-surface-variant">Saving does not send SMS. Verify your new mobile number to confirm ownership.</p>
           {saveError && (
             <p
               className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error"
@@ -109,12 +132,14 @@ export function ProfileEdit() {
             inputMode="numeric"
             autoComplete="tel"
             required
+            disabled={saving}
             error={fieldError ?? undefined}
           />
 
           <Button type="submit" size="lg" loading={saving} disabled={unchanged}>
             Save changes
           </Button>
+          {!user.phoneVerified && <Link to="/verify" className="min-h-[44px] py-3 text-sm underline">Verify mobile number</Link>}
         </form>
       </SettingsGroup>
     </SettingsPage>

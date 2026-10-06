@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
-import { CheckCircle2, Phone } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
+import { normalizePhone } from "@findback/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { motionDurations, motionEasings } from "../components/uiMotion";
 import { motion } from "framer-motion";
-import { sendPendingEmailCode, verifyPendingEmailCode } from "../services/auth";
+import { sendPendingEmailCode, verifyPendingEmailCode, sendPhoneChangeCode, verifyPhoneChangeCode } from "../services/auth";
 import { getPendingReportRoute } from "../utils/pendingReportLink";
 import { AuthShell } from "../components/auth/AuthShell";
 import { OtpField } from "../components/auth/OtpField";
@@ -23,44 +24,78 @@ function useResendCountdown() {
 }
 
 function VerifyRow({ channel }: { channel: Channel }) {
-  const { user, refreshUser } = useAuth();
+  const { user, refreshUser, setUser } = useAuth();
   const [code, setCode] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [sent, setSent] = useState(false);
+  const alive = useRef(true);
+  const busy = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   const { resendIn, setResendIn } = useResendCountdown();
+  const { resendIn: verifyIn, setResendIn: setVerifyIn } = useResendCountdown();
 
   if (!user) return null;
   const verified = channel === "EMAIL" ? user.emailVerified : user.phoneVerified;
-  const destination = channel === "EMAIL" ? user.email : user.phone;
+  const destination = channel === "EMAIL" ? user.email : normalizePhone(user.phone) ?? user.phone;
 
   async function onSend() {
+    if (busy.current || resendIn > 0) return;
+    busy.current = true;
     setSending(true);
     setError(null);
     setMessage(null);
     try {
-      await sendPendingEmailCode(user!.email);
-      setResendIn(30);
+      if (channel === "PHONE") await sendPhoneChangeCode(user!.id, destination, sent);
+      else await sendPendingEmailCode(user!.email);
+      if (!alive.current) return;
+      setSent(true);
+      setCode("");
+      setResendIn(channel === "PHONE" ? 60 : 30);
       setMessage(`Code sent to ${destination}.`);
     } catch (err) {
+      if (!alive.current) return;
       setError(err instanceof Error ? err.message : "Could not send code");
+      if (channel === "PHONE" && err instanceof Error && /too many attempts/i.test(err.message)) setResendIn(60);
     } finally {
-      setSending(false);
+      busy.current = false;
+      if (alive.current) setSending(false);
     }
   }
 
   async function onVerify() {
+    if (busy.current || verifyIn > 0 || (channel === "PHONE" && (!sent || !/^\d{6,10}$/.test(code.trim())))) return;
+    busy.current = true;
     setVerifying(true);
     setError(null);
     try {
-      await verifyPendingEmailCode(user!.email, code.trim());
-      await refreshUser();
+      if (channel === "PHONE") {
+        const profile = await verifyPhoneChangeCode(user!.id, destination, code.trim());
+        if (!alive.current) return;
+        setUser(profile);
+        setMessage("Phone verified.");
+      } else {
+        await verifyPendingEmailCode(user!.email, code.trim());
+        if (!alive.current) return;
+        await refreshUser();
+      }
+      if (!alive.current) return;
       setCode("");
     } catch (err) {
+      if (!alive.current) return;
       setError(err instanceof Error ? err.message : "Verification failed");
+      if (channel === "PHONE" && err instanceof Error && /too many attempts/i.test(err.message)) {
+        setVerifyIn(60);
+        setResendIn(60);
+      }
     } finally {
-      setVerifying(false);
+      busy.current = false;
+      if (alive.current) setVerifying(false);
     }
   }
 
@@ -76,23 +111,6 @@ function VerifyRow({ channel }: { channel: Channel }) {
     );
   }
 
-  // Phone verification is deferred (no SMS provider configured): show the stored
-  // number truthfully as unverified rather than calling an unavailable service.
-  if (channel === "PHONE") {
-    return (
-      <div className="flex items-start gap-3 rounded-m3-md border border-outline-variant p-4">
-        <Phone className="mt-0.5 shrink-0 text-on-surface-variant" size={20} aria-hidden />
-        <div>
-          <p className="font-medium">Phone · unverified</p>
-          <p className="text-sm text-on-surface-variant">{destination}</p>
-          <p className="mt-1 text-sm text-on-surface-variant">
-            Your number is saved. Verification for phone numbers isn&apos;t available yet.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -101,8 +119,9 @@ function VerifyRow({ channel }: { channel: Channel }) {
       className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-4"
     >
       <p className="text-sm text-on-surface-variant">
-        Enter the code sent to <span className="font-medium text-on-surface">{destination}</span>.
+        {channel === "PHONE" && !sent ? "Send an SMS code to " : "Enter the code sent to "}<span className="font-medium text-on-surface">{destination}</span>.
       </p>
+      {channel === "PHONE" && <Link to="/profile/edit" className="min-h-[44px] py-3 text-sm underline">Change mobile number</Link>}
 
       {message && (
         <p className="text-sm text-on-surface-variant" role="status">
@@ -115,14 +134,14 @@ function VerifyRow({ channel }: { channel: Channel }) {
         </p>
       )}
 
-      <OtpField value={code} onChange={setCode} />
+      <OtpField label={channel === "PHONE" ? "Phone verification code" : "Verification code"} value={code} onChange={setCode} />
 
       <div className="flex flex-col gap-2">
-        <Button onClick={onVerify} loading={verifying} size="lg">
-          Verify
+        <Button onClick={onVerify} loading={verifying} disabled={sending || verifyIn > 0 || (channel === "PHONE" && (!sent || !/^\d{6,10}$/.test(code.trim())))} size="lg">
+          {verifyIn > 0 ? `Verify again in ${verifyIn}s` : channel === "PHONE" ? "Verify phone" : "Verify email"}
         </Button>
-        <Button variant="outline" size="lg" onClick={onSend} loading={sending} disabled={resendIn > 0}>
-          {resendIn > 0 ? `Resend in ${resendIn}s` : "Send code"}
+        <Button variant="outline" size="lg" onClick={onSend} loading={sending} disabled={resendIn > 0 || verifying}>
+          {resendIn > 0 ? `Resend in ${resendIn}s` : channel === "PHONE" ? (sent ? "Resend SMS code" : "Send SMS code") : "Send email code"}
         </Button>
       </div>
     </motion.div>
@@ -236,11 +255,11 @@ export function Verify() {
   return (
     <AuthShell
       title="Verify your contact details"
-      supporting="Confirm ownership of your email with the code we sent."
+      supporting="Confirm ownership of your email and mobile number with verification codes."
     >
       <div className="flex flex-col gap-3">
-        <VerifyRow channel="EMAIL" />
-        <VerifyRow channel="PHONE" />
+        <VerifyRow key={`${user!.id}:email:${user!.email}`} channel="EMAIL" />
+        <VerifyRow key={`${user!.id}:phone:${normalizePhone(user!.phone) ?? user!.phone}`} channel="PHONE" />
       </div>
       <Button size="lg" onClick={() => navigate(getPendingReportRoute() ?? "/", { replace: true })}>
         Continue to app
