@@ -79,9 +79,8 @@
       "id": "FBA-008",
       "severity": "P0",
       "area": "release/versioning",
-      "status": "IN_PROGRESS",
-      "evidence": "Root package.json and apps/mobile/package.json both 0.7.0-beta.2 (scripts/check-version-sync.mjs passes); schema metadata parity test apps/mobile/src/services/appCapabilities.test.ts pins BACKEND_SCHEMA_VERSION to newest migration.",
-      "blocker": "synchronized bump deferred until closure"
+      "status": "DONE",
+      "evidence": "Root package.json and apps/mobile/package.json both 0.8.0-beta.2 (scripts/check-version-sync.mjs passes); 0.8.0-beta.1 cut on release/0.8.0-beta.1 from 088d9774f11818a7cdeef410320e246e00e71e5d; schema metadata parity test apps/mobile/src/services/appCapabilities.test.ts pins BACKEND_SCHEMA_VERSION to newest migration."
     },
     {
       "id": "FBA-009",
