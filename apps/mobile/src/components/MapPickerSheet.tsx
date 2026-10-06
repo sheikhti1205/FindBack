@@ -121,9 +121,14 @@ function PickerRasterFallback({
       className="absolute inset-0"
     >
       <div className="absolute inset-0 grid grid-cols-3 grid-rows-3" aria-hidden="true">
-        {tiles.map((tile) => (
+        {tiles.map((tile, index) => (
           <img
-            key={`${tile.z}/${tile.x}/${tile.y}`}
+            // Grid position disambiguates: at minimum zoom the 3x3 window
+            // wraps/clamps into repeated z/x/y coordinates, so tile
+            // coordinates alone are NOT unique React keys (duplicate keys
+            // corrupt reconciliation). Repeated tile URLs are fine; repeated
+            // identities are not.
+            key={`${tile.z}/${tile.x}/${tile.y}#${index}`}
             src={tile.url}
             alt=""
             draggable={false}

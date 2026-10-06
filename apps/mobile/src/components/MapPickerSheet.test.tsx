@@ -640,6 +640,34 @@ describe("MapPickerSheet fallback and camera", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps unique tile identities at minimum zoom (wrapped/clamped duplicates)", async () => {
+    // At z1 only 2x2 tile coordinates exist, so the 3x3 window necessarily
+    // repeats z/x/y. Keys carry the grid position; without it React logs a
+    // duplicate-key warning and corrupts reconciliation (production bug, not
+    // test noise).
+    behavior.throwOnConstruct = true;
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(args); });
+    try {
+      render(
+        <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />,
+      );
+      await screen.findByTestId("map-picker-fallback");
+      for (let i = 0; i < 14; i += 1) {
+        fireEvent.click(screen.getByRole("button", { name: /zoom out/i }));
+      }
+      const tiles = fallbackTiles();
+      expect(tiles).toHaveLength(9);
+      for (const tile of Array.from(tiles)) {
+        expect(tile.getAttribute("src")).toMatch(/^https:\/\/tile\.openstreetmap\.org\/1\/[01]\/[01]\.png$/);
+      }
+      const keyWarnings = errors.filter((args) => /unique.*"key"/i.test(args.map(String).join(" ")));
+      expect(keyWarnings).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("hides fallback tiles that fail to load instead of broken glyphs", async () => {
     behavior.throwOnConstruct = true;
     render(

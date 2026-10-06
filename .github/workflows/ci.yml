@@ -209,6 +209,25 @@ jobs:
           echo "bundle carries required client config and Sentry release identity"
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
+      - name: Negative test — verifyBundledClientConfig fails on stale assets
+        # Proves the packaging gate is not blind: stale one staged chunk, expect
+        # the Gradle task to refuse packaging, then restore and expect success.
+        # Runs on ephemeral CI only; the staged tree is restored before any build.
+        run: |
+          set -euo pipefail
+          ASSETS=apps/mobile/android/app/src/main/assets/public/assets
+          STALE_JS=$(ls "$ASSETS"/index-*.js | head -1)
+          grep -q "supabase.co" "$STALE_JS" || { echo "staged bundle lacks the Supabase host — nothing to stale"; exit 1; }
+          cp "$STALE_JS" /tmp/bundled-config-backup.js
+          sed -i 's/supabase\.co/supabase.invalid/g' "$STALE_JS"
+          if cd apps/mobile/android && ./gradlew :app:verifyBundledClientConfig; then
+            echo "verifyBundledClientConfig passed on stale assets — gate is blind"; exit 1
+          fi
+          cd "$GITHUB_WORKSPACE"
+          cp /tmp/bundled-config-backup.js "$STALE_JS"
+          grep -q "supabase.co" "$STALE_JS" || { echo "asset restore failed"; exit 1; }
+          cd apps/mobile/android && ./gradlew :app:verifyBundledClientConfig
+          echo "packaging gate refuses stale assets and accepts restored ones"
       - name: Android JVM tests + debug APK
         run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
       - name: Log versionName/versionCode

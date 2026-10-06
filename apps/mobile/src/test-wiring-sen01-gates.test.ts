@@ -18,6 +18,10 @@
  * failure output must never echo key material.
  */
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { resolveSentryDsn } from "./services/monitoring/sentry";
 
@@ -107,9 +111,78 @@ describe("SEN-01 DSN rule — TS-side mirror of the preflight gate", () => {
   });
 });
 
-describe.todo("SEN-01 positive + device boundaries (owner/CI-gated, NOT TESTED here)", () => {
-  it.todo("synthetic-DSN build embeds Supabase URL/key + Sentry host + SENTRY_RELEASE");
-  it.todo("vite build with scrubbed env fails at the spawnSync preflight (needs isolated envDir)");
-  it.todo("Gradle verifyBundledClientConfig fails packaging on stale assets");
+describe.todo("SEN-01 device-only boundary (needs real artifact + installed device)", () => {
   it.todo("signed APK carries bundle asserts (needs real artifact + installed device)");
+});
+
+const MOBILE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Shell env with every build-config variable scrubbed (files isolated via envDir). */
+function scrubbedEnv(extra: Record<string, string> = {}): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (/^(VITE_|SUPABASE_|SENTRY_)/.test(key)) continue;
+    env[key] = value;
+  }
+  return { ...env, ...extra };
+}
+
+function buildWeb(env: Record<string, string>, outDir: string) {
+  return spawnSync("npx", ["--no-install", "vite", "build", "--outDir", outDir, "--emptyOutDir"], {
+    cwd: MOBILE_ROOT,
+    encoding: "utf8",
+    env,
+    timeout: 300_000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+function bundleChunks(outDir: string): string[] {
+  const assets = join(outDir, "assets");
+  return readdirSync(assets)
+    .filter((name) => name.endsWith(".js"))
+    .map((name) => readFileSync(join(assets, name), "utf8"));
+}
+
+describe("SEN-01 positive build boundaries (real builds, synthetic config)", () => {
+  it("synthetic-config build embeds Supabase URL + Sentry host/release + share origin", () => {
+    const outDir = mkdtempSync(join(tmpdir(), "sen01-bundle-"));
+    const url = "https://synthetic-sen01.supabase.co";
+    const sentryDsn = "https://synthetic987@o999999.ingest.sentry.io/9999999";
+    const shareOrigin = "https://synthetic-sen01-build.test";
+    const release = "findback-mobile@0.7.0-beta.2+abcdef123456";
+    const built = buildWeb(
+      {
+        ...scrubbedEnv(),
+        VITE_SUPABASE_URL: url,
+        VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_syntheticSEN01000000000001",
+        VITE_SENTRY_DSN: sentryDsn,
+        VITE_PUBLIC_SHARE_ORIGIN: shareOrigin,
+        VITE_SENTRY_RELEASE: release,
+      },
+      outDir,
+    );
+    expect(`${built.stdout ?? ""}${built.stderr ?? ""}`).not.toContain("sb_publishable_syntheticSEN01");
+    expect(built.status).toBe(0);
+    const chunks = bundleChunks(outDir);
+    expect(chunks.length).toBeGreaterThan(0);
+    const has = (text: string) => chunks.some((chunk) => chunk.includes(text));
+    expect(has(url)).toBe(true);
+    expect(has("o999999.ingest.sentry.io")).toBe(true);
+    expect(has(shareOrigin)).toBe(true);
+    expect(has(release)).toBe(true);
+  }, 300_000);
+
+  it("vite build with scrubbed env fails at the spawnSync preflight (isolated envDir)", () => {
+    const outDir = mkdtempSync(join(tmpdir(), "sen01-scrubbed-"));
+    const envDir = mkdtempSync(join(tmpdir(), "sen01-env-"));
+    // A valid share origin on disk proves the failure is the Supabase
+    // preflight specifically, not the share gate.
+    writeFileSync(join(envDir, ".env"), "VITE_PUBLIC_SHARE_ORIGIN=https://synthetic-sen01-scrub.test\n");
+    const built = buildWeb({ ...scrubbedEnv(), FINDBACK_ENV_DIR: envDir }, outDir);
+    const out = `${built.stdout ?? ""}${built.stderr ?? ""}`;
+    expect(built.status).not.toBe(0);
+    expect(out).toMatch(/preflight|VITE_SUPABASE_URL/);
+  }, 300_000);
 });

@@ -10,7 +10,10 @@ import { defineConfig } from "vitest/config";
 // bundle. No API base URL is needed.
 export function resolveSupabaseBuildEnv(
   mode: string,
-  envDir = resolve(import.meta.dirname, "../.."),
+  // FINDBACK_ENV_DIR isolates the env-file root for hermetic tests (CI-local
+  // .env files must never satisfy a test that asserts scrubbed-env failure).
+  // Production/CI never set it, so the repo root stays the single live root.
+  envDir = process.env.FINDBACK_ENV_DIR || resolve(import.meta.dirname, "../.."),
 ) {
   const env = loadEnv(mode, envDir, "");
   return {
@@ -44,7 +47,7 @@ export default defineConfig(({ command, mode }) => {
     if (preflight.status !== 0) throw new Error("Supabase build configuration preflight failed");
   }
   const { publishableKey, url } = resolveSupabaseBuildEnv(mode);
-  const shareOrigin = loadEnv(mode, resolve(import.meta.dirname, "../.."), "").VITE_PUBLIC_SHARE_ORIGIN?.trim() || "";
+  const shareOrigin = loadEnv(mode, process.env.FINDBACK_ENV_DIR || resolve(import.meta.dirname, "../.."), "").VITE_PUBLIC_SHARE_ORIGIN?.trim() || "";
   if (command === "build") {
     // Derive the VITE_* names in the build environment from the canonical
     // local SUPABASE_* values; import.meta.env and define then agree.

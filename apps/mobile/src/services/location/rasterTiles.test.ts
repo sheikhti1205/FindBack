@@ -63,6 +63,17 @@ describe("rasterTiles", () => {
     }
   });
 
+  it("repeats coordinates at minimum zoom, so render keys must carry grid position", () => {
+    // z1 has only 2x2 addressable tiles: the 3x3 window MUST duplicate
+    // z/x/y. Callers keying solely by coordinates get duplicate React keys.
+    const tiles = rasterTilesForCenter({ lat: 23.81, lng: 90.412 }, 1);
+    expect(tiles).toHaveLength(9);
+    const coords = tiles.map((tile) => `${tile.z}/${tile.x}/${tile.y}`);
+    expect(new Set(coords).size).toBeLessThan(9);
+    const positioned = tiles.map((tile, index) => `${tile.z}/${tile.x}/${tile.y}#${index}`);
+    expect(new Set(positioned).size).toBe(9);
+  });
+
   it("nudges the center east/north for fallback panning", () => {
     const start = { lat: 23.81, lng: 90.412 };
     expect(nudgeCenter(start, 15, 1, 0).lng).toBeGreaterThan(start.lng);

@@ -3,7 +3,16 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({
-  user: null as { id: string } | null,
+  user: null as {
+    id: string;
+    username: string;
+    email: string;
+    phone: string;
+    emailVerified: boolean;
+    phoneVerified: boolean;
+    avatarUrl: string | null;
+    createdAt: string;
+  } | null,
   booting: false,
   bootError: null as string | null,
   retryBoot: vi.fn(),
@@ -38,6 +47,8 @@ vi.mock("./screens/AuthGateway", () => ({
 }));
 const marker = vi.hoisted(() => (name: string) => () => <p>{name} screen</p>);
 vi.mock("./screens/Verify", () => ({ Verify: () => <p>Verify screen</p> }));
+vi.mock("./screens/ForgotPassword", () => ({ ForgotPassword: () => <p>ForgotPassword screen</p> }));
+vi.mock("./screens/Recovery", () => ({ Recovery: () => <p>Recovery screen</p> }));
 vi.mock("./screens/Home", () => ({ Home: () => <p>Home screen</p> }));
 vi.mock("./screens/SearchScreen", () => ({ SearchScreen: () => <p>Search screen</p> }));
 vi.mock("./screens/CreateReport", () => ({ CreateReport: () => <p>CreateReport screen</p> }));
@@ -80,8 +91,26 @@ function returningGuest() {
 }
 
 function signedIn() {
-  auth.user = { id: "u1" };
+  // A complete PublicUser: the shell and guards must never rely on a
+  // partial fixture, and a crash from a missing field must fail loudly.
+  auth.user = {
+    id: "u1",
+    username: "route-tester",
+    email: "routes@test.example",
+    phone: "+15550001111",
+    emailVerified: true,
+    phoneVerified: false,
+    avatarUrl: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
 }
+
+// An error boundary also renders text: asserting "body has text" would pass
+// a crashed route. The afterEach guard proves the crash screen is absent on
+// every route, so the per-route marker assertions stay meaningful.
+
+const unexpectedErrors: unknown[][] = [];
+let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
 
 beforeEach(() => {
   vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", origin);
@@ -90,13 +119,36 @@ beforeEach(() => {
   auth.bootError = null;
   localStorage.clear();
   sessionStorage.clear();
+  unexpectedErrors.length = 0;
+  consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    unexpectedErrors.push(args);
+  });
+  // jsdom lacks scrollIntoView; routes that scroll on navigation must not crash.
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = function () {};
+  }
 });
 
 afterEach(() => {
-  cleanup();
-  vi.unstubAllEnvs();
-  native.back = null;
-  window.history.replaceState(null, "", "/");
+  try {
+    // A crashed route renders the boundary instead of the screen: every
+    // route test must prove the crash screen is absent (text assertions
+    // alone would pass on the boundary's own copy).
+    expect(screen.queryByText("Something went wrong")).toBeNull();
+    const suspicious = unexpectedErrors.filter((args) => {
+      const text = args.map(String).join(" ");
+      // jsdom capability noise, not app crashes (e.g. navigation stubs).
+      return !/not implemented|jsdom|Warning: .*act\b/i.test(text);
+    });
+    expect(suspicious, `unexpected console.error on this route: ${JSON.stringify(suspicious).slice(0, 800)}`).toEqual([]);
+  } finally {
+    cleanup();
+    vi.unstubAllEnvs();
+    native.back = null;
+    window.history.replaceState(null, "", "/");
+    consoleErrorSpy?.mockRestore();
+    consoleErrorSpy = null;
+  }
 });
 
 describe("consumer route map", () => {
@@ -124,6 +176,14 @@ describe("consumer route map", () => {
     returningGuest();
     renderAt("/verify");
     expect(screen.getByText("Verify screen")).toBeTruthy();
+  });
+
+  it.each([
+    ["/forgot", "ForgotPassword screen"],
+    ["/recovery", "Recovery screen"],
+  ])("renders public recovery route %s without auth", (route, markerText) => {
+    renderAt(route);
+    expect(screen.getByText(markerText)).toBeTruthy();
   });
 
   it.each([

@@ -87,7 +87,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const [action, path] = process.argv.slice(2);
     if (!["--preflight", "--assets", "--apk"].includes(action)) fail("expected --preflight, --assets PATH, or --apk PATH");
-    const config = effectiveSupabaseConfig();
+    // FINDBACK_ENV_DIR isolates the env-file root for hermetic tests. Exported
+    // VITE_* still win over files (same rule as vite.config.ts); unsetting both
+    // the var and the files fails closed, which the scrubbed-env test asserts.
+    const envDir = process.env.FINDBACK_ENV_DIR || root;
+    const config = effectiveSupabaseConfig("production", envDir);
     effectiveShareOrigin();
     if (action !== "--preflight" && !path) fail(`${action} requires a path`);
     if (action !== "--preflight") {
