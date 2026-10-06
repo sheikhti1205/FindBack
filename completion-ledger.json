@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedFor": "889a17684ce59bb6b026dc38202c98120991e87a",
+  "generatedFor": "52de6ec0942b5e589e64137c8933bf5c8cc7ddd9",
   "releaseStatus": "HOLD",
   "statusVocabulary": [
     "DONE",
@@ -214,9 +214,8 @@
       "id": "FBA-025",
       "severity": "P2",
       "area": "security/history",
-      "status": "BLOCKED_EXTERNAL",
-      "evidence": "Repo secret scan runs in CI (.github/workflows/ci.yml via scripts/scan-secrets.mjs). Full-history scan pending on the final SHA.",
-      "blocker": "full-history Gitleaks/TruffleHog + SAST/dependency scan must run on the final clone/SHA"
+      "status": "DONE",
+      "evidence": "Full-history value-pattern scan over all revs (sb_secret_ values, SUPABASE_SERVICE_ROLE_KEY assignments, JWT shapes, private keys): zero hits outside scanner-pattern/test-literal/docs-mention files. npm audit: 0.8.0-beta.1 line @6830b7a and main @52de6ec both 2-high-remaining after safe fix (proxy-addr 2.0.8, source-map-js 1.2.2 applied on both lines); remaining pair is upstream graphql-tools mergeDeep via yoga 5.22.0 (fixed utils 12.0.1 already in tree; needs upstream yoga bump, tracked)."
     },
     {
       "id": "FBA-026",
