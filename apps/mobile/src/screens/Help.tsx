@@ -4,13 +4,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import { History, MoreVertical } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
+import { AssistantLanding, type LandingQuickAction } from "../components/assistant/AssistantLanding";
 import { BottomSheet } from "../components/BottomSheet";
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatTranscript, type TranscriptMessage, type TranscriptSource } from "../components/ChatTranscript";
 import { HistorySheet, type HistoryChatSummary } from "../components/HistorySheet";
 import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
 import { announce } from "../components/LiveRegion";
-import { fadeUpVariants, motionDurations, motionEasings, pressFeedback } from "../components/uiMotion";
+import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
 import { ChatController, ControllerError, sanitizeControllerError, type ControllerState } from "../services/ai/chatController";
 import { ChatStore } from "../services/ai/chatStore";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, defaultSelection } from "../services/ai/modelPolicy";
@@ -40,7 +41,6 @@ import {
 } from "../services/media/prepareImages";
 import { importImage, type ImportDeps, type ImportedImage, type TranscodeRequest } from "../services/media/importImage";
 import {
-  GUIDED_FLOWS,
   LOCATION_CHOICES,
   PHOTO_CHOICES,
   chooseLocation,
@@ -406,6 +406,17 @@ const SHORTCUT_LABELS: Record<GuidedFlow, string> = {
   search: "Search listings",
   ask: "Ask a question",
 };
+
+/**
+ * Empty-state quick actions on the Assistant landing. They reuse the same
+ * guided router (`beginGuided`) and keep the historical `guided-shortcut-*`
+ * test ids so the guided behavior assertions stay valid.
+ */
+const LANDING_QUICK_ACTIONS: readonly LandingQuickAction[] = [
+  { flow: "lost", label: SHORTCUT_LABELS.lost, testId: "guided-shortcut-lost" },
+  { flow: "found", label: SHORTCUT_LABELS.found, testId: "guided-shortcut-found" },
+  { flow: "search", label: SHORTCUT_LABELS.search, testId: "guided-shortcut-search" },
+];
 
 const PHOTO_LABELS: Record<PhotoChoice, string> = {
   take: "Take a photo",
@@ -1422,21 +1433,20 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       }
     }
     if (stored.length === 0 && ephemeral.length === 0) {
-      return [
-        {
-          id: "greeting",
-          role: "assistant",
-          text: `Hi ${user?.username ?? "there"}! I am the FindBack Help & FAQ. Ask me anything about using the app — reporting, recovering, searching, verifying, ratings and more.`,
-          source: "fallback",
-        },
-      ];
+      // No synthetic greeting: the empty conversation is the Assistant
+      // landing's job now, not a fake transcript bubble.
+      return [];
     }
     return [...stored, ...ephemeral];
   })();
 
   // P1: starter suggestions and guided shortcuts only start an EMPTY
-  // conversation — once chatting the transcript owns the space.
-  const isEmptyConversation = freeMessages.length <= 1;
+  // conversation — once chatting the transcript owns the space. The landing
+  // shows only when there is genuinely nothing to show: no real turns, no
+  // active guided flow, no live stream/partial and no un-retried send error.
+  const isEmptyConversation = turns.length === 0 && ephemeral.length === 0;
+  const showLanding =
+    guided === null && isEmptyConversation && !busy && partial === null && sendError === null && failedSend === null;
   // Lane B intent proposal: classify-intent → route-intent → validated CTA.
   // Advisory only — rendered as a visible chip, followed solely through the
   // validated allowlist on tap. Never auto-navigates, never sends.
@@ -1577,20 +1587,31 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       </header>
 
       <main aria-label="Help conversation" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ChatTranscript
-          messages={freeMessages}
-          busy={busy}
-          busyLabel="Thinking…"
-          notice={notice}
-          error={sendError}
-          onRetry={failedSend === null ? undefined : retryLast}
-          partialText={partial?.text ?? null}
-          partialLabel={partial?.label ?? null}
-          onAction={(id) => {
-            const target = ACTION_ROUTES[id];
-            if (target !== undefined) navigate(target);
-          }}
-        />
+        {showLanding ? (
+          <AssistantLanding
+            username={user?.username ?? null}
+            suggestions={SUGGESTIONS}
+            quickActions={LANDING_QUICK_ACTIONS}
+            privacyCopy={PRIVACY_COPY}
+            onSuggestion={(text) => void sendFreeChat(text)}
+            onQuickAction={(flow) => beginGuided(flow)}
+          />
+        ) : (
+          <ChatTranscript
+            messages={freeMessages}
+            busy={busy}
+            busyLabel="Thinking…"
+            notice={notice}
+            error={sendError}
+            onRetry={failedSend === null ? undefined : retryLast}
+            partialText={partial?.text ?? null}
+            partialLabel={partial?.label ?? null}
+            onAction={(id) => {
+              const target = ACTION_ROUTES[id];
+              if (target !== undefined) navigate(target);
+            }}
+          />
+        )}
 
         {/* The guided panel is a transient state of this screen: it rises in
             from below the transcript and leaves the same way, so switching
@@ -1725,23 +1746,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           )}
         </AnimatePresence>
 
-        {guided === null && isEmptyConversation && (
-          <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
-            {SUGGESTIONS.map((s) => (
-              <motion.button
-                key={s}
-                type="button"
-                onClick={() => void sendFreeChat(s)}
-                whileTap={pressFeedback.button}
-                transition={{ duration: motionDurations.instant }}
-                className="min-h-[48px] rounded-full border border-outline-variant px-3 text-xs text-on-surface-variant hover:bg-surface-container"
-              >
-                {s}
-              </motion.button>
-            ))}
-          </div>
-        )}
-
         {/* Lane B intent CTA: the proposed destination renders visibly and is
             followed only on tap through validated application actions. */}
         {guided === null && intentProposal?.cta !== null && intentProposal?.cta !== undefined && (
@@ -1756,57 +1760,35 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             </button>
           </div>
         )}
-        {guided === null && isEmptyConversation && (
-          <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
-            {(GUIDED_FLOWS.filter((f) => f !== "ask") as GuidedFlow[]).map((flow) => (
-              <motion.button
-                key={flow}
-                type="button"
-                data-testid={`guided-shortcut-${flow}`}
-                onClick={() => beginGuided(flow)}
-                whileTap={pressFeedback.button}
-                transition={{ duration: motionDurations.instant }}
-                className="min-h-[48px] rounded-full border border-outline px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
-              >
-                {SHORTCUT_LABELS[flow]}
-              </motion.button>
-            ))}
+
+        {guided === null && !isEmptyConversation && (
+          <div className="shrink-0 bg-surface px-4 pb-1">
+            <button
+              type="button"
+              aria-expanded={disclosureOpen}
+              onClick={() => setDisclosureOpen((v) => !v)}
+              className="flex min-h-[48px] items-center text-xs font-medium text-on-surface-variant underline"
+            >
+              How your data is used
+            </button>
+            {/* Accordion: the copy expands instead of popping into place, and
+                collapses the same way so the footer never jumps. */}
+            <AnimatePresence initial={false}>
+              {disclosureOpen && (
+                <motion.p
+                  key="privacy-copy"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+                  className="overflow-hidden pb-1 text-xs text-on-surface-variant"
+                >
+                  {PRIVACY_COPY}
+                </motion.p>
+              )}
+            </AnimatePresence>
           </div>
         )}
-
-        {guided === null &&
-          (isEmptyConversation ? (
-            <p className="shrink-0 bg-surface px-4 pb-1 text-xs text-on-surface-variant">
-              {PRIVACY_COPY}
-            </p>
-          ) : (
-            <div className="shrink-0 bg-surface px-4 pb-1">
-              <button
-                type="button"
-                aria-expanded={disclosureOpen}
-                onClick={() => setDisclosureOpen((v) => !v)}
-                className="flex min-h-[48px] items-center text-xs font-medium text-on-surface-variant underline"
-              >
-                How your data is used
-              </button>
-              {/* Accordion: the copy expands instead of popping into place, and
-                  collapses the same way so the footer never jumps. */}
-              <AnimatePresence initial={false}>
-                {disclosureOpen && (
-                  <motion.p
-                    key="privacy-copy"
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
-                    className="overflow-hidden pb-1 text-xs text-on-surface-variant"
-                  >
-                    {PRIVACY_COPY}
-                  </motion.p>
-                )}
-              </AnimatePresence>
-            </div>
-          ))}
 
         {requestRow !== null && (
           <p

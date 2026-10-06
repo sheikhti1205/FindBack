@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ACCENT_OPTIONS, accentTokensFor } from "./appearance";
+import { ACCENT_OPTIONS, DEFAULT_APPEARANCE, accentTokensFor } from "./appearance";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Button } from "./components/Button";
@@ -52,9 +52,9 @@ describe("Soft Utility semantic palette", () => {
   it("keeps AMOLED truly black with distinct tonal elevation and no system override", () => {
     const amoled = block(".amoled");
     expect(token(amoled, "--fb-surface")).toBe("#000000");
-    expect(token(amoled, "--fb-surface-container-low")).toBe("#0b0b0b");
-    expect(token(amoled, "--fb-surface-container")).toBe("#111211");
-    expect(token(amoled, "--fb-surface-container-high")).toBe("#171817");
+    expect(token(amoled, "--fb-surface-container-low")).toBe("#212529");
+    expect(token(amoled, "--fb-surface-container")).toBe("#343a40");
+    expect(token(amoled, "--fb-surface-container-high")).toBe("#495057");
     expect(css).toContain(":root:not(.light):not(.amoled)");
     expect(css).toMatch(/html,\s*body,\s*#root\s*\{[^}]*background: var\(--fb-surface\)/);
   });
@@ -162,9 +162,9 @@ describe("QA I — new consumer-UI token pairings (StatusPill, icons, switches, 
     amoled: blockIn(css, ".dark"),
   };
   const themeSurfaces: Record<"light" | "dark" | "amoled", string[]> = {
-    light: ["#f6f7f5", "#ffffff", "#eff1ed", "#e9ece7"],
-    dark: ["#101211", "#1a1d1b", "#202421", "#282c29"],
-    amoled: ["#000000", "#0b0b0b", "#111211", "#171817"],
+    light: ["#f8f9fa", "#ffffff", "#e9ecef", "#dee2e6"],
+    dark: ["#212529", "#343a40", "#343a40", "#495057"],
+    amoled: ["#000000", "#212529", "#343a40", "#495057"],
   };
 
   it.each(["light", "dark", "amoled"] as const)("%s: error/warning/success text meets AA on every surface", (mode) => {
@@ -220,5 +220,77 @@ describe("QA I — new consumer-UI token pairings (StatusPill, icons, switches, 
     for (const name of ["--fb-error", "--fb-warning", "--fb-success", "--fb-on-error", "--fb-found-bg", "--fb-found-ink", "--fb-lost-bg", "--fb-lost-ink"]) {
       expect(tokenIn(dark, name), name).toBeTruthy();
     }
+  });
+});
+
+describe("neutral structural palette (v0.9.0-beta.1)", () => {
+  const css = readFileSync("src/index.css", "utf8");
+  function blockOf(selector: string) {
+    const start = css.indexOf(`${selector} {`);
+    expect(start, selector).toBeGreaterThanOrEqual(0);
+    return css.slice(start).split("}")[0]!;
+  }
+  function tokenOf(source: string, name: string) {
+    const value = source.match(new RegExp(`${name}\\s*:\\s*([^;]+);`))?.[1]?.trim();
+    expect(value, name).toBeDefined();
+    return value!;
+  }
+  function rgb(hex: string) {
+    return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  }
+
+  /**
+   * Structural surfaces must be neutral, not green/cream tinted. The adopted
+   * neutral family is a cool gray (B >= G >= R); a green tint has G > B and a
+   * cream/beige tint has R > B, so this catches both regressions.
+   */
+  const modes = [
+    ["light", ":root"],
+    ["dark", ".dark"],
+    ["amoled", ".amoled"],
+  ] as const;
+  const structuralTokens = [
+    "--fb-surface",
+    "--fb-surface-container-low",
+    "--fb-surface-container",
+    "--fb-surface-container-high",
+  ];
+
+  it.each(modes)("%s structural surfaces are neutral gray (no green/cream tint)", (_mode, selector) => {
+    const source = blockOf(selector);
+    for (const name of structuralTokens) {
+      const [r, g, b] = rgb(tokenOf(source, name));
+      expect(b! >= g! && g! >= r!, `${name}=${tokenOf(source, name)} is not a cool neutral`).toBe(true);
+    }
+  });
+
+  it.each([["light", ":root"], ["dark", ".dark"]] as const)(
+    "%s status tint and Found badge surfaces are neutral (never green)",
+    (_mode, selector) => {
+      const source = blockOf(selector);
+      for (const name of ["--fb-tint-bg", "--fb-found-bg"]) {
+        const [r, g, b] = rgb(tokenOf(source, name));
+        expect(b! >= g! && g! >= r!, `${name}=${tokenOf(source, name)} is not a cool neutral`).toBe(true);
+      }
+    },
+  );
+
+  it("has retired the green/cream surface values from every mode block", () => {
+    for (const legacy of ["#f6f7f5", "#eff1ed", "#e9ece7", "#edf3ec", "#e2f1e5", "#101211", "#1a1d1b", "#202421", "#282c29"]) {
+      expect(css.includes(legacy), `${legacy} must not appear`).toBe(false);
+    }
+  });
+
+  it("defaults the accent to mono while keeping all seven options", () => {
+    expect(DEFAULT_APPEARANCE.accent).toBe("mono");
+    expect(ACCENT_OPTIONS.map((a) => a.id)).toEqual([
+      "emerald", "blue", "violet", "rose", "amber", "teal", "mono",
+    ]);
+  });
+
+  it("keeps the Found badge neutral with an icon + text affordance elsewhere", () => {
+    const light = blockOf(":root");
+    expect(tokenOf(light, "--fb-found-bg")).toBe("#e9ecef");
+    expect(tokenOf(light, "--fb-found-ink")).toBe("#343a40");
   });
 });

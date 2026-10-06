@@ -52,6 +52,10 @@ export const FINDINGS_MANIFEST = Object.freeze([
   // tracked explicitly instead of being discovered after "completion".
   "FBA-035",
   "FBA-036",
+  // v0.9.0-beta.1 finishing wave (2026-10-07): consumer Help/Assistant
+  // readiness and real dependency-security closure, both tracked explicitly.
+  "FBA-037",
+  "FBA-038",
 ]);
 
 export const CLOSED_STATUSES = Object.freeze(["DONE", "VERIFIED", "OK"]);

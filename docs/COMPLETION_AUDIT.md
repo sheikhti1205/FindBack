@@ -6,8 +6,9 @@ Source packet: `/tmp/opencode/FindBack_completion_audit_b472a24_2026-10-05`.
 All human documents were read: README, 00–18, FINAL_COMPLETION_CHECKLIST,
 RELEASE_READINESS, all three prompts, and all four textual evidence summaries.
 The temporary packet path is provenance, not a portable runtime dependency.
-This register preserves **all 36 FBA IDs** (34 audit + FBA-035/036 from the
-closure review), including positive/limited findings.
+This register preserves **all 38 FBA IDs** (34 audit + FBA-035/036 from the
+closure review + FBA-037/038 from the v0.9.0-beta.1 finishing wave), including
+positive/limited findings.
 
 > **Machine-source-of-truth update (2026-10-06, main owner).** The completion
 > ledger this register called "upcoming" now exists as `completion-ledger.json`,
@@ -83,6 +84,8 @@ reported/historical was not executed again by this documentation owner.
 | FBA-034 | OK | HISTORICAL — repository/tracking owner | Audit searches found no open issues/PRs; not re-queried here. Repository absence-of-tickets is neither product completion nor current remote-state proof. | Maintain ledger/issues for residuals and check remote state at final release review; resolve FBA-024 tracking. No need to fabricate a new issue merely to claim closure. |
 | FBA-035 | P1 | DONE — auth owner (closure-review scope) | Password recovery shipped: `ForgotPassword.tsx` → reset email → verified `/recovery` deep link (`exchangeRecoveryCode`) → `updatePassword`; anti-enumeration throughout. Tests: `auth.test.ts`, `PasswordRecovery.test.tsx`, `App.routes.test.tsx`. Live email delivery needs hosted redirect allowlisting + inbox (external). | Implement Supabase password recovery: forgot-password entry, reset email, verified app/deep link, new password, session refresh, return to login — with tests and no existence leakage. |
 | FBA-036 | P2 | DONE (code seam) — auth owner | Implemented: `supabase/functions/delete-account` (JWT-resolved uid only, storage prefix purge, `users`-row cascade wipe, admin auth delete, honest partial-progress bodies; 10 Deno tests), `requestAccountDeletion()` client, typed-email confirm UI in `AccountSettings.tsx` with success/logout-wipe flow (5 UI tests), capability manifest + knowledge base updated (deletion supported, kb-2026-10-06.1). Hosted live-deletion proof is external — covered by the v8-beta owner waiver, not by mocked tests. | Decide explicitly, then implement if scheduled: server-side purge function, storage cleanup, RLS, UI confirm, hosted proof. Do not rediscover this after "final completion". |
+| FBA-037 | P1 | DONE — assistant/design owner (v0.9 beta wave) | Consumer Assistant landing (`AssistantLanding.tsx`) replaces the synthetic first-use greeting, mounted from the empty-state branch of `Help.tsx`; all capabilities preserved (guided flows, model picker, history, retry/stop, streaming, attachments, provenance, privacy disclosure); empty-conversation "New response" hardening in `ChatTranscript.tsx`; neutral structural palette + mono default accent in `index.css`/`appearance.ts`/`settings.css`. Tests: `AssistantLanding.test.tsx`, `Help.test.tsx`, `Help.assistant.test.tsx`, `ChatTranscript.test.tsx`, `appearance.test.ts`, `appearance.contrast.test.ts`. Visual/device acceptance remains owner-run. | Ship a consumer-credible Assistant first-use screen without breaking any AI/guided/chat behavior or the appearance system. |
+| FBA-038 | P1 | DONE — security owner (v0.9 beta wave) | Both highs closed: `@graphql-tools/utils` pinned to `12.0.1` via root `package.json` overrides (CVE-2026-104852 / GHSA-7mx3-vvmw-hjmv via `graphql-yoga`) and `sharp` bumped to `0.35.5` in `services/api/package.json` (CVE-2026-96889 / GHSA-wq5f-xc86-pv6w); `package-lock.json`/`deno.lock` updated; `npm audit` and `npm audit --omit=dev` report 0 vulnerabilities. Guards: `scripts/check-security-baseline.mjs` (+ test) wired into CI/release with high-level audit gates; API regression `services/api/src/tests/dependencySecurity.test.ts`. | Run a fresh audit (not the old ledger) and close every high-severity advisory with a deterministic regression. |
 
 ## External prerequisites — still required
 

@@ -79,7 +79,7 @@
       "severity": "P0",
       "area": "release/versioning",
       "status": "DONE",
-      "evidence": "Root package.json and apps/mobile/package.json both 0.8.0-beta.2 on main (scripts/check-version-sync.mjs passes); the 0.8.0-beta.1 side-branch was deleted by owner 2026-10-06 so no second line exists; schema metadata parity test apps/mobile/src/services/appCapabilities.test.ts pins BACKEND_SCHEMA_VERSION to newest migration."
+      "evidence": "Root package.json and apps/mobile/package.json both 0.9.0-beta.1 on main (scripts/check-version-sync.mjs passes); the 0.8.0-beta.1 side-branch was deleted by owner 2026-10-06 so no second line exists; schema metadata parity test apps/mobile/src/services/appCapabilities.test.ts pins BACKEND_SCHEMA_VERSION to newest migration."
     },
     {
       "id": "FBA-009",
@@ -205,7 +205,7 @@
       "severity": "P2",
       "area": "process/tracking",
       "status": "DONE",
-      "evidence": "completion-ledger.json tracks every finding to closure (36 ids incl. FBA-035/FBA-036); docs/COMPLETION_AUDIT.md register agrees cell-by-cell (scripts/completion-gate.mjs docs-consistency check).",
+      "evidence": "completion-ledger.json tracks every finding to closure (38 ids incl. FBA-035/036 and this wave's FBA-037/FBA-038); docs/COMPLETION_AUDIT.md register agrees cell-by-cell (scripts/completion-gate.mjs docs-consistency check).",
       "blocker": ""
     },
     {
@@ -213,7 +213,7 @@
       "severity": "P2",
       "area": "security/history",
       "status": "DONE",
-      "evidence": "Full-history value-pattern scan over all revs (sb_secret_ values, SUPABASE_SERVICE_ROLE_KEY assignments, JWT shapes, private keys): zero hits outside scanner-pattern/test-literal/docs-mention files. npm audit on main @52de6ec (package-lock.json): safe-fixes applied (proxy-addr 2.0.8, source-map-js 1.2.2), 2-high-remaining (upstream graphql-tools mergeDeep via yoga 5.22.0; fixed utils 12.0.1 already in tree; needs upstream yoga bump, tracked)."
+      "evidence": "Full-history value-pattern scan over all revs (sb_secret_ values, SUPABASE_SERVICE_ROLE_KEY assignments, JWT shapes, private keys): zero hits outside scanner-pattern/test-literal/docs-mention files. The two highs from the 52de6ec audit are now closed (see FBA-038): @graphql-tools/utils pinned to 12.0.1 via root package.json overrides, sharp bumped to 0.35.5 in services/api/package.json; npm audit and npm audit --omit=dev report 0 vulnerabilities."
     },
     {
       "id": "FBA-026",
@@ -301,6 +301,22 @@
       "area": "auth/account-deletion",
       "status": "DONE",
       "evidence": "Implemented: supabase/functions/delete-account (JWT-resolved uid only: storage prefix purge, users-row cascade wipe, admin auth delete, honest partial-progress bodies; 10 Deno tests green), requestAccountDeletion() client (5 tests), typed-email confirm UI in AccountSettings with success + logout-wipe flow (5 UI tests), capability manifest + knowledge base declare deletion supported (kb-2026-10-06.1). Hosted live-deletion proof is external — owner-waived for the v8 beta line 2026-10-06, tracked for a hosted run."
+    },
+    {
+      "id": "FBA-037",
+      "severity": "P1",
+      "area": "assistant/consumer-readiness",
+      "status": "DONE",
+      "evidence": "Consumer Assistant landing replaces the synthetic first-use greeting: apps/mobile/src/components/assistant/AssistantLanding.tsx mounted from the empty-state branch of apps/mobile/src/screens/Help.tsx (welcome + Popular questions + Quick actions + How the assistant works + collapsed privacy disclosure). Every capability is preserved: guided lost/found/search flows, model picker, provider credentials, per-account history, retry, stop/cancel, streaming, image attachments and provenance labels. Hardening: apps/mobile/src/components/ChatTranscript.tsx clears the 'New response' control on an empty conversation. Neutral structural palette + mono default accent: apps/mobile/src/index.css, apps/mobile/src/appearance.ts, apps/mobile/src/components/settings/settings.css. Tests: apps/mobile/src/components/assistant/AssistantLanding.test.tsx, apps/mobile/src/screens/Help.test.tsx, apps/mobile/src/screens/Help.assistant.test.tsx, apps/mobile/src/components/ChatTranscript.test.tsx, apps/mobile/src/appearance.test.ts, apps/mobile/src/appearance.contrast.test.ts. Limitation: visual/UX acceptance on a physical device is owner-run.",
+      "blocker": ""
+    },
+    {
+      "id": "FBA-038",
+      "severity": "P1",
+      "area": "security/dependencies",
+      "status": "DONE",
+      "evidence": "Fresh dependency audit closed both highs: root package.json overrides @graphql-tools/utils to 12.0.1 (prototype pollution CVE-2026-104852 / GHSA-7mx3-vvmw-hjmv via graphql-yoga) and services/api/package.json sharp to 0.35.5 (CVE-2026-96889 / GHSA-wq5f-xc86-pv6w); package-lock.json and deno.lock updated; npm audit and npm audit --omit=dev report 0 vulnerabilities. Deterministic guards: scripts/check-security-baseline.mjs (+ scripts/check-security-baseline.test.mjs) wired into .github/workflows/ci.yml and .github/workflows/release.yml alongside high-level npm audit gates; API regression services/api/src/tests/dependencySecurity.test.ts proves the installed mergeDeep ignores __proto__ / constructor.prototype payloads.",
+      "blocker": ""
     }
   ]
 }

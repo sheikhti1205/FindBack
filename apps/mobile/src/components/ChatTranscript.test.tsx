@@ -285,3 +285,28 @@ describe("ChatTranscript motion (Wave E)", () => {
     expect(bubble.textContent).toContain("Hello world, streaming…");
   });
 });
+
+describe("ChatTranscript empty-state hardening (v0.9.0-beta.1)", () => {
+  it("never shows 'New response' on an empty/new conversation", async () => {
+    const view = render(
+      <ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />,
+    );
+    const scroller = screen.getByTestId("chat-transcript");
+    // Simulate a genuinely scrolled-up conversation so the pill is warranted.
+    Object.defineProperty(scroller, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scroller, "clientHeight", { value: 200, configurable: true });
+    Object.defineProperty(scroller, "scrollTop", { value: 0, configurable: true, writable: true });
+    view.rerender(
+      <ChatTranscript
+        messages={[
+          { id: "u1", role: "user", text: "hi" },
+          { id: "a1", role: "assistant", text: "answer", source: "llm" },
+        ]}
+      />,
+    );
+    expect(await screen.findByTestId("chat-new-response")).toBeTruthy();
+    // Switching to a brand-new empty chat must clear it — never a stale pill.
+    view.rerender(<ChatTranscript messages={[]} />);
+    await waitFor(() => expect(screen.queryByTestId("chat-new-response")).toBeNull());
+  });
+});

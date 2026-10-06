@@ -10,17 +10,16 @@ import assert from "node:assert/strict";
 
 import { derivePublishType } from "./derive-publish-type.mjs";
 
-const BETA_NOTES = "Signed beta published as a full release. See release-manifest.json for versionCode, git SHA, and per-artifact checksums.";
-const PRERELEASE_NOTES = "Prerelease signed beta. See release-manifest.json for versionCode, git SHA, and per-artifact checksums.";
+const PRERELEASE_NOTES = "Pre-release signed beta. See release-manifest.json for versionCode, git SHA, and per-artifact checksums.";
 
 describe("derivePublishType", () => {
-  it("publishes -beta.* tags as normal releases with a beta title (Latest-eligible)", () => {
-    for (const tag of ["v0.2.0-beta.1", "v0.2.0-beta.2", "v2.3.4-beta.10"]) {
+  it("publishes -beta.* tags as GitHub pre-releases (never Latest)", () => {
+    for (const tag of ["v0.2.0-beta.1", "v0.2.0-beta.2", "v0.9.0-beta.1", "v2.3.4-beta.10"]) {
       const r = derivePublishType(tag);
-      assert.equal(r.prerelease, false, tag);
-      assert.equal(r.prereleaseFlag, "", tag);
-      assert.equal(r.title, `FindBack ${tag} (beta)`, tag);
-      assert.equal(r.notes, BETA_NOTES, tag);
+      assert.equal(r.prerelease, true, tag);
+      assert.equal(r.prereleaseFlag, "--prerelease", tag);
+      assert.equal(r.title, `FindBack ${tag} (pre-release)`, tag);
+      assert.equal(r.notes, PRERELEASE_NOTES, tag);
     }
   });
 
@@ -29,7 +28,7 @@ describe("derivePublishType", () => {
       const r = derivePublishType(tag);
       assert.equal(r.prerelease, true, tag);
       assert.equal(r.prereleaseFlag, "--prerelease", tag);
-      assert.equal(r.title, `FindBack ${tag} (beta)`, tag);
+      assert.equal(r.title, `FindBack ${tag} (pre-release)`, tag);
       assert.equal(r.notes, PRERELEASE_NOTES, tag);
     }
   });

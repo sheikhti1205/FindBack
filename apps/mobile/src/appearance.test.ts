@@ -26,9 +26,9 @@ afterEach(() => {
 });
 
 describe("appearance settings module (AI-011 Quick Appearance)", () => {
-  it("exposes defaults: emerald accent, standard scale, system motion, standard photo", () => {
+  it("exposes defaults: mono accent, standard scale, system motion, standard photo", () => {
     expect(DEFAULT_APPEARANCE).toEqual({
-      accent: "emerald",
+      accent: "mono",
       textScale: "standard",
       reduceMotion: "system",
       highQualityPhoto: false,

@@ -36,22 +36,22 @@
 }
 
 :root {
-  --fb-surface: #f6f7f5;
+  --fb-surface: #f8f9fa;
   --fb-surface-container-low: #ffffff;
-  --fb-surface-container: #eff1ed;
-  --fb-surface-container-high: #e9ece7;
-  --fb-on-surface: #171917;
-  --fb-on-surface-variant: #626761;
+  --fb-surface-container: #e9ecef;
+  --fb-surface-container-high: #dee2e6;
+  --fb-on-surface: #212529;
+  --fb-on-surface-variant: #495057;
   /* Strong outline for controls; subtle outline for group/divider geometry. */
-  --fb-outline: #626761;
-  --fb-outline-variant: #dce0da;
-  --fb-primary: var(--fb-primary-light, #256c4a);
+  --fb-outline: #6c757d;
+  --fb-outline-variant: #ced4da;
+  --fb-primary: var(--fb-primary-light, #212529);
   --fb-primary-hover-layer: rgba(0, 0, 0, 0.08);
   --fb-primary-pressed-layer: rgba(0, 0, 0, 0.12);
   --fb-on-primary: var(--fb-on-primary-light, #ffffff);
-  --fb-primary-container: var(--fb-primary-container-light, #e1f2e8);
-  --fb-on-primary-container: var(--fb-on-primary-container-light, #00391e);
-  --fb-link: var(--fb-link-light, #00391e);
+  --fb-primary-container: var(--fb-primary-container-light, #e9ecef);
+  --fb-on-primary-container: var(--fb-on-primary-container-light, #212529);
+  --fb-link: var(--fb-link-light, #343a40);
   --fb-focus: var(--fb-primary);
   --fb-selection: var(--fb-primary-container);
   --fb-on-selection: var(--fb-on-primary-container);
@@ -64,142 +64,141 @@
   --fb-warning: #755400;
   --fb-error: #ba1a1a;
   --fb-on-error: #ffffff;
-  /* U2 hybrid visual rollout: restrained tint for the occasional status card
-   * (Variant A green-tint / Variant B cool-neutral — one card per screen max).
-   * Large surfaces stay grayscale in light AND dark. */
-  --fb-tint-bg: #edf3ec;
-  --fb-tint-ink: #2e5b34;
-  --fb-tint-line: #c9d8ca;
-  /* Home-feed Lost/Found semantic tokens. Muted surfaces with deep ink that
-   * keeps ≥4.5:1 contrast in each theme; the badge text + icon (never color
-   * alone) carry the meaning. Scoped to the Home feed badges only — the rest
-   * of FindBack stays monochrome. */
+  /* Restrained neutral status tint (one card per screen max). There is no
+   * green-tinted card concept: structural surfaces stay neutral in every mode. */
+  --fb-tint-bg: #f8f9fa;
+  --fb-tint-ink: #343a40;
+  --fb-tint-line: #ced4da;
+  /* Home-feed Lost/Found semantic tokens. Lost keeps a muted red because the
+   * colour conveys meaning; Found is neutral by default — the check icon and
+   * `Found` text carry status, never colour alone. */
   --fb-lost-bg: #f9dedc;
   --fb-lost-ink: #93000a;
-  --fb-found-bg: #e2f1e5;
-  --fb-found-ink: #1b5e20;
-  /* M2-motion semantic surface/action tokens (monochrome; AA vs on-surface text).
+  --fb-found-bg: #e9ecef;
+  --fb-found-ink: #343a40;
+  /* M2-motion semantic surface/action tokens (neutral; AA vs on-surface text).
    * Composer + assistant surfaces stay near-page neutrals; the user bubble is
-   * a mid neutral that keeps ≥4.5:1 vs --fb-on-surface; --primary-action is
-   * near-black behind white label text (≥4.5:1). */
-  --composer-surface: #ffffff;  --user-bubble: #ececea;
-  --assistant-surface: #f7f7f5;
-  --primary-action: #1a1a1a;
+   * a light neutral that keeps >=4.5:1 vs the dark --fb-on-surface text;
+   * --primary-action is near-black behind white label text (>=4.5:1). */
+  --composer-surface: #ffffff;
+  --user-bubble: #e9ecef;
+  --assistant-surface: #f8f9fa;
+  --primary-action: #212529;
   --scrim: rgba(0, 0, 0, 0.5);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.12);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.18);
-  --skeleton-base: #e5e5e1;
-  --skeleton-highlight: #f7f7f5;
+  --skeleton-base: #e9ecef;
+  --skeleton-highlight: #f8f9fa;
   color-scheme: light;
 }
 
 .dark {
-  --fb-surface: #101211;
-  --fb-surface-container-low: #1a1d1b;
-  --fb-surface-container: #202421;
-  --fb-surface-container-high: #282c29;
-  --fb-on-surface: #f0f2ee;
-  --fb-on-surface-variant: #b8bdb7;
-  --fb-outline: #b8bdb7;
-  --fb-outline-variant: #343a35;
-  --fb-primary: var(--fb-primary-dark, #82d5aa);
+  --fb-surface: #212529;
+  --fb-surface-container-low: #343a40;
+  --fb-surface-container: #343a40;
+  --fb-surface-container-high: #495057;
+  --fb-on-surface: #f8f9fa;
+  --fb-on-surface-variant: #ced4da;
+  --fb-outline: #adb5bd;
+  --fb-outline-variant: #6c757d;
+  --fb-primary: var(--fb-primary-dark, #f8f9fa);
   --fb-primary-hover-layer: rgba(255, 255, 255, 0.08);
   --fb-primary-pressed-layer: rgba(255, 255, 255, 0.12);
-  --fb-on-primary: var(--fb-on-primary-dark, #00391e);
-  --fb-primary-container: var(--fb-primary-container-dark, #153c29);
-  --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
-  --fb-link: var(--fb-link-dark, #82d5aa);
+  --fb-on-primary: var(--fb-on-primary-dark, #212529);
+  --fb-primary-container: var(--fb-primary-container-dark, #495057);
+  --fb-on-primary-container: var(--fb-on-primary-container-dark, #f8f9fa);
+  --fb-link: var(--fb-link-dark, #f8f9fa);
   --fb-success: #a9d6b0;
   --fb-warning: #e9c46a;
   --fb-error: #ffb4ab;
   --fb-on-error: #690005;
-  /* U2: dark-mode tint — charcoal-compatible, still grayscale surroundings. */
-  --fb-tint-bg: #1c2620;
-  --fb-tint-ink: #b9d4bd;
-  --fb-tint-line: #3d5244;
-  /* Home-feed dark equivalents: muted dark red/green surfaces, pale ink. */
+  /* Neutral dark status tint (charcoal-compatible, never green-tinted). */
+  --fb-tint-bg: #343a40;
+  --fb-tint-ink: #f8f9fa;
+  --fb-tint-line: #6c757d;
+  /* Home-feed dark equivalents: muted dark red for Lost, neutral for Found. */
   --fb-lost-bg: #3a2325;
   --fb-lost-ink: #ffb4ab;
-  --fb-found-bg: #1e3325;
-  --fb-found-ink: #a9d6b0;
+  --fb-found-bg: #495057;
+  --fb-found-ink: #f8f9fa;
   /* M2-motion dark values: near-white action surface behind near-black label
-   * text (≥4.5:1); user bubble keeps ≥4.5:1 vs dark --fb-on-surface. */
-  --composer-surface: #1d1d1d;
-  --user-bubble: #2f2f2f;
-  --assistant-surface: #121212;
+   * text (>=4.5:1); user bubble keeps >=4.5:1 vs dark --fb-on-surface. */
+  --composer-surface: #343a40;
+  --user-bubble: #495057;
+  --assistant-surface: #212529;
   --primary-action: #e6e6e0;
   --scrim: rgba(0, 0, 0, 0.6);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.6);
-  --skeleton-base: #242424;
-  --skeleton-highlight: #2f2f2f;
+  --skeleton-base: #343a40;
+  --skeleton-highlight: #495057;
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light):not(.amoled) {
-    --fb-surface: #101211;
-    --fb-surface-container-low: #1a1d1b;
-    --fb-surface-container: #202421;
-    --fb-surface-container-high: #282c29;
-    --fb-on-surface: #f0f2ee;
-    --fb-on-surface-variant: #b8bdb7;
-    --fb-outline: #b8bdb7;
-    --fb-outline-variant: #343a35;
-    --fb-primary: var(--fb-primary-dark, #82d5aa);
+    --fb-surface: #212529;
+    --fb-surface-container-low: #343a40;
+    --fb-surface-container: #343a40;
+    --fb-surface-container-high: #495057;
+    --fb-on-surface: #f8f9fa;
+    --fb-on-surface-variant: #ced4da;
+    --fb-outline: #adb5bd;
+    --fb-outline-variant: #6c757d;
+    --fb-primary: var(--fb-primary-dark, #f8f9fa);
     --fb-primary-hover-layer: rgba(255, 255, 255, 0.08);
     --fb-primary-pressed-layer: rgba(255, 255, 255, 0.12);
-    --fb-on-primary: var(--fb-on-primary-dark, #00391e);
-    --fb-primary-container: var(--fb-primary-container-dark, #153c29);
-    --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
-    --fb-link: var(--fb-link-dark, #82d5aa);
+    --fb-on-primary: var(--fb-on-primary-dark, #212529);
+    --fb-primary-container: var(--fb-primary-container-dark, #495057);
+    --fb-on-primary-container: var(--fb-on-primary-container-dark, #f8f9fa);
+    --fb-link: var(--fb-link-dark, #f8f9fa);
     --fb-success: #a9d6b0;
     --fb-warning: #e9c46a;
     --fb-error: #ffb4ab;
     --fb-on-error: #690005;
-    --fb-tint-bg: #1c2620;
-    --fb-tint-ink: #b9d4bd;
-    --fb-tint-line: #3d5244;
+    --fb-tint-bg: #343a40;
+    --fb-tint-ink: #f8f9fa;
+    --fb-tint-line: #6c757d;
     --fb-lost-bg: #3a2325;
     --fb-lost-ink: #ffb4ab;
-    --fb-found-bg: #1e3325;
-    --fb-found-ink: #a9d6b0;
-    --composer-surface: #1d1d1d;
-    --user-bubble: #2f2f2f;
-    --assistant-surface: #121212;
+    --fb-found-bg: #495057;
+    --fb-found-ink: #f8f9fa;
+    --composer-surface: #343a40;
+    --user-bubble: #495057;
+    --assistant-surface: #212529;
     --primary-action: #e6e6e0;
     --scrim: rgba(0, 0, 0, 0.6);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.6);
-    --skeleton-base: #242424;
-    --skeleton-highlight: #2f2f2f;
+    --skeleton-base: #343a40;
+    --skeleton-highlight: #495057;
     color-scheme: dark;
   }
 }
 
 .amoled {
   --fb-surface: #000000;
-  --fb-surface-container-low: #0b0b0b;
-  --fb-surface-container: #111211;
-  --fb-surface-container-high: #171817;
-  --fb-on-surface: #f4f4f1;
-  --fb-on-surface-variant: #b8bab6;
-  --fb-outline: #b8bab6;
-  --fb-outline-variant: #242624;
-  --fb-primary: var(--fb-primary-dark, #82d5aa);
+  --fb-surface-container-low: #212529;
+  --fb-surface-container: #343a40;
+  --fb-surface-container-high: #495057;
+  --fb-on-surface: #f8f9fa;
+  --fb-on-surface-variant: #ced4da;
+  --fb-outline: #adb5bd;
+  --fb-outline-variant: #495057;
+  --fb-primary: var(--fb-primary-dark, #f8f9fa);
   --fb-primary-hover-layer: rgba(255, 255, 255, 0.08);
   --fb-primary-pressed-layer: rgba(255, 255, 255, 0.12);
-  --fb-on-primary: var(--fb-on-primary-dark, #00391e);
-  --fb-primary-container: var(--fb-primary-container-dark, #153c29);
-  --fb-on-primary-container: var(--fb-on-primary-container-dark, #82d5aa);
-  --fb-link: var(--fb-link-dark, #82d5aa);
-  --composer-surface: #0b0b0b;
-  --user-bubble: #171817;
+  --fb-on-primary: var(--fb-on-primary-dark, #212529);
+  --fb-primary-container: var(--fb-primary-container-dark, #343a40);
+  --fb-on-primary-container: var(--fb-on-primary-container-dark, #f8f9fa);
+  --fb-link: var(--fb-link-dark, #f8f9fa);
+  --composer-surface: #212529;
+  --user-bubble: #343a40;
   --assistant-surface: #000000;
   --shadow-sm: none;
   --shadow-md: none;
-  --skeleton-base: #111211;
-  --skeleton-highlight: #171817;
+  --skeleton-base: #212529;
+  --skeleton-highlight: #343a40;
   color-scheme: dark;
 }
 

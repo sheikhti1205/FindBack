@@ -57,7 +57,7 @@ export const ACCENT_OPTIONS: readonly AccentOption[] = [
   { id: "rose", label: "Rose", swatch: "#a34763", onAccent: "#ffffff", darkSwatch: "#ffb2c4", darkOnAccent: "#5b112b", container: "#fbe8ef", darkContainer: "#51283a" },
   { id: "amber", label: "Amber", swatch: "#7a5700", onAccent: "#ffffff", darkSwatch: "#e9c46a", darkOnAccent: "#3d2d00", container: "#f8edce", darkContainer: "#46391c" },
   { id: "teal", label: "Teal", swatch: "#006a6a", onAccent: "#ffffff", darkSwatch: "#7bd8d8", darkOnAccent: "#003838", container: "#ddf2f1", darkContainer: "#153c3c" },
-  { id: "mono", label: "Mono", swatch: "#1a1a1a", onAccent: "#ffffff", darkSwatch: "#e6e6e0", darkOnAccent: "#121212", container: "#e9ece7", darkContainer: "#333632" },
+  { id: "mono", label: "Mono", swatch: "#212529", onAccent: "#ffffff", darkSwatch: "#e9ecef", darkOnAccent: "#212529", container: "#e9ecef", darkContainer: "#343a40" },
 ];
 
 /** Accepts old IDs only at the persistence boundary; UI always uses new IDs. */
@@ -70,7 +70,7 @@ export function migrateAccent(value: unknown): AccentId {
 }
 
 export function accentTokensFor(id: AccentId, mode: "light" | "dark" | "amoled") {
-  const accent = ACCENT_OPTIONS.find((a) => a.id === id) ?? ACCENT_OPTIONS[0]!;
+  const accent = ACCENT_OPTIONS.find((a) => a.id === id) ?? ACCENT_OPTIONS.find((a) => a.id === DEFAULT_APPEARANCE.accent) ?? ACCENT_OPTIONS[0]!;
   const dark = mode !== "light";
   return {
     primary: dark ? accent.darkSwatch : accent.swatch,
@@ -122,7 +122,7 @@ export interface AppearanceSettings {
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
-  accent: "emerald",
+  accent: "mono",
   textScale: "standard",
   reduceMotion: "system",
   highQualityPhoto: false,

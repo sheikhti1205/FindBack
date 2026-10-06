@@ -9,8 +9,9 @@
 #     exactly with the checkout pinned to the tagged commit, reruns the full
 #     gate fresh on that commit, builds/signs/scans every APK variant,
 #     writes checksums + release-manifest.json, then creates a GitHub Release
-#     whose type is derived from the tag (-beta.* and plain stable tags publish
-#     as normal releases; only -rc.*/-alpha-style tags stay prereleases).
+#     whose type is derived from the tag: any prerelease suffix (-beta.*,
+#     -rc.*, -alpha) publishes as a PRE-RELEASE; only plain stable tags
+#     (e.g. v1.0.0) publish as normal releases.
 #
 # This workflow file must be merged to the default branch BEFORE any v* tag
 # is pushed; a tag built from a commit without this file is not a release.
@@ -119,6 +120,12 @@ jobs:
         run: npm run lint
       - name: Secret scan
         run: npm run scan:secrets
+      - name: Dependency security baseline (deterministic CVE tripwire)
+        run: node scripts/check-security-baseline.mjs
+      - name: Dependency audit (0 high / 0 critical)
+        run: |
+          npm audit --audit-level=high
+          npm audit --omit=dev --audit-level=high
       - name: API tests
         run: npm test -w @findback/api
       - name: Mobile tests
@@ -387,10 +394,9 @@ jobs:
     name: Publish release (tag builds only)
     # The ONLY job with write permission, and it runs ONLY for v* tags after
     # every variant passed verification. workflow_dispatch stops at artifacts.
-    # Publish TYPE is derived from the tag's SemVer (R4): -beta.* tags publish
-    # as normal releases with a beta title (Latest-eligible); only -rc.* and
-    # other non-beta prerelease suffixes stay prereleases; plain stable
-    # tags publish as normal releases with a stable title.
+    # Publish TYPE is derived from the tag's SemVer (R4): any prerelease suffix
+    # (-beta.*/-rc.*/-alpha) publishes as a PRE-RELEASE; only plain stable tags
+    # publish as normal releases with a stable title.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: signed-build
     runs-on: ubuntu-24.04
@@ -416,11 +422,19 @@ jobs:
           ls -l release-files/
           (cd release-files && sha256sum -c SHA256SUMS.txt)
           TITLE="$(node scripts/derive-publish-type.mjs --tag "$TAG" --field title)"
-          NOTES="$(node scripts/derive-publish-type.mjs --tag "$TAG" --field notes)"
           FLAG="$(node scripts/derive-publish-type.mjs --tag "$TAG" --field prerelease-flag)"
-          # Intentional word-splitting: FLAG is empty (stable/beta) or --prerelease.
+          # Curated notes win: a committed docs/release-notes/<tag>.md is the
+          # authoritative changelog for that release; otherwise use the derived
+          # generic notes.
+          NOTES_FILE="docs/release-notes/${TAG}.md"
+          if [[ -f "$NOTES_FILE" ]]; then
+            NOTES_ARG=(--notes-file "$NOTES_FILE")
+          else
+            NOTES_ARG=(--notes "$(node scripts/derive-publish-type.mjs --tag "$TAG" --field notes)")
+          fi
+          # Intentional word-splitting: FLAG is empty (stable) or --prerelease.
           # shellcheck disable=SC2086
           gh release create "$TAG" $FLAG \
             --title "$TITLE" \
-            --notes "$NOTES" \
+            "${NOTES_ARG[@]}" \
             release-files/*.apk release-files/*.aab release-files/release-manifest.json release-files/SHA256SUMS.txt

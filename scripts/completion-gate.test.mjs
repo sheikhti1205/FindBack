@@ -30,6 +30,8 @@ const sevOf = (id) => {
   const n = Number(id.slice(4));
   if (id === "FBA-035") return "P1";
   if (id === "FBA-036") return "P2";
+  if (id === "FBA-037") return "P1";
+  if (id === "FBA-038") return "P1";
   if ([1, 2, 7, 8, 17, 26].includes(n)) return "P0";
   if ([3, 4, 5, 10, 11, 14, 15, 19, 20].includes(n)) return "P1";
   if ([6, 13, 16, 18, 21, 23, 24, 25].includes(n)) return "P2";
@@ -93,8 +95,8 @@ describe("validateLedger integrity", () => {
     missing.items = missing.items.filter((i) => i.id !== "FBA-034");
     ok(validateLedger(missing).some((e) => /missing canonical finding FBA-034/.test(e)));
     const extra = fullLedger();
-    extra.items.push({ id: "FBA-037", severity: "P3", status: "DONE", evidence: "x", blocker: "" });
-    ok(validateLedger(extra).some((e) => /non-canonical id FBA-037/.test(e)));
+    extra.items.push({ id: "FBA-099", severity: "P3", status: "DONE", evidence: "x", blocker: "" });
+    ok(validateLedger(extra).some((e) => /non-canonical id FBA-099/.test(e)));
   });
 
   it("rejects duplicate ids and invalid status/severity", () => {

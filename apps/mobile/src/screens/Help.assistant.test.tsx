@@ -111,13 +111,16 @@ function send(text: string) {
 }
 
 describe("Help full-screen assistant", () => {
-  it("renders transcript, composer, history entry and keeps product copy", () => {
+  it("renders the consumer landing, composer, history entry and keeps product copy", () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
     expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
-    expect(screen.getByTestId("chat-transcript")).toBeTruthy();
+    // v0.9.0-beta.1: first use is a consumer landing, never a synthetic
+    // greeting transcript bubble, so the transcript is absent while empty.
+    expect(screen.getByTestId("assistant-landing")).toBeTruthy();
+    expect(screen.queryByTestId("chat-transcript")).toBeNull();
     expect(screen.getByTestId("chat-composer")).toBeTruthy();
     expect(screen.getByRole("button", { name: /chat history/i })).toBeTruthy();
-    expect(screen.getByText(/I am the FindBack Help & FAQ/)).toBeTruthy();
+    expect(screen.queryByText(/I am the FindBack Help & FAQ/)).toBeNull();
     expect(screen.queryByTestId("assistant-entry")).toBeNull();
   });
 
@@ -274,7 +277,7 @@ describe("Help full-screen assistant", () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
     expect(screen.getByRole("link", { name: /skip to composer/i })).toBeTruthy();
     expect(screen.getByRole("main", { name: /help conversation/i })).toBeTruthy();
-    const scroller = screen.getByTestId("chat-transcript");
+    const scroller = screen.getByTestId("assistant-landing");
     expect(scroller.className).toMatch(/bg-surface|surface-container/);
   });
 });
@@ -310,11 +313,14 @@ describe("Help P1 header/layout (screenshots 10/11/12)", () => {
 
   it("collapses the privacy paragraph into an accessible disclosure once chatting", async () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok"), getKey: async () => "test-key" });
-    // First use: the full consent copy is visible up front.
+    // v0.9.0-beta.1: even first use keeps the consent copy behind one tap so
+    // the landing is not a text wall — but it is always one tap away.
+    expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /privacy & ai details/i }));
     expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy();
     send("How do I report?");
     await screen.findByText("ok");
-    // Ongoing chat: a short disclosure replaces the permanent paragraph.
+    // Ongoing chat: the footer disclosure replaces the landing one.
     expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
     const disclosure = screen.getByRole("button", { name: /how your data is used/i });
     expect(disclosure.className).toMatch(/min-h-\[48px\]/);
@@ -336,7 +342,8 @@ describe("Help P1 header/layout (screenshots 10/11/12)", () => {
     expect(panel.getAttribute("aria-label")).toBe("Guided help");
     fireEvent.click(screen.getByRole("button", { name: /end guided help/i }));
     await waitForElementToBeRemoved(() => screen.queryByTestId("guided-panel"));
-    expect(screen.getByTestId("chat-transcript")).toBeTruthy();
+    // Empty again, so the landing owns the space (not an empty transcript).
+    expect(screen.getByTestId("assistant-landing")).toBeTruthy();
     expect(screen.getByTestId("chat-composer")).toBeTruthy();
   });
 

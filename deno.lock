@@ -108,7 +108,7 @@
             "npm:graphql@^16.11.0",
             "npm:jsonwebtoken@^9.0.3",
             "npm:multer@^2.4.0",
-            "npm:sharp@0.35.4",
+            "npm:sharp@0.35.5",
             "npm:socket.io@^4.8.3",
             "npm:supertest@^7.2.2",
             "npm:tsx@^4.23.13",

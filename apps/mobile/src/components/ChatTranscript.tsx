@@ -138,6 +138,15 @@ export function ChatTranscript({
     // Keyed on content: scroll follows messages AND the throttled partial.
   }, [messages, partialText]);
 
+  // Hardening (v0.9.0-beta.1): an empty/new conversation can never show the
+  // "New response" control. The scroll effect above bails early when there is
+  // nothing to follow, so a stale `showNewResponse` from a previous chat could
+  // otherwise survive a switch to an empty one (and layout churn must not be
+  // able to raise it either).
+  useEffect(() => {
+    if (messages.length === 0) setShowNewResponse(false);
+  }, [messages.length]);
+
   async function copyAnswer(message: TranscriptMessage) {
     const text = message.text;
     try {
