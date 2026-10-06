@@ -3,14 +3,18 @@ import { clearAllAuth, getToken, setToken } from "./session";
 import {
   askAiHelp,
   checkUsername,
+  exchangeRecoveryCode,
   fetchMe,
   login,
   logout,
+  passwordRecoveryRedirect,
   register,
+  requestPasswordReset,
   restoreSession,
   sendPendingEmailCode,
   verifyPendingEmailCode,
   sendPhoneChangeCode,
+  updatePassword,
   verifyPhoneChangeCode,
   saveProfilePhone,
 } from "./auth";
@@ -27,6 +31,7 @@ const { clientMock, singleMock, ilikeMock, limitMock, selectMock, isolatedClient
       signUp: vi.fn(), signInWithPassword: vi.fn(), getSession: vi.fn(), getUser: vi.fn(),
       signOut: vi.fn(), resend: vi.fn(), verifyOtp: vi.fn(), refreshSession: vi.fn(),
       onAuthStateChange: vi.fn(), updateUser: vi.fn(), setSession: vi.fn(),
+      resetPasswordForEmail: vi.fn(), exchangeCodeForSession: vi.fn(),
       dispose: vi.fn(),
     },
     rpc: vi.fn(), from: vi.fn(), functions: { invoke: vi.fn() },
@@ -668,5 +673,61 @@ describe("askAiHelp", () => {
     expect(res.text.length).toBeGreaterThan(1200);
     expect(res.text.endsWith(tail)).toBe(true);
     aiCredentials.clearSession();
+  });
+});
+
+describe("password recovery (Forgot password → reset email → verified deep link → new password)", () => {
+  const ORIGIN = "https://recovery-test.example";
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", ORIGIN);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("builds the recovery redirect on the public share origin (App Links compatible)", () => {
+    expect(passwordRecoveryRedirect()).toBe(`${ORIGIN}/recovery`);
+  });
+
+  it("requests a reset email with the recovery redirect and never leaks existence", async () => {
+    clientMock.auth.resetPasswordForEmail.mockResolvedValue({ data: {}, error: null });
+    await requestPasswordReset("  User@Example.com ");
+    expect(clientMock.auth.resetPasswordForEmail).toHaveBeenCalledWith("User@Example.com", {
+      redirectTo: `${ORIGIN}/recovery`,
+    });
+    // Unknown address: SDK anti-enumeration error resolves silently.
+    clientMock.auth.resetPasswordForEmail.mockResolvedValue({ data: {}, error: { code: "user_not_found", message: "x" } });
+    await expect(requestPasswordReset("ghost@example.com")).resolves.toBeUndefined();
+  });
+
+  it("rejects invalid input and surfaces rate limits without leaking existence", async () => {
+    await expect(requestPasswordReset("not-an-email")).rejects.toThrow(/valid email/i);
+    expect(clientMock.auth.resetPasswordForEmail).not.toHaveBeenCalled();
+    clientMock.auth.resetPasswordForEmail.mockResolvedValue({
+      data: {},
+      error: { code: "over_email_send_rate_limit", message: "slow down" },
+    });
+    await expect(requestPasswordReset("user@example.com")).rejects.toThrow(/too many attempts/i);
+  });
+
+  it("exchanges a recovery code for a session, rejecting empty/invalid/used links", async () => {
+    await expect(exchangeRecoveryCode("")).rejects.toThrow(/invalid or expired/i);
+    clientMock.auth.exchangeCodeForSession.mockResolvedValue({ data: { session: { access_token: "tok" } }, error: null });
+    await expect(exchangeRecoveryCode("pkce-code")).resolves.toBeUndefined();
+    expect(getToken()).toBe("tok");
+    clientMock.auth.exchangeCodeForSession.mockResolvedValue({ data: { session: null }, error: null });
+    await expect(exchangeRecoveryCode("used-code")).rejects.toThrow(/invalid or expired/i);
+    clientMock.auth.exchangeCodeForSession.mockResolvedValue({ data: { session: null }, error: { code: "bad", message: "nope" } });
+    await expect(exchangeRecoveryCode("bad-code")).rejects.toThrow();
+  });
+
+  it("sets a new password with the sign-up length rule", async () => {
+    await expect(updatePassword("short")).rejects.toThrow(/at least 8/i);
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+    clientMock.auth.updateUser.mockResolvedValue({ data: {}, error: null });
+    await expect(updatePassword("new-password-123")).resolves.toBeUndefined();
+    expect(clientMock.auth.updateUser).toHaveBeenCalledWith({ password: "new-password-123" });
   });
 });

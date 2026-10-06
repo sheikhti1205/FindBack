@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { motion } from "framer-motion";
 import { useAuth } from "../../auth";
 import { Button } from "../Button";
@@ -14,8 +14,8 @@ import { EMAIL_PATTERN, SIGNIN_GENERIC_ERROR } from "./authCopy";
  * password, offline) surfaces the SAME generic wording so nothing leaks
  * account membership. The email is never cleared on failure.
  *
- * No "Forgot password" link: no fully-implemented recovery exists in-repo,
- * so per the packet the action is omitted entirely rather than left dead.
+ * The "Forgot password" link routes to /forgot, which always shows the same
+ * check-your-inbox message (anti-enumeration, same rule as sign-in).
  */
 export function SignInForm({
   initialEmail,
@@ -38,10 +38,12 @@ export function SignInForm({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const address = (emailLocked ? initialEmail : draftEmail).trim();
+  const addressParam = address ? `?email=${encodeURIComponent(address)}` : "";
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const address = (emailLocked ? initialEmail : draftEmail).trim();
     if (!EMAIL_PATTERN.test(address)) {
       setError("Enter a valid email address.");
       return;
@@ -121,6 +123,12 @@ export function SignInForm({
         <Button type="submit" size="lg" loading={busy}>
           Sign in
         </Button>
+        <Link
+          to={`/forgot${addressParam}`}
+          className="min-h-[44px] self-center px-2 py-2 text-sm font-medium text-on-surface underline focus-visible:outline-2 focus-visible:outline-offset-2"
+        >
+          Forgot password?
+        </Link>
       </form>
 
       <Button

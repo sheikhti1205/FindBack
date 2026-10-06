@@ -13,6 +13,8 @@ import { AuthGateway } from "./screens/AuthGateway";
 import { SignIn } from "./screens/SignIn";
 import { Register } from "./screens/Register";
 import { Verify } from "./screens/Verify";
+import { ForgotPassword } from "./screens/ForgotPassword";
+import { Recovery } from "./screens/Recovery";
 import { Home } from "./screens/Home";
 import { SearchScreen } from "./screens/SearchScreen";
 import { CreateReport } from "./screens/CreateReport";
@@ -104,6 +106,8 @@ export function App() {
               }
             />
             <Route path="/verify" element={<Verify />} />
+            <Route path="/forgot" element={<ForgotPassword />} />
+            <Route path="/recovery" element={<Recovery />} />
             <Route
               element={
                 <RequireAuth>

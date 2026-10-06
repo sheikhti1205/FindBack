@@ -5,6 +5,7 @@ import { BootTimeoutError, withTimeout } from "./timeout";
 import { recordBootEvent } from "./bootDiagnostics";
 import type { PublicUser } from "@findback/shared";
 import { normalizePhone } from "@findback/shared";
+import { publicShareOrigin } from "../utils/reportLinks";
 import { createOpenRouterClient, OpenRouterError } from "./openRouter";
 import { getConnectedOpenRouterKey } from "./aiCredentials";
 import { builtInHelp } from "./helpFaq";
@@ -263,6 +264,51 @@ export async function verifyPendingEmailCode(email: string, code: string): Promi
   if (error) throw mapAuthError(error);
   if (data.session) setToken(data.session.access_token);
   return fetchMe();
+}
+
+/** Minimum password length, shared with the sign-up form's "at least 8" rule. */
+const MIN_PASSWORD_LENGTH = 8;
+
+/** Recovery-link landing path. Must be allowlisted as a Supabase redirect URL (hosted Auth config). */
+export const PASSWORD_RECOVERY_ROUTE = "/recovery";
+
+/** Absolute recovery URL sent as the reset-email redirect (App Links compatible). */
+export function passwordRecoveryRedirect(): string {
+  return `${publicShareOrigin()}${PASSWORD_RECOVERY_ROUTE}`;
+}
+
+/**
+ * Request a password-reset email. Unknown addresses resolve silently
+ * (anti-enumeration): the UI always shows the same "check your inbox"
+ * message, so existence is never leaked. Throws only on invalid input,
+ * missing share-origin config, or rate limits.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const address = email.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new ApiError("Enter a valid email address.", 400);
+  const { error } = await getSupabase().auth.resetPasswordForEmail(address, {
+    redirectTo: passwordRecoveryRedirect(),
+  });
+  if (error && !isEnumerationError(error.code ?? "")) throw mapAuthError(error);
+}
+
+/**
+ * Exchange a recovery-link PKCE code for a session. A missing session or
+ * exchange error means the link is invalid, expired, or already used.
+ */
+export async function exchangeRecoveryCode(code: string): Promise<void> {
+  if (!code) throw new ApiError("This password-reset link is invalid or expired.", 400);
+  const { data, error } = await getSupabase().auth.exchangeCodeForSession(code);
+  if (error) throw mapAuthError(error);
+  if (!data.session) throw new ApiError("This password-reset link is invalid or expired.", 400);
+  setToken(data.session.access_token);
+}
+
+/** Set a new password for the recovery session. Session stays valid; the user lands signed in. */
+export async function updatePassword(password: string): Promise<void> {
+  if (password.length < MIN_PASSWORD_LENGTH) throw new ApiError("Password must be at least 8 characters.", 400);
+  const { error } = await getSupabase().auth.updateUser({ password });
+  if (error) throw mapAuthError(error);
 }
 
 function requirePhone(phone: string): string {

@@ -39,6 +39,7 @@ function renderGateway(ui: React.ReactNode = <AuthGateway />, path = "/auth") {
         <Route path="/posts/:id" element={<p>Shared report destination</p>} />
         <Route path="/" element={<p>Home destination</p>} />
         <Route path="/verify" element={<p>Verify destination</p>} />
+        <Route path="/forgot" element={<p>Forgot destination</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -194,10 +195,11 @@ describe("AuthGateway stage B (sign in)", () => {
     await waitFor(() => expect(screen.getByText("Shared report destination")).toBeTruthy());
   });
 
-  it("exposes no dead Forgot-password link", async () => {
+  it("routes Forgot password to /forgot carrying the email", async () => {
     renderGateway();
     await continueWithEmail("user@example.com");
-    expect(screen.queryByText(/forgot password/i)).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: /forgot password/i }));
+    await waitFor(() => expect(screen.getByText("Forgot destination")).toBeTruthy());
   });
 });
 
