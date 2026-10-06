@@ -33,7 +33,7 @@
       "area": "android/device-gate",
       "status": "WAIVED",
       "evidence": "Not executed. Procedure: docs/runbooks/gate-e-device-run.md; track manual:gate-e-device-run.",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without an executed Gate-E physical-device matrix; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs an authorized ARM64 phone with ADB and the Gate-E runbook executed at the release SHA."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without an executed Gate-E physical-device matrix; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs an authorized ARM64 phone with ADB and the Gate-E runbook executed at the release SHA."
     },
     {
       "id": "FBA-003",
@@ -65,21 +65,21 @@
       "area": "coursework/reporting",
       "status": "WAIVED",
       "evidence": "Substitute surfaces exist: docs/reporting/REPORTING.md plus API/SQL/CSV. No genuine .rpt producible in-repo.",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without a genuine Crystal .rpt artifact; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs licensed Windows Crystal Reports tooling or explicit evaluator acceptance of the CSV/API substitute."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without a genuine Crystal .rpt artifact; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs licensed Windows Crystal Reports tooling or explicit evaluator acceptance of the CSV/API substitute."
     },
     {
       "id": "FBA-007",
       "severity": "P0",
       "area": "release",
       "status": "DONE",
-      "evidence": "Owner release decision 2026-10-06: v8 beta line (0.8.0-beta.1 from 088d977 line @11db2b5, 0.8.0-beta.2 from main @a55f68c code); device/live items carry written beta waivers; tags follow signed-candidate dry runs."
+      "evidence": "Owner release decision 2026-10-06 (amended same day): single-line v8 beta 0.8.0-beta.2 from main; the 0.8.0-beta.1 side-branch was deleted by owner and no beta.1 artifact ships; verified by CI run 37420008645 on main; device/live items carry written beta waivers; the v0.8.0-beta.2 tag follows a signed-candidate dry run."
     },
     {
       "id": "FBA-008",
       "severity": "P0",
       "area": "release/versioning",
       "status": "DONE",
-      "evidence": "Root package.json and apps/mobile/package.json both 0.8.0-beta.2 (scripts/check-version-sync.mjs passes); 0.8.0-beta.1 cut on release/0.8.0-beta.1 from 088d9774f11818a7cdeef410320e246e00e71e5d; schema metadata parity test apps/mobile/src/services/appCapabilities.test.ts pins BACKEND_SCHEMA_VERSION to newest migration."
+      "evidence": "Root package.json and apps/mobile/package.json both 0.8.0-beta.2 on main (scripts/check-version-sync.mjs passes); the 0.8.0-beta.1 side-branch was deleted by owner 2026-10-06 so no second line exists; schema metadata parity test apps/mobile/src/services/appCapabilities.test.ts pins BACKEND_SCHEMA_VERSION to newest migration."
     },
     {
       "id": "FBA-009",
@@ -119,7 +119,7 @@
       "area": "matching/similarity",
       "status": "WAIVED",
       "evidence": "Frozen default policy + labeled regression fixtures (tools/bench/matching-ranking-fixtures.v1.json; tools/bench/run-matching-regression.mjs with vendored-copy drift guard; docs/bench/matching-policy.md). Limitation: representative-device calibration still needs native embedding probe (external).",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without representative-device similarity calibration; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a native embedding probe on a representative device."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without representative-device similarity calibration; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a native embedding probe on a representative device."
     },
     {
       "id": "FBA-014",
@@ -127,7 +127,7 @@
       "area": "ai/native-tests",
       "status": "WAIVED",
       "evidence": "Device-only profiling shells remain it.todo in apps/mobile/src/test-wiring-pulltorefresh-profile.test.ts (allowlisted FBA-014, Gate-E).",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without device AI runtime/perf proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a physical device AI runtime/perf run (it.todo)."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without device AI runtime/perf proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a physical device AI runtime/perf run (it.todo)."
     },
     {
       "id": "FBA-015",
@@ -135,7 +135,7 @@
       "area": "telemetry/build-boundary",
       "status": "WAIVED",
       "evidence": "Automatable SEN-01 boundaries are real CI tests now (apps/mobile/src/test-wiring-sen01-gates.test.ts: synthetic-DSN bundle asserts, scrubbed-env preflight failure; .github/workflows/ci.yml negative stale-assets step for verifyBundledClientConfig). Remaining: signed-APK + release telemetry device proof.",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without release-build device telemetry proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a signed artifact on a device emitting a scrubbed synthetic event."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without release-build device telemetry proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a signed artifact on a device emitting a scrubbed synthetic event."
     },
     {
       "id": "FBA-016",
@@ -151,7 +151,7 @@
       "area": "push/fcm",
       "status": "WAIVED",
       "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md; track manual:gate-e-device-run for delivery proof.",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without live FCM delivery/tap/direct-reply proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a release-signed device with a queued notification and tap/direct-reply evidence."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without live FCM delivery/tap/direct-reply proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a release-signed device with a queued notification and tap/direct-reply evidence."
     },
     {
       "id": "FBA-018",
@@ -159,7 +159,7 @@
       "area": "push/dispatcher",
       "status": "WAIVED",
       "evidence": "Scheduled dispatcher wired and callable (supabase/functions/push-dispatch; dispatch run 37317074620 scanned=0/sent=0 — wiring only). Limitation: zero sends are not delivery proof (see FBA-017).",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without a positive-work delivery result; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs FBA-017 delivery proof."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without a positive-work delivery result; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs FBA-017 delivery proof."
     },
     {
       "id": "FBA-019",
@@ -167,7 +167,7 @@
       "area": "sharing/app-links",
       "status": "WAIVED",
       "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md; route map covered by apps/mobile/src/App.routes.test.tsx.",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without App Links device verification; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a release-signed device proving cold/warm/background link routes."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without App Links device verification; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a release-signed device proving cold/warm/background link routes."
     },
     {
       "id": "FBA-020",
@@ -175,7 +175,7 @@
       "area": "notifications/direct-reply",
       "status": "WAIVED",
       "evidence": "Not executed. Infra: docs/runbooks/SHARING_AND_PUSH_INFRASTRUCTURE.md.",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without notification direct-reply proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs physical direct-reply evidence with backend mutation proof."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without notification direct-reply proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs physical direct-reply evidence with backend mutation proof."
     },
     {
       "id": "FBA-021",
@@ -190,7 +190,7 @@
       "severity": "P3",
       "area": "ci/native-ai",
       "status": "DONE",
-      "evidence": "Exact-commit reruns green on BOTH final SHAs. Beta.1 11db2b5: CI 37421224699, native 37421228091, model-smoke 37421232102, Web 37421236159. Beta.2 a55f68c: CI 37420008645, native 37420139057, model-smoke 37420143013, Web 37420008674. All success."
+      "evidence": "Exact-commit reruns green on the release line (main @a55f68c): CI run 37420008645, native run 37420139057, model-smoke run 37420143013, Web run 37420008674. All success. Earlier beta.1-side runs are void - owner deleted that branch pre-tag and no beta.1 artifact ships."
     },
     {
       "id": "FBA-023",
@@ -213,7 +213,7 @@
       "severity": "P2",
       "area": "security/history",
       "status": "DONE",
-      "evidence": "Full-history value-pattern scan over all revs (sb_secret_ values, SUPABASE_SERVICE_ROLE_KEY assignments, JWT shapes, private keys): zero hits outside scanner-pattern/test-literal/docs-mention files. npm audit: 0.8.0-beta.1 line @6830b7a and main @52de6ec both 2-high-remaining after safe fix (proxy-addr 2.0.8, source-map-js 1.2.2 applied on both lines); remaining pair is upstream graphql-tools mergeDeep via yoga 5.22.0 (fixed utils 12.0.1 already in tree; needs upstream yoga bump, tracked)."
+      "evidence": "Full-history value-pattern scan over all revs (sb_secret_ values, SUPABASE_SERVICE_ROLE_KEY assignments, JWT shapes, private keys): zero hits outside scanner-pattern/test-literal/docs-mention files. npm audit on main @52de6ec (package-lock.json): safe-fixes applied (proxy-addr 2.0.8, source-map-js 1.2.2), 2-high-remaining (upstream graphql-tools mergeDeep via yoga 5.22.0; fixed utils 12.0.1 already in tree; needs upstream yoga bump, tracked)."
     },
     {
       "id": "FBA-026",
@@ -221,7 +221,7 @@
       "area": "android/release-artifact",
       "status": "WAIVED",
       "evidence": "No signed candidate cut yet; track manual:gate-e-device-run.",
-      "waiver": "Owner waiver for the v8 beta line (0.8.0-beta.1 @11db2b5, 0.8.0-beta.2 main), signed 2026-10-06: ships without release-signed install/upgrade/launch proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a physical-device install/upgrade/launch pass on the signed artifacts."
+      "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without release-signed install/upgrade/launch proof; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs a physical-device install/upgrade/launch pass on the signed artifacts."
     },
     {
       "id": "FBA-027",
