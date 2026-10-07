@@ -339,7 +339,21 @@ export class ApplicationAiService {
       await this.smol!.unloadVisionModel();
       this.coordinator.released("needle");
       this.coordinator.released("smol-vision");
-      const record = await this.smol!.measureBackend?.({ modelId: vision.modelId, modelRev: this.probeContext.modelRev, installedPath: this.paths(vision.modelId).installedPath, backend, corpusVersion: DEVICE_CORPUS_VERSION });
+      let record: ProbeRecord | null | undefined;
+      try {
+        record = await this.smol!.measureBackend?.({ modelId: vision.modelId, modelRev: this.probeContext.modelRev, installedPath: this.paths(vision.modelId).installedPath, backend, corpusVersion: DEVICE_CORPUS_VERSION });
+      } catch (error) {
+        // Phase A (Step 9): discriminated native codes. Measurement failing
+        // never makes CPU inference unusable — it only withholds GPU
+        // auto-selection, which requires valid measured evidence.
+        const code = (error as { code?: unknown })?.code;
+        const tag = `${typeof code === "string" ? code : ""} ${error instanceof Error ? error.message : ""}`;
+        if (/benchmark_unavailable|device_facts_unavailable/.test(tag)) {
+          this.notices.set(vision.modelId, "On-device measurement is unavailable; CPU inference remains usable.");
+          this.changed();
+        }
+        throw new Error(`Measurement failed (${tag.trim() || "unknown"}); device evidence is still required`);
+      }
       if (!record || validateProbeRecord(record).length > 0 || record.backend !== backend || record.modelRev !== this.probeContext.modelRev || record.corpusVersion !== DEVICE_CORPUS_VERSION) throw new Error("No valid timing sample; device evidence is still required");
       this.probeRecords = [...this.probeRecords.filter((item) => item.backend !== backend), record];
       this.changed(); return record;

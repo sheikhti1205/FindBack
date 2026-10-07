@@ -43,4 +43,57 @@ class RuntimeTimingRunnerTest {
         assertNull(runner.run("nnapi"))
         assertNull(runner.run("cpu"))
     }
+
+    @Test fun detailedOutcomeNamesEveryFailureCause() {
+        val ok = RuntimeTimingRunner({ File("verified.litertlm") }) { _, _ ->
+            listOf(RuntimeTimingRunner.Sample("red", 0.12, 18.0), RuntimeTimingRunner.Sample("blue", 0.2, 12.0))
+        }
+        val success = ok.runDetailed("cpu")
+        assertTrue(success is DeviceProbe.BenchmarkOutcome.Success)
+        assertTrue((success as DeviceProbe.BenchmarkOutcome.Success).result.correctnessPass)
+
+        val unknown = ok.runDetailed("nnapi")
+        assertTrue(unknown is DeviceProbe.BenchmarkOutcome.Failure)
+        assertEquals(DeviceProbe.BenchmarkFailure.UNKNOWN_BACKEND, (unknown as DeviceProbe.BenchmarkOutcome.Failure).reason)
+
+        val absent = RuntimeTimingRunner({ null }) { _, _ -> error("must not invoke") }
+        val missing = absent.runDetailed("cpu")
+        assertTrue(missing is DeviceProbe.BenchmarkOutcome.Failure)
+        assertEquals(DeviceProbe.BenchmarkFailure.MODEL_MISSING_OR_UNVERIFIED, (missing as DeviceProbe.BenchmarkOutcome.Failure).reason)
+
+        val crashing = RuntimeTimingRunner({ File("verified.litertlm") }) { _, _ -> error("engine exploded") }
+        val initFailed = crashing.runDetailed("cpu")
+        assertTrue(initFailed is DeviceProbe.BenchmarkOutcome.Failure)
+        assertEquals(DeviceProbe.BenchmarkFailure.ENGINE_INIT_FAILED, (initFailed as DeviceProbe.BenchmarkOutcome.Failure).reason)
+
+        val timingOut = RuntimeTimingRunner({ File("verified.litertlm") }) { _, _ ->
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeout(1L) { kotlinx.coroutines.delay(1_000L) }
+            }
+            error("unreachable")
+        }
+        val timedOut = timingOut.runDetailed("gpu")
+        assertTrue(timedOut is DeviceProbe.BenchmarkOutcome.Failure)
+        assertEquals(DeviceProbe.BenchmarkFailure.INFERENCE_TIMEOUT, (timedOut as DeviceProbe.BenchmarkOutcome.Failure).reason)
+
+        val empty = RuntimeTimingRunner({ File("verified.litertlm") }) { _, _ -> emptyList() }
+        val unavailable = empty.runDetailed("cpu")
+        assertTrue(unavailable is DeviceProbe.BenchmarkOutcome.Failure)
+        assertEquals(DeviceProbe.BenchmarkFailure.COUNTERS_UNAVAILABLE, (unavailable as DeviceProbe.BenchmarkOutcome.Failure).reason)
+
+        val zeroes = RuntimeTimingRunner({ File("verified.litertlm") }) { _, _ ->
+            listOf(RuntimeTimingRunner.Sample("red", 0.0, 0.0), RuntimeTimingRunner.Sample("blue", 0.2, 1.0))
+        }
+        val invalid = zeroes.runDetailed("cpu")
+        assertTrue(invalid is DeviceProbe.BenchmarkOutcome.Failure)
+        assertEquals(DeviceProbe.BenchmarkFailure.COUNTERS_INVALID, (invalid as DeviceProbe.BenchmarkOutcome.Failure).reason)
+
+        // Fast-but-wrong stays Success: selection must see the evidence.
+        val wrong = RuntimeTimingRunner({ File("verified.litertlm") }) { _, _ ->
+            listOf(RuntimeTimingRunner.Sample("green", 0.01, 100.0), RuntimeTimingRunner.Sample("blue", 0.01, 100.0))
+        }
+        val wrongOutcome = wrong.runDetailed("cpu")
+        assertTrue(wrongOutcome is DeviceProbe.BenchmarkOutcome.Success)
+        assertFalse((wrongOutcome as DeviceProbe.BenchmarkOutcome.Success).result.correctnessPass)
+    }
 }

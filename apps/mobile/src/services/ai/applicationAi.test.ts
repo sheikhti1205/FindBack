@@ -176,6 +176,20 @@ describe("application-owned AI", () => {
     await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(/Android/);
   });
 
+  it("maps benchmark_unavailable to a CPU-usable notice instead of a collapsed timing error", async () => {
+    const p = platform();
+    const failure = Object.assign(new Error("counters off"), { code: "benchmark_unavailable" });
+    const smol = {
+      ...p.smol,
+      measureBackend: async () => { throw failure; },
+    };
+    const service = new ApplicationAiService({ android: true, ...p, smol });
+    await service.ready;
+    await service.download(SMOL_VISION_DESCRIPTOR.modelId);
+    await expect(service.measure("cpu")).rejects.toThrow(/Measurement failed.*benchmark_unavailable/);
+    expect(service.notice(SMOL_VISION_DESCRIPTOR.modelId)).toMatch(/CPU inference remains usable/);
+  });
+
   it("tracks single-resident ownership across loads and account reset", async () => {
     const p = platform();
     const service = new ApplicationAiService({ android: true, ...p });
@@ -242,12 +256,5 @@ describe("application-owned AI", () => {
     // The old Needle-vs-else branch would have unloaded Smol here.
     expect(p.calls).not.toContain("needle-unload");
     expect(service.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
-  });
-
-  it("fails closed on web without constructing or contacting native seams", async () => {
-    const service = new ApplicationAiService({ android: false });
-    await service.ready;
-    expect(() => service.offlineAdapter()).toThrow(/Android/);
-    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(/Android/);
   });
 });

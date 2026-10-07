@@ -80,6 +80,32 @@ object DeviceProbe {
     )
 
     /**
+     * Phase A (Step 9): discriminated benchmark failure. Each cause maps to
+     * one plugin reject code — never collapsed into a single
+     * `timing_unavailable`.
+     */
+    enum class BenchmarkFailure {
+        UNKNOWN_BACKEND,
+        MODEL_MISSING_OR_UNVERIFIED,
+        ENGINE_INIT_FAILED,
+        INFERENCE_TIMEOUT,
+        COUNTERS_UNAVAILABLE,
+        COUNTERS_INVALID,
+        FACTS_UNREADABLE,
+        NO_TIMING_RUNNER,
+    }
+
+    sealed interface BenchmarkOutcome {
+        data class Success(val result: TimingResult) : BenchmarkOutcome
+        data class Failure(val reason: BenchmarkFailure, val detail: String) : BenchmarkOutcome
+    }
+
+    sealed interface ProbeOutcome {
+        data class Measured(val record: Record) : ProbeOutcome
+        data class Failed(val reason: BenchmarkFailure, val detail: String) : ProbeOutcome
+    }
+
+    /**
      * Pure staleness gate mirroring TS `isProbeStale`: true when ANY of
      * model revision, backend, probe schema, or corpus version differs.
      * A stale record must be re-measured, never auto-preferred.
@@ -127,6 +153,22 @@ object DeviceProbe {
     interface TimingRunner {
         /** Null when the spot-check cannot run (weights/runtime absent). */
         fun run(backend: String): TimingResult?
+
+        /**
+         * Discriminated variant of [run]. Default bridges legacy runners:
+         * success passes through, null collapses to COUNTERS_UNAVAILABLE,
+         * throws to ENGINE_INIT_FAILED. Runners with first-hand knowledge
+         * (RuntimeTimingRunner) override with precise reasons.
+         */
+        fun runDetailed(backend: String): BenchmarkOutcome {
+            val result = try {
+                run(backend)
+            } catch (_: Exception) {
+                return BenchmarkOutcome.Failure(BenchmarkFailure.ENGINE_INIT_FAILED, "timing runner threw")
+            }
+            return result?.let { BenchmarkOutcome.Success(it) }
+                ?: BenchmarkOutcome.Failure(BenchmarkFailure.COUNTERS_UNAVAILABLE, "no timing sample")
+        }
     }
 
     interface Deps {
@@ -258,33 +300,64 @@ object DeviceProbe {
         corpusVersion: String,
         deps: Deps
     ): Record? {
-        if (backend.isBlank() || modelRev.isBlank() || corpusVersion.isBlank()) return null
-        val facts = collectFacts(deps) ?: return null
-        val runner = deps.timing() ?: run {
-            logWarn(TAG, "probe not measured: no timing runner wired", null)
-            return null
+        return when (val outcome = collectDetailed(backend, modelRev, corpusVersion, deps)) {
+            is ProbeOutcome.Measured -> outcome.record
+            is ProbeOutcome.Failed -> {
+                logWarn(TAG, "probe not measured: ${outcome.reason}: ${outcome.detail}", null)
+                null
+            }
         }
+    }
+
+    /**
+     * Phase A (Step 9): discriminated collection. Same rules as [collect],
+     * but every failure carries its [BenchmarkFailure] instead of null.
+     * A `correctnessPass = false` result is still Measured — selection
+     * filters it, and a fast-but-wrong backend must never win by hiding.
+     */
+    fun collectDetailed(
+        backend: String,
+        modelRev: String,
+        corpusVersion: String,
+        deps: Deps
+    ): ProbeOutcome {
+        if (backend.isBlank() || modelRev.isBlank() || corpusVersion.isBlank()) {
+            return ProbeOutcome.Failed(BenchmarkFailure.UNKNOWN_BACKEND, "blank probe identity")
+        }
+        val ramMb = try {
+            deps.ram().totalRamMb()
+        } catch (_: Exception) {
+            -1L
+        }
+        if (ramMb <= 0L) {
+            return ProbeOutcome.Failed(BenchmarkFailure.FACTS_UNREADABLE, "unreadable RAM")
+        }
+        val facts = collectFacts(deps)
+            ?: return ProbeOutcome.Failed(BenchmarkFailure.FACTS_UNREADABLE, "device facts unreadable")
+        val runner = deps.timing()
+            ?: return ProbeOutcome.Failed(BenchmarkFailure.NO_TIMING_RUNNER, "no timing runner wired")
         val timing = try {
-            runner.run(backend)
+            runner.runDetailed(backend)
         } catch (e: Exception) {
-            logWarn(TAG, "probe not measured: timing runner threw", e)
-            return null
-        } ?: run {
-            logWarn(TAG, "probe not measured: timing unavailable", null)
-            return null
+            return ProbeOutcome.Failed(BenchmarkFailure.ENGINE_INIT_FAILED, "timing runner threw: ${e.message?.take(120)}")
         }
-        return Record(
-            socModel = facts.socModel,
-            gpuInfo = "${facts.gpuInfo} [nnapi=${facts.nnapiStatus} vulkan=${facts.vulkanStatus} opencl=${facts.openClStatus}]",
-            ramMb = facts.ramMb,
-            osVersion = facts.osVersion,
-            backend = backend,
-            ttftMs = timing.ttftMs,
-            tokensPerSec = timing.tokensPerSec,
-            corpusVersion = corpusVersion,
-            modelRev = modelRev,
-            correctnessPass = timing.correctnessPass,
-        )
+        return when (timing) {
+            is BenchmarkOutcome.Success -> ProbeOutcome.Measured(
+                Record(
+                    socModel = facts.socModel,
+                    gpuInfo = "${facts.gpuInfo} [nnapi=${facts.nnapiStatus} vulkan=${facts.vulkanStatus} opencl=${facts.openClStatus}]",
+                    ramMb = facts.ramMb,
+                    osVersion = facts.osVersion,
+                    backend = backend,
+                    ttftMs = timing.result.ttftMs,
+                    tokensPerSec = timing.result.tokensPerSec,
+                    corpusVersion = corpusVersion,
+                    modelRev = modelRev,
+                    correctnessPass = timing.result.correctnessPass,
+                ),
+            )
+            is BenchmarkOutcome.Failure -> ProbeOutcome.Failed(timing.reason, timing.detail)
+        }
     }
 
     /**

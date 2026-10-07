@@ -9,10 +9,13 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
@@ -47,6 +50,64 @@ class RuntimeTimingRunner(
         )
     }
 
+    /**
+     * Phase A (Step 9): discriminated variant of [run]. Same corpus rules,
+     * but every failure names its cause instead of collapsing to null:
+     * missing/unverified weights, engine init failure, per-sample timeout,
+     * absent counters (no samples at all — e.g. benchmark flag off), and
+     * invalid counters (zero/non-finite — never fabricated into zeroes).
+     * A correctness failure is still Success: selection must see
+     * fast-but-wrong evidence, never hide it.
+     */
+    override fun runDetailed(backend: String): DeviceProbe.BenchmarkOutcome {
+        if (backend != "cpu" && backend != "gpu") {
+            return DeviceProbe.BenchmarkOutcome.Failure(
+                DeviceProbe.BenchmarkFailure.UNKNOWN_BACKEND, "backend must be cpu or gpu",
+            )
+        }
+        val file = verifiedFile()
+            ?: return DeviceProbe.BenchmarkOutcome.Failure(
+                DeviceProbe.BenchmarkFailure.MODEL_MISSING_OR_UNVERIFIED, "weights missing or checksum mismatch",
+            )
+        val samples = try {
+            execute(file, backend)
+        } catch (e: TimeoutCancellationException) {
+            return DeviceProbe.BenchmarkOutcome.Failure(
+                DeviceProbe.BenchmarkFailure.INFERENCE_TIMEOUT, "sample exceeded 60s: ${e.message?.take(120)}",
+            )
+        } catch (e: Exception) {
+            return DeviceProbe.BenchmarkOutcome.Failure(
+                DeviceProbe.BenchmarkFailure.ENGINE_INIT_FAILED, "engine failure: ${e.message?.take(200)}",
+            )
+        }
+        if (samples.isEmpty()) {
+            return DeviceProbe.BenchmarkOutcome.Failure(
+                DeviceProbe.BenchmarkFailure.COUNTERS_UNAVAILABLE, "no samples produced",
+            )
+        }
+        if (samples.size != 2 || samples.any {
+            !it.ttftSeconds.isFinite() || it.ttftSeconds <= 0.0 ||
+                !it.decodeTokensPerSecond.isFinite() || it.decodeTokensPerSecond <= 0.0
+        }) {
+            return DeviceProbe.BenchmarkOutcome.Failure(
+                DeviceProbe.BenchmarkFailure.COUNTERS_INVALID,
+                "non-positive or non-finite counters (never zero-filled)",
+            )
+        }
+        val colors = listOf("red", "blue")
+        val correctness = samples.withIndex().all { (index, sample) ->
+            val text = sample.text.lowercase().trim()
+            Regex("${colors[index]}[.!]?").matches(text)
+        }
+        return DeviceProbe.BenchmarkOutcome.Success(
+            DeviceProbe.TimingResult(
+                ttftMs = samples.map { it.ttftSeconds * 1000.0 }.average(),
+                tokensPerSec = samples.map { it.decodeTokensPerSecond }.average(),
+                correctnessPass = correctness,
+            ),
+        )
+    }
+
     companion object {
         const val MODEL_ID = "smolvlm2-500M-vision"
         const val MODEL_REV = "dad030b6e56756201d670cfb4d042736a2ce3a5c"
@@ -64,6 +125,14 @@ class RuntimeTimingRunner(
                 }
             },
             execute = { file, backend ->
+                // Phase A (Step 9): LiteRT-LM only populates BenchmarkInfo
+                // counters when benchmarking is enabled. ExperimentalFlags is
+                // a process-global singleton (verified in litertlm-android
+                // 0.17.1: `object ExperimentalFlags`), so this enables
+                // counters for every LiteRT-LM engine in this process —
+                // measurement and product inference alike. Counters only;
+                // decoding behavior is unchanged.
+                ExperimentalFlags.enableBenchmark = true
                 val engine = Engine(EngineConfig(
                     modelPath = file.absolutePath, backend = Backend.CPU(),
                     visionBackend = if (backend == "gpu") Backend.GPU() else Backend.CPU(),

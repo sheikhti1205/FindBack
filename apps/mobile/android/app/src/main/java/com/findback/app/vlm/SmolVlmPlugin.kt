@@ -97,27 +97,54 @@ class SmolVlmPlugin : Plugin() {
                     if (activeJobs.isNotEmpty()) { call.reject("runtime_busy"); return@launch }
                     unloadLocked()
                 }
-                val record = DeviceProbe.collect(backend!!, RuntimeTimingRunner.MODEL_REV,
-                    RuntimeTimingRunner.CORPUS_VERSION, DeviceProbe.RealProviders(context))
-                val result = JSObject()
-                if (record == null) { call.reject("timing_unavailable"); return@launch }
-                val sample = JSObject()
-                sample.put("socModel", record.socModel)
-                sample.put("gpuInfo", record.gpuInfo)
-                sample.put("ramMb", record.ramMb)
-                sample.put("osVersion", record.osVersion)
-                sample.put("backend", record.backend)
-                sample.put("ttftMs", record.ttftMs)
-                sample.put("tokensPerSec", record.tokensPerSec)
-                sample.put("corpusVersion", record.corpusVersion)
-                sample.put("probeVersion", record.probeVersion)
-                sample.put("modelRev", record.modelRev)
-                sample.put("correctnessPass", record.correctnessPass)
-                result.put("record", sample)
-                call.resolve(result)
-            } catch (_: Exception) { call.reject("timing_unavailable") }
+                // Phase A (Step 9): discriminated measurement errors. A failed
+                // measurement never gates CPU inference (TS keeps serving CPU
+                // and auto-GPU still requires valid measured evidence) — these
+                // codes exist so diagnostics can tell "benchmark off" from
+                // "engine crashed" instead of one timing_unavailable collapse.
+                when (val outcome = DeviceProbe.collectDetailed(backend!!, RuntimeTimingRunner.MODEL_REV,
+                    RuntimeTimingRunner.CORPUS_VERSION, DeviceProbe.RealProviders(context))) {
+                    is DeviceProbe.ProbeOutcome.Measured -> {
+                        val record = outcome.record
+                        val sample = JSObject()
+                        sample.put("socModel", record.socModel)
+                        sample.put("gpuInfo", record.gpuInfo)
+                        sample.put("ramMb", record.ramMb)
+                        sample.put("osVersion", record.osVersion)
+                        sample.put("backend", record.backend)
+                        sample.put("ttftMs", record.ttftMs)
+                        sample.put("tokensPerSec", record.tokensPerSec)
+                        sample.put("corpusVersion", record.corpusVersion)
+                        sample.put("probeVersion", record.probeVersion)
+                        sample.put("modelRev", record.modelRev)
+                        sample.put("correctnessPass", record.correctnessPass)
+                        val result = JSObject()
+                        result.put("record", sample)
+                        call.resolve(result)
+                    }
+                    is DeviceProbe.ProbeOutcome.Failed -> call.reject(benchmarkRejectCode(outcome.reason), outcome.detail)
+                }
+            } catch (e: Exception) { call.reject("measurement_failed", e.message?.take(400)) }
             finally { lease.close() }
         }
+    }
+
+    /**
+     * Phase A (Step 9): one reject code per benchmark failure cause.
+     * `benchmark_unavailable` (flag off / no counters / no runner) and
+     * `device_facts_unavailable` mean "measurement impossible" — TS must
+     * keep CPU inference usable and say so. Everything else is a genuine
+     * runtime or install problem.
+     */
+    private fun benchmarkRejectCode(reason: DeviceProbe.BenchmarkFailure): String = when (reason) {
+        DeviceProbe.BenchmarkFailure.UNKNOWN_BACKEND -> "invalid_probe_identity"
+        DeviceProbe.BenchmarkFailure.MODEL_MISSING_OR_UNVERIFIED -> "model_not_installed"
+        DeviceProbe.BenchmarkFailure.ENGINE_INIT_FAILED -> "runtime_init_failed"
+        DeviceProbe.BenchmarkFailure.INFERENCE_TIMEOUT -> "inference_timeout"
+        DeviceProbe.BenchmarkFailure.COUNTERS_UNAVAILABLE -> "benchmark_unavailable"
+        DeviceProbe.BenchmarkFailure.COUNTERS_INVALID -> "benchmark_counters_invalid"
+        DeviceProbe.BenchmarkFailure.FACTS_UNREADABLE -> "device_facts_unavailable"
+        DeviceProbe.BenchmarkFailure.NO_TIMING_RUNNER -> "benchmark_unavailable"
     }
 
     @PluginMethod
