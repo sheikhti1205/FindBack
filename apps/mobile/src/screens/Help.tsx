@@ -1228,11 +1228,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       const generate: CloudGenerate = async (prompt) => {
         if (mode !== "cloud-only") {
           try {
-            const local = await generateLocalFirst(task, prompt, { signal: abort.signal });
-            // Native extraction returns validated slots under `fields`, while
-            // this guided consumer expects the flat object cloud returns.
-            try { const value = JSON.parse(local) as { fields?: unknown }; return value.fields ? JSON.stringify(value.fields) : local; }
-            catch { return local; }
+            return await generateLocalFirst(task, prompt, { signal: abort.signal });
           } catch (error) {
             if (mode === "offline-only" || abort.signal.aborted || generation.current !== gen || (error instanceof Error && /abort|cancel/i.test(`${error.name} ${error.message}`))) throw error;
           }

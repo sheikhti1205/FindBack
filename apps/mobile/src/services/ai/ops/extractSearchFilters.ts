@@ -9,7 +9,7 @@
  */
 import type { ModelProfile } from "../modelProfiles";
 import { makeAskUserPrompt } from "../clarificationCopy";
-import { normalizeJsonOp, validateSearchFilters, type NormalizeOptions } from "../normalize";
+import { normalizeJsonOp, validateSearchFilters, validateSlotEnvelope, type NormalizeOptions } from "../normalize";
 import type {
   AiResult,
   AssistantAction,
@@ -43,7 +43,7 @@ export async function extractSearchFilters(
   const parsed = normalizeJsonOp(
     rawText,
     profile,
-    (value, innerContext) => validateSearchFilters(value, innerContext),
+    (value, innerContext) => validateSlotEnvelope(value, (candidate) => validateSearchFilters(candidate, innerContext), innerContext),
     { ...options, context },
   );
   if (!parsed.ok) return parsed;

@@ -7,7 +7,7 @@
  * and confidence — when supplied — must be a 0-1 finite number.
  */
 import type { ModelProfile } from "../modelProfiles";
-import { normalizeJsonOp, type NormalizeContext, type NormalizeOptions } from "../normalize";
+import { normalizeJsonOp, validateSlotEnvelope, type NormalizeContext, type NormalizeOptions } from "../normalize";
 import { makeAiError, type AiResult, type GenerateFn } from "../types";
 
 const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
@@ -151,7 +151,7 @@ export async function classifyCategory(
     instruction: CLASSIFY_CATEGORY_INSTRUCTION,
     userContext: options?.context?.userContext ?? input.text,
   };
-  return normalizeJsonOp(rawText, profile, (value, innerContext) => validateCategoryPayload(value, innerContext), {
+  return normalizeJsonOp(rawText, profile, (value, innerContext) => validateSlotEnvelope(value, (candidate) => validateCategoryPayload(candidate, innerContext), innerContext), {
     ...options,
     context,
   });

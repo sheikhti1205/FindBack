@@ -484,6 +484,36 @@ export function normalizeJsonOp<T>(
   return validate(parsed, options?.context);
 }
 
+/**
+ * Canonical slot envelope (Phase A Step 5): local producers emit slot
+ * payloads as `{ fields: {...} }`, optionally with the code-owned
+ * `deterministic: true` marker; cloud emits the flat slot object. Both are
+ * canonical here: unwrap the envelope, then run the task's strict flat
+ * validator. A `fields` envelope mixed with flat slots is invalid — never
+ * silently merged. This is the ONLY place that knows about the envelope;
+ * consumers must not unwrap `{ fields }` ad hoc (see the retired Help.tsx
+ * workaround).
+ */
+export function validateSlotEnvelope<T>(
+  value: unknown,
+  validate: (candidate: unknown, context?: NormalizeContext) => AiResult<T>,
+  context?: NormalizeContext,
+): AiResult<T> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return validate(value, context);
+  }
+  const rest = { ...(value as Record<string, unknown>) };
+  delete rest["deterministic"];
+  if (!("fields" in rest)) {
+    return validate(rest, context);
+  }
+  const { fields, ...flat } = rest;
+  if (Object.keys(flat).length > 0) {
+    return fail("INVALID_OUTPUT", "R1_MIXED_ENVELOPE:fields");
+  }
+  return validate(fields, context);
+}
+
 /** Prose pipeline for help answers: R2 → R4 → R3-seam, no JSON required. */
 export function normalizeProse(
   rawText: string,

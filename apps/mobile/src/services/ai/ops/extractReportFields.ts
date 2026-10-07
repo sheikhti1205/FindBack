@@ -7,7 +7,7 @@
  */
 import type { ModelProfile } from "../modelProfiles";
 import { makeAskUserPrompt } from "../clarificationCopy";
-import { normalizeJsonOp, validateReportSlots, type NormalizeOptions } from "../normalize";
+import { normalizeJsonOp, validateReportSlots, validateSlotEnvelope, type NormalizeOptions } from "../normalize";
 import type {
   AiResult,
   AssistantAction,
@@ -41,7 +41,7 @@ export async function extractReportFields(
   const parsed = normalizeJsonOp(
     rawText,
     profile,
-    (value, innerContext) => validateReportSlots(value, innerContext),
+    (value, innerContext) => validateSlotEnvelope(value, (candidate) => validateReportSlots(candidate, innerContext), innerContext),
     { ...options, context },
   );
   if (!parsed.ok) return parsed;
