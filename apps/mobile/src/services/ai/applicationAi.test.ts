@@ -176,6 +176,20 @@ describe("application-owned AI", () => {
     await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(/Android/);
   });
 
+  it("tracks single-resident ownership across loads and account reset", async () => {
+    const p = platform();
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    expect(service.residency.owner).toBe("none");
+    await service.embedNeedle(["umbrella"]);
+    expect(service.residency.owner).toBe("needle");
+    await service.resetForAccount();
+    expect(service.residency).toMatchObject({ owner: "none", claimed: false, inflight: 0 });
+    // Models survive account reset: logout never wipes verified files.
+    expect(service.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
+  });
+
   it("resolves ownership by descriptor, never by catalogue position", async () => {
     const p = platform();
     // Deliberately reordered: vision first. Behavior must not change.
@@ -228,5 +242,12 @@ describe("application-owned AI", () => {
     // The old Needle-vs-else branch would have unloaded Smol here.
     expect(p.calls).not.toContain("needle-unload");
     expect(service.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
+  });
+
+  it("fails closed on web without constructing or contacting native seams", async () => {
+    const service = new ApplicationAiService({ android: false });
+    await service.ready;
+    expect(() => service.offlineAdapter()).toThrow(/Android/);
+    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(/Android/);
   });
 });

@@ -8,9 +8,16 @@ import { createOfflineAdapter, describeOfflineReadiness, type OfflineNativeBridg
 import type { AiTaskId } from "./types";
 import type { RouteContext } from "./orchestrator/AiOrchestrator";
 import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, type ModelDescriptor, type ModelRegistry } from "./modelDescriptors";
+import { ResidencyCoordinator, ResidencyBusyError } from "./residencyCoordinator";
 import { selectBackend } from "./automaticMode";
 import { PROBE_VERSION, validateProbeRecord, type ProbeRecord } from "./deviceProbe";
 
+/** Map a descriptor runtimeId to the coordinator's residency owner. */
+function ownerForRuntime(runtimeId: string): "needle" | "smol-vision" | "none" {
+  if (runtimeId === NEEDLE_RUNTIME_ID) return "needle";
+  if (runtimeId === SMOL_VLM_RUNTIME_ID) return "smol-vision";
+  return "none";
+}
 /**
  * Consumer download catalogue, derived from the canonical descriptor
  * registry (Step 2) — never edited by hand, never indexed by position in
@@ -43,7 +50,8 @@ export class ApplicationAiService {
   private version = 0;
   private notices = new Map<string, string>();
   private operating = new Set<string>();
-  private inferenceBusy = false;
+  /** Phase A (Step 8): the single authority for residency, operations, and inference flights. */
+  private readonly coordinator = new ResidencyCoordinator();
   private driver?: ModelDownloadDriver;
   private needle?: NeedleBridge;
   private smol?: SmolBridge;
@@ -53,6 +61,8 @@ export class ApplicationAiService {
   private changed() { this.version++; this.listeners.forEach((listener) => listener()); }
   get manager() { return this.boot.manager; }
   get matchingBackend() { return this.matching; }
+  /** Residency/operation snapshot for diagnostics (owner, exclusive claim, flights). */
+  get residency() { return this.coordinator.snapshot(); }
   notice(modelId: string) { return this.notices.get(modelId) ?? null; }
   busy(modelId: string) { return this.operating.has(modelId); }
 
@@ -147,15 +157,25 @@ export class ApplicationAiService {
   }
   async remove(modelId: string) {
     this.requireAndroid(); await this.ready;
-    if (this.inferenceBusy || this.operating.size > 0) throw new Error("On-device runtime is busy; stop inference before removing a model");
+    if (this.coordinator.inferenceBlocked || this.operating.size > 0) throw new Error("On-device runtime is busy; stop inference before removing a model");
     this.operating.add(modelId); this.changed();
+    const label = `remove:${modelId}`;
     try {
       await this.pause(modelId);
-      const descriptor = this.model(modelId);
-      await removeManagedModel(this.manager, this.driver!, this.root, modelId, descriptor.revision, descriptor.fileName, {
-        unload: () => this.unloadDescriptor(descriptor),
-      });
-      this.probeRecords = []; this.notices.delete(modelId);
+      try {
+        this.coordinator.beginExclusive(label);
+      } catch (error) {
+        if (error instanceof ResidencyBusyError) throw new Error("On-device runtime is busy; stop inference before removing a model");
+        throw error;
+      }
+      try {
+        const descriptor = this.model(modelId);
+        await removeManagedModel(this.manager, this.driver!, this.root, modelId, descriptor.revision, descriptor.fileName, {
+          unload: () => this.unloadDescriptor(descriptor),
+        });
+        this.coordinator.released(ownerForRuntime(descriptor.runtimeId));
+        this.probeRecords = []; this.notices.delete(modelId);
+      } finally { this.coordinator.endExclusive(label); }
     } finally { this.operating.delete(modelId); this.changed(); }
   }
   /**
@@ -178,8 +198,13 @@ export class ApplicationAiService {
     if (!this.needle) return false;
     if (!this.loadingNeedle) this.loadingNeedle = (async () => {
       if (!this.embedder || !(await this.needle!.isNeedleAvailable())) {
-        await this.smol!.unloadVisionModel();
-        this.embedder = await createNativeNeedleEmbedder(this.needle!, { installedPath: this.paths(NEEDLE_MODEL_ID).installedPath });
+        // Single-resident rule via the coordinator: evict vision, then load.
+        await this.coordinator.switchTo("needle", {
+          evict: () => this.smol!.unloadVisionModel(),
+          load: async () => {
+            this.embedder = await createNativeNeedleEmbedder(this.needle!, { installedPath: this.paths(NEEDLE_MODEL_ID).installedPath });
+          },
+        });
       }
     })().finally(() => { this.loadingNeedle = undefined; });
     await this.loadingNeedle; return true;
@@ -194,20 +219,29 @@ export class ApplicationAiService {
     // adapter can report the honest `runtime_load_failed` class instead of
     // collapsing a GPU/OOM/init failure into "vision not proven".
     if (!describeOfflineReadiness(this.manager, vision.modelId).ready) return false;
-    if (!this.smol) return false;
-    await this.needle!.unload(); this.embedder = undefined;
+    const smol = this.smol;
+    if (!smol) return false;
+    // Single-resident rule via the coordinator: evict Needle, then load.
+    // A failed load leaves ownership at "none" (coordinator rule), so a
+    // half-loaded engine is never claimed as resident.
+    await this.coordinator.switchTo("smol-vision", {
+      evict: async () => { await this.needle!.unload(); this.embedder = undefined; },
+      load: () => this.loadVisionModel(smol, vision.modelId),
+    });
+    return smol.isVisionAvailable();
+  }
+  private async loadVisionModel(smol: SmolBridge, modelId: string): Promise<void> {
     const decision = selectBackend(this.probeRecords, this.probeContext);
     const backend = decision.kind === "use" && decision.backend === "gpu" ? "gpu" : "cpu";
-    const args = { modelId: vision.modelId, installedPath: this.paths(vision.modelId).installedPath, maxOutputTokens: 256 };
-    try { await this.smol.loadVisionModel({ ...args, backend }); }
+    const args = { modelId, installedPath: this.paths(modelId).installedPath, maxOutputTokens: 256 };
+    try { await smol.loadVisionModel({ ...args, backend }); }
     catch (error) {
       if (backend !== "gpu") throw error;
       this.probeRecords = this.probeRecords.filter((record) => record.backend !== "gpu");
       this.notices.set(args.modelId, "GPU initialization failed; retrying with CPU."); this.changed();
-      await this.smol.unloadVisionModel();
-      await this.smol.loadVisionModel({ ...args, backend: "cpu" });
+      await smol.unloadVisionModel();
+      await smol.loadVisionModel({ ...args, backend: "cpu" });
     }
-    return this.smol.isVisionAvailable();
   }
   private async extractFields(input: string): Promise<string> {
     await this.needle!.initTools("Extract only supplied item details.", JSON.stringify([{ name: "record_item", description: "Record item details", parameters: { type: "object", properties: { title: { type: "string" }, description: { type: "string" }, locationNote: { type: "string" } }, required: ["title"] } }]));
@@ -219,10 +253,15 @@ export class ApplicationAiService {
   }
   async route(taskId: AiTaskId, input: unknown, context: RouteContext) {
     await this.ready;
-    if (this.inferenceBusy || this.operating.size > 0) throw new Error("On-device runtime is busy");
-    this.inferenceBusy = true;
+    if (this.coordinator.inferenceBlocked || this.operating.size > 0) throw new Error("On-device runtime is busy");
+    try {
+      this.coordinator.claimInference("route");
+    } catch (error) {
+      if (error instanceof ResidencyBusyError) throw new Error("On-device runtime is busy");
+      throw error;
+    }
     try { return await this.boot.orchestrator.route(taskId, input, context); }
-    finally { this.inferenceBusy = false; }
+    finally { this.coordinator.releaseInference("route"); }
   }
   async embedNeedle(texts: string[]) {
     this.requireAndroid(); await this.ready; this.requireInstalled(NEEDLE_MODEL_ID);
@@ -273,27 +312,54 @@ export class ApplicationAiService {
   }
   private async *completeOffline(adapter: import("./providerContract").ProviderAdapter, request: import("./providerContract").NormalizedRequest) {
     await this.ready;
-    if (this.inferenceBusy || this.operating.size > 0) throw new Error("On-device runtime is busy");
-    this.inferenceBusy = true;
+    if (this.coordinator.inferenceBlocked || this.operating.size > 0) throw new Error("On-device runtime is busy");
+    try {
+      this.coordinator.claimInference("complete");
+    } catch (error) {
+      if (error instanceof ResidencyBusyError) throw new Error("On-device runtime is busy");
+      throw error;
+    }
     try { yield* adapter.complete(request); }
-    finally { this.inferenceBusy = false; }
+    finally { this.coordinator.releaseInference("complete"); }
   }
   async measure(backend: "cpu" | "gpu") {
     const vision = this.registry.visionDescriptor();
     if (!vision) throw new Error("No vision model registered");
     this.requireAndroid(); await this.ready; this.requireInstalled(vision.modelId);
-    if (this.inferenceBusy || this.operating.size > 0) throw new Error("On-device runtime is busy; stop inference before measuring");
-    this.inferenceBusy = true;
+    if (this.coordinator.inferenceBlocked || this.operating.size > 0) throw new Error("On-device runtime is busy; stop inference before measuring");
+    const label = `measure:${backend}`;
+    try {
+      this.coordinator.beginExclusive(label);
+    } catch (error) {
+      if (error instanceof ResidencyBusyError) throw new Error("On-device runtime is busy; stop inference before measuring");
+      throw error;
+    }
     try {
       await this.needle!.unload(); this.embedder = undefined;
       await this.smol!.unloadVisionModel();
+      this.coordinator.released("needle");
+      this.coordinator.released("smol-vision");
       const record = await this.smol!.measureBackend?.({ modelId: vision.modelId, modelRev: this.probeContext.modelRev, installedPath: this.paths(vision.modelId).installedPath, backend, corpusVersion: DEVICE_CORPUS_VERSION });
       if (!record || validateProbeRecord(record).length > 0 || record.backend !== backend || record.modelRev !== this.probeContext.modelRev || record.corpusVersion !== DEVICE_CORPUS_VERSION) throw new Error("No valid timing sample; device evidence is still required");
       this.probeRecords = [...this.probeRecords.filter((item) => item.backend !== backend), record];
       this.changed(); return record;
-    } finally { this.inferenceBusy = false; }
+    } finally { this.coordinator.endExclusive(label); }
   }
   async facts() { this.requireAndroid(); return this.smol!.collectDeviceFacts?.(); }
+
+  /**
+   * Phase A (Step 8): account/logout cleanup. Aborts in-flight inference and
+   * drops residency synchronously, then releases both engines best-effort.
+   * Downloads, pins, and probe records survive — logout never wipes models.
+   */
+  async resetForAccount(): Promise<void> {
+    this.coordinator.reset();
+    this.embedder = undefined;
+    this.matching = "use";
+    await this.needle?.unload().catch(() => {});
+    await this.smol?.unloadVisionModel().catch(() => {});
+    this.changed();
+  }
 }
 
 let applicationAi: ApplicationAiService | undefined;
@@ -302,3 +368,15 @@ export function getApplicationAi(): ApplicationAiService {
   return applicationAi ??= new ApplicationAiService({ android: Capacitor.isNativePlatform() && Capacitor.getPlatform?.() === "android" });
 }
 export function initializeApplicationAi(): Promise<void> { return getApplicationAi().ready; }
+
+/**
+ * Phase A (Step 8): account/logout cleanup entry point for the sign-out
+ * wipe (`clearUserScopedLocalState`). No-op before first use; never throws.
+ */
+export async function resetLocalAiForAccount(): Promise<void> {
+  try {
+    await applicationAi?.resetForAccount();
+  } catch {
+    // Best-effort: logout cleanup must never fail sign-out.
+  }
+}
