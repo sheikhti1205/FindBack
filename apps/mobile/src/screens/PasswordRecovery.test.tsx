@@ -47,6 +47,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ForgotPassword", () => {
+  it("owns the viewport outside Shell (V1-UI-002: full-height main + safe-area insets)", () => {
+    const { container } = renderForgot();
+    const main = container.querySelector("main");
+    expect(main).toBeTruthy();
+    expect(main!.className).toMatch(/min-h-dvh/);
+    expect(main!.style.paddingTop).toBe("max(2rem, env(safe-area-inset-top))");
+    expect(main!.style.paddingBottom).toBe("max(2rem, env(safe-area-inset-bottom))");
+  });
+
   it("prefills the email carried from sign-in", () => {
     renderForgot("/forgot?email=user%40example.com");
     expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe("user@example.com");
@@ -80,6 +89,15 @@ describe("ForgotPassword", () => {
 });
 
 describe("Recovery", () => {
+  it("owns the viewport outside Shell (V1-UI-003: full-height main + safe-area insets)", () => {
+    const { container } = renderRecovery();
+    const main = container.querySelector("main");
+    expect(main).toBeTruthy();
+    expect(main!.className).toMatch(/min-h-dvh/);
+    expect(main!.style.paddingTop).toBe("max(2rem, env(safe-area-inset-top))");
+    expect(main!.style.paddingBottom).toBe("max(2rem, env(safe-area-inset-bottom))");
+  });
+
   it("exchanges the link code, then accepts a matching new password", async () => {
     renderRecovery();
     await screen.findByLabelText("New password");

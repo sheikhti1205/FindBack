@@ -165,3 +165,22 @@ describe("Onboarding first run", () => {
     );
   });
 });
+
+describe("Onboarding viewport ownership (V1-UI-001)", () => {
+  it("owns full viewport height outside Shell and pins controls reachable", async () => {
+    // Static contract on the authoritative owner: Onboarding renders outside
+    // Shell (no .fb-app-viewport), so .fb-onboarding must declare its own
+    // min-height in dvh (with a vh fallback) and bottom-pinned controls.
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const css = readFileSync(join(process.cwd(), "src/screens/Onboarding.css"), "utf8");
+    const rootRule = /\.fb-onboarding\s*\{[^}]*\}/s.exec(css)?.[0] ?? "";
+    expect(rootRule).toMatch(/min-height:\s*100vh/);
+    expect(rootRule).toMatch(/min-height:\s*100dvh/);
+    // min-height (never height): short screens and large text must grow and
+    // scroll instead of clipping.
+    expect(rootRule).not.toMatch(/(?<!min-)height:\s*100/);
+    const controlsRule = /\.fb-onboarding-controls\s*\{[^}]*\}/s.exec(css)?.[0] ?? "";
+    expect(controlsRule).toMatch(/margin-top:\s*auto/);
+  });
+});

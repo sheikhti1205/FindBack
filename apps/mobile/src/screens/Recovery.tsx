@@ -54,7 +54,15 @@ export function Recovery() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-col gap-4 px-4 py-8">
+    // V1-UI-003: same viewport ownership as ForgotPassword — outside Shell,
+    // so the main owns min viewport height + safe-area insets exactly once.
+    <main
+      className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-4 px-4 py-8"
+      style={{
+        paddingTop: "max(2rem, env(safe-area-inset-top))",
+        paddingBottom: "max(2rem, env(safe-area-inset-bottom))",
+      }}
+    >
       <h1 className="text-xl font-semibold">Choose a new password</h1>
       {phase === "exchanging" && (
         <p role="status" className="text-sm text-on-surface-variant">Checking your reset link…</p>

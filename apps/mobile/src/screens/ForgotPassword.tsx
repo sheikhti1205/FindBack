@@ -36,7 +36,15 @@ export function ForgotPassword() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-col gap-4 px-4 py-8">
+    // V1-UI-002: this route renders outside Shell, so the main owns its own
+    // viewport height + safe-area insets (exactly once — no other owner here).
+    <main
+      className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-4 px-4 py-8"
+      style={{
+        paddingTop: "max(2rem, env(safe-area-inset-top))",
+        paddingBottom: "max(2rem, env(safe-area-inset-bottom))",
+      }}
+    >
       <h1 className="text-xl font-semibold">Reset your password</h1>
       {sent ? (
         <>
