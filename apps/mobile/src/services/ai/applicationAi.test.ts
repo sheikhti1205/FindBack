@@ -455,9 +455,14 @@ describe("application-owned AI", () => {
       isVisionAvailable: async () => true,
       loadVisionModel: async () => {},
       describeImage: async function* (_request: unknown, signal: AbortSignal) {
+        // Hang until the combined signal aborts the native call (true
+        // cancel path). The abort rejection below ends the stream with
+        // zero text delivered; the trailing yield is unreachable by
+        // construction and exists only to satisfy require-yield.
         await new Promise<void>((_, reject) => {
           signal.addEventListener("abort", () => reject(new Error("vision aborted")), { once: true });
         });
+        yield { textDelta: "" };
       },
       cancelGeneration: async () => { cancels.push("cancel"); },
     };
