@@ -7,7 +7,7 @@ import { CapacitorModelDownloadDriver, runManagedDownload, removeManagedModel, t
 import { createOfflineAdapter, describeOfflineReadiness, type OfflineNativeBridge, type OfflineVisionNativeBridge } from "./providers/offline";
 import type { AiTaskId } from "./types";
 import type { RouteContext } from "./orchestrator/AiOrchestrator";
-import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, modelSupportsAbi, type ModelDescriptor, type ModelRegistry } from "./modelDescriptors";
+import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, modelSupportsAbi, type ModelDescriptor, type ModelRegistry, type ModelRegistryOptions } from "./modelDescriptors";
 import { ResidencyCoordinator, ResidencyBusyError } from "./residencyCoordinator";
 import { selectBackend } from "./automaticMode";
 import { PROBE_VERSION, validateProbeRecord, type ProbeRecord } from "./deviceProbe";
@@ -100,9 +100,11 @@ export class ApplicationAiService {
   notice(modelId: string) { return this.notices.get(modelId) ?? null; }
   busy(modelId: string) { return this.operating.has(modelId); }
 
-  constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge; descriptors?: readonly ModelDescriptor[] }) {
+  constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge; descriptors?: readonly ModelDescriptor[]; defaultVisionModelId?: string }) {
     this.android = options.android;
-    this.registry = options.descriptors ? createModelRegistry(options.descriptors) : productionModelRegistry();
+    this.registry = options.descriptors
+      ? createModelRegistry(options.descriptors, { defaultVisionModelId: options.defaultVisionModelId } satisfies ModelRegistryOptions)
+      : productionModelRegistry();
     const vision = this.registry.visionDescriptor();
     this.probeContext = { modelRev: vision?.revision ?? "", probeVersion: PROBE_VERSION, corpusVersion: DEVICE_CORPUS_VERSION };
     if (this.android) {

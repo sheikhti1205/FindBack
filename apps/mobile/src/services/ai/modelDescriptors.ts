@@ -31,6 +31,9 @@ export type ModelTrust = "curated" | "imported";
 export interface ModelDescriptor {
   readonly modelId: string;
   readonly displayName: string;
+  /** Consumer catalogue copy (normal tier: no ids, checksums, or transfer jargon). */
+  readonly consumerTitle: string;
+  readonly consumerDetail: string;
   /** Physical runtime that executes this model (never an array index). */
   readonly runtimeId: string;
   readonly format: ModelArtifactFormat;
@@ -60,10 +63,21 @@ export interface ModelRegistry {
   readonly descriptors: readonly ModelDescriptor[];
   descriptorFor(modelId: string): ModelDescriptor | undefined;
   requireDescriptor(modelId: string): ModelDescriptor;
-  /** Names the vision model without any positional assumption. */
+  /**
+   * Audit closure: the default vision model is EXPLICIT registry policy,
+   * never catalogue order. Returns the configured default descriptor, or
+   * undefined when the registry names none — even if vision-capable
+   * entries exist. A future second vision model changes selection by
+   * changing this policy, not by reordering the catalogue.
+   */
   visionDescriptor(): ModelDescriptor | undefined;
   /** All downloadable catalogue entries, in catalogue order. */
   catalogue(): readonly ModelDescriptor[];
+}
+
+export interface ModelRegistryOptions {
+  /** Model id selected by visionDescriptor(); required for vision features. */
+  readonly defaultVisionModelId?: string;
 }
 
 function profilePin(modelId: string): { revision: string; sha256: string } {
@@ -98,6 +112,8 @@ const NEEDLE_TEXT_ROLES: readonly AiTaskId[] = [
 export const NEEDLE_DESCRIPTOR: ModelDescriptor = {
   modelId: NEEDLE_MODEL_ID,
   displayName: "Needle · structured text / matching challenger",
+  consumerTitle: "Local text tools",
+  consumerDetail: "Needle",
   runtimeId: NEEDLE_RUNTIME_ID,
   format: "cact",
   revision: NEEDLE_PIN.revision,
@@ -122,6 +138,8 @@ export const NEEDLE_DESCRIPTOR: ModelDescriptor = {
 export const SMOL_VISION_DESCRIPTOR: ModelDescriptor = {
   modelId: SMOL_VISION_MODEL_ID,
   displayName: "SmolVLM2 · image description",
+  consumerTitle: "Photo analysis",
+  consumerDetail: "SmolVLM2",
   runtimeId: SMOL_VLM_RUNTIME_ID,
   format: "litertlm",
   revision: SMOL_PIN.revision,
@@ -149,13 +167,20 @@ export function modelSupportsAbi(descriptor: ModelDescriptor, abi: string): bool
   return abi !== "" && descriptor.abis.includes(abi);
 }
 
-export function createModelRegistry(descriptors: readonly ModelDescriptor[]): ModelRegistry {
+export function createModelRegistry(
+  descriptors: readonly ModelDescriptor[],
+  options?: ModelRegistryOptions,
+): ModelRegistry {
   const seen = new Set<string>();
   for (const descriptor of descriptors) {
     if (seen.has(descriptor.modelId)) throw new Error(`Duplicate model descriptor ${descriptor.modelId}`);
     seen.add(descriptor.modelId);
   }
   const frozen = Object.freeze([...descriptors]);
+  const defaultVisionModelId = options?.defaultVisionModelId;
+  if (defaultVisionModelId !== undefined && !seen.has(defaultVisionModelId)) {
+    throw new Error(`Default vision model ${defaultVisionModelId} is not registered`);
+  }
   return {
     descriptors: frozen,
     descriptorFor: (modelId: string) => frozen.find((item) => item.modelId === modelId),
@@ -164,7 +189,8 @@ export function createModelRegistry(descriptors: readonly ModelDescriptor[]): Mo
       if (found === undefined) throw new Error("Unknown on-device model");
       return found;
     },
-    visionDescriptor: () => frozen.find((item) => item.capabilities.includes("vision")),
+    visionDescriptor: () =>
+      defaultVisionModelId === undefined ? undefined : frozen.find((item) => item.modelId === defaultVisionModelId),
     catalogue: () => frozen.filter((item) => item.downloadable),
   };
 }
@@ -173,5 +199,5 @@ let production: ModelRegistry | undefined;
 
 /** Frozen production singleton: Needle + SmolVLM2 vision, nothing else. */
 export function productionModelRegistry(): ModelRegistry {
-  return (production ??= createModelRegistry(PRODUCTION_DESCRIPTORS));
+  return (production ??= createModelRegistry(PRODUCTION_DESCRIPTORS, { defaultVisionModelId: SMOL_VISION_MODEL_ID }));
 }

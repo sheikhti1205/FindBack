@@ -25,12 +25,25 @@ describe("modelDescriptors", () => {
     expect(productionModelRegistry()).toBe(registry);
   });
 
-  it("resolves the vision model without any positional assumption", () => {
-    const reordered = createModelRegistry([SMOL_VISION_DESCRIPTOR, NEEDLE_DESCRIPTOR]);
+  it("resolves the vision model from explicit policy, never catalogue order", () => {
+    const reordered = createModelRegistry([SMOL_VISION_DESCRIPTOR, NEEDLE_DESCRIPTOR], {
+      defaultVisionModelId: SMOL_VISION_DESCRIPTOR.modelId,
+    });
     expect(reordered.visionDescriptor()?.modelId).toBe(SMOL_VISION_DESCRIPTOR.modelId);
     expect(reordered.descriptorFor(NEEDLE_MODEL_ID)?.runtimeId).toBe("needle-cact");
     expect(reordered.descriptorFor("nope")).toBeUndefined();
     expect(() => reordered.requireDescriptor("nope")).toThrow(/unknown on-device model/i);
+  });
+
+  it("names no vision default unless the registry configures one", () => {
+    const unconfigured = createModelRegistry([SMOL_VISION_DESCRIPTOR, NEEDLE_DESCRIPTOR]);
+    expect(unconfigured.visionDescriptor()).toBeUndefined();
+  });
+
+  it("rejects a vision default that is not registered", () => {
+    expect(() =>
+      createModelRegistry([NEEDLE_DESCRIPTOR], { defaultVisionModelId: SMOL_VISION_DESCRIPTOR.modelId }),
+    ).toThrow(/not registered/i);
   });
 
   it("rejects duplicate model ids instead of building a split-brain registry", () => {

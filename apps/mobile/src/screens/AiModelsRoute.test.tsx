@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { ApplicationAiService } from "../services/ai/applicationAi";
-import { NEEDLE_DESCRIPTOR, SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
+import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
 import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
 import { AiModelsRoute } from "./AiModelsRoute";
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
@@ -159,7 +159,6 @@ describe("AiModelsRoute consumer cards", () => {
     }
     expectNormalTierCopy(view.container);
   });
-
   it("uses the safest-option line until performance is measured on this phone", async () => {
     const { service } = androidService();
     await service.ready;
@@ -174,5 +173,80 @@ describe("AiModelsRoute consumer cards", () => {
     );
     expectNormalTierCopy(view.container);
     await waitFor(() => expect(view.container.textContent).toContain("Local text tools"));
+  });
+
+  it("names an incompatible device instead of offering a dead download", async () => {
+    const service = new ApplicationAiService({
+      android: true,
+      driver: {
+        rootDir: async () => "/private/ai-models", freeBytes: async () => 2e9,
+        stagedSize: async () => 0, readJournalText: async () => null,
+        download: async () => { throw new Error("must never start"); },
+        cancelDownload: async () => {}, hashFile: async () => { throw new Error("missing"); },
+        promoteFile: async () => {}, removeFile: async () => {},
+      },
+      needle: {
+        bridgeName: "needle-cact", unload: async () => {}, isNeedleAvailable: async () => false,
+        loadModel: async () => 2, embeddingDimension: async () => 2, embedNeedleTexts: async () => [],
+        initTools: async () => {}, completeJson: async () => "{}",
+      },
+      smol: {
+        bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false,
+        loadVisionModel: async () => {}, unloadVisionModel: async () => {},
+        cancelGeneration: async () => {}, describeImage: async function* () {},
+        collectDeviceFacts: async () => ({ supportedAbis: ["x86_64"] }),
+      },
+    });
+    await service.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    // Both production cards name the state once facts load.
+    expect(await screen.findAllByText("Unavailable on this device.")).toHaveLength(2);
+    for (const button of screen.getAllByRole("button", { name: /download/i })) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      expect((button as HTMLButtonElement).title).toBe("Unavailable on this device.");
+    }
+    expectNormalTierCopy(view.container);
+  });
+
+  it("renders catalogue descriptors, never lab entries, with no hard-coded cards", async () => {
+    const extra = {
+      modelId: "test-extra-model", displayName: "Test extra", consumerTitle: "Test extra",
+      consumerDetail: "Test", runtimeId: "test-extra-runtime", format: "cact" as const,
+      revision: "rev1", sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      fileName: "extra.cact", url: "https://example.invalid/extra.cact", bytes: 1024,
+      capabilities: ["text"] as const, taskRoles: [], maturity: "production" as const,
+      trust: "curated" as const, license: "test-only", minRamMb: 512, recommendedRamMb: 512,
+      abis: ["arm64-v8a"], downloadable: true,
+    };
+    const lab = { ...extra, modelId: "test-lab-model", consumerTitle: "Lab hidden", downloadable: false };
+    const service = new ApplicationAiService({
+      android: true,
+      driver: {
+        rootDir: async () => "/private/ai-models", freeBytes: async () => 2e9,
+        stagedSize: async () => 0, readJournalText: async () => null,
+        download: async () => { throw new Error("unexpected download"); },
+        cancelDownload: async () => {}, hashFile: async () => { throw new Error("missing"); },
+        promoteFile: async () => {}, removeFile: async () => {},
+      },
+      needle: {
+        bridgeName: "needle-cact", unload: async () => {}, isNeedleAvailable: async () => false,
+        loadModel: async () => 2, embeddingDimension: async () => 2, embedNeedleTexts: async () => [],
+        initTools: async () => {}, completeJson: async () => "{}",
+      },
+      smol: {
+        bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false,
+        loadVisionModel: async () => {}, unloadVisionModel: async () => {},
+        cancelGeneration: async () => {}, describeImage: async function* () {},
+        collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }),
+      },
+      descriptors: [NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, extra, lab],
+      defaultVisionModelId: SMOL_VISION_MODEL_ID,
+    });
+    await service.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "Test extra" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download Test extra" })).toBeTruthy();
+    expect(view.container.textContent ?? "").not.toContain("Lab hidden");
+    expectNormalTierCopy(view.container);
   });
 });

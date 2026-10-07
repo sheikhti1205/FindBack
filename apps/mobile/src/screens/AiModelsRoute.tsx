@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Gauge } from "lucide-react";
 import { Button } from "../components/Button";
 import {
@@ -9,11 +9,11 @@ import {
 } from "../components/settings";
 import {
   DOWNLOAD_MODELS,
+  DEVICE_INCOMPATIBLE_REASON,
   getApplicationAi,
   type ApplicationAiService,
 } from "../services/ai/applicationAi";
-import { productionModelRegistry, SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
-import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
+import type { ModelDescriptor } from "../services/ai/modelDescriptors";
 import { canShowAuto } from "../services/ai/uiGates";
 
 function formatMegabytes(bytes: number): string {
@@ -62,18 +62,17 @@ export function toConsumerNotice(notice: string | null): string | null {
 }
 
 function ConsumerCard({
-  modelId,
-  title,
-  detail,
+  descriptor,
   service,
   reportError,
 }: {
-  modelId: string;
-  title: string;
-  detail: string;
+  descriptor: ModelDescriptor;
   service: ApplicationAiService;
   reportError: (message: string) => void;
 }) {
+  const modelId = descriptor.modelId;
+  const title = descriptor.consumerTitle;
+  const detail = descriptor.consumerDetail;
   const entry = DOWNLOAD_MODELS.find((item) => item.modelId === modelId);
   const status = service.manager.statusOf(modelId);
   const totalBytes = entry?.bytes ?? null;
@@ -95,8 +94,19 @@ function ConsumerCard({
     );
   };
 
-  const supported = service.android;
-  const stateLine = ready
+  // Compatibility is presentation only: the service enforces it again at
+  // download/run time. An incompatible device names the state instead of
+  // offering a dead download.
+  const compatibility = service.compatibility(modelId);
+  const supported = service.android && compatibility.compatible;
+  const supportTitle = !service.android
+    ? "On-device downloads need the Android app."
+    : compatibility.compatible
+      ? undefined
+      : DEVICE_INCOMPATIBLE_REASON;
+  const stateLine = !compatibility.compatible && service.android
+    ? DEVICE_INCOMPATIBLE_REASON
+    : ready
     ? `Ready · ${formatMegabytes(entry?.bytes ?? downloadedBytes)}`
     : download === "downloading" && percent !== null
       ? `Downloading ${percent}%`
@@ -174,7 +184,7 @@ function ConsumerCard({
               disabled={!supported || busy}
               onClick={() => run(service.download(modelId))}
               aria-label={`Resume ${title}`}
-              title={supported ? undefined : "On-device downloads need the Android app."}
+              title={supportTitle}
             >
               Resume
             </Button>
@@ -195,7 +205,7 @@ function ConsumerCard({
             disabled={!supported || busy}
             onClick={() => run(service.download(modelId))}
             aria-label={`Download ${title}`}
-            title={supported ? undefined : "On-device downloads need the Android app."}
+            title={supportTitle}
           >
             Download
           </Button>
@@ -221,6 +231,11 @@ export function AiModelsRoute({ service = getApplicationAi() }: { service?: Appl
   useSyncExternalStore(service.subscribe, service.snapshot);
   const [error, setError] = useState<string | null>(null);
   const measured = canShowAuto(service.probeRecords, service.probeContext);
+  // Refresh per-model device compatibility once per service: the snapshot
+  // subscription re-renders when the service publishes the results.
+  useEffect(() => {
+    void service.ensureCompatibility().catch(() => {});
+  }, [service]);
 
   return (
     <SettingsPage
@@ -235,20 +250,14 @@ export function AiModelsRoute({ service = getApplicationAi() }: { service?: Appl
         </p>
       ) : null}
       <SettingsGroup title="Tools">
-        <ConsumerCard
-          modelId={NEEDLE_MODEL_ID}
-          title="Local text tools"
-          detail="Needle"
-          service={service}
-          reportError={setError}
-        />
-        <ConsumerCard
-          modelId={productionModelRegistry().visionDescriptor()?.modelId ?? SMOL_VISION_MODEL_ID}
-          title="Photo analysis"
-          detail="SmolVLM2"
-          service={service}
-          reportError={setError}
-        />
+        {service.registry.catalogue().map((descriptor) => (
+          <ConsumerCard
+            key={descriptor.modelId}
+            descriptor={descriptor}
+            service={service}
+            reportError={setError}
+          />
+        ))}
       </SettingsGroup>
       {error !== null ? (
         <p role="alert" className="text-sm text-error">

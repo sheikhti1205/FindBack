@@ -216,6 +216,7 @@ describe("application-owned AI", () => {
       android: true,
       ...p,
       descriptors: [SMOL_VISION_DESCRIPTOR, NEEDLE_DESCRIPTOR],
+      defaultVisionModelId: SMOL_VISION_DESCRIPTOR.modelId,
     });
     await service.ready;
     expect(service.registry.visionDescriptor()?.modelId).toBe(SMOL_VISION_DESCRIPTOR.modelId);
@@ -231,6 +232,8 @@ describe("application-owned AI", () => {
     const third: ModelDescriptor = {
       modelId: "test-third-model",
       displayName: "Test third",
+      consumerTitle: "Test third",
+      consumerDetail: "Test",
       runtimeId: "test-unowned-runtime",
       format: "cact",
       revision: "rev3",
