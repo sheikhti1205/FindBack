@@ -24,3 +24,17 @@ abda2c78661372075e8b08e32eb4d5f4c6325984
 # force-push and orphan the wave's ledger SHA. Grandfathered with reason; the
 # convention is still enforced on every new HEAD.
 83505e76e4562718e16c77314affe340ffa49a20
+# Exception 2026-10-07 (accepted-history): the seven SHAs below are the local
+# AI coherence work authored with Phase/Step labels in their subjects
+# (e.g. "Phase A Step 10: ..."), violating the `scope: outcome` convention.
+# They are already fast-forwarded into origin/main (1bc93d6..35b32c8);
+# rewriting subjects would require a destructive main-history rewrite and a
+# force-push. Grandfathered with reason; every subsequent commit follows the
+# normal `scope: outcome` + Gates convention (enforced on every new HEAD).
+d77dbf79c61195bc9255e0bacb97f42e2bb79cd4
+bda1b2125f2e4cba80601a6dbdfe0b06f239553c
+1bc92ce998e7d88c5c6b7eed536d6721549f8f45
+e309dadab5490a4b6771d1898c30d6ae6049bcf8
+a868ac972260f6b6015898186968ab8903c1b58c
+179df62879902735f1ff536bbdd7bb3a3751b16d
+35b32c89c3bf09862306d852626d8ca453491843
