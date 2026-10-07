@@ -50,6 +50,13 @@ export interface RouteContext {
   readonly timeoutMs?: number;
   /** Phase A (Step 7): caller cancel. Aborting this aborts the route. */
   readonly signal?: AbortSignal;
+  /**
+   * Audit closure: busy-until-settle. The orchestrator forwards the raw
+   * native promise of each adapter invoke here so the inference lease can
+   * stay busy until native work settles — even after the visible request
+   * timed out. Wired by ApplicationAiService.route; absent in tests.
+   */
+  readonly trackSettlement?: (work: Promise<unknown>) => void;
   readonly onState?: (state: OrchestratorState) => void;
 }
 
@@ -264,6 +271,7 @@ export class AiOrchestrator {
     // every non-deterministic input to NO_DETERMINISTIC.
     const runtime = registry.firstAvailable(
       spec.runtimes.filter((id) => id !== DETERMINISTIC_BACKEND),
+      taskId,
     );
     if (runtime === undefined) {
       return this.fail({
@@ -292,7 +300,7 @@ export class AiOrchestrator {
     let outcome: Awaited<ReturnType<AiRuntime["invoke"]>>;
     try {
       outcome = await withTimeout(
-        runtime.invoke({ taskId, input, timeoutMs, traceId, signal: controller.signal }),
+        runtime.invoke({ taskId, input, timeoutMs, traceId, signal: controller.signal, ...(ctx.trackSettlement === undefined ? {} : { trackSettlement: ctx.trackSettlement }) }),
         timeoutMs,
       );
     } catch (error) {
@@ -337,11 +345,13 @@ export class AiOrchestrator {
       });
     }
 
-    // Phase A (Step 5): task output contracts own SUCCESS. A technically
-    // successful generation whose value fails the task schema is
-    // LOCAL_TASK_INVALID — eligible for allowed cloud fallback in Automatic
-    // mode, surfaced in on-device-only, never a silent downstream drop.
-    const checked = validateRouteValue(taskId, outcome.value);
+    // Task output contracts own SUCCESS — re-checked here even though
+    // adapters interpret first, so no adapter can bypass interpretation
+    // and still succeed. A technically successful generation whose value
+    // fails the task schema is LOCAL_TASK_INVALID — eligible for allowed
+    // cloud fallback in Automatic mode, surfaced in on-device-only, never
+    // a silent downstream drop.
+    const checked = validateRouteValue(taskId, outcome.value, input);
     if (!checked.ok) {
       return this.fail({
         taskId,

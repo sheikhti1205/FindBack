@@ -1,16 +1,25 @@
 /**
- * Phase A (Step 8): application-wide local runtime coordinator.
+ * Application-wide local runtime coordinator: one authority owns
+ * heavy-runtime residency (Needle vs SmolVLM2 vision), exclusive operations
+ * (remove/measure), and in-flight inference — exclusion AND cancellation
+ * through a single lease object.
  *
- * One authority owns heavy-runtime residency (Needle vs SmolVLM2 vision),
- * exclusive operations (remove/measure), and in-flight inference
- * generations. Default rule: one heavy generative resident at a time;
- * switching evicts first, aborts in-flight work, then loads — never two
- * heavy runtimes coexisting by accident.
+ * One production inference lease contains the generation id, the
+ * AbortController/signal, runtime ownership, visible-request completion,
+ * native settlement, and release semantics. Every production local route
+ * registers with it; there is no second generation mechanism on the
+ * production path.
+ *
+ * Two lifecycles, deliberately distinguished:
+ * - visible request lifecycle: may return TIMEOUT/CANCELLED promptly.
+ * - native operation lifecycle: the lease stays busy (refusing new
+ *   inference, switches, removals, and measurements) until every tracked
+ *   native promise actually settles. No switch/remove/new inference may
+ *   start while orphaned native work is still running.
  *
  * Layering: this is the TypeScript application authority. Native plugins
  * keep their own operation gates (SmolVLM2 `RuntimeOperationGate`, Needle
  * locks) as defense in depth; they never grant residency by themselves.
- * Phase B wires llama.cpp under this same authority — no new ad hoc locks.
  */
 export type ResidencyOwner = "needle" | "smol-vision" | "none";
 
@@ -19,6 +28,20 @@ export class ResidencyBusyError extends Error {
     super(`On-device runtime is busy (${label})`);
     this.name = "ResidencyBusyError";
   }
+}
+
+/**
+ * One production inference flight. `signal` aborts the visible request;
+ * `trackNative` observes raw native promises; `requestSettled` runs when
+ * the visible request returns. The lease frees only when the request has
+ * settled AND no tracked native work is pending.
+ */
+export interface InferenceLease {
+  readonly id: number;
+  readonly signal: AbortSignal;
+  abort(): void;
+  trackNative(work: Promise<unknown>): void;
+  requestSettled(): void;
 }
 
 interface Generation {
@@ -35,9 +58,11 @@ interface Generation {
 export class ResidencyCoordinator {
   private owner: ResidencyOwner = "none";
   private exclusiveLabel: string | undefined;
-  private claimedLabel: string | undefined;
   private nextGenerationId = 1;
   private readonly generations = new Map<number, Generation>();
+  private activeLeaseId: number | undefined;
+  private activeLeaseController: AbortController | undefined;
+  private settlingNative = 0;
 
   /** True while an exclusive operation (remove/measure) holds the gate. */
   get isExclusive(): boolean {
@@ -48,7 +73,7 @@ export class ResidencyCoordinator {
     return this.exclusiveLabel;
   }
 
-  /** True while any inference generation is in flight. */
+  /** True while any legacy inference generation is in flight. */
   get hasInflight(): boolean {
     for (const generation of this.generations.values()) {
       if (!generation.done) return true;
@@ -56,27 +81,54 @@ export class ResidencyCoordinator {
     return false;
   }
 
-  /** Route/inference gate: busy when exclusive work holds the gate. */
+  /**
+   * Route/inference gate: busy while exclusive work holds the gate, while
+   * a visible request is active, or while orphaned native work is still
+   * settling after its request returned.
+   */
   get inferenceBlocked(): boolean {
-    return this.isExclusive || this.claimedLabel !== undefined;
+    return this.exclusiveLabel !== undefined || this.activeLeaseId !== undefined || this.settlingNative > 0;
   }
 
   /**
-   * Claim the single inference flight (replaces the old `inferenceBusy`
-   * boolean). Throws ResidencyBusyError when exclusive work or another
-   * inference holds it. Check-then-claim is atomic within one synchronous
-   * stretch, so concurrent routes serialize exactly like before. Pair with
-   * `releaseInference` in a finally.
+   * Begin one production inference flight. Throws ResidencyBusyError while
+   * exclusive work, another flight, or unsettled native work holds the
+   * gate. Pair every success with `requestSettled` in a finally.
    */
-  claimInference(label: string): void {
-    if (this.exclusiveLabel !== undefined || this.claimedLabel !== undefined) {
+  beginInference(label: string): InferenceLease {
+    if (this.exclusiveLabel !== undefined || this.activeLeaseId !== undefined || this.settlingNative > 0) {
       throw new ResidencyBusyError(label);
     }
-    this.claimedLabel = label;
+    const id = this.nextGenerationId++;
+    const controller = new AbortController();
+    this.activeLeaseId = id;
+    this.activeLeaseController = controller;
+    return {
+      id,
+      signal: controller.signal,
+      abort: () => {
+        if (this.activeLeaseId === id) controller.abort();
+      },
+      trackNative: (work: Promise<unknown>) => {
+        if (this.activeLeaseId !== id) return;
+        this.settlingNative += 1;
+        const done = () => {
+          this.settlingNative = Math.max(0, this.settlingNative - 1);
+        };
+        work.then(done, done);
+      },
+      requestSettled: () => {
+        if (this.activeLeaseId === id) {
+          this.activeLeaseId = undefined;
+          this.activeLeaseController = undefined;
+        }
+      },
+    };
   }
 
-  releaseInference(label: string): void {
-    if (this.claimedLabel === label) this.claimedLabel = undefined;
+  /** Abort the active flight's visible request (logout, account switch). */
+  abortInference(): void {
+    this.activeLeaseController?.abort();
   }
 
   get current(): ResidencyOwner {
@@ -88,16 +140,23 @@ export class ResidencyCoordinator {
     for (const generation of this.generations.values()) {
       if (!generation.done) inflight += 1;
     }
-    return { owner: this.owner, exclusive: this.exclusiveLabel, claimed: this.claimedLabel !== undefined, inflight };
+    if (this.activeLeaseId !== undefined) inflight += 1;
+    return { owner: this.owner, exclusive: this.exclusiveLabel, claimed: this.activeLeaseId !== undefined, inflight };
   }
 
   /**
    * Take the exclusive gate for remove/measure-style work. Throws
-   * ResidencyBusyError when inference is in flight or another exclusive
-   * operation holds the gate. Pair every success with `endExclusive`.
+   * ResidencyBusyError while inference (active or settling) or another
+   * exclusive operation holds the gate. Pair every success with
+   * `endExclusive`.
    */
   beginExclusive(label: string): void {
-    if (this.exclusiveLabel !== undefined || this.claimedLabel !== undefined || this.hasInflight) {
+    if (
+      this.exclusiveLabel !== undefined ||
+      this.activeLeaseId !== undefined ||
+      this.settlingNative > 0 ||
+      this.hasInflight
+    ) {
       throw new ResidencyBusyError(label);
     }
     this.exclusiveLabel = label;
@@ -108,9 +167,11 @@ export class ResidencyCoordinator {
   }
 
   /**
-   * Register one inference generation. Throws when the exclusive gate is
-   * held. The caller links `entry.signal` into its cancellation chain and
-   * calls `done()` exactly once when the generation settles.
+   * Register one auxiliary inference generation. Throws when the exclusive
+   * gate is held. This is NOT the production route mechanism (routes use
+   * `beginInference`); it exists for auxiliary flights whose cancellation
+   * must join switch/reset. The caller links `entry.signal` into its
+   * cancellation chain and calls `done()` exactly once on settlement.
    */
   beginGeneration(): { id: number; signal: AbortSignal; done(): void } {
     if (this.exclusiveLabel !== undefined) {
@@ -130,7 +191,7 @@ export class ResidencyCoordinator {
     };
   }
 
-  /** Abort every in-flight generation (switch, reset, account change). */
+  /** Abort every auxiliary in-flight generation (reset path). */
   abortInflight(): void {
     for (const generation of this.generations.values()) {
       if (!generation.done) generation.controller.abort();
@@ -138,11 +199,17 @@ export class ResidencyCoordinator {
   }
 
   /**
-   * Switch the heavy resident. Aborts in-flight generations first so no
-   * stale work survives the switch, refuses while exclusive work holds the
+   * Switch the heavy resident. Refuses while exclusive work holds the
    * gate, then runs evict (old engine unload) and load (new engine load).
    * A failed load leaves ownership at "none" — never claiming a resident
    * that did not report ready.
+   *
+   * Deliberately aborts nothing: `switchTo` always runs inside the active
+   * flight's own residency switch (via readiness probes), so aborting
+   * would cancel the very route performing the switch. Stale-flight
+   * cancellation belongs to `reset`/`abortInference`, and the single
+   * flight plus busy-until-settle guarantees no second flight can exist
+   * across a switch.
    */
   async switchTo(
     next: Exclude<ResidencyOwner, "none">,
@@ -151,7 +218,6 @@ export class ResidencyCoordinator {
     if (this.exclusiveLabel !== undefined) {
       throw new ResidencyBusyError(`switch to ${next}`);
     }
-    this.abortInflight();
     await actions.evict();
     try {
       await actions.load();
@@ -168,15 +234,19 @@ export class ResidencyCoordinator {
   }
 
   /**
-   * Account/logout cleanup: abort everything, drop residency and exclusive
-   * claims. Engine processes themselves are released by the service's async
-   * reset, which runs best-effort alongside this synchronous state drop.
+   * Account/logout cleanup: abort the active flight and every auxiliary
+   * generation, drop residency and exclusive claims. The active lease
+   * pointer is KEPT (aborted, not cleared) so no new flight can begin
+   * until the orphaned route's finally releases it — a stale route can
+   * never hand results to the next account, and unsettled native work
+   * keeps the gate busy. Engine processes themselves are released by the
+   * service's async reset, which runs best-effort alongside.
    */
   reset(): void {
+    this.abortInference();
     this.abortInflight();
     this.generations.clear();
     this.owner = "none";
     this.exclusiveLabel = undefined;
-    this.claimedLabel = undefined;
   }
 }

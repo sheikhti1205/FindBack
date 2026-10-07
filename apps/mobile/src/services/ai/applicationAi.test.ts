@@ -190,8 +190,7 @@ describe("application-owned AI", () => {
     expect(service.notice(SMOL_VISION_DESCRIPTOR.modelId)).toMatch(/CPU inference remains usable/);
   });
 
-  it("tracks single-resident ownership across loads and account reset", async () => {
-    const p = platform();
+  it("tracks single-resident ownership across loads and account reset", async () => {    const p = platform();
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
@@ -256,5 +255,85 @@ describe("application-owned AI", () => {
     // The old Needle-vs-else branch would have unloaded Smol here.
     expect(p.calls).not.toContain("needle-unload");
     expect(service.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
+  });
+
+  it("holds the runtime lease until orphaned native work settles after a timeout", async () => {
+    const p = platform();
+    const releasers: Array<() => void> = [];
+    let calls = 0;
+    // First native call never settles on its own (ignores AbortSignal);
+    // later calls resolve immediately with a valid tool envelope.
+    p.needle.completeJson = async () => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<void>((resolve) => { releasers.push(resolve); });
+      }
+      return JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "red umbrella" } }] });
+    };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    const timedOut = await service.route(
+      "extract-report-fields",
+      { prompt: "a red umbrella" },
+      { traceId: "trace-settle-timeout", timeoutMs: 50 },
+    );
+    expect(timedOut.ok).toBe(false);
+    if (!timedOut.ok) expect(timedOut.denialReason).toBe("TIMEOUT");
+    // Caller got TIMEOUT, but native is still running: the next operation
+    // (and a residency switch) must still be refused.
+    await expect(
+      service.route("extract-report-fields", { prompt: "keys" }, { traceId: "trace-settle-refused" }),
+    ).rejects.toThrow(/busy/);
+    await expect(service.remove(NEEDLE_MODEL_ID)).rejects.toThrow(/busy/);
+    releasers.forEach((release) => release());
+    // Let the settlement chain drain (native resolve → adapter → lease)
+    // before the next flight may begin.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const recovered = await service.route(
+      "extract-report-fields",
+      { prompt: "title: keys" },
+      { traceId: "trace-settle-recovered" },
+    );
+    expect(recovered.ok).toBe(true);
+  });
+
+  it("logout aborts the actual route signal and never delivers stale results", async () => {
+    const p = platform();
+    const releasers: Array<() => void> = [];
+    let calls = 0;
+    p.needle.completeJson = async () => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<void>((resolve) => { releasers.push(resolve); });
+      }
+      return JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "red umbrella" } }] });
+    };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    const flight = service.route(
+      "extract-report-fields",
+      { prompt: "a red umbrella" },
+      { traceId: "trace-logout-flight", timeoutMs: 10_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await service.resetForAccount();
+    const result = await flight;
+    // The orphaned route reports cancellation, never success for account B.
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.denialReason).toBe("CANCELLED");
+    // Native still unsettled: the gate stays busy across the account change.
+    await expect(
+      service.route("extract-report-fields", { prompt: "keys" }, { traceId: "trace-logout-refused" }),
+    ).rejects.toThrow(/busy/);
+    releasers.forEach((release) => release());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const after = await service.route(
+      "extract-report-fields",
+      { prompt: "title: keys" },
+      { traceId: "trace-logout-after" },
+    );
+    expect(after.ok).toBe(true);
   });
 });

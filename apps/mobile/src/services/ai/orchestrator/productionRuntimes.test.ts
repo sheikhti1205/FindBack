@@ -52,18 +52,31 @@ function install(manager: OfflineModelManager, pin: OfflineAssetPin): void {
   manager.dispatch(pin.modelId, { type: "VERIFY_OK", actualSha256: pin.sha256 });
 }
 
+const TEXT_ROLES = [
+  "extract-report-fields",
+  "extract-search-filters",
+  "classify-category",
+  "classify-intent",
+  "route-intent",
+  "answer-help",
+  "summarize-local-context",
+];
+
 function depsWithFakes(manager: OfflineModelManager): ProductionRuntimeDeps {
   return {
     manager,
     text: {
       modelId: TEXT_PIN.modelId,
       runtimeId: "test-text",
+      taskRoles: TEXT_ROLES,
       isReady: async () => true,
-      completeJson: async (input: string) => JSON.stringify({ echo: input.slice(0, 8) }),
+      completeText: async (input: string) => input,
+      completeStructured: async (input: string) => JSON.stringify({ echo: input.slice(0, 8) }),
     },
     embedding: {
       modelId: EMBEDDING_PIN.modelId,
       runtimeId: "test-embedding",
+      taskRoles: ["embed-texts"],
       dimension: 4,
       isReady: async () => true,
       embed: async (texts: string[]) => texts.map(() => [0.5, -0.25, 0.125, -0.0625]),
@@ -71,6 +84,7 @@ function depsWithFakes(manager: OfflineModelManager): ProductionRuntimeDeps {
     vision: {
       modelId: VISION_PIN.modelId,
       runtimeId: "test-vision",
+      taskRoles: ["analyze-image", "ground-objects"],
       isAvailable: async () => true,
       describe: async (prompt: string) => `saw: ${prompt}`,
     },
@@ -143,8 +157,10 @@ describe("registerProductionRuntimes", () => {
       text: {
         modelId: TEXT_PIN.modelId,
         runtimeId: "test-text",
+        taskRoles: TEXT_ROLES,
         isReady: async () => live,
-        completeJson: async () => "{}",
+        completeText: async () => "{}",
+        completeStructured: async () => "{}",
       },
     });
     const runtime = registry.get(LOCAL_TEXT_RUNTIME_ID);
@@ -163,7 +179,7 @@ describe("registerProductionRuntimes", () => {
     }
   });
 
-  it("rejects non-JSON model output as INVALID_OUTPUT instead of guessing", async () => {
+  it("rejects non-JSON model output as task-invalid instead of guessing", async () => {
     const manager = new OfflineModelManager([TEXT_PIN]);
     install(manager, TEXT_PIN);
     const registry = new RuntimeRegistry();
@@ -172,8 +188,10 @@ describe("registerProductionRuntimes", () => {
       text: {
         modelId: TEXT_PIN.modelId,
         runtimeId: "test-text",
+        taskRoles: TEXT_ROLES,
         isReady: async () => true,
-        completeJson: async () => "not json at all",
+        completeText: async () => "not json at all",
+        completeStructured: async () => "not json at all",
       },
     });
     const outcome = await registry.get(LOCAL_TEXT_RUNTIME_ID)?.invoke({
@@ -185,7 +203,9 @@ describe("registerProductionRuntimes", () => {
     });
     expect(outcome?.ok).toBe(false);
     if (outcome !== undefined && !outcome.ok) {
-      expect(outcome.denialReason).toBe("INVALID_OUTPUT");
+      // Contract failure (not a transport error): Automatic-eligible, never
+      // a guessed value.
+      expect(outcome.denialReason).toBe("LOCAL_TASK_INVALID");
     }
   });
 
@@ -198,6 +218,7 @@ describe("registerProductionRuntimes", () => {
       embedding: {
         modelId: EMBEDDING_PIN.modelId,
         runtimeId: "test-embedding",
+        taskRoles: ["embed-texts"],
         dimension: 4,
         isReady: async () => true,
         embed: async () => [[0.1, 0.2]],
@@ -225,8 +246,10 @@ describe("registerProductionRuntimes", () => {
       text: {
         modelId: TEXT_PIN.modelId,
         runtimeId: "test-text",
+        taskRoles: TEXT_ROLES,
         isReady: async () => true,
-        completeJson: async () => JSON.stringify({ fields: { title: "wallet" } }),
+        completeText: async () => "{}",
+        completeStructured: async () => JSON.stringify({ fields: { title: "wallet" } }),
       },
     });
     const orchestrator = new AiOrchestrator();

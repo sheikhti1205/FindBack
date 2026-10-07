@@ -1,7 +1,6 @@
 /**
- * Phase A (Step 8): residency coordinator tests. One authority owns the
- * heavy resident, exclusive operations, and inference flights — no ad hoc
- * booleans, no two residents by accident.
+ * Residency coordinator tests: one lease owns exclusion, cancellation, and
+ * native settlement for every production flight.
  */
 import { describe, expect, it } from "vitest";
 import { ResidencyBusyError, ResidencyCoordinator } from "./residencyCoordinator";
@@ -12,25 +11,24 @@ describe("ResidencyCoordinator", () => {
     expect(coordinator.snapshot()).toEqual({ owner: "none", exclusive: undefined, claimed: false, inflight: 0 });
   });
 
-  it("serializes inference: a second claim throws while one is held", () => {
+  it("serializes inference: a second flight throws while one is held", () => {
     const coordinator = new ResidencyCoordinator();
-    coordinator.claimInference("route-a");
-    expect(() => coordinator.claimInference("route-b")).toThrow(ResidencyBusyError);
-    coordinator.releaseInference("route-a");
-    expect(() => coordinator.claimInference("route-b")).not.toThrow();
-    coordinator.releaseInference("route-b");
+    const first = coordinator.beginInference("route-a");
+    expect(() => coordinator.beginInference("route-b")).toThrow(ResidencyBusyError);
+    first.requestSettled();
+    expect(() => coordinator.beginInference("route-b")).not.toThrow();
   });
 
-  it("exclusive operations block inference claims and vice versa", () => {
+  it("exclusive operations block inference flights and vice versa", () => {
     const coordinator = new ResidencyCoordinator();
     coordinator.beginExclusive("remove:x");
-    expect(() => coordinator.claimInference("route")).toThrow(ResidencyBusyError);
+    expect(() => coordinator.beginInference("route")).toThrow(ResidencyBusyError);
     expect(() => coordinator.beginGeneration()).toThrow(ResidencyBusyError);
     coordinator.endExclusive("remove:x");
     expect(coordinator.inferenceBlocked).toBe(false);
-    coordinator.claimInference("route");
+    const lease = coordinator.beginInference("route");
     expect(() => coordinator.beginExclusive("remove:x")).toThrow(ResidencyBusyError);
-    coordinator.releaseInference("route");
+    lease.requestSettled();
   });
 
   it("switchTo evicts before loading and records the new owner", async () => {
@@ -64,14 +62,15 @@ describe("ResidencyCoordinator", () => {
     coordinator.endExclusive("measure:cpu");
   });
 
-  it("switchTo aborts in-flight generations so stale work cannot survive", async () => {
+  it("switchTo never aborts auxiliary generations: it runs inside the active flight", async () => {
     const coordinator = new ResidencyCoordinator();
     const generation = coordinator.beginGeneration();
     let aborted = false;
     generation.signal.addEventListener("abort", () => { aborted = true; });
+    // Aborting here would cancel the very route performing the residency
+    // switch; stale-flight cancellation belongs to reset/abortInference.
     await coordinator.switchTo("needle", { evict: async () => {}, load: async () => {} });
-    expect(aborted).toBe(true);
-    expect(generation.signal.aborted).toBe(true);
+    expect(aborted).toBe(false);
     generation.done();
   });
 
@@ -81,16 +80,63 @@ describe("ResidencyCoordinator", () => {
     expect(coordinator.current).toBe("none");
   });
 
-  it("reset aborts flights and drops every claim (logout cleanup)", () => {
+  it("reset aborts the active flight but keeps its lease until the route settles", () => {
     const coordinator = new ResidencyCoordinator();
-    coordinator.claimInference("route");
-    const generation = coordinator.beginGeneration();
+    const lease = coordinator.beginInference("route");
     let aborted = false;
-    generation.signal.addEventListener("abort", () => { aborted = true; });
+    lease.signal.addEventListener("abort", () => { aborted = true; });
     coordinator.reset();
     expect(aborted).toBe(true);
-    expect(coordinator.snapshot()).toEqual({ owner: "none", exclusive: undefined, claimed: false, inflight: 0 });
-    expect(() => coordinator.claimInference("route")).not.toThrow();
-    coordinator.releaseInference("route");
+    // The aborted (not yet settled) flight still owns the gate: no new
+    // flight may start until the orphaned route's finally releases it, so
+    // stale results can never reach the next account.
+    expect(coordinator.inferenceBlocked).toBe(true);
+    expect(() => coordinator.beginInference("route-b")).toThrow(ResidencyBusyError);
+    lease.requestSettled();
+    expect(coordinator.inferenceBlocked).toBe(false);
+  });
+
+  it("stays busy until tracked native work settles, even after the request returns", async () => {
+    const coordinator = new ResidencyCoordinator();
+    const lease = coordinator.beginInference("route");
+    let releaseNative!: () => void;
+    const native = new Promise<void>((resolve) => { releaseNative = resolve; });
+    lease.trackNative(native);
+    lease.requestSettled();
+    // Visible request returned, native still running: gate stays busy.
+    expect(coordinator.inferenceBlocked).toBe(true);
+    expect(() => coordinator.beginInference("route-b")).toThrow(ResidencyBusyError);
+    expect(() => coordinator.beginExclusive("remove:x")).toThrow(ResidencyBusyError);
+    releaseNative();
+    await native;
+    await Promise.resolve();
+    expect(coordinator.inferenceBlocked).toBe(false);
+    const next = coordinator.beginInference("route-b");
+    next.requestSettled();
+  });
+
+  it("a stale lease can never release a newer flight", () => {
+    const coordinator = new ResidencyCoordinator();
+    const first = coordinator.beginInference("route-a");
+    // Simulate logout timing: first is aborted and superseded without its
+    // finally having run, then a new flight begins after settlement.
+    first.requestSettled();
+    const second = coordinator.beginInference("route-b");
+    first.requestSettled();
+    expect(coordinator.inferenceBlocked).toBe(true);
+    second.requestSettled();
+    expect(coordinator.inferenceBlocked).toBe(false);
+  });
+
+  it("late native tracking after settlement is ignored", async () => {
+    const coordinator = new ResidencyCoordinator();
+    const lease = coordinator.beginInference("route");
+    lease.requestSettled();
+    let releaseNative!: () => void;
+    const native = new Promise<void>((resolve) => { releaseNative = resolve; });
+    lease.trackNative(native);
+    releaseNative();
+    await native;
+    expect(coordinator.inferenceBlocked).toBe(false);
   });
 });

@@ -24,6 +24,13 @@ export interface RuntimeInvokeInput {
    * work once it fires. Never run unobserved after abort.
    */
   readonly signal: AbortSignal;
+  /**
+   * Audit closure: busy-until-settle. Adapters hand the RAW native promise
+   * here before racing it, so the inference lease stays busy until the
+   * underlying native work actually settles — even when the visible request
+   * already returned TIMEOUT/CANCELLED. Optional so test doubles stay tiny.
+   */
+  readonly trackSettlement?: (work: Promise<unknown>) => void;
 }
 
 export type RuntimeResult =
@@ -48,6 +55,13 @@ export interface AiRuntime {
   readonly id: string;
   readonly kind: RuntimeKind;
   available(): boolean;
+  /**
+   * Audit closure: descriptor task roles drive selection. A runtime serves
+   * a task only when its model's descriptor permits the role; runtimes
+   * without role metadata (legacy/test doubles) serve every task their
+   * spec lists. Production adapters always carry roles.
+   */
+  servesTask?(taskId: string): boolean;
   invoke(input: RuntimeInvokeInput): Promise<RuntimeResult>;
 }
 
@@ -66,11 +80,18 @@ export class RuntimeRegistry {
     return [...this.runtimes.values()];
   }
 
-  /** First runtime in `ids` order whose `available()` is true. */
-  firstAvailable(ids: readonly string[]): AiRuntime | undefined {
+  /**
+   * First runtime in `ids` order that is available AND permitted to serve
+   * `taskId`. Role metadata decides eligibility; availability decides
+   * readiness. Both must hold — installed but role-incompatible runtimes
+   * never serve the task.
+   */
+  firstAvailable(ids: readonly string[], taskId?: string): AiRuntime | undefined {
     for (const id of ids) {
       const runtime = this.runtimes.get(id);
-      if (runtime !== undefined && runtime.available()) return runtime;
+      if (runtime === undefined || !runtime.available()) continue;
+      if (taskId !== undefined && runtime.servesTask !== undefined && !runtime.servesTask(taskId)) continue;
+      return runtime;
     }
     return undefined;
   }

@@ -72,7 +72,13 @@ describe("AiOrchestrator.route", () => {
   });
 
   it("denies a destructive model proposal and records the denial", async () => {
-    const evil = modelRuntime("local-text", { op: "publish_report", args: { reportId: "r-1" } });
+    // Contract-valid help answer carrying a destructive proposal: the task
+    // contract passes, then the action gate denies the proposed op.
+    const evil = modelRuntime("local-text", {
+      answerText: "model answer",
+      op: "publish_report",
+      args: { reportId: "r-1" },
+    });
     const registry = new RuntimeRegistry();
     registry.register(evil.runtime);
     const orchestrator = new AiOrchestrator();

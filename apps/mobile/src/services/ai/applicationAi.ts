@@ -77,14 +77,30 @@ export class ApplicationAiService {
       this.smol = options.smol ?? new CapacitorSmolVlmBridge();
     }
     const dimension = () => this.embedder?.dimension ?? 0;
+    // Seam roles come from the same descriptor registry that owns pins and
+    // ABIs: a model serves a task only when its descriptor permits the role.
+    const needleRoles = this.registry.descriptorFor(NEEDLE_MODEL_ID)?.taskRoles ?? [];
     this.boot = bootProductionAi({
       pins: this.registry.descriptors.map((model) => ({ modelId: model.modelId, sha256: model.sha256, downloadBytes: model.bytes, minFreeRamMb: model.minRamMb })),
       managerOptions: this.driver ? { storageProbe: this.driver, storageHeadroomBytes: 64 * 1024 * 1024 } : undefined,
       ...(this.needle ? {
-        text: { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, isReady: () => this.ensureNeedle(), completeJson: (input: string) => this.extractFields(input) },
-        embedding: { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) },
+        text: {
+          modelId: NEEDLE_MODEL_ID,
+          runtimeId: NEEDLE_RUNTIME_ID,
+          taskRoles: needleRoles,
+          isReady: () => this.ensureNeedle(),
+          // Raw free completion (prose tasks). No tools: prose must be
+          // capable of validated free text, never tool-forced JSON.
+          completeText: (input: string) => this.needle!.completeJson(input),
+          // Tool-constrained completion returning the slot envelope string
+          // (tasks with JSON contracts). The record_item schema is
+          // Needle's current structured capability, named here — not in
+          // the generic runtime layer.
+          completeStructured: (input: string) => this.extractFields(input),
+        },
+        embedding: { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, taskRoles: needleRoles, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) },
       } : {}),
-      ...(this.smol && vision ? { vision: { modelId: vision.modelId, runtimeId: vision.runtimeId, isAvailable: () => this.ensureVision(), describe: async (prompt: string, imageBase64: string, signal: AbortSignal) => {
+      ...(this.smol && vision ? { vision: { modelId: vision.modelId, runtimeId: vision.runtimeId, taskRoles: vision.taskRoles, isAvailable: () => this.ensureVision(), describe: async (prompt: string, imageBase64: string, signal: AbortSignal) => {
         let text = "";
         for await (const chunk of this.smol!.describeImage({ generationId: crypto.randomUUID(), prompt, imageBase64, maxOutputTokens: 256 }, signal)) text += chunk.textDelta;
         return text;
@@ -253,15 +269,31 @@ export class ApplicationAiService {
   }
   async route(taskId: AiTaskId, input: unknown, context: RouteContext) {
     await this.ready;
-    if (this.coordinator.inferenceBlocked || this.operating.size > 0) throw new Error("On-device runtime is busy");
+    if (this.operating.size > 0) throw new Error("On-device runtime is busy");
+    // One production lease owns this flight: exclusion, the ACTUAL route
+    // signal, and native settlement. Logout/account-switch aborts this
+    // exact signal via coordinator.reset(); the lease stays busy until
+    // tracked native work settles, so no new flight can start in the
+    // unsafe interval.
+    let lease: import("./residencyCoordinator").InferenceLease;
     try {
-      this.coordinator.claimInference("route");
+      lease = this.coordinator.beginInference("route");
     } catch (error) {
       if (error instanceof ResidencyBusyError) throw new Error("On-device runtime is busy");
       throw error;
     }
-    try { return await this.boot.orchestrator.route(taskId, input, context); }
-    finally { this.coordinator.releaseInference("route"); }
+    if (context.signal !== undefined) {
+      if (context.signal.aborted) lease.abort();
+      else context.signal.addEventListener("abort", () => lease.abort(), { once: true });
+    }
+    try {
+      return await this.boot.orchestrator.route(taskId, input, {
+        ...context,
+        signal: lease.signal,
+        trackSettlement: (work) => lease.trackNative(work),
+      });
+    }
+    finally { lease.requestSettled(); }
   }
   async embedNeedle(texts: string[]) {
     this.requireAndroid(); await this.ready; this.requireInstalled(NEEDLE_MODEL_ID);
@@ -312,15 +344,22 @@ export class ApplicationAiService {
   }
   private async *completeOffline(adapter: import("./providerContract").ProviderAdapter, request: import("./providerContract").NormalizedRequest) {
     await this.ready;
-    if (this.coordinator.inferenceBlocked || this.operating.size > 0) throw new Error("On-device runtime is busy");
+    if (this.operating.size > 0) throw new Error("On-device runtime is busy");
+    // Holds the single inference lease for the request lifetime
+    // (exclusion + logout abort). The offline provider signature carries
+    // no settlement tracker, so native-orphan settlement after
+    // TIMEOUT/CANCELLED is NOT tracked on this path — unlike route(),
+    // whose adapters report every raw native promise. Vision sub-paths
+    // still cancel end to end through their own signal chain.
+    let lease: import("./residencyCoordinator").InferenceLease;
     try {
-      this.coordinator.claimInference("complete");
+      lease = this.coordinator.beginInference("complete");
     } catch (error) {
       if (error instanceof ResidencyBusyError) throw new Error("On-device runtime is busy");
       throw error;
     }
     try { yield* adapter.complete(request); }
-    finally { this.coordinator.releaseInference("complete"); }
+    finally { lease.requestSettled(); }
   }
   async measure(backend: "cpu" | "gpu") {
     const vision = this.registry.visionDescriptor();

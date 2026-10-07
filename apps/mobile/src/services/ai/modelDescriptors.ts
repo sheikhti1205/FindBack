@@ -77,14 +77,21 @@ export const SMOL_VISION_MODEL_ID = "smolvlm2-500M-vision";
 const SMOL_PIN = profilePin(SMOL_VISION_MODEL_ID);
 
 const SMOL_TASK_ROLES: readonly AiTaskId[] = ["analyze-image", "ground-objects"];
+/**
+ * Audit closure: Needle's advertised roles are exactly what its native
+ * path genuinely satisfies today — the record_item tool-constrained
+ * structured path (slot extraction with strict validators) and the
+ * embedding path (validated vectors). Prose tasks (answer-help,
+ * summarize-local-context) and intent tasks (classify-intent,
+ * route-intent) have explicit interpreters and fail closed on the model
+ * path, but the tool schema is report-shaped and free prose is unproven
+ * on device — so they are NOT advertised until device evidence proves
+ * them. Roles expand with evidence, never with hope.
+ */
 const NEEDLE_TEXT_ROLES: readonly AiTaskId[] = [
-  "classify-intent",
-  "route-intent",
   "extract-report-fields",
   "extract-search-filters",
   "classify-category",
-  "answer-help",
-  "summarize-local-context",
   "embed-texts",
 ];
 

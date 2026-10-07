@@ -21,8 +21,10 @@ describe("bootProductionAi", () => {
       text: {
         modelId: TEXT_PIN.modelId,
         runtimeId: "test-text",
+        taskRoles: ["extract-report-fields"],
         isReady: async () => true,
-        completeJson: async () => JSON.stringify({ fields: { title: "wallet" } }),
+        completeText: async () => "{}",
+        completeStructured: async () => JSON.stringify({ fields: { title: "wallet" } }),
       },
     });
     expect(boot.runtimes).toEqual(["local-text"]);

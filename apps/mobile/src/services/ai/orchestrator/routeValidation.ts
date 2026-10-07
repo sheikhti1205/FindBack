@@ -1,52 +1,37 @@
 /**
- * Phase A (Step 5): task output contracts own route SUCCESS.
+ * Task output contracts own route SUCCESS (orchestrator layer).
  *
- * The generic runtime layer produces raw records; a route is SUCCESS only
- * after the task's output contract validates. Envelope handling lives in
- * `validateSlotEnvelope` (normalize.ts) — the single canonical boundary.
- * A contract failure here is LOCAL_TASK_INVALID, which Automatic mode may
- * cloud-fallback; it must never surface as a successful value that a
- * downstream parser silently drops.
+ * This module is the orchestrator-side enforcement point: after a model
+ * adapter returns, the value is re-checked against the task's interpreter
+ * contract. Interpretation itself lives in `taskInterpreters.ts` (the
+ * single authority); this file keeps the `LOCAL_TASK_INVALID` denial
+ * reason and the `validateRouteValue` entry so existing import sites and
+ * the release gate keep working.
  *
- * Tasks without a strict JSON contract here (prose answers, vision text,
- * embeddings) stay permissive at this layer and validate downstream, as
- * today. Adding a strict contract for a new task means adding it to the map
- * below — never a consumer-side shape workaround.
+ * Total: every task id either has an interpreter or fails here. Unknown
+ * task ids and uninterpretable values are LOCAL_TASK_INVALID — eligible
+ * for allowed cloud fallback in Automatic mode, surfaced in
+ * on-device-only, never a silent downstream drop.
  */
-import { validateReportSlots, validateSearchFilters, validateSlotEnvelope } from "../normalize";
-import { validateCategoryPayload } from "../ops/classifyCategory";
-import type { AiResult } from "../types";
+import { interpreterFor } from "./taskInterpreters";
 
 export const LOCAL_TASK_INVALID = "LOCAL_TASK_INVALID" as const;
 
 export type RouteValidation = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
-type SlotValidator = (value: unknown) => AiResult<unknown>;
-
-const SLOT_VALIDATORS: Readonly<Record<string, SlotValidator>> = {
-  "extract-search-filters": (value) => validateSlotEnvelope(value, (candidate) => validateSearchFilters(candidate)),
-  "extract-report-fields": (value) => validateSlotEnvelope(value, (candidate) => validateReportSlots(candidate)),
-  "classify-category": (value) => validateSlotEnvelope(value, (candidate) => validateCategoryPayload(candidate)),
-};
-
-function describeError(error: AiResult<unknown>): string {
-  if (error.ok) return "valid";
-  const detail = error.error;
-  return `${detail.errorClass}:${detail.diagnostic}${detail.reason ? `:${detail.reason}` : ""}`;
-}
-
 /**
- * Validate one runtime-produced value against the task contract.
+ * Re-validate one runtime-produced value against the task contract.
+ * `input` is the original route input (some contracts need caller
+ * context, e.g. route-intent business rules); without a matching
+ * interpreter the value fails closed.
  */
-export function validateRouteValue(taskId: string, value: unknown): RouteValidation {
-  const validate = SLOT_VALIDATORS[taskId];
-  if (validate === undefined) return { ok: true };
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { ok: false, error: `Task "${taskId}" needs a JSON object; got ${Array.isArray(value) ? "array" : typeof value}.` };
+export function validateRouteValue(taskId: string, value: unknown, input?: unknown): RouteValidation {
+  const interpreter = interpreterFor(taskId);
+  if (interpreter === undefined) {
+    return { ok: false, error: `Task "${taskId}" has no output contract.` };
   }
-  const parsed = validate(value);
-  if (!parsed.ok) {
-    return { ok: false, error: `Task "${taskId}" output failed its contract: ${describeError(parsed)}`.slice(0, 400) };
+  if (!interpreter.revalidate(value, { taskId, input })) {
+    return { ok: false, error: `Task "${taskId}" output failed its contract.` };
   }
   return { ok: true };
 }

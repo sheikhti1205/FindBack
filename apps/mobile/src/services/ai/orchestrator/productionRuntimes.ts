@@ -22,6 +22,8 @@ import { profileFor } from "../modelProfiles";
 import { validateNeedleVectors } from "../needle/embedder";
 import { describeOfflineReadiness } from "../providers/offline";
 import type { OfflineModelManager } from "../offlineModelManager";
+import { LOCAL_TASK_INVALID } from "./routeValidation";
+import { interpreterFor } from "./taskInterpreters";
 import { listTaskSpecs } from "./taskRegistry";
 import type { AiRuntime, RuntimeRegistry, RuntimeResult } from "./runtimeRegistry";
 
@@ -39,10 +41,17 @@ export const PRODUCTION_RUNTIME_IDS = [
 export type ProductionRuntimeId = (typeof PRODUCTION_RUNTIME_IDS)[number];
 
 /**
- * Text backend seam: implemented in production by the Needle JSON path
- * (`completeNeedleJson` over the resident needle3 engine); faked in tests.
- * `completeJson` resolves the model-output string, never parsed values —
- * parsing (and its failure) belongs to the adapter, in the open.
+ * Text backend seam: the production text model behind one task's generation.
+ * The seam returns RAW model strings only — never parsed values. Parsing
+ * and validation belong to the task interpreter, in the open, so a future
+ * prose model (Qwen/llama) plugs the same seam without a Needle-shaped
+ * contract rejecting its output first.
+ *
+ * Two generation modes: `completeText` is free model completion (prose
+ * tasks); `completeStructured` is tool-constrained completion returning the
+ * canonical slot envelope string (tasks with JSON contracts). Production
+ * implements both on the resident engine; fakes implement the modes the
+ * test exercises.
  */
 export interface ProductionTextBackend {
   readonly modelId: string;
@@ -52,8 +61,15 @@ export interface ProductionTextBackend {
    * producer. (Canonical ids move to the Step 2 descriptor registry.)
    */
   readonly runtimeId: string;
+  /**
+   * Audit closure: descriptor task roles for this model. The adapter serves
+   * a task only when its roles permit it — roles drive selection, they are
+   * not documentation.
+   */
+  readonly taskRoles: readonly string[];
   isReady(): Promise<boolean>;
-  completeJson(input: string): Promise<string>;
+  completeText(input: string): Promise<string>;
+  completeStructured(input: string): Promise<string>;
 }
 
 /** Embedding backend seam: native Needle embedder in production. */
@@ -61,6 +77,8 @@ export interface ProductionEmbeddingBackend {
   readonly modelId: string;
   /** Physical runtime id (e.g. "needle-cact"); see ProductionTextBackend. */
   readonly runtimeId: string;
+  /** Descriptor task roles; the adapter serves only permitted tasks. */
+  readonly taskRoles: readonly string[];
   /** Live width from the engine probe; vectors are validated against it. */
   readonly dimension: number;
   isReady(): Promise<boolean>;
@@ -72,6 +90,8 @@ export interface ProductionVisionBackend {
   readonly modelId: string;
   /** Physical runtime id (e.g. "smolvlm2-litertlm"); see ProductionTextBackend. */
   readonly runtimeId: string;
+  /** Descriptor task roles; the adapter serves only permitted tasks. */
+  readonly taskRoles: readonly string[];
   isAvailable(): Promise<boolean>;
   describe(prompt: string, imageBase64: string, signal: AbortSignal): Promise<string>;
 }
@@ -154,33 +174,48 @@ function invalidOutput(detail: string): RuntimeResult {
   return { ok: false, error: detail.slice(0, 400), denialReason: "INVALID_OUTPUT" };
 }
 
+function servesRoles(taskRoles: readonly string[]): (taskId: string) => boolean {
+  return (taskId: string) => taskRoles.includes(taskId);
+}
+
 function textRuntime(manager: OfflineModelManager, backend: ProductionTextBackend): AiRuntime {
   const modelRevision = revisionFor(backend.modelId);
   return {
     id: LOCAL_TEXT_RUNTIME_ID,
     kind: "model",
     available: () => managerReady(manager, backend.modelId),
+    servesTask: servesRoles(backend.taskRoles),
     invoke: async (input) => {
       if (!(await backend.isReady().catch(() => false))) return notReady(backend.modelId);
+      // The task interpreter owns generation mode AND interpretation: the
+      // adapter executes raw model output and never parses it. A task
+      // without an interpreter fails closed here, never as silent success.
+      const interpreter = interpreterFor(input.taskId);
+      if (interpreter === undefined || interpreter.generation === "typed") {
+        return { ok: false, error: `Task "${input.taskId}" has no text contract.`, denialReason: "NO_TASK_CONTRACT" };
+      }
       const prompt = toPromptText(input.input);
       if (prompt === undefined) {
         return { ok: false, error: "Text input needs a string or a text/prompt field.", denialReason: "INVALID_INPUT" };
       }
       let raw: string;
       try {
-        raw = await raceWithSignal(backend.completeJson(prompt), input.signal);
+        const native =
+          interpreter.generation === "structured" ? backend.completeStructured(prompt) : backend.completeText(prompt);
+        // Busy-until-settle: the lease observes the raw native promise so
+        // the runtime stays owned until native work settles, even when the
+        // visible request already timed out.
+        input.trackSettlement?.(native);
+        raw = await raceWithSignal(native, input.signal);
       } catch (error) {
         if (error instanceof RouteCancelledError) return { ok: false, error: "Text generation cancelled.", denialReason: "CANCELLED" };
         return runtimeError(error);
       }
-      let value: unknown;
-      try {
-        value = JSON.parse(raw) as unknown;
-      } catch {
-        return invalidOutput("Model output was not a JSON object.");
+      const interpreted = interpreter.interpret(raw, { taskId: input.taskId, input: input.input });
+      if (!interpreted.ok) {
+        return { ok: false, error: interpreted.error, denialReason: LOCAL_TASK_INVALID };
       }
-      if (!isRecord(value)) return invalidOutput("Model output was not a JSON object.");
-      return { ok: true, value, modelId: backend.modelId, backend: LOCAL_TEXT_RUNTIME_ID, runtimeId: backend.runtimeId, ...(modelRevision === undefined ? {} : { modelRevision }) };
+      return { ok: true, value: interpreted.value, modelId: backend.modelId, backend: LOCAL_TEXT_RUNTIME_ID, runtimeId: backend.runtimeId, ...(modelRevision === undefined ? {} : { modelRevision }) };
     },
   };
 }
@@ -194,8 +229,13 @@ function embeddingRuntime(
     id: LOCAL_EMBEDDING_RUNTIME_ID,
     kind: "embedding",
     available: () => managerReady(manager, backend.modelId),
+    servesTask: servesRoles(backend.taskRoles),
     invoke: async (input) => {
       if (!(await backend.isReady().catch(() => false))) return notReady(backend.modelId);
+      const interpreter = interpreterFor(input.taskId);
+      if (interpreter === undefined || interpreter.generation !== "typed") {
+        return { ok: false, error: `Task "${input.taskId}" has no embedding contract.`, denialReason: "NO_TASK_CONTRACT" };
+      }
       const raw = input.input;
       const texts =
         typeof raw === "string" ? [raw] : isRecord(raw) && Array.isArray(raw["texts"]) ? (raw["texts"] as unknown[]) : undefined;
@@ -204,7 +244,9 @@ function embeddingRuntime(
       }
       let vectors: number[][];
       try {
-        const produced = await raceWithSignal(backend.embed(texts as string[]), input.signal);
+        const native = backend.embed(texts as string[]);
+        input.trackSettlement?.(native);
+        const produced = await raceWithSignal(native, input.signal);
         vectors = validateNeedleVectors(texts as string[], produced, backend.dimension);
       } catch (error) {
         if (error instanceof RouteCancelledError) return { ok: false, error: "Embedding cancelled.", denialReason: "CANCELLED" };
@@ -213,9 +255,13 @@ function embeddingRuntime(
         }
         return runtimeError(error);
       }
+      const interpreted = interpreter.interpret({ vectors }, { taskId: input.taskId, input: input.input });
+      if (!interpreted.ok) {
+        return { ok: false, error: interpreted.error, denialReason: LOCAL_TASK_INVALID };
+      }
       return {
         ok: true,
-        value: { vectors },
+        value: interpreted.value,
         modelId: backend.modelId,
         backend: LOCAL_EMBEDDING_RUNTIME_ID,
         runtimeId: backend.runtimeId,
@@ -231,8 +277,13 @@ function visionRuntime(manager: OfflineModelManager, backend: ProductionVisionBa
     id: LOCAL_VISION_RUNTIME_ID,
     kind: "vision",
     available: () => managerReady(manager, backend.modelId),
+    servesTask: servesRoles(backend.taskRoles),
     invoke: async (input) => {
       if (!(await backend.isAvailable().catch(() => false))) return notReady(backend.modelId);
+      const interpreter = interpreterFor(input.taskId);
+      if (interpreter === undefined || interpreter.generation !== "typed") {
+        return { ok: false, error: `Task "${input.taskId}" has no vision contract.`, denialReason: "NO_TASK_CONTRACT" };
+      }
       const raw = input.input;
       const prompt = isRecord(raw) && typeof raw["prompt"] === "string" ? (raw["prompt"] as string) : undefined;
       const imageBase64 = isRecord(raw) && typeof raw["imageBase64"] === "string" ? (raw["imageBase64"] as string) : undefined;
@@ -247,10 +298,16 @@ function visionRuntime(manager: OfflineModelManager, backend: ProductionVisionBa
       // the same signal so native work cancels end to end. No adapter-local
       // timer: a second timeout here could mask the route's abort accounting.
       try {
-        const text = await backend.describe(prompt, imageBase64, input.signal);
+        const native = backend.describe(prompt, imageBase64, input.signal);
+        input.trackSettlement?.(native);
+        const text = await native;
+        const interpreted = interpreter.interpret({ text }, { taskId: input.taskId, input: input.input });
+        if (!interpreted.ok) {
+          return { ok: false, error: interpreted.error, denialReason: LOCAL_TASK_INVALID };
+        }
         return {
           ok: true,
-          value: { text },
+          value: interpreted.value,
           modelId: backend.modelId,
           backend: LOCAL_VISION_RUNTIME_ID,
           runtimeId: backend.runtimeId,
