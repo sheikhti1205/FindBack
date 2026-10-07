@@ -27,7 +27,11 @@
  *                        format / ABI, a pin/identity/capability field is
  *                        missing, a downloadable entry is not curated, model
  *                        removal lacks a fail-closed unknown-runtime default,
- *                        or heavy switches bypass the residency coordinator
+ *                        heavy switches bypass the residency coordinator,
+ *                        declared ABIs go unenforced, taskRoles never gate
+ *                        selection, the text runtime parses JSON, a routable
+ *                        task lacks an interpreter, or catalogue order picks
+ *                        the default model
  *   7. endpoint-pin   — the generic endpoint invents a default (unpinned)
  *                        endpoint instead of failing closed with
  *                        GENERIC_ENDPOINT_MISSING_COPY
@@ -306,13 +310,25 @@ export const REQUIRED_PHOTO_ANALYSIS_TRUTH_RES = [
  *   never ride the production catalogue), or
  * - model removal can fall through to the wrong engine (the unload path
  *   must fail closed on unknown runtimes), or
- * - the app service bypasses the residency coordinator for heavy switches.
+ * - the app service bypasses the residency coordinator for heavy switches,
+ *   or
+ * - declared descriptor ABIs are never enforced (download/run must consult
+ *   device ABIs through the compatibility boundary), or
+ * - model taskRoles never gate runtime selection (roles must decide
+ *   eligibility, not sit as documentation), or
+ * - the generic text runtime hardcodes structured JSON semantics
+ *   (JSON.parse at the runtime boundary is Needle-shaped; parsing belongs
+ *   to task interpreters), or
+ * - a routable task lacks an explicit interpreter, or unlisted tasks fall
+ *   through to success, or
+ * - the default model is chosen by catalogue order instead of explicit
+ *   policy.
  */
 const DESCRIPTOR_RUNTIME_ALLOWLIST = ["needle-cact", "smolvlm2-litertlm"];
 const DESCRIPTOR_FORMAT_ALLOWLIST = ["cact", "litertlm", "gguf", "tflite"];
 const DESCRIPTOR_ABI_ALLOWLIST = ["armeabi-v7a", "arm64-v8a", "x86_64"];
 
-export function validateDescriptorRegistry({ descriptorsSource, serviceSource, modelsSource }) {
+export function validateDescriptorRegistry({ descriptorsSource, serviceSource, modelsSource, runtimesSource, orchestratorSource, interpretersSource, routeValidationSource }) {
   const errors = [];
   for (const [label, source] of [["service", serviceSource], ["models", modelsSource]]) {
     if (/DOWNLOAD_MODELS\[[01]\]/.test(source ?? "")) {
@@ -362,7 +378,7 @@ export function validateDescriptorRegistry({ descriptorsSource, serviceSource, m
   if (blocks === 0) {
     errors.push("descriptor-registry: no production descriptors found (registry gutted?)");
   }
-  for (const field of ["revision:", "sha256:", 'url: "http', "fileName:", "bytes:", "capabilities: [", "taskRoles:", "minRamMb:", 'maturity: "', 'license: "']) {
+  for (const field of ["revision:", "sha256:", 'url: "http', "fileName:", "bytes:", "capabilities: [", "taskRoles:", "minRamMb:", 'maturity: "', 'license: "', "consumerTitle:", "consumerDetail:"]) {
     const count = descriptors.split(field).length - 1;
     if (count < blocks) {
       errors.push(`descriptor-registry: descriptor field "${field}" missing on at least one descriptor`);
@@ -398,6 +414,42 @@ export function validateDescriptorRegistry({ descriptorsSource, serviceSource, m
   if (!/coordinator\.switchTo\("needle"/.test(service) || !/coordinator\.switchTo\("smol-vision"/.test(service)) {
     errors.push("descriptor-registry: heavy switches bypass the residency coordinator (single-resident rule unenforced)");
   }
+  // Audit closure: ABI metadata without enforcement is decoration.
+  // download() must consult device ABIs through the compatibility
+  // boundary (definition + at least one enforcement call site), and the
+  // service must actually parse the native ABI facts.
+  const compatCalls = (service.match(/requireCompatible\(/g) ?? []).length;
+  if (compatCalls < 2 || !/supportedAbis/.test(service)) {
+    errors.push("descriptor-registry: download/run ignores declared descriptor ABIs (metadata without enforcement)");
+  }
+  // Audit closure: taskRoles must decide eligibility. Adapters advertise
+  // servesTask and the orchestrator filters candidates by the routed task.
+  const runtimes = runtimesSource ?? "";
+  if (!/servesTask/.test(runtimes) || !/firstAvailable\([\s\S]{0,200}?taskId/.test(orchestratorSource ?? "")) {
+    errors.push("descriptor-registry: model taskRoles never gate runtime selection (roles are documentation-only)");
+  }
+  // Audit closure: the generic text runtime must stay task-agnostic. Any
+  // JSON.parse at the runtime boundary is a Needle-shaped contract that a
+  // future prose model could never satisfy; parsing lives in interpreters.
+  if (/JSON\.parse/.test(runtimes)) {
+    errors.push("descriptor-registry: generic text runtime parses model output (Needle-shaped JSON boundary)");
+  }
+  // Audit closure: every routable task needs an explicit interpreter, and
+  // unlisted tasks must fail instead of succeeding implicitly.
+  const interpreters = interpretersSource ?? "";
+  for (const task of knownTasks) {
+    if (!interpreters.includes(`"${task}"`)) {
+      errors.push(`descriptor-registry: routable task "${task}" has no explicit interpreter (implicit success risk)`);
+    }
+  }
+  if (/===\s*undefined\)\s*return \{\s*ok:\s*true/.test(routeValidationSource ?? "")) {
+    errors.push("descriptor-registry: unlisted tasks fall through to success (permissive validation hole)");
+  }
+  // Audit closure: no catalogue order may choose the default model. The
+  // registry names its vision default explicitly.
+  if (/capabilities\.includes\("vision"\)/.test(descriptors) || !/defaultVisionModelId/.test(descriptors)) {
+    errors.push("descriptor-registry: default model chosen by catalogue order instead of explicit policy");
+  }
   return errors;
 }
 
@@ -405,14 +457,22 @@ function checkDescriptorRegistry() {
   let descriptors;
   let service;
   let models;
+  let runtimes;
+  let orchestrator;
+  let interpreters;
+  let routeValidation;
   try {
     descriptors = read("apps/mobile/src/services/ai/modelDescriptors.ts");
     service = read("apps/mobile/src/services/ai/applicationAi.ts");
     models = read("apps/mobile/src/screens/AiModelsRoute.tsx");
+    runtimes = read("apps/mobile/src/services/ai/orchestrator/productionRuntimes.ts");
+    orchestrator = read("apps/mobile/src/services/ai/orchestrator/AiOrchestrator.ts");
+    interpreters = read("apps/mobile/src/services/ai/orchestrator/taskInterpreters.ts");
+    routeValidation = read("apps/mobile/src/services/ai/orchestrator/routeValidation.ts");
   } catch (error) {
     return [`descriptor-registry: cannot read registry source (${error.message})`];
   }
-  return validateDescriptorRegistry({ descriptorsSource: descriptors, serviceSource: service, modelsSource: models });
+  return validateDescriptorRegistry({ descriptorsSource: descriptors, serviceSource: service, modelsSource: models, runtimesSource: runtimes, orchestratorSource: orchestrator, interpretersSource: interpreters, routeValidationSource: routeValidation });
 }
 
 export function validatePhotoAnalysisTruth({ clientCapabilitiesSource, serverCapabilitiesSource }) {
@@ -918,7 +978,7 @@ checks (any failure exits 1):
    vision-truth      production vision seam + registration present, copy honest
    photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim (capabilities + About/Help)
   runtime-wiring    every spec runtime has a production adapter, no lab routes
-  descriptor-registry  named descriptors, approved runtimes/formats/ABIs, curated catalogue, fail-closed removal, coordinated residency
+  descriptor-registry  named descriptors, approved runtimes/formats/ABIs, curated catalogue, fail-closed removal, coordinated residency, enforced ABIs, role-gated selection, raw text boundary, exhaustive interpreters, explicit default
   application-integration  real boot, provider, controls, matching, timing and reviewed grounding path
   endpoint-pin      generic endpoint pinned (no invented default)
   needle-telemetry  Needle telemetry default-OFF behind the diag gate

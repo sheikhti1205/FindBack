@@ -39,6 +39,8 @@ const REAL = {
   appSource: read("apps/mobile/src/App.tsx"),
   descriptorsSource: read("apps/mobile/src/services/ai/modelDescriptors.ts"),
   serviceSource: read("apps/mobile/src/services/ai/applicationAi.ts"),
+  interpretersSource: read("apps/mobile/src/services/ai/orchestrator/taskInterpreters.ts"),
+  routeValidationSource: read("apps/mobile/src/services/ai/orchestrator/routeValidation.ts"),
   providersSource: read("apps/mobile/src/services/ai/providerRegistry.ts"),
   modelsSource: read("apps/mobile/src/screens/AiModelsRoute.tsx"),
   advancedSource: read("apps/mobile/src/screens/AiAdvanced.tsx"),
@@ -361,6 +363,10 @@ describe("validateDescriptorRegistry", () => {
     descriptorsSource: REAL.descriptorsSource,
     serviceSource: REAL.serviceSource,
     modelsSource: REAL.modelsSource,
+    runtimesSource: REAL.runtimesSource,
+    orchestratorSource: REAL.orchestratorSource,
+    interpretersSource: REAL.interpretersSource,
+    routeValidationSource: REAL.routeValidationSource,
   });
 
   it("passes on the real tree", () => {
@@ -408,5 +414,53 @@ describe("validateDescriptorRegistry", () => {
       serviceSource: REAL.serviceSource.replaceAll('coordinator.switchTo("needle"', 'directLoad("needle"'),
     });
     ok(errors.some((e) => e.includes("residency coordinator")), `expected coordinator complaint, got: ${errors}`);
+  });
+
+  it("fails when download ignores declared descriptor ABIs", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      serviceSource: REAL.serviceSource.replace("await this.requireCompatible(model);", "void model;"),
+    });
+    ok(errors.some((e) => e.includes("ignores declared descriptor ABIs")), `expected ABI complaint, got: ${errors}`);
+  });
+
+  it("fails when taskRoles never gate runtime selection", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      runtimesSource: REAL.runtimesSource.replaceAll("servesTask", "servesNothing"),
+    });
+    ok(errors.some((e) => e.includes("never gate runtime selection")), `expected roles complaint, got: ${errors}`);
+  });
+
+  it("fails when the generic text runtime parses model output", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      runtimesSource: `${REAL.runtimesSource}\nconst legacy = JSON.parse(raw);`,
+    });
+    ok(errors.some((e) => e.includes("parses model output")), `expected parse complaint, got: ${errors}`);
+  });
+
+  it("fails when a routable task lacks an explicit interpreter", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      interpretersSource: REAL.interpretersSource.replace('taskId: "ground-objects",', 'taskId: "ground-objects-x",'),
+    });
+    ok(errors.some((e) => e.includes('routable task "ground-objects"')), `expected interpreter complaint, got: ${errors}`);
+  });
+
+  it("fails when unlisted tasks fall through to success", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      routeValidationSource: `${REAL.routeValidationSource}\nif (validate === undefined) return { ok: true };`,
+    });
+    ok(errors.some((e) => e.includes("fall through to success")), `expected fallthrough complaint, got: ${errors}`);
+  });
+
+  it("fails when catalogue order picks the default model", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      descriptorsSource: `${REAL.descriptorsSource}\nconst legacy = frozen.find((item) => item.capabilities.includes("vision"));`,
+    });
+    ok(errors.some((e) => e.includes("catalogue order")), `expected order complaint, got: ${errors}`);
   });
 });
