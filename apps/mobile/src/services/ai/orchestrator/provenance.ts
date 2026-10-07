@@ -41,6 +41,13 @@ export interface InferenceProvenance {
   readonly modelId: string;
   readonly requestedBackend: string;
   readonly actualBackend: string;
+  /**
+   * Phase A (Step 6): the physical runtime that produced the value
+   * (e.g. "needle-cact", "smolvlm2-litertlm", "deterministic-local").
+   * Required so consumers can prove which engine ran, instead of assuming
+   * a profile from the task id.
+   */
+  readonly runtimeId: string;
   /** Pinned catalogue revision of the serving model (production routes only). */
   readonly modelRevision?: string;
   readonly denialReason?: string;
@@ -59,6 +66,7 @@ export function isInferenceProvenance(value: unknown): value is InferenceProvena
   if (typeof candidate["modelId"] !== "string") return false;
   if (!isNonEmptyString(candidate["requestedBackend"])) return false;
   if (!isNonEmptyString(candidate["actualBackend"])) return false;
+  if (!isNonEmptyString(candidate["runtimeId"])) return false;
   if (typeof candidate["latencyMs"] !== "number") return false;
   if (!Number.isFinite(candidate["latencyMs"]) || candidate["latencyMs"] < 0) return false;
   if (typeof candidate["traceId"] !== "string" || candidate["traceId"] === "") return false;

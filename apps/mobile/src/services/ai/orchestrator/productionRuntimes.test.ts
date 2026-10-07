@@ -57,17 +57,20 @@ function depsWithFakes(manager: OfflineModelManager): ProductionRuntimeDeps {
     manager,
     text: {
       modelId: TEXT_PIN.modelId,
+      runtimeId: "test-text",
       isReady: async () => true,
       completeJson: async (input: string) => JSON.stringify({ echo: input.slice(0, 8) }),
     },
     embedding: {
       modelId: EMBEDDING_PIN.modelId,
+      runtimeId: "test-embedding",
       dimension: 4,
       isReady: async () => true,
       embed: async (texts: string[]) => texts.map(() => [0.5, -0.25, 0.125, -0.0625]),
     },
     vision: {
       modelId: VISION_PIN.modelId,
+      runtimeId: "test-vision",
       isAvailable: async () => true,
       describe: async (prompt: string) => `saw: ${prompt}`,
     },
@@ -139,6 +142,7 @@ describe("registerProductionRuntimes", () => {
       manager,
       text: {
         modelId: TEXT_PIN.modelId,
+        runtimeId: "test-text",
         isReady: async () => live,
         completeJson: async () => "{}",
       },
@@ -151,6 +155,7 @@ describe("registerProductionRuntimes", () => {
       input: "a wallet found downtown",
       timeoutMs: 1000,
       traceId: "trace-dead-resident",
+      signal: new AbortController().signal,
     });
     expect(outcome?.ok).toBe(false);
     if (outcome !== undefined && !outcome.ok) {
@@ -166,6 +171,7 @@ describe("registerProductionRuntimes", () => {
       manager,
       text: {
         modelId: TEXT_PIN.modelId,
+        runtimeId: "test-text",
         isReady: async () => true,
         completeJson: async () => "not json at all",
       },
@@ -175,6 +181,7 @@ describe("registerProductionRuntimes", () => {
       input: "a wallet found downtown",
       timeoutMs: 1000,
       traceId: "trace-bad-json",
+      signal: new AbortController().signal,
     });
     expect(outcome?.ok).toBe(false);
     if (outcome !== undefined && !outcome.ok) {
@@ -190,6 +197,7 @@ describe("registerProductionRuntimes", () => {
       manager,
       embedding: {
         modelId: EMBEDDING_PIN.modelId,
+        runtimeId: "test-embedding",
         dimension: 4,
         isReady: async () => true,
         embed: async () => [[0.1, 0.2]],
@@ -200,6 +208,7 @@ describe("registerProductionRuntimes", () => {
       input: { texts: ["red umbrella"] },
       timeoutMs: 1000,
       traceId: "trace-bad-vectors",
+      signal: new AbortController().signal,
     });
     expect(outcome?.ok).toBe(false);
     if (outcome !== undefined && !outcome.ok) {
@@ -208,8 +217,18 @@ describe("registerProductionRuntimes", () => {
   });
 
   it("routes a non-deterministic text task through local-text with real provenance", async () => {
+    const manager = new OfflineModelManager([TEXT_PIN]);
+    install(manager, TEXT_PIN);
     const registry = new RuntimeRegistry();
-    registerProductionRuntimes(registry, installedDeps());
+    registerProductionRuntimes(registry, {
+      manager,
+      text: {
+        modelId: TEXT_PIN.modelId,
+        runtimeId: "test-text",
+        isReady: async () => true,
+        completeJson: async () => JSON.stringify({ fields: { title: "wallet" } }),
+      },
+    });
     const orchestrator = new AiOrchestrator();
     // No "title:"/"category:" markers, so no deterministic rule resolves and
     // the model path runs.
@@ -220,6 +239,7 @@ describe("registerProductionRuntimes", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.provenance.actualBackend).toBe(LOCAL_TEXT_RUNTIME_ID);
+      expect(result.provenance.runtimeId).toBe("test-text");
       expect(result.provenance.requestedBackend).toBe("deterministic-local");
       expect(result.provenance.modelId).toBe(TEXT_PIN.modelId);
       expect(result.provenance.modelRevision).toBe(

@@ -21,9 +21,11 @@ import { createDefaultRegistry, type AiRuntime, type RuntimeRegistry } from "./r
 import { fallbackFor, getTaskSpec, isTaskId, tryDeterministic } from "./taskRegistry";
 import {
   registerProductionRuntimes,
+  RouteCancelledError,
   type ProductionRuntimeDeps,
   type ProductionRuntimeId,
 } from "./productionRuntimes";
+import { LOCAL_TASK_INVALID, validateRouteValue } from "./routeValidation";
 
 export type { GateDecision, GatePermissions };
 export type { InferenceProvenance, OrchestratorState };
@@ -46,6 +48,8 @@ export interface RouteContext {
   readonly permissions?: GatePermissions;
   readonly consent?: boolean;
   readonly timeoutMs?: number;
+  /** Phase A (Step 7): caller cancel. Aborting this aborts the route. */
+  readonly signal?: AbortSignal;
   readonly onState?: (state: OrchestratorState) => void;
 }
 
@@ -276,28 +280,46 @@ export class AiOrchestrator {
       });
     }
 
-    // Single-path invoke: exactly one runtime runs per route call.
+    // Single-path invoke: exactly one runtime runs per route call. Phase A
+    // (Step 7): the route owns one AbortController per invocation. Timeout
+    // aborts it, caller cancel aborts it, and every adapter receives the
+    // signal — no generation outlives the returned route.
+    const controller = new AbortController();
+    if (ctx.signal !== undefined) {
+      if (ctx.signal.aborted) controller.abort();
+      else ctx.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
     let outcome: Awaited<ReturnType<AiRuntime["invoke"]>>;
     try {
       outcome = await withTimeout(
-        runtime.invoke({ taskId, input, timeoutMs, traceId }),
+        runtime.invoke({ taskId, input, timeoutMs, traceId, signal: controller.signal }),
         timeoutMs,
       );
     } catch (error) {
+      controller.abort();
       const timedOut = error instanceof Error && error.message.startsWith("route-timeout-after-");
+      const cancelled = error instanceof RouteCancelledError || controller.signal.aborted;
       return this.fail({
         taskId,
         modelId,
         requestedBackend,
         actualBackend: runtime.id,
-        denialReason: timedOut ? "TIMEOUT" : "RUNTIME_ERROR",
-        error: timedOut ? "The runtime exceeded its bound." : "The runtime failed.",
+        runtimeId: runtime.id,
+        denialReason: timedOut ? "TIMEOUT" : cancelled ? "CANCELLED" : "RUNTIME_ERROR",
+        error: timedOut
+          ? "The runtime exceeded its bound."
+          : cancelled
+            ? "The route was cancelled."
+            : "The runtime failed.",
         traceId,
         startedAt,
         ctx,
         fallback: fallbackFor(taskId, input),
       });
     }
+    // A resolved invoke still aborts the controller: a backend that settles
+    // its promise while native work lingers must observe abort promptly.
+    controller.abort();
 
     if (!outcome.ok) {
       return this.fail({
@@ -305,8 +327,30 @@ export class AiOrchestrator {
         modelId,
         requestedBackend,
         actualBackend: runtime.id,
+        runtimeId: runtime.id,
         denialReason: outcome.denialReason,
         error: outcome.error,
+        traceId,
+        startedAt,
+        ctx,
+        fallback: fallbackFor(taskId, input),
+      });
+    }
+
+    // Phase A (Step 5): task output contracts own SUCCESS. A technically
+    // successful generation whose value fails the task schema is
+    // LOCAL_TASK_INVALID — eligible for allowed cloud fallback in Automatic
+    // mode, surfaced in on-device-only, never a silent downstream drop.
+    const checked = validateRouteValue(taskId, outcome.value);
+    if (!checked.ok) {
+      return this.fail({
+        taskId,
+        modelId,
+        requestedBackend,
+        actualBackend: runtime.id,
+        runtimeId: outcome.runtimeId,
+        denialReason: LOCAL_TASK_INVALID,
+        error: checked.error,
         traceId,
         startedAt,
         ctx,
@@ -334,6 +378,7 @@ export class AiOrchestrator {
       modelId: ctx.modelId ?? outcome.modelId,
       requestedBackend,
       actualBackend: outcome.backend,
+      runtimeId: outcome.runtimeId,
       modelRevision: outcome.modelRevision,
       value: outcome.value,
       traceId,
@@ -376,6 +421,7 @@ export class AiOrchestrator {
     readonly modelId: string;
     readonly requestedBackend: string;
     readonly actualBackend: string;
+    readonly runtimeId?: string;
     readonly modelRevision?: string;
     readonly value: unknown;
     readonly traceId: string;
@@ -391,6 +437,7 @@ export class AiOrchestrator {
         modelId: args.modelId,
         requestedBackend: args.requestedBackend,
         actualBackend: args.actualBackend,
+        runtimeId: args.runtimeId ?? args.actualBackend,
         ...(args.modelRevision === undefined ? {} : { modelRevision: args.modelRevision }),
         latencyMs: Date.now() - args.startedAt,
         traceId: args.traceId,
@@ -404,6 +451,7 @@ export class AiOrchestrator {
     readonly modelId: string;
     readonly requestedBackend: string;
     readonly actualBackend: string;
+    readonly runtimeId?: string;
     readonly denialReason: string;
     readonly error: string;
     readonly traceId: string;
@@ -421,6 +469,7 @@ export class AiOrchestrator {
         modelId: args.modelId,
         requestedBackend: args.requestedBackend,
         actualBackend: args.actualBackend,
+        runtimeId: args.runtimeId ?? args.actualBackend,
         denialReason: args.denialReason,
         latencyMs: Date.now() - args.startedAt,
         traceId: args.traceId,

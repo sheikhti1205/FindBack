@@ -17,6 +17,13 @@ export interface RuntimeInvokeInput {
   readonly input: unknown;
   readonly timeoutMs: number;
   readonly traceId: string;
+  /**
+   * Phase A (Step 7): cooperative cancellation. The orchestrator aborts this
+   * signal on route timeout and on caller cancel; adapters must stop waiting
+   * on (and, where the native bridge supports it, cancel) the underlying
+   * work once it fires. Never run unobserved after abort.
+   */
+  readonly signal: AbortSignal;
 }
 
 export type RuntimeResult =
@@ -25,6 +32,13 @@ export type RuntimeResult =
       readonly value: unknown;
       readonly modelId: string;
       readonly backend: string;
+      /**
+       * Phase A (Step 6): the physical runtime that produced the value
+       * (e.g. "needle-cact"), distinct from the logical `backend` runtime
+       * id (e.g. "local-text"). Downstream normalization must be driven by
+       * this id, never by a hard-coded profile for another model.
+       */
+      readonly runtimeId: string;
       /** Pinned catalogue revision of the serving model, when the runtime knows it. */
       readonly modelRevision?: string;
     }
@@ -88,6 +102,7 @@ export function createDefaultRegistry(): RuntimeRegistry {
           value: outcome.value,
           modelId: DETERMINISTIC_RUNTIME_ID,
           backend: DETERMINISTIC_RUNTIME_ID,
+          runtimeId: DETERMINISTIC_RUNTIME_ID,
         };
       }
       return { ok: false, error: "No deterministic rule matched.", denialReason: "NO_DETERMINISTIC" };

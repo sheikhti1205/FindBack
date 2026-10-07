@@ -11,7 +11,7 @@ function stubRuntime(
     available: overrides.available ?? (() => true),
     invoke:
       overrides.invoke ??
-      (async () => ({ ok: true as const, value: { echo: id }, modelId: id, backend: id })),
+      (async () => ({ ok: true as const, value: { echo: id }, modelId: id, backend: id, runtimeId: id })),
   };
 }
 
@@ -38,6 +38,7 @@ describe("runtimeRegistry", () => {
       value: { text: "hi" },
       modelId: "local-text",
       backend: "local-text",
+      runtimeId: "local-text",
     }));
     const registry = new RuntimeRegistry();
     registry.register(stubRuntime("local-text", { invoke }));
@@ -48,6 +49,7 @@ describe("runtimeRegistry", () => {
       input: { text: "hi" },
       timeoutMs: 1000,
       traceId: "trace-runtime-001",
+      signal: new AbortController().signal,
     });
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ ok: true, backend: "local-text" });

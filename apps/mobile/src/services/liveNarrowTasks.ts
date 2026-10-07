@@ -60,7 +60,7 @@ export async function generateLocalFirst(
     await getApplicationAi().route(
       taskId,
       { prompt },
-      { traceId: crypto.randomUUID(), consent: true },
+      { traceId: crypto.randomUUID(), consent: true, ...(opts?.signal ? { signal: opts.signal } : {}) },
     );
   if (opts?.signal?.aborted) throw abortError();
   if (!result.ok) {

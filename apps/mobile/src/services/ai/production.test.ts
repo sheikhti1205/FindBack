@@ -20,8 +20,9 @@ describe("bootProductionAi", () => {
       pins: [TEXT_PIN],
       text: {
         modelId: TEXT_PIN.modelId,
+        runtimeId: "test-text",
         isReady: async () => true,
-        completeJson: async () => JSON.stringify({ intent: "SEARCH" }),
+        completeJson: async () => JSON.stringify({ fields: { title: "wallet" } }),
       },
     });
     expect(boot.runtimes).toEqual(["local-text"]);

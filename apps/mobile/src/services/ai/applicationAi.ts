@@ -61,10 +61,10 @@ export class ApplicationAiService {
       pins: DOWNLOAD_MODELS.map((model) => ({ modelId: model.modelId, sha256: profileFor(model.modelId)!.modelSha256, downloadBytes: model.bytes, minFreeRamMb: 1500 })),
       managerOptions: this.driver ? { storageProbe: this.driver, storageHeadroomBytes: 64 * 1024 * 1024 } : undefined,
       ...(this.needle ? {
-        text: { modelId: NEEDLE_MODEL_ID, isReady: () => this.ensureNeedle(), completeJson: (input: string) => this.extractFields(input) },
-        embedding: { modelId: NEEDLE_MODEL_ID, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) },
+        text: { modelId: NEEDLE_MODEL_ID, runtimeId: "needle-cact", isReady: () => this.ensureNeedle(), completeJson: (input: string) => this.extractFields(input) },
+        embedding: { modelId: NEEDLE_MODEL_ID, runtimeId: "needle-cact", get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) },
       } : {}),
-      ...(this.smol ? { vision: { modelId: DOWNLOAD_MODELS[1].modelId, isAvailable: () => this.ensureVision(), describe: async (prompt: string, imageBase64: string, signal: AbortSignal) => {
+      ...(this.smol ? { vision: { modelId: DOWNLOAD_MODELS[1].modelId, runtimeId: "smolvlm2-litertlm", isAvailable: () => this.ensureVision(), describe: async (prompt: string, imageBase64: string, signal: AbortSignal) => {
         let text = "";
         for await (const chunk of this.smol!.describeImage({ generationId: crypto.randomUUID(), prompt, imageBase64, maxOutputTokens: 256 }, signal)) text += chunk.textDelta;
         return text;

@@ -12,7 +12,7 @@ function modelRuntime(
 ): { runtime: AiRuntime; invoke: InvokeMock } {
   const spy: InvokeMock =
     invoke ??
-    vi.fn(async (): Promise<RuntimeResult> => ({ ok: true, value, modelId: id, backend: id }));
+    vi.fn(async (): Promise<RuntimeResult> => ({ ok: true, value, modelId: id, backend: id, runtimeId: id }));
   return {
     invoke: spy,
     runtime: { id, kind: "model", available: () => true, invoke: spy },

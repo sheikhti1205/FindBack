@@ -46,6 +46,12 @@ export type ProductionRuntimeId = (typeof PRODUCTION_RUNTIME_IDS)[number];
  */
 export interface ProductionTextBackend {
   readonly modelId: string;
+  /**
+   * Phase A (Step 6): physical runtime id (e.g. "needle-cact"). Reported in
+   * every route result so downstream normalization is driven by the actual
+   * producer. (Canonical ids move to the Step 2 descriptor registry.)
+   */
+  readonly runtimeId: string;
   isReady(): Promise<boolean>;
   completeJson(input: string): Promise<string>;
 }
@@ -53,6 +59,8 @@ export interface ProductionTextBackend {
 /** Embedding backend seam: native Needle embedder in production. */
 export interface ProductionEmbeddingBackend {
   readonly modelId: string;
+  /** Physical runtime id (e.g. "needle-cact"); see ProductionTextBackend. */
+  readonly runtimeId: string;
   /** Live width from the engine probe; vectors are validated against it. */
   readonly dimension: number;
   isReady(): Promise<boolean>;
@@ -62,6 +70,8 @@ export interface ProductionEmbeddingBackend {
 /** Vision backend seam: SmolVLM2 native bridge in production. */
 export interface ProductionVisionBackend {
   readonly modelId: string;
+  /** Physical runtime id (e.g. "smolvlm2-litertlm"); see ProductionTextBackend. */
+  readonly runtimeId: string;
   isAvailable(): Promise<boolean>;
   describe(prompt: string, imageBase64: string, signal: AbortSignal): Promise<string>;
 }
@@ -75,6 +85,39 @@ export interface ProductionRuntimeDeps {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Thrown internally when the route signal aborts while a backend is in flight. */
+export class RouteCancelledError extends Error {
+  constructor() {
+    super("route signal aborted");
+    this.name = "RouteCancelledError";
+  }
+}
+
+/**
+ * Phase A (Step 7): cooperative cancellation for backends without a native
+ * signal surface (Needle `completeJson`/`embed` are await-only). The route
+ * stops waiting on abort; the orphaned native call can no longer resolve
+ * into a route value. Bridges with real cancellation (vision `describe`)
+ * receive the signal directly instead.
+ */
+function raceWithSignal<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new RouteCancelledError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(new RouteCancelledError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function toPromptText(input: unknown): string | undefined {
@@ -125,8 +168,9 @@ function textRuntime(manager: OfflineModelManager, backend: ProductionTextBacken
       }
       let raw: string;
       try {
-        raw = await backend.completeJson(prompt);
+        raw = await raceWithSignal(backend.completeJson(prompt), input.signal);
       } catch (error) {
+        if (error instanceof RouteCancelledError) return { ok: false, error: "Text generation cancelled.", denialReason: "CANCELLED" };
         return runtimeError(error);
       }
       let value: unknown;
@@ -136,7 +180,7 @@ function textRuntime(manager: OfflineModelManager, backend: ProductionTextBacken
         return invalidOutput("Model output was not a JSON object.");
       }
       if (!isRecord(value)) return invalidOutput("Model output was not a JSON object.");
-      return { ok: true, value, modelId: backend.modelId, backend: LOCAL_TEXT_RUNTIME_ID, ...(modelRevision === undefined ? {} : { modelRevision }) };
+      return { ok: true, value, modelId: backend.modelId, backend: LOCAL_TEXT_RUNTIME_ID, runtimeId: backend.runtimeId, ...(modelRevision === undefined ? {} : { modelRevision }) };
     },
   };
 }
@@ -160,9 +204,10 @@ function embeddingRuntime(
       }
       let vectors: number[][];
       try {
-        const produced = await backend.embed(texts as string[]);
+        const produced = await raceWithSignal(backend.embed(texts as string[]), input.signal);
         vectors = validateNeedleVectors(texts as string[], produced, backend.dimension);
       } catch (error) {
+        if (error instanceof RouteCancelledError) return { ok: false, error: "Embedding cancelled.", denialReason: "CANCELLED" };
         if (error instanceof Error && error.message === "Invalid needle embedding result") {
           return invalidOutput("Embedding vectors failed validation against the probed dimension.");
         }
@@ -173,6 +218,7 @@ function embeddingRuntime(
         value: { vectors },
         modelId: backend.modelId,
         backend: LOCAL_EMBEDDING_RUNTIME_ID,
+        runtimeId: backend.runtimeId,
         ...(modelRevision === undefined ? {} : { modelRevision }),
       };
     },
@@ -197,21 +243,24 @@ function visionRuntime(manager: OfflineModelManager, backend: ProductionVisionBa
           denialReason: "INVALID_INPUT",
         };
       }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), input.timeoutMs);
+      // The route owns the timeout and aborts input.signal; the bridge gets
+      // the same signal so native work cancels end to end. No adapter-local
+      // timer: a second timeout here could mask the route's abort accounting.
       try {
-        const text = await backend.describe(prompt, imageBase64, controller.signal);
+        const text = await backend.describe(prompt, imageBase64, input.signal);
         return {
           ok: true,
           value: { text },
           modelId: backend.modelId,
           backend: LOCAL_VISION_RUNTIME_ID,
+          runtimeId: backend.runtimeId,
           ...(modelRevision === undefined ? {} : { modelRevision }),
         };
       } catch (error) {
+        if (error instanceof RouteCancelledError || input.signal.aborted) {
+          return { ok: false, error: "Vision request cancelled.", denialReason: "CANCELLED" };
+        }
         return runtimeError(error);
-      } finally {
-        clearTimeout(timeout);
       }
     },
   };
