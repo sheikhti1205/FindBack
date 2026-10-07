@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { groundObjects, groundObjectsTaskSpec } from "./groundObjects";
+import { groundObjects } from "./groundObjects";
+import { getTaskSpec } from "../orchestrator/taskRegistry";
 import { mustProfile, stubGenerate } from "./testSupport";
 
 const VISION = "smolvlm2-500M-vision";
@@ -118,14 +119,16 @@ describe("ground-objects op", () => {
     expect(generate.calls).toBe(0);
   });
 
-  it("carries a vision envelope that requires image consent", () => {
-    expect(groundObjectsTaskSpec.task).toBe("ground-objects");
-    expect(groundObjectsTaskSpec.maxInputChars).toBe(140);
-    expect(groundObjectsTaskSpec.timeoutMs).toBe(60_000);
-    expect(groundObjectsTaskSpec.privacy.tier).toBe("local-only");
-    expect(groundObjectsTaskSpec.privacy.handlesImage).toBe(true);
-    expect(groundObjectsTaskSpec.runtimes).toContain("litert-lm");
-    expect(groundObjectsTaskSpec.consent.required).toBe(true);
-    expect(groundObjectsTaskSpec.consent.kind).toBe("image");
+  it("carries the canonical vision envelope; image consent is enforced by the op, not the route", () => {
+    const spec = getTaskSpec("ground-objects")!;
+    expect(spec.taskId).toBe("ground-objects");
+    expect(spec.maxInputChars).toBe(140);
+    // Enforced route budget wins over the retired table's advisory 60s.
+    expect(spec.timeoutMs).toBe(30_000);
+    expect(spec.privacy.tier).toBe("local-only");
+    expect(spec.privacy.handlesImage).toBe(true);
+    expect(spec.runtimes).toEqual(["local-vision"]);
+    expect(spec.consent.required).toBe(false);
+    expect(spec.consent.kind).toBe("image");
   });
 });

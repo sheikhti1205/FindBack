@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { routeIntent, routeIntentTaskSpec } from "./routeIntent";
+import { routeIntent } from "./routeIntent";
+import { getTaskSpec } from "../orchestrator/taskRegistry";
 import { mustProfile, stubGenerate } from "./testSupport";
 
 const PROFILE = "qwen3-0.6b-dynamic-int4";
@@ -110,13 +111,14 @@ describe("route-intent op", () => {
     expect(generate.calls).toBe(0);
   });
 
-  it("carries a local-only envelope with budgets, runtimes, timeout, and no consent", () => {
-    expect(routeIntentTaskSpec.task).toBe("route-intent");
-    expect(routeIntentTaskSpec.maxInputChars).toBe(280);
-    expect(routeIntentTaskSpec.maxOutputTokens).toBeGreaterThan(0);
-    expect(routeIntentTaskSpec.timeoutMs).toBeGreaterThan(0);
-    expect(routeIntentTaskSpec.privacy.tier).toBe("local-only");
-    expect(routeIntentTaskSpec.runtimes).toContain("litert-lm");
-    expect(routeIntentTaskSpec.consent.required).toBe(false);
+  it("carries the canonical task envelope with budgets, runtimes, timeout, and no consent", () => {
+    const spec = getTaskSpec("route-intent")!;
+    expect(spec.taskId).toBe("route-intent");
+    expect(spec.maxInputChars).toBe(280);
+    expect(spec.maxOutputTokens).toBeGreaterThan(0);
+    expect(spec.timeoutMs).toBeGreaterThan(0);
+    expect(spec.privacy.tier).toBe("local-only");
+    expect(spec.runtimes).toContain("local-text");
+    expect(spec.consent.required).toBe(false);
   });
 });

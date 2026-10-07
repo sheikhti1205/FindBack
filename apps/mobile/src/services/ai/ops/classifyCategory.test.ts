@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { classifyCategory, classifyCategoryTaskSpec } from "./classifyCategory";
+import { classifyCategory } from "./classifyCategory";
+import { getTaskSpec } from "../orchestrator/taskRegistry";
 import { mustProfile, stubGenerate } from "./testSupport";
 
 const PROFILE = "qwen3-0.6b-dynamic-int4";
@@ -77,13 +78,14 @@ describe("classify-category op", () => {
     expect(generate.calls).toBe(0);
   });
 
-  it("carries a local-only envelope with budgets, runtimes, timeout, and no consent", () => {
-    expect(classifyCategoryTaskSpec.task).toBe("classify-category");
-    expect(classifyCategoryTaskSpec.maxInputChars).toBe(280);
-    expect(classifyCategoryTaskSpec.maxOutputTokens).toBeGreaterThan(0);
-    expect(classifyCategoryTaskSpec.timeoutMs).toBeGreaterThan(0);
-    expect(classifyCategoryTaskSpec.privacy.tier).toBe("local-only");
-    expect(classifyCategoryTaskSpec.runtimes).toContain("litert-lm");
-    expect(classifyCategoryTaskSpec.consent.required).toBe(false);
+  it("carries the canonical task envelope with budgets, runtimes, timeout, and no route consent", () => {
+    const spec = getTaskSpec("classify-category")!;
+    expect(spec.taskId).toBe("classify-category");
+    expect(spec.maxInputChars).toBe(280);
+    expect(spec.maxOutputTokens).toBeGreaterThan(0);
+    expect(spec.timeoutMs).toBeGreaterThan(0);
+    expect(spec.privacy.tier).toBe("local-only");
+    expect(spec.runtimes).toContain("local-text");
+    expect(spec.consent.required).toBe(false);
   });
 });

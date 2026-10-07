@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { embedTextsOp, embedTextsTaskSpec, type EmbedTextsInput } from "./embedTexts";
+import { embedTextsOp, type EmbedTextsInput } from "./embedTexts";
+import { getTaskSpec } from "../orchestrator/taskRegistry";
 
 function invalid(input: unknown): ReturnType<typeof embedTextsOp> {
   return embedTextsOp(input as unknown as EmbedTextsInput);
@@ -70,12 +71,13 @@ describe("embed-texts op", () => {
     expect(result).toEqual({ ok: false, error: { errorClass: "CANCELLED", diagnostic: "ABORT_BEFORE_START" } });
   });
 
-  it("carries a local-native envelope with no consent flag", () => {
-    expect(embedTextsTaskSpec.task).toBe("embed-texts");
-    expect(embedTextsTaskSpec.maxOutputTokens).toBe(0);
-    expect(embedTextsTaskSpec.timeoutMs).toBeGreaterThan(0);
-    expect(embedTextsTaskSpec.privacy.tier).toBe("local-only");
-    expect(embedTextsTaskSpec.runtimes).toEqual(["local-native"]);
-    expect(embedTextsTaskSpec.consent.required).toBe(false);
+  it("carries a canonical embedding envelope with no consent flag", () => {
+    const spec = getTaskSpec("embed-texts")!;
+    expect(spec.taskId).toBe("embed-texts");
+    expect(spec.maxOutputTokens).toBe(0);
+    expect(spec.timeoutMs).toBeGreaterThan(0);
+    expect(spec.privacy.tier).toBe("local-only");
+    expect(spec.runtimes).toEqual(["local-embedding"]);
+    expect(spec.consent.required).toBe(false);
   });
 });

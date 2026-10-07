@@ -9,7 +9,6 @@
  */
 import type { ModelProfile } from "../modelProfiles";
 import { normalizeProse, type NormalizeOptions } from "../normalize";
-import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import { makeAiError, type AiResult, type GenerateFn } from "../types";
 
 const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
@@ -127,4 +126,3 @@ export async function summarizeLocalContext(
   return { ok: true, value: { summaryText: parsed.value, density } };
 }
 
-export const summarizeLocalContextTaskSpec: AiTaskSpec = taskSpecFor("summarize-local-context");

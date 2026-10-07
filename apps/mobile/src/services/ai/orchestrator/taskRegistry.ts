@@ -1,9 +1,15 @@
 /**
- * WS-A task registry: the 10 routable AI tasks and their budgets.
+ * Task registry: the single canonical authority for the 10 routable AI
+ * tasks (Phase A Step 4 — the retired taskSpecs table is merged here).
  *
- * Each spec bounds one task (input bytes/images, privacy envelope, ordered
- * runtime preferences, timeout, consent, result schema). Lookup is total:
- * unknown ids yield `undefined` and the orchestrator fails closed.
+ * Each spec bounds one task (input bytes/images, ordered runtime
+ * preferences, enforced timeout, route consent, result schema) and carries
+ * the advisory op bounds (maxInputChars/maxOutputTokens/retryLimit/privacy
+ * handles) preserved from taskSpecs. Lookup is total: unknown ids yield
+ * `undefined` and the orchestrator fails closed.
+ *
+ * Timeout values are the ENFORCED route budgets (previously only in this
+ * table; taskSpecs carried larger advisory numbers that nothing enforced).
  *
  * `tryDeterministic` is the deterministic-first path: pure, synchronous,
  * no I/O. A resolved outcome lets `route` skip model runtimes entirely.
@@ -27,106 +33,143 @@ export const TASK_IDS: readonly AiTaskId[] = [
   "summarize-local-context",
 ];
 
+const TEXT_PRIVACY = { tier: "local-only", handlesImage: false, handlesText: true } as const;
+const IMAGE_PRIVACY = { tier: "local-only", handlesImage: true, handlesText: true } as const;
+const NO_ROUTE_CONSENT = { required: false } as const;
+
 const SPECS: Readonly<Record<AiTaskId, AiTaskSpec>> = {
   "classify-intent": {
     taskId: "classify-intent",
     maxBytes: 4_096,
     maxImages: 0,
-    privacyClass: "local-only",
     runtimes: ["deterministic-local", "local-text"],
     timeoutMs: 5_000,
-    needsConsent: false,
     schema: "classify-intent/v1",
+    maxInputChars: 2000,
+    maxOutputTokens: 256,
+    retryLimit: 0,
+    privacy: TEXT_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
   "extract-report-fields": {
     taskId: "extract-report-fields",
     maxBytes: 8_192,
     maxImages: 0,
-    privacyClass: "local-only",
     runtimes: ["deterministic-local", "local-text"],
     timeoutMs: 8_000,
-    needsConsent: false,
     schema: "report-slots/v1",
+    maxInputChars: 2000,
+    maxOutputTokens: 256,
+    retryLimit: 0,
+    privacy: TEXT_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
   "answer-help": {
     taskId: "answer-help",
     maxBytes: 4_096,
     maxImages: 0,
-    privacyClass: "local-only",
     runtimes: ["deterministic-local", "local-text"],
     timeoutMs: 8_000,
-    needsConsent: false,
     schema: "help-answer/v1",
+    maxInputChars: 2000,
+    maxOutputTokens: 256,
+    retryLimit: 0,
+    privacy: TEXT_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
   "extract-search-filters": {
     taskId: "extract-search-filters",
     maxBytes: 4_096,
     maxImages: 0,
-    privacyClass: "local-only",
     runtimes: ["deterministic-local", "local-text"],
     timeoutMs: 5_000,
-    needsConsent: false,
     schema: "search-filters/v1",
+    maxInputChars: 2000,
+    maxOutputTokens: 256,
+    retryLimit: 0,
+    privacy: TEXT_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
   "analyze-image": {
     taskId: "analyze-image",
     maxBytes: 2_048,
     maxImages: 1,
-    privacyClass: "local-only",
     runtimes: ["local-vision"],
     timeoutMs: 30_000,
-    needsConsent: false,
     schema: "photo-analysis/v2",
+    maxInputChars: 2000,
+    maxOutputTokens: 512,
+    retryLimit: 1,
+    privacy: IMAGE_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
   "route-intent": {
     taskId: "route-intent",
     maxBytes: 4_096,
     maxImages: 0,
-    privacyClass: "local-only",
     runtimes: ["deterministic-local", "local-text"],
     timeoutMs: 5_000,
-    needsConsent: false,
     schema: "route-intent/v1",
+    maxInputChars: 280,
+    maxOutputTokens: 256,
+    retryLimit: 0,
+    privacy: TEXT_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
   "embed-texts": {
     taskId: "embed-texts",
     maxBytes: 32_768,
     maxImages: 0,
-    privacyClass: "local-only",
     runtimes: ["local-embedding"],
     timeoutMs: 10_000,
-    needsConsent: false,
     schema: "text-embeddings/v1",
+    maxInputChars: 16_000,
+    maxOutputTokens: 0,
+    retryLimit: 0,
+    privacy: TEXT_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
   "ground-objects": {
     taskId: "ground-objects",
     maxBytes: 2_048,
     maxImages: 1,
-    privacyClass: "local-only",
     runtimes: ["local-vision"],
     timeoutMs: 30_000,
-    needsConsent: false,
     schema: "object-grounding/v1",
+    maxInputChars: 140,
+    maxOutputTokens: 512,
+    retryLimit: 0,
+    privacy: IMAGE_PRIVACY,
+    // Route-level consent stays false (no behavior change): the image-consent
+    // flag is enforced by the ground-objects op itself (imageConsent option),
+    // never by the route. `kind` documents that op-level requirement.
+    consent: { required: false, kind: "image" },
   },
   "classify-category": {
     taskId: "classify-category",
     maxBytes: 4_096,
     maxImages: 0,
-    privacyClass: "local-only",
     runtimes: ["deterministic-local", "local-text"],
     timeoutMs: 5_000,
-    needsConsent: false,
     schema: "item-category/v1",
+    maxInputChars: 280,
+    maxOutputTokens: 256,
+    retryLimit: 0,
+    privacy: TEXT_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
   "summarize-local-context": {
     taskId: "summarize-local-context",
     maxBytes: 16_384,
     maxImages: 0,
-    privacyClass: "local-only",
     runtimes: ["deterministic-local", "local-text"],
     timeoutMs: 10_000,
-    needsConsent: false,
     schema: "local-summary/v1",
+    maxInputChars: 2000,
+    maxOutputTokens: 256,
+    retryLimit: 0,
+    privacy: TEXT_PRIVACY,
+    consent: NO_ROUTE_CONSENT,
   },
 };
 

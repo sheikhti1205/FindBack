@@ -31,7 +31,12 @@ describe("taskRegistry", () => {
       expect(typeof spec?.maxBytes).toBe("number");
       expect(typeof spec?.maxImages).toBe("number");
       expect(typeof spec?.timeoutMs).toBe("number");
-      expect(typeof spec?.needsConsent).toBe("boolean");
+      expect(typeof spec?.consent.required).toBe("boolean");
+      expect(typeof spec?.maxInputChars).toBe("number");
+      expect(typeof spec?.maxOutputTokens).toBe("number");
+      expect(typeof spec?.retryLimit).toBe("number");
+      expect(spec?.privacy.tier).toBe("local-only");
+      expect(typeof spec?.privacy.handlesImage).toBe("boolean");
       expect(typeof spec?.schema).toBe("string");
       expect((spec?.schema ?? "").trim().length).toBeGreaterThan(0);
       expect(Array.isArray(spec?.runtimes)).toBe(true);

@@ -209,7 +209,7 @@ export class AiOrchestrator {
       });
     }
 
-    if (spec.needsConsent && ctx.consent !== true) {
+    if (spec.consent.required && ctx.consent !== true) {
       return this.fail({
         taskId,
         modelId,

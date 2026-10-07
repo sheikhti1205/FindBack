@@ -17,7 +17,6 @@ import {
   type NormalizeContext,
   type NormalizeOptions,
 } from "../normalize";
-import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import { makeAiError, type AiResult, type GenerateOptions } from "../types";
 
 export const GROUND_COORDINATE_SPACES = ["relative-0-1000"] as const;
@@ -231,4 +230,3 @@ export async function groundObjects(
   });
 }
 
-export const groundObjectsTaskSpec: AiTaskSpec = taskSpecFor("ground-objects");

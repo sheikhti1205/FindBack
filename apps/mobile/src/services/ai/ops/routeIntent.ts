@@ -14,7 +14,6 @@ import {
   type NormalizeContext,
   type NormalizeOptions,
 } from "../normalize";
-import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import {
   isIntent,
   makeAiError,
@@ -196,4 +195,3 @@ export async function routeIntent(
   });
 }
 
-export const routeIntentTaskSpec: AiTaskSpec = taskSpecFor("route-intent");

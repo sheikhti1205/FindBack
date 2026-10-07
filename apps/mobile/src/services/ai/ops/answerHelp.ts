@@ -11,7 +11,6 @@
 import type { ModelProfile } from "../modelProfiles";
 import { getCurrentKnowledge, groundAppAnswer } from "../appKnowledge";
 import { normalizeProse, type NormalizeOptions } from "../normalize";
-import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import type { AiResult, GenerateFn, HelpAnswer } from "../types";
 
 export const HELP_INSTRUCTION =
@@ -54,4 +53,3 @@ export async function answerHelp(
   return { ok: true, value: { answerText: grounded.text, action: { action: "NONE" } } };
 }
 
-export const answerHelpTaskSpec: AiTaskSpec = taskSpecFor("answer-help");

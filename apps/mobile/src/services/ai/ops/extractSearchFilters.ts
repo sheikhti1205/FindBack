@@ -10,7 +10,6 @@
 import type { ModelProfile } from "../modelProfiles";
 import { makeAskUserPrompt } from "../clarificationCopy";
 import { normalizeJsonOp, validateSearchFilters, type NormalizeOptions } from "../normalize";
-import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import type {
   AiResult,
   AssistantAction,
@@ -59,4 +58,3 @@ export async function extractSearchFilters(
   return { ok: true, value: { fields: parsed.value, action } };
 }
 
-export const extractSearchFiltersTaskSpec: AiTaskSpec = taskSpecFor("extract-search-filters");

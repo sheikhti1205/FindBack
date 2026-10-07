@@ -8,7 +8,6 @@
  */
 import type { ModelProfile } from "../modelProfiles";
 import { normalizeJsonOp, type NormalizeContext, type NormalizeOptions } from "../normalize";
-import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import { makeAiError, type AiResult, type GenerateFn } from "../types";
 
 const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
@@ -158,4 +157,3 @@ export async function classifyCategory(
   });
 }
 
-export const classifyCategoryTaskSpec: AiTaskSpec = taskSpecFor("classify-category");

@@ -7,7 +7,6 @@
  * the device), and nothing is persisted — the result is a validated request
  * envelope the caller may hand to the native embedding bridge. Pure.
  */
-import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import { makeAiError, type AiResult } from "../types";
 
 /** Retrieval purpose. Anything else is refused (invalid enum). */
@@ -104,4 +103,3 @@ export async function embedTextsOp(
   return validated;
 }
 
-export const embedTextsTaskSpec: AiTaskSpec = taskSpecFor("embed-texts");

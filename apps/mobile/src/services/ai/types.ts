@@ -263,9 +263,29 @@ export interface AiTaskSpec {
   readonly taskId: AiTaskId;
   readonly maxBytes: number;
   readonly maxImages: number;
-  readonly privacyClass: AiPrivacyClass;
+  /**
+   * Phase A (Step 4): the single task authority. Route-enforced fields
+   * (maxBytes/maxImages/runtimes/timeoutMs/consent/schema) carry the values
+   * the orchestrator actually enforces; advisory bounds (maxInputChars,
+   * maxOutputTokens, retryLimit, privacy handles) are preserved from the
+   * retired taskSpecs table for ops to adopt. Nothing here is duplicated
+   * anywhere else — taskSpecs.ts is deleted.
+   */
   readonly runtimes: readonly string[];
   readonly timeoutMs: number;
-  readonly needsConsent: boolean;
   readonly schema: string;
+  readonly maxInputChars: number;
+  readonly maxOutputTokens: number;
+  readonly retryLimit: number;
+  readonly privacy: {
+    readonly tier: "local-only";
+    readonly handlesImage: boolean;
+    readonly handlesText: boolean;
+  };
+  /**
+   * Route-level consent. All false today: photo tasks take image consent at
+   * the op/caller layer (picker + imageConsent flag), never at the route.
+   * `kind: "image"` documents that op-level requirement where it exists.
+   */
+  readonly consent: { readonly required: boolean; readonly kind?: "image" };
 }

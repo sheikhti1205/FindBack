@@ -8,7 +8,6 @@
 import type { ModelProfile } from "../modelProfiles";
 import { makeAskUserPrompt } from "../clarificationCopy";
 import { normalizeJsonOp, validateReportSlots, type NormalizeOptions } from "../normalize";
-import { taskSpecFor, type AiTaskSpec } from "../taskSpecs";
 import type {
   AiResult,
   AssistantAction,
@@ -53,4 +52,3 @@ export async function extractReportFields(
   return { ok: true, value: { fields: parsed.value, action } };
 }
 
-export const extractReportFieldsTaskSpec: AiTaskSpec = taskSpecFor("extract-report-fields");
