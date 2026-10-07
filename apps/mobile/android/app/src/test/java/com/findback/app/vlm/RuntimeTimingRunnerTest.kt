@@ -96,4 +96,29 @@ class RuntimeTimingRunnerTest {
         assertTrue(wrongOutcome is DeviceProbe.BenchmarkOutcome.Success)
         assertFalse((wrongOutcome as DeviceProbe.BenchmarkOutcome.Success).result.correctnessPass)
     }
+
+    @OptIn(com.google.ai.edge.litertlm.ExperimentalApi::class)
+    @Test fun benchmarkFlagIsScopedToMeasurementAndRestored() {
+        val flags = com.google.ai.edge.litertlm.ExperimentalFlags
+        flags.enableBenchmark = false
+        var sawEnabled = false
+        val result = RuntimeTimingRunner.withBenchmarkCounters {
+            sawEnabled = flags.enableBenchmark
+            42
+        }
+        assertEquals(42, result)
+        assertTrue(sawEnabled)
+        assertFalse(flags.enableBenchmark)
+    }
+
+    @OptIn(com.google.ai.edge.litertlm.ExperimentalApi::class)
+    @Test fun benchmarkFlagIsRestoredWhenMeasurementThrows() {
+        val flags = com.google.ai.edge.litertlm.ExperimentalFlags
+        flags.enableBenchmark = false
+        try {
+            RuntimeTimingRunner.withBenchmarkCounters { throw IllegalStateException("engine failed") }
+        } catch (_: IllegalStateException) {
+        }
+        assertFalse(flags.enableBenchmark)
+    }
 }

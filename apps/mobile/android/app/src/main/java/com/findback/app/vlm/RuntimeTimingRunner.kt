@@ -117,6 +117,26 @@ class RuntimeTimingRunner(
         fun installedFile(context: Context): File = File(context.filesDir,
             "ai-models/models/$MODEL_ID/$MODEL_REV/SmolVLM2-500M.litertlm")
 
+        /**
+         * Audit closure: `ExperimentalFlags.enableBenchmark` is a
+         * process-global singleton (verified readable/writable in
+         * litertlm-android 0.17.1: `getEnableBenchmark`/`setEnableBenchmark`
+         * in bytecode), so measurement enables it only for the duration of
+         * [block] and restores the prior value in `finally` — including on
+         * throw. Benchmark instrumentation must never leak into later
+         * product inference in this process.
+         */
+        @OptIn(com.google.ai.edge.litertlm.ExperimentalApi::class)
+        fun <T> withBenchmarkCounters(block: () -> T): T {
+            val previous = ExperimentalFlags.enableBenchmark
+            ExperimentalFlags.enableBenchmark = true
+            try {
+                return block()
+            } finally {
+                ExperimentalFlags.enableBenchmark = previous
+            }
+        }
+
         @OptIn(com.google.ai.edge.litertlm.ExperimentalApi::class)
         fun forInstalledSmol(context: Context): RuntimeTimingRunner = RuntimeTimingRunner(
             verifiedFile = {
@@ -125,52 +145,51 @@ class RuntimeTimingRunner(
                 }
             },
             execute = { file, backend ->
-                // Phase A (Step 9): LiteRT-LM only populates BenchmarkInfo
-                // counters when benchmarking is enabled. ExperimentalFlags is
-                // a process-global singleton (verified in litertlm-android
-                // 0.17.1: `object ExperimentalFlags`), so this enables
-                // counters for every LiteRT-LM engine in this process —
-                // measurement and product inference alike. Counters only;
-                // decoding behavior is unchanged.
-                ExperimentalFlags.enableBenchmark = true
-                val engine = Engine(EngineConfig(
-                    modelPath = file.absolutePath, backend = Backend.CPU(),
-                    visionBackend = if (backend == "gpu") Backend.GPU() else Backend.CPU(),
-                    audioBackend = Backend.CPU(), cacheDir = context.cacheDir.path,
-                ))
-                try {
-                    engine.initialize()
-                    listOf(Color.RED, Color.BLUE).map { color ->
-                        val bitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888)
-                        val bytes = try {
-                            bitmap.eraseColor(color)
-                            ByteArrayOutputStream().use { stream ->
-                                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
-                                stream.toByteArray()
-                            }
-                        } finally { bitmap.recycle() }
-                        val conversation = engine.createConversation(ConversationConfig(
-                            samplerConfig = SamplerConfig(topK = 40, topP = 1.0, temperature = 0.0),
-                            maxOutputToken = 24,
-                        ))
-                        try {
-                            val output = StringBuilder()
-                            runBlocking {
-                                withTimeout(60_000L) {
-                                    conversation.sendMessageAsync(Contents.of(
-                                        Content.ImageBytes(bytes),
-                                        Content.Text("What is the main color of this image? Answer with the color only."),
-                                    )).collect { message -> output.append(message.toString()) }
+                // LiteRT-LM only populates BenchmarkInfo counters when
+                // benchmarking is enabled. The flag is process-global, so it
+                // is scoped to this measurement via withBenchmarkCounters
+                // (save/enable/restore) — never left on for later product
+                // inference. Counters only; decoding behavior is unchanged.
+                withBenchmarkCounters {
+                    val engine = Engine(EngineConfig(
+                        modelPath = file.absolutePath, backend = Backend.CPU(),
+                        visionBackend = if (backend == "gpu") Backend.GPU() else Backend.CPU(),
+                        audioBackend = Backend.CPU(), cacheDir = context.cacheDir.path,
+                    ))
+                    try {
+                        engine.initialize()
+                        listOf(Color.RED, Color.BLUE).map { color ->
+                            val bitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888)
+                            val bytes = try {
+                                bitmap.eraseColor(color)
+                                ByteArrayOutputStream().use { stream ->
+                                    check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
+                                    stream.toByteArray()
                                 }
+                            } finally { bitmap.recycle() }
+                            val conversation = engine.createConversation(ConversationConfig(
+                                samplerConfig = SamplerConfig(topK = 40, topP = 1.0, temperature = 0.0),
+                                maxOutputToken = 24,
+                            ))
+                            try {
+                                val output = StringBuilder()
+                                runBlocking {
+                                    withTimeout(60_000L) {
+                                        conversation.sendMessageAsync(Contents.of(
+                                            Content.ImageBytes(bytes),
+                                            Content.Text("What is the main color of this image? Answer with the color only."),
+                                        )).collect { message -> output.append(message.toString()) }
+                                    }
+                                }
+                                val counters = conversation.getBenchmarkInfo()
+                                Sample(output.toString(), counters.timeToFirstTokenInSecond,
+                                    counters.lastDecodeTokensPerSecond)
+                            } finally {
+                                try { conversation.cancelProcess() } finally { conversation.close() }
                             }
-                            val counters = conversation.getBenchmarkInfo()
-                            Sample(output.toString(), counters.timeToFirstTokenInSecond,
-                                counters.lastDecodeTokensPerSecond)
-                        } finally {
-                            try { conversation.cancelProcess() } finally { conversation.close() }
                         }
-                    }
-                } finally { engine.close() }
+                    } finally { engine.close() }
+                }
             },
         )
 
