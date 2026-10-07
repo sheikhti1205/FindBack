@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ApplicationAiService, DEVICE_CORPUS_VERSION, DOWNLOAD_MODELS } from "./applicationAi";
+import { ApplicationAiService, DEVICE_CORPUS_VERSION } from "./applicationAi";
+import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, type ModelDescriptor } from "./modelDescriptors";
+import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import { PROBE_VERSION } from "./deviceProbe";
 import type { ModelDownloadDriver } from "./download/driver";
 import type { OfflineVisionNativeBridge } from "./providers/offline";
@@ -50,13 +52,13 @@ describe("application-owned AI", () => {
     const p = platform();
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
-    await service.download(DOWNLOAD_MODELS[0].modelId);
-    await service.download(DOWNLOAD_MODELS[1].modelId);
+    await service.download(NEEDLE_DESCRIPTOR.modelId);
+    await service.download(SMOL_VISION_DESCRIPTOR.modelId);
     let release!: () => void;
     let entered!: () => void;
     const unloading = new Promise<void>((resolve) => { entered = resolve; });
     p.needle.unload = async () => { entered(); await new Promise<void>((resolve) => { release = resolve; }); };
-    const removal = service.remove(DOWNLOAD_MODELS[0].modelId);
+    const removal = service.remove(NEEDLE_DESCRIPTOR.modelId);
     await unloading;
     try {
       await expect(service.embedNeedle(["umbrella"])).rejects.toThrow(/busy/);
@@ -74,7 +76,7 @@ describe("application-owned AI", () => {
     };
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
-    const modelId = DOWNLOAD_MODELS[1].modelId;
+    const modelId = SMOL_VISION_DESCRIPTOR.modelId;
     await service.download(modelId);
     service.probeRecords = ["cpu", "gpu"].map((backend) => ({
       socModel: "test", gpuInfo: "test", ramMb: 8192, osVersion: "test", backend: backend as "cpu" | "gpu",
@@ -99,7 +101,7 @@ describe("application-owned AI", () => {
     const p = platform();
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
-    const id = DOWNLOAD_MODELS[0]!.modelId;
+    const id = NEEDLE_MODEL_ID;
     await expect(service.embedNeedle(["umbrella"])).rejects.toThrow(/installed/);
     await service.download(id);
     expect(service.manager.statusOf(id)?.checksumVerified).toBe(true);
@@ -115,7 +117,7 @@ describe("application-owned AI", () => {
     const p = platform();
     const first = new ApplicationAiService({ android: true, ...p });
     await first.ready;
-    const id = DOWNLOAD_MODELS[0]!.modelId;
+    const id = NEEDLE_MODEL_ID;
     await first.download(id);
     const second = new ApplicationAiService({ android: true, ...p });
     await second.ready;
@@ -131,7 +133,7 @@ describe("application-owned AI", () => {
     const p = platform();
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
-    const modelId = DOWNLOAD_MODELS[1]!.modelId;
+    const modelId = SMOL_VISION_DESCRIPTOR.modelId;
     await service.download(modelId);
     const adapter = service.offlineAdapter(async () => "approved-bytes");
     expect((await adapter.listModels?.())?.[0]?.input).toContain("image");
@@ -152,7 +154,7 @@ describe("application-owned AI", () => {
     p.smol.loadVisionModel = async () => { throw new Error("GPU initialize failed hard"); };
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
-    const modelId = DOWNLOAD_MODELS[1]!.modelId;
+    const modelId = SMOL_VISION_DESCRIPTOR.modelId;
     await service.download(modelId);
     const adapter = service.offlineAdapter(async () => "approved-bytes");
     const events: { kind: string; code?: string; message?: string }[] = [];
@@ -171,6 +173,60 @@ describe("application-owned AI", () => {
     const service = new ApplicationAiService({ android: false });
     await service.ready;
     expect(() => service.offlineAdapter()).toThrow(/Android/);
-    await expect(service.download(DOWNLOAD_MODELS[0]!.modelId)).rejects.toThrow(/Android/);
+    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(/Android/);
+  });
+
+  it("resolves ownership by descriptor, never by catalogue position", async () => {
+    const p = platform();
+    // Deliberately reordered: vision first. Behavior must not change.
+    const service = new ApplicationAiService({
+      android: true,
+      ...p,
+      descriptors: [SMOL_VISION_DESCRIPTOR, NEEDLE_DESCRIPTOR],
+    });
+    await service.ready;
+    expect(service.registry.visionDescriptor()?.modelId).toBe(SMOL_VISION_DESCRIPTOR.modelId);
+    await service.download(NEEDLE_MODEL_ID);
+    await service.remove(NEEDLE_MODEL_ID);
+    expect(p.calls).toContain("needle-unload");
+    expect(p.calls).not.toContain("vision-load");
+    expect(service.probeContext.modelRev).toBe(SMOL_VISION_DESCRIPTOR.revision);
+  });
+
+  it("a third descriptor without a production adapter fails closed without touching Needle or Smol", async () => {
+    const p = platform();
+    const third: ModelDescriptor = {
+      modelId: "test-third-model",
+      displayName: "Test third",
+      runtimeId: "test-unowned-runtime",
+      format: "gguf",
+      revision: "rev3",
+      sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      fileName: "third.gguf",
+      url: "https://example.invalid/third.gguf",
+      bytes: 1024,
+      capabilities: ["text"],
+      taskRoles: [],
+      maturity: "experimental",
+      trust: "curated",
+      license: "test-only",
+      minRamMb: 512,
+      recommendedRamMb: 512,
+      abis: ["arm64-v8a"],
+      downloadable: false,
+    };
+    const service = new ApplicationAiService({
+      android: true,
+      ...p,
+      descriptors: [NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, third],
+    });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    await service.download(third.modelId);
+    expect(service.manager.statusOf(third.modelId)?.checksumVerified).toBe(true);
+    await expect(service.remove(third.modelId)).rejects.toThrow(/no production runtime adapter/i);
+    // The old Needle-vs-else branch would have unloaded Smol here.
+    expect(p.calls).not.toContain("needle-unload");
+    expect(service.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
   });
 });

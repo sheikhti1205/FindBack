@@ -4,14 +4,16 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { ApplicationAiService, DOWNLOAD_MODELS } from "../services/ai/applicationAi";
+import { ApplicationAiService } from "../services/ai/applicationAi";
+import { NEEDLE_DESCRIPTOR, SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
+import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
 import { AiModelsRoute } from "./AiModelsRoute";
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 vi.mock("../services/supabaseClient", () => ({ getSupabase: () => ({ auth: { getSession: async () => ({ data: { session: null } }) } }) }));
 afterEach(cleanup);
 
-const NEEDLE = DOWNLOAD_MODELS[0].modelId;
-const VISION = DOWNLOAD_MODELS[1].modelId;
+const NEEDLE = NEEDLE_MODEL_ID;
+const VISION = SMOL_VISION_MODEL_ID;
 
 const FORBIDDEN = [
   "checksum",
@@ -107,7 +109,7 @@ describe("AiModelsRoute consumer cards", () => {
       service.manager.dispatch(NEEDLE, { type: "START" });
       service.manager.dispatch(NEEDLE, {
         type: "PROGRESS",
-        downloadedBytes: Math.round(DOWNLOAD_MODELS[0].bytes * 0.42),
+        downloadedBytes: Math.round(NEEDLE_DESCRIPTOR.bytes * 0.42),
       });
     });
     expect(await screen.findByText("Downloading 42%")).toBeTruthy();

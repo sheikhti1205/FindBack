@@ -2,7 +2,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { ApplicationAiService, DOWNLOAD_MODELS } from "../services/ai/applicationAi";
+import { ApplicationAiService } from "../services/ai/applicationAi";
+import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
 import { Help } from "./Help";
 import { resetBackInterceptors } from "../components/backNavigation";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
@@ -53,7 +54,7 @@ async function installNeedle(fail = false, wait?: () => Promise<void>) {
     cancelGeneration: async () => {}, describeImage: async function* () {},
   } });
   await state.service.ready;
-  await state.service.download(DOWNLOAD_MODELS[0].modelId);
+  await state.service.download(NEEDLE_MODEL_ID);
   return inputs;
 }
 

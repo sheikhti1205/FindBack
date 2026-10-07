@@ -1,6 +1,5 @@
 import { Capacitor } from "@capacitor/core";
 import { bootProductionAi, type ProductionBoot } from "./production";
-import { profileFor } from "./modelProfiles";
 import { CapacitorNeedleBridge, createNativeNeedleEmbedder } from "./needle/native";
 import { NEEDLE_MODEL_ID, type NativeNeedleEmbedder } from "./needle/embedder";
 import { CapacitorSmolVlmBridge } from "./vision/native";
@@ -8,16 +7,22 @@ import { CapacitorModelDownloadDriver, runManagedDownload, removeManagedModel, t
 import { createOfflineAdapter, describeOfflineReadiness, type OfflineNativeBridge, type OfflineVisionNativeBridge } from "./providers/offline";
 import type { AiTaskId } from "./types";
 import type { RouteContext } from "./orchestrator/AiOrchestrator";
+import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, type ModelDescriptor, type ModelRegistry } from "./modelDescriptors";
 import { selectBackend } from "./automaticMode";
 import { PROBE_VERSION, validateProbeRecord, type ProbeRecord } from "./deviceProbe";
 
-/** Only redistributable, implemented product runtimes. Lab/LFM arms cannot enter this list. */
-export const DOWNLOAD_MODELS = [
-  { modelId: NEEDLE_MODEL_ID, label: "Needle · structured text / matching challenger", fileName: "needle3.cact", bytes: 35335380,
-    url: "https://huggingface.co/Cactus-Compute/needle3/resolve/c7c415a3d1b3d929014bc6e866d51ebb971f7089/needle3.cact" },
-  { modelId: "smolvlm2-500M-vision", label: "SmolVLM2 · image description", fileName: "SmolVLM2-500M.litertlm", bytes: 360822960,
-    url: "https://huggingface.co/litert-community/SmolVLM2-500M/resolve/dad030b6e56756201d670cfb4d042736a2ce3a5c/SmolVLM2-500M.litertlm" },
-] as const;
+/**
+ * Consumer download catalogue, derived from the canonical descriptor
+ * registry (Step 2) — never edited by hand, never indexed by position in
+ * production logic. `label` mirrors the descriptor display name.
+ */
+export const DOWNLOAD_MODELS = productionModelRegistry().catalogue().map((descriptor) => ({
+  modelId: descriptor.modelId,
+  label: descriptor.displayName,
+  fileName: descriptor.fileName,
+  bytes: descriptor.bytes,
+  url: descriptor.url,
+}));
 export const DEVICE_CORPUS_VERSION = "smol-color-plate-v1";
 type NeedleBridge = Pick<CapacitorNeedleBridge, "bridgeName" | "isNeedleAvailable" | "embeddingDimension" | "loadModel" | "embedNeedleTexts" | "initTools" | "completeJson" | "unload">;
 type SmolBridge = OfflineVisionNativeBridge & Partial<Pick<CapacitorSmolVlmBridge, "measureBackend" | "collectDeviceFacts">>;
@@ -26,7 +31,9 @@ export class ApplicationAiService {
   readonly boot: ProductionBoot;
   readonly ready: Promise<void>;
   readonly android: boolean;
-  readonly probeContext = { modelRev: profileFor(DOWNLOAD_MODELS[1].modelId)!.revision, probeVersion: PROBE_VERSION, corpusVersion: DEVICE_CORPUS_VERSION };
+  /** Phase A (Step 2): the descriptor authority behind every model decision. */
+  readonly registry: ModelRegistry;
+  readonly probeContext: { modelRev: string; probeVersion: number; corpusVersion: string };
   probeRecords: readonly ProbeRecord[] = [];
   private root = "";
   private embedder: NativeNeedleEmbedder | undefined;
@@ -49,8 +56,11 @@ export class ApplicationAiService {
   notice(modelId: string) { return this.notices.get(modelId) ?? null; }
   busy(modelId: string) { return this.operating.has(modelId); }
 
-  constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge }) {
+  constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge; descriptors?: readonly ModelDescriptor[] }) {
     this.android = options.android;
+    this.registry = options.descriptors ? createModelRegistry(options.descriptors) : productionModelRegistry();
+    const vision = this.registry.visionDescriptor();
+    this.probeContext = { modelRev: vision?.revision ?? "", probeVersion: PROBE_VERSION, corpusVersion: DEVICE_CORPUS_VERSION };
     if (this.android) {
       this.driver = options.driver ?? new CapacitorModelDownloadDriver();
       this.needle = options.needle ?? new CapacitorNeedleBridge();
@@ -58,13 +68,13 @@ export class ApplicationAiService {
     }
     const dimension = () => this.embedder?.dimension ?? 0;
     this.boot = bootProductionAi({
-      pins: DOWNLOAD_MODELS.map((model) => ({ modelId: model.modelId, sha256: profileFor(model.modelId)!.modelSha256, downloadBytes: model.bytes, minFreeRamMb: 1500 })),
+      pins: this.registry.descriptors.map((model) => ({ modelId: model.modelId, sha256: model.sha256, downloadBytes: model.bytes, minFreeRamMb: model.minRamMb })),
       managerOptions: this.driver ? { storageProbe: this.driver, storageHeadroomBytes: 64 * 1024 * 1024 } : undefined,
       ...(this.needle ? {
-        text: { modelId: NEEDLE_MODEL_ID, runtimeId: "needle-cact", isReady: () => this.ensureNeedle(), completeJson: (input: string) => this.extractFields(input) },
-        embedding: { modelId: NEEDLE_MODEL_ID, runtimeId: "needle-cact", get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) },
+        text: { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, isReady: () => this.ensureNeedle(), completeJson: (input: string) => this.extractFields(input) },
+        embedding: { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) },
       } : {}),
-      ...(this.smol ? { vision: { modelId: DOWNLOAD_MODELS[1].modelId, runtimeId: "smolvlm2-litertlm", isAvailable: () => this.ensureVision(), describe: async (prompt: string, imageBase64: string, signal: AbortSignal) => {
+      ...(this.smol && vision ? { vision: { modelId: vision.modelId, runtimeId: vision.runtimeId, isAvailable: () => this.ensureVision(), describe: async (prompt: string, imageBase64: string, signal: AbortSignal) => {
         let text = "";
         for await (const chunk of this.smol!.describeImage({ generationId: crypto.randomUUID(), prompt, imageBase64, maxOutputTokens: 256 }, signal)) text += chunk.textDelta;
         return text;
@@ -72,15 +82,14 @@ export class ApplicationAiService {
     });
     this.manager.subscribe(() => this.changed());
     this.ready = this.reconcile().catch(() => {
-      DOWNLOAD_MODELS.forEach((model) => this.notices.set(model.modelId, "Model storage could not be verified. Retry from AI & Models."));
+      this.registry.catalogue().forEach((model) => this.notices.set(model.modelId, "Model storage could not be verified. Retry from AI & Models."));
       this.changed();
     });
   }
 
   private model(modelId: string) {
-    const model = DOWNLOAD_MODELS.find((item) => item.modelId === modelId);
-    if (!model) throw new Error("Unknown on-device model");
-    return { ...model, revision: profileFor(modelId)!.revision };
+    const descriptor = this.registry.requireDescriptor(modelId);
+    return { ...descriptor };
   }
   private paths(modelId: string) {
     const model = this.model(modelId);
@@ -89,10 +98,10 @@ export class ApplicationAiService {
   private async reconcile() {
     if (!this.driver) return;
     this.root = await this.driver.rootDir();
-    for (const model of DOWNLOAD_MODELS) {
+    for (const model of this.registry.catalogue()) {
       const paths = this.paths(model.modelId);
       const actual = await this.driver.hashFile(paths.installedPath).catch(() => "");
-      const matches = this.manager.checksumsMatch(profileFor(model.modelId)!.modelSha256, actual);
+      const matches = this.manager.checksumsMatch(model.sha256, actual);
       if (matches) {
         this.manager.dispatch(model.modelId, { type: "QUEUE_DOWNLOAD", userInitiated: true });
         this.manager.dispatch(model.modelId, { type: "START" });
@@ -142,12 +151,27 @@ export class ApplicationAiService {
     this.operating.add(modelId); this.changed();
     try {
       await this.pause(modelId);
-      const model = this.model(modelId);
-      await removeManagedModel(this.manager, this.driver!, this.root, modelId, model.revision, model.fileName, {
-        unload: modelId === NEEDLE_MODEL_ID ? async () => { await this.needle!.unload(); this.embedder = undefined; this.matching = "use"; } : () => this.smol!.unloadVisionModel(),
+      const descriptor = this.model(modelId);
+      await removeManagedModel(this.manager, this.driver!, this.root, modelId, descriptor.revision, descriptor.fileName, {
+        unload: () => this.unloadDescriptor(descriptor),
       });
       this.probeRecords = []; this.notices.delete(modelId);
     } finally { this.operating.delete(modelId); this.changed(); }
+  }
+  /**
+   * Phase A (Step 3): runtime-owned unload. Ownership dispatches on the
+   * descriptor's runtimeId — never a Needle-vs-else branch, so an unknown
+   * third runtime fails closed instead of unloading the wrong engine.
+   */
+  private async unloadDescriptor(descriptor: ModelDescriptor): Promise<void> {
+    switch (descriptor.runtimeId) {
+      case NEEDLE_RUNTIME_ID:
+        await this.needle!.unload(); this.embedder = undefined; this.matching = "use"; return;
+      case SMOL_VLM_RUNTIME_ID:
+        await this.smol!.unloadVisionModel(); return;
+      default:
+        throw new Error(`No production runtime adapter for ${descriptor.runtimeId}`);
+    }
   }
   private async ensureNeedle(): Promise<boolean> {
     await this.ready; this.requireInstalled(NEEDLE_MODEL_ID);
@@ -162,17 +186,19 @@ export class ApplicationAiService {
   }
   private async ensureVision(): Promise<boolean> {
     await this.ready;
+    const vision = this.registry.visionDescriptor();
+    if (!vision) return false;
     // Readiness is a fact, not a load failure: an absent/unverified model
     // resolves false so the offline adapter keeps `vision_unsupported`.
     // Once the model is installed, a throwing native load propagates so the
     // adapter can report the honest `runtime_load_failed` class instead of
     // collapsing a GPU/OOM/init failure into "vision not proven".
-    if (!describeOfflineReadiness(this.manager, DOWNLOAD_MODELS[1].modelId).ready) return false;
+    if (!describeOfflineReadiness(this.manager, vision.modelId).ready) return false;
     if (!this.smol) return false;
     await this.needle!.unload(); this.embedder = undefined;
     const decision = selectBackend(this.probeRecords, this.probeContext);
     const backend = decision.kind === "use" && decision.backend === "gpu" ? "gpu" : "cpu";
-    const args = { modelId: DOWNLOAD_MODELS[1].modelId, installedPath: this.paths(DOWNLOAD_MODELS[1].modelId).installedPath, maxOutputTokens: 256 };
+    const args = { modelId: vision.modelId, installedPath: this.paths(vision.modelId).installedPath, maxOutputTokens: 256 };
     try { await this.smol.loadVisionModel({ ...args, backend }); }
     catch (error) {
       if (backend !== "gpu") throw error;
@@ -233,7 +259,8 @@ export class ApplicationAiService {
     };
   }
   private async *describeOfflineImage(request: import("./providers/offline").OfflineVisionRequest, signal: AbortSignal) {
-    const notice = this.notice(DOWNLOAD_MODELS[1].modelId);
+    const vision = this.registry.visionDescriptor();
+    const notice = vision ? this.notice(vision.modelId) : undefined;
     if (notice?.startsWith("GPU initialization failed")) yield { textDelta: `${notice}\n\n` };
     yield* this.smol!.describeImage(request, signal);
   }
@@ -252,13 +279,15 @@ export class ApplicationAiService {
     finally { this.inferenceBusy = false; }
   }
   async measure(backend: "cpu" | "gpu") {
-    this.requireAndroid(); await this.ready; this.requireInstalled(DOWNLOAD_MODELS[1].modelId);
+    const vision = this.registry.visionDescriptor();
+    if (!vision) throw new Error("No vision model registered");
+    this.requireAndroid(); await this.ready; this.requireInstalled(vision.modelId);
     if (this.inferenceBusy || this.operating.size > 0) throw new Error("On-device runtime is busy; stop inference before measuring");
     this.inferenceBusy = true;
     try {
       await this.needle!.unload(); this.embedder = undefined;
       await this.smol!.unloadVisionModel();
-      const record = await this.smol!.measureBackend?.({ modelId: DOWNLOAD_MODELS[1].modelId, modelRev: this.probeContext.modelRev, installedPath: this.paths(DOWNLOAD_MODELS[1].modelId).installedPath, backend, corpusVersion: DEVICE_CORPUS_VERSION });
+      const record = await this.smol!.measureBackend?.({ modelId: vision.modelId, modelRev: this.probeContext.modelRev, installedPath: this.paths(vision.modelId).installedPath, backend, corpusVersion: DEVICE_CORPUS_VERSION });
       if (!record || validateProbeRecord(record).length > 0 || record.backend !== backend || record.modelRev !== this.probeContext.modelRev || record.corpusVersion !== DEVICE_CORPUS_VERSION) throw new Error("No valid timing sample; device evidence is still required");
       this.probeRecords = [...this.probeRecords.filter((item) => item.backend !== backend), record];
       this.changed(); return record;

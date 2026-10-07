@@ -12,6 +12,7 @@ import {
   getApplicationAi,
   type ApplicationAiService,
 } from "../services/ai/applicationAi";
+import { productionModelRegistry, SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
 import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
 import { canShowAuto } from "../services/ai/uiGates";
 
@@ -242,7 +243,7 @@ export function AiModelsRoute({ service = getApplicationAi() }: { service?: Appl
           reportError={setError}
         />
         <ConsumerCard
-          modelId={DOWNLOAD_MODELS[1].modelId}
+          modelId={productionModelRegistry().visionDescriptor()?.modelId ?? SMOL_VISION_MODEL_ID}
           title="Photo analysis"
           detail="SmolVLM2"
           service={service}

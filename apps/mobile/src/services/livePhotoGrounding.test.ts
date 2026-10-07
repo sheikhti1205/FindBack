@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { groundReportPhoto } from "./livePhotoGrounding";
-import { ApplicationAiService, DOWNLOAD_MODELS } from "./ai/applicationAi";
+import { ApplicationAiService } from "./ai/applicationAi";
+import { SMOL_VISION_DESCRIPTOR } from "./ai/modelDescriptors";
 import type { ModelDownloadDriver } from "./ai/download/driver";
 import type { OfflineVisionNativeBridge } from "./ai/providers/offline";
 import { aiPreferencesKey } from "./ai/aiPreferences";
@@ -195,7 +196,7 @@ async function platform(stall = false) {
   const needle = { bridgeName: "needle-cact" as const, isNeedleAvailable: async () => false, embeddingDimension: async () => 2,
     loadModel: async () => 2, embedNeedleTexts: async () => [], initTools: async () => {}, completeJson: async () => "", unload: async () => {} };
   const service = new ApplicationAiService({ android: true, driver, smol, needle });
-  await service.ready; await service.download(DOWNLOAD_MODELS[1].modelId); application.current = service;
+  await service.ready; await service.download(SMOL_VISION_DESCRIPTOR.modelId); application.current = service;
   return { started, seen: () => seen };
 }
 it("default local production adapter receives actual photo bytes and ground-objects instruction", async () => {
