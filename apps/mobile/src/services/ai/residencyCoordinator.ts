@@ -64,6 +64,15 @@ export class ResidencyCoordinator {
   private activeLeaseController: AbortController | undefined;
   private settlingNative = 0;
   private readonly idleWaiters = new Set<() => void>();
+  /**
+   * Audit closure (reset barrier): true from `reset()` until
+   * `completeReset()` runs after post-settlement engine cleanup. While
+   * set, no new flight, exclusive operation, download, or resident
+   * switch may start — even when no native work is currently settling.
+   * A wedged native call can hold this until process restart; that is
+   * preferable to tearing down an engine underneath live native code.
+   */
+  private resetBarrier = false;
 
   /** Resolve idle waiters whenever the gate reaches the free state. */
   private notifyIdle(): void {
@@ -92,11 +101,22 @@ export class ResidencyCoordinator {
 
   /**
    * Route/inference gate: busy while exclusive work holds the gate, while
-   * a visible request is active, or while orphaned native work is still
-   * settling after its request returned.
+   * a visible request is active, while orphaned native work is still
+   * settling after its request returned, or while the reset barrier is
+   * up awaiting post-settlement cleanup.
    */
   get inferenceBlocked(): boolean {
-    return this.exclusiveLabel !== undefined || this.activeLeaseId !== undefined || this.settlingNative > 0;
+    return (
+      this.exclusiveLabel !== undefined ||
+      this.activeLeaseId !== undefined ||
+      this.settlingNative > 0 ||
+      this.resetBarrier
+    );
+  }
+
+  /** True while the account-reset cleanup barrier is up. */
+  get resetPending(): boolean {
+    return this.resetBarrier;
   }
 
   /**
@@ -105,7 +125,7 @@ export class ResidencyCoordinator {
    * gate. Pair every success with `requestSettled` in a finally.
    */
   beginInference(label: string): InferenceLease {
-    if (this.exclusiveLabel !== undefined || this.activeLeaseId !== undefined || this.settlingNative > 0) {
+    if (this.inferenceBlocked) {
       throw new ResidencyBusyError(label);
     }
     const id = this.nextGenerationId++;
@@ -196,12 +216,7 @@ export class ResidencyCoordinator {
    * `endExclusive`.
    */
   beginExclusive(label: string): void {
-    if (
-      this.exclusiveLabel !== undefined ||
-      this.activeLeaseId !== undefined ||
-      this.settlingNative > 0 ||
-      this.hasInflight
-    ) {
+    if (this.inferenceBlocked || this.hasInflight) {
       throw new ResidencyBusyError(label);
     }
     this.exclusiveLabel = label;
@@ -219,7 +234,7 @@ export class ResidencyCoordinator {
    * cancellation chain and calls `done()` exactly once on settlement.
    */
   beginGeneration(): { id: number; signal: AbortSignal; done(): void } {
-    if (this.exclusiveLabel !== undefined) {
+    if (this.exclusiveLabel !== undefined || this.resetBarrier) {
       throw new ResidencyBusyError("inference generation");
     }
     const id = this.nextGenerationId++;
@@ -260,7 +275,7 @@ export class ResidencyCoordinator {
     next: Exclude<ResidencyOwner, "none">,
     actions: { evict(): Promise<void>; load(): Promise<void> },
   ): Promise<void> {
-    if (this.exclusiveLabel !== undefined) {
+    if (this.exclusiveLabel !== undefined || this.resetBarrier) {
       throw new ResidencyBusyError(`switch to ${next}`);
     }
     await actions.evict();
@@ -279,13 +294,13 @@ export class ResidencyCoordinator {
   }
 
   /**
-   * Account/logout cleanup: abort the active flight and every auxiliary
-   * generation, drop residency and exclusive claims. The active lease
-   * pointer is KEPT (aborted, not cleared) so no new flight can begin
-   * until the orphaned route's finally releases it — a stale route can
-   * never hand results to the next account, and unsettled native work
-   * keeps the gate busy. Engine processes themselves are released by the
-   * service's async reset, which runs best-effort alongside.
+   * Account/logout cleanup, phase 1: abort the active flight and every
+   * auxiliary generation, drop residency and exclusive claims, and raise
+   * the reset barrier. The active lease pointer is KEPT (aborted, not
+   * cleared) so no new flight can begin until the orphaned route's
+   * finally releases it. Engine processes are NOT released here — the
+   * service unloads them after native settlement and lowers the barrier
+   * with `completeReset()`.
    */
   reset(): void {
     this.abortInference();
@@ -293,5 +308,17 @@ export class ResidencyCoordinator {
     this.generations.clear();
     this.owner = "none";
     this.exclusiveLabel = undefined;
+    this.resetBarrier = true;
+  }
+
+  /**
+   * Account/logout cleanup, phase 2: lower the reset barrier after the
+   * service has unloaded engines post-settlement. Only call once tracked
+   * native work has actually settled — never to force the gate open while
+   * native code may still be alive.
+   */
+  completeReset(): void {
+    this.resetBarrier = false;
+    this.notifyIdle();
   }
 }

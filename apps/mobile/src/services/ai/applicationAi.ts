@@ -33,6 +33,12 @@ export const DOWNLOAD_MODELS = productionModelRegistry().catalogue().map((descri
 export const DEVICE_CORPUS_VERSION = "smol-color-plate-v1";
 /** Consumer copy for a device the catalogue does not support. */
 export const DEVICE_INCOMPATIBLE_REASON = "Unavailable on this device.";
+/**
+ * Audit closure: sign-out never waits longer than this for native
+ * settlement before finishing. The reset barrier (not the wait) owns
+ * safety — an expired wait defers engine unload, never forces it.
+ */
+export const RESET_SIGNOUT_WAIT_MS = 10_000;
 
 interface StructuredToolSchema {
   readonly type: string;
@@ -311,6 +317,9 @@ export class ApplicationAiService {
   async download(modelId: string): Promise<void> {
     this.requireAndroid();
     await this.ready;
+    // Model files back the resident engines: no download may cross the
+    // reset barrier while cleanup is pending.
+    if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
     if (this.active.has(modelId) || this.operating.has(modelId)) return;
     const model = this.model(modelId);
     await this.requireCompatible(model);
@@ -601,20 +610,43 @@ export class ApplicationAiService {
   async facts() { this.requireAndroid(); return this.smol!.collectDeviceFacts?.(); }
 
   /**
-   * Account/logout cleanup. Abort the visible flight immediately and
-   * invalidate old-account output, but unload engines ONLY after tracked
-   * native work settles — a non-cancellable native call must never be
-   * torn down mid-execution. Downloads, pins, and probe records survive —
-   * logout never wipes models.
+   * Account/logout cleanup with a reset barrier.
+   *
+   * Abort the visible flight immediately and invalidate old-account
+   * output, then unload engines ONLY after tracked native work settles —
+   * a non-cancellable native call is never torn down mid-execution. If
+   * the bounded sign-out wait expires first, sign-out still finishes but
+   * the barrier stays up (local AI, removal, measurement, downloads, and
+   * switches all refuse) and engine cleanup is deferred until settlement
+   * actually occurs. A permanently wedged native call can hold local AI
+   * unavailable until process restart; that is preferable to unloading
+   * underneath live native code. Downloads, pins, and probe records
+   * survive — logout never wipes models.
    */
-  async resetForAccount(): Promise<void> {
+  async resetForAccount(timeoutMs = RESET_SIGNOUT_WAIT_MS): Promise<void> {
     this.coordinator.reset();
-    await this.coordinator.whenNativeIdle();
+    if (await this.coordinator.whenNativeIdle(timeoutMs)) {
+      await this.finishResetCleanup();
+    } else {
+      // Escape hatch fired: engines may still be alive. Do NOT unload;
+      // arrange cleanup when settlement eventually occurs.
+      void this.deferredResetCleanup().catch(() => {});
+    }
+  }
+
+  private async finishResetCleanup(): Promise<void> {
     this.embedder = undefined;
     this.matching = "use";
     await this.needle?.unload().catch(() => {});
     await this.smol?.unloadVisionModel().catch(() => {});
+    this.coordinator.completeReset();
     this.changed();
+  }
+
+  private async deferredResetCleanup(): Promise<void> {
+    let settled = false;
+    while (!settled) settled = await this.coordinator.whenNativeIdle(RESET_SIGNOUT_WAIT_MS);
+    await this.finishResetCleanup();
   }
 }
 

@@ -80,20 +80,27 @@ describe("ResidencyCoordinator", () => {
     expect(coordinator.current).toBe("none");
   });
 
-  it("reset aborts the active flight but keeps its lease until the route settles", () => {
+  it("reset aborts flights and raises the barrier until cleanup completes", () => {
     const coordinator = new ResidencyCoordinator();
     const lease = coordinator.beginInference("route");
     let aborted = false;
     lease.signal.addEventListener("abort", () => { aborted = true; });
     coordinator.reset();
     expect(aborted).toBe(true);
-    // The aborted (not yet settled) flight still owns the gate: no new
-    // flight may start until the orphaned route's finally releases it, so
-    // stale results can never reach the next account.
+    expect(coordinator.resetPending).toBe(true);
+    // The aborted (not yet settled) flight still owns the gate, and the
+    // barrier holds even after the route settles: no new flight may
+    // start until post-settlement cleanup lowers it.
     expect(coordinator.inferenceBlocked).toBe(true);
     expect(() => coordinator.beginInference("route-b")).toThrow(ResidencyBusyError);
+    expect(() => coordinator.beginExclusive("remove:x")).toThrow(ResidencyBusyError);
     lease.requestSettled();
+    expect(coordinator.inferenceBlocked).toBe(true);
+    expect(() => coordinator.beginInference("route-b")).toThrow(ResidencyBusyError);
+    coordinator.completeReset();
+    expect(coordinator.resetPending).toBe(false);
     expect(coordinator.inferenceBlocked).toBe(false);
+    expect(() => coordinator.beginInference("route-b")).not.toThrow();
   });
 
   it("stays busy until tracked native work settles, even after the request returns", async () => {
@@ -164,5 +171,17 @@ describe("ResidencyCoordinator", () => {
     lease.trackNative(new Promise<void>(() => {}));
     await expect(coordinator.whenNativeIdle(20)).resolves.toBe(false);
     lease.requestSettled();
+  });
+
+  it("switchTo refuses while the reset barrier is up", async () => {
+    const coordinator = new ResidencyCoordinator();
+    coordinator.reset();
+    await expect(
+      coordinator.switchTo("needle", { evict: async () => {}, load: async () => {} }),
+    ).rejects.toThrow(ResidencyBusyError);
+    coordinator.completeReset();
+    await expect(
+      coordinator.switchTo("needle", { evict: async () => {}, load: async () => {} }),
+    ).resolves.toBeUndefined();
   });
 });

@@ -306,8 +306,7 @@ describe("application-owned AI", () => {
     );
     expect(recovered.ok).toBe(true);
   });
-  it("logout aborts the actual route signal, unloads only after native settles, and never delivers stale results", async () => {
-    const p = platform();
+  it("logout aborts the actual route signal, unloads only after native settles, and never delivers stale results", async () => {    const p = platform();
     const releasers: Array<() => void> = [];
     const unloads: string[] = [];
     let calls = 0;
@@ -490,5 +489,60 @@ describe("application-owned AI", () => {
     // True native cancel ran, and no image text reached the old account.
     expect(cancels).toEqual(["cancel"]);
     expect(events.filter((event) => (event as { kind?: string }).kind === "text")).toEqual([]);
+  });
+
+  it("reset never unloads under native work that outlives the sign-out wait", async () => {
+    const p = platform();
+    const releasers: Array<() => void> = [];
+    const unloads: string[] = [];
+    let calls = 0;
+    p.needle.completeJson = async () => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<void>((resolve) => { releasers.push(resolve); });
+      }
+      return JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "red umbrella" } }] });
+    };
+    const baseUnload = p.needle.unload;
+    p.needle.unload = async () => { unloads.push("needle-unload"); await baseUnload(); };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    await service.download(SMOL_VISION_DESCRIPTOR.modelId);
+    const flight = service.route(
+      "extract-report-fields",
+      { prompt: "a red umbrella" },
+      { traceId: "trace-barrier-flight", timeoutMs: 10_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Bound far below any real hang: the wait MUST expire with native alive.
+    const resetting = service.resetForAccount(100);
+    const result = await flight;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.denialReason).toBe("CANCELLED");
+    // Sign-out itself finishes...
+    await resetting;
+    // ...but no engine was torn down under live native work...
+    expect(unloads).toEqual([]);
+    // ...and the barrier refuses route, removal, and measurement.
+    await expect(
+      service.route("extract-report-fields", { prompt: "keys" }, { traceId: "trace-barrier-refused" }),
+    ).rejects.toThrow(/busy/);
+    await expect(service.remove(NEEDLE_MODEL_ID)).rejects.toThrow(/busy/);
+    await expect(service.measure("cpu")).rejects.toThrow(/busy/);
+    // Settlement triggers the deferred cleanup: unload AFTER settle...
+    releasers.forEach((release) => release());
+    const deadline = Date.now() + 2000;
+    while (unloads.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(unloads).toEqual(["needle-unload"]);
+    // ...and the barrier clears: the next account can route again.
+    const after = await service.route(
+      "extract-report-fields",
+      { prompt: "title: keys" },
+      { traceId: "trace-barrier-after" },
+    );
+    expect(after.ok).toBe(true);
   });
 });
