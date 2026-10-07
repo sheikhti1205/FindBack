@@ -13,6 +13,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkAiReleaseGate,
+  validateDescriptorRegistry,
   validatePhotoAnalysisTruth,
   validateUserFacingPhotoTruth,
   validatePhotoGroundingWired,
@@ -36,6 +37,7 @@ const REAL = {
   aboutSource: read("apps/mobile/src/screens/About.tsx"),
   mainSource: read("apps/mobile/src/main.tsx"),
   appSource: read("apps/mobile/src/App.tsx"),
+  descriptorsSource: read("apps/mobile/src/services/ai/modelDescriptors.ts"),
   serviceSource: read("apps/mobile/src/services/ai/applicationAi.ts"),
   providersSource: read("apps/mobile/src/services/ai/providerRegistry.ts"),
   modelsSource: read("apps/mobile/src/screens/AiModelsRoute.tsx"),
@@ -351,5 +353,60 @@ describe("checkAiReleaseGate", () => {
   it("passes on the real tree", () => {
     const { passed, results } = checkAiReleaseGate();
     equal(passed, true, JSON.stringify(results.filter((r) => !r.ok), null, 2));
+  });
+});
+
+describe("validateDescriptorRegistry", () => {
+  const base = () => ({
+    descriptorsSource: REAL.descriptorsSource,
+    serviceSource: REAL.serviceSource,
+    modelsSource: REAL.modelsSource,
+  });
+
+  it("passes on the real tree", () => {
+    deepStrictEqual(validateDescriptorRegistry(base()), []);
+  });
+
+  it("fails on positional catalogue indexing in shipped code", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      serviceSource: `${REAL.serviceSource}\nconst id = DOWNLOAD_MODELS[1].modelId;`,
+    });
+    ok(errors.some((e) => e.includes("catalogue position")), `expected position complaint, got: ${errors}`);
+  });
+
+  it("fails on an unapproved production runtime id", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      descriptorsSource: REAL.descriptorsSource.replace(
+        'SMOL_VLM_RUNTIME_ID = "smolvlm2-litertlm"',
+        'SMOL_VLM_RUNTIME_ID = "llama-cpp"',
+      ),
+    });
+    ok(errors.some((e) => e.includes("llama-cpp")), `expected runtime complaint, got: ${errors}`);
+  });
+
+  it("fails on a downloadable entry that is not curated", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      descriptorsSource: REAL.descriptorsSource.replace('trust: "curated"', 'trust: "imported"'),
+    });
+    ok(errors.some((e) => e.includes("not curated")), `expected curation complaint, got: ${errors}`);
+  });
+
+  it("fails when removal loses its fail-closed unknown-runtime default", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      serviceSource: REAL.serviceSource.replace("throw new Error(`No production runtime adapter", "throw new Error(`oops"),
+    });
+    ok(errors.some((e) => e.includes("fail-closed")), `expected fail-closed complaint, got: ${errors}`);
+  });
+
+  it("fails when heavy switches bypass the residency coordinator", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      serviceSource: REAL.serviceSource.replaceAll('coordinator.switchTo("needle"', 'directLoad("needle"'),
+    });
+    ok(errors.some((e) => e.includes("residency coordinator")), `expected coordinator complaint, got: ${errors}`);
   });
 });

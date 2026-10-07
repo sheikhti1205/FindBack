@@ -22,6 +22,12 @@
  *                        foreign (lab) runtime is registered as routable, or
  *                        the orchestrator lets deterministic-local shadow
  *                        model runtimes on the model path
+ *   11. descriptor-registry — shipped code indexes the model catalogue by
+ *                        position, a descriptor names an unapproved runtime /
+ *                        format / ABI, a pin/identity/capability field is
+ *                        missing, a downloadable entry is not curated, model
+ *                        removal lacks a fail-closed unknown-runtime default,
+ *                        or heavy switches bypass the residency coordinator
  *   7. endpoint-pin   — the generic endpoint invents a default (unpinned)
  *                        endpoint instead of failing closed with
  *                        GENERIC_ENDPOINT_MISSING_COPY
@@ -78,12 +84,17 @@ export const SHIPPED_AI_FILES = [
   "apps/mobile/src/services/ai/orchestrator/runtimeRegistry.ts",
   "apps/mobile/src/services/ai/orchestrator/productionRuntimes.ts",
   "apps/mobile/src/services/ai/orchestrator/AiOrchestrator.ts",
+  "apps/mobile/src/services/ai/orchestrator/routeValidation.ts",
+  "apps/mobile/src/services/ai/modelDescriptors.ts",
+  "apps/mobile/src/services/ai/residencyCoordinator.ts",
   "apps/mobile/src/services/ai/applicationAi.ts",
   "apps/mobile/src/services/ai/providerRegistry.ts",
   "apps/mobile/src/services/ai/vision/native.ts",
   "apps/mobile/src/services/ai/download/driver.ts",
   "apps/mobile/src/screens/AiModelsRoute.tsx",
   "apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt",
+  "apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt",
+  "apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt",
 ];
 
 const MARKER_RE = /\bTODO\b|\bFIXME\b|not\s+wired/i;
@@ -279,6 +290,130 @@ export const REQUIRED_PHOTO_ANALYSIS_TRUTH_RES = [
   /cloud-only/i,
   /fall\s?back/i,
 ];
+
+/**
+ * Descriptor-registry detector (Phase A Steps 2/3/8/10). Fails when:
+ * - shipped app code identifies a model by catalogue position
+ *   (`DOWNLOAD_MODELS[0]`/`[1]`) instead of the descriptor registry, or
+ * - a shipped descriptor names a runtime outside the production allowlist
+ *   (a third runtime — including llama-cpp — needs explicit gate review,
+ *   never a silent catalogue entry), an unknown artifact format, an ABI
+ *   outside the known Android set, or an empty ABI list, or
+ * - a shipped descriptor lacks an immutable pin field (revision/sha256),
+ *   download identity (url/fileName/bytes), capability/task-role lists, or
+ *   RAM bounds, or
+ * - a downloadable entry is not curated (imported/untrusted models must
+ *   never ride the production catalogue), or
+ * - model removal can fall through to the wrong engine (the unload path
+ *   must fail closed on unknown runtimes), or
+ * - the app service bypasses the residency coordinator for heavy switches.
+ */
+const DESCRIPTOR_RUNTIME_ALLOWLIST = ["needle-cact", "smolvlm2-litertlm"];
+const DESCRIPTOR_FORMAT_ALLOWLIST = ["cact", "litertlm", "gguf", "tflite"];
+const DESCRIPTOR_ABI_ALLOWLIST = ["armeabi-v7a", "arm64-v8a", "x86_64"];
+
+export function validateDescriptorRegistry({ descriptorsSource, serviceSource, modelsSource }) {
+  const errors = [];
+  for (const [label, source] of [["service", serviceSource], ["models", modelsSource]]) {
+    if (/DOWNLOAD_MODELS\[[01]\]/.test(source ?? "")) {
+      errors.push(`descriptor-registry: ${label} identifies a model by catalogue position (use the descriptor registry)`);
+    }
+  }
+  const descriptors = descriptorsSource ?? "";
+  // Descriptors reference `*_RUNTIME_ID` constants: resolve them from the
+  // same source before allowlisting, so an unapproved runtime cannot hide
+  // behind an identifier.
+  const constStrings = new Map(
+    [...descriptors.matchAll(/(?:export\s+)?const\s+([A-Za-z0-9_]+)\s*=\s*"([^"]+)"/g)].map((match) => [match[1], match[2]]),
+  );
+  const resolveRuntime = (raw) => {
+    if (raw.startsWith('"')) return raw.slice(1, -1);
+    const resolved = constStrings.get(raw);
+    return resolved ?? `unresolvable:${raw}`;
+  };
+  // (Interface declarations read `runtimeId: string` — lowercase type
+  // names never match the UPPER_CASE-or-quoted value pattern.)
+  const runtimeIds = [...descriptors.matchAll(/runtimeId:\s*("[^"]+"|[A-Z][A-Za-z0-9_]*)/g)].map((match) => resolveRuntime(match[1]));
+  if (runtimeIds.length === 0) {
+    errors.push("descriptor-registry: no descriptor runtimeIds found (registry gutted?)");
+  }
+  for (const id of runtimeIds) {
+    if (!DESCRIPTOR_RUNTIME_ALLOWLIST.includes(id)) {
+      errors.push(`descriptor-registry: runtime "${id}" is not an approved production runtime (gate review required)`);
+    }
+  }
+  for (const format of [...descriptors.matchAll(/format:\s*"([^"]+)"/g)].map((match) => match[1])) {
+    if (!DESCRIPTOR_FORMAT_ALLOWLIST.includes(format)) {
+      errors.push(`descriptor-registry: artifact format "${format}" is not a known model format`);
+    }
+  }
+  const abis = [...descriptors.matchAll(/abis:\s*\[([^\]]*)\]/g)].flatMap((match) =>
+    [...match[1].matchAll(/"([^"]+)"/g)].map((id) => id[1]),
+  );
+  if (abis.length === 0) {
+    errors.push("descriptor-registry: no descriptor ABIs declared (ABI truth missing)");
+  }
+  for (const abi of abis) {
+    if (!DESCRIPTOR_ABI_ALLOWLIST.includes(abi)) {
+      errors.push(`descriptor-registry: ABI "${abi}" is not a known Android ABI`);
+    }
+  }
+  const blocks = (descriptors.match(/_DESCRIPTOR:\s*ModelDescriptor\s*=/g) ?? []).length;
+  if (blocks === 0) {
+    errors.push("descriptor-registry: no production descriptors found (registry gutted?)");
+  }
+  for (const field of ["revision:", "sha256:", 'url: "http', "fileName:", "bytes:", "capabilities: [", "taskRoles:", "minRamMb:", 'maturity: "', 'license: "']) {
+    const count = descriptors.split(field).length - 1;
+    if (count < blocks) {
+      errors.push(`descriptor-registry: descriptor field "${field}" missing on at least one descriptor`);
+    }
+  }
+  // Task roles may be inline or `*_ROLES` constants: every named role must
+  // be a real routable task, otherwise the catalogue advertises dead roles.
+  const roleArrays = [...descriptors.matchAll(/taskRoles:\s*(\[[^\]]*\]|([A-Za-z0-9_]+))/g)].map((match) => {
+    if (match[1].startsWith("[")) return match[1];
+    const block = descriptors.match(new RegExp(`const\\s+${match[2]}\\s*[^=]*=\\s*\\[([^\\]]*)\\]`));
+    return block ? block[1] : "";
+  });
+  const knownTasks = ["classify-intent", "extract-report-fields", "answer-help", "extract-search-filters", "analyze-image", "route-intent", "embed-texts", "ground-objects", "classify-category", "summarize-local-context"];
+  for (const array of roleArrays) {
+    for (const role of [...array.matchAll(/"([^"]+)"/g)].map((match) => match[1])) {
+      if (!knownTasks.includes(role)) {
+        errors.push(`descriptor-registry: task role "${role}" is not a routable task`);
+      }
+    }
+  }
+  const downloadable = (descriptors.match(/downloadable:\s*true/g) ?? []).length;
+  const curated = (descriptors.match(/trust:\s*"curated"/g) ?? []).length;
+  if (downloadable === 0) {
+    errors.push("descriptor-registry: production catalogue is empty (nothing downloadable)");
+  }
+  if (curated < downloadable) {
+    errors.push("descriptor-registry: a downloadable entry is not curated (untrusted models must never ride the catalogue)");
+  }
+  const service = serviceSource ?? "";
+  if (!/default:\s*\n?\s*throw new Error\(`No production runtime adapter/.test(service)) {
+    errors.push("descriptor-registry: model removal has no fail-closed default for unknown runtimes (wrong-engine unload risk)");
+  }
+  if (!/coordinator\.switchTo\("needle"/.test(service) || !/coordinator\.switchTo\("smol-vision"/.test(service)) {
+    errors.push("descriptor-registry: heavy switches bypass the residency coordinator (single-resident rule unenforced)");
+  }
+  return errors;
+}
+
+function checkDescriptorRegistry() {
+  let descriptors;
+  let service;
+  let models;
+  try {
+    descriptors = read("apps/mobile/src/services/ai/modelDescriptors.ts");
+    service = read("apps/mobile/src/services/ai/applicationAi.ts");
+    models = read("apps/mobile/src/screens/AiModelsRoute.tsx");
+  } catch (error) {
+    return [`descriptor-registry: cannot read registry source (${error.message})`];
+  }
+  return validateDescriptorRegistry({ descriptorsSource: descriptors, serviceSource: service, modelsSource: models });
+}
 
 export function validatePhotoAnalysisTruth({ clientCapabilitiesSource, serverCapabilitiesSource }) {
   const errors = [];
@@ -479,7 +614,7 @@ export function validateApplicationIntegration(sources) {
     ["probeSource", /override fun timing\(\): TimingRunner\s*=\s*RuntimeTimingRunner\.forInstalledSmol\(appContext\)/, "production timing provider cannot be null"],
     ["timingSource", /conversation\.getBenchmarkInfo\(\)/, "timing must use runtime counters, not synthetic token estimates"],
     ["timingSource", /correctnessPass\s*=\s*correctness/, "timing must report tested correctness"],
-    ["pluginSource", /fun measureBackend\([\s\S]+DeviceProbe\.collect\(/, "native plugin must expose measurement runner"],
+    ["pluginSource", /fun measureBackend\([\s\S]+DeviceProbe\.collect(Detailed)?\(/, "native plugin must expose measurement runner"],
     // On-device-first report-photo wiring (owner decision): the local SmolVLM2
     // analyzer is the DEFAULT engine; cloud is the fallback. These tripwires
     // fail closed if the local attempt, its image transport, or its UI caller
@@ -731,6 +866,7 @@ export const GATE_CHECKS = [
   { id: "vision-truth", run: checkVisionTruth },
   { id: "photo-analysis-truth", run: checkPhotoAnalysisTruth },
   { id: "runtime-wiring", run: checkRuntimeWiring },
+  { id: "descriptor-registry", run: checkDescriptorRegistry },
   { id: "application-integration", run: checkApplicationIntegration },
   { id: "endpoint-pin", run: checkEndpointPin },
   { id: "needle-telemetry", run: checkNeedleTelemetry },
@@ -782,6 +918,7 @@ checks (any failure exits 1):
    vision-truth      production vision seam + registration present, copy honest
    photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim (capabilities + About/Help)
   runtime-wiring    every spec runtime has a production adapter, no lab routes
+  descriptor-registry  named descriptors, approved runtimes/formats/ABIs, curated catalogue, fail-closed removal, coordinated residency
   application-integration  real boot, provider, controls, matching, timing and reviewed grounding path
   endpoint-pin      generic endpoint pinned (no invented default)
   needle-telemetry  Needle telemetry default-OFF behind the diag gate
