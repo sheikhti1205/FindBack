@@ -1,6 +1,7 @@
 package com.findback.app.vlm
 
 import android.util.Base64
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -76,6 +77,9 @@ class SmolVlmPlugin : Plugin() {
             result.put("nnapiStatus", facts.nnapiStatus)
             result.put("vulkanStatus", facts.vulkanStatus)
             result.put("openClStatus", facts.openClStatus)
+            val abis = JSArray()
+            for (abi in facts.supportedAbis) abis.put(abi)
+            result.put("supportedAbis", abis)
             call.resolve(result)
         }
     }

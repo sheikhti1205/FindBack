@@ -7,7 +7,7 @@ import { CapacitorModelDownloadDriver, runManagedDownload, removeManagedModel, t
 import { createOfflineAdapter, describeOfflineReadiness, type OfflineNativeBridge, type OfflineVisionNativeBridge } from "./providers/offline";
 import type { AiTaskId } from "./types";
 import type { RouteContext } from "./orchestrator/AiOrchestrator";
-import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, type ModelDescriptor, type ModelRegistry } from "./modelDescriptors";
+import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, modelSupportsAbi, type ModelDescriptor, type ModelRegistry } from "./modelDescriptors";
 import { ResidencyCoordinator, ResidencyBusyError } from "./residencyCoordinator";
 import { selectBackend } from "./automaticMode";
 import { PROBE_VERSION, validateProbeRecord, type ProbeRecord } from "./deviceProbe";
@@ -31,6 +31,36 @@ export const DOWNLOAD_MODELS = productionModelRegistry().catalogue().map((descri
   url: descriptor.url,
 }));
 export const DEVICE_CORPUS_VERSION = "smol-color-plate-v1";
+/** Consumer copy for a device the catalogue does not support. */
+export const DEVICE_INCOMPATIBLE_REASON = "Unavailable on this device.";
+
+export interface DeviceCompatibility {
+  readonly compatible: boolean;
+  readonly reason?: string;
+}
+
+/**
+ * Audit closure: the real device-eligibility contract. A model is
+ * downloadable/runnable only when Android runs, the device's ABI set
+ * intersects the descriptor's verified ABIs, the required native
+ * runtime/plugin exists in this build, and the artifact/runtime format
+ * pair is supported. Unknown ABIs and unknown formats never count.
+ * UI disabling is presentation only — `download()` enforces this
+ * independently, and it is also re-checked at run time.
+ */
+export function compatibilityOf(
+  descriptor: ModelDescriptor,
+  deviceAbis: readonly string[],
+  bridges: { readonly needle: boolean; readonly smol: boolean },
+): DeviceCompatibility {
+  const abiOk = deviceAbis.some((abi) => modelSupportsAbi(descriptor, abi));
+  if (!abiOk) return { compatible: false, reason: DEVICE_INCOMPATIBLE_REASON };
+  const runtimeOk =
+    (descriptor.format === "cact" && bridges.needle) ||
+    (descriptor.format === "litertlm" && bridges.smol);
+  if (!runtimeOk) return { compatible: false, reason: DEVICE_INCOMPATIBLE_REASON };
+  return { compatible: true };
+}
 type NeedleBridge = Pick<CapacitorNeedleBridge, "bridgeName" | "isNeedleAvailable" | "embeddingDimension" | "loadModel" | "embedNeedleTexts" | "initTools" | "completeJson" | "unload">;
 type SmolBridge = OfflineVisionNativeBridge & Partial<Pick<CapacitorSmolVlmBridge, "measureBackend" | "collectDeviceFacts">>;
 
@@ -50,6 +80,10 @@ export class ApplicationAiService {
   private version = 0;
   private notices = new Map<string, string>();
   private operating = new Set<string>();
+  /** Cached device ABI set (from native facts); undefined until first read. */
+  private deviceAbiCache: readonly string[] | undefined;
+  /** Per-model compatibility snapshot for the UI; refreshed by ensureCompatibility. */
+  private compatCache = new Map<string, DeviceCompatibility>();
   /** Phase A (Step 8): the single authority for residency, operations, and inference flights. */
   private readonly coordinator = new ResidencyCoordinator();
   private driver?: ModelDownloadDriver;
@@ -145,6 +179,62 @@ export class ApplicationAiService {
     }
   }
   private requireAndroid() { if (!this.android || !this.driver) throw new Error("On-device AI requires the Android app."); }
+  private bridges() { return { needle: this.needle !== undefined, smol: this.smol !== undefined }; }
+  /**
+   * Device ABI set from the native facts bridge. Unreadable or absent
+   * facts yield an empty set, which no descriptor verifies — fail-closed.
+   */
+  private async deviceAbis(): Promise<readonly string[]> {
+    if (this.deviceAbiCache === undefined) {
+      let abis: readonly string[] = [];
+      try {
+        const facts = (await this.smol?.collectDeviceFacts?.()) as Record<string, unknown> | undefined;
+        const raw = facts?.["supportedAbis"];
+        if (Array.isArray(raw)) abis = raw.filter((entry): entry is string => typeof entry === "string");
+      } catch {
+        abis = [];
+      }
+      this.deviceAbiCache = abis;
+    }
+    return this.deviceAbiCache;
+  }
+  /** Sync compatibility snapshot for the UI (unknown until ensureCompatibility runs). */
+  compatibility(modelId: string): DeviceCompatibility {
+    const cached = this.compatCache.get(modelId);
+    if (cached !== undefined) return cached;
+    if (!this.android) return { compatible: false, reason: "On-device downloads need the Android app." };
+    return { compatible: true };
+  }
+  /** Refresh every catalogue compatibility snapshot from live device facts. */
+  async ensureCompatibility(): Promise<void> {
+    if (!this.android) return;
+    const abis = await this.deviceAbis();
+    let changed = false;
+    for (const descriptor of this.registry.catalogue()) {
+      const next = compatibilityOf(descriptor, abis, this.bridges());
+      const prev = this.compatCache.get(descriptor.modelId);
+      if (prev?.compatible !== next.compatible || prev?.reason !== next.reason) {
+        this.compatCache.set(descriptor.modelId, next);
+        changed = true;
+      }
+    }
+    if (changed) this.changed();
+  }
+  /**
+   * Enforcement boundary: refuses the download/run when the device is
+   * incompatible and records the consumer notice. UI disabling never
+   * substitutes for this check.
+   */
+  private async requireCompatible(descriptor: ModelDescriptor): Promise<void> {
+    const compat = compatibilityOf(descriptor, await this.deviceAbis(), this.bridges());
+    this.compatCache.set(descriptor.modelId, compat);
+    this.changed();
+    if (!compat.compatible) {
+      const reason = compat.reason ?? DEVICE_INCOMPATIBLE_REASON;
+      this.notices.set(descriptor.modelId, reason);
+      throw new Error(reason);
+    }
+  }
   private requireInstalled(modelId: string) {
     if (!describeOfflineReadiness(this.manager, modelId).ready) throw new Error("Model is not installed and verified");
   }
@@ -153,6 +243,7 @@ export class ApplicationAiService {
     await this.ready;
     if (this.active.has(modelId) || this.operating.has(modelId)) return;
     const model = this.model(modelId);
+    await this.requireCompatible(model);
     const abort = new AbortController();
     const work = (async () => {
       const result = await runManagedDownload(this.manager, this.driver!, { ...model, maxBytes: model.bytes, userInitiated: true, signal: abort.signal });
@@ -212,6 +303,11 @@ export class ApplicationAiService {
   private async ensureNeedle(): Promise<boolean> {
     await this.ready; this.requireInstalled(NEEDLE_MODEL_ID);
     if (!this.needle) return false;
+    // Run-time re-check: an install that predates compatibility
+    // enforcement (or a device whose facts changed) must not run.
+    const needleDescriptor = this.registry.descriptorFor(NEEDLE_MODEL_ID);
+    if (needleDescriptor === undefined) return false;
+    if (!compatibilityOf(needleDescriptor, await this.deviceAbis(), this.bridges()).compatible) return false;
     if (!this.loadingNeedle) this.loadingNeedle = (async () => {
       if (!this.embedder || !(await this.needle!.isNeedleAvailable())) {
         // Single-resident rule via the coordinator: evict vision, then load.
@@ -237,6 +333,9 @@ export class ApplicationAiService {
     if (!describeOfflineReadiness(this.manager, vision.modelId).ready) return false;
     const smol = this.smol;
     if (!smol) return false;
+    // Run-time re-check, same as ensureNeedle: incompatible devices fail
+    // closed here even if a model file is somehow present.
+    if (!compatibilityOf(vision, await this.deviceAbis(), this.bridges()).compatible) return false;
     // Single-resident rule via the coordinator: evict Needle, then load.
     // A failed load leaves ownership at "none" (coordinator rule), so a
     // half-loaded engine is never claimed as resident.

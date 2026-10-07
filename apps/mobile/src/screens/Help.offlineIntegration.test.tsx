@@ -52,6 +52,7 @@ async function installNeedle(fail = false, wait?: () => Promise<void>) {
     bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false,
     loadVisionModel: async () => {}, unloadVisionModel: async () => {},
     cancelGeneration: async () => {}, describeImage: async function* () {},
+    collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }),
   } });
   await state.service.ready;
   await state.service.download(NEEDLE_MODEL_ID);

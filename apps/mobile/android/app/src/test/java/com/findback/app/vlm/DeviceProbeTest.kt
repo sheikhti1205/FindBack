@@ -224,6 +224,16 @@ class DeviceProbeTest {
         assertNull(DeviceProbe.collectFacts(fakeDeps(ramMb = -1L)))
     }
 
+    @Test fun collectFactsReportsSupportedAbisFailClosedWhenUnreadable() {
+        val facts = DeviceProbe.collectFacts(fakeDeps())
+        assertNotNull(facts)
+        // Plain JVM unit tests stub android.os.Build, so SUPPORTED_ABIS is
+        // unreadable here: facts must carry an empty (never null, never
+        // compatible-by-default) ABI list. On device the same field carries
+        // Build.SUPPORTED_ABIS for the download gate.
+        assertEquals(emptyList<String>(), facts.supportedAbis)
+    }
+
     @Test fun collectReturnsNullOnBlankArguments() {
         val deps = fakeDeps(timing = DeviceProbe.TimingResult(10.0, 20.0, true))
         assertNull(DeviceProbe.collect("", "r1", "c1", deps))

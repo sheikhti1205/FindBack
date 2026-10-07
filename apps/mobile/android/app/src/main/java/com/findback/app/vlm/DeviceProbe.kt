@@ -70,6 +70,12 @@ object DeviceProbe {
         val vulkanStatus: String,
         /** OpenCL availability (`available:<n>:…` / `unavailable`). */
         val openClStatus: String,
+        /**
+         * Audit closure: executable ABIs (`Build.SUPPORTED_ABIS`), used by
+         * the download gate to refuse models unverified for this device.
+         * Empty means unreadable — never treated as compatible.
+         */
+        val supportedAbis: List<String> = emptyList(),
     )
 
     /** One corpus spot-check run on the requested backend. */
@@ -284,6 +290,11 @@ object DeviceProbe {
             nnapiStatus = safe({ deps.nnapi().status() }, "unavailable-unknown"),
             vulkanStatus = safe({ deps.vulkan().status() }, "unavailable-unknown"),
             openClStatus = safe({ deps.openCl().status() }, "unavailable-unknown"),
+            supportedAbis = try {
+                Build.SUPPORTED_ABIS.toList()
+            } catch (_: Exception) {
+                emptyList()
+            },
         )
     }
 

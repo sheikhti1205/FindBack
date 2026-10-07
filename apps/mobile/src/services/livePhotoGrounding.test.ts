@@ -3,7 +3,7 @@ import { groundReportPhoto } from "./livePhotoGrounding";
 import { ApplicationAiService } from "./ai/applicationAi";
 import { SMOL_VISION_DESCRIPTOR } from "./ai/modelDescriptors";
 import type { ModelDownloadDriver } from "./ai/download/driver";
-import type { OfflineVisionNativeBridge } from "./ai/providers/offline";
+import type { OfflineVisionNativeBridge, OfflineVisionRequest } from "./ai/providers/offline";
 import { aiPreferencesKey } from "./ai/aiPreferences";
 
 const { application, normalized } = vi.hoisted(() => ({ application: { current: undefined as unknown }, normalized: vi.fn() }));
@@ -184,14 +184,15 @@ async function platform(stall = false) {
   let entered!: () => void;
   const started = new Promise<void>((resolve) => { entered = resolve; });
   let seen: { request: unknown; signal: AbortSignal } | undefined;
-  const smol: OfflineVisionNativeBridge = {
+  const smol: OfflineVisionNativeBridge & { collectDeviceFacts: () => Promise<Record<string, unknown>> } = {
     bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => true,
     loadVisionModel: async () => {}, unloadVisionModel: async () => {}, cancelGeneration: async () => {},
-    describeImage: async function* (request, signal) {
+    describeImage: async function* (request: OfflineVisionRequest, signal: AbortSignal) {
       seen = { request, signal }; entered();
       if (stall) await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
       if (!signal.aborted) yield { textDelta: raw };
     },
+    collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }),
   };
   const needle = { bridgeName: "needle-cact" as const, isNeedleAvailable: async () => false, embeddingDimension: async () => 2,
     loadModel: async () => 2, embedNeedleTexts: async () => [], initTools: async () => {}, completeJson: async () => "", unload: async () => {} };

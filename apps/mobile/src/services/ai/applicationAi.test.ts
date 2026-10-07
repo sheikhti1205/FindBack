@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApplicationAiService, DEVICE_CORPUS_VERSION } from "./applicationAi";
+import { ApplicationAiService, compatibilityOf, DEVICE_CORPUS_VERSION, DEVICE_INCOMPATIBLE_REASON } from "./applicationAi";
 import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, type ModelDescriptor } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import { PROBE_VERSION } from "./deviceProbe";
@@ -44,7 +44,13 @@ function platform() {
     describeImage: async function* () { calls.push("vision-describe"); yield { textDelta: "A red umbrella." }; },
     cancelGeneration: async () => {},
   };
-  return { disk, calls, driver, needle, smol };
+  // Every android build ships the Smol facts bridge; the platform fake
+  // carries it separately so the base seam type stays untouched.
+  const smolWithFacts = {
+    ...smol,
+    collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["arm64-v8a"] }),
+  };
+  return { disk, calls, driver, needle, smol: smolWithFacts };
 }
 
 describe("application-owned AI", () => {
@@ -226,7 +232,7 @@ describe("application-owned AI", () => {
       modelId: "test-third-model",
       displayName: "Test third",
       runtimeId: "test-unowned-runtime",
-      format: "gguf",
+      format: "cact",
       revision: "rev3",
       sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
       fileName: "third.gguf",
@@ -298,8 +304,7 @@ describe("application-owned AI", () => {
     expect(recovered.ok).toBe(true);
   });
 
-  it("logout aborts the actual route signal and never delivers stale results", async () => {
-    const p = platform();
+  it("logout aborts the actual route signal and never delivers stale results", async () => {    const p = platform();
     const releasers: Array<() => void> = [];
     let calls = 0;
     p.needle.completeJson = async () => {
@@ -335,5 +340,52 @@ describe("application-owned AI", () => {
       { traceId: "trace-logout-after" },
     );
     expect(after.ok).toBe(true);
+  });
+
+  it("grades device compatibility on ABI, runtime presence, and format support", () => {
+    const bridges = { needle: true, smol: true };
+    expect(compatibilityOf(NEEDLE_DESCRIPTOR, ["arm64-v8a"], bridges)).toEqual({ compatible: true });
+    expect(compatibilityOf(SMOL_VISION_DESCRIPTOR, ["arm64-v8a", "x86_64"], bridges).compatible).toBe(true);
+    // Unsupported ABI (e.g. the armeabi-v7a/x86_64 APK on an unvalidated
+    // device) is refused, even though the platform is Android.
+    expect(compatibilityOf(NEEDLE_DESCRIPTOR, ["x86_64"], bridges)).toEqual({
+      compatible: false,
+      reason: DEVICE_INCOMPATIBLE_REASON,
+    });
+    // Unreadable facts fail closed: empty never counts as compatible.
+    expect(compatibilityOf(NEEDLE_DESCRIPTOR, [], bridges).compatible).toBe(false);
+    // Missing native runtime for the artifact format is refused.
+    expect(compatibilityOf(NEEDLE_DESCRIPTOR, ["arm64-v8a"], { needle: false, smol: true }).compatible).toBe(false);
+    expect(compatibilityOf(SMOL_VISION_DESCRIPTOR, ["arm64-v8a"], { needle: true, smol: false }).compatible).toBe(false);
+  });
+
+  it("refuses downloads on ABI-incompatible Android without staging bytes", async () => {
+    const p = platform();
+    const x86smol = {
+      ...p.smol,
+      collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["x86_64"] }),
+    };
+    const service = new ApplicationAiService({ android: true, driver: p.driver, needle: p.needle, smol: x86smol });
+    await service.ready;
+    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(DEVICE_INCOMPATIBLE_REASON);
+    expect(service.notice(NEEDLE_MODEL_ID)).toBe(DEVICE_INCOMPATIBLE_REASON);
+    expect(p.calls).not.toContain("download");
+    expect(service.manager.statusOf(NEEDLE_MODEL_ID)?.download).toBe("not-installed");
+  });
+
+  it("refuses to run an installed model after the device proves incompatible", async () => {
+    const p = platform();
+    const first = new ApplicationAiService({ android: true, ...p });
+    await first.ready;
+    await first.download(NEEDLE_MODEL_ID);
+    // Same files, but the device now reports an unverified ABI.
+    const x86smol = {
+      ...p.smol,
+      collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["x86_64"] }),
+    };
+    const second = new ApplicationAiService({ android: true, driver: p.driver, needle: p.needle, smol: x86smol });
+    await second.ready;
+    expect(second.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
+    await expect(second.embedNeedle(["umbrella"])).rejects.toThrow(/not installed and verified|not resident/);
   });
 });
