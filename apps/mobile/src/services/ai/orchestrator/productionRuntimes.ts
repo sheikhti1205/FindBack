@@ -49,7 +49,9 @@ export type ProductionRuntimeId = (typeof PRODUCTION_RUNTIME_IDS)[number];
  *
  * Two generation modes: `completeText` is free model completion (prose
  * tasks); `completeStructured` is tool-constrained completion returning the
- * canonical slot envelope string (tasks with JSON contracts). Production
+ * canonical slot envelope string (tasks with JSON contracts). The task id
+ * selects the tool schema: each advertised structured task installs its own
+ * real schema, never one generic schema borrowed across tasks. Production
  * implements both on the resident engine; fakes implement the modes the
  * test exercises.
  */
@@ -69,7 +71,7 @@ export interface ProductionTextBackend {
   readonly taskRoles: readonly string[];
   isReady(): Promise<boolean>;
   completeText(input: string): Promise<string>;
-  completeStructured(input: string): Promise<string>;
+  completeStructured(taskId: string, input: string): Promise<string>;
 }
 
 /** Embedding backend seam: native Needle embedder in production. */
@@ -201,7 +203,9 @@ function textRuntime(manager: OfflineModelManager, backend: ProductionTextBacken
       let raw: string;
       try {
         const native =
-          interpreter.generation === "structured" ? backend.completeStructured(prompt) : backend.completeText(prompt);
+          interpreter.generation === "structured"
+            ? backend.completeStructured(input.taskId, prompt)
+            : backend.completeText(prompt);
         // Busy-until-settle: the lease observes the raw native promise so
         // the runtime stays owned until native work settles, even when the
         // visible request already timed out.

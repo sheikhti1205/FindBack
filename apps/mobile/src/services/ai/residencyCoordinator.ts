@@ -63,6 +63,15 @@ export class ResidencyCoordinator {
   private activeLeaseId: number | undefined;
   private activeLeaseController: AbortController | undefined;
   private settlingNative = 0;
+  private readonly idleWaiters = new Set<() => void>();
+
+  /** Resolve idle waiters whenever the gate reaches the free state. */
+  private notifyIdle(): void {
+    if (this.activeLeaseId !== undefined || this.settlingNative > 0) return;
+    const waiters = [...this.idleWaiters];
+    this.idleWaiters.clear();
+    for (const wake of waiters) wake();
+  }
 
   /** True while an exclusive operation (remove/measure) holds the gate. */
   get isExclusive(): boolean {
@@ -111,17 +120,14 @@ export class ResidencyCoordinator {
       },
       trackNative: (work: Promise<unknown>) => {
         if (this.activeLeaseId !== id) return;
-        this.settlingNative += 1;
-        const done = () => {
-          this.settlingNative = Math.max(0, this.settlingNative - 1);
-        };
-        work.then(done, done);
+        this.trackActiveNative(work);
       },
       requestSettled: () => {
         if (this.activeLeaseId === id) {
           this.activeLeaseId = undefined;
           this.activeLeaseController = undefined;
         }
+        this.notifyIdle();
       },
     };
   }
@@ -129,6 +135,45 @@ export class ResidencyCoordinator {
   /** Abort the active flight's visible request (logout, account switch). */
   abortInference(): void {
     this.activeLeaseController?.abort();
+  }
+
+  /**
+   * Track native work onto the currently active flight, if any. Lets
+   * nested producers that cannot hold their own lease (single flight) —
+   * e.g. the offline provider's inner orchestrator route — still keep
+   * the gate busy until their native work settles. No active flight:
+   * ignored.
+   */
+  trackActiveNative(work: Promise<unknown>): void {
+    if (this.activeLeaseId === undefined) return;
+    this.settlingNative += 1;
+    const done = () => {
+      this.settlingNative = Math.max(0, this.settlingNative - 1);
+      this.notifyIdle();
+    };
+    work.then(done, done);
+  }
+
+  /**
+   * Audit closure: resolve when no flight is active and no tracked native
+   * work is settling. Account reset awaits this before unloading engines,
+   * so a non-cancellable native call is never torn down mid-execution.
+   * Bounded escape hatch (default 30s): a leaked native promise must not
+   * hang sign-out forever — false means the gate is still busy.
+   */
+  whenNativeIdle(timeoutMs = 30_000): Promise<boolean> {
+    if (this.activeLeaseId === undefined && this.settlingNative === 0) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        this.idleWaiters.delete(wake);
+        resolve(false);
+      }, timeoutMs);
+      const wake = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      this.idleWaiters.add(wake);
+    });
   }
 
   get current(): ResidencyOwner {

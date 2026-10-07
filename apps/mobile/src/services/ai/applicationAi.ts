@@ -34,6 +34,74 @@ export const DEVICE_CORPUS_VERSION = "smol-color-plate-v1";
 /** Consumer copy for a device the catalogue does not support. */
 export const DEVICE_INCOMPATIBLE_REASON = "Unavailable on this device.";
 
+interface StructuredToolSchema {
+  readonly type: string;
+  readonly properties: Record<string, { readonly type: string; readonly description?: string }>;
+  readonly required: readonly string[];
+}
+
+interface StructuredStrategy {
+  readonly toolName: string;
+  readonly system: string;
+  readonly toolDescription: string;
+  readonly schema: StructuredToolSchema;
+}
+
+/**
+ * Audit closure: one real native tool schema per advertised structured
+ * task. The record_item schema only satisfies report extraction — search
+ * filters (query/category/status/dateRangeText) and category
+ * classification (category/confidence) each need their own tool, or the
+ * advertised roles are false capabilities. A task without a strategy
+ * fails closed here instead of borrowing another task's schema.
+ */
+const STRUCTURED_STRATEGIES: Readonly<Record<string, StructuredStrategy>> = {
+  "extract-report-fields": {
+    toolName: "record_item",
+    system: "Extract only supplied item details.",
+    toolDescription: "Record item details",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        category: { type: "string" },
+        dateText: { type: "string" },
+        locationNote: { type: "string" },
+      },
+      required: ["title"],
+    },
+  },
+  "extract-search-filters": {
+    toolName: "search_filters",
+    system: "Extract only supplied search filters.",
+    toolDescription: "Record search filters",
+    schema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        category: { type: "string" },
+        status: { type: "string" },
+        dateRangeText: { type: "string" },
+      },
+      required: [],
+    },
+  },
+  "classify-category": {
+    toolName: "item_category",
+    system: "Classify the item into exactly one category.",
+    toolDescription: "Record item category",
+    schema: {
+      type: "object",
+      properties: {
+        category: { type: "string" },
+        confidence: { type: "number" },
+      },
+      required: ["category"],
+    },
+  },
+};
+
 export interface DeviceCompatibility {
   readonly compatible: boolean;
   readonly reason?: string;
@@ -129,10 +197,10 @@ export class ApplicationAiService {
           // capable of validated free text, never tool-forced JSON.
           completeText: (input: string) => this.needle!.completeJson(input),
           // Tool-constrained completion returning the slot envelope string
-          // (tasks with JSON contracts). The record_item schema is
-          // Needle's current structured capability, named here — not in
-          // the generic runtime layer.
-          completeStructured: (input: string) => this.extractFields(input),
+          // (tasks with JSON contracts). Each advertised structured task
+          // installs its OWN tool schema (see STRUCTURED_STRATEGIES) —
+          // never one generic schema borrowed across tasks.
+          completeStructured: (taskId: string, input: string) => this.extractTaskFields(taskId, input),
         },
         embedding: { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, taskRoles: needleRoles, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) },
       } : {}),
@@ -360,12 +428,18 @@ export class ApplicationAiService {
       await smol.loadVisionModel({ ...args, backend: "cpu" });
     }
   }
-  private async extractFields(input: string): Promise<string> {
-    await this.needle!.initTools("Extract only supplied item details.", JSON.stringify([{ name: "record_item", description: "Record item details", parameters: { type: "object", properties: { title: { type: "string" }, description: { type: "string" }, locationNote: { type: "string" } }, required: ["title"] } }]));
+  private async extractTaskFields(taskId: string, input: string): Promise<string> {
+    const strategy = STRUCTURED_STRATEGIES[taskId];
+    if (strategy === undefined) throw new Error(`No structured generation strategy for task "${taskId}"`);
+    await this.needle!.initTools(strategy.system, JSON.stringify([{
+      name: strategy.toolName,
+      description: strategy.toolDescription,
+      parameters: strategy.schema,
+    }]));
     const raw: unknown = JSON.parse(await this.needle!.completeJson(input));
     const calls = (raw as { function_calls?: { name?: string; arguments?: unknown }[] }).function_calls;
-    const fields = calls?.find((call) => call.name === "record_item")?.arguments;
-    if (!fields || typeof fields !== "object") throw new Error("Needle did not produce a confident item record");
+    const fields = calls?.find((call) => call.name === strategy.toolName)?.arguments;
+    if (!fields || typeof fields !== "object") throw new Error(`Needle did not produce a confident ${strategy.toolName} record`);
     return JSON.stringify({ fields });
   }
   async route(taskId: AiTaskId, input: unknown, context: RouteContext) {
@@ -438,7 +512,16 @@ export class ApplicationAiService {
   }
   private async *generateOffline(text: string, signal: AbortSignal) {
     if (signal.aborted) return;
-    const result = await this.boot.orchestrator.route("extract-report-fields", { text }, { traceId: crypto.randomUUID() });
+    // Audit closure: the offline text path runs inside completeOffline's
+    // lease but cannot hold its own (single flight). The route still gets
+    // the live signal (logout cancels the visible request) and reports
+    // its raw native promise onto the active lease (busy-until-settle for
+    // non-cancellable Needle orphans).
+    const result = await this.boot.orchestrator.route("extract-report-fields", { text }, {
+      traceId: crypto.randomUUID(),
+      signal,
+      trackSettlement: (work) => this.coordinator.trackActiveNative(work),
+    });
     if (signal.aborted) return;
     if (!result.ok) throw new Error(result.error);
     yield { textDelta: JSON.stringify(result.value) };
@@ -447,11 +530,7 @@ export class ApplicationAiService {
     await this.ready;
     if (this.operating.size > 0) throw new Error("On-device runtime is busy");
     // Holds the single inference lease for the request lifetime
-    // (exclusion + logout abort). The offline provider signature carries
-    // no settlement tracker, so native-orphan settlement after
-    // TIMEOUT/CANCELLED is NOT tracked on this path — unlike route(),
-    // whose adapters report every raw native promise. Vision sub-paths
-    // still cancel end to end through their own signal chain.
+    // (exclusion + logout abort + native-settlement tracking).
     let lease: import("./residencyCoordinator").InferenceLease;
     try {
       lease = this.coordinator.beginInference("complete");
@@ -459,8 +538,28 @@ export class ApplicationAiService {
       if (error instanceof ResidencyBusyError) throw new Error("On-device runtime is busy");
       throw error;
     }
-    try { yield* adapter.complete(request); }
-    finally { lease.requestSettled(); }
+    // Audit closure: the adapter only knows request.signal, so logout
+    // would never cancel the real provider stream. Compose caller cancel
+    // with the lease signal and hand the adapter the combination; after
+    // either fires, no further event is delivered to the old consumer.
+    const combined = new AbortController();
+    const forward = () => combined.abort();
+    if (request.signal.aborted || lease.signal.aborted) combined.abort();
+    else {
+      request.signal.addEventListener("abort", forward, { once: true });
+      lease.signal.addEventListener("abort", forward, { once: true });
+    }
+    try {
+      for await (const event of adapter.complete({ ...request, signal: combined.signal })) {
+        if (combined.signal.aborted) return;
+        yield event;
+      }
+    }
+    finally {
+      request.signal.removeEventListener("abort", forward);
+      lease.signal.removeEventListener("abort", forward);
+      lease.requestSettled();
+    }
   }
   async measure(backend: "cpu" | "gpu") {
     const vision = this.registry.visionDescriptor();
@@ -502,12 +601,15 @@ export class ApplicationAiService {
   async facts() { this.requireAndroid(); return this.smol!.collectDeviceFacts?.(); }
 
   /**
-   * Phase A (Step 8): account/logout cleanup. Aborts in-flight inference and
-   * drops residency synchronously, then releases both engines best-effort.
-   * Downloads, pins, and probe records survive — logout never wipes models.
+   * Account/logout cleanup. Abort the visible flight immediately and
+   * invalidate old-account output, but unload engines ONLY after tracked
+   * native work settles — a non-cancellable native call must never be
+   * torn down mid-execution. Downloads, pins, and probe records survive —
+   * logout never wipes models.
    */
   async resetForAccount(): Promise<void> {
     this.coordinator.reset();
+    await this.coordinator.whenNativeIdle();
     this.embedder = undefined;
     this.matching = "use";
     await this.needle?.unload().catch(() => {});

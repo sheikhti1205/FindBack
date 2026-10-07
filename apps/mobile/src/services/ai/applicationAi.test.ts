@@ -306,9 +306,10 @@ describe("application-owned AI", () => {
     );
     expect(recovered.ok).toBe(true);
   });
-
-  it("logout aborts the actual route signal and never delivers stale results", async () => {    const p = platform();
+  it("logout aborts the actual route signal, unloads only after native settles, and never delivers stale results", async () => {
+    const p = platform();
     const releasers: Array<() => void> = [];
+    const unloads: string[] = [];
     let calls = 0;
     p.needle.completeJson = async () => {
       calls += 1;
@@ -317,6 +318,8 @@ describe("application-owned AI", () => {
       }
       return JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "red umbrella" } }] });
     };
+    const baseUnload = p.needle.unload;
+    p.needle.unload = async () => { unloads.push("needle-unload"); await baseUnload(); };
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
@@ -326,17 +329,22 @@ describe("application-owned AI", () => {
       { traceId: "trace-logout-flight", timeoutMs: 10_000 },
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
-    await service.resetForAccount();
+    const resetting = service.resetForAccount();
     const result = await flight;
     // The orphaned route reports cancellation, never success for account B.
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.denialReason).toBe("CANCELLED");
-    // Native still unsettled: the gate stays busy across the account change.
+    // Native still unsettled: the engine must NOT be unloaded yet, and the
+    // gate stays busy across the account change.
+    expect(unloads).toEqual([]);
     await expect(
       service.route("extract-report-fields", { prompt: "keys" }, { traceId: "trace-logout-refused" }),
     ).rejects.toThrow(/busy/);
     releasers.forEach((release) => release());
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await resetting;
+    // Settlement first, unload second — never torn down mid-execution.
+    expect(unloads).toEqual(["needle-unload"]);
     const after = await service.route(
       "extract-report-fields",
       { prompt: "title: keys" },
@@ -345,8 +353,7 @@ describe("application-owned AI", () => {
     expect(after.ok).toBe(true);
   });
 
-  it("grades device compatibility on ABI, runtime presence, and format support", () => {
-    const bridges = { needle: true, smol: true };
+  it("grades device compatibility on ABI, runtime presence, and format support", () => {    const bridges = { needle: true, smol: true };
     expect(compatibilityOf(NEEDLE_DESCRIPTOR, ["arm64-v8a"], bridges)).toEqual({ compatible: true });
     expect(compatibilityOf(SMOL_VISION_DESCRIPTOR, ["arm64-v8a", "x86_64"], bridges).compatible).toBe(true);
     // Unsupported ABI (e.g. the armeabi-v7a/x86_64 APK on an unvalidated
@@ -390,5 +397,93 @@ describe("application-owned AI", () => {
     await second.ready;
     expect(second.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
     await expect(second.embedNeedle(["umbrella"])).rejects.toThrow(/not installed and verified|not resident/);
+  });
+
+  it("logout cancels a pending offline text provider and delivers no old-account text", async () => {
+    const p = platform();
+    const releasers: Array<() => void> = [];
+    let calls = 0;
+    p.needle.completeJson = async () => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<void>((resolve) => { releasers.push(resolve); });
+      }
+      return JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "red umbrella" } }] });
+    };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    const adapter = service.offlineAdapter(async () => "approved-bytes");
+    const caller = new AbortController();
+    const request = {
+      selection: { accountId: "u", provider: "offline", modelId: NEEDLE_MODEL_ID, mode: "free-only" },
+      task: "app-help", policyVersion: "p", knowledgeVersion: "k", recentTurns: [],
+      currentText: "Describe the umbrella", approvedImageIds: [], authorizedResultIds: [],
+      maxOutputTokens: 64, signal: caller.signal,
+    } as Parameters<typeof adapter.complete>[0];
+    const events: unknown[] = [];
+    const consuming = (async () => {
+      for await (const event of adapter.complete(request)) events.push(event);
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const resetting = service.resetForAccount();
+    // The pending provider stream terminates on logout...
+    await Promise.race([
+      consuming,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("offline stream hung past logout")), 2000)),
+    ]);
+    // ...with no model text ever delivered to the old account...
+    expect(events.filter((event) => (event as { kind?: string }).kind === "text")).toEqual([]);
+    // ...and the gate stays busy until the orphaned native call settles.
+    await expect((async () => {
+      for await (const event of adapter.complete(request)) void event;
+    })()).rejects.toThrow(/busy/);
+    releasers.forEach((release) => release());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await resetting;
+    // A new account can stream again once settlement completes.
+    const after: unknown[] = [];
+    for await (const event of adapter.complete(request)) after.push(event);
+    expect(after.some((event) => (event as { kind?: string }).kind === "text")).toBe(true);
+  });
+
+  it("logout cancels a pending offline vision provider through true native cancel", async () => {
+    const p = platform();
+    const cancels: string[] = [];
+    const visionSmol = {
+      ...p.smol,
+      isVisionAvailable: async () => true,
+      loadVisionModel: async () => {},
+      describeImage: async function* (_request: unknown, signal: AbortSignal) {
+        await new Promise<void>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("vision aborted")), { once: true });
+        });
+      },
+      cancelGeneration: async () => { cancels.push("cancel"); },
+    };
+    const service = new ApplicationAiService({ android: true, ...p, smol: visionSmol });
+    await service.ready;
+    await service.download(SMOL_VISION_DESCRIPTOR.modelId);
+    const adapter = service.offlineAdapter(async () => "aGVsbG8=");
+    const caller = new AbortController();
+    const request = {
+      selection: { accountId: "u", provider: "offline", modelId: SMOL_VISION_DESCRIPTOR.modelId, mode: "free-only" },
+      task: "app-help", policyVersion: "p", knowledgeVersion: "k", recentTurns: [],
+      currentText: "Describe", approvedImageIds: ["img-1"], authorizedResultIds: [],
+      maxOutputTokens: 64, signal: caller.signal,
+    } as Parameters<typeof adapter.complete>[0];
+    const events: unknown[] = [];
+    const consuming = (async () => {
+      for await (const event of adapter.complete(request)) events.push(event);
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await service.resetForAccount();
+    await Promise.race([
+      consuming,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("vision stream hung past logout")), 2000)),
+    ]);
+    // True native cancel ran, and no image text reached the old account.
+    expect(cancels).toEqual(["cancel"]);
+    expect(events.filter((event) => (event as { kind?: string }).kind === "text")).toEqual([]);
   });
 });

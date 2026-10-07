@@ -139,4 +139,30 @@ describe("ResidencyCoordinator", () => {
     await native;
     expect(coordinator.inferenceBlocked).toBe(false);
   });
+
+  it("whenNativeIdle resolves immediately when nothing is in flight", async () => {
+    const coordinator = new ResidencyCoordinator();
+    await expect(coordinator.whenNativeIdle()).resolves.toBe(true);
+  });
+
+  it("whenNativeIdle waits for settlement, then reports idle", async () => {
+    const coordinator = new ResidencyCoordinator();
+    const lease = coordinator.beginInference("route");
+    let releaseNative!: () => void;
+    const native = new Promise<void>((resolve) => { releaseNative = resolve; });
+    lease.trackNative(native);
+    const waiting = coordinator.whenNativeIdle(1000);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    lease.requestSettled();
+    releaseNative();
+    await expect(waiting).resolves.toBe(true);
+  });
+
+  it("whenNativeIdle times out instead of hanging logout forever", async () => {
+    const coordinator = new ResidencyCoordinator();
+    const lease = coordinator.beginInference("route");
+    lease.trackNative(new Promise<void>(() => {}));
+    await expect(coordinator.whenNativeIdle(20)).resolves.toBe(false);
+    lease.requestSettled();
+  });
 });
