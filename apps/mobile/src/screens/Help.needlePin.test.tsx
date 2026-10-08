@@ -101,3 +101,17 @@ it("a stale Needle chat pin refuses honestly instead of answering chat through t
   expect(screen.getByLabelText("Ask the Help & FAQ")).toHaveProperty("value", question);
   expect(network).not.toHaveBeenCalled();
 });
+
+it("the assistant picker offers Automatic first and never lists the installed tool engine", async () => {
+  await installNeedle();
+  render(
+    <MemoryRouter>
+      <Help deps={{ getKey: async () => "test-key" }} />
+    </MemoryRouter>,
+  );
+  fireEvent.click(screen.getByTestId("composer-model-chip"));
+  await screen.findByTestId("model-picker");
+  expect(screen.getByTestId("model-pick-automatic")).toBeTruthy();
+  expect(screen.queryByText(NEEDLE_MODEL_ID)).toBeNull();
+  expect(screen.getByTestId("model-manage-link")).toBeTruthy();
+});

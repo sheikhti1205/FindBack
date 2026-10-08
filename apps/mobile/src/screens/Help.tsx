@@ -1521,6 +1521,12 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     announce(`Model ${modelId} selected for new sends.`);
   }
 
+  function handleSelectAutomatic() {
+    setSelectedModelId(null);
+    setModelOpen(false);
+    announce("Automatic model selection for new sends.");
+  }
+
   function stopComposer() {
     if (guidedBusy) {
       generation.current += 1;
@@ -1983,9 +1989,11 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       >
         <div data-testid="model-picker" className="flex flex-col gap-3">
           <ModelCatalogSheet
+            variant="assistant"
             models={[...catalog]}
             selectedId={selectedModelId}
             onSelect={handleSelectModel}
+            onSelectAutomatic={handleSelectAutomatic}
             retrievedAt={catalog[0]?.retrievedAt ?? null}
             offlineDetail={offlineDetail}
           />

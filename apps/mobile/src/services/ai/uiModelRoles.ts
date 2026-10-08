@@ -15,6 +15,7 @@
  * - A future text model advertising answer-help → Chat.
  * - A VLM advertising answer-help AND analyze-image → Chat + Vision.
  */
+import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import { productionModelRegistry } from "./modelDescriptors";
 import type { AiTaskId } from "./types";
 import type { ModelRecord } from "./providerContract";
@@ -79,3 +80,23 @@ export function isAssistantSelectableOfflineRecord(record: Pick<ModelRecord, "id
   if (record.provider !== "offline") return true;
   return qualifiedUiRolesForOfflineModel(record.id).some(isConversationalUiRole);
 }
+
+/**
+ * Consumer roles for any catalogue row (assistant picker sections + settings
+ * library chips). Offline rows use qualified registry roles. Cloud provider
+ * rows are general-purpose conversational products by contract: text-only
+ * rows read as Chat, image-capable rows as Chat + Vision.
+ */
+export function rolesForCatalogRecord(record: Pick<ModelRecord, "id" | "provider" | "input">): readonly UiModelRole[] {
+  if (record.provider === "offline") return qualifiedUiRolesForOfflineModel(record.id);
+  return record.input.includes("image") ? ["chat", "vision"] : ["chat"];
+}
+
+/**
+ * Explicit role defaults (master plan §10: no registry-order defaults).
+ * Single-candidate roles resolve to their only qualified engine; the
+ * multi-candidate matches role stays a persisted user preference
+ * (matchesEngine: use | needle).
+ */
+export const DEFAULT_TOOL_MODEL_ID = NEEDLE_MODEL_ID;
+export const DEFAULT_EMBEDDING_MODEL_ID = NEEDLE_MODEL_ID;

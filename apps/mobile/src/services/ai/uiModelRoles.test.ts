@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_EMBEDDING_MODEL_ID,
+  DEFAULT_TOOL_MODEL_ID,
   isAssistantSelectableOfflineRecord,
   isConversationalUiRole,
   qualifiedUiRolesForOfflineModel,
+  rolesForCatalogRecord,
 } from "./uiModelRoles";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import { SMOL_VISION_MODEL_ID } from "./modelDescriptors";
@@ -40,5 +43,25 @@ describe("uiModelRoles (master plan §8)", () => {
 
   it("leaves cloud rows to the provider catalogue path", () => {
     expect(isAssistantSelectableOfflineRecord({ id: "openrouter/free", provider: "openrouter" })).toBe(true);
+  });
+
+  it("derives catalogue roles per row: offline qualified, cloud conversational by contract", () => {
+    expect(rolesForCatalogRecord({ id: NEEDLE_MODEL_ID, provider: "offline", input: ["text"] })).toEqual([
+      "tools",
+      "embeddings",
+    ]);
+    expect(rolesForCatalogRecord({ id: SMOL_VISION_MODEL_ID, provider: "offline", input: ["text", "image"] })).toEqual([
+      "vision",
+    ]);
+    expect(rolesForCatalogRecord({ id: "openrouter/free", provider: "openrouter", input: ["text"] })).toEqual(["chat"]);
+    expect(rolesForCatalogRecord({ id: "groq-vision", provider: "groq", input: ["text", "image"] })).toEqual([
+      "chat",
+      "vision",
+    ]);
+  });
+
+  it("names explicit single-candidate role defaults instead of registry order", () => {
+    expect(DEFAULT_TOOL_MODEL_ID).toBe(NEEDLE_MODEL_ID);
+    expect(DEFAULT_EMBEDDING_MODEL_ID).toBe(NEEDLE_MODEL_ID);
   });
 });

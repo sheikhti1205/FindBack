@@ -108,8 +108,8 @@ describe("Help M2 chat UI", () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
     expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /choose model/i }));
-    // Until C wires the catalogue fetch the sheet is honest about having no rows.
-    await screen.findByText("Models");
+    // U3: the send-time picker opens on Automatic first, never an empty row list.
+    await screen.findByTestId("model-pick-automatic");
   });
 
   it("shows a real request-state row with attempt history while sending", async () => {

@@ -1,16 +1,21 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { Link } from "react-router";
 import type { ModelRecord, PriceClass, PriceLine, ProviderId } from "../services/ai/providerContract";
 import {
   formatPerMillionTokens,
   isFastRecord,
   supportsVision,
 } from "../services/ai/modelCatalog";
+import { rolesForCatalogRecord, type UiModelRole } from "../services/ai/uiModelRoles";
 import { listItemVariants, motionDurations, motionEasings, pressFeedback } from "./uiMotion";
 
 export type CatalogFilter =
   | { readonly kind: "all" | "free" | "vision" | "fast" | "offline" }
   | { readonly kind: "provider"; readonly provider: ProviderId };
+
+/** Consumer capability filter for the settings library. "all" disables it. */
+export type CatalogRoleFilter = UiModelRole | "all";
 
 export type ModelCatalogSheetProps = {
   /** Catalogue rows to list. Empty means none loaded — never rendered as verified. */
@@ -24,6 +29,16 @@ export type ModelCatalogSheetProps = {
   /** Controlled filter; uncontrolled (internal state) when omitted. */
   readonly activeFilter?: CatalogFilter;
   readonly onFilterChange?: (filter: CatalogFilter) => void;
+  /**
+   * Presentation variant. "library" is the settings model library (price +
+   * capability filters, full rows). "assistant" is the send-time picker:
+   * Automatic first, Chat/Vision sections, conversational rows only, and a
+   * Manage AI models link. Callers filter rows; the assistant variant never
+   * lists tools/embeddings/speech rows it is given.
+   */
+  readonly variant?: "library" | "assistant";
+  /** Assistant variant: selecting Automatic (selectedId null). */
+  readonly onSelectAutomatic?: () => void;
   /**
    * True once the on-device adapter is wired (native bridge landed).
    * False keeps the Offline view honest: no offline row is ever shown as
@@ -68,6 +83,20 @@ export function matchesCatalogFilter(model: ModelRecord, filter: CatalogFilter):
   }
 }
 
+/** Library capability predicate: "all" passes everything; otherwise the row must carry the role. */
+export function matchesRoleFilter(model: ModelRecord, role: CatalogRoleFilter): boolean {
+  if (role === "all") return true;
+  return rolesForCatalogRecord(model).includes(role);
+}
+
+const ROLE_CHIPS: readonly { readonly role: CatalogRoleFilter; readonly label: string }[] = [
+  { role: "all", label: "All roles" },
+  { role: "chat", label: "Chat" },
+  { role: "vision", label: "Vision" },
+  { role: "tools", label: "Tools" },
+  { role: "embeddings", label: "Embeddings" },
+];
+
 export function ModelCatalogSheet({
   models,
   retrievedAt,
@@ -76,23 +105,41 @@ export function ModelCatalogSheet({
   onSelect,
   activeFilter,
   onFilterChange,
+  variant = "library",
+  onSelectAutomatic,
   offlineAvailable = false,
   offlineDetail = null,
 }: ModelCatalogSheetProps) {
   const [internalFilter, setInternalFilter] = useState<CatalogFilter>({ kind: "all" });
+  const [internalRole, setInternalRole] = useState<CatalogRoleFilter>("all");
   const filter = activeFilter ?? internalFilter;
   const providers = useMemo(() => {
     const seen = new Set<ProviderId>();
     for (const model of models) seen.add(model.provider);
     return [...seen].sort();
   }, [models]);
-  const visible = useMemo(() => models.filter((model) => matchesCatalogFilter(model, filter)), [models, filter]);
+  const visible = useMemo(
+    () => models.filter((model) => matchesCatalogFilter(model, filter) && matchesRoleFilter(model, internalRole)),
+    [models, filter, internalRole],
+  );
   function choose(next: CatalogFilter) {
     if (onFilterChange) onFilterChange(next);
     else setInternalFilter(next);
   }
   const offlineStatus =
     offlineDetail ?? (offlineAvailable ? "No offline models are ready yet." : "On-device AI requires the Android app.");
+  if (variant === "assistant") {
+    return (
+      <AssistantPickerSections
+        models={models}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        onSelectAutomatic={onSelectAutomatic}
+        retrievedAt={retrievedAt}
+        stale={stale}
+      />
+    );
+  }
   return (
     <section aria-label="Model catalogue" className="flex flex-col gap-3">
       <header className="flex flex-col gap-1">
@@ -138,6 +185,22 @@ export function ModelCatalogSheet({
               className="min-h-[48px] rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface-variant hover:bg-surface-container"
             >
               {provider}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {models.length > 0 ? (
+        <div role="group" aria-label="Filter by capability" className="flex flex-wrap gap-2">
+          {ROLE_CHIPS.map((chip) => (
+            <button
+              key={chip.role}
+              type="button"
+              aria-pressed={internalRole === chip.role}
+              aria-label={`Capability: ${chip.label}`}
+              onClick={() => setInternalRole(chip.role)}
+              className="min-h-[48px] rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface-variant hover:bg-surface-container"
+            >
+              {chip.label}
             </button>
           ))}
         </div>
@@ -217,6 +280,119 @@ export function ModelCatalogSheet({
           </AnimatePresence>
         </ul>
       ) : null}
+    </section>
+  );
+}
+
+/** Locality badge copy: installed engines read Local, provider rows read Cloud. */
+function localityFor(model: ModelRecord): string {
+  return model.provider === "offline" ? "Local" : "Cloud";
+}
+
+/**
+ * Assistant send-time picker (U3): Automatic first, then Chat and Vision
+ * sections with conversational rows only. A cross-listed row (Chat + Vision)
+ * appears in both sections with a combined badge. Tool/embedding/speech rows
+ * are never rendered here even when passed in — they belong to the settings
+ * library, not the conversation.
+ */
+function AssistantPickerSections({
+  models,
+  selectedId,
+  onSelect,
+  onSelectAutomatic,
+  retrievedAt,
+  stale,
+}: {
+  models: readonly ModelRecord[];
+  selectedId?: string | null;
+  onSelect?: (modelId: string) => void;
+  onSelectAutomatic?: () => void;
+  retrievedAt?: string | null;
+  stale?: boolean;
+}) {
+  const conversational = models.filter((model) => rolesForCatalogRecord(model).some((role) => role === "chat" || role === "vision"));
+  const chatRows = conversational.filter((model) => rolesForCatalogRecord(model).includes("chat"));
+  const visionRows = conversational.filter((model) => rolesForCatalogRecord(model).includes("vision"));
+  const automaticSelected = selectedId === null || selectedId === undefined;
+  function rowBadge(model: ModelRecord): string {
+    const roles = rolesForCatalogRecord(model);
+    const both = roles.includes("chat") && roles.includes("vision");
+    return `${localityFor(model)}${both ? " · Chat + Vision" : ""}`;
+  }
+  function renderRow(model: ModelRecord) {
+    const selected = selectedId === model.id;
+    return (
+      <motion.li
+        key={`${model.provider}/${model.id}`}
+        layout
+        variants={listItemVariants}
+        initial="hidden"
+        animate="visible"
+        exit="exit"
+        transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
+        className="flex flex-col gap-1 rounded-m3-sm border border-outline bg-surface px-3 py-2"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-sm font-medium">{model.id}</span>
+          <span className="shrink-0 text-xs text-on-surface-variant">{rowBadge(model)}</span>
+        </div>
+        {onSelect ? (
+          <motion.button
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onSelect(model.id)}
+            whileTap={pressFeedback.button}
+            transition={{ duration: motionDurations.instant }}
+            className="mt-1 min-h-[48px] rounded-m3-sm border border-outline px-3 text-sm font-medium"
+          >
+            {selected ? "Selected" : "Select"}
+          </motion.button>
+        ) : null}
+      </motion.li>
+    );
+  }
+  return (
+    <section aria-label="Choose model" className="flex flex-col gap-3">
+      <button
+        type="button"
+        data-testid="model-pick-automatic"
+        aria-pressed={automaticSelected}
+        onClick={() => onSelectAutomatic?.()}
+        className="flex min-h-[48px] flex-col justify-center gap-0.5 rounded-m3-sm border border-outline bg-surface px-3 text-left"
+      >
+        <span className="text-sm font-medium">{automaticSelected ? "● Automatic" : "○ Automatic"}</span>
+        <span className="text-xs text-on-surface-variant">Picks the best compatible model for this message</span>
+      </button>
+      {chatRows.length > 0 ? (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Chat</h3>
+          <ul className="flex flex-col gap-2">
+            <AnimatePresence initial={false}>{chatRows.map(renderRow)}</AnimatePresence>
+          </ul>
+        </div>
+      ) : null}
+      {visionRows.length > 0 ? (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Vision</h3>
+          <ul className="flex flex-col gap-2">
+            <AnimatePresence initial={false}>{visionRows.map(renderRow)}</AnimatePresence>
+          </ul>
+        </div>
+      ) : null}
+      {conversational.length === 0 ? (
+        <p className="text-sm text-on-surface-variant">
+          No conversational models loaded{retrievedAt ? ` · listed ${retrievedAt}` : ""}{stale ? " · list may be out of date" : ""}.
+          Tool engines run automatically in the background.
+        </p>
+      ) : null}
+      <Link
+        to="/settings/ai/models"
+        data-testid="model-manage-link"
+        className="flex min-h-[48px] items-center justify-center rounded-m3-sm border border-outline-variant px-3 text-sm font-medium"
+      >
+        Manage AI models
+      </Link>
     </section>
   );
 }
