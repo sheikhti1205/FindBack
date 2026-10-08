@@ -58,6 +58,24 @@ type ProbeState = {
 const IDLE_PROBE: ProbeState = { phase: "idle", notice: null };
 
 /**
+ * Phase A.4: derive the offline-model status from the live service when
+ * no test override is passed. Production renders `<AiAdvanced />` with no
+ * `offlineStatus`, so the gate must read the manager (which knows the
+ * installed + checksum-verified models) instead of asking
+ * `canShowOffline(null)` — which always hides. An explicitly passed
+ * status (including tests) still wins.
+ */
+function offlineStatusFromService(service: ApplicationAiService): OfflineModelStatus | null {
+  for (const model of DOWNLOAD_MODELS) {
+    const status = service.manager.statusOf(model.modelId);
+    if (status !== undefined && status.download === "installed" && status.checksumVerified === true) {
+      return status;
+    }
+  }
+  return null;
+}
+
+/**
  * Advanced diagnostics (`/settings/ai/advanced`). The only consumer tier
  * where exact technical values (model ids, revisions, checksums, raw probe
  * data, provider test output) may appear. All actions reuse the existing
@@ -86,9 +104,10 @@ export function AiAdvanced({
 
   const records = probeRecords ?? service.probeRecords;
   const context = probeContext ?? service.probeContext;
+  const effectiveOfflineStatus = offlineStatus ?? offlineStatusFromService(service);
   const measuredFlags: MeasuredCapabilityFlags = {
     hasFreshAutoProbe: canShowAuto(records, context),
-    hasVerifiedOfflineModel: canShowOffline(offlineStatus),
+    hasVerifiedOfflineModel: canShowOffline(effectiveOfflineStatus),
     hasNeedleEvidence: canShowNeedle(needleEvidence),
     hasFreshGpuProbe: canShowGpu(records, context),
   };

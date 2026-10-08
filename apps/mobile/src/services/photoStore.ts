@@ -120,19 +120,25 @@ function writeRegistry(accountId: string | null | undefined, entries: StoredPhot
   }
 }
 
+/**
+ * File → data URL without the FileReader boundary. jsdom's FileReader
+ * data-URL path races its binary encoder across realms (`Expected an
+ * Uint8Array` surfacing as an unhandled error after teardown), so the
+ * bytes are read via `arrayBuffer()` and base64-encoded here instead —
+ * one awaited promise, no listener race, deterministic in tests and on
+ * device. Rejects `unreadable file` when the bytes cannot be read.
+ */
 function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    try {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") resolve(reader.result);
-        else reject(new Error("unreadable file"));
-      };
-      reader.onerror = () => reject(reader.error ?? new Error("unreadable file"));
-      reader.readAsDataURL(file);
-    } catch (err) {
-      reject(err instanceof Error ? err : new Error("unreadable file"));
+  return (async () => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
     }
+    return `data:${file.type || "application/octet-stream"};base64,${btoa(binary)}`;
+  })().catch(() => {
+    throw new Error("unreadable file");
   });
 }
 

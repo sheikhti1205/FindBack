@@ -120,6 +120,25 @@ describe("AiAdvanced diagnostics", () => {
     expect(screen.getByTestId("ai-gate-offline").textContent).toMatch(/verified/i);
   });
 
+  it("derives offline-model evidence from the live service when no override is passed", async () => {
+    const { ApplicationAiService, DOWNLOAD_MODELS } = await import("../services/ai/applicationAi");
+    const service = new ApplicationAiService({ android: false });
+    await service.ready;
+    // Installed + checksum-verified in the manager, no offlineStatus prop.
+    const modelId = DOWNLOAD_MODELS[0]!.modelId;
+    const pin = service.registry.requireDescriptor(modelId).sha256;
+    service.manager.dispatch(modelId, { type: "QUEUE_DOWNLOAD", userInitiated: true });
+    service.manager.dispatch(modelId, { type: "START" });
+    service.manager.dispatch(modelId, { type: "VERIFY_START" });
+    service.manager.dispatch(modelId, { type: "VERIFY_OK", actualSha256: pin });
+    render(
+      <MemoryRouter>
+        <AiAdvanced service={service} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("ai-gate-offline").textContent).toMatch(/verified/i);
+  });
+
   it("keeps exact technical values reachable here", () => {
     const view = render(
       <MemoryRouter>

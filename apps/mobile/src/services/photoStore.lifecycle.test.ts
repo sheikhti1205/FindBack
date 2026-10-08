@@ -16,11 +16,11 @@ afterEach(() => {
 it("late photo-byte persistence cannot restore a published account's retired image", async () => {
   const id = stashPhotoFile(new File(["abc"], "old.jpg", { type: "image/jpeg" }), { accountId: "u1" });
   let finish: (() => void) | null = null;
-  vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) {
-    finish = () => {
-      Object.defineProperty(this, "result", { configurable: true, value: "data:image/jpeg;base64,YWJj" });
-      this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>);
-    };
+  let release!: (value: ArrayBuffer) => void;
+  const gate = new Promise<ArrayBuffer>((resolve) => { release = resolve; });
+  vi.spyOn(File.prototype, "arrayBuffer").mockImplementation(() => {
+    finish = () => release(new Uint8Array([97, 98, 99]).buffer);
+    return gate;
   });
   const pending = persistStashedPhotos("u1");
   expect(finish).not.toBeNull();
@@ -34,11 +34,11 @@ it("late photo-byte persistence cannot restore a published account's retired ima
 it("sign-out invalidates in-flight persistence for every account", async () => {
   const id = stashPhotoFile(new File(["abc"], "old.jpg", { type: "image/jpeg" }), { accountId: "u1" });
   let finish: (() => void) | null = null;
-  vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) {
-    finish = () => {
-      Object.defineProperty(this, "result", { configurable: true, value: "data:image/jpeg;base64,YWJj" });
-      this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>);
-    };
+  let release!: (value: ArrayBuffer) => void;
+  const gate = new Promise<ArrayBuffer>((resolve) => { release = resolve; });
+  vi.spyOn(File.prototype, "arrayBuffer").mockImplementation(() => {
+    finish = () => release(new Uint8Array([97, 98, 99]).buffer);
+    return gate;
   });
   const pending = persistStashedPhotos("u1");
   expect(finish).not.toBeNull();
