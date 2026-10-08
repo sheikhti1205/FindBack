@@ -145,6 +145,38 @@ describe("generateLocalFirst", () => {
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(state.route).not.toHaveBeenCalled();
   });
+
+  it("routes localInput instead of the engineered prompt when supplied", async () => {
+    state.route.mockResolvedValue(okRoute('{"query":"wallet"}'));
+    await generateLocalFirst("extract-report-fields", "Extract report slots. Return ONLY one JSON object.", {
+      localInput: { text: "a red umbrella" },
+    });
+    expect(state.route.mock.calls[0]![1]).toEqual({ text: "a red umbrella" });
+  });
+});
+
+describe("local/cloud input split (Phase A.4)", () => {
+  it("routes localTaskInput locally while the cloud fallback keeps the engineered prompt", async () => {
+    state.route.mockResolvedValue(okRoute('{"category":"electronics"}'));
+    const out = await liveGenerateFor("classify-category")(
+      "Classify the item text. Return ONLY one JSON object.",
+      { maxOutputTokens: 8, temperature: 0, localTaskInput: { text: "red umbrella" } },
+    );
+    expect(out).toBe('{"category":"electronics"}');
+    expect(state.route.mock.calls[0]![1]).toEqual({ text: "red umbrella" });
+    expect(state.text).not.toHaveBeenCalled();
+  });
+
+  it("cloud fallback receives the engineered prompt, never the raw input", async () => {
+    state.route.mockResolvedValue(failRoute("RUNTIME_ERROR"));
+    state.text.mockResolvedValue('{"category":"electronics"}');
+    await liveGenerateFor("classify-category")("Engineered prompt here.", {
+      maxOutputTokens: 8,
+      temperature: 0,
+      localTaskInput: { text: "red umbrella" },
+    });
+    expect(state.text.mock.calls[0]![0]).toBe("Engineered prompt here.");
+  });
 });
 
 describe("liveGenerateFor (local-first, cloud fallback)", () => {

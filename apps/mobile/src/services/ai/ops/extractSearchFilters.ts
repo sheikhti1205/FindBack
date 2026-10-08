@@ -35,6 +35,8 @@ export async function extractSearchFilters(
   const rawText = await generate(buildSearchSlotsPrompt(userMessage), {
     maxOutputTokens: profile.maxOutputTokensText,
     temperature: profile.defaultTemperature,
+    // Raw request for the on-device tool route; cloud keeps the prompt.
+    localTaskInput: { text: userMessage },
   });
   const context = {
     instruction: SEARCH_SLOTS_INSTRUCTION,

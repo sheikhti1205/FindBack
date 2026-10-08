@@ -33,6 +33,9 @@ export async function extractReportFields(
   const rawText = await generate(buildReportSlotsPrompt(userMessage), {
     maxOutputTokens: profile.maxOutputTokensText,
     temperature: profile.defaultTemperature,
+    // The on-device route receives the raw request (a tool model selects
+    // and fills its tool from what the user said); cloud keeps the prompt.
+    localTaskInput: { text: userMessage },
   });
   const context = {
     instruction: REPORT_SLOTS_INSTRUCTION,

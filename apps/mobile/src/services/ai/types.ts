@@ -157,6 +157,13 @@ export type AiResult<T> = { readonly ok: true; readonly value: T } | { readonly 
 export interface GenerateOptions {
   readonly maxOutputTokens: number;
   readonly temperature: number;
+  /**
+   * Phase A.4: raw task input for the on-device route. Cloud transports
+   * ignore this and generate from the engineered prompt; local-first
+   * transports route this instead, so a tool model receives the original
+   * request — never instructions written for a chat LLM.
+   */
+  readonly localTaskInput?: unknown;
 }
 
 export type GenerateFn = (prompt: string, options: GenerateOptions) => Promise<string>;

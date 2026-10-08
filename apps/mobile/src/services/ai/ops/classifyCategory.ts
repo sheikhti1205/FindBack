@@ -138,6 +138,8 @@ export async function classifyCategory(
       generate(buildClassifyCategoryPrompt(input), {
         maxOutputTokens: profile.maxOutputTokensText,
         temperature: profile.defaultTemperature,
+        // Raw request for the on-device tool route; cloud keeps the prompt.
+        localTaskInput: { text: input.text },
       }),
       signal,
     );

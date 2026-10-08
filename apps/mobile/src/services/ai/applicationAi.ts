@@ -1,5 +1,6 @@
 import { Capacitor } from "@capacitor/core";
 import { bootProductionAi, type ProductionBoot } from "./production";
+import { ITEM_CATEGORIES } from "./ops/classifyCategory";
 import { CapacitorNeedleBridge, createNativeNeedleEmbedder } from "./needle/native";
 import { NEEDLE_MODEL_ID, type NativeNeedleEmbedder } from "./needle/embedder";
 import { CapacitorSmolVlmBridge } from "./vision/native";
@@ -42,7 +43,7 @@ export const RESET_SIGNOUT_WAIT_MS = 10_000;
 
 interface StructuredToolSchema {
   readonly type: string;
-  readonly properties: Record<string, { readonly type: string; readonly description?: string }>;
+  readonly properties: Record<string, { readonly type: string; readonly description?: string; readonly enum?: readonly string[] }>;
   readonly required: readonly string[];
 }
 
@@ -60,48 +61,58 @@ interface StructuredStrategy {
  * classification (category/confidence) each need their own tool, or the
  * advertised roles are false capabilities. A task without a strategy
  * fails closed here instead of borrowing another task's schema.
+ *
+ * Phase A.4 (Needle contract): Needle is a tool model, not a chat LLM —
+ * it receives the raw user request (see GenerateOptions.localTaskInput)
+ * and selects/fills its one declared tool from what the user said. The
+ * `system` strings below are environment facts, never model-steering
+ * instructions; the tool descriptions name the actual extraction action.
+ * Required stays empty for extraction (a required value with no grounding
+ * withholds the whole record instead of guessing — partial extraction is
+ * the app contract, enforced by validateReportSlots downstream). Category
+ * binds the canonical ITEM_CATEGORIES enum; engine confidence arrives as
+ * the top-level Needle score, never as a tool argument.
  */
 const STRUCTURED_STRATEGIES: Readonly<Record<string, StructuredStrategy>> = {
   "extract-report-fields": {
     toolName: "record_item",
-    system: "Extract only supplied item details.",
-    toolDescription: "Record item details",
+    system: "Lost-and-found item report details.",
+    toolDescription: "Extract details explicitly stated about a lost or found item.",
     schema: {
       type: "object",
       properties: {
-        title: { type: "string" },
-        description: { type: "string" },
-        category: { type: "string" },
-        dateText: { type: "string" },
-        locationNote: { type: "string" },
+        title: { type: "string", description: "Short item title as stated by the user" },
+        description: { type: "string", description: "Longer item description as stated by the user" },
+        category: { type: "string", description: "Item category as stated by the user" },
+        dateText: { type: "string", description: "When the item was lost or found, as stated by the user" },
+        locationNote: { type: "string", description: "Where the item was lost or found, as stated by the user" },
       },
-      required: ["title"],
+      required: [],
     },
   },
   "extract-search-filters": {
     toolName: "search_filters",
-    system: "Extract only supplied search filters.",
-    toolDescription: "Record search filters",
+    system: "Lost-and-found search request.",
+    toolDescription: "Extract lost-and-found search terms and filters explicitly stated by the user.",
     schema: {
       type: "object",
       properties: {
-        query: { type: "string" },
-        category: { type: "string" },
-        status: { type: "string" },
-        dateRangeText: { type: "string" },
+        query: { type: "string", description: "Search terms as stated by the user" },
+        category: { type: "string", description: "Item category filter as stated by the user" },
+        status: { type: "string", description: "Lost or found status filter as stated by the user" },
+        dateRangeText: { type: "string", description: "Date range filter as stated by the user" },
       },
       required: [],
     },
   },
   "classify-category": {
     toolName: "item_category",
-    system: "Classify the item into exactly one category.",
-    toolDescription: "Record item category",
+    system: "Lost-and-found item description for classification.",
+    toolDescription: "Classify the described lost-or-found item into one FindBack category.",
     schema: {
       type: "object",
       properties: {
-        category: { type: "string" },
-        confidence: { type: "number" },
+        category: { type: "string", description: "The single FindBack category for the described item", enum: ITEM_CATEGORIES },
       },
       required: ["category"],
     },

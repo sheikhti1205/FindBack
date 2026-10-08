@@ -32,6 +32,12 @@ export type LiveNarrowTaskId =
 
 export interface LocalFirstOptions {
   readonly signal?: AbortSignal;
+  /**
+   * Phase A.4: raw task input routed to the on-device engine instead of
+   * the engineered prompt. Absent means the prompt itself is the input
+   * (legacy callers); the cloud fallback always receives the prompt.
+   */
+  readonly localInput?: unknown;
 }
 
 function isAbort(error: unknown): boolean {
@@ -56,10 +62,14 @@ export async function generateLocalFirst(
   if (opts?.signal?.aborted) throw abortError();
   // No catch here: route rejections (including AbortError on user cancel)
   // propagate to the caller, which decides fallback vs fail-closed.
+  // The local route gets the raw task input when the op supplied one —
+  // a tool model must see the original request, not the cloud-engineered
+  // prompt. The cloud fallback (below) always receives the prompt.
+  const input = opts?.localInput ?? { prompt };
   const result: Awaited<ReturnType<import("./ai/applicationAi").ApplicationAiService["route"]>> =
     await getApplicationAi().route(
       taskId,
-      { prompt },
+      input,
       { traceId: crypto.randomUUID(), consent: true, ...(opts?.signal ? { signal: opts.signal } : {}) },
     );
   if (opts?.signal?.aborted) throw abortError();
@@ -117,7 +127,10 @@ export function liveGenerateFor(taskId: LiveNarrowTaskId): GenerateFn {
     const mode = loadSeededAiPreferences(account ?? "local").assistantMode;
     if (mode === "cloud-only") return generateCloudForAccount(account, prompt, signal);
     try {
-      return await generateLocalFirst(taskId, prompt, { signal });
+      return await generateLocalFirst(taskId, prompt, {
+        signal,
+        ...(genOpts.localTaskInput !== undefined ? { localInput: genOpts.localTaskInput } : {}),
+      });
     } catch (error) {
       if (signal?.aborted) throw abortError();
       if (isAbort(error) || mode === "on-device-only") throw error;

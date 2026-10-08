@@ -144,4 +144,56 @@ describe("advertised Needle roles have real production generators", () => {
       }
     }
   });
+
+  it("Needle tool schemas match the tool-model contract (Phase A.4)", async () => {
+    const needle = toolAwareNeedle();
+    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge, smol: arm64Smol("saw it") });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    await service.route("extract-report-fields", { prompt: "a red umbrella" }, { traceId: "trace-schema-report" });
+    await service.route("extract-search-filters", { prompt: "a red umbrella" }, { traceId: "trace-schema-search" });
+    await service.route("classify-category", { prompt: "a red umbrella" }, { traceId: "trace-schema-category" });
+    const tools = needle.installed
+      .map((entry) => (JSON.parse(JSON.stringify(entry.tools)) as Array<Record<string, unknown>>)[0])
+      .filter((tool): tool is Record<string, unknown> => tool !== undefined);
+    const byName = new Map(tools.map((tool) => [tool["name"], tool]));
+    // Extraction is partial by app contract: nothing required, so an
+    // ungrounded slot withholds nothing and FindBack validates the rest.
+    for (const name of ["record_item", "search_filters"]) {
+      const schema = byName.get(name)?.["parameters"] as { required?: unknown };
+      expect(schema.required).toEqual([]);
+    }
+    // Category binds the canonical enum; confidence is the engine's
+    // top-level score, never a tool argument.
+    const categoryParams = byName.get("item_category")?.["parameters"] as {
+      properties?: Record<string, unknown>;
+      required?: unknown;
+    };
+    expect(categoryParams.required).toEqual(["category"]);
+    expect((categoryParams.properties?.["category"] as { enum?: unknown }).enum).toEqual([
+      "documents",
+      "electronics",
+      "keys",
+      "wallet",
+      "bags",
+      "clothing",
+      "accessories",
+      "jewelry",
+      "pets",
+      "eyewear",
+      "sports",
+      "books",
+      "toys",
+      "tools",
+      "cosmetics",
+      "other",
+    ]);
+    expect(categoryParams.properties).not.toHaveProperty("confidence");
+    // Tool descriptions name the actual extraction action.
+    for (const tool of tools) {
+      const description = tool["description"];
+      expect(typeof description).toBe("string");
+      expect((description as string).length).toBeGreaterThan("Record item details".length);
+    }
+  });
 });

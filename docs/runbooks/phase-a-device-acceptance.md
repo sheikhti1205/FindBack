@@ -142,6 +142,23 @@ contradictory copy on the same screen.
 2. CPU/GPU measurement unusable (same cause).
 3. Needle structured extraction unusable (empty `function_calls`).
 
+## A.4 follow-up: oracle comparison (Needle root cause proven)
+
+Official `cactus-needle` 3.1.2 on desktop CPU, same extraction task,
+controlled A/B — no device, no JNI, no triggers involved:
+
+| Input shape | Tool schema | Result |
+| --- | --- | --- |
+| Engineered cloud-style prompt (`"Extract report slots. Return ONLY one JSON object … User message: Lost a red umbrella near CUET gate yesterday."`) + steering system | `record_item`, `required: ["title"]`, weak descriptions | `function_calls: []`, reasoning `"No tool available for file management or document retrieval."` — **reproduces the device failure verbatim** |
+| Raw user request (`"Lost a red umbrella near CUET gate yesterday."`) | `record_item`, `required: []`, action-naming descriptions | `{"title": "Red umbrella near CUET gate", "description": …, "category": "umbrella", "dateText": "yesterday"}` — **extracts** |
+
+Conclusion: the model, the JNI bridge (`needle_init(system, tools, nullptr)`),
+the absent tool index, and the MediaTek phone are all exonerated. The defect
+is purely the integration contract: FindBack fed a chat-LLM instruction
+prompt plus a stricter-than-app schema into a tool model. Fixes (raw
+`localTaskInput` for the local route, `required: []`, enum-bound category,
+no `confidence` argument) match the oracle-winning shape exactly.
+
 ## Candidate fixes (NOT applied)
 
 1. **Smol + measurement** — likely one-line each: drop the `audioBackend`
