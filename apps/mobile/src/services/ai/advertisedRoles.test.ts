@@ -78,6 +78,30 @@ function arm64Smol(describeText: string) {
   };
 }
 
+function suppressedNeedle() {
+  const installed: Array<{ system: string; tools: Array<{ name: string }> }> = [];
+  let resident = false;
+  return {
+    installed,
+    bridge: {
+      bridgeName: "needle-cact" as const,
+      isNeedleAvailable: async () => resident,
+      embeddingDimension: async () => 2,
+      loadModel: async () => { resident = true; return 2; },
+      embedNeedleTexts: async (texts: string[]) => texts.map(() => [1, 0]),
+      initTools: async (system: string, toolsJson: string) => {
+        installed.push({ system, tools: JSON.parse(toolsJson) as Array<{ name: string }> });
+      },
+      completeJson: async () =>
+        JSON.stringify({
+          function_calls: [],
+          suppressed_calls: [{ name: "record_item", arguments: { title: "brown leather wallet" } }],
+        }),
+      unload: async () => { resident = false; },
+    },
+  };
+}
+
 const EXPECTED_TOOL: Readonly<Record<string, string>> = {
   "extract-report-fields": "record_item",
   "extract-search-filters": "search_filters",
@@ -110,6 +134,23 @@ describe("advertised Needle roles have real production generators", () => {
               : { category: "accessories" },
         );
       }
+    }
+  });
+
+  it("extraction succeeds when Needle withholds the record in suppressed_calls", async () => {
+    const needle = suppressedNeedle();
+    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge, smol: arm64Smol("saw it") });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    const result = await service.route(
+      "extract-report-fields",
+      { prompt: "Lost a brown leather wallet near the central library yesterday" },
+      { traceId: "trace-suppressed" },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const value = result.value as Record<string, unknown>;
+      expect(value["fields"] ?? value).toMatchObject({ title: "brown leather wallet" });
     }
   });
 

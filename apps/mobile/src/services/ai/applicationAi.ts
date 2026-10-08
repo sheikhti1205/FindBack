@@ -457,7 +457,14 @@ export class ApplicationAiService {
       parameters: strategy.schema,
     }]));
     const raw: unknown = JSON.parse(await this.needle!.completeJson(input));
-    const calls = (raw as { function_calls?: { name?: string; arguments?: unknown }[] }).function_calls;
+    const envelope = raw as {
+      function_calls?: { name?: string; arguments?: unknown }[];
+      suppressed_calls?: { name?: string; arguments?: unknown }[];
+    };
+    const calls =
+      envelope.function_calls !== undefined && envelope.function_calls.length > 0
+        ? envelope.function_calls
+        : envelope.suppressed_calls;
     const fields = calls?.find((call) => call.name === strategy.toolName)?.arguments;
     if (!fields || typeof fields !== "object") throw new Error(`Needle did not produce a confident ${strategy.toolName} record`);
     return JSON.stringify({ fields });
