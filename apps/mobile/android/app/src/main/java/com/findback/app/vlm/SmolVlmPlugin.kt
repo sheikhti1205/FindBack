@@ -14,6 +14,8 @@ import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.NoRepeatNgramConfig
+import com.google.ai.edge.litertlm.RepetitionPenaltyConfig
 import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -31,8 +33,9 @@ import kotlinx.coroutines.launch
  * - `isVisionAvailable()` reports whether an image-capable resident is
  *   loaded (runtime-only state; process death returns to unloaded).
  * - `loadVisionModel()` loads a verified `.litertlm` file with evict-then-load
- *   single-resident semantics, a greedy sampler (temperature 0.0), and a
- *   self-test before resolving READY.
+ *   single-resident semantics, a greedy sampler (temperature 0.0) with a
+ *   conservative anti-repeat decode (repetition penalty 1.1, no-repeat
+ *   3-gram), and a self-test before resolving READY.
  * - `describeImage()` streams vision inference as `visionChunk` listener
  *   events keyed by `generationId`, honouring cancellation.
  * - `cancelGeneration()` aborts an in-flight generation.
@@ -251,6 +254,18 @@ class SmolVlmPlugin : Plugin() {
                         Content.ImageBytes(bytes),
                         Content.Text(prompt),
                     ),
+                    // Anti-repeat decode (U5): greedy sampling loops whole
+                    // sentences on this artifact, so every user-visible
+                    // generation carries a conservative repetition penalty
+                    // plus a no-repeat 3-gram. Values verified against the
+                    // pinned litertlm-android 0.17.1 AAR (per-message params
+                    // on sendMessageAsync); the load self-test stays greedy.
+                    repetitionPenaltyConfig = RepetitionPenaltyConfig(
+                        repetitionPenalty = REPETITION_PENALTY,
+                    ),
+                    noRepeatNgramConfig = NoRepeatNgramConfig(
+                        noRepeatNgramSize = NO_REPEAT_NGRAM_SIZE,
+                    ),
                 ).collect { message ->
                     notifyGeneration(generationId, delta = message.toString())
                 }
@@ -369,6 +384,11 @@ class SmolVlmPlugin : Plugin() {
         private const val AI_MODELS_DIR = "ai-models"
         private const val DEFAULT_MAX_OUTPUT_TOKENS = 512
         private const val DEFAULT_VISION_PROMPT = "Describe this image."
+        // Conservative anti-repeat decode: mild penalty (1.0 is neutral) plus
+        // a no-repeat 3-gram. Tuned against the on-device repetition loops;
+        // correctness first, smoothness second.
+        private const val REPETITION_PENALTY = 1.1f
+        private const val NO_REPEAT_NGRAM_SIZE = 3
         private val MODEL_ID_PATTERN = Regex("[A-Za-z0-9._-]+")
     }
 }
