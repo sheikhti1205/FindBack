@@ -54,6 +54,7 @@ import {
   updateAiPreferences,
   type AiPreferences,
 } from "../services/ai/aiPreferences";
+import { isAssistantSelectableOfflineRecord } from "../services/ai/uiModelRoles";
 import { getApplicationAi } from "../services/ai/applicationAi";
 
 /**
@@ -722,8 +723,12 @@ export function AiModels({
   // Paid rows are never offered here — they need explicit per-model consent
   // on the Cloud connections screen (Settings → AI & intelligence → Cloud
   // connections), which persists the choice on confirm.
+  // Background on-device engines (Needle tools/embeddings) are excluded:
+  // the Assistant default must be conversational.
   const visibleCatalog = catalog.filter((record) => isProviderEnabled(account, record.provider));
-  const assistantFreeRows = visibleCatalog.filter((record) => record.priceClass === "free");
+  const assistantFreeRows = visibleCatalog.filter(
+    (record) => record.priceClass === "free" && isAssistantSelectableOfflineRecord(record),
+  );
   const needleReady = isNeedleSelectable(needleEvidence);
 
   // WS-E: visibility gates consume measured evidence only (no guessing).

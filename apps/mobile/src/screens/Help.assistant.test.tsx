@@ -282,8 +282,8 @@ describe("Help full-screen assistant", () => {
   });
 });
 
-describe("Help P1 header/layout (screenshots 10/11/12)", () => {
-  it("uses a compact two-row header with history + overflow and no header Clear", async () => {
+describe("Help U2 header/layout", () => {
+  it("uses a single-row header with history + overflow and a composer model chip", async () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
     const header = screen.getByRole("banner");
     expect(header.className).toMatch(/shrink-0/);
@@ -294,11 +294,17 @@ describe("Help P1 header/layout (screenshots 10/11/12)", () => {
     expect(screen.getByRole("button", { name: /chat history/i })).toBeTruthy();
     const overflow = screen.getByRole("button", { name: /more options/i });
     expect(overflow.className).toMatch(/min-h-\[48px\]/);
-    // Second row carries connection status + the live model chip.
-    expect(screen.getByTestId("assistant-header-subrow")).toBeTruthy();
+    // No header subrow: model selection lives with the composer.
+    expect(screen.queryByTestId("assistant-header-subrow")).toBeNull();
+    expect(screen.getByTestId("composer-model-chip")).toBeTruthy();
     expect(screen.getByRole("button", { name: /choose model/i })).toBeTruthy();
     fireEvent.click(overflow);
     await screen.findByText("Assistant options");
+    expect(screen.getByRole("button", { name: /^new chat$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^history$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /help & guide/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^privacy & ai$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /assistant settings/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /clear chat view/i })).toBeTruthy();
   });
 
@@ -311,28 +317,22 @@ describe("Help P1 header/layout (screenshots 10/11/12)", () => {
     expect(screen.queryByTestId("guided-shortcut-search")).toBeNull();
   });
 
-  it("collapses the privacy paragraph into an accessible disclosure once chatting", async () => {
+  it("keeps the privacy copy in the overflow Privacy & AI sheet, never in the transcript", async () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok"), getKey: async () => "test-key" });
-    // v0.9.0-beta.1: even first use keeps the consent copy behind one tap so
-    // the landing is not a text wall — but it is always one tap away.
+    // U2: even first use keeps the consent copy out of the conversation — it
+    // lives one tap away in the overflow menu, always reachable.
     expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /privacy & ai details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^privacy & ai$/i }));
+    expect(screen.getByTestId("privacy-full-copy")).toBeTruthy();
     expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("privacy-full-copy")).toBeNull());
     send("How do I report?");
     await screen.findByText("ok");
-    // Ongoing chat: the footer disclosure replaces the landing one.
+    // Ongoing chat: still no privacy block consuming chat height.
     expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
-    const disclosure = screen.getByRole("button", { name: /how your data is used/i });
-    expect(disclosure.className).toMatch(/min-h-\[48px\]/);
-    fireEvent.click(disclosure);
-    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy();
-    // Collapsing plays the accordion exit before the copy leaves the DOM.
-    fireEvent.click(disclosure);
-    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
-    await waitForElementToBeRemoved(() =>
-      screen.queryByText(/Photos are never attached automatically/),
-    );
+    expect(screen.queryByRole("button", { name: /how your data is used/i })).toBeNull();
   });
 
   it("brings the guided panel in and out instead of snapping it", async () => {

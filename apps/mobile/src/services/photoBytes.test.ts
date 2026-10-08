@@ -143,3 +143,42 @@ it("sign-out still clears photo bytes when localStorage removal throws", async (
     store.clearPhotoStore(account);
   }
 });
+
+it("reads through the FileReader fallback deterministically when arrayBuffer is missing", async () => {
+  const account = crypto.randomUUID();
+  const file = new File(["abc"], "legacy.jpg", { type: "image/jpeg" });
+  (file as unknown as Record<string, unknown>).arrayBuffer = undefined;
+  class FakeReader {
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    result: ArrayBuffer | null = null;
+    readAsArrayBuffer(_blob: Blob) {
+      queueMicrotask(() => {
+        this.result = new TextEncoder().encode("abc").buffer as ArrayBuffer;
+        this.onload?.();
+      });
+    }
+  }
+  vi.stubGlobal("FileReader", FakeReader);
+  try {
+    await writePhotoBytes(account, [{ id: "legacy", file }]);
+    const restored = await readPhotoBytes(account, "legacy");
+    expect(restored?.size).toBe(3);
+    expect(new Uint8Array(await restored!.arrayBuffer())[0]).toBe(97);
+  } finally {
+    vi.unstubAllGlobals();
+    await clearPhotoBytes(account);
+  }
+});
+
+it("rejects with a typed error instead of hanging when no byte reader exists", async () => {
+  const account = crypto.randomUUID();
+  const file = new File(["abc"], "legacy.jpg", { type: "image/jpeg" });
+  (file as unknown as Record<string, unknown>).arrayBuffer = undefined;
+  vi.stubGlobal("FileReader", undefined);
+  try {
+    await expect(writePhotoBytes(account, [{ id: "legacy", file }])).rejects.toThrow(/unreadable file/);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

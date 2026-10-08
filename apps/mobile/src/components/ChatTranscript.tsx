@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowDown, Check, Copy } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, Copy } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
 import {
   fadeUpVariants,
@@ -73,8 +73,10 @@ function sourceLabel(source: TranscriptSource, detail?: string | null): string {
 
 /**
  * Scrollable conversation log. Grayscale surfaces; colour only on the send
- * control / links / meaningful status (handled by callers). Sticks to the
- * latest message and offers a "New response" pill when the user scrolled up.
+ * control / links / meaningful status (handled by callers). Follows the
+ * latest message only while the user is near the bottom — scrolling up stops
+ * auto-follow immediately — and offers a floating right-edge scroll-to-latest
+ * control while away from the bottom.
  *
  * Motion: each turn enters once with a tiny rise/fade (restored history never
  * replays the entrance), streamed tokens never animate — only the bubble does —
@@ -95,9 +97,16 @@ export function ChatTranscript({
 }: ChatTranscriptProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const [showNewResponse, setShowNewResponse] = useState(false);
+  // Floating scroll-to-latest state: visible only while the user is away from
+  // the bottom; hidden while the finger is actively scrolling (reappears on
+  // scroll idle); dotted when unseen response content arrived while away.
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const [scrolling, setScrolling] = useState(false);
+  const [unseenResponse, setUnseenResponse] = useState(false);
+  const scrollIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState<string | null>(null);
   const reduceMotion = useShouldReduceMotion();
   // Entrance suppression: the turns already on screen (restored history)
   // render settled; only turns appended after mount rise in.
@@ -125,26 +134,54 @@ export function ChatTranscript({
   function scrollToLatest() {
     const instant = reduceMotion || shouldReduceMotion();
     bottomRef.current?.scrollIntoView({ behavior: instant ? "auto" : "smooth" });
-    setShowNewResponse(false);
+    setUnseenResponse(false);
   }
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    setAwayFromBottom(!nearBottom());
+    // Hide the control while the finger is actively scrolling; an idle timer
+    // brings it back ~200 ms after scrolling stops, if still away.
+    setScrolling(true);
+    if (scrollIdleTimer.current !== null) clearTimeout(scrollIdleTimer.current);
+    scrollIdleTimer.current = setTimeout(() => {
+      scrollIdleTimer.current = null;
+      setScrolling(false);
+    }, 200);
+  }
+
+  useEffect(
+    () => () => {
+      if (scrollIdleTimer.current !== null) clearTimeout(scrollIdleTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (messages.length === 0 && (partialText === null || partialText === "")) return;
     if (nearBottom()) {
+      setAwayFromBottom(false);
+      setUnseenResponse(false);
       scrollToLatest();
     } else if (messages[messages.length - 1]?.role === "assistant" || (partialText !== null && partialText !== "")) {
-      setShowNewResponse(true);
+      // User scrolled up: never yank them back down. Mark the arrival so the
+      // floating control can dot, and tapping it jumps to latest.
+      setAwayFromBottom(true);
+      setUnseenResponse(true);
     }
     // Keyed on content: scroll follows messages AND the throttled partial.
   }, [messages, partialText]);
 
   // Hardening (v0.9.0-beta.1): an empty/new conversation can never show the
-  // "New response" control. The scroll effect above bails early when there is
-  // nothing to follow, so a stale `showNewResponse` from a previous chat could
-  // otherwise survive a switch to an empty one (and layout churn must not be
-  // able to raise it either).
+  // scroll-to-latest control. Content keyed above bails early when there is
+  // nothing to follow, so stale away/dot state from a previous chat is reset
+  // on switch to an empty one.
   useEffect(() => {
-    if (messages.length === 0) setShowNewResponse(false);
+    if (messages.length === 0) {
+      setAwayFromBottom(false);
+      setUnseenResponse(false);
+    }
   }, [messages.length]);
 
   async function copyAnswer(message: TranscriptMessage) {
@@ -162,13 +199,14 @@ export function ChatTranscript({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
         data-testid="chat-transcript"
         role="log"
         aria-live="polite"
         aria-label="Assistant conversation"
+        onScroll={handleScroll}
         className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-surface px-4 py-4"
       >
         {messages.map((m) => (
@@ -189,7 +227,7 @@ export function ChatTranscript({
               }`}
             >
               {m.role === "assistant" && m.source !== undefined && (
-                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
+                <p className="mb-1 text-xs text-on-surface-variant">
                   {sourceLabel(m.source, m.sourceDetail)}
                 </p>
               )}
@@ -221,7 +259,7 @@ export function ChatTranscript({
                 </div>
               )}
               {m.role === "assistant" && (
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-1">
                   <motion.button
                     type="button"
                     data-testid={`chat-copy-${m.id}`}
@@ -269,6 +307,46 @@ export function ChatTranscript({
                       Copied
                     </span>
                   )}
+                  {(m.sourceDetail !== undefined && m.sourceDetail !== null && m.sourceDetail.trim() !== "") ||
+                  (m.attachments !== undefined && m.attachments > 0) ? (
+                    <div className="flex min-h-[48px] items-center">
+                      <motion.button
+                        type="button"
+                        data-testid={`chat-details-${m.id}`}
+                        onClick={() => setDetailsOpen((prev) => (prev === m.id ? null : m.id))}
+                        aria-expanded={detailsOpen === m.id}
+                        aria-label="Response details"
+                        whileTap={pressFeedback.iconButton}
+                        transition={{ duration: motionDurations.instant }}
+                        className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container"
+                      >
+                        <ChevronDown
+                          size={16}
+                          aria-hidden
+                          className={`transition-transform ${detailsOpen === m.id ? "rotate-180" : ""}`}
+                        />
+                      </motion.button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+              {m.role === "assistant" && detailsOpen === m.id && (
+                <div
+                  data-testid={`chat-details-panel-${m.id}`}
+                  className="mt-1 flex flex-col gap-0.5 border-t border-outline-variant pt-1.5 text-xs text-on-surface-variant"
+                >
+                  {m.sourceDetail !== undefined && m.sourceDetail !== null && m.sourceDetail.trim() !== "" && (
+                    <p>
+                      <span className="font-medium">Source </span>
+                      {m.sourceDetail}
+                    </p>
+                  )}
+                  {m.attachments !== undefined && m.attachments > 0 && (
+                    <p>
+                      <span className="font-medium">Photos used </span>
+                      {m.attachments}
+                    </p>
+                  )}
                 </div>
               )}
               {m.failed === true && onRetry !== undefined && (
@@ -296,7 +374,7 @@ export function ChatTranscript({
             className="flex justify-start"
           >
             <div className="max-w-[85%] rounded-m3-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5 text-sm leading-relaxed">
-              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
+              <p className="mb-1 text-xs text-on-surface-variant">
                 {partialLabel !== null && partialLabel !== "" ? partialLabel : "AI answer"}
               </p>
               {/* Streamed text grows here — never animated per token. */}
@@ -380,26 +458,40 @@ export function ChatTranscript({
         </AnimatePresence>
         <div ref={bottomRef} data-testid="chat-bottom" aria-hidden />
       </div>
+      {/* Floating right-edge scroll-to-latest: 40 dp visual inside a 48 dp
+          touch target, 16 dp right inset, above the composer. Appears only
+          while away from the bottom, hides during active scrolling, dots when
+          unseen response content arrived while away. */}
       <AnimatePresence initial={false}>
-        {showNewResponse && (
+        {awayFromBottom && !scrolling && (
           <motion.div
-            key="new-response"
-            variants={fadeUpVariants}
+            key="scroll-latest"
+            variants={fadeVariants}
             initial="hidden"
             animate="visible"
             exit="exit"
-            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
-            className="flex justify-center bg-surface px-4 pb-2"
+            transition={{ duration: motionDurations.fast }}
+            className="pointer-events-none absolute bottom-3 right-3"
           >
             <motion.button
               type="button"
-              data-testid="chat-new-response"
+              data-testid="chat-scroll-latest"
               onClick={scrollToLatest}
               whileTap={pressFeedback.button}
               transition={{ duration: motionDurations.instant }}
-              className="flex min-h-[48px] items-center gap-1 rounded-full border border-outline bg-surface px-4 text-xs font-semibold text-on-surface shadow"
+              aria-label={unseenResponse ? "Scroll to latest response" : "Scroll to latest"}
+              className="pointer-events-auto relative flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full border border-outline bg-surface text-on-surface shadow"
             >
-              <ArrowDown size={14} aria-hidden /> New response
+              <span className="grid h-10 w-10 place-items-center">
+                <ArrowDown size={18} aria-hidden />
+              </span>
+              {unseenResponse && (
+                <span
+                  data-testid="chat-scroll-latest-dot"
+                  aria-hidden
+                  className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-on-surface"
+                />
+              )}
             </motion.button>
           </motion.div>
         )}

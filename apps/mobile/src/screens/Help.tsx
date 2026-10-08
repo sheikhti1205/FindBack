@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { History, MoreVertical } from "lucide-react";
+import { ChevronDown, History, MoreVertical } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { AssistantLanding, type LandingQuickAction } from "../components/assistant/AssistantLanding";
@@ -21,6 +21,7 @@ import { SUPPORTED_AI_PROVIDERS, aiCredentials } from "../services/aiCredentials
 import { loadGenericEndpoint } from "../services/ai/genericEndpoint";
 import { loadAppearance } from "../appearance";
 import { loadAuthorizedCatalog } from "../services/ai/modelCatalog";
+import { isAssistantSelectableOfflineRecord } from "../services/ai/uiModelRoles";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
 import { isProviderEnabled } from "../services/ai/providerStatus";
 import { generateCloudForAccount, generateLocalFirst } from "../services/liveNarrowTasks";
@@ -202,7 +203,10 @@ async function loadHelpCatalog(
   let offlineRecords: readonly ModelRecord[] = [];
   try {
     const offline = createProviderAdapter("offline", { accountId, resolveKey: async () => null });
-    offlineRecords = await offline.listModels?.() ?? [];
+    // The Assistant picker offers conversational rows only: background
+    // engines (Needle tools/embeddings) never appear as chat selections.
+    // Automatic routing to those engines is unchanged (U3 owns routing).
+    offlineRecords = (await offline.listModels?.() ?? []).filter(isAssistantSelectableOfflineRecord);
     offlineDetail = null;
   } catch (e) {
     // Web or unavailable Android storage: surface honest availability, never internals.
@@ -257,7 +261,7 @@ export function refuseHelpSend(input: {
     if (!getApplicationAi().android || input.record === null) return honestOfflineDetail(new Error(OFFLINE_NOT_AVAILABLE));
     if (!getApplicationAi().manager.statusOf(input.record.id)?.checksumVerified) return "Install and verify this on-device model in Settings → AI & models → On-device AI first.";
     if (input.hasImages && !input.record.input.includes("image")) return "This on-device model accepts text only; select SmolVLM2 for an approved image.";
-    if (!input.hasImages && input.record.input.includes("image")) return "SmolVLM2 requires one approved image. Select Needle for structured text extraction.";
+    if (!input.hasImages && input.record.input.includes("image")) return "SmolVLM2 needs one approved image — attach a photo or use Automatic for a text answer.";
   }
   const priceClass = input.record?.priceClass ?? "free";
   if (priceClass === "paid" || priceClass === "variable") {
@@ -549,7 +553,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   // and the ongoing-chat privacy disclosure.
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuConfirmClear, setMenuConfirmClear] = useState(false);
-  const [disclosureOpen, setDisclosureOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
 
   const generation = useRef(0);
   const sendGenRef = useRef<number | null>(null);
@@ -559,6 +563,18 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const inflightRef = useRef("");
   const sourceByTurn = useRef(new Map<string, TranscriptSource>());
   const prefillConsumed = useRef(false);
+
+  // Single owner for streaming-partial teardown (U1): every terminal
+  // transition (complete, failed, cancelled, stopped, chat/account switch)
+  // clears the pending throttle timer AND the partial, so a late timer can
+  // never resurrect a partial bubble after the final answer rendered.
+  function clearStreamingPartial() {
+    if (partialTimer.current !== null) {
+      clearTimeout(partialTimer.current);
+      partialTimer.current = null;
+    }
+    setPartial(null);
+  }
 
   function refreshTurns(chatId: string | null) {
     if (chatId === null || !store.isHistoryEnabled(accountId)) {
@@ -635,11 +651,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   // one render per 120ms with stable message IDs. ControllerState carries
   // the delivered C contract (phase/partialText/attempt/provider/modelId).
   useEffect(() => {
-    setPartial(null);
-    if (partialTimer.current !== null) {
-      clearTimeout(partialTimer.current);
-      partialTimer.current = null;
-    }
+    clearStreamingPartial();
     setControllerPhase(controller.getState().phase);
     const unsubscribe = controller.subscribe((snapshot) => {
       const gen = generation.current;
@@ -663,10 +675,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     });
     return () => {
       unsubscribe();
-      if (partialTimer.current !== null) {
-        clearTimeout(partialTimer.current);
-        partialTimer.current = null;
-      }
+      clearStreamingPartial();
     };
   }, [controller, activeChatId]);
 
@@ -842,6 +851,19 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           : await createProviderAdapter("offline", { accountId, resolveKey: async () => null }).listModels?.() ?? [];
         if (generation.current !== gen || controllerAbort.signal.aborted) return;
         const compatible = localRows.filter((row) => row.provider === "offline" && refuseHelpSend({ provider: "offline", record: row, mode, hasImages }) === null);
+        // A stale pin to a background engine (Needle tools/embeddings) can
+        // never answer chat: refuse honestly instead of silently routing
+        // through it. Automatic (no pin) still uses U3-owned routing.
+        const stalePin = selectedModelId === null ? undefined : compatible.find((row) => row.id === selectedModelId);
+        if (stalePin !== undefined && !isAssistantSelectableOfflineRecord(stalePin)) {
+          setInput(question);
+          setFailedSend({ text: question });
+          setSendError("That on-device engine runs automatically in the background and can't answer chat directly. Use Automatic or pick a listed chat model — your draft is kept.");
+          setBusy(false);
+          sendGenRef.current = null;
+          announce("Send refused. Your message and photos were kept.");
+          return;
+        }
         pickedRecord = compatible.find((row) => row.id === selectedModelId) ?? compatible[0] ?? pickedRecord;
       } catch (error) {
         if (generation.current !== gen || controllerAbort.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
@@ -891,7 +913,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setAttempts((prev) =>
       opts.isRetry ? [...prev, { n: attemptN, status: "retrying" }] : [{ n: attemptN, status: "sending" }],
     );
-    setPartial(null);
+    clearStreamingPartial();
     setInput("");
     setFailedSend(null);
     setSendError(null);
@@ -1055,7 +1077,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       }
       clearTray();
       inflightRef.current = "";
-      setPartial(null);
+      clearStreamingPartial();
       setAttempts((prev) =>
         prev.length === 0 ? prev : [...prev.slice(0, -1), { n: attemptN, status: "complete" }],
       );
@@ -1068,7 +1090,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       // Sanitized (C-owned scrubber): provider text may echo input or
       // key-like material, so it is scrubbed against the question and clipped.
       const safeMessage = sanitizeControllerError(message, [question]);
-      setPartial(null);
+      clearStreamingPartial();
       setAttempts((prev) => [...prev, { n: attemptN, status: "failed" }]);
       if (sendProvider === "offline" || loadEffectiveAssistantMode(accountId) === "offline-only" || !isProviderEnabled(accountId, sendProvider) || isGeneralNonAppQuestion(question)) {
         // Privacy refusals and general-chat failures never get an FAQ
@@ -1120,11 +1142,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     generation.current += 1;
     // Pin the guard: late controller chunks from the stopped send are dropped.
     sendGenRef.current = null;
-    if (partialTimer.current !== null) {
-      clearTimeout(partialTimer.current);
-      partialTimer.current = null;
-    }
-    setPartial(null);
+    clearStreamingPartial();
     setBusy(false);
     setCancelled(true);
     setControllerPhase("cancelled");
@@ -1165,7 +1183,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setSendError(null);
     setCancelled(false);
     setEphemeral([]);
-    setPartial(null);
+    clearStreamingPartial();
     setAttempts([]);
     announce("Chat view cleared.");
   }
@@ -1521,10 +1539,11 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       >
         Skip to composer
       </a>
-      {/* P1: compact two-row 360dp header. Row 1: back + truncating title +
-        fixed-size history/overflow. Row 2: short connection note + live
-        model chip. No Clear button here — it lives in HistorySheet (saved
-        chats, confirmed) and the overflow menu (view-only clear). */}
+      {/* U2: single-row header. Row 1: back + truncating title +
+        fixed-size history/overflow. Model selection lives with the composer;
+        privacy/help live in the overflow menu. No Clear button here — it
+        lives in HistorySheet (saved chats, confirmed) and the overflow menu
+        (view-only clear). */}
       <header className="shrink-0 border-b border-outline-variant bg-surface px-3 py-2">
         <div className="flex min-w-0 items-center gap-1">
           <BackButton fallbackTo="/profile" label="Back to profile" />
@@ -1551,44 +1570,13 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             <MoreVertical size={20} aria-hidden />
           </button>
         </div>
-        <div
-          data-testid="assistant-header-subrow"
-          className="flex min-w-0 items-center justify-between gap-2 pl-12"
-        >
-          <span
-            className="min-w-0 flex-1 truncate text-xs text-on-surface-variant"
-            title="AI provider when connected · built-in otherwise"
-          >
-            AI provider when connected · built-in otherwise
-          </span>
-          <button
-            type="button"
-            onClick={() => setModelOpen(true)}
-            aria-label={`Choose model, currently ${selectedModelId ?? "Free default"}`}
-            title={selectedModelId ?? "Free default"}
-            className="min-h-[48px] max-w-[48%] shrink-0 truncate rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
-          >
-            {selectedModelId ?? "Free default"}
-          </button>
-        </div>
-        {savedDefaultUnavailable && (
-          <p
-            data-testid="model-default-unavailable"
-            role="status"
-            className="pl-12 pt-1 text-xs text-on-surface-variant"
-          >
-            Saved default unavailable — using Free default.
-          </p>
-        )}
       </header>
 
       <main aria-label="Help conversation" className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {showLanding ? (
           <AssistantLanding
-            username={user?.username ?? null}
             suggestions={SUGGESTIONS}
             quickActions={LANDING_QUICK_ACTIONS}
-            privacyCopy={PRIVACY_COPY}
             onSuggestion={(text) => void sendFreeChat(text)}
             onQuickAction={(flow) => beginGuided(flow)}
           />
@@ -1757,34 +1745,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           </div>
         )}
 
-        {guided === null && !isEmptyConversation && (
-          <div className="shrink-0 bg-surface px-4 pb-1">
-            <button
-              type="button"
-              aria-expanded={disclosureOpen}
-              onClick={() => setDisclosureOpen((v) => !v)}
-              className="flex min-h-[48px] items-center text-xs font-medium text-on-surface-variant underline"
-            >
-              How your data is used
-            </button>
-            {/* Accordion: the copy expands instead of popping into place, and
-                collapses the same way so the footer never jumps. */}
-            <AnimatePresence initial={false}>
-              {disclosureOpen && (
-                <motion.p
-                  key="privacy-copy"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
-                  className="overflow-hidden pb-1 text-xs text-on-surface-variant"
-                >
-                  {PRIVACY_COPY}
-                </motion.p>
-              )}
-            </AnimatePresence>
-          </div>
-        )}
+        {/* U2: the permanent privacy block is gone from the conversation.
+            The full consent copy lives one tap away in the overflow menu
+            (Privacy & AI sheet) — the transcript keeps the viewport. */}
 
         {requestRow !== null && (
           <p
@@ -1806,6 +1769,30 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           </p>
         )}
 
+        {/* U2: model selection lives with the composer (compact chip row),
+            not in the header. ChatComposer internals stay untouched. */}
+        <div className="flex shrink-0 items-center gap-2 bg-surface px-4 pb-1">
+          <button
+            type="button"
+            onClick={() => setModelOpen(true)}
+            data-testid="composer-model-chip"
+            aria-label={`Choose model, currently ${selectedModelId ?? "Automatic"}`}
+            title={selectedModelId ?? "Automatic"}
+            className="flex min-h-[48px] max-w-[70%] items-center gap-1 truncate rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
+          >
+            <ChevronDown size={14} aria-hidden className="shrink-0" />
+            <span className="truncate">{selectedModelId ?? "Automatic"}</span>
+          </button>
+          {savedDefaultUnavailable && (
+            <p
+              data-testid="model-default-unavailable"
+              role="status"
+              className="min-w-0 flex-1 truncate text-xs text-on-surface-variant"
+            >
+              Saved default unavailable — using Free default.
+            </p>
+          )}
+        </div>
         {/* ChatComposer is owned by the composer worker — wrapped shrink-0 so
           the bounded column never squeezes it; its internals are untouched. */}
         <div className="shrink-0">
@@ -1845,8 +1832,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         historyEnabled={store.isHistoryEnabled(accountId)}
         onToggleHistory={toggleHistory}
       />
-      {/* P1: overflow menu reusing the shared BottomSheet primitive — the
-        view-only Clear lives here (two-step confirm), never in the header.
+      {/* U2: overflow menu — New chat, History, Help & guide, Privacy & AI,
+        Assistant settings, and the view-only Clear (two-step confirm).
         Saved chats (with confirmed Clear all) stay in HistorySheet. */}
       <BottomSheet
         open={menuOpen}
@@ -1854,7 +1841,57 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         title="Assistant options"
         description="View options for this screen. Saved chats stay in Chat history."
       >
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              newChat();
+              setMenuOpen(false);
+            }}
+            className="flex min-h-[48px] items-center text-sm text-on-surface hover:bg-surface-container"
+          >
+            New chat
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false);
+              setHistoryOpen(true);
+            }}
+            className="flex min-h-[48px] items-center text-sm text-on-surface hover:bg-surface-container"
+          >
+            History
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false);
+              navigate("/settings/help");
+            }}
+            className="flex min-h-[48px] items-center text-sm text-on-surface hover:bg-surface-container"
+          >
+            Help &amp; guide
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false);
+              setPrivacyOpen(true);
+            }}
+            className="flex min-h-[48px] items-center text-sm text-on-surface hover:bg-surface-container"
+          >
+            Privacy &amp; AI
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false);
+              navigate("/settings/ai/models");
+            }}
+            className="flex min-h-[48px] items-center text-sm text-on-surface hover:bg-surface-container"
+          >
+            Assistant settings
+          </button>
           {menuConfirmClear ? (
             <div className="flex items-center gap-2">
               <p className="flex-1 text-xs text-on-surface-variant">
@@ -1881,6 +1918,61 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
               Clear chat view
             </button>
           )}
+        </div>
+      </BottomSheet>
+      {/* U2: Privacy & AI sheet — the full consent copy, one tap away from the
+        conversation instead of permanently occupying transcript space. */}
+      <BottomSheet
+        open={privacyOpen}
+        onClose={() => setPrivacyOpen(false)}
+        title="Privacy & AI"
+        description="How this assistant handles your messages and photos."
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-medium text-on-surface">Automatic</p>
+            <p className="text-xs leading-relaxed text-on-surface-variant">
+              FindBack may use an installed on-device model first. Cloud fallback follows your
+              current AI setting.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-medium text-on-surface">Photos</p>
+            <p className="text-xs leading-relaxed text-on-surface-variant">
+              A photo is included only when you select it for that message.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-medium text-on-surface">On-device only</p>
+            <p className="text-xs leading-relaxed text-on-surface-variant">
+              Nothing is sent to a cloud AI provider.
+            </p>
+          </div>
+          <p data-testid="privacy-full-copy" className="text-xs leading-relaxed text-on-surface-variant">
+            {PRIVACY_COPY}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setPrivacyOpen(false);
+                navigate("/settings/ai/models");
+              }}
+              className="flex min-h-[48px] items-center rounded-full border border-outline px-4 text-xs font-medium text-on-surface"
+            >
+              Open AI settings
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPrivacyOpen(false);
+                navigate("/ai-connection");
+              }}
+              className="flex min-h-[48px] items-center rounded-full border border-outline px-4 text-xs font-medium text-on-surface"
+            >
+              Open Privacy settings
+            </button>
+          </div>
         </div>
       </BottomSheet>
       <BottomSheet

@@ -389,11 +389,24 @@ export async function photoToFile(photo: PickedPhoto, name?: string, opts?: Phot
 function blobBytes(blob: Blob): Promise<ArrayBuffer> {
   if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
   // Older Android WebViews and jsdom may expose FileReader but not Blob.arrayBuffer.
+  // Same deterministic contract as photoBytes.buffer: current-realm copy,
+  // current-realm Error, no hang when FileReader is absent.
+  if (typeof FileReader !== "function") return Promise.reject(new Error("unreadable file"));
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as ArrayBuffer);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(blob);
+    reader.onload = () => {
+      try {
+        resolve(new Uint8Array(reader.result as ArrayBuffer).slice().buffer);
+      } catch {
+        reject(new Error("unreadable file"));
+      }
+    };
+    reader.onerror = () => reject(new Error("unreadable file"));
+    try {
+      reader.readAsArrayBuffer(blob);
+    } catch {
+      reject(new Error("unreadable file"));
+    }
   });
 }
 

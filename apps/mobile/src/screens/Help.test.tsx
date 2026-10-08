@@ -24,23 +24,24 @@ describe("Help product naming", () => {
         <Help />
       </MemoryRouter>,
     );
-    // M2 G23: the header is the Assistant with a model-picker affordance.
+    // M2 G23: the header is the Assistant with history + overflow; model
+    // selection lives with the composer.
     expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /choose model/i })).toBeTruthy();
+    expect(screen.getByTestId("composer-model-chip")).toBeTruthy();
     expect(screen.getByLabelText("Ask the Help & FAQ")).toBeTruthy();
-    // v0.9.0-beta.1: a consumer landing replaces the old synthetic greeting
-    // bubble; the eyebrow is "FindBack Assistant", never the removed
-    // "Help Assistant" product name.
+    // U2: a conversation-first landing replaces the old card stack; the hero
+    // is "What can I help with?", never the removed "Help Assistant" name.
     expect(screen.getByTestId("assistant-landing")).toBeTruthy();
-    expect(screen.getByText(/I can help with reporting, recovering, searching/)).toBeTruthy();
+    expect(screen.getByText(/report, search, or understand something you found/i)).toBeTruthy();
     expect(screen.queryByText(/Help Assistant/)).toBeNull();
     expect(screen.queryByText(/I am the FindBack Help & FAQ/)).toBeNull();
-    // P1: the header carries the short honest mode note.
-    expect(screen.getByText(/AI provider when connected/)).toBeTruthy();
-    // The full consent copy is collapsed on first use but reachable in one tap.
+    // U2: no permanent privacy wall in the conversation — the full consent
+    // copy lives one tap away in the overflow menu (Privacy & AI sheet).
     expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /privacy & ai details/i }));
-    await waitFor(() => expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^privacy & ai$/i }));
+    await waitFor(() => expect(screen.getByTestId("privacy-full-copy")).toBeTruthy());
+    expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy();
     // F02: the privacy explainer is truth-complete across transports.
     expect(screen.getByText(/built-in answer instead/)).toBeTruthy();
     expect(screen.getByText(/local-first/)).toBeTruthy();

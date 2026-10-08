@@ -33,11 +33,27 @@ function enqueue(account: string, action: () => Promise<void>): Promise<void> {
 
 function buffer(file: File): Promise<ArrayBuffer> {
   if (typeof file.arrayBuffer === "function") return file.arrayBuffer();
+  // Deterministic legacy fallback (old WebViews / synthetic files without
+  // arrayBuffer): FileReader is event-based and its result/error objects come
+  // from another realm, so the bytes are copied into a current-realm buffer
+  // and failures reject with a current-realm Error — never a foreign
+  // DOMException, never a ReferenceError, never a hang. No retries.
+  if (typeof FileReader !== "function") return Promise.reject(new Error("unreadable file"));
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as ArrayBuffer);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(file);
+    reader.onload = () => {
+      try {
+        resolve(new Uint8Array(reader.result as ArrayBuffer).slice().buffer);
+      } catch {
+        reject(new Error("unreadable file"));
+      }
+    };
+    reader.onerror = () => reject(new Error("unreadable file"));
+    try {
+      reader.readAsArrayBuffer(file);
+    } catch {
+      reject(new Error("unreadable file"));
+    }
   });
 }
 

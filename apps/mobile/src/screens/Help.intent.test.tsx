@@ -60,10 +60,10 @@ function typeInput(text: string) {
 describe("Help intent convergence (Lane B): input → intent → CTA → visible UI", () => {
   it("reads the persisted Assistant default (null = Automatic, never a faked choice)", () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    // No stored choice in this environment → the session seeds to Automatic
-    // ("Free default"), not to a resolved model id. A resolved seed would
-    // fake a user choice and hide Select buttons in the picker.
-    expect(screen.getByRole("button", { name: /choose model/i }).textContent).toMatch(/free default/i);
+    // No stored choice in this environment → the session seeds to Automatic,
+    // not to a resolved model id. A resolved seed would fake a user choice
+    // and hide Select buttons in the picker.
+    expect(screen.getByRole("button", { name: /choose model/i }).textContent).toMatch(/automatic/i);
   });
 
   it("proposes Start lost report for a lost input and follows it only on tap", () => {

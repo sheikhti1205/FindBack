@@ -286,13 +286,13 @@ describe("ChatTranscript motion (Wave E)", () => {
   });
 });
 
-describe("ChatTranscript empty-state hardening (v0.9.0-beta.1)", () => {
-  it("never shows 'New response' on an empty/new conversation", async () => {
+describe("ChatTranscript scroll-to-latest control (U2)", () => {
+  it("shows a floating control with an unseen dot instead of a centered pill", async () => {
     const view = render(
       <ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />,
     );
     const scroller = screen.getByTestId("chat-transcript");
-    // Simulate a genuinely scrolled-up conversation so the pill is warranted.
+    // Simulate a genuinely scrolled-up conversation so the control is warranted.
     Object.defineProperty(scroller, "scrollHeight", { value: 1000, configurable: true });
     Object.defineProperty(scroller, "clientHeight", { value: 200, configurable: true });
     Object.defineProperty(scroller, "scrollTop", { value: 0, configurable: true, writable: true });
@@ -304,9 +304,39 @@ describe("ChatTranscript empty-state hardening (v0.9.0-beta.1)", () => {
         ]}
       />,
     );
-    expect(await screen.findByTestId("chat-new-response")).toBeTruthy();
-    // Switching to a brand-new empty chat must clear it — never a stale pill.
+    const control = await screen.findByTestId("chat-scroll-latest");
+    expect(control).toBeTruthy();
+    // No centered pill anywhere; the dot marks unseen response content.
+    expect(screen.queryByTestId("chat-new-response")).toBeNull();
+    expect(screen.getByTestId("chat-scroll-latest-dot")).toBeTruthy();
+    // Switching to a brand-new empty chat must clear it — never stale.
     view.rerender(<ChatTranscript messages={[]} />);
-    await waitFor(() => expect(screen.queryByTestId("chat-new-response")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("chat-scroll-latest")).toBeNull());
+  });
+
+  it("hides the control during active scrolling and restores it on idle", async () => {
+    const view = render(
+      <ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />,
+    );
+    const scroller = screen.getByTestId("chat-transcript");
+    Object.defineProperty(scroller, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scroller, "clientHeight", { value: 200, configurable: true });
+    Object.defineProperty(scroller, "scrollTop", { value: 0, configurable: true, writable: true });
+    view.rerender(
+      <ChatTranscript
+        messages={[
+          { id: "u1", role: "user", text: "hi" },
+          { id: "a1", role: "assistant", text: "answer", source: "llm" },
+        ]}
+      />,
+    );
+    await screen.findByTestId("chat-scroll-latest");
+    fireEvent.scroll(scroller);
+    // The control leaves with an exit fade, then the 200 ms scroll-idle
+    // timer brings it back while still away from the bottom.
+    await waitFor(() => expect(screen.queryByTestId("chat-scroll-latest")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("chat-scroll-latest")).toBeTruthy(), {
+      timeout: 2000,
+    });
   });
 });
