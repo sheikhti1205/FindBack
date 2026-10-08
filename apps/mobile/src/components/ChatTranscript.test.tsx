@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import { ChatTranscript } from "./ChatTranscript";
+import { clearDiagEvents, getDiagEvents, setDiagEnabled } from "../services/diag";
 
 beforeAll(() => {
   if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
@@ -9,7 +10,7 @@ beforeAll(() => {
   }
 });
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); setDiagEnabled(false); clearDiagEvents(); });
 
 describe("ChatTranscript", () => {
   it("renders user and assistant turns with honest source labels", () => {
@@ -97,11 +98,11 @@ describe("ChatTranscript", () => {
     expect(container.innerHTML).not.toMatch(/text-(red|green|blue|amber|emerald)-/);
   });
 
-  it("scrolls smoothly to the latest message under full motion", () => {
+  it("auto-follows instantly rather than restarting smooth travel on every chunk", () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView as unknown as typeof Element.prototype.scrollIntoView;
     render(<ChatTranscript messages={[{ id: "u1", role: "user", text: "hi" }]} />);
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth" });
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto" });
   });
 
   it("collapses the scroll to instant when the OS prefers reduced motion", () => {
@@ -296,6 +297,7 @@ describe("ChatTranscript scroll-to-latest control (U2)", () => {
     Object.defineProperty(scroller, "scrollHeight", { value: 1000, configurable: true });
     Object.defineProperty(scroller, "clientHeight", { value: 200, configurable: true });
     Object.defineProperty(scroller, "scrollTop", { value: 0, configurable: true, writable: true });
+    fireEvent.wheel(scroller, { deltaY: -100 });
     view.rerender(
       <ChatTranscript
         messages={[
@@ -322,6 +324,7 @@ describe("ChatTranscript scroll-to-latest control (U2)", () => {
     Object.defineProperty(scroller, "scrollHeight", { value: 1000, configurable: true });
     Object.defineProperty(scroller, "clientHeight", { value: 200, configurable: true });
     Object.defineProperty(scroller, "scrollTop", { value: 0, configurable: true, writable: true });
+    fireEvent.wheel(scroller, { deltaY: -100 });
     view.rerender(
       <ChatTranscript
         messages={[
@@ -338,5 +341,102 @@ describe("ChatTranscript scroll-to-latest control (U2)", () => {
     await waitFor(() => expect(screen.queryByTestId("chat-scroll-latest")).toBeTruthy(), {
       timeout: 2000,
     });
+  });
+});
+
+describe("ChatTranscript streaming follow intent", () => {
+  function geometry(el: HTMLElement, top: number, height = 1000) {
+    Object.defineProperties(el, {
+      scrollHeight: { value: height, configurable: true },
+      clientHeight: { value: 200, configurable: true },
+      scrollTop: { value: top, configurable: true, writable: true },
+    });
+  }
+
+  it("measures committed partial paints separately from scheduled updates using numeric-only metrics", () => {
+    setDiagEnabled(true);
+    const messages = [{ id: "private-turn", role: "user" as const, text: "private prompt" }];
+    const view = render(<ChatTranscript messages={messages} partialText="private output" />);
+    view.rerender(<ChatTranscript messages={messages} partialText="private output continued" />);
+    view.rerender(<ChatTranscript messages={messages} partialText="private output continued" />);
+    view.rerender(<ChatTranscript messages={messages} partialText={null} />);
+    const events = getDiagEvents().filter(e => e.event.startsWith("ai.stream.transcript"));
+    expect(events.map(e => e.fields.paintCount)).toEqual([1, 2, 2]);
+    expect(events.every(e => Object.values(e.fields).every(v => typeof v === "number"))).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("private");
+  });
+
+  it("keeps following when content grows beyond the bottom threshold", () => {
+    const scroll = vi.fn(); Element.prototype.scrollIntoView = scroll;
+    const view = render(<ChatTranscript messages={[]} partialText="first" />);
+    geometry(screen.getByTestId("chat-transcript"), 800, 1500);
+    scroll.mockClear();
+    view.rerender(<ChatTranscript messages={[]} partialText="first plus a large real chunk" />);
+    expect(scroll).toHaveBeenCalledWith({ behavior: "auto" });
+    expect(screen.queryByTestId("chat-scroll-latest")).toBeNull();
+  });
+
+  it.each(["touch", "keyboard"])("%s upward intent suspends follow before a scroll event arrives", input => {
+    const scroll = vi.fn(); Element.prototype.scrollIntoView = scroll;
+    const messages = [{ id: "u", role: "user" as const, text: "hi" }];
+    const view = render(<ChatTranscript messages={messages} partialText="first" />);
+    const el = screen.getByTestId("chat-transcript"); geometry(el, 800);
+    if (input === "touch") {
+      fireEvent.touchStart(el, { touches: [{ clientY: 100 }] });
+      fireEvent.touchMove(el, { touches: [{ clientY: 110 }] });
+    } else fireEvent.keyDown(el, { key: "ArrowUp" });
+    scroll.mockClear();
+    view.rerender(<ChatTranscript messages={messages} partialText="first more" />);
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it("does not resume for a programmatic downward scroll, but resets when the conversation clears", () => {
+    const scroll = vi.fn(); Element.prototype.scrollIntoView = scroll;
+    const messages = [{ id: "u", role: "user" as const, text: "hi" }];
+    const view = render(<ChatTranscript messages={messages} partialText="first" />);
+    const el = screen.getByTestId("chat-transcript"); geometry(el, 790);
+    fireEvent.wheel(el, { deltaY: -10 });
+    el.scrollTop = 800; fireEvent.scroll(el); // No downward user intent.
+    scroll.mockClear();
+    view.rerender(<ChatTranscript messages={messages} partialText="first more" />);
+    expect(scroll).not.toHaveBeenCalled();
+    view.rerender(<ChatTranscript messages={[]} />);
+    view.rerender(<ChatTranscript messages={messages} partialText="new" />);
+    expect(scroll).toHaveBeenCalledWith({ behavior: "auto" });
+  });
+
+  it("upward movement inside 96px stops follow until genuine downward scrolling reaches bottom", () => {
+    const scroll = vi.fn(); Element.prototype.scrollIntoView = scroll;
+    const messages = [{ id: "u", role: "user" as const, text: "hi" }];
+    const view = render(<ChatTranscript messages={messages} partialText="first" />);
+    const el = screen.getByTestId("chat-transcript"); geometry(el, 800);
+    fireEvent.scroll(el); // Establish current bottom; no user movement yet.
+    fireEvent.wheel(el, { deltaY: -10 }); el.scrollTop = 790; fireEvent.scroll(el);
+    scroll.mockClear();
+    view.rerender(<ChatTranscript messages={messages} partialText="first more" />);
+    expect(scroll).not.toHaveBeenCalled();
+    // Layout/programmatic scroll at the same position cannot re-enable follow.
+    fireEvent.scroll(el);
+    view.rerender(<ChatTranscript messages={messages} partialText="first more still" />);
+    expect(scroll).not.toHaveBeenCalled();
+    fireEvent.wheel(el, { deltaY: 10 }); el.scrollTop = 800; fireEvent.scroll(el);
+    view.rerender(<ChatTranscript messages={messages} partialText="first more still latest" />);
+    expect(scroll).toHaveBeenCalledWith({ behavior: "auto" });
+  });
+
+  it.each([false, true])("explicit latest tap is smooth only without reduced motion (%s)", async reduced => {
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: reduced, addEventListener() {}, removeEventListener() {} });
+    try {
+      const scroll = vi.fn(); Element.prototype.scrollIntoView = scroll;
+      render(<ChatTranscript messages={[{ id: "u", role: "user", text: "hi" }]} />);
+      const el = screen.getByTestId("chat-transcript"); geometry(el, 790);
+      fireEvent.wheel(el, { deltaY: -10 }); fireEvent.scroll(el);
+      // Do not click the outgoing AnimatePresence node during scroll idle.
+      await waitFor(() => expect(screen.queryByTestId("chat-scroll-latest")).toBeNull());
+      const button = await screen.findByTestId("chat-scroll-latest");
+      scroll.mockClear(); fireEvent.click(button);
+      expect(scroll).toHaveBeenCalledWith({ behavior: reduced ? "auto" : "smooth" });
+    } finally { window.matchMedia = original; }
   });
 });

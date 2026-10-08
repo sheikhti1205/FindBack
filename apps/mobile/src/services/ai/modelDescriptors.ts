@@ -113,7 +113,7 @@ export const NEEDLE_DESCRIPTOR: ModelDescriptor = {
   modelId: NEEDLE_MODEL_ID,
   displayName: "Needle · structured text / matching challenger",
   consumerTitle: "Local text tools",
-  consumerDetail: "Needle",
+  consumerDetail: "Needle3",
   runtimeId: NEEDLE_RUNTIME_ID,
   format: "cact",
   revision: NEEDLE_PIN.revision,

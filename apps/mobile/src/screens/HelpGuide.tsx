@@ -82,7 +82,7 @@ const TOPICS: readonly HelpTopic[] = [
     id: "ai-privacy",
     title: "AI and privacy",
     description: "Optional AI features and what leaves your device.",
-    route: "/ai-connection",
+    route: "/settings/ai/privacy",
     icon: Sparkles,
     iconTone: "ai",
     group: "Your account",

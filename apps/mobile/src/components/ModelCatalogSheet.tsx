@@ -7,7 +7,7 @@ import {
   isFastRecord,
   supportsVision,
 } from "../services/ai/modelCatalog";
-import { rolesForCatalogRecord, type UiModelRole } from "../services/ai/uiModelRoles";
+import { displayNameForCatalogRecord, rolesForCatalogRecord, type UiModelRole } from "../services/ai/uiModelRoles";
 import { listItemVariants, motionDurations, motionEasings, pressFeedback } from "./uiMotion";
 
 export type CatalogFilter =
@@ -89,12 +89,29 @@ export function matchesRoleFilter(model: ModelRecord, role: CatalogRoleFilter): 
   return rolesForCatalogRecord(model).includes(role);
 }
 
+/**
+ * A row is recommended when it is free to use — either the provider declared it
+ * free or its consumer name/id says so. Owner preference: free models surface
+ * first in every list as recommendations, but paid models stay user-selectable.
+ */
+export function isRecommendedFree(model: ModelRecord): boolean {
+  if (model.priceClass === "free") return true;
+  return /\bfree\b/i.test(`${model.displayName ?? ""} ${model.id}`);
+}
+
+/** Stable free-first ordering; paid/unknown rows keep their incoming order. */
+function recommendedFirst(rows: readonly ModelRecord[]): ModelRecord[] {
+  return [...rows].sort((a, b) => Number(isRecommendedFree(b)) - Number(isRecommendedFree(a)));
+}
+
 const ROLE_CHIPS: readonly { readonly role: CatalogRoleFilter; readonly label: string }[] = [
   { role: "all", label: "All roles" },
   { role: "chat", label: "Chat" },
   { role: "vision", label: "Vision" },
   { role: "tools", label: "Tools" },
   { role: "embeddings", label: "Embeddings" },
+  { role: "stt", label: "Speech to text" },
+  { role: "tts", label: "Text to speech" },
 ];
 
 export function ModelCatalogSheet({
@@ -119,7 +136,7 @@ export function ModelCatalogSheet({
     return [...seen].sort();
   }, [models]);
   const visible = useMemo(
-    () => models.filter((model) => matchesCatalogFilter(model, filter) && matchesRoleFilter(model, internalRole)),
+    () => recommendedFirst(models.filter((model) => matchesCatalogFilter(model, filter) && matchesRoleFilter(model, internalRole))),
     [models, filter, internalRole],
   );
   function choose(next: CatalogFilter) {
@@ -233,11 +250,15 @@ export function ModelCatalogSheet({
                 className="flex flex-col gap-1 rounded-m3-sm border border-outline bg-surface px-3 py-2"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium">{model.id}</span>
+                  <span className="truncate text-sm font-medium">{displayNameForCatalogRecord(model)}</span>
                   <span className="shrink-0 text-xs font-semibold" aria-label={`Price: ${BADGE_COPY[model.priceClass]}`}>
                     {BADGE_COPY[model.priceClass]}
                   </span>
                 </div>
+                <p className="text-xs text-on-surface-variant">
+                  {rolesForCatalogRecord(model).map((role) => ROLE_CHIPS.find((chip) => chip.role === role)?.label).join(" · ") || "Capabilities not qualified"}
+                </p>
+                <ModelTechnicalDetails model={model} />
                 <p className="text-xs text-on-surface-variant">
                   {model.provider}
                   {" · "}
@@ -312,8 +333,8 @@ function AssistantPickerSections({
   stale?: boolean;
 }) {
   const conversational = models.filter((model) => rolesForCatalogRecord(model).some((role) => role === "chat" || role === "vision"));
-  const chatRows = conversational.filter((model) => rolesForCatalogRecord(model).includes("chat"));
-  const visionRows = conversational.filter((model) => rolesForCatalogRecord(model).includes("vision"));
+  const chatRows = recommendedFirst(conversational.filter((model) => rolesForCatalogRecord(model).includes("chat")));
+  const visionRows = recommendedFirst(conversational.filter((model) => rolesForCatalogRecord(model).includes("vision")));
   const automaticSelected = selectedId === null || selectedId === undefined;
   function rowBadge(model: ModelRecord): string {
     const roles = rolesForCatalogRecord(model);
@@ -334,9 +355,17 @@ function AssistantPickerSections({
         className="flex flex-col gap-1 rounded-m3-sm border border-outline bg-surface px-3 py-2"
       >
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium">{model.id}</span>
-          <span className="shrink-0 text-xs text-on-surface-variant">{rowBadge(model)}</span>
+          <span className="truncate text-sm font-medium">{displayNameForCatalogRecord(model)}</span>
+          <span className="shrink-0 text-xs text-on-surface-variant">
+            {isRecommendedFree(model) ? (
+              <span data-testid="model-recommended" className="mr-1 rounded-full bg-surface-container-high px-2 py-0.5 font-medium">
+                Recommended
+              </span>
+            ) : null}
+            <span>{rowBadge(model)}</span>
+          </span>
         </div>
+        <ModelTechnicalDetails model={model} />
         {onSelect ? (
           <motion.button
             type="button"
@@ -394,5 +423,14 @@ function AssistantPickerSections({
         Manage AI models
       </Link>
     </section>
+  );
+}
+
+function ModelTechnicalDetails({ model }: { readonly model: ModelRecord }) {
+  return (
+    <details className="text-xs text-on-surface-variant">
+      <summary className="min-h-[48px] cursor-pointer py-3">Technical details</summary>
+      <p className="break-all"><span className="font-medium">Model ID: </span><code>{model.id}</code></p>
+    </details>
   );
 }

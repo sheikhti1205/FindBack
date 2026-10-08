@@ -79,7 +79,9 @@ describe("photo source", () => {
 
   it("detects a motion clip from XMP plus its actual MP4 offset and keeps just the still", async () => {
     const mp4 = new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 109, 112, 52, 50, 0, 0, 0, 0]);
-    const xmp = new TextEncoder().encode('GCamera:MicroVideo="1" GCamera:MicroVideoOffset="16"');
+    const xmp = new TextEncoder().encode(
+      '<rdf:Description xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GCamera="http://ns.google.com/photos/1.0/camera/" GCamera:MicroVideo="1" GCamera:MicroVideoOffset="16"/>',
+    );
     const jpeg = new Uint8Array([255, 216, 255, 225, 0, xmp.length + 2, ...xmp, ...SOF0_1X1, 255, 217]);
     const combined = new Uint8Array(jpeg.length + mp4.length);
     combined.set(jpeg); combined.set(mp4, jpeg.length);

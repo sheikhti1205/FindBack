@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowDown, Check, ChevronDown, Copy } from "lucide-react";
 import { MarkdownView } from "./MarkdownView";
+import { diag } from "../services/diag";
 import {
   fadeUpVariants,
   fadeVariants,
@@ -74,7 +75,7 @@ function sourceLabel(source: TranscriptSource, detail?: string | null): string {
 /**
  * Scrollable conversation log. Grayscale surfaces; colour only on the send
  * control / links / meaningful status (handled by callers). Follows the
- * latest message only while the user is near the bottom — scrolling up stops
+ * latest message while follow is enabled — scrolling up stops
  * auto-follow immediately — and offers a floating right-edge scroll-to-latest
  * control while away from the bottom.
  *
@@ -97,6 +98,12 @@ export function ChatTranscript({
 }: ChatTranscriptProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Follow is USER INTENT, not geometry measured after streaming content grows.
+  const following = useRef(true);
+  const lastScrollTop = useRef(0);
+  const downwardUntil = useRef(0);
+  const touchY = useRef<number | null>(null);
+  const partialPaints = useRef({ paintCount: 0, firstPaintMs: 0, lastPaintMs: 0, paintIntervalMs: 0 });
   // Floating scroll-to-latest state: visible only while the user is away from
   // the bottom; hidden while the finger is actively scrolling (reappears on
   // scroll idle); dotted when unseen response content arrived while away.
@@ -121,12 +128,6 @@ export function ChatTranscript({
     [],
   );
 
-  function nearBottom(): boolean {
-    const el = scrollRef.current;
-    if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 96;
-  }
-
   // Imperative scroll cannot see MotionConfig: honor the OS setting here.
   // The hook supplies the reactive view of the preference; the live read is
   // re-queried at call time so a change the hook never observed (framer-motion
@@ -134,13 +135,39 @@ export function ChatTranscript({
   function scrollToLatest() {
     const instant = reduceMotion || shouldReduceMotion();
     bottomRef.current?.scrollIntoView({ behavior: instant ? "auto" : "smooth" });
+    following.current = true;
+    downwardUntil.current = 0;
+    lastScrollTop.current = scrollRef.current?.scrollTop ?? 0;
+    setAwayFromBottom(false);
     setUnseenResponse(false);
+  }
+
+  function scrollIntent(direction: number) {
+    if (direction < 0) {
+      following.current = false;
+      downwardUntil.current = 0;
+      setAwayFromBottom(true);
+    } else if (direction > 0) {
+      // Includes inertial touch scrolling after the last touchmove.
+      downwardUntil.current = performance.now() + 1500;
+    }
+    lastScrollTop.current = scrollRef.current?.scrollTop ?? 0;
   }
 
   function handleScroll() {
     const el = scrollRef.current;
     if (!el) return;
-    setAwayFromBottom(!nearBottom());
+    const movement = el.scrollTop - lastScrollTop.current;
+    if (movement < 0) {
+      following.current = false;
+      setAwayFromBottom(true);
+    } else if (movement > 0 && performance.now() <= downwardUntil.current &&
+        el.scrollHeight - el.scrollTop - el.clientHeight <= 2) {
+      following.current = true;
+      setAwayFromBottom(false);
+      setUnseenResponse(false);
+    }
+    lastScrollTop.current = el.scrollTop;
     // Hide the control while the finger is actively scrolling; an idle timer
     // brings it back ~200 ms after scrolling stops, if still away.
     setScrolling(true);
@@ -158,12 +185,15 @@ export function ChatTranscript({
     [],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (messages.length === 0 && (partialText === null || partialText === "")) return;
-    if (nearBottom()) {
+    if (following.current) {
       setAwayFromBottom(false);
       setUnseenResponse(false);
-      scrollToLatest();
+      // Automatic streaming follow never restarts smooth travel. Layout effect
+      // runs after DOM growth, before paint; geometry cannot revoke the latch.
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+      lastScrollTop.current = scrollRef.current?.scrollTop ?? 0;
     } else if (messages[messages.length - 1]?.role === "assistant" || (partialText !== null && partialText !== "")) {
       // User scrolled up: never yank them back down. Mark the arrival so the
       // floating control can dot, and tapping it jumps to latest.
@@ -173,16 +203,36 @@ export function ChatTranscript({
     // Keyed on content: scroll follows messages AND the throttled partial.
   }, [messages, partialText]);
 
+  useLayoutEffect(() => {
+    const metrics = partialPaints.current;
+    if (partialText) {
+      const ms = performance.now();
+      metrics.paintIntervalMs = metrics.paintCount > 0 ? ms - metrics.lastPaintMs : 0;
+      if (metrics.paintCount === 0) metrics.firstPaintMs = ms;
+      metrics.lastPaintMs = ms;
+      metrics.paintCount++;
+      // DOM commit count, separate from upstream scheduler publications. No
+      // response content or turn identifiers may enter this diagnostic path.
+      diag("ai.stream.transcript.paint", { ...metrics });
+    } else if (metrics.paintCount > 0) {
+      diag("ai.stream.transcript.end", { ...metrics });
+      partialPaints.current = { paintCount: 0, firstPaintMs: 0, lastPaintMs: 0, paintIntervalMs: 0 };
+    }
+  }, [partialText]);
+
   // Hardening (v0.9.0-beta.1): an empty/new conversation can never show the
   // scroll-to-latest control. Content keyed above bails early when there is
   // nothing to follow, so stale away/dot state from a previous chat is reset
   // on switch to an empty one.
   useEffect(() => {
-    if (messages.length === 0) {
+    if (messages.length === 0 && !partialText) {
+      following.current = true;
+      downwardUntil.current = 0;
+      lastScrollTop.current = 0;
       setAwayFromBottom(false);
       setUnseenResponse(false);
     }
-  }, [messages.length]);
+  }, [messages.length, partialText]);
 
   async function copyAnswer(message: TranscriptMessage) {
     const text = message.text;
@@ -207,6 +257,20 @@ export function ChatTranscript({
         aria-live="polite"
         aria-label="Assistant conversation"
         onScroll={handleScroll}
+        onWheel={(event) => scrollIntent(event.deltaY)}
+        onTouchStart={(event) => { touchY.current = event.touches[0]?.clientY ?? null; }}
+        onTouchMove={(event) => {
+          const y = event.touches[0]?.clientY;
+          if (y !== undefined && touchY.current !== null) scrollIntent(touchY.current - y);
+          touchY.current = y ?? null;
+        }}
+        onTouchEnd={() => { touchY.current = null; }}
+        onTouchCancel={() => { touchY.current = null; }}
+        onPointerDown={() => { downwardUntil.current = performance.now() + 1500; }}
+        onKeyDown={(event) => {
+          if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) scrollIntent(-1);
+          else if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) scrollIntent(1);
+        }}
         className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-surface px-4 py-4"
       >
         {messages.map((m) => (

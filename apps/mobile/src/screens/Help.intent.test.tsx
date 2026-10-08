@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Help } from "./Help";
 import { resetBackInterceptors } from "../components/backNavigation";
+import { loadAiPreferences } from "../services/ai/aiPreferences";
 import type { ProviderAdapter, StreamEvent } from "../services/ai/providerContract";
 
 vi.mock("../auth", () => ({
@@ -130,13 +131,13 @@ describe("Help guided-search tap gate (P0-3): ready stages a CTA, never auto-nav
   });
 });
 
-describe("Help paid-default notice (P1-2): persisted default absent from catalogue", () => {
+describe("Help unavailable manual pin: persisted default absent from catalogue", () => {
   function send(text: string) {
     fireEvent.change(screen.getByLabelText("Ask the Help & FAQ"), { target: { value: text } });
     fireEvent.submit(screen.getByTestId("chat-composer"));
   }
 
-  it("shows an honest notice and sends still go through the free route", async () => {
+  it("refuses an unavailable manual pin without silently switching to the free route", async () => {
     const key = "findback.ai.preferences.v1.u-intent";
     window.localStorage.setItem(
       key,
@@ -148,11 +149,21 @@ describe("Help paid-default notice (P1-2): persisted default absent from catalog
       }),
     );
     try {
-      renderHelp({ createAdapter: () => cannedAdapter("free answer"), getKey: async () => "test-key" });
-      const notice = await screen.findByTestId("model-default-unavailable");
-      expect(notice.textContent).toMatch(/saved default unavailable.*free default/i);
-      send("How do I report?");
-      await screen.findByText("free answer");
+      const adapter = cannedAdapter("free answer");
+      const complete = vi.spyOn(adapter, "complete");
+      const getKey = vi.fn(async () => "test-key");
+      renderHelp({ createAdapter: () => adapter, getKey, listCatalog: async () => [] });
+      const question = "How do I report?";
+      send(question);
+      const refusal = await screen.findByTestId("chat-error");
+      expect(refusal.textContent).toMatch(/not in the enabled catalogue.*draft is kept/i);
+      expect(screen.getByLabelText("Ask the Help & FAQ")).toHaveProperty("value", question);
+      expect(screen.getByTestId("chat-retry")).toBeTruthy();
+      expect(screen.queryByText("free answer")).toBeNull();
+      expect(screen.queryByText("Built-in answer")).toBeNull();
+      expect(getKey).not.toHaveBeenCalled();
+      expect(complete).not.toHaveBeenCalled();
+      expect(loadAiPreferences("u-intent").preferredAssistantModel).toBe("groq/paid-row");
     } finally {
       window.localStorage.removeItem(key);
     }

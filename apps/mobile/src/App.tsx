@@ -35,6 +35,7 @@ import { MediaSettings } from "./screens/MediaSettings";
 import { NotificationPreferences } from "./screens/NotificationPreferences";
 import { PrivacySettings } from "./screens/PrivacySettings";
 import { AiSettings } from "./screens/AiSettings";
+import { AiPrivacy } from "./screens/AiPrivacy";
 import { AiAdvanced } from "./screens/AiAdvanced";
 import { HelpGuide } from "./screens/HelpGuide";
 import { Diagnostics } from "./screens/Diagnostics";
@@ -136,6 +137,7 @@ export function App() {
               <Route path="/settings/privacy" element={<PrivacySettings />} />
               <Route path="/settings/ai" element={<AiSettings />} />
               <Route path="/settings/ai/connections" element={<AiConnection />} />
+              <Route path="/settings/ai/privacy" element={<AiPrivacy />} />
               <Route path="/settings/ai/models" element={<AiModelsRoute />} />
               <Route path="/settings/ai/advanced" element={<AiAdvanced />} />
               <Route path="/settings/help" element={<HelpGuide />} />

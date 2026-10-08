@@ -24,6 +24,7 @@ import {
   isDecimalAmount,
   priceClassFromLines,
 } from "../providerContract";
+import { cloudCatalogMetadata } from "./catalogueQualification";
 import type {
   ModelRecord,
   NormalizedRequest,
@@ -175,6 +176,7 @@ function modelRecordFor(entry: unknown, retrievedAt: string): ModelRecord | null
   return {
     provider: "openrouter",
     id: record["id"],
+    ...cloudCatalogMetadata("openrouter", record["id"], { name: record["name"], input, output }),
     input: input.length > 0 ? input : ["text"],
     output: output.length > 0 ? output : ["text"],
     ...(contextTokens === undefined ? {} : { contextTokens }),

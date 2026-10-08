@@ -42,9 +42,16 @@ export type PriceLine = {
   sourceField: string;
 };
 
+/** Qualified product roles, distinct from technical input/output modalities. */
+export type UiModelRole = "chat" | "vision" | "tools" | "embeddings" | "stt" | "tts";
+
 export type ModelRecord = {
   provider: ProviderId;
   id: string;
+  /** Upstream human title or a curated title; never a raw identifier fallback. */
+  displayName?: string;
+  /** Adapter-owned qualification evidence. Missing/empty means no qualified roles. */
+  qualifiedRoles?: readonly UiModelRole[];
   input: readonly string[];
   output: readonly string[];
   contextTokens?: number;

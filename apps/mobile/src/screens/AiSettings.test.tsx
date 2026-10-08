@@ -54,6 +54,8 @@ function renderSettings() {
 const FREE_ROW: ModelRecord = {
   provider: "openrouter",
   id: "openrouter/free",
+  displayName: "Free test chat",
+  qualifiedRoles: ["chat"],
   input: ["text"],
   output: ["text"],
   prices: [

@@ -1,5 +1,6 @@
 package com.findback.app.vlm
 
+import android.os.SystemClock
 import android.util.Base64
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -247,6 +248,27 @@ class SmolVlmPlugin : Plugin() {
         }
         call.setKeepAlive(true)
         val job = scope.launch(start = CoroutineStart.LAZY) {
+            val started = SystemClock.elapsedRealtime()
+            var chunkCount = 0
+            var firstChunkMs = 0L
+            var lastChunkMs = 0L
+            var chunkIntervalMs = 0L
+            var minIntervalMs = 0L
+            var maxIntervalMs = 0L
+            fun cadence(event: String) {
+                if (!Diag.enabled) return
+                // Numeric timing/counts only. Never use generationId as traceId,
+                // or pass prompts, decoded images, paths or response text.
+                Diag.event(context.cacheDir, event, null, mapOf(
+                    "chunkCount" to chunkCount,
+                    "firstChunkMs" to firstChunkMs,
+                    "lastChunkMs" to lastChunkMs,
+                    "chunkIntervalMs" to chunkIntervalMs,
+                    "minIntervalMs" to minIntervalMs,
+                    "maxIntervalMs" to maxIntervalMs,
+                    "meanIntervalMs" to if (chunkCount > 1) (lastChunkMs - firstChunkMs).toDouble() / (chunkCount - 1) else 0.0,
+                ))
+            }
             try {
                 val bytes = Base64.decode(imageBase64, Base64.DEFAULT)
                 conv.sendMessageAsync(
@@ -267,6 +289,16 @@ class SmolVlmPlugin : Plugin() {
                         noRepeatNgramSize = NO_REPEAT_NGRAM_SIZE,
                     ),
                 ).collect { message ->
+                    val ms = SystemClock.elapsedRealtime() - started
+                    chunkIntervalMs = if (chunkCount > 0) ms - lastChunkMs else 0L
+                    if (chunkCount == 0) firstChunkMs = ms
+                    else {
+                        minIntervalMs = if (chunkCount == 1) chunkIntervalMs else minOf(minIntervalMs, chunkIntervalMs)
+                        maxIntervalMs = maxOf(maxIntervalMs, chunkIntervalMs)
+                    }
+                    lastChunkMs = ms
+                    chunkCount++
+                    cadence("ai.stream.native.chunk")
                     notifyGeneration(generationId, delta = message.toString())
                 }
                 notifyGeneration(generationId, done = true)
@@ -277,6 +309,8 @@ class SmolVlmPlugin : Plugin() {
             } catch (e: Exception) {
                 notifyGeneration(generationId, error = e.message?.take(400))
                 call.reject("generation_failed")
+            } finally {
+                cadence("ai.stream.native.end")
             }
         }
         synchronized(lock) { activeJobs[generationId] = job }

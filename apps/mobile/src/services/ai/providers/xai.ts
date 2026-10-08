@@ -35,6 +35,8 @@ import type {
   StreamEvent,
 } from "../providerContract";
 
+import { cloudCatalogMetadata } from "./catalogueQualification";
+
 /** Sole allowlisted origin for this adapter. No proxy, no override. */
 export const XAI_API_ORIGIN = "https://api.x.ai";
 export const XAI_COMPLETIONS_URL = `${XAI_API_ORIGIN}/v1/chat/completions`;
@@ -137,6 +139,7 @@ function modelRecordFor(entry: unknown, retrievedAt: string): ModelRecord | null
   return {
     provider: XAI_PROVIDER_ID,
     id: record["id"],
+    ...cloudCatalogMetadata("xai", record["id"]),
     input: ["text"],
     output: ["text"],
     prices: [],

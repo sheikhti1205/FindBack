@@ -11,6 +11,7 @@ import com.findback.app.vlm.SmolVlmPlugin;
 import com.findback.app.vlm.EmbeddingPlugin;
 import com.findback.app.OpenRouterKeyPlugin;
 import com.getcapacitor.BridgeActivity;
+import com.findback.app.media.FindbackMediaPlugin;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -25,6 +26,18 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(EmbeddingPlugin.class);
         registerPlugin(LocationServicesPlugin.class);
         registerPlugin(FindbackNotificationsPlugin.class);
+        registerPlugin(FindbackMediaPlugin.class);
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null && savedInstanceState.getBundle("findbackMediaRequest") != null) {
+            mediaPlugin().restoreMediaRequestState(savedInstanceState.getBundle("findbackMediaRequest"));
+        }
+    }
+    @Override public void onSaveInstanceState(android.os.Bundle outState) {
+        android.os.Bundle media = mediaPlugin().saveMediaRequestState();
+        if (media != null) outState.putBundle("findbackMediaRequest", media);
+        super.onSaveInstanceState(outState);
+    }
+    private FindbackMediaPlugin mediaPlugin() {
+        return (FindbackMediaPlugin) getBridge().getPlugin("FindbackMedia").getInstance();
     }
 }

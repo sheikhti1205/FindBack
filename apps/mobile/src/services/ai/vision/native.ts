@@ -1,6 +1,7 @@
 import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 import type { OfflineGenerationChunk, OfflineVisionNativeBridge, OfflineVisionRequest } from "../providers/offline";
 import type { ProbeRecord } from "../deviceProbe";
+import { diag } from "../../diag";
 
 export interface SmolPlugin {
   isVisionAvailable(): Promise<{ available: boolean }>;
@@ -40,10 +41,33 @@ export class CapacitorSmolVlmBridge implements OfflineVisionNativeBridge {
     let failure: Error | undefined;
     let cancellation: Promise<unknown> | undefined;
     let wake = () => {};
+    const started = performance.now();
+    let chunkCount = 0;
+    let firstChunkMs = 0;
+    let lastChunkMs = 0;
+    let chunkIntervalMs = 0;
+    let minIntervalMs = 0;
+    let maxIntervalMs = 0;
+    const cadence = (event: string) => diag(event, {
+      chunkCount, firstChunkMs, lastChunkMs, chunkIntervalMs, minIntervalMs, maxIntervalMs,
+      meanIntervalMs: chunkCount > 1 ? (lastChunkMs - firstChunkMs) / (chunkCount - 1) : 0,
+    });
     const finish = () => { done = true; wake(); };
     const listener = await plugin.addListener("visionChunk", (event) => {
-      if (event.generationId !== request.generationId) return;
-      if (event.textDelta) chunks.push(event.textDelta);
+      if (done || signal.aborted || event.generationId !== request.generationId) return;
+      if (event.textDelta) {
+        const ms = performance.now() - started;
+        chunkIntervalMs = chunkCount > 0 ? ms - lastChunkMs : 0;
+        if (chunkCount === 0) firstChunkMs = ms;
+        else {
+          minIntervalMs = chunkCount === 1 ? chunkIntervalMs : Math.min(minIntervalMs, chunkIntervalMs);
+          maxIntervalMs = Math.max(maxIntervalMs, chunkIntervalMs);
+        }
+        lastChunkMs = ms;
+        chunkCount++;
+        cadence("ai.stream.bridge.chunk");
+        chunks.push(event.textDelta);
+      }
       if (event.error) failure = new Error(event.error);
       if (event.done || event.cancelled || event.error) done = true;
       wake();
@@ -70,6 +94,7 @@ export class CapacitorSmolVlmBridge implements OfflineVisionNativeBridge {
       signal.removeEventListener("abort", abort);
       if (!done || signal.aborted) await cancel();
       await listener.remove();
+      cadence("ai.stream.bridge.end");
     }
   }
 }

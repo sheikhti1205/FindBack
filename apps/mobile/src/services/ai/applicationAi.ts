@@ -509,12 +509,11 @@ export class ApplicationAiService {
   }
   offlineAdapter(resolveApprovedImage?: (id: string) => Promise<string>) {
     this.requireAndroid();
-    const generate: OfflineNativeBridge["generate"] = (prompt, signal) => this.generateOffline(prompt.currentText, signal);
     const bridge: OfflineNativeBridge = {
-      bridgeName: "needle-cact", isAvailable: () => this.android,
-      load: async (id) => { if (id !== NEEDLE_MODEL_ID) throw new Error("This model requires an approved image"); await this.ensureNeedle(); },
-      unload: () => this.needle!.unload(),
-      generate,
+      bridgeName: "on-device-chat", isAvailable: () => false,
+      load: async () => { throw new Error("No qualified on-device chat runtime is installed"); },
+      unload: async () => {},
+      generate: async function* () { yield await Promise.reject(new Error("No qualified on-device chat runtime is installed")); },
     };
     const visionBridge: OfflineVisionNativeBridge = {
       bridgeName: this.smol!.bridgeName,
@@ -536,22 +535,6 @@ export class ApplicationAiService {
     const notice = vision ? this.notice(vision.modelId) : undefined;
     if (notice?.startsWith("GPU initialization failed")) yield { textDelta: `${notice}\n\n` };
     yield* this.smol!.describeImage(request, signal);
-  }
-  private async *generateOffline(text: string, signal: AbortSignal) {
-    if (signal.aborted) return;
-    // Audit closure: the offline text path runs inside completeOffline's
-    // lease but cannot hold its own (single flight). The route still gets
-    // the live signal (logout cancels the visible request) and reports
-    // its raw native promise onto the active lease (busy-until-settle for
-    // non-cancellable Needle orphans).
-    const result = await this.boot.orchestrator.route("extract-report-fields", { text }, {
-      traceId: crypto.randomUUID(),
-      signal,
-      trackSettlement: (work) => this.coordinator.trackActiveNative(work),
-    });
-    if (signal.aborted) return;
-    if (!result.ok) throw new Error(result.error);
-    yield { textDelta: JSON.stringify(result.value) };
   }
   private async *completeOffline(adapter: import("./providerContract").ProviderAdapter, request: import("./providerContract").NormalizedRequest) {
     await this.ready;

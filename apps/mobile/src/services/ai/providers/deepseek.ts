@@ -31,6 +31,7 @@
  * never logs prompt or photo content (no console usage at all).
  */
 import { hasNoInlineImageBytesOrKeys, priceClassFromLines } from "../providerContract";
+import { cloudCatalogMetadata } from "./catalogueQualification";
 import type {
   ModelRecord,
   NormalizedRequest,
@@ -230,6 +231,7 @@ function modelRecordFor(entry: unknown, retrievedAt: string): ModelRecord | null
   return {
     provider: "deepseek",
     id: record["id"],
+    ...cloudCatalogMetadata("deepseek", record["id"], { name: record["name"], input, output }),
     input: input.length > 0 ? input : ["text"],
     output: output.length > 0 ? output : ["text"],
     ...(contextTokens === undefined ? {} : { contextTokens }),

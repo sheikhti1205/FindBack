@@ -44,6 +44,18 @@ function responseWith(models: Array<Record<string, unknown>>): OpenRouterModelsR
 }
 
 describe("modelCatalog (P1 red)", () => {
+  it("preserves the upstream title and explicit qualification of a documented dialogue endpoint", () => {
+    const [record] = parseModelCatalog(responseWith([baseModel()]));
+    expect(record?.displayName).toBe("Llama 3 8B Instruct");
+    expect(record?.qualifiedRoles).toEqual(["chat"]);
+  });
+
+  it("never promotes an unknown text-output image tool, even with chat-style formatting metadata", () => {
+    const [record] = parseModelCatalog(responseWith([baseModel({ id: "vendor/unknown-tool", architecture: {
+      input_modalities: ["text", "image"], output_modalities: ["text"], instruct_type: "chatml",
+    } })]));
+    expect(record?.qualifiedRoles).toEqual([]);
+  });
   it("parses a free text model: zero lines stay exact strings, free class, real limits", () => {
     const [record] = parseModelCatalog(responseWith([baseModel()]), { retrievedAt: "2026-09-25T00:00:00.000Z" });
     expect(record?.provider).toBe("openrouter");

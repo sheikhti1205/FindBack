@@ -567,6 +567,9 @@ export function createGenericAdapter(
       records.push({
         provider: providerId,
         id,
+        // An arbitrary compatible host is not the official provider, even
+        // if it returns a familiar ID or advertises qualification fields.
+        qualifiedRoles: [],
         input: ["text"],
         output: ["text"],
         // Unknown stays unknown: no pricing or limits are ever invented.

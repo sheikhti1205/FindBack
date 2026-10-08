@@ -41,6 +41,14 @@ function deps(overrides: Partial<ImportDeps> = {}): ImportDeps {
 }
 
 describe("sniffImage", () => {
+  it("probes compatible ftyp brands, not just the major brand", () => {
+    const bytes = new Uint8Array(24);
+    new DataView(bytes.buffer).setUint32(0, 24);
+    bytes.set(ascii("ftypmif1"), 4); bytes.set(ascii("heicavif"), 16);
+    expect(sniffImage(bytes)).toBe("avif");
+    bytes.set(ascii("heicisom"), 16);
+    expect(sniffImage(bytes)).toBe("heic");
+  });
   it("sniffs JPEG, PNG, GIF, WebP, and BMP from magic bytes", () => {
     expect(sniffImage(buildJpeg(8, 8))).toBe("jpeg");
     expect(sniffImage(buildPng(8, 8))).toBe("png");
@@ -89,6 +97,37 @@ describe("probeDimensions / readExifOrientation", () => {
 });
 
 describe("importImage intake", () => {
+  it("refuses a HEIF mpvd container before handing bytes to a decoder", async () => {
+    const ftyp = buildHeicFtyp();
+    const bytes = new Uint8Array(ftyp.length + 8);
+    bytes.set(ftyp);
+    new DataView(bytes.buffer).setUint32(ftyp.length, 8);
+    bytes.set(ascii("mpvd"), ftyp.length + 4);
+    const decoder = deps();
+    await expect(importImage({ bytes, fileName: "motion.heic" }, decoder)).rejects.toThrow("still frame");
+    expect(decoder.transcode).not.toHaveBeenCalled();
+  });
+  it("does not confuse a non-motion Ultra HDR directory with a malformed Motion Photo", async () => {
+    const bytes = buildJpeg(48, 32);
+    const hdr = new TextEncoder().encode('<Container:Directory><Container:Item Item:Semantic="GainMap"/></Container:Directory>');
+    const segment = new Uint8Array(hdr.length + 4);
+    segment.set([255, 225, 0, hdr.length + 2]); segment.set(hdr, 4);
+    const mixed = new Uint8Array(bytes.length + segment.length);
+    mixed.set(bytes.subarray(0, 2)); mixed.set(segment, 2); mixed.set(bytes.subarray(2), 2 + segment.length);
+    const result = await importImage({ bytes: mixed, fileName: "hdr.jpg" }, deps());
+    expect(result.motionStillUsed).toBe(false);
+  });
+  it("refuses an uncertain modern still instead of decoding a container via legacy metadata", async () => {
+    const { bytes } = generatedMotionPhoto();
+    const modern = new TextEncoder().encode('<Meta xmlns:Camera="http://ns.google.com/photos/1.0/camera/" Camera:MotionPhoto="1"/>');
+    const segment = new Uint8Array(modern.length + 4);
+    segment.set([255, 225, 0, modern.length + 2]); segment.set(modern, 4);
+    const mixed = new Uint8Array(bytes.length + segment.length);
+    mixed.set(bytes.subarray(0, 2)); mixed.set(segment, 2); mixed.set(bytes.subarray(2), 2 + segment.length);
+    const transcode = fakeTranscode([512]);
+    await expect(importImage({ bytes: mixed, fileName: "uncertain.jpg" }, deps({ transcode }))).rejects.toMatchObject({ code: "CORRUPT_IMAGE" });
+    expect(transcode).not.toHaveBeenCalled();
+  });
   it("applies portrait EXIF orientation to the output dimensions", async () => {
     const seen: TranscodeRequest[] = [];
     // Stored landscape 1200x800 with orientation 6 -> portrait 800x1200.
@@ -102,6 +141,14 @@ describe("importImage intake", () => {
     expect(result.derivative.height).toBe(1200);
     expect(seen[0]?.targetWidth).toBe(800);
     expect(seen[0]?.targetHeight).toBe(1200);
+  });
+  it("uses big-endian EXIF orientation when calculating an oriented browser decode target", async () => {
+    const bytes = buildJpeg(1200, 800, { orientation: 6 });
+    bytes.set([77, 77, 0, 42, 0, 0, 0, 8, 0, 1, 1, 18, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0], 12);
+    const seen: TranscodeRequest[] = [];
+    const result = await importImage({ bytes, fileName: "big-endian.jpg" }, deps({ transcode: fakeTranscode([512], seen) }));
+    expect(result.exifOrientationApplied).toBe(6);
+    expect(seen[0]).toMatchObject({ targetWidth: 800, targetHeight: 1200 });
   });
 
   it("keeps PNG alpha lossless", async () => {

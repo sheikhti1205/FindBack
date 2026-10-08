@@ -16,11 +16,12 @@
  * - A VLM advertising answer-help AND analyze-image → Chat + Vision.
  */
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
-import { productionModelRegistry } from "./modelDescriptors";
+import { productionModelRegistry, SMOL_VISION_MODEL_ID } from "./modelDescriptors";
 import type { AiTaskId } from "./types";
-import type { ModelRecord } from "./providerContract";
+import type { ModelRecord, UiModelRole } from "./providerContract";
+import { curatedCloudModelName } from "./providers/catalogueQualification";
 
-export type UiModelRole = "chat" | "vision" | "tools" | "embeddings" | "stt" | "tts";
+export type { UiModelRole } from "./providerContract";
 
 /** Roles that can answer the Assistant conversation. Tool/embedding/speech engines cannot. */
 export const ASSISTANT_CONVERSATIONAL_ROLES: readonly UiModelRole[] = ["chat", "vision"];
@@ -72,24 +73,39 @@ export function isConversationalUiRole(role: UiModelRole): boolean {
 }
 
 /**
- * Assistant-picker predicate: an offline catalogue row is selectable for chat
- * only when its model id carries a qualified conversational role. Cloud rows
- * are governed by the provider catalogue/consent path, not this predicate.
+ * Legacy-named Assistant-picker predicate: all rows require conversational
+ * qualification. Offline uses the registry; cloud uses adapter-owned roles.
+ * Entitlement, consent and message compatibility remain separate gates.
  */
-export function isAssistantSelectableOfflineRecord(record: Pick<ModelRecord, "id" | "provider">): boolean {
-  if (record.provider !== "offline") return true;
-  return qualifiedUiRolesForOfflineModel(record.id).some(isConversationalUiRole);
+export function isAssistantSelectableOfflineRecord(record: Pick<ModelRecord, "id" | "provider" | "qualifiedRoles">): boolean {
+  return rolesForCatalogRecord(record).some(isConversationalUiRole);
 }
 
 /**
  * Consumer roles for any catalogue row (assistant picker sections + settings
- * library chips). Offline rows use qualified registry roles. Cloud provider
- * rows are general-purpose conversational products by contract: text-only
- * rows read as Chat, image-capable rows as Chat + Vision.
+ * library chips). Offline rows use the live registry, not cached claims.
+ * Cloud rows require explicit adapter qualification; I/O proves no role.
  */
-export function rolesForCatalogRecord(record: Pick<ModelRecord, "id" | "provider" | "input">): readonly UiModelRole[] {
+export function rolesForCatalogRecord(record: Pick<ModelRecord, "id" | "provider" | "qualifiedRoles"> & Partial<Pick<ModelRecord, "input">>): readonly UiModelRole[] {
   if (record.provider === "offline") return qualifiedUiRolesForOfflineModel(record.id);
-  return record.input.includes("image") ? ["chat", "vision"] : ["chat"];
+  // Persisted rows may predate qualification or have malformed metadata.
+  if (!Array.isArray(record.qualifiedRoles) || !record.qualifiedRoles.every(isUiModelRole)) return [];
+  return [...new Set(record.qualifiedRoles)];
+}
+
+export function isUiModelRole(value: unknown): value is UiModelRole {
+  return value === "chat" || value === "vision" || value === "tools" || value === "embeddings" || value === "stt" || value === "tts";
+}
+
+/** Shared consumer title for catalogue rows and the Assistant composer chip. */
+export function displayNameForCatalogRecord(record: Pick<ModelRecord, "id" | "provider" | "displayName">): string {
+  if (record.provider === "offline") {
+    const descriptor = productionModelRegistry().descriptorFor(record.id);
+    return descriptor?.consumerDetail.trim() || "On-device model";
+  }
+  const title = typeof record.displayName === "string" ? record.displayName.trim() : "";
+  if (title !== "" && title !== record.id) return title;
+  return curatedCloudModelName(record.provider, record.id) ?? "Cloud model";
 }
 
 /**
@@ -100,3 +116,16 @@ export function rolesForCatalogRecord(record: Pick<ModelRecord, "id" | "provider
  */
 export const DEFAULT_TOOL_MODEL_ID = NEEDLE_MODEL_ID;
 export const DEFAULT_EMBEDDING_MODEL_ID = NEEDLE_MODEL_ID;
+/** No production text engine is chat-qualified today. */
+export const DEFAULT_CHAT_MODEL_ID: string | null = null;
+export const DEFAULT_VISION_MODEL_ID = SMOL_VISION_MODEL_ID;
+
+export function supportsAssistantMessage(record: ModelRecord, hasImages: boolean): boolean {
+  return rolesForCatalogRecord(record).includes(hasImages ? "vision" : "chat");
+}
+
+/** Explicit role default, not catalogue order. An unqualified default fails closed. */
+export function automaticLocalModel(rows: readonly ModelRecord[], hasImages: boolean): ModelRecord | null {
+  const id = hasImages ? DEFAULT_VISION_MODEL_ID : DEFAULT_CHAT_MODEL_ID;
+  return rows.find((row) => row.provider === "offline" && row.id === id && supportsAssistantMessage(row, hasImages)) ?? null;
+}

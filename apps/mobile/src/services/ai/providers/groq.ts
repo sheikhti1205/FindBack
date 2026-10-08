@@ -34,6 +34,8 @@ import type {
   StreamEvent,
 } from "../providerContract";
 
+import { cloudCatalogMetadata } from "./catalogueQualification";
+
 /** Sole allowlisted origin for this adapter. No proxy, no override. */
 export const GROQ_API_ORIGIN = "https://api.groq.com";
 export const GROQ_COMPLETIONS_URL = `${GROQ_API_ORIGIN}/openai/v1/chat/completions`;
@@ -136,6 +138,7 @@ function modelRecordFor(entry: unknown, retrievedAt: string): ModelRecord | null
   return {
     provider: GROQ_PROVIDER_ID,
     id: record["id"],
+    ...cloudCatalogMetadata("groq", record["id"]),
     input: ["text"],
     output: ["text"],
     prices: [],

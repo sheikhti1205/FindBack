@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApplicationAiService, compatibilityOf, DEVICE_CORPUS_VERSION, DEVICE_INCOMPATIBLE_REASON } from "./applicationAi";
 import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, type ModelDescriptor } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
@@ -398,52 +398,40 @@ describe("application-owned AI", () => {
     await expect(second.embedNeedle(["umbrella"])).rejects.toThrow(/not installed and verified|not resident/);
   });
 
-  it("logout cancels a pending offline text provider and delivers no old-account text", async () => {
+  it.each([NEEDLE_MODEL_ID, SMOL_VISION_DESCRIPTOR.modelId])("refuses direct offline prose for %s without calling either native engine", async (modelId) => {
     const p = platform();
-    const releasers: Array<() => void> = [];
-    let calls = 0;
-    p.needle.completeJson = async () => {
-      calls += 1;
-      if (calls === 1) {
-        await new Promise<void>((resolve) => { releasers.push(resolve); });
-      }
-      return JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "red umbrella" } }] });
-    };
+    const extract = vi.spyOn(p.needle, "completeJson");
+    const needleLoad = vi.spyOn(p.needle, "loadModel");
+    const vision = vi.spyOn(p.smol, "describeImage");
+    const visionLoad = vi.spyOn(p.smol, "loadVisionModel");
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
-    const adapter = service.offlineAdapter(async () => "approved-bytes");
-    const caller = new AbortController();
+    await service.download(SMOL_VISION_DESCRIPTOR.modelId);
+    const resolveImage = vi.fn(async () => "approved-bytes");
+    const adapter = service.offlineAdapter(resolveImage);
     const request = {
-      selection: { accountId: "u", provider: "offline", modelId: NEEDLE_MODEL_ID, mode: "free-only" },
+      selection: { accountId: "u", provider: "offline", modelId, mode: "free-only" },
       task: "app-help", policyVersion: "p", knowledgeVersion: "k", recentTurns: [],
-      currentText: "Describe the umbrella", approvedImageIds: [], authorizedResultIds: [],
-      maxOutputTokens: 64, signal: caller.signal,
+      currentText: "How do I report a lost umbrella?", approvedImageIds: [], authorizedResultIds: [],
+      maxOutputTokens: 64, signal: new AbortController().signal,
     } as Parameters<typeof adapter.complete>[0];
-    const events: unknown[] = [];
-    const consuming = (async () => {
-      for await (const event of adapter.complete(request)) events.push(event);
-    })();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const resetting = service.resetForAccount();
-    // The pending provider stream terminates on logout...
-    await Promise.race([
-      consuming,
-      new Promise((_, reject) => setTimeout(() => reject(new Error("offline stream hung past logout")), 2000)),
+    const events = [];
+    for await (const event of adapter.complete(request)) events.push(event);
+    expect(events).toEqual([
+      { kind: "phase", phase: "queued", attempt: 1 },
+      { kind: "phase", phase: "failed", attempt: 1, message: "runtime_unavailable" },
+      { kind: "error", attempt: 1, code: "runtime_unavailable", retryable: false,
+        message: "the on-device-chat native runtime is not available on this device" },
+      { kind: "done", attempt: 1, stopReason: "error" },
     ]);
-    // ...with no model text ever delivered to the old account...
-    expect(events.filter((event) => (event as { kind?: string }).kind === "text")).toEqual([]);
-    // ...and the gate stays busy until the orphaned native call settles.
-    await expect((async () => {
-      for await (const event of adapter.complete(request)) void event;
-    })()).rejects.toThrow(/busy/);
-    releasers.forEach((release) => release());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await resetting;
-    // A new account can stream again once settlement completes.
-    const after: unknown[] = [];
-    for await (const event of adapter.complete(request)) after.push(event);
-    expect(after.some((event) => (event as { kind?: string }).kind === "text")).toBe(true);
+    expect(extract).not.toHaveBeenCalled();
+    expect(needleLoad).not.toHaveBeenCalled();
+    expect(vision).not.toHaveBeenCalled();
+    expect(visionLoad).not.toHaveBeenCalled();
+    expect(resolveImage).not.toHaveBeenCalled();
+    expect(service.residency).toMatchObject({ owner: "none", claimed: false, inflight: 0 });
+    expect(service.manager.statusOf(modelId)?.checksumVerified).toBe(true);
   });
 
   it("logout cancels a pending offline vision provider through true native cancel", async () => {

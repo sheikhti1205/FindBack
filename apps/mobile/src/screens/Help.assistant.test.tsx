@@ -170,9 +170,9 @@ describe("Help full-screen assistant", () => {
     expect(screen.getByText("How do I search?")).toBeTruthy();
     fireEvent.click(screen.getByTestId("chat-retry"));
     await screen.findByText("Use the Search tab.");
-    // The error row is dismissed with an exit animation — wait for the node to
-    // leave the DOM instead of asserting synchronously.
-    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-error"));
+    // P2: the status row is a single inline region — the error testid is gone
+    // as soon as the retry succeeds (no separate stacking error node).
+    await waitFor(() => expect(screen.queryByTestId("chat-error")).toBeNull());
   });
 
   it("opens history as a popup supporting new, continue, rename, delete and clear", async () => {
@@ -317,17 +317,19 @@ describe("Help U2 header/layout", () => {
     expect(screen.queryByTestId("guided-shortcut-search")).toBeNull();
   });
 
-  it("keeps the privacy copy in the overflow Privacy & AI sheet, never in the transcript", async () => {
+  it("keeps the privacy summary in the overflow Privacy & AI sheet, never in the transcript", async () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok"), getKey: async () => "test-key" });
-    // U2: even first use keeps the consent copy out of the conversation — it
-    // lives one tap away in the overflow menu, always reachable.
+    // U2/P2: even first use keeps the consent copy out of the conversation — a
+    // concise sheet with a "Full details" destination lives one tap away.
     expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /more options/i }));
     fireEvent.click(screen.getByRole("button", { name: /^privacy & ai$/i }));
-    expect(screen.getByTestId("privacy-full-copy")).toBeTruthy();
-    expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy();
+    const fullDetails = await screen.findByRole("button", { name: /full details/i });
+    // The truth-complete disclosure is not dumped inline in the sheet.
+    expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByTestId("privacy-full-copy")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: /full details/i })).toBeNull());
+    expect(fullDetails).toBeTruthy();
     send("How do I report?");
     await screen.findByText("ok");
     // Ongoing chat: still no privacy block consuming chat height.
@@ -366,9 +368,8 @@ describe("Help U2 header/layout", () => {
     await screen.findByTestId("chat-error");
     fireEvent.click(screen.getByTestId("chat-retry"));
     await screen.findByText("Use the Search tab.");
-    // The error row is dismissed with an exit animation — wait for the node to
-    // leave the DOM instead of asserting synchronously.
-    await waitForElementToBeRemoved(() => screen.queryByTestId("chat-error"));
+    // P2: single inline status region — error testid clears on retry success.
+    await waitFor(() => expect(screen.queryByTestId("chat-error")).toBeNull());
     // One logical reply: the user question persisted exactly once.
     expect(screen.getAllByText("How do I search?").length).toBe(1);
   });

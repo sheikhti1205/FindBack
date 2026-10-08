@@ -120,6 +120,12 @@ describe("chat tray retention", () => {
 });
 
 describe("animation disclosure", () => {
+  it("does not claim the animation is kept when intake produced a sampled still", async () => {
+    const still = { ...await makeStill(1), sampledStill: true };
+    expect(frameDisclosureFor(still)).toMatch(/still frame used/i);
+    expect(frameDisclosureFor(still)).not.toMatch(/kept in storage/i);
+    expect(frameDisclosureFor(still)).toMatch(/not attached/i);
+  });
   it("discloses sampled frames for animated GIF and WebP, never claiming full viewing", async () => {
     for (const image of [await makeAnimatedGif(), await makeAnimatedWebp()]) {
       const disclosure = frameDisclosureFor(image);

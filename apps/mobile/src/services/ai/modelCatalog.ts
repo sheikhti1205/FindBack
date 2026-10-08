@@ -33,6 +33,7 @@ import {
   type PriceLine,
   type ProviderId,
 } from "./providerContract";
+import { cloudCatalogMetadata } from "./providers/catalogueQualification";
 
 export const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models" as const;
 export const OPENROUTER_MODELS_DOCS_URL =
@@ -242,6 +243,11 @@ export function parseModelCatalog(
     return {
       provider: "openrouter",
       id,
+      ...cloudCatalogMetadata("openrouter", id, {
+        name: model?.name,
+        input: parseModalities(model?.architecture, "input_modalities"),
+        output: parseModalities(model?.architecture, "output_modalities"),
+      }),
       input: parseModalities(model?.architecture, "input_modalities"),
       output: parseModalities(model?.architecture, "output_modalities"),
       ...(asPositiveInt(model?.context_length) !== undefined
@@ -361,6 +367,8 @@ export function fixedFallbackCatalog(input: FixedFallbackInput): readonly ModelR
     .map((id) => ({
       provider: input.provider,
       id,
+      // Knowing an ID is not evidence of a conversational endpoint.
+      qualifiedRoles: [],
       input: ["text"],
       output: ["text"],
       prices: [],

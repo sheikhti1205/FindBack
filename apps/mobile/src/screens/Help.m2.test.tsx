@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Help } from "./Help";
 import { resetBackInterceptors } from "../components/backNavigation";
-import type { ProviderAdapter, StreamEvent } from "../services/ai/providerContract";
+import type { NormalizedRequest, ProviderAdapter, StreamEvent } from "../services/ai/providerContract";
 import { buildPng } from "../services/media/__fixtures__/synthetic";
 
 vi.mock("../auth", () => ({
@@ -118,10 +118,13 @@ describe("Help M2 chat UI", () => {
     const row = await screen.findByTestId("chat-request-state");
     expect(row.textContent).toMatch(/attempt 1/i);
     fireEvent.click(screen.getByTestId("chat-stop"));
-    await screen.findByTestId("chat-cancelled");
+    // P2: one consolidated status region — the cancelled state replaces (not
+    // stacks on) the request-state row.
+    const stopped = await screen.findByTestId("chat-cancelled");
+    expect(stopped.textContent).toMatch(/stopped/i);
     // Late chunks after cancel never reach the transcript.
     expect(screen.queryByText("partial…")).toBeNull();
-    expect(screen.getByTestId("chat-request-state").textContent).toMatch(/cancel/i);
+    expect(screen.queryByTestId("chat-request-state")).toBeNull();
   });
 
   it("general-chat failure renders draft + Retry with no FAQ substitution, keeping images", async () => {
@@ -201,7 +204,7 @@ describe("Help M2 chat UI", () => {
     // WB-02 guard bans any second openrouter/... route literal in shipped
     // code, so the minimal catalogue is the single pinned free row; a
     // non-default-row proof must wait for the authenticated-catalogue packet.
-    const seen: unknown[] = [];
+    const seen: NormalizedRequest[] = [];
     const spy: ProviderAdapter = {
       ...cannedAdapter("Model-bound hello."),
       complete: async function* (request): AsyncIterable<StreamEvent> {
@@ -212,17 +215,25 @@ describe("Help M2 chat UI", () => {
     };
     renderHelp({ createAdapter: () => spy, getKey: async () => "test-key" });
     fireEvent.click(screen.getByRole("button", { name: /choose model/i }));
-    // Placeholder models={[]} renders zero rows — this must be gone.
-    const selects = await screen.findAllByRole("button", { name: /^select$/i });
-    expect(selects).toHaveLength(1);
-    fireEvent.click(selects[0]!);
+    // One qualified model is cross-listed under Chat and Vision; this is
+    // one model identity, not two transport choices. Pick its Chat row.
+    const chat = (await screen.findByRole("heading", { name: "Chat" })).parentElement!;
+    const vision = screen.getByRole("heading", { name: "Vision" }).parentElement!;
+    expect(within(chat).getByText("Free model router")).toBeTruthy();
+    expect(within(vision).getByText("Free model router")).toBeTruthy();
+    fireEvent.click(within(chat).getByRole("button", { name: /^select$/i }));
     const header = screen.getByRole("button", { name: /choose model/i });
+    // P2: the header shows the consumer display name, not the raw model ID;
+    // the raw ID still drives the send-time binding asserted below.
     const chosen = (header.textContent ?? "").trim();
-    expect(chosen).not.toBe("");
-    expect(chosen).not.toMatch(/^free default$/i);
+    expect(chosen).toBe("Free model router");
     send("Hello model?");
     await screen.findByText("Model-bound hello.");
     expect(seen.length).toBe(1);
-    expect(JSON.stringify(seen[0] ?? {})).toContain(chosen);
+    expect(seen[0]).toMatchObject({
+      selection: { provider: "openrouter", modelId: "openrouter/free" },
+      currentText: "Hello model?",
+      approvedImageIds: [],
+    });
   });
 });

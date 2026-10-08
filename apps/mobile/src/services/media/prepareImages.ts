@@ -19,6 +19,7 @@ export const ANIMATED_FRAME_DISCLOSURE =
   "sampled still frame(s) — not every frame.";
 
 export const MOTION_STILL_DISCLOSURE = "Motion photo · still frame used.";
+export const SAMPLED_STILL_DISCLOSURE = "Animated photo · still frame used. The animation is not attached.";
 
 export type PrepareErrorCode = "TRAY_FULL" | "REPORT_LIMIT" | "NOT_FOUND" | "BAD_INDEX";
 
@@ -136,7 +137,7 @@ export function buildChatSendPlan(
 /** Frame disclosure: motion-still and sampled-still notes first, animated inputs keep theirs; null for plain stills. */
 export function frameDisclosureFor(image: ImportedImage): string | null {
   if (image.motionStillUsed) return MOTION_STILL_DISCLOSURE;
-  if (image.sampledStill) return ANIMATED_FRAME_DISCLOSURE;
+  if (image.sampledStill) return SAMPLED_STILL_DISCLOSURE;
   return image.animated ? ANIMATED_FRAME_DISCLOSURE : null;
 }
 

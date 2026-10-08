@@ -12,11 +12,13 @@ import { OfflineModelManager, type OfflineAssetPin } from "../offlineModelManage
 import {
   OFFLINE_PROVIDER_ID,
   buildOfflinePrompt,
+  createOfflineAdapter,
   describeOfflineReadiness,
   estimateOfflineMemoryMb,
   estimateOfflineStorage,
 } from "./offline";
 import type { NormalizedRequest } from "../providerContract";
+import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR } from "../modelDescriptors";
 
 const PIN: OfflineAssetPin = {
   modelId: "qwen3-0.6b-dynamic-int4",
@@ -62,6 +64,33 @@ function baseRequest(): NormalizedRequest {
 describe("offline provider identity", () => {
   it("serves the dedicated offline union member (IF-002), never a custom string", () => {
     expect(OFFLINE_PROVIDER_ID).toBe("offline");
+  });
+
+  it("lists registry-qualified roles and consumer names without invoking native inference", async () => {
+    const pins = [NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR].map((descriptor) => ({
+      modelId: descriptor.modelId, sha256: descriptor.sha256,
+      downloadBytes: descriptor.bytes, minFreeRamMb: descriptor.minRamMb,
+    }));
+    const manager = new OfflineModelManager(pins);
+    for (const pin of pins) {
+      manager.dispatch(pin.modelId, { type: "QUEUE_DOWNLOAD", userInitiated: true });
+      manager.dispatch(pin.modelId, { type: "START" });
+      manager.dispatch(pin.modelId, { type: "PROGRESS", downloadedBytes: pin.downloadBytes });
+      manager.dispatch(pin.modelId, { type: "VERIFY_START" });
+      manager.dispatch(pin.modelId, { type: "VERIFY_OK", actualSha256: pin.sha256 });
+    }
+    const adapter = createOfflineAdapter({ manager, bridge: {
+      bridgeName: "Never needed for catalogue",
+      isAvailable: () => { throw new Error("Catalogue must not probe the runtime"); },
+      load: async () => { throw new Error("Catalogue must not load a runtime"); },
+      unload: async () => { throw new Error("Catalogue must not unload a runtime"); },
+      async *generate() { yield await Promise.reject<never>(new Error("Catalogue must not generate")); },
+    } });
+    const rows = await adapter.listModels!();
+    expect(rows.map(({ displayName, qualifiedRoles }) => ({ displayName, qualifiedRoles }))).toEqual([
+      { displayName: "Needle3", qualifiedRoles: ["tools", "embeddings"] },
+      { displayName: "SmolVLM2", qualifiedRoles: ["vision"] },
+    ]);
   });
 });
 

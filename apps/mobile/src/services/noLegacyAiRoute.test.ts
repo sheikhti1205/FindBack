@@ -10,13 +10,17 @@ import { describe, expect, it } from "vitest";
  * `VITE_*` key env.
  *
  * C1 change (deliberate, reviewed): the old blanket ban on vendor-qualified/paid model
- * IDs (`openai/…`, `gpt-4`, …) in *fixtures* is REMOVED. The app now ships a dynamic
- * OpenRouter catalogue (`services/ai/modelCatalog.ts`) where paid models are browsable
- * data, gated at send time by `priceClass` + per-task paid consent (`modelPolicy.ts`
- * over the frozen `isSelectionAuthorized`) — never by string-matching fixtures. Paid
- * model ids therefore remain banned in SHIPPED (non-test) modules but are legal in
- * `*.test.*` fixtures. If paid-model protection regresses, it regresses in policy
- * tests, not here.
+ * IDs (`openai/…`, `gpt-4`, …) is REMOVED. The app ships a dynamic OpenRouter
+ * catalogue (`services/ai/modelCatalog.ts`) plus a bounded qualification
+ * manifest (`services/ai/providers/catalogueQualification.ts`) where paid
+ * models are browsable data the user may explicitly choose; free models are
+ * surfaced first as recommendations. Paid-model protection lives in
+ * `modelPolicy.ts` over the frozen `isSelectionAuthorized`, not in string bans.
+ *
+ * Owner decision 2026-10-08: model-ID literal bans (vendor-qualified and bare
+ * paid ids) are removed from SHIPPED_RULES, because the qualification manifest
+ * must name the families it qualifies. Route/key/secret bans below are
+ * unchanged and remain absolute.
  *
  * Still banned: legacy `ai-help`/`functions/v1`, the retired server-key
  * `ai-relay` route (deleted 2026-10-02 — OpenAI/DeepSeek became ordinary BYOK
@@ -190,17 +194,6 @@ const SHIPPED_RULES: Array<{ id: string; re: RegExp }> = [
   { id: "LLM_MODEL second route", re: /\bLLM_MODEL\b/ },
   { id: "LLM_BASE_URL second route", re: /\bLLM_BASE_URL\b/ },
   { id: "non-free openrouter route", re: /openrouter\/(?!free\b)/ },
-  {
-    id: "vendor-qualified paid model id",
-    // NOTE: `openai/(?!v1/)` — Groq's documented OpenAI-compatible endpoint
-    // path (`api.groq.com/openai/v1/...`) is a URL prefix, not a paid model
-    // id like `openai/gpt-4o`. IF-001 multi-provider adoption.
-    re: /(?:\bopenai\/(?!v1\/)|\b(?:anthropic|google|meta-llama|deepseek|deepseek-chat|mistralai|mistral|perplexity|x-ai|cohere|microsoft|togethercomputer|ai21|qwen|moonshotai|z-ai)\/)/,
-  },
-  {
-    id: "bare paid model id",
-    re: /\bgpt-(?:3|4|5)|\bclaude-[0-9]|\bgemini-[0-9]|\bdeepseek-chat\b|\bdeepseek-v[0-9]|\bcommand-r|\bgrok-[0-9]|\bchatgpt-/,
-  },
   { id: "raw OpenRouter key literal", re: /\bsk-or-[A-Za-z0-9]/ },
   { id: "VITE OpenRouter key env", re: /VITE_OPENROUTER_API_KEY|\bOPENROUTER_API_KEY\s*[:=]/ },
   { id: "byok provider endpoint", re: /api\/v1\/byok/ },
@@ -300,7 +293,7 @@ describe("legacy AI route absence (WB-02 client guard)", () => {
     expect(shipped.some((f) => f.rel === "services/openRouter.ts")).toBe(true);
   });
 
-  it("ships no ai-help symbol, second LLM route, paid model id, key literal, unapproved base URL or direct-connection label", () => {
+  it("ships no ai-help symbol, second LLM route, key literal, unapproved base URL or direct-connection label", () => {
     expect(violations(shipped, SHIPPED_RULES)).toEqual([]);
   });
 

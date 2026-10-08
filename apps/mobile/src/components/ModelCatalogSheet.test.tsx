@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router";
 import { ModelCatalogSheet, matchesCatalogFilter, matchesRoleFilter } from "./ModelCatalogSheet";
 import type { ModelRecord } from "../services/ai/providerContract";
 import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
+import { SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
 
 afterEach(() => {
   cleanup();
@@ -14,6 +15,8 @@ function freeRecord(provider: ModelRecord["provider"], id: string): ModelRecord 
   return {
     provider,
     id,
+    displayName: `Test model ${id}`,
+    qualifiedRoles: ["chat"],
     input: ["text"],
     output: ["text"],
     contextTokens: 128_000,
@@ -29,6 +32,8 @@ function freeRecord(provider: ModelRecord["provider"], id: string): ModelRecord 
 
 const visionRecord: ModelRecord = {
   ...freeRecord("groq", "groq-vision"),
+  displayName: "Test vision model",
+  qualifiedRoles: ["chat", "vision"],
   input: ["text", "image"],
 };
 
@@ -143,16 +148,53 @@ describe("ModelCatalogSheet assistant picker (U3)", () => {
     expect(screen.getByTestId("model-manage-link").getAttribute("href")).toBe("/settings/ai/models");
   });
 
+  it("surfaces a free row above a paid row and marks it Recommended, keeping paid selectable", () => {
+    const paid: ModelRecord = {
+      ...freeRecord("groq", "paid-row"),
+      displayName: "Paid chat",
+      priceClass: "paid",
+    };
+    // Free row is listed second: ordering (not input order) must lift it up.
+    renderAssistant([paid, freeRecord("groq", "free-row")]);
+    expect(screen.getByTestId("model-recommended")).toBeTruthy();
+    const chat = screen.getByRole("heading", { name: "Chat" }).parentElement!;
+    const names = [...chat.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(names[0]).toContain("Test model free-row");
+    expect(names[1]).toContain("Paid chat");
+    // Paid rows stay user-selectable.
+    expect(screen.getAllByRole("button", { name: /^select$/i })).toHaveLength(2);
+  });
+
   it("never lists tool engines as conversational rows", () => {
     renderAssistant([freeRecord("offline", NEEDLE_MODEL_ID)]);
     expect(screen.queryByText(NEEDLE_MODEL_ID)).toBeNull();
     expect(screen.getByText(/tool engines run automatically/i)).toBeTruthy();
   });
 
+  it("does not promote unqualified cloud speech, tools, embeddings or image-shaped rows", () => {
+    renderAssistant([
+      { ...freeRecord("groq", "speech"), qualifiedRoles: ["stt"] },
+      { ...freeRecord("openai", "voice-output"), qualifiedRoles: ["tts"] },
+      { ...freeRecord("openrouter", "structured-tool"), qualifiedRoles: ["tools"] },
+      { ...freeRecord("openai", "embedding"), qualifiedRoles: ["embeddings"] },
+      { ...freeRecord("openrouter", "image-tool"), input: ["text", "image"], qualifiedRoles: undefined },
+    ]);
+    expect(screen.queryAllByRole("button", { name: /^select$/i })).toHaveLength(0);
+    expect(screen.queryByRole("heading", { name: "Chat" })).toBeNull();
+  });
+
+  it("shows SmolVLM2 only under Vision despite a stale cached Chat claim", () => {
+    renderAssistant([freeRecord("offline", SMOL_VISION_MODEL_ID)]);
+    expect(screen.getByText("SmolVLM2")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Vision" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Chat" })).toBeNull();
+    expect(screen.getByText(SMOL_VISION_MODEL_ID).closest("details")).toBeTruthy();
+  });
+
   it("cross-lists a Chat + Vision row in both sections", () => {
-    // An image-capable cloud row qualifies for both sections.
+    // Both conversational roles are explicitly qualified, not inferred.
     renderAssistant([visionRecord]);
-    expect(screen.getAllByText("groq-vision")).toHaveLength(2);
+    expect(screen.getAllByText("Test vision model")).toHaveLength(2);
   });
 
   it("selects Automatic and conversation rows through their callbacks", () => {
@@ -161,5 +203,38 @@ describe("ModelCatalogSheet assistant picker (U3)", () => {
     expect(onSelectAutomatic).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getAllByRole("button", { name: /^select$/i })[0]!);
     expect(onSelect).toHaveBeenCalledWith("a");
+  });
+});
+
+describe("consumer catalogue names and speech filters", () => {
+  it("uses proper local names and hides raw IDs inside Technical details", () => {
+    render(<ModelCatalogSheet models={[freeRecord("offline", NEEDLE_MODEL_ID), freeRecord("offline", SMOL_VISION_MODEL_ID)]} />);
+    expect(screen.getByText("Needle3")).toBeTruthy();
+    expect(screen.getByText("SmolVLM2")).toBeTruthy();
+    expect(screen.getByText(NEEDLE_MODEL_ID).closest("details")).toBeTruthy();
+    expect(screen.getAllByText("Technical details")).toHaveLength(2);
+  });
+
+  it("keeps an upstream human title and uses an honest generic fallback for unknown names", () => {
+    render(<ModelCatalogSheet models={[
+      { ...freeRecord("openrouter", "vendor/model-42"), displayName: "Friendly upstream model" },
+      { ...freeRecord("generic", "opaque-id-999"), displayName: undefined },
+    ]} />);
+    expect(screen.getByText("Friendly upstream model")).toBeTruthy();
+    expect(screen.getByText("Cloud model")).toBeTruthy();
+    expect(screen.getByText("opaque-id-999").closest("details")).toBeTruthy();
+  });
+
+  it("filters pure speech engines separately without showing them under Chat", async () => {
+    render(<ModelCatalogSheet models={[
+      { ...freeRecord("groq", "whisper"), displayName: "Whisper", qualifiedRoles: ["stt"] },
+      { ...freeRecord("openai", "tts-1"), displayName: "TTS 1", qualifiedRoles: ["tts"] },
+    ]} onSelect={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Capability: Speech to text" }));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^select$/i })).toHaveLength(1));
+    expect(screen.getByText("Whisper")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Capability: Text to speech" }));
+    await waitFor(() => expect(screen.queryByText("Whisper")).toBeNull());
+    expect(screen.getByText("TTS 1")).toBeTruthy();
   });
 });

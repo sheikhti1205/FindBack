@@ -23,12 +23,18 @@ import {
 /** Facade boundary for dictation: mock this prop in tests; real device pending. */
 export type ComposerSpeech = typeof speechInput;
 
+export type ComposerSelectionStatus = "ready" | "preparing" | "failed";
+
 export interface ComposerImageSelection {
   id: string;
   name: string;
   previewUrl: string;
   /** Sampled-frame disclosure for animated inputs; null for stills. */
   disclosure: string | null;
+  /** Native prep state. Absent/`ready` behaves like an ordinary attached photo. */
+  status?: ComposerSelectionStatus;
+  /** Consumer-safe preparation message shown while `preparing` or `failed`. */
+  message?: string | null;
 }
 
 export interface ChatComposerProps {
@@ -49,6 +55,16 @@ export interface ChatComposerProps {
   maxSelections?: number;
   onRemoveSelection?: (id: string) => void;
   onAddFiles?: (files: File[]) => void;
+  /**
+   * Android-native add-menu seam. When provided, Take a photo / Gallery route
+   * through the device photo picker instead of the HTML File input; the caller
+   * owns Preparing/Ready/Failed rows (see `ComposerImageSelection.status`).
+   */
+  onPickImage?: (source: "camera" | "gallery") => void;
+  /** Retry a failed native preparation row. */
+  onRetrySelection?: (id: string) => void;
+  /** Block send while a photo is preparing/failed so it cannot be silently dropped. */
+  blockSend?: boolean;
   /** Honest capacity note (e.g. model takes fewer images); never a silent drop. */
   capacityNotice?: string | null;
   /** DOM id for the text field (skip links, focus management). */
@@ -103,6 +119,9 @@ export function ChatComposer({
   maxSelections = 10,
   onRemoveSelection,
   onAddFiles,
+  onPickImage,
+  onRetrySelection,
+  blockSend = false,
   capacityNotice = null,
   inputId,
   speech,
@@ -131,7 +150,7 @@ export function ChatComposer({
   const reduceMotion = useShouldReduceMotion();
 
   // G10 fix: photo-only drafts send — text is required only when no photos.
-  const sendDisabled = disabled || busy || (value.trim() === "" && selections.length === 0);
+  const sendDisabled = disabled || busy || blockSend || (value.trim() === "" && selections.length === 0);
 
   function setMic(next: MicState) {
     micStateRef.current = next;
@@ -202,17 +221,20 @@ export function ChatComposer({
         addTriggerRef.current?.focus();
         return;
       }
-      cameraInputRef.current?.click();
+      if (onPickImage !== undefined) onPickImage("camera");
+      else cameraInputRef.current?.click();
       addTriggerRef.current?.focus();
       return;
     }
-    galleryInputRef.current?.click();
+    if (onPickImage !== undefined) onPickImage("gallery");
+    else galleryInputRef.current?.click();
     addTriggerRef.current?.focus();
   }
 
   function continueCamera() {
     setCameraPrompt(false);
-    cameraInputRef.current?.click();
+    if (onPickImage !== undefined) onPickImage("camera");
+    else cameraInputRef.current?.click();
     addTriggerRef.current?.focus();
   }
 
@@ -406,42 +428,77 @@ export function ChatComposer({
           aria-label={`Selected photos, ${selections.length} of ${maxSelections}`}
           className="flex gap-2 overflow-x-auto pb-1"
         >
-          {selections.map((s) => (
-            <figure
-              key={s.id}
-              data-testid={`chat-selection-${s.id}`}
-              className="relative w-16 shrink-0"
-            >
-              {s.previewUrl !== "" ? (
-                <img
-                  src={s.previewUrl}
-                  alt={s.name}
-                  className="h-16 w-16 rounded-m3-xs border border-outline-variant object-cover"
-                />
-              ) : (
-                <span
-                  role="img"
-                  aria-label={s.name}
-                  className="flex h-16 w-16 items-center justify-center rounded-m3-xs border border-outline-variant bg-surface-container-low text-[10px] text-on-surface-variant"
-                >
-                  {s.name}
-                </span>
-              )}
-              {s.disclosure !== null && <span className="sr-only">{s.disclosure}</span>}
-              {onRemoveSelection !== undefined && (
-                <motion.button
-                  type="button"
-                  onClick={() => onRemoveSelection(s.id)}
-                  aria-label={`Remove ${s.name}`}
-                  whileTap={pressFeedback.iconButton}
-                  transition={{ duration: motionDurations.instant }}
-                  className="absolute -right-2 -top-2 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full border border-outline-variant bg-surface text-on-surface shadow"
-                >
-                  <X size={16} aria-hidden />
-                </motion.button>
-              )}
-            </figure>
-          ))}
+          {selections.map((s) => {
+            const status = s.status ?? "ready";
+            return (
+              <figure
+                key={s.id}
+                data-testid={`chat-selection-${s.id}`}
+                data-status={status}
+                className="relative w-16 shrink-0"
+              >
+                {status === "preparing" ? (
+                  <span
+                    role="img"
+                    aria-label={s.message ?? `Preparing ${s.name}`}
+                    className="flex h-16 w-16 items-center justify-center rounded-m3-xs border border-outline-variant bg-surface-container-low text-[10px] text-on-surface-variant"
+                  >
+                    Preparing…
+                  </span>
+                ) : status === "failed" ? (
+                  <span
+                    role="img"
+                    aria-label={s.message ?? `${s.name} could not be added`}
+                    className="flex h-16 w-16 items-center justify-center rounded-m3-xs border border-error bg-error-container px-1 text-center text-[10px] text-on-error-container"
+                  >
+                    Couldn’t add
+                  </span>
+                ) : s.previewUrl !== "" ? (
+                  <img
+                    src={s.previewUrl}
+                    alt={s.name}
+                    className="h-16 w-16 rounded-m3-xs border border-outline-variant object-cover"
+                  />
+                ) : (
+                  <span
+                    role="img"
+                    aria-label={s.name}
+                    className="flex h-16 w-16 items-center justify-center rounded-m3-xs border border-outline-variant bg-surface-container-low text-[10px] text-on-surface-variant"
+                  >
+                    {s.name}
+                  </span>
+                )}
+                {status === "ready" && s.disclosure !== null && <span className="sr-only">{s.disclosure}</span>}
+                {status === "failed" && (
+                  <span data-testid={`chat-selection-message-${s.id}`} className="sr-only">
+                    {s.message ?? "Photo preparation failed."}
+                  </span>
+                )}
+                {status === "failed" && onRetrySelection !== undefined && (
+                  <button
+                    type="button"
+                    data-testid={`chat-selection-retry-${s.id}`}
+                    onClick={() => onRetrySelection(s.id)}
+                    className="absolute -bottom-2 left-0 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full border border-outline-variant bg-surface text-[10px] text-on-surface shadow"
+                  >
+                    Retry {s.name}
+                  </button>
+                )}
+                {onRemoveSelection !== undefined && status !== "preparing" && (
+                  <motion.button
+                    type="button"
+                    onClick={() => onRemoveSelection(s.id)}
+                    aria-label={`Remove ${s.name}`}
+                    whileTap={pressFeedback.iconButton}
+                    transition={{ duration: motionDurations.instant }}
+                    className="absolute -right-2 -top-2 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full border border-outline-variant bg-surface text-on-surface shadow"
+                  >
+                    <X size={16} aria-hidden />
+                  </motion.button>
+                )}
+              </figure>
+            );
+          })}
         </div>
       )}
       {capacityNotice !== null && capacityNotice !== "" && (
@@ -470,7 +527,7 @@ export function ChatComposer({
       </div>
       {/* Row 2 — accessories: Add, mic, expand on the left; send/stop on the right. */}
       <div data-testid="chat-controls" className="relative flex items-center gap-2">
-        {onAddFiles !== undefined && (
+        {(onAddFiles !== undefined || onPickImage !== undefined) && (
           <>
             <motion.button
               type="button"

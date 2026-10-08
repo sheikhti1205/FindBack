@@ -34,7 +34,7 @@ describe("HelpGuide", () => {
       "/search",
       "/my",
       "/notifications",
-      "/ai-connection",
+      "/settings/ai/privacy",
       "/help",
       "/onboarding?replay=1",
     ]) {

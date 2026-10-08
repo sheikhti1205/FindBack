@@ -23,6 +23,7 @@
  *   a scripted `fetch`.
  */
 import { hasNoInlineImageBytesOrKeys } from "../providerContract";
+import { cloudCatalogMetadata } from "./catalogueQualification";
 import type {
   ChatTurn,
   CredentialHandle,
@@ -501,6 +502,7 @@ export function createOpenAiAdapter(deps: OpenAiAdapterDeps): OpenAiProviderAdap
       records.push({
         provider: "openai",
         id,
+        ...cloudCatalogMetadata("openai", id),
         input: [],
         output: [],
         // The official /models payload carries no pricing → unknown, never 0.

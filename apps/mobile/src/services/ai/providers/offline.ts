@@ -74,6 +74,7 @@ import type {
 import { hasNoInlineImageBytesOrKeys } from "../providerContract";
 import type { OfflineModelManager } from "../offlineModelManager";
 import { profileFor } from "../modelProfiles";
+import { displayNameForCatalogRecord, qualifiedUiRolesForOfflineModel } from "../uiModelRoles";
 
 /**
  * Provider id this adapter serves.
@@ -758,7 +759,9 @@ export function createOfflineAdapter(deps: OfflineAdapterDeps): ProviderAdapter 
         records.push({
           provider: OFFLINE_PROVIDER_ID,
           id: modelId,
-           input: profileFor(modelId)?.supportsVision ? ["text", "image"] : ["text"],
+          displayName: displayNameForCatalogRecord({ provider: "offline", id: modelId }),
+          qualifiedRoles: qualifiedUiRolesForOfflineModel(modelId),
+          input: profileFor(modelId)?.supportsVision ? ["text", "image"] : ["text"],
           output: ["text"],
           prices: [],
           priceClass: "free",

@@ -35,7 +35,7 @@ function ascii(text: string): Uint8Array {
 function xmp(microVideo: string | null, offset: number | null): Uint8Array {
   const flag = microVideo === null ? "" : `GCamera:MicroVideo="${microVideo}" `;
   const off = offset === null ? "" : `GCamera:MicroVideoOffset="${offset}" `;
-  return ascii(`<rdf:Description ${flag}${off}GCamera:MicroVideoVersion="1" />`);
+  return ascii(`<rdf:Description xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GCamera="http://ns.google.com/photos/1.0/camera/" ${flag}${off}GCamera:MicroVideoVersion="1" />`);
 }
 
 /** size u32be + 4-byte type + 0xab payload (never 0xff, never "ftyp" by accident). */

@@ -31,6 +31,7 @@
  * proposal text).
  */
 import { priceClassFromLines } from "../providerContract";
+import { cloudCatalogMetadata } from "./catalogueQualification";
 import type {
   ModelRecord,
   NormalizedRequest,
@@ -155,6 +156,7 @@ function modelRecordFor(entry: unknown, retrievedAt: string): ModelRecord | null
   return {
     provider: MISTRAL_PROVIDER_ID,
     id: record["id"],
+    ...cloudCatalogMetadata("mistral", record["id"], { name: record["name"], capabilities: record["capabilities"] }),
     input: ["text"],
     output: ["text"],
     prices: [],

@@ -13,7 +13,7 @@
  * through verbatim; ids are opaque references (never bytes).
  */
 
-import { detectMotionPhoto, strippedVideoBytes } from "./motionPhoto";
+import { detectMotionPhoto, hasMotionPhotoMetadata, hasUnsupportedMotionContainer, strippedVideoBytes } from "./motionPhoto";
 
 /**
  * Downsample-first intake: ordinary modern camera media (32–50 MP, large
@@ -279,11 +279,12 @@ function walkWebp(bytes: Uint8Array): WebpWalk {
 
 function sniffFtypBrand(bytes: Uint8Array): SniffedKind | null {
   if (bytes.length < 12 || sliceAscii(bytes, 4, 4) !== "ftyp") return null;
-  const brand = sliceAscii(bytes, 8, 4);
-  if (brand === "avif" || brand === "avis") return "avif";
-  if (brand === "heic" || brand === "heix" || brand === "hevc" || brand === "hevx") return "heic";
-  if (brand === "heim" || brand === "heis" || brand === "hevm" || brand === "hevs") return "heic";
-  if (brand === "mif1" || brand === "msf1") return "heif";
+  const brands = [sliceAscii(bytes, 8, 4)];
+  const end = Math.min(readU32BE(bytes, 0) ?? 0, bytes.length, 65536);
+  for (let offset = 16; offset + 4 <= end; offset += 4) brands.push(sliceAscii(bytes, offset, 4));
+  if (brands.some((brand) => brand === "avif" || brand === "avis")) return "avif";
+  if (brands.some((brand) => brand !== null && ["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"].includes(brand))) return "heic";
+  if (brands.some((brand) => brand === "mif1" || brand === "msf1")) return "heif";
   return null;
 }
 
@@ -413,17 +414,23 @@ export function probeDimensions(
 }
 
 function readTiffOrientation(tiff: Uint8Array): number {
-  if (tiff.length < 8 || sliceAscii(tiff, 0, 2) !== "II") return 1;
-  const ifdOffset = readU32LE(tiff, 4);
-  if (ifdOffset === null || ifdOffset + 2 > tiff.length) return 1;
-  const count = readU16LE(tiff, ifdOffset);
+  if (tiff.length < 8) return 1;
+  const endian = sliceAscii(tiff, 0, 2);
+  if (endian !== "II" && endian !== "MM") return 1;
+  const read16 = endian === "II" ? readU16LE : readU16BE;
+  const read32 = endian === "II" ? readU32LE : readU32BE;
+  if (read16(tiff, 2) !== 42) return 1;
+  const ifdOffset = read32(tiff, 4);
+  if (ifdOffset === null || ifdOffset < 8 || ifdOffset + 2 > tiff.length) return 1;
+  const count = read16(tiff, ifdOffset);
   if (count === null) return 1;
   for (let index = 0; index < count; index += 1) {
     const entry = ifdOffset + 2 + index * 12;
-    const tag = readU16LE(tiff, entry);
-    const type = readU16LE(tiff, entry + 2);
-    if (tag === 0x0112 && type === 3) {
-      const value = readU16LE(tiff, entry + 8);
+    if (entry + 12 > tiff.length) return 1;
+    const tag = read16(tiff, entry);
+    const type = read16(tiff, entry + 2);
+    if (tag === 0x0112 && type === 3 && read32(tiff, entry + 4) === 1) {
+      const value = read16(tiff, entry + 8);
       if (value !== null && value >= 1 && value <= 8) return value;
       return 1;
     }
@@ -565,6 +572,9 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
     throw new MediaError("EMPTY_INPUT", `"${fileName}" is empty. Please pick a photo file and try again.`);
   }
   const containerSniffed = sniffImage(bytes);
+  if (hasUnsupportedMotionContainer(bytes)) {
+    throw new MediaError("UNSUPPORTED_FORMAT", "Couldn't read the still frame of this HEIC/AVIF motion photo. Export a still JPEG and choose it again.");
+  }
   if (containerSniffed === null) {
     throw new MediaError(
       "UNRECOGNIZED_FORMAT",
@@ -576,6 +586,9 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
   // (still + video tail) must never disqualify the useful still frame, and
   // the video tail never reaches the decoder or any provider.
   const motion = containerSniffed === "jpeg" ? detectMotionPhoto(bytes) : null;
+  if (containerSniffed === "jpeg" && motion === null && hasMotionPhotoMetadata(bytes)) {
+    throw new MediaError("CORRUPT_IMAGE", "Couldn't read the still frame of this motion photo. Try exporting a still JPEG instead.");
+  }
   const motionStillUsed = motion !== null;
   const videoBytesStripped = strippedVideoBytes(bytes.length, motion?.stillEnd ?? null);
   const still = motionStillUsed ? bytes.subarray(0, motion.stillEnd) : bytes;

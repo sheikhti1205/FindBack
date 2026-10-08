@@ -13,6 +13,7 @@ import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
 import { announce } from "../components/LiveRegion";
 import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
 import { ChatController, ControllerError, sanitizeControllerError, type ControllerState } from "../services/ai/chatController";
+import { createStreamingPaint } from "../services/ai/streamingPaint";
 import { ChatStore } from "../services/ai/chatStore";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, defaultSelection } from "../services/ai/modelPolicy";
 import { getCurrentKnowledge, getSystemPolicy, isGeneralNonAppQuestion } from "../services/ai/appKnowledge";
@@ -21,7 +22,7 @@ import { SUPPORTED_AI_PROVIDERS, aiCredentials } from "../services/aiCredentials
 import { loadGenericEndpoint } from "../services/ai/genericEndpoint";
 import { loadAppearance } from "../appearance";
 import { loadAuthorizedCatalog } from "../services/ai/modelCatalog";
-import { isAssistantSelectableOfflineRecord } from "../services/ai/uiModelRoles";
+import { automaticLocalModel, displayNameForCatalogRecord, isAssistantSelectableOfflineRecord, supportsAssistantMessage } from "../services/ai/uiModelRoles";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
 import { isProviderEnabled } from "../services/ai/providerStatus";
 import { generateCloudForAccount, generateLocalFirst } from "../services/liveNarrowTasks";
@@ -40,7 +41,9 @@ import {
   toApprovedImageIds,
   type ChatTray,
 } from "../services/media/prepareImages";
-import { importImage, type ImportDeps, type ImportedImage, type TranscodeRequest } from "../services/media/importImage";
+import { importImage, MediaError, type ImportDeps, type ImportedImage } from "../services/media/importImage";
+import { chooseNativeImage, isNativeMediaIntakeAvailable } from "../services/media/nativeMedia";
+import { transcodeImageForWeb } from "../services/media/webTranscode";
 import {
   LOCATION_CHOICES,
   PHOTO_CHOICES,
@@ -98,19 +101,6 @@ const SUGGESTIONS = [
 ];
 
 /**
- * P1: first-use consent copy. Shown in full on an empty conversation;
- * once chatting it collapses behind an accessible disclosure so the
- * transcript keeps the viewport (screenshot 10). Photos stay opt-in:
- * nothing here auto-attaches — each photo is chosen per send.
- *
- * Truth-complete across transports: cloud answers leave the device through
- * the connected provider; on-device answers stay on the device; Analyze
- * photo is local-first on Android with a consented cloud fallback.
- */
-const PRIVACY_COPY =
-  "With an AI provider connected (Settings → AI & intelligence → Cloud connections), cloud answers are generated with that provider's models and need an internet connection; your question text is sent to that provider and answers may vary. OpenRouter stays on its free route. On-device answers run locally on approved inputs without a provider key and never leave this device: on-device-only never sends anything to the cloud. Analyze photo is local-first on Android when the verified SmolVLM2 runtime is available — automatic mode tries on-device inference first and may fall back to the connected OpenRouter provider only after local failure and with your consent; cloud-only skips local inference. On-device AI requires the Android app and an installed, checksum-verified model — install and verify one in Settings → AI & models → On-device AI; if local AI could not start you get the built-in answer instead. Photos are never attached automatically. Without a connected provider — or when AI is unavailable — you get a built-in answer instead.";
-
-/**
  * Pinned free-route seed (P4b origin, AI-024b unpinned): the catalogue opens
  * on this single free row and expands to the authorized catalogue (vault
  * keys via the registry) whenever the picker opens. When nothing is authorized the seed stays — an unloaded catalogue
@@ -121,6 +111,8 @@ const HELP_MODEL_CATALOG: readonly ModelRecord[] = [
   {
     provider: DEFAULT_PROVIDER,
     id: DEFAULT_MODEL_ID,
+    displayName: "Free model router",
+    qualifiedRoles: ["chat", "vision"],
     input: ["text"],
     output: ["text"],
     prices: [
@@ -260,8 +252,15 @@ export function refuseHelpSend(input: {
   if (input.provider === "offline") {
     if (!getApplicationAi().android || input.record === null) return honestOfflineDetail(new Error(OFFLINE_NOT_AVAILABLE));
     if (!getApplicationAi().manager.statusOf(input.record.id)?.checksumVerified) return "Install and verify this on-device model in Settings → AI & models → On-device AI first.";
+    if (!isAssistantSelectableOfflineRecord(input.record)) return "That on-device engine runs automatically in the background and can't answer chat directly. Use Automatic or pick a listed chat model — your draft is kept.";
+    if (!supportsAssistantMessage(input.record, input.hasImages)) return input.hasImages
+      ? "This model cannot read images. Use Automatic or choose a vision model — your draft is kept."
+      : "This model needs an approved image and is not qualified for text chat. Attach a photo or use Automatic.";
     if (input.hasImages && !input.record.input.includes("image")) return "This on-device model accepts text only; select SmolVLM2 for an approved image.";
     if (!input.hasImages && input.record.input.includes("image")) return "SmolVLM2 needs one approved image — attach a photo or use Automatic for a text answer.";
+  }
+  if (input.record !== null && input.provider !== "offline" && !supportsAssistantMessage(input.record, input.hasImages)) {
+    return "This model is not qualified for this message. Use Automatic or choose a compatible model — your draft is kept.";
   }
   const priceClass = input.record?.priceClass ?? "free";
   if (priceClass === "paid" || priceClass === "variable") {
@@ -312,33 +311,6 @@ function readPersistedAssistantDefault(accountId: string): string | null {
 
 /** In-app targets an intent CTA may propose. Model output never navigates. */
 const INTENT_CTA_TARGETS: ReadonlySet<string> = new Set([...Object.values(ACTION_ROUTES), "/help"]);
-
-/**
- * Canvas transcode for photo intake: decodes the picked bytes, draws them at
- * the requested size and re-encodes. Browser-only; throws an honest error
- * elsewhere instead of inventing bytes.
- */
-async function canvasTranscode(request: TranscodeRequest): Promise<Uint8Array> {
-  if (typeof createImageBitmap === "undefined" || typeof document === "undefined") {
-    throw new Error("Photo intake needs this device's image tools; your text still sends.");
-  }
-  const bitmap = await createImageBitmap(new Blob([request.bytes as BlobPart]));
-  try {
-    const canvas = document.createElement("canvas");
-    canvas.width = request.targetWidth;
-    canvas.height = request.targetHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Photo intake needs this device's image tools; your text still sends.");
-    ctx.drawImage(bitmap, 0, 0, request.targetWidth, request.targetHeight);
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, request.mimeType, request.quality ?? undefined),
-    );
-    if (!blob) throw new Error("The photo could not be encoded; your text still sends.");
-    return new Uint8Array(await blob.arrayBuffer());
-  } finally {
-    bitmap.close();
-  }
-}
 
 function webpSupported(): boolean {
   try {
@@ -435,6 +407,13 @@ const LOCATION_LABELS: Record<LocationChoice, string> = {
   skip: "Skip location",
 };
 
+interface PendingPhoto {
+  key: string;
+  source: "camera" | "gallery";
+  status: "preparing" | "failed";
+  message: string | null;
+}
+
 interface GuidedEntry {
   role: "user" | "assistant";
   text: string;
@@ -505,6 +484,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const [tray, setTray] = useState<ChatTray>(() => createChatTray());
   const [previewUrls, setPreviewUrls] = useState<ReadonlyMap<string, string>>(new Map());
   const [trayNotice, setTrayNotice] = useState<string | null>(null);
+  const [pendingPhotos, setPendingPhotos] = useState<readonly PendingPhoto[]>([]);
+  const nativeIntake = isNativeMediaIntakeAvailable();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyTick, setHistoryTick] = useState(0);
@@ -558,7 +539,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const generation = useRef(0);
   const sendGenRef = useRef<number | null>(null);
   const attemptRef = useRef(0);
-  const partialTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamPaint = useRef<{ gen: number; label: string; scheduler: ReturnType<typeof createStreamingPaint> } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inflightRef = useRef("");
   const sourceByTurn = useRef(new Map<string, TranscriptSource>());
@@ -569,10 +550,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   // clears the pending throttle timer AND the partial, so a late timer can
   // never resurrect a partial bubble after the final answer rendered.
   function clearStreamingPartial() {
-    if (partialTimer.current !== null) {
-      clearTimeout(partialTimer.current);
-      partialTimer.current = null;
-    }
+    streamPaint.current?.scheduler.cancel();
+    streamPaint.current = null;
     setPartial(null);
   }
 
@@ -647,8 +626,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
 
   // Controller subscription: once per chat, cleaned up on switch/unmount.
   // getState() paints immediately (subscribe never replays); a stale
-  // generation guard drops late snapshots, and partial text is throttled to
-  // one render per 120ms with stable message IDs. ControllerState carries
+  // generation guard drops late snapshots, and real cumulative text is
+  // coalesced at adaptive deadlines without restarting them on every chunk.
+  // ControllerState carries
   // the delivered C contract (phase/partialText/attempt/provider/modelId).
   useEffect(() => {
     clearStreamingPartial();
@@ -660,16 +640,23 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       if (sendGenRef.current === null || gen !== sendGenRef.current) return;
       setControllerPhase(snapshot.phase);
       if (snapshot.phase === "streaming" && snapshot.partialText !== "") {
-        const label =
-          snapshot.modelId !== "" ? `${snapshot.provider} · ${snapshot.modelId}` : "AI answer";
-        const text = snapshot.partialText;
-        if (partialTimer.current !== null) clearTimeout(partialTimer.current);
-        partialTimer.current = setTimeout(() => {
-          partialTimer.current = null;
-          if (generation.current !== gen) return; // superseded while throttled
-          setPartial({ id: `partial-${gen}`, text, label });
-        }, 120);
+        const label = snapshot.provider === "offline" ? "On-device" : "Cloud";
+        if (streamPaint.current?.gen !== gen) {
+          streamPaint.current?.scheduler.cancel();
+          streamPaint.current = { gen, label, scheduler: createStreamingPaint({
+            paint: (text) => {
+              if (generation.current === gen && sendGenRef.current === gen) setPartial({ id: `partial-${gen}`, text, label });
+            },
+          }) };
+        }
+        streamPaint.current.scheduler.push(snapshot.partialText);
+      } else if (snapshot.phase === "complete") {
+        streamPaint.current?.scheduler.flush();
+      } else if (snapshot.phase === "failed" || snapshot.phase === "cancelled") {
+        clearStreamingPartial();
       } else if (snapshot.partialText === "") {
+        streamPaint.current?.scheduler.cancel();
+        streamPaint.current = null;
         setPartial((prev) => (prev !== null && prev.id === `partial-${gen}` ? null : prev));
       }
     });
@@ -729,7 +716,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   async function addFiles(files: File[]) {
     if (busy || guidedBusy) return;
     const intake: ImportDeps = deps?.importDeps ?? {
-      transcode: canvasTranscode,
+      transcode: transcodeImageForWeb,
       webpEncodeSupported: webpSupported(),
     };
     for (const file of files) {
@@ -774,6 +761,62 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     });
     dropPreview(id);
     setTrayNotice(null);
+  }
+
+  function removePending(key: string) {
+    setPendingPhotos((prev) => prev.filter((row) => row.key !== key));
+  }
+
+  function removeAnySelection(id: string) {
+    if (id.startsWith("pending_")) removePending(id);
+    else removeSelection(id);
+  }
+
+  async function runNativePick(key: string, source: "camera" | "gallery") {
+    try {
+      const item = await chooseNativeImage({
+        source: source === "camera" ? "camera" : "photos",
+        highQuality: loadAppearance().highQualityPhoto,
+        text: input,
+      });
+      if (item === null) {
+        removePending(key);
+        return;
+      }
+      let added = true;
+      setTray((prev) => {
+        try {
+          return addChatSelection(prev, item);
+        } catch (e) {
+          added = false;
+          setTrayNotice(e instanceof Error ? e.message : "That photo was not added.");
+          return prev;
+        }
+      });
+      if (added) {
+        trackPreview(item.id, item.derivative.bytes, item.derivative.mimeType);
+        setTrayNotice(null);
+      }
+      removePending(key);
+    } catch (e) {
+      const message =
+        e instanceof MediaError ? e.message : "Couldn't prepare this photo. Try a different photo or re-save it as JPEG.";
+      setPendingPhotos((prev) => prev.map((row) => (row.key === key ? { ...row, status: "failed", message } : row)));
+    }
+  }
+
+  function pickNative(source: "camera" | "gallery") {
+    if (busy || guidedBusy) return;
+    const key = `pending_${crypto.randomUUID().replaceAll("-", "_")}`;
+    setPendingPhotos((prev) => [...prev, { key, source, status: "preparing", message: null }]);
+    void runNativePick(key, source);
+  }
+
+  function retryNativePick(key: string) {
+    const row = pendingPhotos.find((p) => p.key === key);
+    if (row === undefined) return;
+    setPendingPhotos((prev) => prev.map((p) => (p.key === key ? { ...p, status: "preparing", message: null } : p)));
+    void runNativePick(key, row.source);
   }
 
   function lastAssistantId(chatId: string | null): string {
@@ -854,17 +897,19 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         // A stale pin to a background engine (Needle tools/embeddings) can
         // never answer chat: refuse honestly instead of silently routing
         // through it. Automatic (no pin) still uses U3-owned routing.
-        const stalePin = selectedModelId === null ? undefined : compatible.find((row) => row.id === selectedModelId);
-        if (stalePin !== undefined && !isAssistantSelectableOfflineRecord(stalePin)) {
+        const stalePin = selectedModelId === null ? undefined : localRows.find((row) => row.provider === "offline" && row.id === selectedModelId);
+        const pinRefusal = stalePin === undefined ? null : refuseHelpSend({ provider: "offline", record: stalePin, mode, hasImages });
+        if (pinRefusal !== null) {
           setInput(question);
           setFailedSend({ text: question });
-          setSendError("That on-device engine runs automatically in the background and can't answer chat directly. Use Automatic or pick a listed chat model — your draft is kept.");
+          setSendError(pinRefusal);
           setBusy(false);
           sendGenRef.current = null;
           announce("Send refused. Your message and photos were kept.");
           return;
         }
-        pickedRecord = compatible.find((row) => row.id === selectedModelId) ?? compatible[0] ?? pickedRecord;
+        if (selectedModelId === null) pickedRecord = automaticLocalModel(compatible, hasImages) ?? pickedRecord;
+        else if (stalePin !== undefined) pickedRecord = stalePin;
       } catch (error) {
         if (generation.current !== gen || controllerAbort.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
           if (generation.current === gen) setBusy(false);
@@ -877,7 +922,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       try { pickedRecord = await resolvePinnedRecord(); cloudRecord = pickedRecord; }
       catch { /* Unknown catalogue means no permission to send a pinned model. */ }
       if (generation.current !== gen || controllerAbort.signal.aborted) return;
-      if (pickedRecord === null && !hasImages) {
+      if (pickedRecord === null && !hasImages && selectedModelId === null) {
         // A missing default is not permission to invent its price/provider.
         // Match the visible notice by falling back to the known free route.
         pickedRecord = HELP_MODEL_CATALOG[0]!;
@@ -885,6 +930,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         setNotice("Saved default unavailable — using the free OpenRouter route after checking on-device availability.");
       }
     }
+    const builtInOnly = selectedModelId === null && mode === "offline-only" && !hasImages && pickedRecord?.provider !== "offline" && !isGeneralNonAppQuestion(question);
     const sendProvider = pickedRecord?.provider ?? selection.provider;
     const sendModelId = pickedRecord?.id ?? selection.modelId;
     const refusal = pickedRecord === null && selectedModelId !== null && selectedModelId !== DEFAULT_MODEL_ID && mode !== "offline-only"
@@ -900,7 +946,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       mode: loadEffectiveAssistantMode(accountId),
       hasImages,
     });
-    if (refusal !== null) {
+    if (refusal !== null && !builtInOnly) {
       setInput(question);
       setFailedSend({ text: question });
       setSendError(refusal);
@@ -983,10 +1029,15 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       return key;
     };
     try {
+      if (builtInOnly) {
+        finishFallback(persistFallback(chatId, historyOn, question), builtInHelp(question));
+        return;
+      }
       // Cloud rows need a vault slot; installed offline rows do not.
       const key = sendProvider === "offline" ? null : await readCloudKey(accountId, sendProvider);
       if (generation.current !== gen) return;
       if (key === null && sendProvider !== "offline") {
+        if (hasImages) throw new Error("No compatible on-device photo model or connected cloud model is available. Install a photo model or connect a provider — your message and photos are kept.");
         // No connected key: honest built-in answer, kept like any turn.
         finishFallback(persistFallback(chatId, historyOn, question), builtInHelp(question));
         return;
@@ -1092,7 +1143,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       const safeMessage = sanitizeControllerError(message, [question]);
       clearStreamingPartial();
       setAttempts((prev) => [...prev, { n: attemptN, status: "failed" }]);
-      if (sendProvider === "offline" || loadEffectiveAssistantMode(accountId) === "offline-only" || !isProviderEnabled(accountId, sendProvider) || isGeneralNonAppQuestion(question)) {
+      if (hasImages || sendProvider === "offline" || loadEffectiveAssistantMode(accountId) === "offline-only" || !isProviderEnabled(accountId, sendProvider) || isGeneralNonAppQuestion(question)) {
         // Privacy refusals and general-chat failures never get an FAQ
         // substitution — the draft and tray photos are preserved for Retry.
         setInput(question);
@@ -1488,6 +1539,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   // Real request-state row: controller phase + attempt history only — never
   // fabricated reasoning steps.
   const requestRow: string | null = (() => {
+    if (sendError !== null) return sendError;
+    if (cancelled) return "Send stopped. Your message was kept in the composer.";
     if (busy) {
       const phaseCopy =
         controllerPhase === "streaming"
@@ -1503,14 +1556,12 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           : ` · earlier: ${earlier.map((a) => `attempt ${a.n} ${a.status}`).join(", ")}`;
       return `${phaseCopy}${current ? ` (attempt ${current.n}${current.status === "retrying" ? " · retrying" : ""})` : ""}${history}`;
     }
-    if (sendError !== null) {
-      const current = attempts.at(-1);
-      const photos = tray.items.length > 0 ? " and photos" : "";
-      return `Failed${current ? ` (attempt ${current.n})` : ""} — Retry keeps your message${photos}.`;
-    }
-    if (cancelled) return "Cancelled.";
-    return null;
+    return notice ?? trayNotice ?? (savedDefaultUnavailable ? "Saved model unavailable — choose a model or use Automatic. Your draft is kept." : null);
   })();
+  const selectedRecord = catalog.find((row) => row.id === selectedModelId);
+  const selectedTitle = selectedModelId === null ? "Automatic" : displayNameForCatalogRecord(
+    selectedRecord ?? { id: selectedModelId, provider: getApplicationAi().registry.descriptorFor(selectedModelId) ? "offline" : selection.provider },
+  );
 
   function handleSelectModel(modelId: string) {
     // The choice rebuilds the controller binding above, so new sends carry
@@ -1518,7 +1569,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     // gated by policy at send time (never silent).
     setSelectedModelId(modelId);
     setModelOpen(false);
-    announce(`Model ${modelId} selected for new sends.`);
+    announce(`${displayNameForCatalogRecord(catalog.find((row) => row.id === modelId) ?? { id: modelId, provider: selection.provider })} selected for new sends.`);
   }
 
   function handleSelectAutomatic() {
@@ -1589,11 +1640,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         ) : (
           <ChatTranscript
             messages={freeMessages}
-            busy={busy}
-            busyLabel="Thinking…"
-            notice={notice}
-            error={sendError}
-            onRetry={failedSend === null ? undefined : retryLast}
             partialText={partial?.text ?? null}
             partialLabel={partial?.label ?? null}
             onAction={(id) => {
@@ -1756,23 +1802,14 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             (Privacy & AI sheet) — the transcript keeps the viewport. */}
 
         {requestRow !== null && (
-          <p
-            data-testid="chat-request-state"
-            role="status"
-            className="shrink-0 bg-surface px-4 pb-1 text-xs text-on-surface-variant"
-          >
-            {requestRow}
-          </p>
-        )}
-
-        {cancelled && (
-          <p
-            data-testid="chat-cancelled"
-            role="status"
-            className="shrink-0 bg-surface px-4 pb-1 text-xs text-on-surface-variant"
-          >
-            Send stopped. Your message was kept in the composer.
-          </p>
+          <div data-testid="assistant-status" className="flex shrink-0 items-center gap-2 bg-surface px-4 pb-1">
+            <p data-testid={sendError !== null ? "chat-error" : cancelled ? "chat-cancelled" : savedDefaultUnavailable && !busy && notice === null ? "model-default-unavailable" : "chat-request-state"}
+              role={sendError !== null ? "alert" : "status"} className="min-w-0 flex-1 text-xs text-on-surface-variant">{requestRow}</p>
+            {sendError !== null && failedSend !== null && (
+              <button type="button" data-testid="chat-retry" onClick={retryLast} disabled={composerBusy}
+                className="min-h-[48px] shrink-0 rounded-full border border-outline px-3 text-xs font-medium disabled:opacity-60">Retry</button>
+            )}
+          </div>
         )}
 
         {/* U2: model selection lives with the composer (compact chip row),
@@ -1782,22 +1819,14 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             type="button"
             onClick={() => setModelOpen(true)}
             data-testid="composer-model-chip"
-            aria-label={`Choose model, currently ${selectedModelId ?? "Automatic"}`}
-            title={selectedModelId ?? "Automatic"}
+            disabled={composerBusy}
+            aria-label={`Choose model, currently ${selectedTitle}`}
+            title={selectedTitle}
             className="flex min-h-[48px] max-w-[70%] items-center gap-1 truncate rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
           >
             <ChevronDown size={14} aria-hidden className="shrink-0" />
-            <span className="truncate">{selectedModelId ?? "Automatic"}</span>
+            <span className="truncate">{selectedTitle}</span>
           </button>
-          {savedDefaultUnavailable && (
-            <p
-              data-testid="model-default-unavailable"
-              role="status"
-              className="min-w-0 flex-1 truncate text-xs text-on-surface-variant"
-            >
-              Saved default unavailable — using Free default.
-            </p>
-          )}
         </div>
         {/* ChatComposer is owned by the composer worker — wrapped shrink-0 so
           the bounded column never squeezes it; its internals are untouched. */}
@@ -1809,15 +1838,27 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           busy={composerBusy}
           onStop={stopComposer}
           inputId="help-composer-input"
-          selections={tray.items.map((item) => ({
-            id: item.id,
-            name: item.fileName,
-            previewUrl: previewUrls.get(item.id) ?? "",
-            disclosure: frameDisclosureFor(item),
-          }))}
-          onRemoveSelection={removeSelection}
-          onAddFiles={(files) => void addFiles(files)}
-          capacityNotice={trayNotice}
+          selections={[
+            ...tray.items.map((item) => ({
+              id: item.id,
+              name: item.fileName,
+              previewUrl: previewUrls.get(item.id) ?? "",
+              disclosure: frameDisclosureFor(item),
+            })),
+            ...pendingPhotos.map((row) => ({
+              id: row.key,
+              name: "photo",
+              previewUrl: "",
+              disclosure: null,
+              status: row.status,
+              message: row.message ?? (row.status === "preparing" ? "Preparing photo…" : null),
+            })),
+          ]}
+          onRemoveSelection={removeAnySelection}
+          onRetrySelection={retryNativePick}
+          onAddFiles={nativeIntake ? undefined : (files) => void addFiles(files)}
+          onPickImage={nativeIntake ? pickNative : undefined}
+          blockSend={pendingPhotos.length > 0}
           maxSelections={MAX_CHAT_SELECTIONS}
         />
         </div>
@@ -1892,7 +1933,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             type="button"
             onClick={() => {
               setMenuOpen(false);
-              navigate("/settings/ai/models");
+              navigate("/settings/ai");
             }}
             className="flex min-h-[48px] items-center text-sm text-on-surface hover:bg-surface-container"
           >
@@ -1954,15 +1995,14 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
               Nothing is sent to a cloud AI provider.
             </p>
           </div>
-          <p data-testid="privacy-full-copy" className="text-xs leading-relaxed text-on-surface-variant">
-            {PRIVACY_COPY}
-          </p>
+          <button type="button" onClick={() => { setPrivacyOpen(false); navigate("/settings/ai/privacy"); }}
+            className="min-h-[48px] text-left text-sm font-medium underline">Full details ›</button>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => {
                 setPrivacyOpen(false);
-                navigate("/settings/ai/models");
+                navigate("/settings/ai");
               }}
               className="flex min-h-[48px] items-center rounded-full border border-outline px-4 text-xs font-medium text-on-surface"
             >
@@ -1972,7 +2012,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
               type="button"
               onClick={() => {
                 setPrivacyOpen(false);
-                navigate("/ai-connection");
+                navigate("/settings/privacy");
               }}
               className="flex min-h-[48px] items-center rounded-full border border-outline px-4 text-xs font-medium text-on-surface"
             >

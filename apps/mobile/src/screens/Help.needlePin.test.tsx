@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { ApplicationAiService } from "../services/ai/applicationAi";
 import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
+import { SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
 import { Help } from "./Help";
 import { resetBackInterceptors } from "../components/backNavigation";
 
@@ -25,10 +26,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function installNeedle() {
+async function installNeedle(withSmol = false) {
   Element.prototype.scrollIntoView ??= function () {};
   const files = new Map<string, string>();
   let resident = false;
+  const completeJson = vi.fn(async () => JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "x" } }] }));
+  const describeImage = vi.fn(async function* () {});
   state.service = new ApplicationAiService({
     android: true,
     driver: {
@@ -60,7 +63,7 @@ async function installNeedle() {
       embeddingDimension: async () => 2,
       embedNeedleTexts: async (texts) => texts.map(() => [1, 0]),
       initTools: async () => {},
-      completeJson: async () => JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "x" } }] }),
+      completeJson,
       unload: async () => {
         resident = false;
       },
@@ -71,13 +74,31 @@ async function installNeedle() {
       loadVisionModel: async () => {},
       unloadVisionModel: async () => {},
       cancelGeneration: async () => {},
-      describeImage: async function* () {},
+      describeImage,
       collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }),
     },
   });
   await state.service.ready;
   await state.service.download(NEEDLE_MODEL_ID);
+  if (withSmol) await state.service.download(SMOL_VISION_MODEL_ID);
+  return { completeJson, describeImage };
 }
+
+it.each([
+  [false, "automatic"], [true, "automatic"],
+  [false, "on-device-only"], [true, "on-device-only"],
+])("Automatic text with Smol=%s in %s uses built-in guidance, never extraction or vision", async (withSmol, mode) => {
+  const native = await installNeedle(Boolean(withSmol));
+  localStorage.setItem("findback.ai.preferences.v1.u-needle-pin", JSON.stringify({ assistantMode: mode }));
+  const getKey = vi.fn(async () => null);
+  render(<MemoryRouter><Help deps={{ getKey }} /></MemoryRouter>);
+  fireEvent.change(screen.getByLabelText("Ask the Help & FAQ"), { target: { value: "How do I report a lost wallet?" } });
+  fireEvent.submit(screen.getByTestId("chat-composer"));
+  await screen.findByText(/To report an item, open the Report tab/);
+  expect(native.completeJson).not.toHaveBeenCalled();
+  expect(native.describeImage).not.toHaveBeenCalled();
+  if (mode === "on-device-only") expect(getKey).not.toHaveBeenCalled();
+});
 
 it("a stale Needle chat pin refuses honestly instead of answering chat through the tool engine", async () => {
   await installNeedle();

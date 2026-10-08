@@ -21,6 +21,8 @@ import { SUPPORTED_AI_PROVIDERS } from "../services/aiCredentials";
 const FREE_ROW: ModelRecord = {
   provider: "openrouter",
   id: "openrouter/free",
+  displayName: "Free test chat",
+  qualifiedRoles: ["chat"],
   input: ["text"],
   output: ["text"],
   prices: [
@@ -35,6 +37,8 @@ const FREE_ROW: ModelRecord = {
 const PAID_ROW: ModelRecord = {
   provider: "groq",
   id: "groq/paid-model",
+  displayName: "Groq paid test chat",
+  qualifiedRoles: ["chat"],
   input: ["text"],
   output: ["text"],
   prices: [
@@ -158,8 +162,6 @@ describe("AiModels control center (AI-022)", () => {
     expect(photoSelect.value).toBe("automatic");
     expect(matchesSelect.value).toBe("use");
     // Only free rows are offered as the persisted default — paid never is.
-    expect(modelSelect.textContent).toContain("openrouter/free");
-    expect(modelSelect.textContent).not.toContain("groq/paid-model");
     // Needle stays locked without installed/verified evidence.
     const needleOption = within(matchesSelect).getByText(/needle/i) as HTMLOptionElement;
     expect(needleOption.disabled).toBe(true);
@@ -167,7 +169,10 @@ describe("AiModels control center (AI-022)", () => {
     await waitFor(() => {
       const values = Array.from(modelSelect.querySelectorAll("option")).map((o) => o.value);
       expect(values).toContain("openrouter/free");
+      expect(values).not.toContain("groq/paid-model");
     });
+    expect(modelSelect.textContent).toContain(FREE_ROW.id);
+    expect(modelSelect.textContent).not.toContain(PAID_ROW.id);
     fireEvent.change(photoSelect, { target: { value: "cloud-only" } });
     fireEvent.change(modelSelect, { target: { value: "openrouter/free" } });
     expect(loadAiPreferences("u1").photoEngine).toBe("cloud-only");
