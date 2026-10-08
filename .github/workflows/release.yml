@@ -388,7 +388,10 @@ jobs:
         with:
           name: findback-signed-${{ github.run_id }}
           path: release-stage/
-          retention-days: 90
+          # Temporary inter-job transport consumed by the publish job in this
+          # same run. 3 days is enough to retry a failed release; the published
+          # GitHub Release assets are separate and unaffected.
+          retention-days: 3
 
   publish:
     name: Publish release (tag builds only)

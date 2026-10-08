@@ -256,15 +256,19 @@ jobs:
           # Hashes only — no key material, no DSN.
           sha256sum apps/mobile/android/app/build/outputs/apk/debug/*.apk
       - name: Upload debug APK (device monitoring proof)
+        # Manual device-validation runs only. Ordinary push/PR CI still builds,
+        # JVM-tests, scans and checksums the APK, but MUST NOT create an
+        # artifact: an unconditional per-push upload is exactly how the store
+        # accumulated 133 artifacts / 13.46 GiB. No continue-on-error — a
+        # requested device-artifact run should honestly fail if it cannot upload.
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
         with:
           name: findback-debug-apk-${{ github.sha }}
           path: apps/mobile/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          # Modest: this is a verification artifact, not a release. Long enough for
-          # the owner to install it on a physical device, short enough that stale
-          # debug APKs do not accumulate in the artifact store.
-          retention-days: 14
+          # Short: this is a manual device-verification artifact, not a release.
+          retention-days: 3
 
   docker:
     name: Docker build & health check
