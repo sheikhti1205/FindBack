@@ -13,8 +13,24 @@
  * through verbatim; ids are opaque references (never bytes).
  */
 
-export const IMPORT_MAX_INPUT_BYTES = 16_000_000;
-export const IMPORT_MAX_DECODE_PIXELS = 30_000_000;
+import { detectMotionPhoto, strippedVideoBytes } from "./motionPhoto";
+
+/**
+ * Downsample-first intake: ordinary modern camera media (32–50 MP, large
+ * compressed files, Motion Photo containers) is normalized to a bounded
+ * derivative instead of being refused. Only pathological inputs — absurd
+ * dimensions, impossible lengths, malformed headers — are rejected.
+ */
+export const IMPORT_MAX_INPUT_BYTES = 48_000_000;
+/**
+ * Pathological decode ceiling (120 MP, 32k edge): ordinary 32–50 MP camera
+ * photos pass through to downsampling; only absurd declarations refuse.
+ * Never raise this to "fix" a normal photo — downsample instead.
+ */
+export const IMPORT_PATHOLOGICAL_PIXELS = 120_000_000;
+export const IMPORT_PATHOLOGICAL_EDGE = 32_768;
+/** Legacy alias: the old camera-refusing bound now means pathological-only. */
+export const IMPORT_MAX_DECODE_PIXELS = IMPORT_PATHOLOGICAL_PIXELS;
 export const IMPORT_MAX_EDGE = 1920;
 export const IMPORT_MAX_DERIVATIVE_BYTES = 2_000_000;
 export const IMPORT_QUALITY_LADDER: readonly number[] = [0.82, 0.7, 0.55, 0.4];
@@ -98,6 +114,12 @@ export interface ImportedImage {
   declaredMimeType: string;
   originalByteLength: number;
   animated: boolean;
+  /** True when the source was a Motion Photo container and only the still frame was used. */
+  motionStillUsed: boolean;
+  /** Trailing container bytes (Motion Photo video tail) that never reached the decoder. */
+  videoBytesStripped: number;
+  /** True when an over-cap animation was sampled to a still frame with disclosure. */
+  sampledStill: boolean;
   exifOrientationApplied: number;
   locationMetadataStripped: boolean;
   derivative: {
@@ -450,6 +472,12 @@ export function stripWebpExifChunk(bytes: Uint8Array): Uint8Array {
     const dataStart = offset + 8;
     const padded = size + (size % 2);
     if (dataStart + padded > bytes.length) break;
+    if (padded === 0) {
+      // Zero-length chunk header (padding/garbage tail): carries no data, so
+      // skip the header instead of queueing empty slices for the rebuild.
+      offset = dataStart;
+      continue;
+    }
     if (fourcc !== "EXIF") {
       kept.push(bytes.slice(offset, dataStart + padded));
     }
@@ -536,8 +564,23 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
   if (bytes.length === 0) {
     throw new MediaError("EMPTY_INPUT", `"${fileName}" is empty. Please pick a photo file and try again.`);
   }
-  if (bytes.length > IMPORT_MAX_INPUT_BYTES) {
-    const mb = (bytes.length / 1_000_000).toFixed(1);
+  const containerSniffed = sniffImage(bytes);
+  if (containerSniffed === null) {
+    throw new MediaError(
+      "UNRECOGNIZED_FORMAT",
+      `"${fileName}" is not a recognized photo (JPEG, PNG, WebP, GIF, BMP). ` +
+        "The file may be corrupt or a renamed non-photo — nothing was imported.",
+    );
+  }
+  // Motion Photo: extract the still frame FIRST. The container's total size
+  // (still + video tail) must never disqualify the useful still frame, and
+  // the video tail never reaches the decoder or any provider.
+  const motion = containerSniffed === "jpeg" ? detectMotionPhoto(bytes) : null;
+  const motionStillUsed = motion !== null;
+  const videoBytesStripped = strippedVideoBytes(bytes.length, motion?.stillEnd ?? null);
+  const still = motionStillUsed ? bytes.subarray(0, motion.stillEnd) : bytes;
+  if (still.length > IMPORT_MAX_INPUT_BYTES) {
+    const mb = (still.length / 1_000_000).toFixed(1);
     const cap = (IMPORT_MAX_INPUT_BYTES / 1_000_000).toFixed(0);
     throw new MediaError(
       "OVERSIZED_INPUT",
@@ -545,12 +588,12 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
         "Please pick a smaller file or trim it first — nothing was imported.",
     );
   }
-  const sniffed = sniffImage(bytes);
+  const sniffed = sniffImage(still);
   if (sniffed === null) {
     throw new MediaError(
-      "UNRECOGNIZED_FORMAT",
-      `"${fileName}" is not a recognized photo (JPEG, PNG, WebP, GIF, BMP). ` +
-        "The file may be corrupt or a renamed non-photo — nothing was imported.",
+      "CORRUPT_IMAGE",
+      `"${fileName}" looks like a photo but its still frame cannot be read. ` +
+        "Try re-saving the file — nothing was imported.",
     );
   }
   const declared = (input.declaredMimeType ?? "").trim().toLowerCase();
@@ -567,7 +610,7 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
   if (UNSUPPORTED_KINDS.has(sniffed)) {
     throw new MediaError("UNSUPPORTED_FORMAT", unsupportedMessage(sniffed, fileName));
   }
-  const probed = probeDimensions(bytes, sniffed);
+  const probed = probeDimensions(still, sniffed);
   if (probed === null) {
     throw new MediaError(
       "CORRUPT_IMAGE",
@@ -575,43 +618,69 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
         "truncated, so dimensions cannot be read. Try re-saving the file — nothing was imported.",
     );
   }
+  // Pathological ceiling only: ordinary large camera photos fall through to
+  // downsampling below instead of refusing. Never raise this to admit a
+  // normal photo — the transcode target already bounds the decode.
   const pixels = probed.width * probed.height;
-  if (pixels > IMPORT_MAX_DECODE_PIXELS) {
+  if (
+    !Number.isSafeInteger(pixels) ||
+    pixels > IMPORT_PATHOLOGICAL_PIXELS ||
+    probed.width > IMPORT_PATHOLOGICAL_EDGE ||
+    probed.height > IMPORT_PATHOLOGICAL_EDGE ||
+    probed.width <= 0 ||
+    probed.height <= 0
+  ) {
     throw new MediaError(
       "PIXEL_BOMB",
-      `"${fileName}" declares ${probed.width}x${probed.height} pixels, over the ` +
-        `${IMPORT_MAX_DECODE_PIXELS.toLocaleString("en-US")}-pixel decode bound. ` +
+      `"${fileName}" declares ${probed.width}x${probed.height} pixels, which looks invalid. ` +
         "Decoding was refused to protect memory — nothing was imported.",
     );
   }
-  const orientation = sniffed === "jpeg" ? readExifOrientation(bytes) : 1;
+  const orientation = sniffed === "jpeg" ? readExifOrientation(still) : 1;
   const oriented =
     orientation >= 5
       ? { width: probed.height, height: probed.width }
       : { width: probed.width, height: probed.height };
   const target = fitWithin(IMPORT_MAX_EDGE, oriented.width, oriented.height);
-  const animated =
+  const animatedSource =
     sniffed === "gif-animated" || sniffed === "webp-animated" || sniffed === "png-animated";
+  const animatedMime =
+    sniffed === "gif-animated" ? "image/gif" : sniffed === "webp-animated" ? "image/webp" : "image/png";
 
   let derivativeBytes: Uint8Array;
   let derivativeMime: string;
   let quality: number | null;
-  if (animated) {
-    derivativeMime =
-      sniffed === "gif-animated" ? "image/gif" : sniffed === "webp-animated" ? "image/webp" : "image/png";
-    derivativeBytes =
+  let animated = animatedSource;
+  let sampledStill = false;
+  if (animatedSource) {
+    const passthrough =
       sniffed === "webp-animated"
-        ? stripWebpExifChunk(bytes)
+        ? stripWebpExifChunk(still)
         : sniffed === "png-animated"
-          ? stripPngExIfChunk(bytes)
-          : bytes.slice();
-    quality = null;
-    if (derivativeBytes.length > IMPORT_MAX_DERIVATIVE_BYTES) {
-      throw new MediaError(
-        "DERIVATIVE_TOO_LARGE",
-        `"${fileName}" is animated and cannot be shrunk without losing animation, yet it ` +
-          "is over the 2 MB derivative bound. Please pick a shorter or smaller animation.",
-      );
+          ? stripPngExIfChunk(still)
+          : still.slice();
+    if (passthrough.length <= IMPORT_MAX_DERIVATIVE_BYTES) {
+      derivativeMime = animatedMime;
+      derivativeBytes = passthrough;
+      quality = null;
+    } else {
+      // Over-cap animation: sample a still frame with disclosure instead of
+      // refusing. The decoder reads the first frame; the animation stays out
+      // of the derivative while storage keeps the caller's context.
+      const ladder = input.highQuality === true ? IMPORT_QUALITY_LADDER_HQ : IMPORT_QUALITY_LADDER;
+      derivativeMime = "image/jpeg";
+      const sampled = await transcodeLadder(still, sniffed, target, derivativeMime, ladder);
+      if (sampled === null) {
+        throw new MediaError(
+          "DERIVATIVE_TOO_LARGE",
+          `"${fileName}" is animated and cannot be shrunk without losing animation, yet it ` +
+            "is over the 2 MB derivative bound. Please pick a shorter or smaller animation.",
+        );
+      }
+      derivativeBytes = sampled.bytes;
+      quality = sampled.quality;
+      animated = false;
+      sampledStill = true;
     }
   } else {
     derivativeMime =
@@ -624,24 +693,8 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
             : "image/png";
     const lossy = derivativeMime === "image/jpeg" || derivativeMime === "image/webp";
     if (lossy) {
-      let picked: Uint8Array | null = null;
-      let pickedQuality: number | null = null;
       const ladder = input.highQuality === true ? IMPORT_QUALITY_LADDER_HQ : IMPORT_QUALITY_LADDER;
-      for (const candidate of ladder) {
-        const encoded = await deps.transcode({
-          bytes,
-          sniffed,
-          targetWidth: target.width,
-          targetHeight: target.height,
-          mimeType: derivativeMime,
-          quality: candidate,
-        });
-        if (encoded.length <= IMPORT_MAX_DERIVATIVE_BYTES) {
-          picked = encoded;
-          pickedQuality = candidate;
-          break;
-        }
-      }
+      const picked = await transcodeLadder(still, sniffed, target, derivativeMime, ladder);
       if (picked === null) {
         throw new MediaError(
           "DERIVATIVE_TOO_LARGE",
@@ -649,11 +702,11 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
             "Please pick a smaller photo — nothing was imported.",
         );
       }
-      derivativeBytes = picked;
-      quality = pickedQuality;
+      derivativeBytes = picked.bytes;
+      quality = picked.quality;
     } else {
       derivativeBytes = await deps.transcode({
-        bytes,
+        bytes: still,
         sniffed,
         targetWidth: target.width,
         targetHeight: target.height,
@@ -671,6 +724,29 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
     }
   }
 
+  async function transcodeLadder(
+    source: Uint8Array,
+    sourceSniffed: SniffedKind,
+    size: { width: number; height: number },
+    mime: string,
+    ladder: readonly number[],
+  ): Promise<{ bytes: Uint8Array; quality: number } | null> {
+    for (const candidate of ladder) {
+      const encoded = await deps.transcode({
+        bytes: source,
+        sniffed: sourceSniffed,
+        targetWidth: size.width,
+        targetHeight: size.height,
+        mimeType: mime,
+        quality: candidate,
+      });
+      if (encoded.length <= IMPORT_MAX_DERIVATIVE_BYTES) {
+        return { bytes: encoded, quality: candidate };
+      }
+    }
+    return null;
+  }
+
   const id = deps.createId ? deps.createId() : defaultId();
   const text = input.text ?? "";
   return {
@@ -679,8 +755,11 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
     text,
     sniffed,
     declaredMimeType: declared,
-    originalByteLength: bytes.length,
+    originalByteLength: still.length,
     animated,
+    motionStillUsed,
+    videoBytesStripped,
+    sampledStill,
     exifOrientationApplied: orientation,
     locationMetadataStripped: true,
     derivative: {

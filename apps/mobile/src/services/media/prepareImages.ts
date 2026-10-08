@@ -18,6 +18,8 @@ export const ANIMATED_FRAME_DISCLOSURE =
   "Animated photo: the full animation is kept in storage, but the assistant only sees " +
   "sampled still frame(s) — not every frame.";
 
+export const MOTION_STILL_DISCLOSURE = "Motion photo · still frame used.";
+
 export type PrepareErrorCode = "TRAY_FULL" | "REPORT_LIMIT" | "NOT_FOUND" | "BAD_INDEX";
 
 export class PrepareError extends Error {
@@ -131,8 +133,10 @@ export function buildChatSendPlan(
   };
 }
 
-/** Sampled-frame disclosure for animated inputs; null for stills. */
+/** Frame disclosure: motion-still and sampled-still notes first, animated inputs keep theirs; null for plain stills. */
 export function frameDisclosureFor(image: ImportedImage): string | null {
+  if (image.motionStillUsed) return MOTION_STILL_DISCLOSURE;
+  if (image.sampledStill) return ANIMATED_FRAME_DISCLOSURE;
   return image.animated ? ANIMATED_FRAME_DISCLOSURE : null;
 }
 

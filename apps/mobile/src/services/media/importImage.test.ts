@@ -21,6 +21,7 @@ import {
   buildTiff,
   buildWebp,
 } from "./__fixtures__/synthetic";
+import { generatedMotionPhoto } from "../__tests__/motionPhotoFixture";
 
 function fakeTranscode(sizes: number[], seen?: TranscodeRequest[]) {
   let call = 0;
@@ -151,7 +152,7 @@ describe("importImage intake", () => {
     ).rejects.toMatchObject({ code: "EMPTY_INPUT" });
   });
 
-  it("blocks pixel bombs before any decode work", async () => {
+  it("blocks pathological dimensions before any decode work", async () => {
     const transcode = fakeTranscode([16]);
     await expect(
       importImage(
@@ -162,8 +163,60 @@ describe("importImage intake", () => {
     expect(transcode).not.toHaveBeenCalled();
   });
 
+  it("downsamples an ordinary 32 MP phone photo instead of refusing it", async () => {
+    const seen: TranscodeRequest[] = [];
+    // The Xiaomi device case: 4928x6560 = 32.3 MP refused by the old 30 MP bound.
+    const result = await importImage(
+      { bytes: buildJpeg(4928, 6560), fileName: "1000026950.jpg", declaredMimeType: "image/jpeg" },
+      deps({ transcode: fakeTranscode([900_000], seen) }),
+    );
+    expect(result.motionStillUsed).toBe(false);
+    expect(result.sampledStill).toBe(false);
+    expect(result.derivative.width).toBe(1442);
+    expect(result.derivative.height).toBe(1920);
+    expect(seen[0]?.targetWidth).toBe(1442);
+    expect(seen[0]?.targetHeight).toBe(1920);
+  });
+
+  it("extracts the Motion Photo still first and never decodes the video tail", async () => {
+    const { bytes, stillEnd, video } = generatedMotionPhoto();
+    const seen: TranscodeRequest[] = [];
+    const result = await importImage(
+      { bytes, fileName: "motion.jpg", declaredMimeType: "image/jpeg" },
+      deps({ transcode: fakeTranscode([512], seen) }),
+    );
+    expect(result.motionStillUsed).toBe(true);
+    expect(result.videoBytesStripped).toBe(bytes.length - stillEnd);
+    expect(video.length).toBeGreaterThan(0);
+    // The decoder input is the still alone, never the container.
+    expect(seen[0]?.bytes.length).toBe(stillEnd);
+    expect(result.originalByteLength).toBe(stillEnd);
+  });
+
+  it("samples an over-cap animation to a disclosed still instead of refusing it", async () => {
+    // Valid animated PNG carrying one large tEXt chunk before IEND: the
+    // passthrough stays over the 2 MB derivative bound, so intake samples a
+    // still frame.
+    const base = buildPng(64, 64, { animated: true });
+    const payload = 2_100_000;
+    const chunk = new Uint8Array(12 + payload);
+    new DataView(chunk.buffer).setUint32(0, payload);
+    chunk.set([0x74, 0x45, 0x58, 0x74], 4);
+    const bytes = new Uint8Array(base.length + chunk.length);
+    bytes.set(base.subarray(0, base.length - 12));
+    bytes.set(chunk, base.length - 12);
+    bytes.set(base.subarray(base.length - 12), base.length - 12 + chunk.length);
+    const result = await importImage(
+      { bytes, fileName: "long.png", declaredMimeType: "image/png" },
+      deps({ transcode: fakeTranscode([900_000]) }),
+    );
+    expect(result.animated).toBe(false);
+    expect(result.sampledStill).toBe(true);
+    expect(result.derivative.mimeType).toBe("image/jpeg");
+  });
+
   it("rejects inputs over the byte cap with an actionable message", async () => {
-    const huge = new Uint8Array(17_000_000);
+    const huge = new Uint8Array(49_000_000);
     huge.set([0xff, 0xd8, 0xff, 0xe0]);
     await expect(
       importImage({ bytes: huge, fileName: "huge.jpg" }, deps()),
