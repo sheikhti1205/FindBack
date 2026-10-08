@@ -183,11 +183,15 @@ class SmolVlmPlugin : Plugin() {
                 synchronized(lock) { unloadLocked() }
                 val visionBackend =
                     if (requestedBackend == "gpu") Backend.GPU() else Backend.CPU()
+                // Audio executor stays uninitialized (EngineConfig default
+                // null): the SmolVLM2 artifact carries no audio encoder, so
+                // configuring one fails conversation creation with NOT_FOUND
+                // (TF_LITE_AUDIO_ENCODER_HW). Vision-only model, vision-only
+                // executors.
                 val config = EngineConfig(
                     modelPath = modelFile.absolutePath,
                     backend = Backend.CPU(),
                     visionBackend = visionBackend,
-                    audioBackend = Backend.CPU(),
                     cacheDir = context.cacheDir.path,
                 )
                 val eng = Engine(config)

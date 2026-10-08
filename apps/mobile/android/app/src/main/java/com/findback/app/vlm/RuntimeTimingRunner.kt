@@ -151,10 +151,13 @@ class RuntimeTimingRunner(
                 // (save/enable/restore) — never left on for later product
                 // inference. Counters only; decoding behavior is unchanged.
                 withBenchmarkCounters {
+                    // Audio executor stays uninitialized (EngineConfig default
+                    // null): the SmolVLM2 artifact carries no audio encoder —
+                    // see SmolVlmPlugin.loadVisionModel. Same fix, same cause.
                     val engine = Engine(EngineConfig(
                         modelPath = file.absolutePath, backend = Backend.CPU(),
                         visionBackend = if (backend == "gpu") Backend.GPU() else Backend.CPU(),
-                        audioBackend = Backend.CPU(), cacheDir = context.cacheDir.path,
+                        cacheDir = context.cacheDir.path,
                     ))
                     try {
                         engine.initialize()
