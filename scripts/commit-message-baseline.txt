@@ -38,3 +38,10 @@ e309dadab5490a4b6771d1898c30d6ae6049bcf8
 a868ac972260f6b6015898186968ab8903c1b58c
 179df62879902735f1ff536bbdd7bb3a3751b16d
 35b32c89c3bf09862306d852626d8ca453491843
+# Exception 2026-10-09 (accepted-history): 575edc5 is a ledger restamp with
+# an empty body (no Gates trailer), merged to origin/main 2026-10-08. Fixing
+# its message would require a destructive main-history rewrite and a
+# force-push. Grandfathered with reason so the v1.0.0 release range can close;
+# every subsequent commit follows the normal `scope: outcome` + Gates
+# convention (enforced on every new HEAD).
+575edc51d0be14f2cf019187a67deed0f1945e87
