@@ -225,6 +225,107 @@ describe("chatController streaming state (M2)", () => {
     expect(texts.join("\n")).not.toContain("partial-");
   });
 
+  it("a retryable failure cannot blend its text into the successful attempt", async () => {
+    const { store, chatId } = await seedStore();
+    let call = 0;
+    // Both invocations label their own stream attempt=1 (as a real adapter
+    // does). Only the coordinator's outer attempt numbering keeps them apart.
+    const adapter: ProviderAdapter = {
+      id: "openrouter",
+      capabilities: caps,
+      async *complete(): AsyncIterable<StreamEvent> {
+        call += 1;
+        if (call === 1) {
+          yield { kind: "text", attempt: 1, delta: "SAME ANSWER" };
+          yield { kind: "error", attempt: 1, code: "provider-error", message: "HTTP 503 retry-after 0", retryable: true };
+          yield { kind: "done", attempt: 1, stopReason: "error" };
+          return;
+        }
+        yield { kind: "text", attempt: 1, delta: "SAME ANSWER" };
+        yield { kind: "done", attempt: 1, stopReason: "complete" };
+      },
+    };
+    const controller = new ChatController({
+      store,
+      selection,
+      adapter,
+      systemPolicy: policy,
+      knowledge,
+      budget: budgetTerms(),
+      catalog: freeCatalog,
+    });
+    const result = await controller.send(chatId, "describe the image");
+    expect(call).toBe(2);
+    expect(result.answer).toBe("SAME ANSWER");
+    const stored = store
+      .listChats("acct-a")[0]!
+      .turns.filter((t) => t.role === "assistant")
+      .map((t) => t.text);
+    expect(stored).toEqual(["SAME ANSWER"]);
+  });
+
+  it("every terminal phase exposes partialText '' (final answer is never a partial)", async () => {
+    // complete
+    {
+      const { store, chatId } = await seedStore();
+      const adapter: ProviderAdapter = {
+        id: "openrouter",
+        capabilities: caps,
+        async *complete(): AsyncIterable<StreamEvent> {
+          yield { kind: "text", attempt: 1, delta: "final words" };
+          yield { kind: "done", attempt: 1, stopReason: "complete" };
+        },
+      };
+      const controller = new ChatController({
+        store, selection, adapter, systemPolicy: policy, knowledge, budget: budgetTerms(), catalog: freeCatalog,
+      });
+      await controller.send(chatId, "hi");
+      const state = controller.getState();
+      expect(state.phase).toBe("complete");
+      expect(state.partialText).toBe("");
+    }
+    // failed
+    {
+      const { store, chatId } = await seedStore();
+      const adapter: ProviderAdapter = {
+        id: "openrouter",
+        capabilities: caps,
+        async *complete(): AsyncIterable<StreamEvent> {
+          yield { kind: "text", attempt: 1, delta: "partial-before-error" };
+          yield { kind: "error", attempt: 1, code: "refused", message: "refused", retryable: false };
+          yield { kind: "done", attempt: 1, stopReason: "error" };
+        },
+      };
+      const controller = new ChatController({
+        store, selection, adapter, systemPolicy: policy, knowledge, budget: budgetTerms(), catalog: freeCatalog,
+      });
+      await expect(controller.send(chatId, "hi")).rejects.toThrow(ControllerError);
+      const state = controller.getState();
+      expect(state.phase).toBe("failed");
+      expect(state.partialText).toBe("");
+    }
+    // cancelled
+    {
+      const { store, chatId } = await seedStore();
+      const adapter = pausedAdapter();
+      const controller = new ChatController({
+        store, selection, adapter, systemPolicy: policy, knowledge, budget: budgetTerms(), catalog: freeCatalog,
+      });
+      const pending = controller.send(chatId, "hi");
+      await tick();
+      adapter.emit({ kind: "text", attempt: 1, delta: "partial-" });
+      await tick();
+      expect(controller.getState().partialText).toBe("partial-");
+      controller.cancel();
+      // Wake the suspended adapter iterator so teardown settles immediately.
+      adapter.emit({ kind: "done", attempt: 1, stopReason: "cancelled" });
+      await expect(pending).rejects.toThrow(ControllerError);
+      const state = controller.getState();
+      expect(state.phase).toBe("cancelled");
+      expect(state.partialText).toBe("");
+    }
+  });
+
   it("send() with a per-request free selection reaches the request (model change mid-chat)", async () => {
     const { store, chatId } = await seedStore();
     const requests: NormalizedRequest[] = [];

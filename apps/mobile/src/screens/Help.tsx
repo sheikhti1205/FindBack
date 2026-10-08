@@ -538,6 +538,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
 
   const generation = useRef(0);
   const sendGenRef = useRef<number | null>(null);
+  const sendLock = useRef(false);
   const attemptRef = useRef(0);
   const streamPaint = useRef<{ gen: number; label: string; scheduler: ReturnType<typeof createStreamingPaint> } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -639,26 +640,25 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       // (sendGenRef pins the live one) never touch partial or phase UI.
       if (sendGenRef.current === null || gen !== sendGenRef.current) return;
       setControllerPhase(snapshot.phase);
-      if (snapshot.phase === "streaming" && snapshot.partialText !== "") {
-        const label = snapshot.provider === "offline" ? "On-device" : "Cloud";
-        if (streamPaint.current?.gen !== gen) {
-          streamPaint.current?.scheduler.cancel();
-          streamPaint.current = { gen, label, scheduler: createStreamingPaint({
-            paint: (text) => {
-              if (generation.current === gen && sendGenRef.current === gen) setPartial({ id: `partial-${gen}`, text, label });
-            },
-          }) };
-        }
-        streamPaint.current.scheduler.push(snapshot.partialText);
-      } else if (snapshot.phase === "complete") {
-        streamPaint.current?.scheduler.flush();
-      } else if (snapshot.phase === "failed" || snapshot.phase === "cancelled") {
+      // Terminal / non-streaming phases own the lifecycle: cancel any pending
+      // paint AND clear the visible partial. A partial is only ever valid while
+      // the controller says it is streaming, so a completed, failed, cancelled
+      // or superseded attempt can never leave a stale bubble beside the final.
+      if (snapshot.phase !== "streaming") {
         clearStreamingPartial();
-      } else if (snapshot.partialText === "") {
-        streamPaint.current?.scheduler.cancel();
-        streamPaint.current = null;
-        setPartial((prev) => (prev !== null && prev.id === `partial-${gen}` ? null : prev));
+        return;
       }
+      if (snapshot.partialText === "") return;
+      const label = snapshot.provider === "offline" ? "On-device" : "Cloud";
+      if (streamPaint.current?.gen !== gen) {
+        streamPaint.current?.scheduler.cancel();
+        streamPaint.current = { gen, label, scheduler: createStreamingPaint({
+          paint: (text) => {
+            if (generation.current === gen && sendGenRef.current === gen) setPartial({ id: `partial-${gen}`, text, label });
+          },
+        }) };
+      }
+      streamPaint.current.scheduler.push(snapshot.partialText);
     });
     return () => {
       unsubscribe();
@@ -852,7 +852,23 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     return "ephemeral";
   }
 
+  /**
+   * Synchronous send mutex. React `busy` state is UI state, not a lock: a fast
+   * double tap, key repeat, or duplicated WebView event can call this twice
+   * before React rerenders and flips `busy`. A ref flips synchronously, so only
+   * the first caller proceeds and a double send can never persist two turns.
+   */
   async function sendFreeChat(text: string, opts: { isRetry?: boolean } = {}) {
+    if (sendLock.current) return;
+    sendLock.current = true;
+    try {
+      await sendFreeChatInner(text, opts);
+    } finally {
+      sendLock.current = false;
+    }
+  }
+
+  async function sendFreeChatInner(text: string, opts: { isRetry?: boolean } = {}) {
     const rawText = text.trim();
     const hasImages = tray.items.length > 0;
     // Photo-only drafts send (G10): text is required only when no photos.
@@ -1003,6 +1019,10 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     };
     const finishFallback = (mode: "stored" | "ephemeral", reply: string) => {
       if (generation.current !== gen) return;
+      // A failed local/cloud attempt may have painted a partial: terminate it
+      // here so the built-in fallback turn can never sit beside stale text.
+      clearStreamingPartial();
+      sendGenRef.current = null;
       if (mode === "stored" && chatId !== null) {
         titleFreshChat();
         refreshTurns(chatId);
@@ -1101,6 +1121,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           finishFallback(persistFallback(chatId, historyOn, question), builtInHelp(question));
           return;
         }
+        // Terminate the failed local attempt's partial before the cloud retry
+        // owns the stream, so local text can never survive into cloud output.
+        clearStreamingPartial();
         setNotice("On-device AI could not answer. Trying the connected cloud model.");
         const fallbackAdapter = deps?.createAdapter?.(fallbackProvider) ?? createProviderAdapter(fallbackProvider, {
           accountId, resolveKey: readCloudKey, resolveGenericEndpoint: (id) => loadGenericEndpoint(id),
@@ -1640,8 +1663,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         ) : (
           <ChatTranscript
             messages={freeMessages}
-            partialText={partial?.text ?? null}
-            partialLabel={partial?.label ?? null}
+            partialText={busy && controllerPhase === "streaming" ? (partial?.text ?? null) : null}
+            partialLabel={busy && controllerPhase === "streaming" ? (partial?.label ?? null) : null}
             onAction={(id) => {
               const target = ACTION_ROUTES[id];
               if (target !== undefined) navigate(target);

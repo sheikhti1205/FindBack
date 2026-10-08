@@ -281,7 +281,7 @@ export class ChatController {
     this.inFlightAbort.abort();
     this.inFlightAbort = null;
     if (this.state.phase === "sending" || this.state.phase === "streaming") {
-      this.update({ phase: "cancelled", lastError: "Send was cancelled." });
+      this.update({ phase: "cancelled", partialText: "", lastError: "Send was cancelled." });
     }
   }
 
@@ -595,12 +595,13 @@ export class ChatController {
     } catch (error) {
       if (generation !== this.generation) throw new ControllerError("cancelled", "Superseded by a newer send.");
       const message = error instanceof Error ? error.message : "Context build failed.";
-      this.update({ phase: "failed", lastError: sanitizeControllerError(message, [text]) });
+      this.update({ phase: "failed", partialText: "", lastError: sanitizeControllerError(message, [text]) });
       throw error;
     }
 
     let answer = "";
     let attempt = 0;
+    let activeAttempt = 0;
     let stopReason: "complete" | "cancelled" | "error" = "complete";
     let lastErrorMessage = "";
     try {
@@ -611,9 +612,23 @@ export class ChatController {
           stopReason = "cancelled";
           break;
         }
+        // The coordinator normalizes attempt identity on EVERY event. A newer
+        // outer attempt is a clean slate: discard any text a failed attempt
+        // accumulated so retry output can never blend into the final answer.
+        if (event.attempt > activeAttempt) {
+          activeAttempt = event.attempt;
+          answer = "";
+          this.update({
+            phase: "sending",
+            partialText: "",
+            attempt: activeAttempt,
+            provider: effective.selection.provider,
+            modelId: effective.selection.modelId,
+          });
+        }
         if (event.kind === "text") {
           answer += event.delta;
-          attempt = event.attempt;
+          attempt = activeAttempt;
           this.update({
             phase: "streaming",
             partialText: answer,
@@ -623,16 +638,16 @@ export class ChatController {
           });
         } else if (event.kind === "error") {
           lastErrorMessage = event.message;
-          attempt = event.attempt;
+          attempt = activeAttempt;
         } else if (event.kind === "done") {
           stopReason = event.stopReason;
-          attempt = event.attempt;
+          attempt = activeAttempt;
         }
       }
     } catch (error) {
       if (generation !== this.generation) throw new ControllerError("cancelled", "Superseded by a newer send.");
       const message = error instanceof Error ? error.message : "Send failed.";
-      this.update({ phase: "failed", lastError: sanitizeControllerError(message, [text]) });
+      this.update({ phase: "failed", partialText: "", lastError: sanitizeControllerError(message, [text]) });
       throw error;
     }
 
@@ -668,14 +683,18 @@ export class ChatController {
           // History off: the send already succeeded transiently.
         } else {
           const message = error instanceof Error ? error.message : "Persist failed.";
-          this.update({ phase: "failed", lastError: sanitizeControllerError(message, [text]) });
+          this.update({ phase: "failed", partialText: "", lastError: sanitizeControllerError(message, [text]) });
           throw error;
         }
       }
     }
     this.update({
       phase: "complete",
-      partialText: answer,
+      // partialText is in-flight streaming ONLY. The final answer already
+      // lives in SendResult.answer (and the persisted assistant turn), so a
+      // completed send must NEVER leave a rendered partial behind — that dual
+      // ownership is what produced the original two-bubble defect.
+      partialText: "",
       attempt,
       provider: effective.selection.provider,
       modelId: effective.selection.modelId,

@@ -19,6 +19,14 @@ Build under test (reviewer fills):
 
 ### Conversation correctness
 - [ ] One send → exactly one assistant bubble (text and image sends).
+- [ ] A retry whose first attempt streamed a partial never concatenates the two
+      attempts (attempt 1 "SAME ANSWER" → retryable error → attempt 2 "SAME
+      ANSWER" must persist exactly once).
+- [ ] No partial bubble survives completion/failure/cancellation (the final
+      answer is rendered only from the persisted turn).
+- [ ] A failed attempt's partial is gone before a cloud fallback or built-in
+      fallback answer appears (no stale local text beside the cloud/built-in answer).
+- [ ] A fast double-tap on Send creates exactly one request.
 - [ ] No resurrected partial after completion, failure, stop, chat switch, or
       account switch.
 - [ ] Stop-while-streaming keeps the draft; retry never duplicates turns.

@@ -116,12 +116,25 @@ export async function* coordinate(
   const getRetryDelayMs = options.getRetryDelayMs ?? defaultRetryDelayMs;
   const overallDeadline = Date.now() + overallMs;
 
+  /**
+   * The coordinator OWNS attempt identity. Every outward event is stamped with
+   * the current OUTER attempt, never the adapter's internal number: a provider
+   * adapter commonly restarts its own stream at `attempt: 1` on each
+   * invocation, so trusting it would let a retry blend into the previous
+   * attempt downstream (the failed attempt's text concatenating into the
+   * successful one).
+   */
+  let currentAttempt = 1;
+
   const emit = function* (event: StreamEvent): Generator<StreamEvent> {
-    options.onEvent?.(event);
-    yield event;
+    const normalized: StreamEvent =
+      event.attempt === currentAttempt ? event : { ...event, attempt: currentAttempt };
+    options.onEvent?.(normalized);
+    yield normalized;
   };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    currentAttempt = attempt;
     if (request.signal.aborted) {
       yield* emit({ kind: "phase", phase: "cancelled", attempt });
       yield* emit({ kind: "done", attempt, stopReason: "cancelled" });
@@ -236,7 +249,7 @@ export async function* coordinate(
         continue;
       }
       if (event.kind === "error") {
-        lastError = event.attempt === attempt ? event : { ...event, attempt };
+        lastError = event;
         yield* emit(lastError);
         continue;
       }
@@ -250,7 +263,7 @@ export async function* coordinate(
           attemptFailed = true;
           yield* emitPhase("failed");
         }
-        yield* emit(event.attempt === attempt ? event : { ...event, attempt });
+        yield* emit(event);
         break;
       }
       yield* emit(event);

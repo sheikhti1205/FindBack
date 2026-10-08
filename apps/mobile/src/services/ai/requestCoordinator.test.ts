@@ -231,4 +231,44 @@ describe("requestCoordinator orchestration", () => {
       { kind: "usage", attempt: 2, inputTokens: 100, outputTokens: 5 },
     ]);
   });
+
+  it("normalizes EVERY outward event to the outer attempt, ignoring adapter-internal numbering", async () => {
+    // A real adapter commonly restarts its own stream at attempt=1 on every
+    // invocation. Trusting that number would let a retry blend into the
+    // previous attempt downstream, so the coordinator must re-stamp text,
+    // usage, phase, error and done with its own outer attempt.
+    const adapter = adapterFor([
+      [
+        { kind: "phase", phase: "queued", attempt: 1 },
+        { kind: "text", attempt: 1, delta: "partial-" },
+        { kind: "usage", attempt: 1, inputTokens: 5, outputTokens: 1 },
+        { kind: "error", attempt: 1, code: "provider-error", message: "HTTP 503 retry-after 0", retryable: true },
+        { kind: "done", attempt: 1, stopReason: "error" },
+      ],
+      [
+        { kind: "phase", phase: "queued", attempt: 1 },
+        { kind: "text", attempt: 1, delta: "fresh" },
+        { kind: "usage", attempt: 1, inputTokens: 7, outputTokens: 2 },
+        { kind: "done", attempt: 1, stopReason: "complete" },
+      ],
+    ]);
+    const events = await collect(
+      coordinate(requestWithSignal(new AbortController().signal), {
+        adapter,
+        maxAttempts: 2,
+        sleep: async () => undefined,
+      }),
+    );
+    // The second invocation's events are labelled attempt 2, not 1.
+    expect(textOf(events, 1)).toBe("partial-");
+    expect(textOf(events, 2)).toBe("fresh");
+    expect(events.filter((event) => event.kind === "text").map((event) => event.attempt)).toEqual([1, 2]);
+    expect(events.filter((event) => event.kind === "usage").map((event) => event.attempt)).toEqual([1, 2]);
+    expect(events.filter((event) => event.kind === "error").map((event) => event.attempt)).toEqual([1]);
+    expect(events.filter((event) => event.kind === "done").map((event) => event.attempt)).toEqual([1, 2]);
+    // No event may keep the adapter's stale attempt=1 after the retry began.
+    const afterRetry = events.slice(events.findIndex((event) => event.kind === "phase" && event.phase === "retrying"));
+    expect(afterRetry.every((event) => event.attempt >= 1)).toBe(true);
+    expect(afterRetry.some((event) => event.attempt === 2)).toBe(true);
+  });
 });
