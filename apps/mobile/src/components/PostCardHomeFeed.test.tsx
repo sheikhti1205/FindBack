@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { PostItem, PostStatus, PostType } from "@findback/shared";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PostCard } from "./PostCard";
 import { PostCardContent } from "./PostCardContent";
@@ -20,6 +20,11 @@ vi.mock("../services/feedReactions", async (importOriginal) => {
     toggleLoveReaction: loveToggleMock,
   };
 });
+
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="location">{`${loc.pathname}${loc.search}`}</div>;
+}
 
 function post(overrides: Partial<PostItem> = {}): PostItem {
   const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
@@ -103,24 +108,24 @@ beforeEach(() => {
 
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
 
-describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
-  it("shows a Lost badge with icon + text and keeps time as a separate element", () => {
+describe("PostCardContent home-feed (content-first Home layout)", () => {
+  it("shows a Lost status chip with icon + text and keeps time as a separate element", () => {
     renderHomeFeed(imagePost());
-    const badge = screen.getByTestId("post-type-badge");
-    expect(badge.textContent).toMatch(/lost/i);
+    const chip = screen.getByTestId("post-status-chip");
+    expect(chip.textContent).toMatch(/lost/i);
     // Icon + text redundancy: meaning must not be color-only.
-    expect(badge.querySelector("svg")).toBeTruthy();
+    expect(chip.querySelector("svg")).toBeTruthy();
     const time = screen.getByTestId("post-time");
     expect(time.textContent).toMatch(/2h ago/);
-    expect(time.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_CONTAINS).toBe(0);
-    expect(badge.compareDocumentPosition(time) & Node.DOCUMENT_POSITION_CONTAINS).toBe(0);
+    expect(time.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_CONTAINS).toBe(0);
+    expect(chip.compareDocumentPosition(time) & Node.DOCUMENT_POSITION_CONTAINS).toBe(0);
   });
 
-  it("shows a Found badge with icon + text", () => {
+  it("shows a Found status chip with icon + text", () => {
     renderHomeFeed(imagePost(1, { type: "FOUND" as PostType }));
-    const badge = screen.getByTestId("post-type-badge");
-    expect(badge.textContent).toMatch(/found/i);
-    expect(badge.querySelector("svg")).toBeTruthy();
+    const chip = screen.getByTestId("post-status-chip");
+    expect(chip.textContent).toMatch(/found/i);
+    expect(chip.querySelector("svg")).toBeTruthy();
   });
 
   it("uses a strong sans title, not the editorial serif", () => {
@@ -157,18 +162,26 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     expect(screen.queryByTestId("post-location")).toBeNull();
   });
 
-  it("shows the category chip and only non-OPEN lifecycle states", () => {
-    const { rerender } = renderHomeFeed(post());
+  it("shows the category chip", () => {
+    renderHomeFeed(post());
     expect(screen.getByTestId("post-category").textContent).toBe("Pets");
-    expect(screen.queryByTestId("post-lifecycle")).toBeNull();
-    rerender(
-      <MemoryRouter>
-        <FeedLoveProvider items={[post({ status: "MATCHED" as PostStatus })]} patchItem={vi.fn() as unknown as FeedPatchItem}>
-          <PostCardContent post={post({ status: "MATCHED" as PostStatus })} layout="home-feed" />
-        </FeedLoveProvider>
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId("post-lifecycle").textContent).toBe("Matched");
+  });
+
+  it("maps the semantic status chip over the five allowed labels only", () => {
+    const cases: Array<{ type: PostType; status: PostStatus; label: string }> = [
+      { type: "LOST", status: "OPEN", label: "Lost" },
+      { type: "FOUND", status: "OPEN", label: "Found" },
+      { type: "LOST", status: "MATCHED", label: "Matched" },
+      { type: "LOST", status: "RECOVERED", label: "Recovered" },
+      { type: "FOUND", status: "CLOSED", label: "Closed" },
+    ];
+    for (const { type, status, label } of cases) {
+      const target = post({ type, status });
+      const { unmount } = renderHomeFeed(target);
+      const chip = screen.getByTestId("post-status-chip");
+      expect(chip.textContent).toBe(label);
+      unmount();
+    }
   });
 
   it("has separate Love, Comments and Share controls outside the report link", () => {
@@ -226,27 +239,25 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     expect(screen.getByRole("img", { name: "Photo unavailable" })).toBeTruthy();
   });
 
-  it("renders a deliberate same-geometry placeholder when there is no photo", () => {
+  it("renders a compact text-first card with no media box when there is no photo", () => {
     renderHomeFeed(post());
-    const placeholder = screen.getByTestId("home-feed-no-photo");
-    expect(placeholder.className).toContain("fb-feed-img");
-    expect(placeholder.textContent).toMatch(/no photo/i);
+    expect(screen.queryByTestId("home-feed-no-photo")).toBeNull();
     expect(screen.queryByTestId("post-image-state")).toBeNull();
-    expect(screen.queryByTestId("photo-count")).toBeNull();
+    expect(screen.queryByTestId("feed-media-viewport")).toBeNull();
+    expect(screen.queryByTestId("carousel-dot")).toBeNull();
+    // The report still reads: status, title, body, actions.
+    expect(screen.getByTestId("post-status-chip")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Golden Retriever near Riverside Park" })).toBeTruthy();
+    expect(screen.getByTestId("home-feed-actions")).toBeTruthy();
   });
 
-  it("shows a truthful photo-count badge only for multiple photos", () => {
-    const { rerender } = renderHomeFeed(imagePost(3));
-    expect(screen.getByTestId("photo-count").textContent).toMatch(/3 photos/);
-    const single = imagePost(1);
-    rerender(
-      <MemoryRouter>
-        <FeedLoveProvider items={[single]} patchItem={vi.fn() as unknown as FeedPatchItem}>
-          <PostCardContent post={single} layout="home-feed" />
-        </FeedLoveProvider>
-      </MemoryRouter>,
-    );
+  it("shows swipe dots instead of a badge for multiple photos, and none for one", () => {
+    const { unmount } = renderHomeFeed(imagePost(3));
     expect(screen.queryByTestId("photo-count")).toBeNull();
+    expect(screen.getAllByTestId("carousel-dot")).toHaveLength(3);
+    unmount();
+    renderHomeFeed(imagePost(1));
+    expect(screen.queryAllByTestId("carousel-dot")).toHaveLength(0);
   });
 
   it("carries the shared media + title ids when enableSharedMedia", () => {
@@ -268,23 +279,27 @@ describe("PostCardContent home-feed (reference-inspired Home layout)", () => {
     ).toBe("fb-post-title-p1");
   });
 
-  it("never conflates LOST/FOUND type with lifecycle state", () => {
+  it("never conflates LOST/FOUND type with a resolved lifecycle state", () => {
     renderHomeFeed(
       imagePost(1, { type: "FOUND" as PostType, status: "RECOVERED" as PostStatus }),
     );
-    expect(screen.getByTestId("post-type-badge").textContent).toMatch(/found/i);
-    expect(screen.getByTestId("post-lifecycle").textContent).toBe("Recovered");
+    // A recovered FOUND report reads as Recovered, never as the stale type.
+    const chip = screen.getByTestId("post-status-chip");
+    expect(chip.textContent).toBe("Recovered");
+    expect(chip.getAttribute("data-status")).toBe("recovered");
   });
 
   it("keeps the card understandable to assistive tech in logical order", () => {
     renderHomeFeed(imagePost());
     const card = screen.getByTestId("home-feed-content");
     const order = within(card)
-      .getAllByTestId(/post-(type-badge|time)|post-title|post-description|post-location|post-footer/)
+      .getAllByTestId(/post-status-chip|post-time|post-title|post-description|post-location|post-author|post-footer/)
       .map((el) => el.getAttribute("data-testid"));
-    expect(order[0]).toBe("post-type-badge");
+    expect(order[0]).toBe("post-status-chip");
     expect(order).toContain("post-title");
-    expect(order.indexOf("post-title")).toBeGreaterThan(order.indexOf("post-type-badge"));
+    expect(order.indexOf("post-title")).toBeGreaterThan(order.indexOf("post-status-chip"));
+    expect(order.indexOf("post-footer")).toBeGreaterThan(order.indexOf("post-title"));
+    // The action row is the last interactive region.
     expect(order.indexOf("post-footer")).toBe(order.length - 1);
   });
 
@@ -514,11 +529,92 @@ describe("home-feed media polish (edge-to-edge cover for loaded photos)", () => 
     expect(frame.className).not.toContain("fb-feed-img-none");
   });
 
-  it("keeps the subtle outline placeholder only for no-photo cards", () => {
+  it("keeps no-photo cards text-first with no fake image geometry", () => {
     renderHomeFeed(post());
-    const placeholder = screen.getByTestId("home-feed-no-photo");
-    expect(placeholder.className).toContain("fb-feed-img");
-    expect(placeholder.className).toContain("fb-feed-img-none");
+    expect(screen.queryByTestId("home-feed-no-photo")).toBeNull();
+    expect(screen.queryByTestId("feed-media-viewport")).toBeNull();
     expect(screen.getByRole("button", { name: /love/i })).toBeTruthy();
+  });
+});
+
+describe("home-feed content-first interactions", () => {
+  it("opens the canonical PhotoLightbox at the current carousel index on an image tap", () => {
+    renderHomeFeed(imagePost(4));
+    const track = screen.getByTestId("feed-media-track");
+    Object.defineProperty(track, "clientWidth", { configurable: true, value: 300 });
+    track.scrollLeft = 2 * 300;
+    fireEvent.scroll(track);
+    fireEvent.click(screen.getAllByTestId("feed-slide")[2]!);
+    expect(screen.getByTestId("photo-lightbox")).toBeTruthy();
+    // Starts on the third photo, not the first.
+    expect(screen.getByText("Photo 3 of 4")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "View photo 3" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("does not open the lightbox when the carousel is swiped", () => {
+    renderHomeFeed(imagePost(4));
+    const track = screen.getByTestId("feed-media-track");
+    Object.defineProperty(track, "clientWidth", { configurable: true, value: 300 });
+    track.scrollLeft = 300;
+    fireEvent.scroll(track);
+    const slide = screen.getAllByTestId("feed-slide")[1]!;
+    fireEvent.mouseDown(slide, { clientX: 260, clientY: 30 });
+    fireEvent.click(slide, { clientX: 30, clientY: 34 });
+    expect(screen.queryByTestId("photo-lightbox")).toBeNull();
+  });
+
+  it("shows See more only when the description is actually truncated, and it navigates to detail", async () => {
+    const scrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight");
+    const clientHeight = Object.getOwnPropertyDescriptor(Element.prototype, "clientHeight");
+    // jsdom has no layout; drive a real truncation measurement.
+    Object.defineProperty(Element.prototype, "scrollHeight", { configurable: true, get: () => 96 });
+    Object.defineProperty(Element.prototype, "clientHeight", { configurable: true, get: () => 40 });
+    try {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <FeedLoveProvider items={[imagePost()]} patchItem={vi.fn() as unknown as FeedPatchItem}>
+            <PostCardContent post={imagePost()} layout="home-feed" />
+          </FeedLoveProvider>
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+      const more = await screen.findByTestId("post-description-more");
+      expect(more.textContent).toMatch(/see more/i);
+      expect(more.closest("a")?.getAttribute("href")).toBe("/posts/p1");
+      fireEvent.click(more);
+      await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/posts/p1"));
+    } finally {
+      if (scrollHeight) Object.defineProperty(Element.prototype, "scrollHeight", scrollHeight);
+      else delete (Element.prototype as { scrollHeight?: unknown }).scrollHeight;
+      if (clientHeight) Object.defineProperty(Element.prototype, "clientHeight", clientHeight);
+      else delete (Element.prototype as { clientHeight?: unknown }).clientHeight;
+    }
+  });
+
+  it("omits See more when the description is not truncated", () => {
+    renderHomeFeed(imagePost());
+    expect(screen.queryByTestId("post-description-more")).toBeNull();
+  });
+
+  it("renders a flat action row reusing the existing love/comment/share controls", () => {
+    renderHomeFeed(imagePost());
+    const row = screen.getByTestId("home-feed-actions");
+    expect(row.className).toMatch(/grid-cols-3/);
+    // Flat: the reused controls' internal borders/backgrounds are neutralized
+    // for both the button controls (love/share) and the comments link. The
+    // trailing `!` (important) is REQUIRED — `.fb-report-action` is unlayered
+    // plain CSS and otherwise beats Tailwind's @layer utilities regardless of
+    // specificity (verified in Chromium against the compiled index.css).
+    expect(row.className).toMatch(/\[&_button\]:border-0!/);
+    expect(row.className).toMatch(/\[&_button\]:bg-transparent!/);
+    expect(row.className).toMatch(/\[&_a\]:border-0!/);
+    expect(row.className).toMatch(/\[&_a\]:bg-transparent!/);
+    expect(screen.getByTestId("home-feed-love")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /comments, 3/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /share report/i })).toBeTruthy();
+    // No giant bordered button cards: the old 3-column bordered grid is gone.
+    expect(row.className).not.toMatch(/fb-report-actions/);
   });
 });

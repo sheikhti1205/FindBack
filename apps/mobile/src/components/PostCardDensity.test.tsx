@@ -164,7 +164,7 @@ describe("PostList home-feed density (reference-inspired Home redesign)", () => 
     onRetry: () => Promise.resolve(),
   };
 
-  it("home-feed density renders the image-left/content-right layout", () => {
+  it("home-feed density renders the content-first layout", () => {
     render(
       <MemoryRouter>
         <PostList items={[imagePost()]} {...base} density="home-feed" />
@@ -172,7 +172,7 @@ describe("PostList home-feed density (reference-inspired Home redesign)", () => 
     );
     // Home-feed contract markers — none of the other layouts render these.
     expect(screen.getByTestId("home-feed-content")).toBeTruthy();
-    expect(screen.getByTestId("post-type-badge").textContent).toMatch(/found/i);
+    expect(screen.getByTestId("post-status-chip").textContent).toMatch(/found/i);
     expect(screen.getByTestId("post-time")).toBeTruthy();
     expect(screen.getByTestId("post-image-state").className).toContain("fb-feed-img");
     const title = screen.getByRole("heading", { name: "Black over-ear headphones" });

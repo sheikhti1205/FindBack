@@ -44,15 +44,15 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
   useEffect(() => {
     if (animated) feedEntrancePlayed = true;
   }, [animated]);
-  // UXN-2: the home-feed card is NOT one wrapping Link. A button nested in a
-  // link is invalid DOM and breaks assistive tech, so the shell is a plain
-  // div and the content block owns two siblings: the detail Link (media +
-  // text) and the action row (Love toggle). `to` is kept for API parity with
-  // PostList and still drives the default variant; home-feed ignores it
-  // because PostCardContent links to `/posts/${post.id}` itself.
+  // UXN-2 / W2: the home-feed card is NOT one wrapping Link. A button nested
+  // in a link is invalid DOM and breaks assistive tech, so the shell is a plain
+  // div and PostCardContent owns navigation AND actions as siblings: the media
+  // (own tap target), the detail Link (text), and the flat action row.
+  // `to` is kept for API parity with PostList and still drives the default
+  // variant; home-feed ignores it because PostCardContent links itself.
   const body =
     variant === "home-feed" ? (
-      <div className="flex gap-2.5 rounded-[18px] border border-outline-variant bg-surface-container-low p-2.5 shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container">
+      <div className="flex flex-col overflow-hidden rounded-[18px] border border-outline-variant bg-surface-container-low shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container">
         {children}
       </div>
     ) : (

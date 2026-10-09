@@ -1,12 +1,15 @@
-import { useState } from "react";
-import type { PostItem, PostStatus, PostType } from "@findback/shared";
+import { useLayoutEffect, useRef, useState } from "react";
+import type { ComponentType } from "react";
+import type { PostItem, PostStatus } from "@findback/shared";
 import { motion } from "framer-motion";
-import { CircleAlert, CircleCheck, ImageOff, MapPin, MessageSquare, Star, Tag, ThumbsDown, ThumbsUp } from "lucide-react";
+import { CircleAlert, CircleCheck, ImageOff, Link2, Lock, MapPin, MessageSquare, Star, Tag, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Link } from "react-router";
 import { timeAgo } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
 import { HomeFeedLoveButton } from "./HomeFeedLoveButton";
 import { ReportShareButton } from "./ReportShareButton";
+import { PhotoLightbox } from "./PhotoLightbox";
+import { FeedMediaCarousel } from "./FeedMediaCarousel";
 import {
   fadeVariants,
   motionDurations,
@@ -355,74 +358,131 @@ function CompactContent({ post, enableSharedMedia = false }: { post: PostItem; e
   );
 }
 
-/** Lost/Found semantic badge: muted surface + deep ink + icon. Text and icon
- *  carry the meaning so type is never color-only. */
-function TypeBadge({ type }: { type: PostType }) {
-  const lost = type === "LOST";
+type SemanticStatusKind = "lost" | "found" | "matched" | "recovered" | "closed";
+
+/**
+ * Derive the single semantic status chip from existing PostItem fields only —
+ * no invented statuses. An OPEN report reads as its type (Lost/Found); any
+ * resolved lifecycle state supersedes it (Matched/Recovered/Closed).
+ */
+function semanticStatus(post: PostItem): { kind: SemanticStatusKind; label: string } {
+  switch (post.status) {
+    case "MATCHED":
+      return { kind: "matched", label: "Matched" };
+    case "RECOVERED":
+      return { kind: "recovered", label: "Recovered" };
+    case "CLOSED":
+      return { kind: "closed", label: "Closed" };
+    default:
+      return post.type === "LOST"
+        ? { kind: "lost", label: "Lost" }
+        : { kind: "found", label: "Found" };
+  }
+}
+
+const STATUS_ICONS: Record<SemanticStatusKind, ComponentType<{ size?: number; "aria-hidden"?: boolean }>> = {
+  lost: CircleAlert,
+  found: CircleCheck,
+  matched: Link2,
+  recovered: CircleCheck,
+  closed: Lock,
+};
+
+const STATUS_TONE: Record<SemanticStatusKind, string> = {
+  lost: "fb-type-lost",
+  found: "fb-type-found",
+  matched: "bg-surface-container text-on-surface",
+  recovered: "bg-on-surface text-surface",
+  closed: "border border-outline-variant text-on-surface-variant",
+};
+
+/** Semantic status chip: text + icon carry the meaning, never color alone. */
+function StatusChip({ post }: { post: PostItem }) {
+  const status = semanticStatus(post);
+  const Icon = STATUS_ICONS[status.kind];
   return (
     <span
-      data-testid="post-type-badge"
-      className={`fb-type-badge ${lost ? "fb-type-lost" : "fb-type-found"}`}
+      data-testid="post-status-chip"
+      data-status={status.kind}
+      className={`fb-type-badge ${STATUS_TONE[status.kind]}`}
     >
-      {lost ? <CircleAlert size={14} aria-hidden /> : <CircleCheck size={14} aria-hidden />}
-      {lost ? "Lost" : "Found"}
+      <Icon size={14} aria-hidden />
+      {status.label}
     </span>
   );
 }
 
 /**
- * Home-feed layout (reference-inspired redesign): image-left/content-right.
- * Only Home uses this; Search `compact` and other `classic` renderings are
- * verbatim. Reuses FeedImage (lazy, shimmer, crossfade, failure fallback,
- * shared layoutId), SharedTitle (shared layoutId), stripMarkdown, timeAgo,
- * and the lifecycle labels — only the arrangement and emphasis change.
+ * Real truncation probe for the clamped description. Reads the element's own
+ * scrollHeight vs clientHeight (jsdom reports 0/0, so tests drive the values
+ * through the element prototype) and re-runs on resize; a short description
+ * never grows a "See more".
+ */
+function useTruncatedDescription(text: string) {
+  const ref = useRef<HTMLParagraphElement | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !text) {
+      setTruncated(false);
+      return;
+    }
+    const measure = () => setTruncated(el.scrollHeight > el.clientHeight);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [text]);
+  return { ref, truncated };
+}
+
+/**
+ * Home-feed layout (W2 content-first redesign): full-width 4:3 media carousel
+ * on top, then a text block, then a flat action row.
  *
- * UXN-2 DOM contract: the PostCard home-feed shell is a plain div, so this
- * block owns navigation AND actions as siblings — the detail `Link` wraps
- * media + text, and the Love toggle sits beside it in an action row. Never
- * nest the button inside the link.
+ * Navigation contract: the media region is a SIBLING of the detail link, never
+ * inside it — tapping a photo opens the canonical PhotoLightbox at that index,
+ * a horizontal swipe only changes the visible photo, and neither can navigate
+ * the post. The detail `Link` wraps only the text (title/description/metadata),
+ * so tapping the text opens Post Detail. "See more" is part of that link, so it
+ * also navigates to detail instead of expanding inline.
  */
 function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; enableSharedMedia?: boolean }) {
   const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
-  const hero = images[0];
   const excerpt = stripMarkdown(post.description);
+  const { ref: descriptionRef, truncated } = useTruncatedDescription(excerpt);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
+  const lastIndex = lightboxPhotos.length - 1;
   // Detail destination mirrors PostList (`/posts/${post.id}`) — the single
   // route both shells navigate to.
   return (
-    <div data-testid="home-feed-content" className="fb-report-preview min-w-0 flex-1">
-      <Link
-        to={`/posts/${post.id}`}
-        data-testid="home-feed-detail-link"
-        className="group contents"
-      >
-        <div className="fb-report-media relative min-w-0 group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-on-surface">
-          {hero ? (
-            <FeedImage
-              url={hero.fileUrl}
-              alt={`Photo for ${post.title}`}
-              variant="feed"
-              postId={post.id}
-              enableSharedMedia={enableSharedMedia}
-            />
-          ) : (
-            <div data-testid="home-feed-no-photo" className="fb-feed-img fb-feed-img-none">
-              <ImageOff size={18} aria-hidden />
-              <span>No photo</span>
-            </div>
-          )}
-          {images.length > 1 && (
-            <span data-testid="photo-count" className="fb-feed-photo-badge">
-              {images.length} photos
-            </span>
-          )}
+    <div data-testid="home-feed-content" className="flex min-w-0 flex-col">
+      {images.length > 0 && (
+        <FeedMediaCarousel
+          images={images.map((a, i) => ({
+            id: a.id,
+            fileUrl: a.fileUrl,
+            alt:
+              images.length === 1
+                ? `Photo for ${post.title}`
+                : `Photo ${i + 1} of ${images.length} for ${post.title}`,
+          }))}
+          sharedMediaId={enableSharedMedia ? sharedMediaLayoutId(post.id) : undefined}
+          onOpenImage={(index) => setLightboxIndex(index)}
+        />
+      )}
+      <div className="flex min-w-0 flex-col gap-2 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <StatusChip post={post} />
+          <span data-testid="post-time" className="shrink-0 whitespace-nowrap text-xs text-on-surface-variant">
+            {timeAgo(post.createdAt)}
+          </span>
         </div>
-        <div className="flex min-w-0 flex-col gap-2 rounded-m3-sm group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-on-surface">
-          <div className="flex items-start justify-between gap-2">
-            <TypeBadge type={post.type} />
-            <span data-testid="post-time" className="shrink-0 whitespace-nowrap text-xs text-on-surface-variant">
-              {timeAgo(post.createdAt)}
-            </span>
-          </div>
+        <Link
+          to={`/posts/${post.id}`}
+          data-testid="home-feed-detail-link"
+          className="flex min-w-0 flex-col gap-1.5 rounded-m3-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
+        >
           <div data-testid="post-title">
             <SharedTitle
               post={post}
@@ -431,39 +491,87 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
             />
           </div>
           {excerpt && (
-            <p data-testid="post-description" className="line-clamp-2 break-words text-sm leading-relaxed text-on-surface-variant">
+            <p
+              ref={descriptionRef}
+              data-testid="post-description"
+              className="line-clamp-2 break-words text-sm leading-relaxed text-on-surface-variant"
+            >
               {excerpt}
             </p>
           )}
+          {excerpt && truncated && (
+            <span
+              data-testid="post-description-more"
+              className="text-sm font-medium text-on-surface underline"
+            >
+              See more
+            </span>
+          )}
+          <p data-testid="post-author" className="truncate text-xs text-on-surface-variant">
+            @{post.author.username}
+          </p>
           {post.locationLabel && (
             <p data-testid="post-location" className="flex min-w-0 items-center gap-1 text-xs text-on-surface-variant">
               <MapPin size={13} aria-hidden className="shrink-0" />
               <span className="truncate">{post.locationLabel}</span>
             </p>
           )}
-          <p data-testid="post-author" className="truncate text-xs text-on-surface-variant">
-            @{post.author.username}
-          </p>
-          <div data-testid="post-footer" className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1.5 pt-1">
-            <span data-testid="post-category" className="fb-category-chip">
-              <Tag size={12} aria-hidden className="shrink-0" />
-              <span>{post.category}</span>
-            </span>
-            {post.status !== "OPEN" && (
-              <span data-testid="post-lifecycle" className="text-[11px] font-medium text-on-surface-variant">
-                {STATUS_LABELS[post.status]}
-              </span>
-            )}
-          </div>
-        </div>
-      </Link>
-      <div data-testid="home-feed-actions" className="fb-report-actions" role="group" aria-label="Report actions">
-        <HomeFeedLoveButton postId={post.id} likeCount={post.likeCount} />
-        <Link to={`/posts/${post.id}#detail-comments`} aria-label={`Comments, ${post.commentCount}`} className="fb-report-action">
-          <MessageSquare size={18} aria-hidden /><span>{post.commentCount}</span>
         </Link>
-        <ReportShareButton postId={post.id} title={post.title} />
+        <div data-testid="post-footer" className="flex flex-wrap items-center gap-2">
+          <span data-testid="post-category" className="fb-category-chip">
+            <Tag size={12} aria-hidden className="shrink-0" />
+            <span>{post.category}</span>
+          </span>
+        </div>
+        {/* Flat action row (no bordered button cards): the existing Love
+            toggle, the comments shortcut, and the existing share button share
+            one row. The internal `.fb-report-action` border/background are
+            neutralized visually via wrapper utilities — the controls themselves
+            are reused untouched. */}
+        <div
+          data-testid="home-feed-actions"
+          role="group"
+          aria-label="Report actions"
+          className="grid grid-cols-3 items-center gap-1 [&_a]:rounded-full! [&_a]:border-0! [&_a]:bg-transparent! [&_button]:rounded-full! [&_button]:border-0! [&_button]:bg-transparent!"
+        >
+          <HomeFeedLoveButton postId={post.id} likeCount={post.likeCount} />
+          <Link
+            to={`/posts/${post.id}#detail-comments`}
+            aria-label={`Comments, ${post.commentCount}`}
+            className="fb-report-action"
+          >
+            <MessageSquare size={18} aria-hidden /><span>{post.commentCount}</span>
+          </Link>
+          <ReportShareButton postId={post.id} title={post.title} />
+        </div>
       </div>
+      {lightboxIndex !== null && lightboxPhotos.length > 0 && (
+        <PhotoLightbox
+          photo={lightboxPhotos[Math.min(lightboxIndex, lastIndex)]!}
+          index={Math.min(lightboxIndex, lastIndex)}
+          total={lightboxPhotos.length}
+          photos={lightboxPhotos}
+          title={post.title}
+          onSelect={(index) => setLightboxIndex(index)}
+          onClose={() => setLightboxIndex(null)}
+          onPrev={
+            lightboxPhotos.length > 1
+              ? () =>
+                  setLightboxIndex((current) =>
+                    current === null ? current : (current - 1 + lightboxPhotos.length) % lightboxPhotos.length,
+                  )
+              : undefined
+          }
+          onNext={
+            lightboxPhotos.length > 1
+              ? () =>
+                  setLightboxIndex((current) =>
+                    current === null ? current : (current + 1) % lightboxPhotos.length,
+                  )
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }
