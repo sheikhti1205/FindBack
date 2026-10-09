@@ -20,9 +20,13 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 export function GuestOnly({ children }: { children: ReactNode }) {
-  const { user, booting, bootError } = useAuth();
+  const { user, booting, bootError, needsProfile } = useAuth();
   if (booting || (bootError && !user)) return <Splash />;
   if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
+  // W0-C (W0-QA defect 1): restart-while-incomplete. A kept session with no
+  // FindBack profile must resume at completion, ahead of the pending-link and
+  // onboarding branches below (completion itself resumes the pending link).
+  if (!user && needsProfile) return <Navigate to="/complete-profile" replace />;
   // A pending shared-report launch bypasses first-run flow: stay on the auth
   // path so the link resumes after sign-in (never consumed here).
   if (hasPendingReportLink()) return <>{children}</>;

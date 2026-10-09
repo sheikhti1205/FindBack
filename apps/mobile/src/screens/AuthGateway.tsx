@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Navigate } from "react-router";
+import { Navigate, useNavigate } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAuth } from "../auth";
 import { registerBackInterceptor } from "../components/backNavigation";
@@ -8,6 +8,11 @@ import { TextField } from "../components/Fields";
 import { motionDurations, motionEasings } from "../components/uiMotion";
 import { getPendingReportRoute } from "../utils/pendingReportLink";
 import { AuthShell } from "../components/auth/AuthShell";
+import {
+  GoogleSignInButton,
+  isGoogleSignInAvailable,
+  type GoogleSignInOutcome,
+} from "../components/auth/GoogleSignInButton";
 import { SignInForm } from "../components/auth/SignInForm";
 import { SignUpForm } from "../components/auth/SignUpForm";
 import { EMAIL_PATTERN, type AuthGatewayMode } from "../components/auth/authCopy";
@@ -38,7 +43,8 @@ type Stage = "email" | "signin" | "signup";
  * combinations keep working standalone.
  */
 export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGatewayProps) {
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
+  const navigate = useNavigate();
   const [stage, setStage] = useState<Stage>(initialMode);
   const [email, setEmail] = useState(initialEmail);
   // True once the address arrived via the email stage (chip mode). Compat
@@ -67,6 +73,22 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
   );
 
   if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
+
+  /**
+   * W0-C (S3) Google handoff. The button already ran the S1+S2 exchange:
+   * an existing linked profile completes immediately (context synced, then
+   * the pending destination), while a missing profile carries its seed to
+   * `/complete-profile` via router state (auth-context `needsProfile` from
+   * W0-B is read by the route wrapper once it lands).
+   */
+  async function handleGoogleDone(outcome: GoogleSignInOutcome) {
+    if (outcome.status === "needsProfile") {
+      navigate("/complete-profile", { state: { seed: outcome.seed } });
+      return;
+    }
+    setUser(outcome.user);
+    navigate(getPendingReportRoute() ?? "/", { replace: true });
+  }
 
   function onEmailSubmit(e: FormEvent) {
     e.preventDefault();
@@ -103,7 +125,27 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
           transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
         >
           {stage === "email" && (
-            <form className="flex flex-col gap-4" onSubmit={onEmailSubmit} noValidate>
+            <div className="flex flex-col gap-4">
+              {/* W0-C (S3) insertion ONLY: Google affordance + divider ABOVE the
+                  email form. Mode "signup" is the superset entry point (full
+                  account chooser + verified-phone request for new users);
+                  returning users still resolve via the S2 outcome. Renders
+                  nothing until the S1 bridge is configured (fail closed). */}
+              {isGoogleSignInAvailable() && (
+                <>
+                  <GoogleSignInButton mode="signup" onDone={handleGoogleDone} />
+                  <div
+                    role="separator"
+                    aria-label="or"
+                    className="flex items-center gap-3 text-sm text-on-surface-variant"
+                  >
+                    <span aria-hidden="true" className="h-px flex-1 bg-outline-variant" />
+                    <span>or</span>
+                    <span aria-hidden="true" className="h-px flex-1 bg-outline-variant" />
+                  </div>
+                </>
+              )}
+              <form className="flex flex-col gap-4" onSubmit={onEmailSubmit} noValidate>
               {emailError && (
                 <p
                   className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error"
@@ -132,7 +174,8 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
               <Button type="submit" size="lg">
                 Continue
               </Button>
-            </form>
+              </form>
+            </div>
           )}
 
           {stage === "signin" && (

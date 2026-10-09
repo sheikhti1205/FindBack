@@ -10,6 +10,7 @@ import { BackButtonHandler } from "./components/BackButtonHandler";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Splash } from "./screens/Splash";
 import { AuthGateway } from "./screens/AuthGateway";
+import { CompleteProfileRoute } from "./screens/CompleteProfile";
 import { SignIn } from "./screens/SignIn";
 import { Register } from "./screens/Register";
 import { Verify } from "./screens/Verify";
@@ -107,6 +108,10 @@ export function App() {
               }
             />
             <Route path="/verify" element={<Verify />} />
+            {/* W0-C (S3) additive-only: social profile completion. Unchanged
+                guards everywhere else; the wrapper redirects to /auth when no
+                seed is present. */}
+            <Route path="/complete-profile" element={<CompleteProfileRoute />} />
             <Route path="/forgot" element={<ForgotPassword />} />
             <Route path="/recovery" element={<Recovery />} />
             <Route

@@ -264,3 +264,141 @@ describe("AuthGateway compat entry points", () => {
     expect(screen.getByRole("button", { name: "Create account" })).toBeTruthy();
   });
 });
+
+// ── W0-C (S3) appended coverage: Google entry point. Everything above stays
+// byte-identical; these blocks only ADD behavior pins for the insertion. ──
+import { useLocation } from "react-router";
+import {
+  __resetGoogleSignInSeams,
+  __setGoogleSignInSeams,
+  type GoogleProfileSeed,
+  type GoogleSignInOutcome,
+} from "./GoogleSignInButton";
+
+const GOOGLE_SEED: GoogleProfileSeed = {
+  email: "google.new@example.com",
+  name: "Google New",
+  avatarUrl: null,
+  phone: "",
+  suggestedUsername: "google_new",
+};
+
+function configureGoogleSeams(outcome: GoogleSignInOutcome) {
+  __setGoogleSignInSeams({
+    isGoogleAuthAvailable: () => true,
+    startGoogleSignIn: async () => ({
+      idToken: "fake-google-id-token",
+      email: GOOGLE_SEED.email,
+      name: GOOGLE_SEED.name,
+      avatarUrl: null,
+      phone: null,
+    }),
+    signInWithGoogleIdToken: async () => outcome,
+  });
+}
+
+function SeedProbe() {
+  const location = useLocation();
+  const seed = (location.state as { seed?: GoogleProfileSeed } | null)?.seed;
+  return <p>Seed email: {seed?.email ?? "none"}</p>;
+}
+
+describe("AuthGateway Google entry (W0-C S3, appended)", () => {
+  it("shows Continue with Google above the email form with an or divider", () => {
+    configureGoogleSeams({ status: "needsProfile", seed: GOOGLE_SEED });
+    try {
+      renderGateway();
+      const googleButton = screen.getByRole("button", { name: "Continue with Google" });
+      const emailField = screen.getByLabelText("Email");
+      const separator = screen.getByRole("separator", { name: "or" });
+      // Hierarchy: Continue with Google / — or — / Email… Continue.
+      expect(
+        googleButton.compareDocumentPosition(emailField) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        separator.compareDocumentPosition(emailField) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
+    } finally {
+      __resetGoogleSignInSeams();
+    }
+  });
+
+  it("email Continue still advances to sign-in with Google configured", async () => {
+    configureGoogleSeams({ status: "needsProfile", seed: GOOGLE_SEED });
+    try {
+      renderGateway();
+      await continueWithEmail("user@example.com");
+      expect(screen.getByLabelText("Password")).toBeTruthy();
+    } finally {
+      __resetGoogleSignInSeams();
+    }
+  });
+
+  it("sign-in/signup stages show no Google button (insertion is email-stage only)", async () => {
+    configureGoogleSeams({ status: "needsProfile", seed: GOOGLE_SEED });
+    try {
+      renderGateway();
+      await continueWithEmail("user@example.com");
+      expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+    } finally {
+      __resetGoogleSignInSeams();
+    }
+  });
+
+  it("fail-closed when unavailable: no button, no divider, email flow intact", async () => {
+    __resetGoogleSignInSeams();
+    renderGateway();
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+    expect(screen.queryByRole("separator", { name: "or" })).toBeNull();
+    await continueWithEmail("user@example.com");
+    expect(screen.getByLabelText("Password")).toBeTruthy();
+  });
+
+  it("routes a new Google account to /complete-profile carrying the seed", async () => {
+    configureGoogleSeams({ status: "needsProfile", seed: GOOGLE_SEED });
+    try {
+      render(
+        <MemoryRouter initialEntries={["/auth"]}>
+          <Routes>
+            <Route path="/auth" element={<AuthGateway />} />
+            <Route path="/complete-profile" element={<SeedProbe />} />
+            <Route path="/" element={<p>Home destination</p>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+      await waitFor(() =>
+        expect(screen.getByText("Seed email: google.new@example.com")).toBeTruthy(),
+      );
+    } finally {
+      __resetGoogleSignInSeams();
+    }
+  });
+
+  it("completes an existing Google-linked account into the pending destination", async () => {
+    const linkedUser = { id: "u-linked" };
+    configureGoogleSeams({ status: "authenticated", user: linkedUser as never });
+    const setUser = vi.fn();
+    (authMock as unknown as { setUser: unknown }).setUser = setUser;
+    pendingMock.getPendingReportRoute.mockReturnValue("/posts/abc123");
+    try {
+      render(
+        <MemoryRouter initialEntries={["/auth"]}>
+          <Routes>
+            <Route path="/auth" element={<AuthGateway />} />
+            <Route path="/posts/:id" element={<p>Shared report destination</p>} />
+            <Route path="/" element={<p>Home destination</p>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+      await waitFor(() => expect(screen.getByText("Shared report destination")).toBeTruthy());
+      expect(setUser).toHaveBeenCalledWith(linkedUser);
+    } finally {
+      __resetGoogleSignInSeams();
+      delete (authMock as unknown as { setUser?: unknown }).setUser;
+    }
+  });
+});
