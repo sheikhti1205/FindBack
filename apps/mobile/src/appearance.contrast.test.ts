@@ -76,6 +76,8 @@ describe("Soft Utility semantic palette", () => {
   for (const mode of ["light", "dark", "amoled"] as const) {
     const source = block(mode === "light" ? ":root" : `.${mode}`);
     const surfaces = ["--fb-surface", "--fb-surface-container-low", "--fb-surface-container", "--fb-surface-container-high"];
+    // True-black (`.amoled`) reuses the dark accent tokens; only its surfaces differ.
+    const accentMode = mode === "light" ? "light" : "dark";
     it(`${mode}: body and supporting text meet AA on every surface`, () => {
       for (const surface of surfaces) {
         expect(contrast(token(source, "--fb-on-surface"), token(source, surface))).toBeGreaterThanOrEqual(4.5);
@@ -90,7 +92,7 @@ describe("Soft Utility semantic palette", () => {
     });
     for (const state of ["hover", "active"] as const) {
       it.each(ACCENT_OPTIONS)(`${mode}: enabled $id Button ${state} rendered text meets AA`, ({ id }) => {
-        const colors = accentTokensFor(id, mode);
+        const colors = accentTokensFor(id, accentMode);
         const opacity = Number(buttonClasses.match(new RegExp(`${state}:opacity-(\\d+)`))?.[1] ?? "100") / 100;
         const stateBackground = primaryStateBackground(colors.primary, source, state);
         for (const surface of surfaces) {
@@ -103,7 +105,7 @@ describe("Soft Utility semantic palette", () => {
       });
     }
     it.each(ACCENT_OPTIONS)(`${mode}: $id primary/container text AA and focus/control/link contrast`, ({ id }) => {
-      const colors = accentTokensFor(id, mode);
+      const colors = accentTokensFor(id, accentMode);
       expect(contrast(colors.primary, colors.onPrimary)).toBeGreaterThanOrEqual(4.5);
       expect(contrast(colors.primaryContainer, colors.onPrimaryContainer)).toBeGreaterThanOrEqual(4.5);
       for (const surface of surfaces) {

@@ -45,7 +45,6 @@ const THEME_LABELS: Record<Theme, string> = {
   system: "System",
   light: "Light",
   dark: "Dark",
-  amoled: "AMOLED",
 };
 
 const MOTION_LABELS: Record<ReduceMotionOverride, string> = {
@@ -54,7 +53,7 @@ const MOTION_LABELS: Record<ReduceMotionOverride, string> = {
   full: "Full",
 };
 
-/** Live theme + accent, e.g. `AMOLED · Emerald`. */
+/** Live theme + accent, e.g. `Dark · Emerald`. */
 export function appearanceSummary(theme: Theme, accent: AccentId): string {
   const accentLabel = ACCENT_OPTIONS.find((option) => option.id === accent)?.label ?? accent;
   return `${THEME_LABELS[theme]} · ${accentLabel}`;

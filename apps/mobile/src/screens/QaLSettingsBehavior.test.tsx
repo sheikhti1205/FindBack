@@ -90,7 +90,7 @@ vi.mock("../appearance", () => ({
 }));
 
 vi.mock("../theme", () => ({
-  useTheme: () => ({ theme: "amoled", setTheme: vi.fn() }),
+  useTheme: () => ({ theme: "dark", setTheme: vi.fn() }),
 }));
 
 vi.mock("../services/notificationPreferences", () => ({

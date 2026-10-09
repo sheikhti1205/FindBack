@@ -26,28 +26,55 @@ afterEach(() => {
   const root = document.documentElement;
   root.removeAttribute("style");
   root.className = "";
-  for (const key of ["theme", "accent", "reduceMotionOverride"]) delete root.dataset[key];
+  for (const key of ["theme", "trueBlack", "accent", "reduceMotionOverride"]) delete root.dataset[key];
 });
 
 describe("AppearanceSettings", () => {
-  it("renders one heading, four theme options, and seven accent options as native radios", () => {
+  it("renders one heading, three theme options, and seven accent options as native radios", () => {
     renderScreen();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1, name: "Appearance" })).toBeTruthy();
-    for (const name of ["System", "Light", "Dark", "AMOLED"]) {
+    for (const name of ["System", "Light", "Dark"]) {
       expect(screen.getByRole("radio", { name: new RegExp(`^${name}`) })).toBeTruthy();
     }
+    expect(screen.queryByRole("radio", { name: /^AMOLED/ })).toBeNull();
     for (const name of ["Emerald", "Blue", "Violet", "Rose", "Amber", "Teal", "Mono"]) {
       expect(screen.getByRole("radio", { name })).toBeTruthy();
     }
   });
 
-  it("theme selection applies and persists immediately with no save step", () => {
+  it("theme selection applies and persists immediately in the stable object format", () => {
     renderScreen();
     act(() => { screen.getByRole("radio", { name: /^Dark/ }).click(); });
-    expect(localStorage.getItem("findback.theme")).toBe("dark");
+    expect(JSON.parse(localStorage.getItem("findback.theme")!)).toEqual({ theme: "dark", trueBlackDark: false });
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(document.documentElement.classList.contains("amoled")).toBe(false);
+  });
+
+  it("selecting Dark alone does not force true black", () => {
+    renderScreen();
+    act(() => { screen.getByRole("radio", { name: /^Dark/ }).click(); });
+    expect(screen.getByRole("switch", { name: /true black/i }).getAttribute("aria-checked")).toBe("false");
+    expect(document.documentElement.classList.contains("amoled")).toBe(false);
+  });
+
+  it("shows the true-black toggle for Dark and System, hides it for Light", () => {
+    renderScreen();
+    expect(screen.queryByRole("switch", { name: /true black/i })).toBeTruthy();
+    act(() => { screen.getByRole("radio", { name: /^Light/ }).click(); });
+    expect(screen.queryByRole("switch", { name: /true black/i })).toBeNull();
+    act(() => { screen.getByRole("radio", { name: /^Dark/ }).click(); });
+    expect(screen.queryByRole("switch", { name: /true black/i })).toBeTruthy();
+  });
+
+  it("true-black toggle persists and applies AMOLED while keeping dark", () => {
+    localStorage.setItem("findback.theme", "dark");
+    renderScreen();
+    act(() => { screen.getByRole("switch", { name: /true black/i }).click(); });
+    expect(JSON.parse(localStorage.getItem("findback.theme")!)).toEqual({ theme: "dark", trueBlackDark: true });
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(document.documentElement.classList.contains("amoled")).toBe(true);
   });
 
   it("accent selection applies and persists immediately with no save step", () => {
@@ -62,9 +89,9 @@ describe("AppearanceSettings", () => {
     renderScreen();
     const preview = screen.getByRole("img", { name: /preview/i });
     expect(preview.getAttribute("aria-label")).toMatch(/system/i);
-    act(() => { screen.getByRole("radio", { name: /^AMOLED/ }).click(); });
+    act(() => { screen.getByRole("radio", { name: /^Dark/ }).click(); });
     act(() => { screen.getByRole("radio", { name: "Teal" }).click(); });
-    expect(screen.getByRole("img", { name: /preview/i }).getAttribute("aria-label")).toMatch(/amoled/i);
+    expect(screen.getByRole("img", { name: /preview/i }).getAttribute("aria-label")).toMatch(/dark/i);
     expect(screen.getByRole("img", { name: /preview/i }).getAttribute("aria-label")).toMatch(/teal/i);
   });
 });

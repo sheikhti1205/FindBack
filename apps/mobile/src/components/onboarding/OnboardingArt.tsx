@@ -244,7 +244,7 @@ function SetupArt({ reduced }: { reduced: boolean }) {
   const themes = [
     { id: "light", label: "Light", icon: Sun, className: "fb-ob-theme--light" },
     { id: "dark", label: "Dark", icon: Moon, className: "fb-ob-theme--dark" },
-    { id: "amoled", label: "AMOLED", icon: Contrast, className: "fb-ob-theme--amoled" },
+    { id: "amoled", label: "True black", icon: Contrast, className: "fb-ob-theme--amoled" },
   ] as const;
   return (
     <div className="fb-ob-card-stack">

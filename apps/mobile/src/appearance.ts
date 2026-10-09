@@ -69,9 +69,10 @@ export function migrateAccent(value: unknown): AccentId {
     : DEFAULT_APPEARANCE.accent;
 }
 
-export function accentTokensFor(id: AccentId, mode: "light" | "dark" | "amoled") {
+/** True-black (`.amoled`) reuses the dark accent tokens; only surfaces differ. */
+export function accentTokensFor(id: AccentId, mode: "light" | "dark") {
   const accent = ACCENT_OPTIONS.find((a) => a.id === id) ?? ACCENT_OPTIONS.find((a) => a.id === DEFAULT_APPEARANCE.accent) ?? ACCENT_OPTIONS[0]!;
-  const dark = mode !== "light";
+  const dark = mode === "dark";
   return {
     primary: dark ? accent.darkSwatch : accent.swatch,
     onPrimary: dark ? accent.darkOnAccent : accent.onAccent,

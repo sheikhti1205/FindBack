@@ -72,18 +72,18 @@ describe("settings foundation semantics", () => {
     render(<>
       <fieldset><legend>Theme</legend>
         <ThemeCard name="theme" value="light" checked onChange={theme} />
-        <ThemeCard name="theme" value="amoled" checked={false} onChange={theme} />
+        <ThemeCard name="theme" value="dark" checked={false} onChange={theme} />
       </fieldset>
       <fieldset><legend>Accent</legend>
         <AccentSwatch name="accent" accent="emerald" checked onChange={accent} />
         <AccentSwatch name="accent" accent="blue" checked={false} onChange={accent} />
       </fieldset>
     </>);
-    const amoled = screen.getByRole("radio", { name: "AMOLED" }) as HTMLInputElement;
-    expect(amoled.tagName).toBe("INPUT");
-    expect(amoled.name).toBe("theme");
-    fireEvent.click(amoled);
-    expect(theme).toHaveBeenCalledWith("amoled");
+    const dark = screen.getByRole("radio", { name: "Dark" }) as HTMLInputElement;
+    expect(dark.tagName).toBe("INPUT");
+    expect(dark.name).toBe("theme");
+    fireEvent.click(dark);
+    expect(theme).toHaveBeenCalledWith("dark");
     fireEvent.click(screen.getByRole("radio", { name: "Blue" }));
     expect(accent).toHaveBeenCalledWith("blue");
     expect(screen.getByRole("radio", { name: "Emerald" }).getAttribute("name")).toBe("accent");

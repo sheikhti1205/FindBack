@@ -44,7 +44,7 @@ vi.mock("../appearance", () => ({
 }));
 
 vi.mock("../theme", () => ({
-  useTheme: () => ({ theme: "amoled", setTheme: vi.fn() }),
+  useTheme: () => ({ theme: "dark", setTheme: vi.fn() }),
 }));
 
 vi.mock("../services/notificationPreferences", () => ({
@@ -97,7 +97,7 @@ function renderSettings() {
 
 describe("summary helpers", () => {
   it("composes the appearance value from live theme and accent", () => {
-    expect(appearanceSummary("amoled", "emerald")).toBe("AMOLED · Emerald");
+    expect(appearanceSummary("dark", "emerald")).toBe("Dark · Emerald");
     expect(appearanceSummary("system", "blue")).toBe("System · Blue");
   });
 
@@ -157,7 +157,7 @@ describe("Settings home", () => {
 
   it("shows live summary values and the account card", async () => {
     renderSettings();
-    expect(await screen.findByText("AMOLED · Emerald")).toBeTruthy();
+    expect(await screen.findByText("Dark · Emerald")).toBeTruthy();
     expect(await screen.findByText("Default text · System motion")).toBeTruthy();
     expect(await screen.findByText("Standard")).toBeTruthy();
     expect(await screen.findByText("On")).toBeTruthy();

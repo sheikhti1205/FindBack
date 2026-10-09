@@ -156,8 +156,8 @@ export function SettingsSearch({ query, onQueryChange, results, label = "Search 
   </div>;
 }
 
-const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark", amoled: "AMOLED" };
-const THEME_HINTS: Record<Theme, string> = { system: "Follows your device", light: "Bright and soft", dark: "Comfortably dim", amoled: "True black background" };
+const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
+const THEME_HINTS: Record<Theme, string> = { system: "Follows your device", light: "Bright and soft", dark: "Comfortably dim" };
 export interface ThemeCardProps {
   name: string;
   value: Theme;
