@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { Navigate } from "react-router";
 import { useAuth } from "../auth";
+import { BrandMark } from "../components/BrandMark";
 import { motionDurations, motionEasings } from "../components/uiMotion";
 import { getBootDiagnostics } from "../services/bootDiagnostics";
 import { getPendingReportRoute } from "../utils/pendingReportLink";
@@ -21,10 +22,9 @@ export function Splash() {
           initial={{ opacity: 0, scale: 0.96 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: motionDurations.emphasized, ease: motionEasings.out }}
-          className="flex h-16 w-16 items-center justify-center rounded-m3-lg bg-on-surface text-2xl font-bold text-surface"
           aria-hidden
         >
-          F
+          <BrandMark size={64} />
         </motion.div>
         <p className="text-sm text-on-surface-variant">FindBack</p>
       </div>

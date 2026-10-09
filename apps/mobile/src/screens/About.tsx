@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Bell, LifeBuoy, Sparkles } from "lucide-react";
 import { AdvancedDisclosure, SettingsGroup, SettingsPage, SettingsRow } from "../components/settings";
+import { BrandMark } from "../components/BrandMark";
 import { readBuildInfo, type BuildInfo } from "../services/buildInfo";
 import { APP_VERSION, BACKEND_SCHEMA_VERSION, CAPABILITIES_VERSION } from "../services/appCapabilities";
 import "./About.css";
@@ -39,6 +40,7 @@ export function About() {
     <SettingsPage title="About" backTo="/settings">
       <SettingsGroup title="FindBack">
         <div className="fb-about-brand">
+          <BrandMark size={48} />
           <p className="fb-about-name">FindBack {APP_VERSION}</p>
           <p className="fb-about-mission">
             FindBack helps people report, discover and recover lost items without turning the

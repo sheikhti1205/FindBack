@@ -4,6 +4,7 @@ import type { PostType } from "@findback/shared";
 import { HomeFilterChips, HomeScopeChips } from "./HomeFilterChips";
 import { HomeSearchBar } from "./HomeSearchBar";
 import { PostList } from "../components/PostList";
+import { BrandMark } from "../components/BrandMark";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { NewPostsPill } from "../components/NewPostsPill";
 import { BottomSheet } from "../components/BottomSheet";
@@ -398,7 +399,10 @@ export function Home() {
           toolbarSeparated ? "border-outline-variant shadow-sm" : "border-transparent shadow-none"
         }`}
       >
-        <h1 className="text-xl font-semibold tracking-tight">FindBack</h1>
+        <div className="flex items-center gap-2">
+          <BrandMark size={24} />
+          <h1 className="text-xl font-semibold tracking-tight">FindBack</h1>
+        </div>
         <AnimatePresence initial={false} mode="wait">
           <motion.p
             key={total}
