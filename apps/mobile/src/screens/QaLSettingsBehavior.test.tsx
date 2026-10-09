@@ -102,7 +102,10 @@ vi.mock("../services/pushRuntime", () => ({
 }));
 
 vi.mock("../services/aiCredentials", () => ({
-  aiCredentials: { hasSaved: (...args: unknown[]) => mockHasSaved(...args) },
+  aiCredentials: {
+    hasSaved: (...args: unknown[]) => mockHasSaved(...args),
+    get: async (...args: unknown[]) => ((await mockHasSaved(...args)) ? "k" : null),
+  },
   describeCloudConnections: async (...args: unknown[]) => {
     const has = await mockHasSaved(...args);
     return { summary: has ? "OpenRouter connected" : "Not connected", providers: [] };
@@ -112,6 +115,7 @@ vi.mock("../services/aiCredentials", () => ({
 import { assistantModeKey } from "./AiModels";
 import { Settings } from "./Settings";
 import { AccountSettings } from "./AccountSettings";
+import { AiSettings } from "./AiSettings";
 
 function LocationProbe() {
   const location = useLocation();
@@ -125,7 +129,8 @@ const SETTINGS_TARGETS = [
   "/settings/media",
   "/settings/notifications",
   "/settings/ai",
-  "/settings/ai/connections",
+  // "/settings/ai/connections" moved inside AI & models (W4) — covered by the
+  // through-AI navigation test below, not as a root row.
   "/settings/privacy",
   "/settings/diagnostics",
   "/settings/help",
@@ -161,6 +166,38 @@ describe("QA L: every settings row click lands on its route", () => {
     fireEvent.click(anchor!);
     await waitFor(() => {
       expect(screen.getByTestId("probe").textContent).toBe(target);
+    });
+  });
+});
+
+describe("QA L: moved Cloud connections stays reachable through AI & models", () => {
+  beforeEach(() => {
+    mockFetchPrefs.mockResolvedValue({ pushEnabled: true });
+    mockHasSaved.mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("root → AI & models → Cloud connections lands on its route", async () => {
+    render(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <Routes>
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/ai" element={<AiSettings />} />
+          <Route path="/settings/ai/connections" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("link", { name: /AI & models/ }));
+    const cloudRow = await screen.findByRole("link", { name: /Cloud connections/ });
+    expect(cloudRow.getAttribute("href")).toBe("/settings/ai/connections");
+    fireEvent.click(cloudRow);
+    await waitFor(() => {
+      expect(screen.getByTestId("probe").textContent).toBe("/settings/ai/connections");
     });
   });
 });
@@ -280,5 +317,58 @@ describe("QA L: normal-tier notices never leak technical wording", () => {
   it("keeps friendly consumer wording for storage and verification outcomes", () => {
     expect(toConsumerNotice("not enough free storage for this download")).toContain("storage");
     expect(toConsumerNotice("checksum mismatch against catalogue pin")).toMatch(/verif/i);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 5. W4 root IA: five groups, moved rows nested but reachable           */
+/* ------------------------------------------------------------------ */
+
+describe("QA L: W4 root groups moved rows without orphaning destinations", () => {
+  beforeEach(() => {
+    mockFetchPrefs.mockResolvedValue({ pushEnabled: true });
+    mockHasSaved.mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  function renderSettingsRoot() {
+    render(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <Routes>
+          <Route path="/settings" element={<Settings />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("renders the Account/Preferences/Intelligence/Privacy/More groups", () => {
+    renderSettingsRoot();
+    for (const name of ["Account", "Preferences", "Intelligence", "Privacy", "More"]) {
+      expect(screen.getByRole("region", { name })).toBeTruthy();
+    }
+  });
+
+  it("nests moved rows under Advanced and Help & about disclosures", () => {
+    renderSettingsRoot();
+    const more = screen.getByRole("region", { name: "More" });
+    expect(more.querySelectorAll("details.fb-settings-nested")).toHaveLength(2);
+    const hrefs = Array.from(document.querySelectorAll("a[href]")).map((a) =>
+      (a as HTMLAnchorElement).getAttribute("href"),
+    );
+    for (const href of ["/settings/media", "/settings/diagnostics", "/settings/help", "/onboarding?replay=1", "/settings/about"]) {
+      expect(hrefs, `nested row linking to ${href} exists`).toContain(href);
+    }
+  });
+
+  it("shows the profile header linking to the existing profile edit route", () => {
+    renderSettingsRoot();
+    const header = screen.getByRole("link", { name: /edit profile/i });
+    expect(header.getAttribute("href")).toBe("/profile/edit");
+    expect(screen.getByText("@tester")).toBeTruthy();
   });
 });

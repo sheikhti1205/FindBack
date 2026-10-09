@@ -3,6 +3,7 @@ import { Link, type To } from "react-router";
 import { Check, ChevronRight, Search, X, type LucideIcon } from "lucide-react";
 import { ACCENT_OPTIONS, type AccentId } from "../../appearance";
 import type { Theme } from "../../theme";
+import { density } from "../../design/density";
 import { BackButton } from "../BackButton";
 import "./settings.css";
 
@@ -20,7 +21,7 @@ export interface SettingIconTileProps {
 /** Decorative category glyph; its row title carries the accessible meaning. */
 export function SettingIconTile({ icon: Icon, tone = "neutral", className = "" }: SettingIconTileProps) {
   const color = tone in CATEGORY_TONES ? CATEGORY_TONES[tone as keyof typeof CATEGORY_TONES] : tone;
-  return <span aria-hidden="true" data-tone={color} className={`fb-setting-icon ${className}`}><Icon size={20} aria-hidden="true" /></span>;
+  return <span aria-hidden="true" data-tone={color} className={`fb-setting-icon ${className}`}><Icon size={density.iconSize} aria-hidden="true" /></span>;
 }
 
 export interface SettingsPageProps {

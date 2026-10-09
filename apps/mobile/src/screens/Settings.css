@@ -93,3 +93,173 @@ a.fb-account-card:hover {
   font-weight: 500;
   color: var(--fb-on-surface);
 }
+
+/* W4 compact density — scoped to the Settings root ONLY
+   (.fb-settings-page.fb-settings-root). Visual sizes shrink per
+   design/density.ts; effective touch targets stay >= 44/48 because the
+   row/header/summary visuals themselves remain >= 48px tall. No color
+   tokens are defined here (W5 owns color). */
+
+.fb-settings-root .fb-settings-page-content {
+  gap: 1rem;
+}
+
+.fb-settings-root .fb-settings-group-header {
+  padding: 0 0.75rem 0.375rem;
+}
+
+.fb-settings-root .fb-settings-group-card {
+  border-radius: 0.75rem;
+}
+
+.fb-settings-root .fb-settings-row {
+  gap: 0.625rem;
+  min-height: 3.375rem;
+  padding: 0.625rem 0.75rem;
+}
+
+.fb-settings-root .fb-settings-row:first-child {
+  border-start-start-radius: 0.75rem;
+  border-start-end-radius: 0.75rem;
+}
+
+.fb-settings-root .fb-settings-row:last-child {
+  border-end-start-radius: 0.75rem;
+  border-end-end-radius: 0.75rem;
+}
+
+.fb-settings-root .fb-setting-icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.625rem;
+}
+
+.fb-settings-root .fb-settings-search-field {
+  min-height: 3rem;
+}
+
+/* Visible keyboard focus for every root row, the profile header, nested
+   summaries, and search controls. References the shared focus token. */
+.fb-settings-root .fb-settings-row:focus-visible,
+.fb-settings-profile:focus-visible,
+.fb-settings-root .fb-settings-search-field input:focus-visible,
+.fb-settings-root .fb-settings-search-field button:focus-visible {
+  outline: 2px solid var(--fb-focus);
+  outline-offset: 2px;
+}
+
+/* Profile header: single link to /profile/edit. Plain (no card) to reduce
+   card-overuse; the 60px-tall hit area doubles as the touch target. */
+.fb-settings-profile {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+  min-height: 3.75rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.75rem;
+  color: var(--fb-on-surface);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+a.fb-settings-profile:hover {
+  background: var(--fb-surface-container-low);
+}
+
+.fb-settings-profile-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.fb-settings-profile-name {
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-settings-profile-username {
+  font-size: 0.8125rem;
+  color: var(--fb-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-settings-profile-edit {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.125rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--fb-link);
+  white-space: nowrap;
+}
+
+/* Nested disclosure groups (Advanced, Help & about). Native details/summary:
+   keyboard-focusable with free expanded-state semantics. */
+.fb-settings-nested {
+  min-width: 0;
+}
+
+.fb-settings-nested-summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.fb-settings-nested-summary::-webkit-details-marker {
+  display: none;
+}
+
+summary.fb-settings-nested-summary:hover {
+  background: var(--fb-surface-container);
+}
+
+.fb-settings-nested-summary .fb-settings-nested-chevron {
+  transition: transform 0.15s ease;
+}
+
+.fb-settings-nested[open] > .fb-settings-nested-summary .fb-settings-nested-chevron {
+  transform: rotate(90deg);
+}
+
+.fb-settings-nested-body {
+  border-top: 1px solid var(--fb-outline-variant);
+}
+
+.fb-settings-nested-body > * {
+  position: relative;
+}
+
+.fb-settings-nested-body > * + *::before {
+  content: "";
+  position: absolute;
+  inset: 0 0.75rem auto;
+  border-top: 1px solid var(--fb-outline-variant);
+  pointer-events: none;
+}
+
+.fb-settings-group-card > .fb-settings-nested:first-child > .fb-settings-nested-summary {
+  border-start-start-radius: 0.75rem;
+  border-start-end-radius: 0.75rem;
+}
+
+.fb-settings-group-card > .fb-settings-nested:last-child:not([open]) > .fb-settings-nested-summary,
+.fb-settings-group-card > .fb-settings-nested:last-child > .fb-settings-nested-body > :last-child {
+  border-end-start-radius: 0.75rem;
+  border-end-end-radius: 0.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-settings-nested-summary .fb-settings-nested-chevron {
+    transition: none;
+  }
+}

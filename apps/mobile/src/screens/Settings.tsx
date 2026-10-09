@@ -1,18 +1,21 @@
 import { useEffect, useState } from "react";
 import {
+  Accessibility,
   Activity,
   Bell,
   CircleHelp,
   Image,
   Info,
-  KeyRound,
+  LifeBuoy,
   LogOut,
   Palette,
   RotateCcw,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
-  Accessibility,
+  UserRound,
 } from "lucide-react";
+import type { PublicUser } from "@findback/shared";
 import { useAuth } from "../auth";
 import {
   ACCENT_OPTIONS,
@@ -29,14 +32,14 @@ import {
   SettingsRow,
   SettingsSearch,
 } from "../components/settings";
-import { AccountSummaryCard } from "../components/AccountSummaryCard";
+import { SettingsProfileHeader } from "./settings/SettingsProfileHeader";
+import { SettingsNestedGroup } from "./settings/SettingsNestedGroup";
 import { searchSettings } from "../services/settingsIndex";
 import { type AssistantMode } from "./AiModels";
 import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
 import { fetchNotificationPreferences, type NotificationPreferences } from "../services/notificationPreferences";
 import { pushController } from "../services/pushRuntime";
 import type { PushPermissionState } from "../services/pushNotifications";
-import { describeCloudConnections } from "../services/aiCredentials";
 import { APP_VERSION } from "../services/appCapabilities";
 import { friendlyError } from "../utils/friendlyErrors";
 import "./Settings.css";
@@ -71,6 +74,15 @@ export function mediaSummary(highQualityPhoto: boolean): string {
   return highQualityPhoto ? "High quality" : "Standard";
 }
 
+/** Live verification state for the Account & verification row. */
+export function accountSummary(
+  user: Pick<PublicUser, "emailVerified" | "phoneVerified">,
+): string {
+  if (user.emailVerified && user.phoneVerified) return "Verified";
+  if (user.emailVerified || user.phoneVerified) return "Partially verified";
+  return "Unverified";
+}
+
 /**
  * Stored prefs win; OS permission fills the gap; otherwise an honest
  * fallback — never a guessed value.
@@ -94,11 +106,6 @@ export function notificationSummary(
   }
 }
 
-/** Fail-closed presence probe: unknown means not connected. */
-export function connectionSummary(connected: boolean): string {
-  return connected ? "OpenRouter connected" : "Not connected";
-}
-
 /**
  * Consumer-tier AI mode labels (match AiSettings MODE_COPY; a legacy stored
  * offline-first value migrates fail-closed to on-device-only, which is an
@@ -117,10 +124,14 @@ export function aiModeSummary(mode: AssistantMode): string {
 }
 
 /**
- * Settings root: account card, search, exact packet groups, sign-out.
- * Every row targets a real route_map.csv route (detail screens land via
- * tasks E–H/G; the links are in place regardless). Live summaries degrade
- * to honest fallback text when a source is unreadable.
+ * Settings root: profile header, search, packet groups, sign-out.
+ *
+ * IA (W4): Account / Preferences / Intelligence / Privacy / More. Moved rows
+ * stay one tap away with unchanged routes — Cloud connections lives inside
+ * AI & models (`/settings/ai`), Media & uploads and Diagnostics inside the
+ * Advanced disclosure, Replay introduction and About inside Help & about —
+ * so no destination is orphaned and every row targets a real route.
+ * Live summaries degrade to honest fallback text when a source is unreadable.
  */
 export function Settings() {
   const { user, logout } = useAuth();
@@ -128,7 +139,6 @@ export function Settings() {
   const { settings } = useAppearance();
   const [query, setQuery] = useState("");
   const [notifValue, setNotifValue] = useState<string | null>(null);
-  const [cloudValue, setCloudValue] = useState<string | null>(null);
   const [aiMode, setAiMode] = useState<AssistantMode>(() =>
     user ? loadEffectiveAssistantMode(user.id) : "auto",
   );
@@ -161,22 +171,6 @@ export function Settings() {
     if (user) setAiMode(loadEffectiveAssistantMode(user.id));
   }, [user]);
 
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    describeCloudConnections(user.id)
-      .then((result) => {
-        if (!cancelled) setCloudValue(result.summary);
-      })
-      .catch(() => {
-        // Fail closed: an unreadable slot reads as not connected.
-        if (!cancelled) setCloudValue(connectionSummary(false));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
-
   if (!user) return null;
 
   const trimmed = query.trim();
@@ -196,7 +190,8 @@ export function Settings() {
   };
 
   return (
-    <SettingsPage title="Settings">
+    <SettingsPage title="Settings" className="fb-settings-root">
+      <SettingsProfileHeader user={user} />
       <SettingsSearch
         query={query}
         onQueryChange={setQuery}
@@ -211,8 +206,16 @@ export function Settings() {
         )
       ) : (
         <>
-          <AccountSummaryCard user={user} />
-          <SettingsGroup title="Personalization">
+          <SettingsGroup title="Account">
+            <SettingsRow
+              title="Account & verification"
+              icon={UserRound}
+              iconTone="account"
+              value={accountSummary(user)}
+              route="/settings/account"
+            />
+          </SettingsGroup>
+          <SettingsGroup title="Preferences">
             <SettingsRow
               title="Appearance"
               icon={Palette}
@@ -221,30 +224,21 @@ export function Settings() {
               route="/settings/appearance"
             />
             <SettingsRow
-              title="Accessibility"
-              icon={Accessibility}
-              iconTone="accessibility"
-              value={accessibilitySummary(settings.textScale, settings.reduceMotion)}
-              route="/settings/accessibility"
-            />
-            <SettingsRow
-              title="Media & uploads"
-              icon={Image}
-              iconTone="media"
-              value={mediaSummary(settings.highQualityPhoto)}
-              route="/settings/media"
-            />
-          </SettingsGroup>
-          <SettingsGroup title="Activity">
-            <SettingsRow
               title="Notifications"
               icon={Bell}
               iconTone="notifications"
               value={notifValue ?? "Review settings"}
               route="/settings/notifications"
             />
+            <SettingsRow
+              title="Accessibility"
+              icon={Accessibility}
+              iconTone="accessibility"
+              value={accessibilitySummary(settings.textScale, settings.reduceMotion)}
+              route="/settings/accessibility"
+            />
           </SettingsGroup>
-          <SettingsGroup title="AI & intelligence">
+          <SettingsGroup title="Intelligence">
             <SettingsRow
               title="AI & models"
               icon={Sparkles}
@@ -252,48 +246,62 @@ export function Settings() {
               value={aiModeSummary(aiMode)}
               route="/settings/ai"
             />
-            <SettingsRow
-              title="Cloud connections"
-              icon={KeyRound}
-              iconTone="ai"
-              value={cloudValue ?? "Checking…"}
-              route="/settings/ai/connections"
-            />
           </SettingsGroup>
-          <SettingsGroup title="Privacy & app">
+          <SettingsGroup title="Privacy">
             <SettingsRow
-              title="Privacy & permissions"
+              title="Privacy & safety"
               icon={ShieldCheck}
               iconTone="privacy"
               route="/settings/privacy"
             />
-            <SettingsRow
-              title="Diagnostics"
-              icon={Activity}
-              iconTone="privacy"
-              route="/settings/diagnostics"
-            />
           </SettingsGroup>
-          <SettingsGroup title="Support">
-            <SettingsRow
-              title="Help & guide"
-              icon={CircleHelp}
+          <SettingsGroup title="More">
+            <SettingsNestedGroup
+              title="Advanced"
+              description="Uploads and troubleshooting."
+              icon={SlidersHorizontal}
+              iconTone="neutral"
+            >
+              <SettingsRow
+                title="Media & uploads"
+                icon={Image}
+                iconTone="media"
+                value={mediaSummary(settings.highQualityPhoto)}
+                route="/settings/media"
+              />
+              <SettingsRow
+                title="Diagnostics"
+                icon={Activity}
+                iconTone="privacy"
+                route="/settings/diagnostics"
+              />
+            </SettingsNestedGroup>
+            <SettingsNestedGroup
+              title="Help & about"
+              description="Guides and app info."
+              icon={LifeBuoy}
               iconTone="help"
-              route="/settings/help"
-            />
-            <SettingsRow
-              title="Replay introduction"
-              icon={RotateCcw}
-              iconTone="help"
-              route="/onboarding?replay=1"
-            />
-            <SettingsRow
-              title="About FindBack"
-              icon={Info}
-              iconTone="about"
-              value={APP_VERSION}
-              route="/settings/about"
-            />
+            >
+              <SettingsRow
+                title="Help & guide"
+                icon={CircleHelp}
+                iconTone="help"
+                route="/settings/help"
+              />
+              <SettingsRow
+                title="Replay introduction"
+                icon={RotateCcw}
+                iconTone="help"
+                route="/onboarding?replay=1"
+              />
+              <SettingsRow
+                title="About FindBack"
+                icon={Info}
+                iconTone="about"
+                value={APP_VERSION}
+                route="/settings/about"
+              />
+            </SettingsNestedGroup>
           </SettingsGroup>
           <div className="fb-settings-signout">
             <SettingsGroup>

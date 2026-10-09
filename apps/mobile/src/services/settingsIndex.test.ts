@@ -56,4 +56,22 @@ describe("settingsIndex", () => {
       expect((result.description as string).length).toBeGreaterThan(0);
     }
   });
+
+  it("groups entries under the W4 root structure", () => {
+    const groups = new Map(SETTINGS_INDEX.map((entry) => [entry.id, entry.group]));
+    expect(groups.get("account")).toBe("Account");
+    for (const id of ["appearance", "accessibility", "notifications"]) {
+      expect(groups.get(id)).toBe("Preferences");
+    }
+    for (const id of ["ai", "connections"]) {
+      expect(groups.get(id)).toBe("Intelligence");
+    }
+    expect(groups.get("privacy")).toBe("Privacy");
+    for (const id of ["media", "diagnostics"]) {
+      expect(groups.get(id)).toBe("Advanced");
+    }
+    for (const id of ["help", "replay", "about"]) {
+      expect(groups.get(id)).toBe("Help & about");
+    }
+  });
 });

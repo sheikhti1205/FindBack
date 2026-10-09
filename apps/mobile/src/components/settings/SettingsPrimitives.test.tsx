@@ -8,6 +8,7 @@ import {
   SettingsPage, SettingsGroup, SettingsRow, SettingIconTile, SettingsSearch,
   PreferenceSwitchRow, ThemeCard, AccentSwatch, StatusPill, AdvancedDisclosure,
 } from "./index";
+import { density } from "../../design/density";
 
 afterEach(cleanup);
 
@@ -119,5 +120,26 @@ describe("settings foundation semantics", () => {
     expect(document.querySelector(".fb-setting-icon")?.getAttribute("aria-hidden")).toBe("true");
     expect(screen.getByText("Ready")).toBeTruthy();
     expect(screen.getByText("Technical details").tagName).toBe("SUMMARY");
+  });
+
+  it("pins the category glyph to the shared density icon token", () => {
+    render(<SettingIconTile icon={Palette} tone="lavender" />);
+    const svg = document.querySelector(".fb-setting-icon svg");
+    expect(svg?.getAttribute("width")).toBe(String(density.iconSize));
+    expect(svg?.getAttribute("height")).toBe(String(density.iconSize));
+    expect(density.iconSize).toBeGreaterThanOrEqual(20);
+    expect(density.iconSize).toBeLessThanOrEqual(22);
+  });
+
+  it("keeps every row a single native keyboard-focusable target", () => {
+    const click = vi.fn();
+    render(<MemoryRouter>
+      <SettingsRow title="Appearance" route="/settings/appearance" icon={Palette} />
+      <SettingsRow title="Reset" onClick={click} />
+    </MemoryRouter>);
+    const link = screen.getByRole("link", { name: "Appearance" });
+    expect(link.tagName).toBe("A");
+    expect((link as HTMLAnchorElement).href).toContain("/settings/appearance");
+    expect(screen.getByRole("button", { name: "Reset" }).tagName).toBe("BUTTON");
   });
 });

@@ -3,11 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockLogout, mockFetchPrefs, mockPermission, mockDescribeCloudConnections } = vi.hoisted(() => ({
+const { mockLogout, mockFetchPrefs, mockPermission } = vi.hoisted(() => ({
   mockLogout: vi.fn(),
   mockFetchPrefs: vi.fn(),
   mockPermission: vi.fn(),
-  mockDescribeCloudConnections: vi.fn(),
 }));
 
 vi.mock("../auth", () => ({
@@ -15,6 +14,7 @@ vi.mock("../auth", () => ({
     user: {
       id: "u1",
       username: "tester",
+      displayName: "Test Person",
       email: "tester@example.com",
       phone: "+10000000000",
       emailVerified: true,
@@ -55,16 +55,9 @@ vi.mock("../services/pushRuntime", () => ({
   pushController: () => ({ permission: (...args: unknown[]) => mockPermission(...args) }),
 }));
 
-vi.mock("../services/aiCredentials", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../services/aiCredentials")>();
-  return {
-    ...actual,
-    describeCloudConnections: (...args: unknown[]) => mockDescribeCloudConnections(...args),
-  };
-});
-
 import {
   accessibilitySummary,
+  accountSummary,
   appearanceSummary,
   mediaSummary,
   notificationSummary,
@@ -78,12 +71,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFetchPrefs.mockResolvedValue({ pushEnabled: true, likes: true, comments: true, mentions: true, status: true });
   mockPermission.mockResolvedValue("granted");
-  mockDescribeCloudConnections.mockResolvedValue({
-    connected: true,
-    count: 1,
-    providers: ["openrouter"],
-    summary: "OpenRouter connected",
-  });
   mockLogout.mockResolvedValue(undefined);
 });
 
@@ -95,10 +82,24 @@ function renderSettings() {
   );
 }
 
+/** Every destination reachable from the root (nested disclosures included). */
+function rootHrefs(): string[] {
+  return Array.from(document.querySelectorAll("a[href]")).map((a) =>
+    (a as HTMLAnchorElement).getAttribute("href")!,
+  );
+}
+
 describe("summary helpers", () => {
   it("composes the appearance value from live theme and accent", () => {
     expect(appearanceSummary("dark", "emerald")).toBe("Dark · Emerald");
     expect(appearanceSummary("system", "blue")).toBe("System · Blue");
+  });
+
+  it("composes the account value from live verification flags", () => {
+    expect(accountSummary({ emailVerified: true, phoneVerified: true })).toBe("Verified");
+    expect(accountSummary({ emailVerified: true, phoneVerified: false })).toBe("Partially verified");
+    expect(accountSummary({ emailVerified: false, phoneVerified: true })).toBe("Partially verified");
+    expect(accountSummary({ emailVerified: false, phoneVerified: false })).toBe("Unverified");
   });
 
   it("composes the accessibility value from live text and motion settings", () => {
@@ -122,56 +123,85 @@ describe("summary helpers", () => {
 });
 
 describe("Settings home", () => {
-  it("renders one h1, the search field, and the exact group structure", () => {
+  it("renders one h1, the profile header, the search field, and the exact group structure", () => {
     renderSettings();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1, name: "Settings" })).toBeTruthy();
     expect(screen.getByRole("searchbox", { name: "Search settings" })).toBeTruthy();
-    for (const name of ["Personalization", "Activity", "AI & intelligence", "Privacy & app", "Support"]) {
+    for (const name of ["Account", "Preferences", "Intelligence", "Privacy", "More"]) {
       expect(screen.getByRole("region", { name })).toBeTruthy();
     }
   });
 
-  it("links every row to its real route_map.csv target", () => {
+  it("shows the profile header with avatar, display name, @username, and Edit profile", () => {
     renderSettings();
-    const expected: Array<[string, string]> = [
-      ["Appearance", "/settings/appearance"],
-      ["Accessibility", "/settings/accessibility"],
-      ["Media & uploads", "/settings/media"],
-      ["Notifications", "/settings/notifications"],
-      ["AI & models", "/settings/ai"],
-      ["Cloud connections", "/settings/ai/connections"],
-      ["Privacy & permissions", "/settings/privacy"],
-      ["Diagnostics", "/settings/diagnostics"],
-      ["Help & guide", "/settings/help"],
-      ["Replay introduction", "/onboarding?replay=1"],
-      ["About FindBack", "/settings/about"],
-    ];
-    for (const [name, href] of expected) {
-      const row = screen.getByRole("link", { name: new RegExp(name.replace(/&/g, "&")) });
-      expect(row.getAttribute("href")).toBe(href);
-    }
-    const account = screen.getByRole("link", { name: /manage account/i });
-    expect(account.getAttribute("href")).toBe("/settings/account");
+    const header = screen.getByRole("link", { name: /edit profile/i });
+    expect(header.getAttribute("href")).toBe("/profile/edit");
+    expect(screen.getByTestId("user-avatar")).toBeTruthy();
+    expect(screen.getByText("Test Person")).toBeTruthy();
+    expect(screen.getByText("@tester")).toBeTruthy();
+    expect(header.textContent).toMatch(/edit profile/i);
   });
 
-  it("shows live summary values and the account card", async () => {
+  it("links every row to its real route_map.csv target (nested disclosures included)", () => {
+    renderSettings();
+    const hrefs = rootHrefs();
+    for (const href of [
+      "/profile/edit",
+      "/settings/account",
+      "/settings/appearance",
+      "/settings/notifications",
+      "/settings/accessibility",
+      "/settings/ai",
+      "/settings/privacy",
+      "/settings/media",
+      "/settings/diagnostics",
+      "/settings/help",
+      "/onboarding?replay=1",
+      "/settings/about",
+    ]) {
+      expect(hrefs, `row linking to ${href} exists`).toContain(href);
+    }
+    // Cloud connections moved inside AI & models: reachable via the AI row + search, not a root row.
+    const aiRow = screen.getByRole("link", { name: /AI & models/ });
+    expect(aiRow.getAttribute("href")).toBe("/settings/ai");
+  });
+
+  it("groups moved rows under the Advanced and Help & about disclosures", () => {
+    renderSettings();
+    const more = screen.getByRole("region", { name: "More" });
+    expect(within(more).getByText("Advanced")).toBeTruthy();
+    expect(within(more).getByText("Help & about")).toBeTruthy();
+    expect(document.querySelectorAll("details.fb-settings-nested")).toHaveLength(2);
+  });
+
+  it("keeps every root row keyboard-focusable with a real target", () => {
+    renderSettings();
+    for (const anchor of Array.from(document.querySelectorAll('a[href^="/"],a[href^="/onboarding"]')) as HTMLAnchorElement[]) {
+      expect(anchor.getAttribute("href")!.length).toBeGreaterThan(0);
+    }
+    const links = screen.getAllByRole("link");
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect((link as HTMLAnchorElement).href.length).toBeGreaterThan(0);
+    }
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+  });
+
+  it("shows live summary values on the top-level rows", async () => {
     renderSettings();
     expect(await screen.findByText("Dark · Emerald")).toBeTruthy();
     expect(await screen.findByText("Default text · System motion")).toBeTruthy();
     expect(await screen.findByText("Standard")).toBeTruthy();
     expect(await screen.findByText("On")).toBeTruthy();
-    expect(await screen.findByText("OpenRouter connected")).toBeTruthy();
-    expect(screen.getByText("tester@example.com")).toBeTruthy();
+    expect(await screen.findByText("Partially verified")).toBeTruthy();
   });
 
   it("shows honest fallbacks when live sources are unreadable", async () => {
     mockFetchPrefs.mockRejectedValueOnce(new Error("offline"));
     mockPermission.mockRejectedValueOnce(new Error("offline"));
-    mockDescribeCloudConnections.mockRejectedValueOnce(new Error("offline"));
     renderSettings();
     expect(await screen.findByText("Review settings")).toBeTruthy();
-    expect(await screen.findByText("Not connected")).toBeTruthy();
   });
 
   it("filters rows by alias terms and shows the verbatim empty state", async () => {
@@ -181,7 +211,7 @@ describe("Settings home", () => {
     await waitFor(() => {
       expect(screen.getByRole("link", { name: /appearance/i })).toBeTruthy();
     });
-    expect(screen.queryByRole("region", { name: "Personalization" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Preferences" })).toBeNull();
 
     fireEvent.change(search, { target: { value: "text size" } });
     await waitFor(() => {
@@ -214,10 +244,14 @@ describe("Settings home", () => {
 
   it("keeps rows free of nested interactive controls", () => {
     renderSettings();
-    const group = screen.getByRole("region", { name: "Personalization" });
-    for (const row of within(group).getAllByRole("link")) {
-      expect(row.querySelectorAll("button,a,input").length).toBe(0);
+    for (const groupName of ["Account", "Preferences", "Intelligence", "Privacy"]) {
+      const group = screen.getByRole("region", { name: groupName });
+      for (const row of within(group).getAllByRole("link")) {
+        expect(row.querySelectorAll("button,a,input").length).toBe(0);
+      }
     }
+    const header = screen.getByRole("link", { name: /edit profile/i });
+    expect(header.querySelectorAll("button,a,input").length).toBe(0);
   });
 });
 
@@ -246,95 +280,5 @@ describe("cloud connections summary (F03)", () => {
     expect(cloudConnectionsSummary(["openai"])).not.toContain(secret);
     expect(cloudConnectionsSummary(["openai", "anthropic"])).not.toContain(secret);
     expect(cloudConnectionsSummary([])).not.toContain(secret);
-  });
-
-  it("renders a saved OpenRouter connection as connected", async () => {
-    mockDescribeCloudConnections.mockResolvedValueOnce({
-      connected: true,
-      count: 1,
-      providers: ["openrouter"],
-      summary: "OpenRouter connected",
-    });
-    renderSettings();
-    expect(await screen.findByText("OpenRouter connected")).toBeTruthy();
-    expect(mockDescribeCloudConnections).toHaveBeenCalledWith("u1");
-  });
-
-  it("renders a session-only OpenRouter connection as connected", async () => {
-    mockDescribeCloudConnections.mockResolvedValueOnce({
-      connected: true,
-      count: 1,
-      providers: ["openrouter"],
-      summary: "OpenRouter connected",
-    });
-    renderSettings();
-    expect(await screen.findByText("OpenRouter connected")).toBeTruthy();
-    expect(screen.queryByText("Not connected")).toBeNull();
-  });
-
-  it("renders a non-default provider-only connection as connected", async () => {
-    mockDescribeCloudConnections.mockResolvedValueOnce({
-      connected: true,
-      count: 1,
-      providers: ["openai"],
-      summary: "OpenAI connected",
-    });
-    renderSettings();
-    expect(await screen.findByText("OpenAI connected")).toBeTruthy();
-    expect(screen.queryByText("Not connected")).toBeNull();
-  });
-
-  it("renders multiple providers with a truthful summary", async () => {
-    mockDescribeCloudConnections.mockResolvedValueOnce({
-      connected: true,
-      count: 2,
-      providers: ["openai", "anthropic"],
-      summary: "2 connections",
-    });
-    renderSettings();
-    expect(await screen.findByText("2 connections")).toBeTruthy();
-    expect(screen.queryByText("Not connected")).toBeNull();
-  });
-
-  it("renders no connections as not connected", async () => {
-    mockDescribeCloudConnections.mockResolvedValueOnce({
-      connected: false,
-      count: 0,
-      providers: [],
-      summary: "Not connected",
-    });
-    renderSettings();
-    expect(await screen.findByText("Not connected")).toBeTruthy();
-  });
-
-  it("queries the current account id (sibling-account isolation)", async () => {
-    mockDescribeCloudConnections.mockResolvedValueOnce({
-      connected: true,
-      count: 1,
-      providers: ["openai"],
-      summary: "OpenAI connected",
-    });
-    renderSettings();
-    expect(await screen.findByText("OpenAI connected")).toBeTruthy();
-    expect(mockDescribeCloudConnections).toHaveBeenCalledWith("u1");
-    expect(mockDescribeCloudConnections).not.toHaveBeenCalledWith("sibling-account");
-  });
-
-  it("never renders raw key material in the cloud row", async () => {
-    const secret = "sk-live-F03-PROBE-SECRET-9f8e7d6c5b4a";
-    mockDescribeCloudConnections.mockResolvedValueOnce({
-      connected: true,
-      count: 1,
-      providers: ["openrouter"],
-      summary: "OpenRouter connected",
-    });
-    const { container } = render(
-      <MemoryRouter>
-        <Settings />
-      </MemoryRouter>,
-    );
-    expect(await screen.findByText("OpenRouter connected")).toBeTruthy();
-    expect(container.textContent ?? "").not.toContain(secret);
-    expect(JSON.stringify(mockDescribeCloudConnections.mock.results)).not.toContain(secret);
   });
 });
