@@ -6,6 +6,7 @@ import type { CanonicalReactionKind, CommentItem, PostItem, PostStatus, Reaction
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
+import { UserAvatar } from "../components/UserAvatar";
 import { Button } from "../components/Button";
 import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
@@ -938,7 +939,8 @@ export function PostDetail() {
             @{parentName}
           </button>
         )}
-        <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <UserAvatar avatarUrl={c.author.avatarUrl} username={c.author.username} size={28} />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
           <span className="shrink-0 text-[11px] text-on-surface-variant">
             {formatTimestamp(c.createdAt)}

@@ -110,18 +110,18 @@ describe("AccountSettings", () => {
     expect(row.textContent).toContain("+8801812345678");
   });
 
-  it("falls back to initials when there is no profile photo", () => {
+  it("falls back to canonical initials when there is no profile photo", () => {
     renderAccount();
     expect(screen.queryByRole("img")).toBeNull();
-    // Decorative initials tile; the username row carries the meaning.
-    expect(screen.getByText("T", { selector: '[aria-hidden="true"]' })).toBeTruthy();
+    // Decorative canonical avatar; the username row carries the meaning.
+    expect(screen.getByTestId("user-avatar").textContent).toBe("TE");
   });
 
   it("shows the profile photo when one exists", () => {
     mockUser.value = { ...verifiedUser, avatarUrl: "https://example.com/a.png" };
     const { container } = renderAccount();
-    // Decorative photo (the username row carries the meaning): presentational img.
-    const img = container.querySelector("img.fb-account-avatar") as HTMLImageElement;
+    // Decorative photo inside the canonical avatar (the username row carries the meaning).
+    const img = container.querySelector('[data-testid="user-avatar"] img') as HTMLImageElement;
     expect(img?.src).toBe("https://example.com/a.png");
   });
 

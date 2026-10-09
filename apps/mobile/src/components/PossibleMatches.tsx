@@ -5,6 +5,7 @@ import type { PostItem } from "@findback/shared";
 import { ImageOff, MapPin } from "lucide-react";
 import { useAuth } from "../auth";
 import { EmptyState, Spinner } from "./PostCard";
+import { PhotoLightbox } from "./PhotoLightbox";
 import { loadAiPreferences } from "../services/ai/aiPreferences";
 import { applyMatchesEngineToRuntime } from "../screens/AiModels";
 import { findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
@@ -30,6 +31,10 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
   const [result, setResult] = useState<PossibleMatchesResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  // Canonical PhotoLightbox for match thumbs (single photo each: straight
+  // in). The thumb button is a SIBLING of the detail link, never inside it —
+  // a button nested in a link is invalid DOM (see PostCard home-feed).
+  const [lightboxId, setLightboxId] = useState<string | null>(null);
   // Account for the persisted matches-engine choice. Best effort and never
   // throwing: outside an AuthProvider (some test mounts) this stays "local".
   let account = "local";
@@ -130,6 +135,12 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
     );
   }
 
+  const visibleMatches = result.matches.slice(0, 3);
+  const lightboxMatch =
+    (lightboxId !== null
+      ? visibleMatches.find((m) => m.post.id === lightboxId && m.post.photoUrl)
+      : undefined) ?? null;
+
   return (
     <section className="min-w-0 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
       <h2 id="possible-matches-heading" className="mb-3 text-base font-semibold">
@@ -139,7 +150,7 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
         Compared {result.candidatesConsidered} recent report{result.candidatesConsidered === 1 ? "" : "s"}.
       </p>
       <ul className="fb-scroll-row flex gap-3" role="list">
-        {result.matches.slice(0, 3).map((match, index) => (
+        {visibleMatches.map((match, index) => (
           <motion.li
             key={match.post.id}
             variants={listItemVariants}
@@ -152,11 +163,23 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
             }}
             className="flex min-w-0 flex-[0_0_clamp(9rem,42%,12rem)] flex-col"
           >
-            <Link
-              to={`/posts/${match.post.id}`}
-              className="flex h-full flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface p-2 transition-colors hover:border-on-surface-variant active:bg-surface-container"
-            >
-              <MatchPhoto post={match.post} />
+            <div className="flex h-full flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface p-2 transition-colors hover:border-on-surface-variant active:bg-surface-container">
+              {match.post.photoUrl ? (
+                <button
+                  type="button"
+                  onClick={() => setLightboxId(match.post.id)}
+                  aria-label={`Open photo for ${match.post.title} fullscreen`}
+                  className="block w-full"
+                >
+                  <MatchPhoto post={match.post} />
+                </button>
+              ) : (
+                <MatchPhoto post={match.post} />
+              )}
+              <Link
+                to={`/posts/${match.post.id}`}
+                className="flex min-w-0 flex-1 flex-col gap-2"
+              >
               <h3 className="line-clamp-2 break-words text-sm font-semibold text-on-surface">{match.post.title}</h3>
               <div className="flex flex-col gap-1 text-xs text-on-surface-variant">
                 <span className="self-start rounded-full border border-outline px-2 py-0.5 font-medium">
@@ -176,13 +199,21 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
                   Why: {match.reasons.join(", ")}
                 </p>
               )}
-            </Link>
+              </Link>
+            </div>
           </motion.li>
         ))}
       </ul>
       <p className="mt-3 text-xs text-on-surface-variant" role="note">
         These are text-similarity suggestions, not confirmed matches.
       </p>
+      {lightboxMatch?.post.photoUrl && (
+        <PhotoLightbox
+          photo={{ id: lightboxMatch.post.id, previewUrl: lightboxMatch.post.photoUrl }}
+          title={lightboxMatch.post.title}
+          onClose={() => setLightboxId(null)}
+        />
+      )}
     </section>
   );
 }

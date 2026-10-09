@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { motion, type PanInfo } from "framer-motion";
 import { Bell, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
+import { UserAvatar } from "../components/UserAvatar";
 import {
   deleteNotifications,
   fetchNotifications,
@@ -405,6 +406,7 @@ function NotificationBody({ item }: { item: NotificationItem }) {
             className="h-2 w-2 shrink-0 rounded-full bg-primary"
           />
         )}
+        <UserAvatar username={item.actorUsername} size={32} />
         <p className="text-sm">
           <span className="font-semibold">{item.actorUsername ?? "FindBack"}</span>{" "}
           <span className="text-on-surface-variant">{typeLabel(item.type)}</span>

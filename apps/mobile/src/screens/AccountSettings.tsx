@@ -3,6 +3,7 @@ import { LogOut } from "lucide-react";
 import { useAuth } from "../auth";
 import { requestAccountDeletion } from "../services/auth";
 import { Button } from "../components/Button";
+import { UserAvatar } from "../components/UserAvatar";
 import {
   SettingsGroup,
   SettingsPage,
@@ -12,11 +13,6 @@ import {
 import { describeCloudConnections } from "../services/aiCredentials";
 import { friendlyError } from "../utils/friendlyErrors";
 import "./AccountSettings.css";
-
-function initialsFor(username: string): string {
-  const initial = username.trim().charAt(0);
-  return initial ? initial.toUpperCase() : "?";
-}
 
 /**
  * Account detail screen (integrator: mount at `/settings/account`).
@@ -139,15 +135,7 @@ export function AccountSettings() {
       <SettingsGroup title="Account information">
         <SettingsRow
           title="Profile photo"
-          value={
-            user.avatarUrl ? (
-              <img className="fb-account-avatar" src={user.avatarUrl} alt="" />
-            ) : (
-              <span aria-hidden="true" className="fb-account-avatar fb-account-avatar-initials">
-                {initialsFor(user.username)}
-              </span>
-            )
-          }
+          value={<UserAvatar avatarUrl={user.avatarUrl} username={user.username} size={40} />}
         />
         <SettingsRow
           title="Username"

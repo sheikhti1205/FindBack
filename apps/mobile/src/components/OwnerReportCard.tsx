@@ -3,6 +3,7 @@ import type { PostItem, PostStatus, PostType } from "@findback/shared";
 import { POST_STATUS_LABELS } from "@findback/shared";
 import { CircleAlert, CircleCheck, ImageOff, Link2, MessageSquare, Tag, Heart } from "lucide-react";
 import { Link } from "react-router";
+import { PhotoLightbox } from "./PhotoLightbox";
 import { timeAgo } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
 
@@ -80,7 +81,8 @@ function OwnerImage({ post, fileUrl }: { post: PostItem; fileUrl: string }) {
  * shared lifecycle labels — only the arrangement and the prominent owner
  * status differ.
  *
- * The whole card links to the detail page. Owner controls (status changes,
+ * The content links to the detail page while the photo opens the canonical
+ * PhotoLightbox (media and link are siblings, never nested). Owner controls (status changes,
  * delete) live on the redesigned detail page — never on this scrolling card.
  * The card never repeats @currentUser: authorship is implicit on My Reports.
  */
@@ -88,10 +90,16 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
   const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
   const hero = images[0];
   const excerpt = stripMarkdown(post.description);
+  // Canonical PhotoLightbox for the hero thumb (multi-image: full gallery at
+  // the tapped index with prev/next). The media button is a SIBLING of the
+  // content detail link, never inside it — a button nested in a link is
+  // invalid DOM (see PostCard home-feed). All testids/classes are unchanged.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
+  const lastIndex = lightboxPhotos.length - 1;
   return (
     <article data-testid="owner-report-article">
-      <Link
-        to={`/posts/${post.id}`}
+      <div
         className="flex gap-2.5 rounded-[18px] border border-outline-variant bg-surface-container-low p-2.5 shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container"
       >
         <div
@@ -100,7 +108,18 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
         >
           <div data-testid="owner-report-media" className="relative min-w-0">
             {hero ? (
-              <OwnerImage post={post} fileUrl={hero.fileUrl} />
+              <button
+                type="button"
+                onClick={() => setLightboxIndex(0)}
+                aria-label={
+                  images.length === 1
+                    ? `Open photo for ${post.title} fullscreen`
+                    : `Open photo 1 of ${images.length} for ${post.title} fullscreen`
+                }
+                className="block w-full"
+              >
+                <OwnerImage post={post} fileUrl={hero.fileUrl} />
+              </button>
             ) : (
               <div
                 data-testid="owner-report-no-photo"
@@ -116,7 +135,8 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
               </span>
             )}
           </div>
-          <div
+          <Link
+            to={`/posts/${post.id}`}
             data-testid="owner-report-content"
             className="flex min-w-0 flex-col gap-1.5"
           >
@@ -149,9 +169,36 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
               </span>
               <OwnerMetrics post={post} />
             </div>
-          </div>
+          </Link>
         </div>
-      </Link>
+      </div>
+      {lightboxIndex !== null && lightboxPhotos.length > 0 && (
+        <PhotoLightbox
+          photo={lightboxPhotos[Math.min(lightboxIndex, lastIndex)]!}
+          index={Math.min(lightboxIndex, lastIndex)}
+          total={lightboxPhotos.length}
+          photos={lightboxPhotos}
+          title={post.title}
+          onSelect={(index) => setLightboxIndex(index)}
+          onClose={() => setLightboxIndex(null)}
+          onPrev={
+            lightboxPhotos.length > 1
+              ? () =>
+                  setLightboxIndex((current) =>
+                    current === null ? current : (current - 1 + lightboxPhotos.length) % lightboxPhotos.length,
+                  )
+              : undefined
+          }
+          onNext={
+            lightboxPhotos.length > 1
+              ? () =>
+                  setLightboxIndex((current) =>
+                    current === null ? current : (current + 1) % lightboxPhotos.length,
+                  )
+              : undefined
+          }
+        />
+      )}
     </article>
   );
 }

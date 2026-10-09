@@ -152,18 +152,27 @@ describe("OwnerReportCard (My Reports owner-feed layout)", () => {
     expect(screen.queryByTestId("owner-report-image")).toBeNull();
   });
 
-  it("opens the detail page from the whole card", () => {
+  it("opens the detail page from the content link while the photo opens the lightbox", () => {
     renderCard(<OwnerReportCard post={imagePost()} />);
     const link = screen.getByRole("link");
     expect(link.getAttribute("href")).toBe("/posts/p1");
-    expect(screen.getByTestId("owner-report-card").contains(link)).toBe(false);
-    expect(link.contains(screen.getByTestId("owner-report-card"))).toBe(true);
+    expect(link.getAttribute("data-testid")).toBe("owner-report-content");
+    expect(screen.getByTestId("owner-report-card").contains(link)).toBe(true);
+    // The photo is a sibling tap target, never nested inside the link.
+    const photoButton = screen.getByRole("button", { name: /open photo/i });
+    expect(link.contains(photoButton)).toBe(false);
+    fireEvent.click(photoButton);
+    expect(screen.getByTestId("photo-lightbox")).toBeTruthy();
   });
 
   it("exposes NO destructive status controls on the scrolling card", () => {
     renderCard(<OwnerReportCard post={imagePost()} />);
     const card = screen.getByTestId("owner-report-card");
-    expect(within(card).queryByRole("button")).toBeNull();
+    // Only the photo viewer button; no status/delete controls.
+    const buttons = within(card).getAllByRole("button");
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
+      expect.stringMatching(/open photo/i),
+    ]);
     expect(card.querySelector("select, input")).toBeNull();
     expect(card.textContent).not.toMatch(/delete|close report|mark recovered/i);
   });
