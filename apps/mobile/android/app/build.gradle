@@ -98,6 +98,15 @@ android {
         // CI/local can point at a different project.
         def nativeSupabaseUrl = System.getenv("VITE_SUPABASE_URL") ?: System.getenv("SUPABASE_URL") ?: "https://nfjhpigbsyyoaaktfaev.supabase.co"
         buildConfigField "String", "REPLY_ENDPOINT", "\"${nativeSupabaseUrl}/functions/v1/reply-comment\""
+        // Google Sign-In (W0-A S1): Web/server OAuth client ID used as the
+        // Credential Manager Google ID option audience. Env-provided
+        // (GOOGLE_WEB_CLIENT_ID from the owner-configured Google Cloud
+        // console); default empty = misconfigured → the GoogleAuthPlugin fails
+        // closed (isAvailable false, signIn rejects) and never fakes success.
+        // This is a public identifier, NOT a secret — and no client secret
+        // exists anywhere in this path. Never hard-code a real value here.
+        def googleWebClientId = System.getenv("GOOGLE_WEB_CLIENT_ID") ?: ""
+        buildConfigField "String", "GOOGLE_WEB_CLIENT_ID", "\"${googleWebClientId}\""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -237,6 +246,13 @@ dependencies {
     // Report location-services check + enable dialog (SettingsClient). The
     // Geolocation fix itself comes from @capacitor/geolocation (fused provider).
     implementation "com.google.android.gms:play-services-location:21.3.0"
+    // Google Sign-In (W0-A S1): Android Credential Manager + Google ID option.
+    // Pinned exact — never floating. Stable 1.6.0 line (April 2026) +
+    // googleid 1.2.1 (Sept 2026, carries GetGoogleIdOption incl.
+    // setRequestVerifiedPhoneNumber used by GoogleAuthPlugin).
+    implementation "androidx.credentials:credentials:1.6.0"
+    implementation "androidx.credentials:credentials-play-services-auth:1.6.0"
+    implementation "com.google.android.libraries.identity.googleid:googleid:1.2.1"
     implementation "androidx.exifinterface:exifinterface:$androidxExifInterfaceVersion"
     // On-device vision: LiteRT-LM Android (SmolVLM2-500M `.litertlm`).
     // GPU is selected via EngineConfig backend — no separate GPU-delegate

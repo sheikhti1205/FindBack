@@ -32,9 +32,20 @@ import {
   joinInboxRoom,
   leaveInboxRoom,
 } from "./services/realtime";
+import {
+  GoogleAuthError,
+  startGoogleSignIn as startNativeGoogleSignIn,
+} from "./native/googleAuth";
 import { startPushNotifications, stopPushNotifications } from "./services/pushRuntime";
 import { clearUserScopedLocalState } from "./services/userScopedState";
 import { aiCredentials } from "./services/aiCredentials";
+// W0-B (S2, additive): Google ID-token seam + missing-profile seed. auth.ts,
+// session.ts, and userScopedState.ts remain the owners of their behavior.
+import {
+  getNeedsProfileSeed,
+  signInWithGoogleIdToken,
+  type GoogleProfileSeed,
+} from "./services/auth/googleSignIn";
 
 export type RegisterOutcome =
   | { status: "authenticated"; user: PublicUser }
@@ -64,6 +75,15 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   setUser: (user: PublicUser) => void;
+  /** W0-B (S2, additive): bridge token → Supabase session. Returns the user
+   *  when authenticated, or null when routed to completion (see needsProfile). */
+  signInWithGoogle: (mode: "signin" | "signup") => Promise<PublicUser | null>;
+  /** W0-B (S2, additive): set when a valid session has no FindBack profile
+   *  (new Google account or interrupted completion). The session is KEPT —
+   *  this state never signs the user out. */
+  needsProfile: GoogleProfileSeed | null;
+  /** W0-B (S2, additive): dismiss the completion state (after completeSocialProfile). */
+  clearNeedsProfile: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -73,6 +93,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [pendingEmail, setPendingEmailState] = useState<string | null>(() => getPendingEmail());
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
+  // W0-B (S2, additive): social profile-completion state. Independent of user;
+  // a valid session with no profile row sets this WITHOUT signing out.
+  const [needsProfile, setNeedsProfileState] = useState<GoogleProfileSeed | null>(null);
 
   const runBoot = useCallback(() => {
     let cancelled = false;
@@ -81,7 +104,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void (async () => {
       try {
         const restored = await restoreSession();
-        if (!cancelled) setUserState(restored);
+        if (!cancelled) {
+          // W0-B (S2, additive): a loaded profile is complete by definition.
+          setNeedsProfileState(null);
+          setUserState(restored);
+        }
       } catch (err) {
         if (cancelled) return;
         if (err instanceof BootTimeoutError) {
@@ -89,8 +116,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Retry. Never assume signed-out and never destroy the session here.
           setBootError("unreachable");
         } else {
-          clearAllAuth();
-          setPendingEmailState(null);
+          // W0-B (S2, additive): a valid session without a FindBack profile
+          // (new Google account or interrupted completion) routes to
+          // completion — the session is KEPT, clearAllAuth is NOT called.
+          const seed = await getNeedsProfileSeed().catch(() => null);
+          if (cancelled) return;
+          if (seed) {
+            setNeedsProfileState(seed);
+          } else {
+            clearAllAuth();
+            setPendingEmailState(null);
+          }
         }
       } finally {
         if (!cancelled) setBooting(false);
@@ -116,6 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           clearUserScopedLocalState();
           setUserState(null);
           setPendingEmailState(null);
+          setNeedsProfileState(null); // W0-B (S2, additive): completion cannot outlive the session.
           return;
         }
         if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
@@ -145,6 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearUserScopedLocalState();
         setUserState(null);
         setPendingEmailState(null);
+        setNeedsProfileState(null); // W0-B (S2, additive): see SIGNED_OUT above.
       }),
     [],
   );
@@ -169,6 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const next = await apiLogin({ email, password });
+    setNeedsProfileState(null); // W0-B (S2, additive): password login is a complete profile.
     setUserState(next);
     return next;
   }, []);
@@ -182,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPendingEmailState(email);
         return { status: "pending", email } as const;
       }
+      setNeedsProfileState(null); // W0-B (S2, additive): registered profile is complete.
       setUserState(result.user);
       return { status: "authenticated", user: result.user } as const;
     },
@@ -194,6 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const next = await verifyPendingEmailCode(pendingEmail, code);
       persistPendingEmail(null);
       setPendingEmailState(null);
+      setNeedsProfileState(null); // W0-B (S2, additive): verified profile is complete.
       setUserState(next);
       return next;
     },
@@ -228,10 +269,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     aiCredentials.clearSession();
     setPendingEmailState(null);
+    setNeedsProfileState(null); // W0-B (S2, additive): completion cannot outlive the session.
     disconnectRealtime();
     clearUserScopedLocalState();
     setUserState(null);
   }, [user]);
+
+  // Coordinator integration (S1 landed): full Google flow — S1 bridge token
+  // → S2 seam → auth state. Static S1 import with the typed kind taxonomy;
+  // cancel is detected via `kind`, never message matching.
+  const clearNeedsProfile = useCallback(() => setNeedsProfileState(null), []);
+
+  const signInWithGoogle = useCallback(async (mode: "signin" | "signup") => {
+    let idToken = "";
+    try {
+      const result = await startNativeGoogleSignIn({ mode });
+      idToken = typeof result?.idToken === "string" ? result.idToken : "";
+    } catch (err) {
+      // S1 GoogleAuthError messages are already human (contract) — rethrow
+      // verbatim so the taxonomy survives to the UI.
+      if (err instanceof GoogleAuthError && err.kind === "cancelled") {
+        throw new Error("Google sign-in was cancelled.");
+      }
+      if (err instanceof Error) throw err;
+      throw new Error("Google sign-in failed. Please try again.");
+    }
+    if (!idToken) throw new Error("Google sign-in did not return a token. Please try again.");
+    const outcome = await signInWithGoogleIdToken(idToken);
+    if (outcome.status === "authenticated") {
+      setNeedsProfileState(null);
+      setUserState(outcome.user);
+      return outcome.user;
+    }
+    setNeedsProfileState(outcome.seed);
+    return null;
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -247,6 +319,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       refreshUser,
       setUser,
+      signInWithGoogle,
+      needsProfile,
+      clearNeedsProfile,
     }),
     [
       user,
@@ -261,6 +336,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       refreshUser,
       setUser,
+      signInWithGoogle,
+      needsProfile,
+      clearNeedsProfile,
     ],
   );
 
