@@ -153,6 +153,28 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+        signeddev {
+            // W0-D: device-bound dev installs. Debug behavior otherwise
+            // (initWith debug); ABI splits stay OFF because the task name
+            // carries no "release" (see splits above), so a single unsplit
+            // APK. Signed with the CANONICAL findbackRelease keystore ONLY
+            // when ALL of the existing ANDROID_KEYSTORE_* env creds are
+            // present; otherwise unsigned — the build NEVER fails on missing
+            // secrets. No new secret paths, no committed keystore/passwords.
+            initWith debug
+            // Library modules (:capacitor-android,
+            // :capacitor-cordova-android-plugins) ship only debug/release
+            // variants: resolve their debug variant for this build type.
+            matchingFallbacks = ['debug']
+            if (System.getenv("ANDROID_KEYSTORE_PATH")
+                && System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                && System.getenv("ANDROID_KEY_ALIAS")
+                && System.getenv("ANDROID_KEY_PASSWORD")) {
+                signingConfig signingConfigs.findbackRelease
+            }
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
     }
     kotlinOptions {
         jvmTarget = '21'
