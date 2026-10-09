@@ -203,6 +203,11 @@ jobs:
       VITE_MONITORING_SELFTEST: ${{ vars.VITE_MONITORING_SELFTEST }}
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+      # Web/server Google OAuth client ID -> BuildConfig.GOOGLE_WEB_CLIENT_ID.
+      # Public identifier (NOT the client secret). Empty keeps Google sign-in
+      # fail-closed; the release preflight warns rather than shipping a build
+      # that silently lacks the provider.
+      GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v5
         with:
