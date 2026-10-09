@@ -126,6 +126,9 @@ function pendingUser(user: User | null, input: { username: string; email: string
     phoneVerified: false,
     avatarUrl: null,
     createdAt: user?.created_at ?? new Date().toISOString(),
+    displayName: null,
+    bio: null,
+    locationLabel: null,
   };
 }
 
@@ -136,6 +139,9 @@ interface ProfileRow {
   phone_verified: boolean | null;
   avatar_url: string | null;
   created_at: string;
+  display_name: string | null;
+  bio: string | null;
+  location_label: string | null;
 }
 
 export async function register(input: {
@@ -196,7 +202,7 @@ export async function fetchMe(expectedUserId?: string): Promise<PublicUser> {
   // auth.phone + phone_confirmed_at alone prove ownership of that number.
   const { data: row, error } = await getSupabase()
     .from("users")
-    .select("id,username,email_verified,phone_verified,avatar_url,created_at")
+    .select("id,username,email_verified,phone_verified,avatar_url,created_at,display_name,bio,location_label")
     .eq("id", user.id)
     .single<ProfileRow>();
   if (error || !row) throw new ApiError(error?.message ?? "Could not load profile", 400);
@@ -213,6 +219,9 @@ export async function fetchMe(expectedUserId?: string): Promise<PublicUser> {
       normalizePhone(phone) !== null && normalizePhone(phone) === normalizePhone(user.phone ?? ""),
     avatarUrl: row.avatar_url ?? null,
     createdAt: row.created_at,
+    displayName: row.display_name ?? null,
+    bio: row.bio ?? null,
+    locationLabel: row.location_label ?? null,
   };
 }
 

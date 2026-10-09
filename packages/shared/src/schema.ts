@@ -145,6 +145,15 @@ export interface PublicProfile {
   phoneVerified: boolean;
   avatarUrl: string | null;
   createdAt: string;
+  /**
+   * Optional public identity fields. Kept optional (rather than required) so
+   * existing author projections that predate the profile-identity migration
+   * stay valid without editing coordinator-owned mappers; absent is treated as
+   * null. Never email/phone.
+   */
+  displayName?: string | null;
+  bio?: string | null;
+  locationLabel?: string | null;
 }
 
 /** The signed-in user's own account. Email/phone are only ever shown to them. */
@@ -157,6 +166,10 @@ export interface PublicUser {
   phoneVerified: boolean;
   avatarUrl: string | null;
   createdAt: string;
+  /** Own editable public identity; optional for pre-migration rows. */
+  displayName?: string | null;
+  bio?: string | null;
+  locationLabel?: string | null;
 }
 
 export interface Attachment {

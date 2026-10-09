@@ -17,6 +17,9 @@ const { mockUser } = vi.hoisted(() => ({
       emailVerified: true,
       phoneVerified: false,
       avatarUrl: null,
+      displayName: "Tester Name",
+      bio: null,
+      locationLabel: null,
       createdAt: "2026-01-01T00:00:00.000Z",
     },
   },
@@ -41,6 +44,9 @@ beforeEach(() => {
     emailVerified: true,
     phoneVerified: false,
     avatarUrl: null,
+    displayName: "Tester Name",
+    bio: null,
+    locationLabel: null,
     createdAt: "2026-01-01T00:00:00.000Z",
   };
 });
@@ -56,15 +62,23 @@ function renderProfile() {
 }
 
 describe("Profile landing", () => {
-  it("renders the header, identity hero, and edit action", () => {
+  it("renders the header and identity hero with the canonical avatar fallback", () => {
     renderProfile();
     expect(screen.getByRole("heading", { level: 1, name: "Profile" })).toBeTruthy();
+    expect(screen.getByText("Tester Name")).toBeTruthy();
     expect(screen.getByText("@tester")).toBeTruthy();
     expect(screen.getByText("tester@example.com")).toBeTruthy();
     expect(screen.getByText("Email verified")).toBeTruthy();
+    expect(screen.getByText("TE")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Edit profile" }).getAttribute("href")).toBe(
       "/profile/edit",
     );
+  });
+
+  it("links to the public profile route for the signed-in user", () => {
+    renderProfile();
+    const link = screen.getByRole("link", { name: /public profile/i });
+    expect(link.getAttribute("href")).toBe("/u/tester");
   });
 
   it("offers a real Verify action when the email is unverified", () => {
@@ -76,16 +90,21 @@ describe("Profile landing", () => {
     );
   });
 
-  it("links My reports and Settings to their canonical routes", () => {
+  it("links Public profile, My reports, Settings and Help to their canonical routes", () => {
     renderProfile();
     const nav = screen.getByRole("navigation", { name: "Profile actions" });
     const links = within(nav).getAllByRole("link");
-    expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
-      ["My reports", "/my"],
-      ["Settings", "/settings"],
-      ["Help & guide", "/settings/help"],
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/u/tester",
+      "/my",
+      "/settings",
+      "/settings/help",
     ]);
     for (const link of links) expect(link.tagName).toBe("A");
+    expect(within(nav).getByText("Public profile")).toBeTruthy();
+    expect(within(nav).getByText("My reports")).toBeTruthy();
+    expect(within(nav).getByText("Settings")).toBeTruthy();
+    expect(within(nav).getByText("Help & guide")).toBeTruthy();
   });
 
   it("removes debug-panel content: phone hero, appearance, AI links, self-test, about, logout", () => {
