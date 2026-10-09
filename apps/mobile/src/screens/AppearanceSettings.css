@@ -60,8 +60,10 @@
   min-height: 2.75rem;
   padding: 0 1rem;
   border-radius: 999px;
-  background: var(--fb-primary-container);
-  color: var(--fb-on-primary-container);
+  /* W5: the preview chip demonstrates a semantic state (Found), so it binds
+     to the functional palette — never the accent container. */
+  background: var(--fb-found-bg);
+  color: var(--fb-found-ink);
   font-size: 0.875rem;
   font-weight: 500;
 }

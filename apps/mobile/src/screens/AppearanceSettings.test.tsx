@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -93,5 +94,19 @@ describe("AppearanceSettings", () => {
     act(() => { screen.getByRole("radio", { name: "Teal" }).click(); });
     expect(screen.getByRole("img", { name: /preview/i }).getAttribute("aria-label")).toMatch(/dark/i);
     expect(screen.getByRole("img", { name: /preview/i }).getAttribute("aria-label")).toMatch(/teal/i);
+  });
+
+  it("scopes the accent copy: selections only, semantics keep their own meaning", () => {
+    renderScreen();
+    const group = screen.getByText(/status colors, reactions, and mention links/i);
+    expect(group.textContent).toMatch(/never follow the accent/i);
+  });
+
+  it("binds the preview Found chip to functional tokens, never the accent container", () => {
+    const css = readFileSync("src/screens/AppearanceSettings.css", "utf8");
+    const rule = css.slice(css.indexOf(".fb-appearance-preview-chip {")).split("}")[0]!;
+    expect(rule).toContain("var(--fb-found-bg)");
+    expect(rule).toContain("var(--fb-found-ink)");
+    expect(rule).not.toContain("--fb-primary-container");
   });
 });

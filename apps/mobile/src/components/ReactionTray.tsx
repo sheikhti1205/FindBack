@@ -7,6 +7,7 @@ import type {
 } from "@findback/shared";
 import { CANONICAL_REACTION_KINDS } from "@findback/shared";
 import { REACTION_KINDS, normalizeReactionKind } from "../services/reactions";
+import { REACTION_KIND_FUNCTIONAL } from "../design/functionalColors";
 
 /**
  * W3.3 multi-kind reaction tray: the shared picker for posts and comments.
@@ -24,6 +25,18 @@ const KIND_ICONS: Record<CanonicalReactionKind, typeof Heart> = {
   HELPFUL: Lightbulb,
   SUPPORT: HeartHandshake,
   WOW: Sparkles,
+};
+
+/**
+ * W5 functional kind colors (Love rose, Helpful blue, Support teal-green,
+ * Wow bronze). Icon + count only, on the neutral tray surface — the label
+ * keeps the surrounding tone and the user accent never applies here.
+ */
+const KIND_COLOR_VAR: Record<CanonicalReactionKind, string> = {
+  LOVE: "var(--fb-reaction-love)",
+  HELPFUL: "var(--fb-reaction-helpful)",
+  SUPPORT: "var(--fb-reaction-support)",
+  WOW: "var(--fb-reaction-wow)",
 };
 
 export function reactionKindLabel(kind: CanonicalReactionKind): string {
@@ -168,15 +181,16 @@ export function ReactionTray({
             aria-checked={checked}
             data-testid={`reaction-option-${kind}`}
             data-kind={kind}
+            data-functional-color={REACTION_KIND_FUNCTIONAL[kind]}
             disabled={pending}
             onClick={() => onSelect(kind)}
             className={`flex min-h-[44px] min-w-[44px] flex-1 flex-col items-center justify-center gap-0.5 rounded-m3-md px-2 py-1 text-xs font-medium ${
               checked ? "bg-surface-container-high text-on-surface" : "text-on-surface-variant"
             }`}
           >
-            <Icon size={20} aria-hidden fill={checked ? "currentColor" : "none"} />
+            <Icon size={20} aria-hidden fill={checked ? "currentColor" : "none"} style={{ color: KIND_COLOR_VAR[kind] }} />
             <span>{reactionKindLabel(kind)}</span>
-            <span aria-hidden className="tabular-nums">{count}</span>
+            <span aria-hidden className="tabular-nums" style={{ color: KIND_COLOR_VAR[kind] }}>{count}</span>
           </button>
         );
       })}

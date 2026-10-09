@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ACCENT_OPTIONS,
+  ACCENT_OWNED_CSS_VARS,
   APPEARANCE_EVENT,
   APPEARANCE_STORAGE_KEY,
   DEFAULT_APPEARANCE,
@@ -140,5 +141,44 @@ describe("appearance settings module (AI-011 Quick Appearance)", () => {
     expect(currentPhotoQuality()).toEqual(PHOTO_QUALITY_HIGH);
     saveAppearance({ ...DEFAULT_APPEARANCE, highQualityPhoto: false });
     expect(currentPhotoQuality()).toEqual(PHOTO_QUALITY_STANDARD);
+  });
+});
+
+describe("appearance accent scope (W5: accent never recolors semantics)", () => {
+  const SEMANTIC_INLINE_VARS = [
+    "--fb-status-matched-bg",
+    "--fb-status-recovered-bg",
+    "--fb-status-closed-bg",
+    "--fb-lost-bg",
+    "--fb-found-bg",
+    "--fb-reaction-love",
+    "--fb-reaction-wow",
+    "--fb-mention",
+    "--fb-fc-brand",
+    "--fb-fc-ai",
+  ];
+
+  it("declares only principal action/selection vars as accent-owned", () => {
+    for (const name of ACCENT_OWNED_CSS_VARS) {
+      expect(name).toMatch(/--fb-(primary|on-primary|link|accent)/);
+    }
+    for (const name of SEMANTIC_INLINE_VARS) {
+      expect(ACCENT_OWNED_CSS_VARS as readonly string[]).not.toContain(name);
+    }
+  });
+
+  it("applyAppearance leaves every semantic inline var unset for all accents", () => {
+    for (const accent of ACCENT_OPTIONS) {
+      applyAppearance({ ...DEFAULT_APPEARANCE, accent: accent.id });
+      const style = document.documentElement.style;
+      for (const name of SEMANTIC_INLINE_VARS) {
+        expect(style.getPropertyValue(name), `${accent.id} ${name}`).toBe("");
+      }
+    }
+  });
+
+  it("keeps mono valid and the new-install default untouched", () => {
+    expect(DEFAULT_APPEARANCE.accent).toBe("mono");
+    expect(ACCENT_OPTIONS.some((a) => a.id === "mono")).toBe(true);
   });
 });

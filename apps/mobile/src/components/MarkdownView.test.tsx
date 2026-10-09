@@ -108,7 +108,9 @@ describe("MarkdownView linkMentions", () => {
 
     const link = screen.getByRole("link", { name: "@alice" });
     expect(link.getAttribute("href")).toBe("/u/alice");
-    expect(link.className).toMatch(/text-primary/);
+    // W5: mention links bind the functional blue/teal family, never the accent.
+    expect(link.className).toMatch(/text-mention/);
+    expect(link.className).not.toMatch(/text-primary/);
   });
 
   it("leaves non-handles untouched", () => {

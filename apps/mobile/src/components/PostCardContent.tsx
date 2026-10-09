@@ -389,11 +389,11 @@ const STATUS_ICONS: Record<SemanticStatusKind, ComponentType<{ size?: number; "a
 };
 
 const STATUS_TONE: Record<SemanticStatusKind, string> = {
-  lost: "fb-type-lost",
-  found: "fb-type-found",
-  matched: "bg-surface-container text-on-surface",
-  recovered: "bg-on-surface text-surface",
-  closed: "border border-outline-variant text-on-surface-variant",
+  lost: "fb-status-lost",
+  found: "fb-status-found",
+  matched: "fb-status-matched",
+  recovered: "fb-status-recovered",
+  closed: "fb-status-closed",
 };
 
 /** Semantic status chip: text + icon carry the meaning, never color alone. */

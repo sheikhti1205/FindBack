@@ -25,6 +25,11 @@
  * - Accent pairs are emitted for both light and dark so CSS can select the
  *   active palette without a stale inline color during an OS/theme change.
  *   Lost/Found/Error/Warning/Success remain independent semantic roles.
+ * - W5 scope: the accent owns ONLY principal action/selection vars (the
+ *   `ACCENT_OWNED_CSS_VARS` list). Semantic states (status chips, reaction
+ *   kinds, mention links) bind to the functional palette (`design/
+ *   functionalColors.ts` → `--fb-status-*`, `--fb-reaction-*`, `--fb-mention`,
+ *   `--fb-fc-*`) and never follow the accent.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -70,8 +75,7 @@ export function migrateAccent(value: unknown): AccentId {
 }
 
 /** True-black (`.amoled`) reuses the dark accent tokens; only surfaces differ. */
-export function accentTokensFor(id: AccentId, mode: "light" | "dark") {
-  const accent = ACCENT_OPTIONS.find((a) => a.id === id) ?? ACCENT_OPTIONS.find((a) => a.id === DEFAULT_APPEARANCE.accent) ?? ACCENT_OPTIONS[0]!;
+export function accentTokensFor(id: AccentId, mode: "light" | "dark") {  const accent = ACCENT_OPTIONS.find((a) => a.id === id) ?? ACCENT_OPTIONS.find((a) => a.id === DEFAULT_APPEARANCE.accent) ?? ACCENT_OPTIONS[0]!;
   const dark = mode === "dark";
   return {
     primary: dark ? accent.darkSwatch : accent.swatch,
@@ -81,6 +85,28 @@ export function accentTokensFor(id: AccentId, mode: "light" | "dark") {
     link: dark ? accent.darkSwatch : accent.darkOnAccent,
   };
 }
+
+/**
+ * W5: the ONLY inline CSS vars `applyAppearance` may write for the accent.
+ * Semantic/functional vars (`--fb-status-*`, `--fb-reaction-*`,
+ * `--fb-mention`, `--fb-fc-*`, `--fb-lost-*`, `--fb-found-*`) are owned by
+ * `index.css` per mode and must never appear here — that is what keeps the
+ * user's arbitrary accent from recoloring semantic states.
+ */
+export const ACCENT_OWNED_CSS_VARS = [
+  "--fb-primary-light",
+  "--fb-on-primary-light",
+  "--fb-primary-container-light",
+  "--fb-on-primary-container-light",
+  "--fb-link-light",
+  "--fb-primary-dark",
+  "--fb-on-primary-dark",
+  "--fb-primary-container-dark",
+  "--fb-on-primary-container-dark",
+  "--fb-link-dark",
+  "--fb-accent",
+  "--fb-accent-ink",
+] as const;
 
 export type TextScaleId = "compact" | "standard" | "large" | "xlarge";
 

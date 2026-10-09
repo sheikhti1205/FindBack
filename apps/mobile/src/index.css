@@ -18,6 +18,7 @@
   --color-on-primary-container: var(--fb-on-primary-container);
   --color-focus: var(--fb-focus);
   --color-link: var(--fb-link);
+  --color-mention: var(--fb-mention);
   --color-selection: var(--fb-selection);
   --color-on-selection: var(--fb-on-selection);
   --color-control-active: var(--fb-control-active);
@@ -69,13 +70,36 @@
   --fb-tint-bg: #f8f9fa;
   --fb-tint-ink: #343a40;
   --fb-tint-line: #ced4da;
-  /* Home-feed Lost/Found semantic tokens. Lost keeps a muted red because the
-   * colour conveys meaning; Found is neutral by default — the check icon and
-   * `Found` text carry status, never colour alone. */
-  --fb-lost-bg: #f9dedc;
-  --fb-lost-ink: #93000a;
-  --fb-found-bg: #e9ecef;
-  --fb-found-ink: #343a40;
+  /* Home-feed Lost/Found semantic tokens (W5 functional palette:
+   * Lost = amber/orange, Found = green). Meaning is carried by text + icon,
+   * never color alone. */
+  --fb-lost-bg: #fbeed3;
+  --fb-lost-ink: #5c3200;
+  --fb-found-bg: #ddf0e1;
+  --fb-found-ink: #123f1f;
+  /* W5 status chips: Matched = blue/violet, Recovered = emerald,
+   * Closed stays neutral. */
+  --fb-status-matched-bg: #e4e9fc;
+  --fb-status-matched-ink: #26328a;
+  --fb-status-recovered-bg: #d8f0e6;
+  --fb-status-recovered-ink: #093f2e;
+  --fb-status-closed-bg: #e9ecef;
+  --fb-status-closed-ink: #343a40;
+  /* W5 reaction kind accents (icon + count on neutral surfaces, never the
+   * user accent): Love rose, Helpful blue, Support teal-green, Wow bronze. */
+  --fb-reaction-love: #a62b4d;
+  --fb-reaction-helpful: #2f5fc6;
+  --fb-reaction-support: #0b6b5b;
+  --fb-reaction-wow: #8a5a00;
+  /* W5 mention/semantic link color (blue family, never the user accent). */
+  --fb-mention: #0b57d0;
+  /* W5 remaining functional text tones (neutral-surface use only). */
+  --fb-fc-brand: #0a5a4c;
+  --fb-fc-ai: #6a3fd1;
+  --fb-fc-notification: #7a4a00;
+  --fb-fc-appearance: #7a3fb0;
+  --fb-fc-media: #0b6e7a;
+  --fb-fc-privacy: #1e6b32;
   /* M2-motion semantic surface/action tokens (neutral; AA vs on-surface text).
    * Composer + assistant surfaces stay near-page neutrals; the user bubble is
    * a light neutral that keeps >=4.5:1 vs the dark --fb-on-surface text;
@@ -116,11 +140,28 @@
   --fb-tint-bg: #343a40;
   --fb-tint-ink: #f8f9fa;
   --fb-tint-line: #6c757d;
-  /* Home-feed dark equivalents: muted dark red for Lost, neutral for Found. */
-  --fb-lost-bg: #3a2325;
-  --fb-lost-ink: #ffb4ab;
-  --fb-found-bg: #495057;
-  --fb-found-ink: #f8f9fa;
+  /* Home-feed dark equivalents (W5: Lost amber, Found green). */
+  --fb-lost-bg: #3a2c00;
+  --fb-lost-ink: #f5c04b;
+  --fb-found-bg: #12331f;
+  --fb-found-ink: #9bdcab;
+  --fb-status-matched-bg: #1c2a5c;
+  --fb-status-matched-ink: #bec8ff;
+  --fb-status-recovered-bg: #0e3b2c;
+  --fb-status-recovered-ink: #8fe3c3;
+  --fb-status-closed-bg: #343a40;
+  --fb-status-closed-ink: #ced4da;
+  --fb-reaction-love: #ffb2c4;
+  --fb-reaction-helpful: #adc7ff;
+  --fb-reaction-support: #7bd8d8;
+  --fb-reaction-wow: #e9c46a;
+  --fb-mention: #a8c7fa;
+  --fb-fc-brand: #7bd8d8;
+  --fb-fc-ai: #cfbdff;
+  --fb-fc-notification: #e9c46a;
+  --fb-fc-appearance: #d9beff;
+  --fb-fc-media: #8fe3e3;
+  --fb-fc-privacy: #8fdb9f;
   /* M2-motion dark values: near-white action surface behind near-black label
    * text (>=4.5:1); user bubble keeps >=4.5:1 vs dark --fb-on-surface. */
   --composer-surface: #343a40;
@@ -159,10 +200,27 @@
     --fb-tint-bg: #343a40;
     --fb-tint-ink: #f8f9fa;
     --fb-tint-line: #6c757d;
-    --fb-lost-bg: #3a2325;
-    --fb-lost-ink: #ffb4ab;
-    --fb-found-bg: #495057;
-    --fb-found-ink: #f8f9fa;
+    --fb-lost-bg: #3a2c00;
+    --fb-lost-ink: #f5c04b;
+    --fb-found-bg: #12331f;
+    --fb-found-ink: #9bdcab;
+    --fb-status-matched-bg: #1c2a5c;
+    --fb-status-matched-ink: #bec8ff;
+    --fb-status-recovered-bg: #0e3b2c;
+    --fb-status-recovered-ink: #8fe3c3;
+    --fb-status-closed-bg: #343a40;
+    --fb-status-closed-ink: #ced4da;
+    --fb-reaction-love: #ffb2c4;
+    --fb-reaction-helpful: #adc7ff;
+    --fb-reaction-support: #7bd8d8;
+    --fb-reaction-wow: #e9c46a;
+    --fb-mention: #a8c7fa;
+    --fb-fc-brand: #7bd8d8;
+    --fb-fc-ai: #cfbdff;
+    --fb-fc-notification: #e9c46a;
+    --fb-fc-appearance: #d9beff;
+    --fb-fc-media: #8fe3e3;
+    --fb-fc-privacy: #8fdb9f;
     --composer-surface: #343a40;
     --user-bubble: #495057;
     --assistant-surface: #212529;
@@ -625,6 +683,30 @@ html.fb-reduce-motion .fb-feed-img[data-state="loading"]::after {
 .fb-type-found {
   background: var(--fb-found-bg);
   color: var(--fb-found-ink);
+}
+
+/* W5 functional status chips (color only — geometry comes from
+ * `.fb-type-badge` alongside). True-black safe: these resolve from the
+ * `.dark` rule, which `.amoled` keeps, and every pair meets AA on `#000`. */
+.fb-status-lost {
+  background: var(--fb-lost-bg);
+  color: var(--fb-lost-ink);
+}
+.fb-status-found {
+  background: var(--fb-found-bg);
+  color: var(--fb-found-ink);
+}
+.fb-status-matched {
+  background: var(--fb-status-matched-bg);
+  color: var(--fb-status-matched-ink);
+}
+.fb-status-recovered {
+  background: var(--fb-status-recovered-bg);
+  color: var(--fb-status-recovered-ink);
+}
+.fb-status-closed {
+  background: var(--fb-status-closed-bg);
+  color: var(--fb-status-closed-ink);
 }
 
 /* Truthful multi-photo badge overlaid on the feed image. */

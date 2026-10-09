@@ -140,7 +140,9 @@ export const MarkdownView = memo(function MarkdownView({
           // acknowledgement there.
           a: ({ href, children }) =>
             linkMentions && href && INTERNAL_MENTION_HREF_RE.test(href) ? (
-              <Link to={href} className="break-words font-medium text-primary underline">
+              // W5: @mention links use the functional blue/teal family
+              // (`--fb-mention`), never the user accent.
+              <Link to={href} className="break-words font-medium text-mention underline">
                 {children}
               </Link>
             ) : isSafeHref(href) ? (

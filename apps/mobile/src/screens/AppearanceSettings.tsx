@@ -75,7 +75,7 @@ export function AppearanceSettings() {
 
       <SettingsGroup
         title="Accent"
-        description="Used for buttons, links, and highlights across the app."
+        description="Used for buttons, selections, and highlights. Status colors, reactions, and mention links keep their own meaning and never follow the accent."
       >
         <fieldset className="fb-personal-fieldset">
           <legend className="sr-only">Accent</legend>

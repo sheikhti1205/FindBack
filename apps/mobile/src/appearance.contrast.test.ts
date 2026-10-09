@@ -267,10 +267,10 @@ describe("neutral structural palette (v0.9.0-beta.1)", () => {
   });
 
   it.each([["light", ":root"], ["dark", ".dark"]] as const)(
-    "%s status tint and Found badge surfaces are neutral (never green)",
+    "%s status tint surface stays neutral (Found badge is functional green per W5)",
     (_mode, selector) => {
       const source = blockOf(selector);
-      for (const name of ["--fb-tint-bg", "--fb-found-bg"]) {
+      for (const name of ["--fb-tint-bg"]) {
         const [r, g, b] = rgb(tokenOf(source, name));
         expect(b! >= g! && g! >= r!, `${name}=${tokenOf(source, name)} is not a cool neutral`).toBe(true);
       }
@@ -290,9 +290,41 @@ describe("neutral structural palette (v0.9.0-beta.1)", () => {
     ]);
   });
 
-  it("keeps the Found badge neutral with an icon + text affordance elsewhere", () => {
+  it("binds the Found badge to the W5 functional green with an icon + text affordance elsewhere", () => {
     const light = blockOf(":root");
-    expect(tokenOf(light, "--fb-found-bg")).toBe("#e9ecef");
-    expect(tokenOf(light, "--fb-found-ink")).toBe("#343a40");
+    expect(tokenOf(light, "--fb-found-bg")).toBe("#ddf0e1");
+    expect(tokenOf(light, "--fb-found-ink")).toBe("#123f1f");
+  });
+
+  it("binds every W5 functional chip pair with AA ink-on-bg in both modes", () => {
+    const modes = [["light", ":root"], ["dark", ".dark"]] as const;
+    const pairs: Array<[string, string]> = [
+      ["--fb-lost-ink", "--fb-lost-bg"],
+      ["--fb-found-ink", "--fb-found-bg"],
+      ["--fb-status-matched-ink", "--fb-status-matched-bg"],
+      ["--fb-status-recovered-ink", "--fb-status-recovered-bg"],
+      ["--fb-status-closed-ink", "--fb-status-closed-bg"],
+    ];
+    for (const [_mode, selector] of modes) {
+      const source = blockOf(selector);
+      for (const [ink, bg] of pairs) {
+        expect(contrast(token(source, ink), token(source, bg)), `${selector} ${ink}/${bg}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it("keeps W5 reaction/mention accents legible on neutral surfaces incl. true black", () => {
+    const light = blockOf(":root");
+    const dark = blockOf(".dark");
+    const lightSurfaces = ["#ffffff", "#f8f9fa", "#e9ecef"];
+    const darkSurfaces = ["#212529", "#343a40", "#000000"];
+    for (const name of ["--fb-reaction-love", "--fb-reaction-helpful", "--fb-reaction-support", "--fb-reaction-wow", "--fb-mention"]) {
+      for (const surface of lightSurfaces) {
+        expect(contrast(token(light, name), surface), `light ${name} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+      for (const surface of darkSurfaces) {
+        expect(contrast(token(dark, name), surface), `dark ${name} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 });
