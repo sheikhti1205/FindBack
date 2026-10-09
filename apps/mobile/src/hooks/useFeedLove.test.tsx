@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { PostItem } from "@findback/shared";
+import type { ReactionKind } from "@findback/shared";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FeedLoveProvider, useFeedLove } from "./useFeedLove";
@@ -283,8 +284,7 @@ describe("FeedLoveProvider optimistic Love toggle", () => {
     await waitFor(() => expect(result).toBe(false));
   });
 
-  it("reports an in-flight second toggle as handled (true), never a failure", async () => {
-    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+  it("reports an in-flight second toggle as handled (true), never a failure", async () => {    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
     let release!: (value: { data: unknown[]; error: null }) => void;
     clientMock.rpc.mockImplementationOnce(
       () =>
@@ -333,5 +333,172 @@ describe("FeedLoveProvider optimistic Love toggle", () => {
     expect(results).toEqual([true, true]);
     // No duplicate request: hydration + exactly one toggle.
     expect(clientMock.rpc).toHaveBeenCalledTimes(2);
+  });
+});
+
+function KindProbe({ postId, kind }: { postId: string; kind: ReactionKind }) {
+  const love = useFeedLove(postId);
+  if (!love) throw new Error("useFeedLove must be used inside FeedLoveProvider");
+  return (
+    <div>
+      <span data-testid={`kind-${postId}`}>{love.myKind ?? "none"}</span>
+      <span data-testid={`total-${postId}`}>{love.total}</span>
+      <button type="button" data-testid={`react-${postId}`} onClick={() => void love.react(kind)}>
+        react {postId}
+      </button>
+      <button type="button" data-testid={`toggle-${postId}`} onClick={() => void love.toggle()}>
+        toggle {postId}
+      </button>
+    </div>
+  );
+}
+
+describe("FeedLoveProvider kind-aware reactions (W3.3)", () => {
+  it("selects a tray kind through the real RPC and stores the returned summary", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ my_reaction: "HELPFUL", reaction_counts: { LOVE: 4, HELPFUL: 1 } }],
+      error: null,
+    });
+    const patchItem = vi.fn();
+    render(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4, dislikeCount: 0 })]} patchItem={patchItem}>
+        <KindProbe postId="p1" kind="HELPFUL" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(1));
+    patchItem.mockClear();
+
+    await act(async () => {
+      screen.getByTestId("react-p1").click();
+    });
+
+    // Every kind change calls the real RPC with the real kind (never LIKE).
+    expect(clientMock.rpc).toHaveBeenLastCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: "HELPFUL",
+    });
+    await waitFor(() => expect(screen.getByTestId("kind-p1").textContent).toBe("HELPFUL"));
+    // Server truth: 5 total, carried on the entry and patched into the feed item.
+    expect(screen.getByTestId("total-p1").textContent).toBe("5");
+    expect(patchItem).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({
+        reactionSummary: { counts: { LOVE: 4, HELPFUL: 1 }, myReaction: "HELPFUL", total: 5 },
+      }),
+    );
+  });
+
+  it("unreacts when the tray taps the active kind", async () => {
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", my_reaction: "HELPFUL", my_rating: null }],
+      error: null,
+    });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ my_reaction: null, reaction_counts: { LOVE: 4 } }],
+      error: null,
+    });
+    const patchItem = vi.fn();
+    render(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4 })]} patchItem={patchItem}>
+        <KindProbe postId="p1" kind="HELPFUL" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("kind-p1").textContent).toBe("HELPFUL"));
+
+    await act(async () => {
+      screen.getByTestId("react-p1").click();
+    });
+
+    expect(clientMock.rpc).toHaveBeenLastCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: null,
+    });
+    await waitFor(() => expect(screen.getByTestId("kind-p1").textContent).toBe("none"));
+  });
+
+  it("reads the batch-hydrated kind without refetching per card", async () => {
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", my_reaction: "WOW", my_rating: null }],
+      error: null,
+    });
+    render(
+      <FeedLoveProvider items={[item({ id: "p1" })]} patchItem={vi.fn()}>
+        <KindProbe postId="p1" kind="WOW" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("kind-p1").textContent).toBe("WOW"));
+    // One batch call only — no per-card hydration.
+    expect(clientMock.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls the optimistic kind back and reports false when the RPC fails", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+    clientMock.rpc.mockRejectedValueOnce(new Error("offline"));
+    const patchItem = vi.fn();
+    let result: boolean | null = null;
+    function ResultKindProbe() {
+      const love = useFeedLove("p1");
+      if (!love) throw new Error("useFeedLove must be used inside FeedLoveProvider");
+      return (
+        <button
+          type="button"
+          data-testid="react-result"
+          onClick={() => {
+            void love.react("SUPPORT").then((ok) => {
+              result = ok;
+            });
+          }}
+        >
+          react
+        </button>
+      );
+    }
+    render(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4 })]} patchItem={patchItem}>
+        <ResultKindProbe />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      screen.getByTestId("react-result").click();
+    });
+
+    await waitFor(() => expect(result).toBe(false));
+  });
+
+  it("stores the per-kind summary from a legacy toggle when the server provides it", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        {
+          post_id: "p1",
+          like_count: 5,
+          dislike_count: 1,
+          my_reaction: "LIKE",
+          reaction_counts: { LOVE: 5 },
+        },
+      ],
+      error: null,
+    });
+    render(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4, dislikeCount: 1 })]} patchItem={vi.fn()}>
+        <KindProbe postId="p1" kind="LOVE" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+
+    // The legacy LIKE write still lands, and the widened response is kept.
+    expect(clientMock.rpc).toHaveBeenLastCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: "LIKE",
+    });
+    await waitFor(() => expect(screen.getByTestId("total-p1").textContent).toBe("5"));
+    expect(screen.getByTestId("kind-p1").textContent).toBe("LOVE");
   });
 });

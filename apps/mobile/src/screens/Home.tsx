@@ -13,6 +13,7 @@ import { useFeed } from "../hooks/useFeed";
 import { FeedLoveProvider } from "../hooks/useFeedLove";
 import { useUrlParam } from "../hooks/useUrlParam";
 import { onRealtime } from "../services/realtime";
+import { reactionCountsFromJson } from "../services/reactions";
 import {
   FIX_MICROCOPY,
   createProductionLocationAdapter,
@@ -322,6 +323,40 @@ export function Home() {
     });
     return off;
   }, [removeItem]);
+
+  // Live reaction counts: patch the affected feed card in place (legacy
+  // buckets + per-kind summary). Comment broadcasts target comment rows on
+  // PostDetail — the feed shows no comment rows, so they are ignored here.
+  // The caller's own reaction is preserved from the cached item: the
+  // broadcast carries counts only, never my_reaction. Never refetch here.
+  useEffect(() => {
+    const off = onRealtime("reaction:changed", (payload) => {
+      const p = (payload ?? {}) as {
+        postId?: unknown;
+        commentId?: unknown;
+        likeCount?: unknown;
+        dislikeCount?: unknown;
+        reactionCounts?: unknown;
+      };
+      if (typeof p.postId !== "string" || typeof p.commentId === "string") return;
+      const counts = reactionCountsFromJson(p.reactionCounts);
+      const total = Object.values(counts).reduce<number>((s, n) => s + (n ?? 0), 0);
+      patchItem(p.postId, (prev) => ({
+        ...(typeof p.likeCount === "number" ? { likeCount: p.likeCount } : {}),
+        ...(typeof p.dislikeCount === "number" ? { dislikeCount: p.dislikeCount } : {}),
+        ...(p.reactionCounts === undefined
+          ? {}
+          : {
+              reactionSummary: {
+                counts,
+                total,
+                myReaction: prev.reactionSummary?.myReaction ?? null,
+              },
+            }),
+      }));
+    });
+    return off;
+  }, [patchItem]);
 
   useEffect(() => {
     setNewPostCount(getNewPostCount(scopedCacheKey));

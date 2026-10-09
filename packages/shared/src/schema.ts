@@ -213,6 +213,11 @@ export interface PostItem {
   commentCount: number;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Optional per-kind reaction summary (W3.3). Absent on rows that predate
+   * the summary (feed list) — callers fall back to likeCount/dislikeCount.
+   */
+  reactionSummary?: ReactionSummary;
 }
 
 /**

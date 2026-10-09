@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, MessageCircle, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
-import type { CommentItem, PostItem, PostStatus } from "@findback/shared";
+import { CalendarDays, ChevronDown, CornerDownRight, ExternalLink, Heart, HeartHandshake, Lightbulb, MapPin, MessageCircle, Sparkles, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
+import type { CanonicalReactionKind, CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
@@ -29,6 +29,8 @@ import { recordLoadTiming } from "../utils/loadTiming";
 import { openInMaps } from "../utils/location";
 import { formatEventDate, formatTimestamp } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
+import { ReactionTray, reactionKindLabel, topReactionKind } from "../components/ReactionTray";
+import { useLongPress } from "../hooks/useLongPress";
 import {
   addComment,
   deleteComment,
@@ -39,6 +41,16 @@ import {
   reactToPost,
   updatePostStatus,
 } from "../services/posts";
+import {
+  applyReactionDeltas,
+  seedSummaryFromItem,
+} from "../services/feedReactions";
+import {
+  nextReactionForTap,
+  normalizeReactionKind,
+  reactionCountsFromJson,
+  setCommentReaction,
+} from "../services/reactions";
 import {
   joinPostRoom,
   leavePostRoom,
@@ -60,6 +72,124 @@ function scrollToSection(id: string) {
   el.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" });
 }
 
+const COMMENT_KIND_ICONS: Record<CanonicalReactionKind, typeof Heart> = {
+  LOVE: Heart,
+  HELPFUL: Lightbulb,
+  SUPPORT: HeartHandshake,
+  WOW: Sparkles,
+};
+
+/**
+ * Compact per-comment reaction control (W3.3). Tap toggles the default Love,
+ * press-and-hold opens the shared ReactionTray, and the chevron "Choose
+ * reaction" button opens the same tray for keyboard/screen-reader users (no
+ * long-press needed). Writes go to the real comment RPC via the parent's
+ * onToggle/onSelect; failures revert there and surface through the page's
+ * existing inline actionError + announce pattern.
+ */
+function CommentReactionControl({
+  comment,
+  summary,
+  pending,
+  onToggle,
+  onSelect,
+}: {
+  comment: CommentItem;
+  summary: ReactionSummary;
+  pending: boolean;
+  onToggle: () => void;
+  onSelect: (kind: CanonicalReactionKind) => void;
+}) {
+  const [trayOpen, setTrayOpen] = useState(false);
+  const [opener, setOpener] = useState<"main" | "choose">("main");
+  const press = useLongPress(
+    () => {
+      setOpener("main");
+      setTrayOpen(true);
+    },
+    { disabled: pending || trayOpen },
+  );
+  const mainId = `detail-comment-react-${comment.id}`;
+  const chooseId = `detail-comment-choose-${comment.id}`;
+  const mine =
+    summary.myReaction === null
+      ? null
+      : (normalizeReactionKind(summary.myReaction) as CanonicalReactionKind);
+  const top = topReactionKind(summary.counts);
+  const display: CanonicalReactionKind | null = mine ?? top;
+  const Icon = display ? COMMENT_KIND_ICONS[display] : Heart;
+  const countWord = summary.total === 1 ? "reaction" : "reactions";
+  const label =
+    mine !== null
+      ? `${reactionKindLabel(mine)}, ${summary.total} ${countWord}`
+      : top !== null && summary.total > 0
+        ? `${reactionKindLabel(top)}, ${summary.total} ${countWord}`
+        : `React to comment by ${comment.author.username}`;
+  return (
+    <span className="relative ml-auto flex items-center gap-0.5">
+      <button
+        type="button"
+        id={mainId}
+        data-testid={`comment-react-${comment.id}`}
+        aria-pressed={mine !== null}
+        aria-label={label}
+        disabled={pending}
+        aria-busy={pending}
+        onPointerDown={press.onPointerDown}
+        onPointerMove={press.onPointerMove}
+        onPointerUp={press.onPointerUp}
+        onPointerCancel={press.onPointerCancel}
+        onClick={() => {
+          if (press.claimTap()) return;
+          if (trayOpen) {
+            setTrayOpen(false);
+            return;
+          }
+          onToggle();
+        }}
+        className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-2 text-xs font-medium text-on-surface-variant"
+      >
+        <Icon size={13} aria-hidden fill={mine !== null ? "currentColor" : "none"} />
+        <span aria-hidden className="tabular-nums">{summary.total}</span>
+      </button>
+      <button
+        type="button"
+        id={chooseId}
+        data-testid={`comment-choose-${comment.id}`}
+        aria-haspopup="menu"
+        aria-expanded={trayOpen}
+        aria-label={`Choose reaction for comment by ${comment.author.username}`}
+        disabled={pending}
+        onClick={() => {
+          setOpener("choose");
+          setTrayOpen((o) => !o);
+        }}
+        className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-1 text-xs text-on-surface-variant"
+      >
+        <ChevronDown size={14} aria-hidden />
+      </button>
+      {trayOpen && (
+        <span className="absolute bottom-full right-0 z-20 mb-1 w-max max-w-[78vw]">
+          <ReactionTray
+            open
+            myReaction={summary.myReaction}
+            counts={summary.counts}
+            total={summary.total}
+            pending={pending}
+            onSelect={(kind) => {
+              setTrayOpen(false);
+              document.getElementById(mainId)?.focus({ preventScroll: true });
+              onSelect(kind);
+            }}
+            onClose={() => setTrayOpen(false)}
+            triggerId={opener === "choose" ? chooseId : mainId}
+          />
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function PostDetail() {
   const { id = "" } = useParams();
   const { hash, search, key: locationKey } = useLocation();
@@ -69,7 +199,9 @@ export function PostDetail() {
   const { user } = useAuth();
   const [post, setPost] = useState<PostItem | null>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
-  const [myReaction, setMyReaction] = useState<"LIKE" | "DISLIKE" | null>(null);
+  // W3.3: the caller's reaction is any valid kind (LIKE/DISLIKE-era wire plus
+  // canonical LOVE/HELPFUL/SUPPORT/WOW). LIKE reads as LOVE for display.
+  const [myReaction, setMyReaction] = useState<ReactionKind | null>(null);
   const [myRating, setMyRating] = useState<number | null>(null);
   const [commentText, setCommentText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -84,6 +216,21 @@ export function PostDetail() {
   const [socialError, setSocialError] = useState<string | null>(null);
   // Mutation failures stay inline + announce; they never own the page.
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // W3.3 multi-kind reaction UI state. The post summary override holds
+  // server-truth counts/total once a write or realtime event delivers them;
+  // otherwise the seeded summary (legacy buckets + own canonical kind) is
+  // derived at render. Comment overrides are keyed by comment id and take
+  // precedence over the fetched CommentItem.reactionSummary.
+  const [postCountsOverride, setPostCountsOverride] = useState<{
+    postId: string;
+    counts: ReactionCounts;
+    total: number;
+  } | null>(null);
+  const [commentSummaries, setCommentSummaries] = useState<Record<string, ReactionSummary>>({});
+  const [commentPending, setCommentPending] = useState<Record<string, boolean>>({});
+  const [trayTarget, setTrayTarget] = useState<"post" | string | null>(null);
+  const [trayOpener, setTrayOpener] = useState<"main" | "choose">("main");
 
   // Redesign UI state: collapsed description, lazy map/video, comment paging,
   // and the fullscreen lightbox position.
@@ -113,6 +260,19 @@ export function PostDetail() {
   const postPresentRef = useRef(false);
   // Track in-flight mutations to disable owner controls
   const [statusPending, setStatusPending] = useState(false);
+  // Latest comments for realtime comment-reaction patches (the effect below
+  // only depends on [id, load], so it reads through this ref).
+  const commentsRef = useRef<CommentItem[]>([]);
+  commentsRef.current = comments;
+  // Press-and-hold on the post Love button opens the tray; a quick release
+  // is a plain tap (the click handler consults claimTap).
+  const postPress = useLongPress(
+    () => {
+      setTrayOpener("main");
+      setTrayTarget("post");
+    },
+    { disabled: reactionPendingRef.current },
+  );
 
   const loadPost = useCallback(
     async (gen: number) => {
@@ -243,11 +403,47 @@ export function PostDetail() {
         setComments((prev) => prev.filter((c) => c.id !== p.commentId));
       }),
       onRealtime("reaction:changed", (payload) => {
-        const p = payload as { postId: string; likeCount: number; dislikeCount: number };
+        const p = payload as {
+          postId: string;
+          likeCount?: number;
+          dislikeCount?: number;
+          reactionCounts?: unknown;
+          commentId?: string;
+        };
         if (p.postId !== id) return;
+        // Comment reaction broadcast: patch that comment's summary live,
+        // keeping the caller's own reaction (the payload carries no
+        // my_reaction — it is counts-only).
+        if (typeof p.commentId === "string") {
+          const counts = reactionCountsFromJson(p.reactionCounts);
+          const total = Object.values(counts).reduce<number>((s, n) => s + (n ?? 0), 0);
+          setCommentSummaries((prev) => ({
+            ...prev,
+            [p.commentId as string]: {
+              counts,
+              total,
+              myReaction:
+                prev[p.commentId as string]?.myReaction ??
+                commentsRef.current.find((c) => c.id === p.commentId)?.reactionSummary?.myReaction ??
+                null,
+            },
+          }));
+          return;
+        }
         setPost((prev) =>
-          prev ? { ...prev, likeCount: p.likeCount, dislikeCount: p.dislikeCount } : prev,
+          prev
+            ? {
+                ...prev,
+                likeCount: p.likeCount ?? prev.likeCount,
+                dislikeCount: p.dislikeCount ?? prev.dislikeCount,
+              }
+            : prev,
         );
+        if (p.reactionCounts !== undefined) {
+          const counts = reactionCountsFromJson(p.reactionCounts);
+          const total = Object.values(counts).reduce<number>((s, n) => s + (n ?? 0), 0);
+          setPostCountsOverride({ postId: p.postId, counts, total });
+        }
       }),
       onRealtime("rating:changed", (payload) => {
         const p = payload as { postId: string; ratingAvg: number | null; ratingCount: number };
@@ -272,7 +468,22 @@ export function PostDetail() {
   const current = post;
   const isOwner = user?.id === current.author.id;
 
-  async function applyReaction(next: "LIKE" | "DISLIKE" | null) {
+  // W3.3 post summary: server-truth counts/total once a write or realtime
+  // event delivers them, else seeded from the legacy buckets (+1 for an own
+  // canonical kind, which the legacy buckets never contain). The caller's
+  // own reaction always comes from state, never from the override.
+  const postActiveKind =
+    myReaction === null ? null : (normalizeReactionKind(myReaction) as CanonicalReactionKind);
+  const postSummary: ReactionSummary =
+    postCountsOverride !== null && postCountsOverride.postId === current.id
+      ? { counts: postCountsOverride.counts, total: postCountsOverride.total, myReaction }
+      : seedSummaryFromItem(current.likeCount, current.dislikeCount, myReaction);
+  const postLoveLabel =
+    postActiveKind === null || postActiveKind === "LOVE"
+      ? `Love, ${current.likeCount} ${current.likeCount === 1 ? "love" : "loves"}`
+      : `${reactionKindLabel(postActiveKind)}, ${postSummary.total} ${postSummary.total === 1 ? "reaction" : "reactions"}`;
+
+  async function applyReaction(next: ReactionKind | null) {
     if (reactionPendingRef.current) return;
     reactionPendingRef.current = true;
     setReactionPending(true);
@@ -288,6 +499,15 @@ export function PostDetail() {
         setPost((prevPost) =>
           prevPost ? { ...prevPost, likeCount: res.likeCount, dislikeCount: res.dislikeCount } : prevPost,
         );
+        // The widened RPC returns server-truth per-kind counts; keep them so
+        // the tray/total read exact counts without a refetch.
+        if (res.reactionCounts) {
+          setPostCountsOverride({
+            postId: res.postId,
+            counts: res.reactionCounts.counts,
+            total: res.reactionCounts.total,
+          });
+        }
       }
     } catch (e) {
       // Only rollback if this is still the latest request; failures stay
@@ -304,9 +524,21 @@ export function PostDetail() {
     }
   }
 
-  /** Heart Love/Unlove: LIKE ⇄ null; a DISLIKE switches to LIKE. */
+  /**
+   * Heart Love/Unlove (LIKE-era wire preserved): a LOVE-kind reaction
+   * (LIKE or canonical LOVE) clears to null, anything else switches to LIKE.
+   */
   function toggleLove() {
-    void applyReaction(myReaction === "LIKE" ? null : "LIKE");
+    void applyReaction(
+      myReaction !== null && normalizeReactionKind(myReaction) === "LOVE" ? null : "LIKE",
+    );
+  }
+
+  /** Tray write path: the tapped canonical kind goes to the real multi-kind RPC. */
+  function reactToKind(kind: CanonicalReactionKind) {
+    setTrayTarget(null);
+    document.getElementById("detail-love")?.focus({ preventScroll: true });
+    void applyReaction(nextReactionForTap(myReaction, kind));
   }
 
   /** Secondary "Not helpful" control (lives in the Community card). */
@@ -389,6 +621,66 @@ export function PostDetail() {
       setActionError(message);
       announce(message);
     }
+  }
+
+  /**
+   * Comment reaction state: local overrides win over the fetched
+   * CommentItem.reactionSummary (populated by the extended list-RPC mapping);
+   * untouched comments fall through to the fetched summary, else empty.
+   */
+  function commentSummaryFor(c: CommentItem): ReactionSummary {
+    return (
+      commentSummaries[c.id] ??
+      c.reactionSummary ?? { counts: {}, myReaction: null, total: 0 }
+    );
+  }
+
+  /**
+   * Comment write path (W3.3): optimistic myReaction + per-kind counts over
+   * the real comment RPC, full revert + inline announce on failure (same
+   * actionError pattern as post reactions — never silent).
+   */
+  async function writeCommentReaction(c: CommentItem, next: ReactionKind | null) {
+    if (commentPending[c.id]) return;
+    const prev = commentSummaryFor(c);
+    const counts = applyReactionDeltas(prev.counts, prev.myReaction, next);
+    const optimistic: ReactionSummary = {
+      counts,
+      myReaction: next,
+      total: Object.values(counts).reduce<number>((s, n) => s + (n ?? 0), 0),
+    };
+    setCommentPending((p) => ({ ...p, [c.id]: true }));
+    setCommentSummaries((p) => ({ ...p, [c.id]: optimistic }));
+    try {
+      const res = await setCommentReaction(c.id, next);
+      setCommentSummaries((p) => ({
+        ...p,
+        [c.id]: { counts: res.counts, myReaction: res.myReaction, total: res.total },
+      }));
+    } catch (err) {
+      setCommentSummaries((p) => ({ ...p, [c.id]: prev }));
+      const message = friendlyError(err).message;
+      setActionError(message);
+      announce(message);
+    } finally {
+      setCommentPending((p) => {
+        const rest = { ...p };
+        delete rest[c.id];
+        return rest;
+      });
+    }
+  }
+
+  /** Comment tap: default Love; tapping the active Love removes it. */
+  function toggleCommentReaction(c: CommentItem) {
+    const summary = commentSummaryFor(c);
+    void writeCommentReaction(c, nextReactionForTap(summary.myReaction, "LOVE"));
+  }
+
+  /** Comment tray write: the tapped kind (or unreact when it is active). */
+  function reactCommentToKind(c: CommentItem, kind: CanonicalReactionKind) {
+    const summary = commentSummaryFor(c);
+    void writeCommentReaction(c, nextReactionForTap(summary.myReaction, kind));
   }
 
   async function onChangeStatus(status: PostStatus) {
@@ -495,6 +787,13 @@ export function PostDetail() {
               <Trash2 size={13} aria-hidden /> Delete
             </button>
           )}
+          <CommentReactionControl
+            comment={c}
+            summary={commentSummaryFor(c)}
+            pending={commentPending[c.id] ?? false}
+            onToggle={() => toggleCommentReaction(c)}
+            onSelect={(kind) => reactCommentToKind(c, kind)}
+          />
         </div>
         {children.length > 0 && (
           <ul className="mt-3 flex flex-col gap-3 border-l border-outline-variant pl-3">
@@ -549,17 +848,64 @@ export function PostDetail() {
         />
 
         <div id="detail-activity" tabIndex={-1} className="grid scroll-mt-4 grid-cols-3 gap-2" role="group" aria-label="Report actions">
-          <button
-            type="button"
-            className="fb-report-action"
-            onClick={toggleLove}
-            disabled={reactionPending}
-            aria-busy={reactionPending}
-            aria-label={`Love, ${post.likeCount} ${post.likeCount === 1 ? "love" : "loves"}`}
-            aria-pressed={myReaction === "LIKE"}
-          >
-            <Heart size={20} aria-hidden fill={myReaction === "LIKE" ? "currentColor" : "none"} /> {post.likeCount}
-          </button>
+          {/* Post reaction cell: the Love toggle keeps its flat styling and
+              LIKE-era default-tap wire; hold opens the tray and the chevron
+              opens the same tray for keyboard/screen-reader users. */}
+          <div className="relative flex min-w-0 items-stretch gap-0.5">
+            <button
+              type="button"
+              id="detail-love"
+              className="fb-report-action min-h-[44px] flex-1"
+              onClick={() => {
+                if (postPress.claimTap()) return;
+                if (trayTarget !== null) {
+                  setTrayTarget(null);
+                  return;
+                }
+                toggleLove();
+              }}
+              disabled={reactionPending}
+              aria-busy={reactionPending}
+              aria-label={postLoveLabel}
+              aria-pressed={postActiveKind !== null}
+              onPointerDown={postPress.onPointerDown}
+              onPointerMove={postPress.onPointerMove}
+              onPointerUp={postPress.onPointerUp}
+              onPointerCancel={postPress.onPointerCancel}
+            >
+              <Heart size={20} aria-hidden fill={postActiveKind !== null ? "currentColor" : "none"} /> {post.likeCount}
+            </button>
+            <button
+              type="button"
+              id="detail-choose-reaction"
+              data-testid="detail-choose-reaction"
+              aria-haspopup="menu"
+              aria-expanded={trayTarget === "post"}
+              aria-label="Choose reaction"
+              className="fb-report-action min-h-[44px] min-w-[44px] shrink-0"
+              disabled={reactionPending}
+              onClick={() => {
+                setTrayOpener("choose");
+                setTrayTarget((t) => (t === "post" ? null : "post"));
+              }}
+            >
+              <ChevronDown size={16} aria-hidden />
+            </button>
+            {trayTarget === "post" && (
+              <span className="absolute bottom-full left-0 z-20 mb-1 w-max max-w-[80vw]">
+                <ReactionTray
+                  open
+                  myReaction={myReaction}
+                  counts={postSummary.counts}
+                  total={postSummary.total}
+                  pending={reactionPending}
+                  onSelect={reactToKind}
+                  onClose={() => setTrayTarget(null)}
+                  triggerId={trayOpener === "choose" ? "detail-choose-reaction" : "detail-love"}
+                />
+              </span>
+            )}
+          </div>
           <button type="button" className="fb-report-action" onClick={() => scrollToSection("detail-comments")} aria-label={`Comments, ${comments.length}`}>
             <MessageCircle size={20} aria-hidden /> {comments.length}
           </button>

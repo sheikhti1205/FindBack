@@ -521,6 +521,26 @@ describe("reactToPost multi-kind (W3.3)", () => {
 
     expect(res.reactionCounts).toBeUndefined();
   });
+
+  it("passes a canonical LOVE caller reaction through unwidened", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [
+        {
+          post_id: "p1",
+          like_count: 0,
+          dislike_count: 0,
+          my_reaction: "LOVE",
+          reaction_counts: { LOVE: 1 },
+        },
+      ],
+      error: null,
+    });
+
+    const res = await reactToPost("p1", "LOVE");
+
+    expect(res.myReaction).toBe("LOVE");
+    expect(res.reactionCounts?.total).toBe(1);
+  });
 });
 
 describe("fetchSocialState canonical reaction (W3.3)", () => {

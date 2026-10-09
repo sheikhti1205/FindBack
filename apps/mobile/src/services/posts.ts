@@ -384,7 +384,8 @@ export interface ReactionResult {
   postId: string;
   likeCount: number;
   dislikeCount: number;
-  myReaction: "LIKE" | "DISLIKE" | null;
+  /** Caller's own reaction (raw wire kind, W3.3: any valid kind, not just LIKE/DISLIKE). */
+  myReaction: ReactionKind | null;
   /** Per-kind counts from the widened react RPC (W3.3); absent on legacy mocks. */
   reactionCounts?: ReactionSummary;
 }
@@ -416,7 +417,7 @@ export async function reactToPost(
     postId: row.post_id,
     likeCount: Number(row.like_count ?? 0),
     dislikeCount: Number(row.dislike_count ?? 0),
-    myReaction: (row.my_reaction as "LIKE" | "DISLIKE" | null) ?? null,
+    myReaction: (row.my_reaction as ReactionKind | null) ?? null,
     ...(reactionCounts ? { reactionCounts } : {}),
   };
 }
@@ -452,14 +453,14 @@ export async function ratePost(postId: string, score: number): Promise<{
 /** The caller's own reaction/rating for a post (reload hydration). */
 export async function fetchSocialState(
   postId: string,
-): Promise<{ myReaction: "LIKE" | "DISLIKE" | null; myRating: number | null }> {
+): Promise<{ myReaction: ReactionKind | null; myRating: number | null }> {
   const { data, error } = await getSupabase().rpc("findback_post_social_state_client", {
     p_post_id: postId,
   });
   if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
   const row = ((data ?? []) as { my_reaction: string | null; my_rating: number | null }[])[0];
   return {
-    myReaction: (row?.my_reaction as "LIKE" | "DISLIKE" | null) ?? null,
+    myReaction: (row?.my_reaction as ReactionKind | null) ?? null,
     myRating: row?.my_rating == null ? null : Number(row.my_rating),
   };
 }

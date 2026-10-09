@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FEED_REACTION_BATCH_LIMIT,
+  applyReactionDeltas,
   fetchFeedReactionState,
+  legacyCountDeltas,
   loveToggleDeltas,
   nextLoveReaction,
+  seedSummaryFromItem,
   toggleLoveReaction,
+  togglePostReactionKind,
 } from "./feedReactions";
 
 const { clientMock, reactToPostMock } = vi.hoisted(() => ({
@@ -173,5 +177,130 @@ describe("toggleLoveReaction", () => {
     await toggleLoveReaction("p1", "DISLIKE");
 
     expect(reactToPostMock).toHaveBeenCalledWith("p1", "LIKE");
+  });
+});
+
+describe("kind-aware Love toggle (W3.3 additive)", () => {
+  it("treats canonical LOVE as loved for the default tap", () => {
+    expect(nextLoveReaction("LOVE")).toBeNull();
+  });
+
+  it("switches a non-Love kind to LIKE on default tap", () => {
+    expect(nextLoveReaction("HELPFUL")).toBe("LIKE");
+    expect(nextLoveReaction("SUPPORT")).toBe("LIKE");
+    expect(nextLoveReaction("WOW")).toBe("LIKE");
+  });
+
+  it("decrements one like when unloving from canonical LOVE", () => {
+    expect(loveToggleDeltas("LOVE")).toEqual({ like: -1, dislike: 0 });
+  });
+
+  it("adds one like when switching from a non-Love kind", () => {
+    expect(loveToggleDeltas("HELPFUL")).toEqual({ like: 1, dislike: 0 });
+  });
+});
+
+describe("togglePostReactionKind (tray write path, real RPC)", () => {
+  it("sets the tapped kind through findback_react_client (never faked over LIKE)", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ my_reaction: "HELPFUL", reaction_counts: { LOVE: 2, HELPFUL: 1 } }],
+      error: null,
+    });
+
+    const summary = await togglePostReactionKind("p1", null, "HELPFUL");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: "HELPFUL",
+    });
+    expect(summary).toEqual({ counts: { LOVE: 2, HELPFUL: 1 }, myReaction: "HELPFUL", total: 3 });
+  });
+
+  it("clears the reaction when tapping the active kind (unreact)", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ my_reaction: null, reaction_counts: {} }],
+      error: null,
+    });
+
+    await togglePostReactionKind("p1", "HELPFUL", "HELPFUL");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: null,
+    });
+  });
+
+  it("defaults a bare tap to LOVE", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ my_reaction: "LOVE", reaction_counts: { LOVE: 1 } }],
+      error: null,
+    });
+
+    await togglePostReactionKind("p1", null);
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: "LOVE",
+    });
+  });
+});
+
+describe("legacyCountDeltas (legacy buckets for a kind move)", () => {
+  it("moves the like bucket only for raw LIKE moves", () => {
+    expect(legacyCountDeltas(null, "LIKE")).toEqual({ like: 1, dislike: 0 });
+    expect(legacyCountDeltas("LIKE", null)).toEqual({ like: -1, dislike: 0 });
+    expect(legacyCountDeltas("LIKE", "HELPFUL")).toEqual({ like: -1, dislike: 0 });
+    expect(legacyCountDeltas("HELPFUL", "LIKE")).toEqual({ like: 1, dislike: 0 });
+  });
+
+  it("leaves legacy buckets alone for canonical-only moves", () => {
+    expect(legacyCountDeltas(null, "HELPFUL")).toEqual({ like: 0, dislike: 0 });
+    expect(legacyCountDeltas("HELPFUL", "WOW")).toEqual({ like: 0, dislike: 0 });
+    expect(legacyCountDeltas("HELPFUL", null)).toEqual({ like: 0, dislike: 0 });
+  });
+
+  it("moves the dislike bucket only for raw DISLIKE moves", () => {
+    expect(legacyCountDeltas("DISLIKE", "LIKE")).toEqual({ like: 1, dislike: -1 });
+    expect(legacyCountDeltas(null, "DISLIKE")).toEqual({ like: 0, dislike: 1 });
+  });
+});
+
+describe("applyReactionDeltas (optimistic per-kind counts)", () => {  it("applies the current→next move over existing counts", () => {
+    expect(applyReactionDeltas({ LOVE: 2 }, "LIKE", null)).toEqual({ LOVE: 1 });
+    expect(applyReactionDeltas({}, null, "HELPFUL")).toEqual({ HELPFUL: 1 });
+    expect(applyReactionDeltas({ HELPFUL: 1, LOVE: 2 }, "HELPFUL", "WOW")).toEqual({
+      LOVE: 2,
+      WOW: 1,
+    });
+  });
+
+  it("drops buckets that reach zero", () => {
+    expect(applyReactionDeltas({ WOW: 1 }, "WOW", null)).toEqual({});
+  });
+});
+
+describe("seedSummaryFromItem (batch hydration has no counts)", () => {
+  it("seeds LOVE/DISLIKE buckets from the feed item's legacy counts", () => {
+    expect(seedSummaryFromItem(4, 1, null)).toEqual({
+      counts: { LOVE: 4, DISLIKE: 1 },
+      myReaction: null,
+      total: 5,
+    });
+  });
+
+  it("adds one bucket for a canonical own reaction the legacy counts miss", () => {
+    expect(seedSummaryFromItem(4, 0, "HELPFUL")).toEqual({
+      counts: { LOVE: 4, HELPFUL: 1 },
+      myReaction: "HELPFUL",
+      total: 5,
+    });
+  });
+
+  it("adds nothing for a raw LIKE/DISLIKE own reaction (already counted)", () => {
+    expect(seedSummaryFromItem(4, 0, "LIKE")).toEqual({
+      counts: { LOVE: 4 },
+      myReaction: "LIKE",
+      total: 4,
+    });
   });
 });
