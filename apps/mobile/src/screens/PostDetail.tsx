@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 import { motion } from "framer-motion";
 import { CalendarDays, ChevronDown, CornerDownRight, ExternalLink, Heart, HeartHandshake, Lightbulb, MapPin, MessageCircle, Sparkles, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
@@ -23,7 +23,7 @@ import { RatingStars } from "../components/RatingStars";
 import { ReportShareButton } from "../components/ReportShareButton";
 import { PossibleMatches } from "../components/PossibleMatches";
 import { announce } from "../components/LiveRegion";
-import { shouldReduceMotion } from "../components/uiMotion";
+import { listItemVariants, motionDurations, shouldReduceMotion } from "../components/uiMotion";
 import { friendlyError } from "../utils/friendlyErrors";
 import { recordLoadTiming } from "../utils/loadTiming";
 import { openInMaps } from "../utils/location";
@@ -61,6 +61,12 @@ import {
 const DESCRIPTION_PREVIEW_LIMIT = 280;
 /** Comments shown before "View all N comments" expands the list. */
 const COMMENTS_PREVIEW_COUNT = 5;
+/** Replies visible per thread before "View N more replies" (W3 inline threads). */
+const COMMENT_FIRST_REPLIES = 2;
+/** Incremental replies revealed per "View N more replies" tap (W3). */
+const COMMENT_REPLIES_INCREMENT = 5;
+/** Visual indent cap: deeper logical levels render flat with an @reply target. */
+const COMMENT_MAX_VISUAL_DEPTH = 2;
 
 function scrollToSection(id: string) {
   const el = document.getElementById(id);
@@ -239,6 +245,12 @@ export function PostDetail() {
   const [videoOpen, setVideoOpen] = useState(false);
   const [commentsExpanded, setCommentsExpanded] = useState(false);
   const [replyTo, setReplyTo] = useState<CommentItem | null>(null);
+  // W3 inline threads: per-thread visible-reply counts keyed by comment id.
+  // Absent = COMMENT_FIRST_REPLIES (collapsed to the first replies).
+  const [threadCounts, setThreadCounts] = useState<Record<string, number>>({});
+  // Briefly highlights the jump target of an @reply-to tap (same pattern as
+  // the linked-comment highlight below — focus ring, no navigation).
+  const [flashComment, setFlashComment] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ index: number; origin: PhotoLightboxOriginRect | null } | null>(null);
 
   // Sequence tokens for latest-request-wins mutation sequencing
@@ -460,6 +472,42 @@ export function PostDetail() {
       offs.forEach((off) => off());
     };
   }, [id, load]);
+
+  // W3 inline threads: ancestor chain of the ?comment= deep link. Derived
+  // (not state) so a linked reply inside a collapsed branch auto-expands on
+  // the same render that reveals it — no effect ordering with the focus
+  // scroll below. parentId stays the true relation; this only forces
+  // visibility for the linked chain.
+  const linkedAncestors = useMemo(() => {
+    const chain = new Set<string>();
+    if (!linkedComment) return chain;
+    const byId = new Map(comments.map((c) => [c.id, c]));
+    let cur = byId.get(linkedComment);
+    while (cur?.parentId) {
+      if (!byId.has(cur.parentId) || chain.has(cur.parentId)) break;
+      chain.add(cur.parentId);
+      cur = byId.get(cur.parentId);
+    }
+    return chain;
+  }, [linkedComment, comments]);
+
+  // W3 inline threads: drop per-thread expand counts for comments that are
+  // gone (local cascade delete or realtime comment:deleted) so re-added
+  // same-id threads render collapsed again. Live threads are untouched
+  // (unchanged object identity bails out of a re-render).
+  useEffect(() => {
+    const live = new Set(comments.map((c) => c.id));
+    setThreadCounts((prev) => {
+      let pruned: Record<string, number> | null = null;
+      for (const key of Object.keys(prev)) {
+        if (!live.has(key)) {
+          if (!pruned) pruned = { ...prev };
+          delete pruned[key];
+        }
+      }
+      return pruned ?? prev;
+    });
+  }, [comments]);
 
   if (loading) return <Spinner label="Loading post…" />;
   if (error && !post) return <EmptyState title="Post unavailable" subtitle={error} />;
@@ -730,11 +778,17 @@ export function PostDetail() {
 
   // Threaded comments: group replies under their parent. A reply whose parent is
   // not in the current page is treated as a root so it is never hidden.
+  // W3 inline threads: replies expand inline per thread (first replies +
+  // "View N more replies" / "Hide replies"); visual indent caps at
+  // COMMENT_MAX_VISUAL_DEPTH and deeper logical levels render flat with an
+  // @reply-to jump target. parentId/depth semantics are untouched.
+  const commentsById = new Map<string, CommentItem>();
+  for (const c of comments) commentsById.set(c.id, c);
   const childrenByParent = new Map<string, CommentItem[]>();
   const commentRoots: CommentItem[] = [];
   for (const c of comments) {
     const parentId = c.parentId ?? null;
-    if (parentId && comments.some((p) => p.id === parentId)) {
+    if (parentId && commentsById.has(parentId)) {
       const list = childrenByParent.get(parentId) ?? [];
       list.push(c);
       childrenByParent.set(parentId, list);
@@ -747,17 +801,106 @@ export function PostDetail() {
       ? commentRoots
       : commentRoots.slice(0, COMMENTS_PREVIEW_COUNT);
 
-  const renderComment = (c: CommentItem): React.ReactNode => {
+  /** Visible slice of a thread: linked ancestors force full visibility. */
+  function visibleRepliesFor(c: CommentItem): { visible: CommentItem[]; remaining: number } {
+    const all = childrenByParent.get(c.id) ?? [];
+    const count = linkedAncestors.has(c.id)
+      ? all.length
+      : (threadCounts[c.id] ?? COMMENT_FIRST_REPLIES);
+    const visible = all.slice(0, count);
+    return { visible, remaining: all.length - visible.length };
+  }
+
+  function showMoreReplies(c: CommentItem) {
+    const total = childrenByParent.get(c.id)?.length ?? 0;
+    setThreadCounts((prev) => ({
+      ...prev,
+      [c.id]: Math.min((prev[c.id] ?? COMMENT_FIRST_REPLIES) + COMMENT_REPLIES_INCREMENT, total),
+    }));
+  }
+
+  function hideReplies(c: CommentItem) {
+    setThreadCounts((prev) => ({ ...prev, [c.id]: COMMENT_FIRST_REPLIES }));
+  }
+
+  /**
+   * @reply-to jump: focuses + highlights the parent comment in place (same
+   * reduced-motion policy as section scrolls). Never navigates away.
+   */
+  function jumpToComment(targetId: string) {
+    const el = document.getElementById(`detail-comment-${targetId}`);
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: shouldReduceMotion() ? "instant" : "smooth", block: "start" });
+    }
+    setFlashComment(targetId);
+    window.setTimeout(() => {
+      setFlashComment((cur) => (cur === targetId ? null : cur));
+    }, 1600);
+  }
+
+  const renderComment = (c: CommentItem, level = 0): React.ReactNode => {
     const canDelete = c.author.id === user?.id || isOwner;
     const children = childrenByParent.get(c.id) ?? [];
+    const { visible, remaining } = visibleRepliesFor(c);
+    const expandedBeyondDefault = visible.length > COMMENT_FIRST_REPLIES;
     const isReplyTarget = replyTo?.id === c.id;
+    const highlighted = linkedComment === c.id || flashComment === c.id;
+    // Deeper logical nesting stays real (parentId/replyTo untouched) but
+    // renders flat: indented connector only while level < cap, otherwise an
+    // @username prefix names the true parent.
+    const nestChildren = level < COMMENT_MAX_VISUAL_DEPTH;
+    const showTarget = level > COMMENT_MAX_VISUAL_DEPTH;
+    const parentName =
+      showTarget && c.parentId ? (commentsById.get(c.parentId)?.author.username ?? null) : null;
+    const threadControls = children.length > 0 && (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {remaining > 0 && (
+          <button
+            type="button"
+            onClick={() => showMoreReplies(c)}
+            aria-expanded={expandedBeyondDefault}
+            aria-label={`View ${remaining} more ${remaining === 1 ? "reply" : "replies"} to ${c.author.username}`}
+            className="inline-flex min-h-[44px] items-center gap-1 rounded-full px-2 text-xs font-medium text-on-surface-variant underline"
+          >
+            View {remaining} more {remaining === 1 ? "reply" : "replies"}
+          </button>
+        )}
+        {remaining === 0 && expandedBeyondDefault && (
+          <button
+            type="button"
+            onClick={() => hideReplies(c)}
+            aria-expanded="true"
+            aria-label={`Hide replies to ${c.author.username}`}
+            className="inline-flex min-h-[44px] items-center gap-1 rounded-full px-2 text-xs font-medium text-on-surface-variant underline"
+          >
+            Hide replies
+          </button>
+        )}
+      </div>
+    );
     return (
-      <li
+      <motion.li
         key={c.id}
         id={`detail-comment-${c.id}`}
         tabIndex={-1}
-        className="scroll-mt-4 rounded-m3-md border border-outline-variant p-3 focus:outline-2 focus:outline-offset-2 focus:outline-on-surface"
+        initial="hidden"
+        animate="visible"
+        variants={listItemVariants}
+        transition={{ duration: motionDurations.fast }}
+        className={`scroll-mt-4 rounded-m3-md border p-3 focus:outline-2 focus:outline-offset-2 focus:outline-on-surface ${highlighted ? "border-on-surface" : "border-outline-variant"}`}
       >
+        {showTarget && parentName && c.parentId && (
+          <button
+            type="button"
+            onClick={() => jumpToComment(c.parentId as string)}
+            aria-label={`Jump to parent comment by ${parentName}`}
+            className="mb-1 inline-flex min-h-[44px] items-center rounded-full text-xs font-semibold text-on-surface-variant underline"
+          >
+            @{parentName}
+          </button>
+        )}
         <div className="flex items-baseline justify-between gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
           <span className="shrink-0 text-[11px] text-on-surface-variant">
@@ -795,12 +938,18 @@ export function PostDetail() {
             onSelect={(kind) => reactCommentToKind(c, kind)}
           />
         </div>
-        {children.length > 0 && (
+        {children.length > 0 && nestChildren && (
           <ul className="mt-3 flex flex-col gap-3 border-l border-outline-variant pl-3">
-            {children.map(renderComment)}
+            {visible.map((ch) => renderComment(ch, level + 1))}
           </ul>
         )}
-      </li>
+        {children.length > 0 && !nestChildren && (
+          <ul className="mt-2 flex flex-col gap-3">
+            {visible.map((ch) => renderComment(ch, level + 1))}
+          </ul>
+        )}
+        {threadControls}
+      </motion.li>
     );
   };
 
@@ -1147,7 +1296,7 @@ export function PostDetail() {
                 <p className="text-sm text-on-surface-variant">No comments yet.</p>
               )}
               <ul className="flex flex-col gap-3">
-                {visibleRoots.map(renderComment)}
+                {visibleRoots.map((c) => renderComment(c, 0))}
               </ul>
               {!commentsExpanded && !linkedComment && commentRoots.length > COMMENTS_PREVIEW_COUNT && (
                 <button
