@@ -181,6 +181,17 @@ export interface PublicUser {
   locationLabel?: string | null;
 }
 
+/**
+ * Prefix-search hit for @mention autocomplete (W3.2). Same four safe columns
+ * as the public identity surface — never email/phone.
+ */
+export interface SearchedProfile {
+  id: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
 export interface Attachment {
   id: string;
   postId: string;

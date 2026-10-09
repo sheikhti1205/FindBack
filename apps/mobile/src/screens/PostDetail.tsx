@@ -19,6 +19,7 @@ import { DetailHeroGallery } from "../components/detail/DetailHeroGallery";
 import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
 import { PhotoLightbox } from "../components/PhotoLightbox";
 import { MarkdownView } from "../components/MarkdownView";
+import { MentionAutocomplete } from "../components/MentionAutocomplete";
 import { RatingStars } from "../components/RatingStars";
 import { ReportShareButton } from "../components/ReportShareButton";
 import { PossibleMatches } from "../components/PossibleMatches";
@@ -211,6 +212,30 @@ export function PostDetail() {
   const [myRating, setMyRating] = useState<number | null>(null);
   const [commentText, setCommentText] = useState("");
   const [busy, setBusy] = useState(false);
+  // Mention autocomplete anchor: the composer input owns the caret, the
+  // listbox only reads it through this ref (W3.2).
+  const commentInputRef = useRef<HTMLInputElement | null>(null);
+  /**
+   * Mention sources (W3.2): unique comment authors on this post rank first,
+   * the report owner second, server prefix-search last (inside the
+   * autocomplete). No reply-body prefill — parentId stays the reply relation.
+   * Above the `if (!post)` guard: hooks must stay unconditional.
+   */
+  const mentionParticipants = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { username: string; displayName?: string | null; avatarUrl?: string | null }[] = [];
+    for (const c of comments) {
+      const key = c.author.username.toLowerCase();
+      if (!c.author.username || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        username: c.author.username,
+        displayName: c.author.displayName ?? null,
+        avatarUrl: c.author.avatarUrl ?? null,
+      });
+    }
+    return out;
+  }, [comments]);
   // Post shell state: the article renders as soon as the post resolves.
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -625,6 +650,18 @@ export function PostDetail() {
     }
   }
 
+  function handleMentionInsert(next: string, caretPos: number) {
+    setCommentText(next);
+    // Restore the caret after the inserted "@username " once React commits.
+    requestAnimationFrame(() => {
+      const el = commentInputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(caretPos, caretPos);
+      }
+    });
+  }
+
   async function onComment(e: React.FormEvent) {
     e.preventDefault();
     const body = commentText.trim();
@@ -908,7 +945,7 @@ export function PostDetail() {
           </span>
         </div>
         <div className="mt-1 text-sm leading-relaxed">
-          <MarkdownView text={c.body} />
+          <MarkdownView text={c.body} linkMentions />
         </div>
         <div className="mt-2 flex items-center gap-1">
           <button
@@ -1262,14 +1299,28 @@ export function PostDetail() {
           ) : null}
 
           <form onSubmit={(e) => void onComment(e)} className="flex items-start gap-2">
-            <input
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              placeholder={replyTo ? `Reply to @${replyTo.author.username}…` : "Write a helpful comment…"}
-              aria-label="Comment"
-              maxLength={1000}
-              className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
-            />
+            <div className="relative flex-1">
+              <input
+                ref={commentInputRef}
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                placeholder={replyTo ? `Reply to @${replyTo.author.username}…` : "Write a helpful comment…"}
+                aria-label="Comment"
+                maxLength={1000}
+                className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+              />
+              <MentionAutocomplete
+                inputRef={commentInputRef}
+                value={commentText}
+                participants={mentionParticipants}
+                owner={{
+                  username: current.author.username,
+                  displayName: current.author.displayName ?? null,
+                  avatarUrl: current.author.avatarUrl ?? null,
+                }}
+                onInsert={handleMentionInsert}
+              />
+            </div>
             <Button type="submit" loading={busy} disabled={!commentText.trim()}>
               {replyTo ? "Reply" : "Post"}
             </Button>

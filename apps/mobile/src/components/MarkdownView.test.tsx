@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { MarkdownView } from "./MarkdownView";
 import { stripMarkdown } from "../utils/stripMarkdown";
 
@@ -83,8 +84,7 @@ describe("stripMarkdown", () => {
   });
 });
 
-describe("MarkdownView motion (Wave E)", () => {
-  it("acknowledges a press on an external link, then leaves the hand-off alone", async () => {
+describe("MarkdownView motion (Wave E)", () => {  it("acknowledges a press on an external link, then leaves the hand-off alone", async () => {
     render(<MarkdownView text={"[FindBack](https://example.com)"} />);
     const link = screen.getByRole("link", { name: "FindBack" }) as HTMLElement;
     // Light acknowledgement only: the anchor semantics are untouched.
@@ -95,5 +95,40 @@ describe("MarkdownView motion (Wave E)", () => {
     expect(link.getAttribute("rel")).toContain("noopener");
     fireEvent.pointerUp(link, { pointerId: 1, isPrimary: true });
     await waitFor(() => expect(link.style.opacity).toBe("1"), { timeout: 1500 });
+  });
+});
+
+describe("MarkdownView linkMentions", () => {
+  it("links @handles to the public profile with accent styling when opted in", () => {
+    render(
+      <MemoryRouter>
+        <MarkdownView text={"thanks @alice for this"} linkMentions />
+      </MemoryRouter>,
+    );
+
+    const link = screen.getByRole("link", { name: "@alice" });
+    expect(link.getAttribute("href")).toBe("/u/alice");
+    expect(link.className).toMatch(/text-primary/);
+  });
+
+  it("leaves non-handles untouched", () => {
+    render(
+      <MemoryRouter>
+        <MarkdownView text={"shout @! and a lone @ here"} linkMentions />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("stays off by default so other consumers are unaffected", () => {
+    render(
+      <MemoryRouter>
+        <MarkdownView text={"thanks @alice"} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByText(/@alice/)).toBeTruthy();
   });
 });

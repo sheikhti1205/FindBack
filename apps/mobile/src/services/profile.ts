@@ -1,4 +1,4 @@
-import type { PublicProfile, PublicUser } from "@findback/shared";
+import type { PublicProfile, PublicUser, SearchedProfile } from "@findback/shared";
 import { getSupabase } from "./supabaseClient";
 import { ApiError } from "./session";
 import { fetchMe } from "./auth";
@@ -37,6 +37,49 @@ interface PublicProfileRow {
 const MAX_DISPLAY_NAME = 80;
 const MAX_BIO = 280;
 const MAX_LOCATION = 60;
+
+/**
+ * Minimum prefix length before the prefix-search RPC is called. Single-char
+ * (and empty) prefixes short-circuit to []: they would fan out to near the
+ * whole user table while adding nothing the client-side participant/owner
+ * ranking doesn't already cover for short fragments.
+ */
+const MIN_PREFIX_SEARCH_LENGTH = 2;
+
+/** Row shape returned by `findback_search_profiles_client` (public columns only). */
+interface SearchedProfileRow {
+  id: string;
+  username: string;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
+/** Maps the prefix-search row into `SearchedProfile`; never carries email/phone. */
+export function mapSearchedProfileRow(row: SearchedProfileRow): SearchedProfile {
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name ?? null,
+    avatarUrl: row.avatar_url ?? null,
+  };
+}
+
+/**
+ * Prefix-search public profiles for @mention autocomplete. Trims; empty and
+ * sub-threshold prefixes resolve [] without touching the backend. RPC errors
+ * propagate as ApiError — never silently swallowed.
+ */
+export async function searchProfilesByPrefix(prefix: string): Promise<SearchedProfile[]> {
+  const trimmed = prefix.trim();
+  if (trimmed.length < MIN_PREFIX_SEARCH_LENGTH) return [];
+
+  const { data, error } = await getSupabase().rpc("findback_search_profiles_client", {
+    p_prefix: trimmed,
+  });
+  if (error) throw new ApiError("Those profiles could not be searched. Check your connection and try again.", 400);
+
+  return ((data ?? []) as SearchedProfileRow[]).map(mapSearchedProfileRow);
+}
 
 function trimToNull(value: string | null | undefined): string | null {
   const trimmed = (value ?? "").trim();

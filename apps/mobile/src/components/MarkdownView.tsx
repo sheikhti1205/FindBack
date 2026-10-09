@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { Link } from "react-router";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -38,11 +39,91 @@ function isSafeHref(href?: string): boolean {
  * Deeper source headings (h4–h6) demote one step for the same reason. */
 const headingMap = { h1: "h2", h2: "h3", h3: "h4" } as const;
 
-export const MarkdownView = memo(function MarkdownView({ text }: { text: string }) {
+/**
+ * Mention handle shape. Deliberately the exact server regex class
+ * (`@([A-Za-z0-9_]{1,30})` in the comment-notify trigger) so client links and
+ * server notifications agree on what counts as a mention.
+ */
+const MENTION_SPLIT_RE = /@([A-Za-z0-9_]{1,30})/g;
+/** Internal profile hrefs produced by the mention plugin. */
+const INTERNAL_MENTION_HREF_RE = /^\/u\/[A-Za-z0-9_]{1,30}\/?$/;
+
+/** Minimal mdast structural typing so the plugin needs no new type deps. */
+interface MdastNode {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MdastNode[];
+}
+
+/** Containers whose text must never become mention links (code/links/images). */
+const MENTION_SKIP_TYPES = new Set([
+  "code",
+  "inlineCode",
+  "link",
+  "linkReference",
+  "image",
+  "imageReference",
+  "definition",
+  "html",
+]);
+
+function splitTextNode(node: MdastNode): MdastNode[] {
+  if (node.type !== "text" || typeof node.value !== "string") return [node];
+  MENTION_SPLIT_RE.lastIndex = 0;
+  const out: MdastNode[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MENTION_SPLIT_RE.exec(node.value)) !== null) {
+    const handle = match[1] ?? "";
+    if (match.index > cursor) {
+      out.push({ type: "text", value: node.value.slice(cursor, match.index) });
+    }
+    out.push({
+      type: "link",
+      url: `/u/${handle}`,
+      children: [{ type: "text", value: `@${handle}` }],
+    });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor === 0) return [node];
+  if (cursor < node.value.length) {
+    out.push({ type: "text", value: node.value.slice(cursor) });
+  }
+  return out;
+}
+
+function visitMentions(node: MdastNode): void {
+  if (!node.children) return;
+  if (MENTION_SKIP_TYPES.has(node.type)) return;
+  node.children = node.children.flatMap((child) => {
+    if (child.type === "text") return splitTextNode(child);
+    visitMentions(child);
+    return [child];
+  });
+}
+
+/** Remark plugin turning @handle text into internal /u/<handle> links. */
+function remarkMentionLinks() {
+  return (tree: MdastNode) => {
+    visitMentions(tree);
+  };
+}
+
+export const MarkdownView = memo(function MarkdownView({
+  text,
+  linkMentions = false,
+}: {
+  text: string;
+  /** Opt-in @mention → /u/<handle> links (default off; other consumers unaffected). */
+  linkMentions?: boolean;
+}) {
   return (
     <div className="fb-markdown break-words text-sm leading-relaxed">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        remarkPlugins={
+          linkMentions ? [remarkGfm, remarkBreaks, remarkMentionLinks] : [remarkGfm, remarkBreaks]
+        }
         rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
         disallowedElements={["img", "iframe"]}
         unwrapDisallowed
@@ -58,7 +139,11 @@ export const MarkdownView = memo(function MarkdownView({ text }: { text: string 
           // scale token is a no-op on inline boxes, so opacity carries the
           // acknowledgement there.
           a: ({ href, children }) =>
-            isSafeHref(href) ? (
+            linkMentions && href && INTERNAL_MENTION_HREF_RE.test(href) ? (
+              <Link to={href} className="break-words font-medium text-primary underline">
+                {children}
+              </Link>
+            ) : isSafeHref(href) ? (
               <motion.a
                 href={href}
                 target="_blank"
