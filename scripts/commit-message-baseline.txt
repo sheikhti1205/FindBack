@@ -45,3 +45,12 @@ a868ac972260f6b6015898186968ab8903c1b58c
 # every subsequent commit follows the normal `scope: outcome` + Gates
 # convention (enforced on every new HEAD).
 575edc51d0be14f2cf019187a67deed0f1945e87
+# Exception 2026-10-09 (accepted-history): the two SHAs below are already
+# merged/pushed main history (W4+W5+W6 ledger 2174bd1 with a 78-char subject;
+# W7 ledger d899234 with no Gates body). Rewriting would require a destructive
+# main-history rewrite + force-push; the owner explicitly requires append-only
+# fix-forward history and rejects history rewriting. Grandfathered with
+# reason; every new commit remains subject to the normal `scope: outcome` +
+# Gates convention (enforced on every new HEAD).
+2174bd139ec7f0513e3afc240efd2e4b19aab3ef
+d899234d8ac816dae7ebf4bc0297db9d1e6f31b8
