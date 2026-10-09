@@ -105,8 +105,17 @@ export const addCommentSchema = z.object({
   body: z.string().min(1, "Comment cannot be empty").max(1000),
 });
 
+/** Every reaction kind the API accepts: legacy LIKE/DISLIKE + canonical W3.3 kinds. */
+export const REACTION_INPUT_TYPES = [
+  ...REACTION_TYPES,
+  "LOVE",
+  "HELPFUL",
+  "SUPPORT",
+  "WOW",
+] as const;
+
 export const reactToPostSchema = z.object({
-  type: z.enum(REACTION_TYPES).nullable(),
+  type: z.enum(REACTION_INPUT_TYPES).nullable(),
 });
 
 export const ratePostSchema = z.object({
@@ -206,6 +215,26 @@ export interface PostItem {
   updatedAt: string;
 }
 
+/**
+ * Canonical multi-kind reaction model (W3.3). Legacy LIKE/DISLIKE remain valid
+ * on the wire; LIKE is displayed as LOVE (see the reaction migration mapping).
+ */
+export const CANONICAL_REACTION_KINDS = ["LOVE", "HELPFUL", "SUPPORT", "WOW"] as const;
+export const LEGACY_REACTION_KINDS = ["LIKE", "DISLIKE"] as const;
+
+export type CanonicalReactionKind = (typeof CANONICAL_REACTION_KINDS)[number];
+export type LegacyReactionKind = (typeof LEGACY_REACTION_KINDS)[number];
+export type ReactionKind = CanonicalReactionKind | LegacyReactionKind;
+
+/** Per-kind counts keyed by canonical kind. Absent kinds are 0 (never stored). */
+export type ReactionCounts = Partial<Record<ReactionKind, number>>;
+
+export interface ReactionSummary {
+  counts: ReactionCounts;
+  myReaction: ReactionKind | null;
+  total: number;
+}
+
 export interface CommentItem {
   id: string;
   postId: string;
@@ -217,6 +246,8 @@ export interface CommentItem {
   body: string;
   createdAt: string;
   updatedAt: string;
+  /** Optional so pre-multi-kind rows/mappers stay valid; absent is treated as empty. */
+  reactionSummary?: ReactionSummary;
 }
 
 export interface FeedPage {

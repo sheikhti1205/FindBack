@@ -461,3 +461,77 @@ describe("fetchSocialState", () => {
     expect(await fetchSocialState("p1")).toEqual({ myReaction: null, myRating: null });
   });
 });
+
+describe("fetchComments reaction summary (W3.3)", () => {
+  it("maps per-kind counts and the caller's reaction onto the comment", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [commentRow({ reaction_counts: { LIKE: 2, WOW: 1 }, my_reaction: "LIKE" })],
+      error: null,
+    });
+
+    const comments = await fetchComments("p1");
+
+    expect(comments[0]!.reactionSummary).toEqual({
+      counts: { LOVE: 2, WOW: 1 },
+      myReaction: "LOVE",
+      total: 3,
+    });
+  });
+
+  it("omits the summary when the row carries no reaction columns", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [commentRow()], error: null });
+
+    const comments = await fetchComments("p1");
+
+    expect(comments[0]!.reactionSummary).toBeUndefined();
+  });
+});
+
+describe("reactToPost multi-kind (W3.3)", () => {
+  it("returns the per-kind summary when the widened RPC provides it", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [
+        {
+          post_id: "p1",
+          like_count: 1,
+          dislike_count: 0,
+          my_reaction: "HELPFUL",
+          reaction_counts: { LOVE: 1, HELPFUL: 1 },
+        },
+      ],
+      error: null,
+    });
+
+    const res = await reactToPost("p1", "HELPFUL");
+
+    expect(res.reactionCounts).toEqual({
+      counts: { LOVE: 1, HELPFUL: 1 },
+      myReaction: "HELPFUL",
+      total: 2,
+    });
+  });
+
+  it("leaves reactionCounts absent for a legacy row shape", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ post_id: "p1", like_count: 1, dislike_count: 0, my_reaction: "LIKE" }],
+      error: null,
+    });
+
+    const res = await reactToPost("p1", "LIKE");
+
+    expect(res.reactionCounts).toBeUndefined();
+  });
+});
+
+describe("fetchSocialState canonical reaction (W3.3)", () => {
+  it("surfaces a multi-kind reaction value", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ my_reaction: "SUPPORT", my_rating: null }],
+      error: null,
+    });
+
+    const state = await fetchSocialState("p1");
+
+    expect(state).toEqual({ myReaction: "SUPPORT", myRating: null });
+  });
+});

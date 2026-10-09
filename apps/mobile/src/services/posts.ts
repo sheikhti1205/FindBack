@@ -6,7 +6,10 @@ import type {
   PostItem,
   PostStatus,
   PostType,
+  ReactionKind,
+  ReactionSummary,
 } from "@findback/shared";
+import { reactionSummaryFromRow } from "./reactions";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 import { createPost, createPostMulti, type CreatePostInput } from "./postsCreate";
@@ -310,9 +313,14 @@ interface ClientCommentRow {
   author_phone_verified: number | boolean | null;
   author_avatar_url: string | null;
   author_created_at: string;
+  /** Per-kind reaction counts (W3.3); absent on rows from the add RPC. */
+  reaction_counts?: unknown;
+  /** Caller's own reaction (W3.3); absent on rows from the add RPC. */
+  my_reaction?: unknown;
 }
 
 function mapClientComment(row: ClientCommentRow): CommentItem {
+  const reactionSummary = reactionSummaryFromRow(row);
   return {
     id: row.id,
     postId: row.post_id,
@@ -329,6 +337,7 @@ function mapClientComment(row: ClientCommentRow): CommentItem {
     body: row.body,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(reactionSummary ? { reactionSummary } : {}),
   };
 }
 
@@ -376,6 +385,8 @@ export interface ReactionResult {
   likeCount: number;
   dislikeCount: number;
   myReaction: "LIKE" | "DISLIKE" | null;
+  /** Per-kind counts from the widened react RPC (W3.3); absent on legacy mocks. */
+  reactionCounts?: ReactionSummary;
 }
 
 interface ClientReactionRow {
@@ -383,11 +394,12 @@ interface ClientReactionRow {
   like_count: number | null;
   dislike_count: number | null;
   my_reaction: string | null;
+  reaction_counts?: unknown;
 }
 
 export async function reactToPost(
   postId: string,
-  type: "LIKE" | "DISLIKE" | null,
+  type: ReactionKind | null,
 ): Promise<ReactionResult> {
   const { data, error } = await getSupabase().rpc("findback_react_client", {
     p_post_id: postId,
@@ -396,11 +408,16 @@ export async function reactToPost(
   if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
   const row = ((data ?? []) as ClientReactionRow[])[0];
   if (!row) throw new ApiError("Reaction was not saved", 400);
+  const reactionCounts =
+    row.reaction_counts === undefined
+      ? undefined
+      : reactionSummaryFromRow({ reaction_counts: row.reaction_counts, my_reaction: row.my_reaction });
   return {
     postId: row.post_id,
     likeCount: Number(row.like_count ?? 0),
     dislikeCount: Number(row.dislike_count ?? 0),
     myReaction: (row.my_reaction as "LIKE" | "DISLIKE" | null) ?? null,
+    ...(reactionCounts ? { reactionCounts } : {}),
   };
 }
 

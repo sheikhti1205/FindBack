@@ -1,15 +1,25 @@
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 import { reactToPost, type ReactionResult } from "./posts";
+import {
+  DEFAULT_REACTION_KIND,
+  nextReactionForTap,
+  setPostReaction,
+  type ReactionKind,
+  type ReactionSummary,
+} from "./reactions";
 
 /**
  * Home-feed Love/Unlove on the EXISTING reaction model (UXN-2):
- * - Love = LIKE
+ * - Love = LIKE (the canonical Love wire kind; LIKE counts toward LOVE)
  * - Unlove = null (reaction removed server-side)
  * - a DISLIKE switches to LIKE when Loved
  *
- * No LOVE kind exists in SQL, types, or this module — never invent one.
+ * No separate LOVE kind is needed for this fast path — the multi-kind model in
+ * `reactions.ts` maps LIKE to LOVE for display and adds the other kinds.
  */
+
+export type { ReactionKind, ReactionSummary } from "./reactions";
 
 export type CallerReaction = "LIKE" | "DISLIKE" | null;
 
@@ -80,4 +90,17 @@ export async function toggleLoveReaction(
   current: CallerReaction,
 ): Promise<ReactionResult> {
   return reactToPost(postId, nextLoveReaction(current));
+}
+
+/**
+ * Multi-kind write path for the reaction tray (W3.3). Tapping the caller's
+ * current kind clears it; otherwise the tapped kind (default Love) is set. The
+ * optimistic delta for this move is `reactionToggleDeltas(current, next)`.
+ */
+export async function togglePostReactionKind(
+  postId: string,
+  current: ReactionKind | null,
+  kind: ReactionKind = DEFAULT_REACTION_KIND,
+): Promise<ReactionSummary> {
+  return setPostReaction(postId, nextReactionForTap(current, kind));
 }
