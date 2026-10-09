@@ -27,6 +27,10 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 
 export interface GoogleIdTokenResult {
   idToken: string;
+  /** Raw single-use nonce (native-generated, SecureRandom). The caller passes
+   *  it as `nonce` to Supabase `signInWithIdToken`; the hashed form went to
+   *  Google as the ID-option nonce. NEVER logged/printed. */
+  nonce: string;
   email?: string | null;
   /** Display-name SEED only. Never treated as identity. */
   name?: string | null;
@@ -182,8 +186,16 @@ function normalizeResult(raw: unknown): GoogleIdTokenResult {
     // Never resolve an empty "success": callers must not proceed without a token.
     throw new GoogleAuthError("unknown", MESSAGES.unknown);
   }
+  const nonce = record["nonce"];
+  if (typeof nonce !== "string" || nonce.length === 0) {
+    // The raw nonce is required: without it the Supabase server-side
+    // nonce check cannot pass, so resolving would only produce a
+    // doomed exchange. Fail closed with the same unknown kind.
+    throw new GoogleAuthError("unknown", MESSAGES.unknown);
+  }
   return {
     idToken,
+    nonce,
     email: asOptionalString(record["email"]),
     name: asOptionalString(record["name"]),
     avatarUrl: sanitizeAvatarUrl(record["avatarUrl"]),

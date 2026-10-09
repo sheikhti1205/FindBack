@@ -282,9 +282,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInWithGoogle = useCallback(async (mode: "signin" | "signup") => {
     let idToken = "";
+    let nonce = "";
     try {
       const result = await startNativeGoogleSignIn({ mode });
       idToken = typeof result?.idToken === "string" ? result.idToken : "";
+      nonce = typeof result?.nonce === "string" ? result.nonce : "";
     } catch (err) {
       // S1 GoogleAuthError messages are already human (contract) — rethrow
       // verbatim so the taxonomy survives to the UI.
@@ -295,7 +297,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("Google sign-in failed. Please try again.");
     }
     if (!idToken) throw new Error("Google sign-in did not return a token. Please try again.");
-    const outcome = await signInWithGoogleIdToken(idToken);
+    // W0-D: forward the S1 raw nonce for the Supabase server-side nonce
+    // check (skip-nonce-check stays OFF). Missing nonce fails closed in S2.
+    const outcome = await signInWithGoogleIdToken(idToken, nonce);
     if (outcome.status === "authenticated") {
       setNeedsProfileState(null);
       setUserState(outcome.user);

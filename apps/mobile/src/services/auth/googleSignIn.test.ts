@@ -48,6 +48,7 @@ import {
 import { ApiError } from "../session";
 
 const TOKEN = "w0b-test-id-token-abc123";
+const NONCE = "w0d-test-raw-nonce-xyz789";
 
 const EXISTING_USER: PublicUser = {
   id: "user-existing",
@@ -110,14 +111,30 @@ describe("isProfileMissingError — narrow PGRST116 check", () => {
   });
 });
 
+describe("signInWithGoogleIdToken — nonce forwarding (W0-D)", () => {
+  it("forwards the raw nonce into Supabase signInWithIdToken", async () => {
+    hoisted.signInWithIdToken.mockResolvedValue(sessionResult());
+    hoisted.fetchMe.mockResolvedValue({ ...EXISTING_USER });
+
+    await signInWithGoogleIdToken(TOKEN, NONCE);
+
+    expect(hoisted.signInWithIdToken).toHaveBeenCalledWith({ provider: "google", token: TOKEN, nonce: NONCE });
+  });
+
+  it("rejects an empty nonce without touching Supabase", async () => {
+    await expect(signInWithGoogleIdToken(TOKEN, "")).rejects.toMatchObject({ name: "ApiError" });
+    expect(hoisted.signInWithIdToken).not.toHaveBeenCalled();
+  });
+});
+
 describe("signInWithGoogleIdToken — existing profile (path A)", () => {
   it("sets the session token and returns the preserved profile untouched", async () => {
     hoisted.signInWithIdToken.mockResolvedValue(sessionResult());
     hoisted.fetchMe.mockResolvedValue({ ...EXISTING_USER });
 
-    const outcome = await signInWithGoogleIdToken(TOKEN);
+    const outcome = await signInWithGoogleIdToken(TOKEN, NONCE);
 
-    expect(hoisted.signInWithIdToken).toHaveBeenCalledWith({ provider: "google", token: TOKEN });
+    expect(hoisted.signInWithIdToken).toHaveBeenCalledWith({ provider: "google", token: TOKEN, nonce: NONCE });
     expect(getToken()).toBe("session-token-1");
     expect(outcome).toEqual({ status: "authenticated", user: EXISTING_USER });
     expect(hoisted.rpc).not.toHaveBeenCalled();
@@ -139,7 +156,7 @@ describe("signInWithGoogleIdToken — existing profile (path A)", () => {
     });
     hoisted.fetchMe.mockResolvedValue({ ...EXISTING_USER });
 
-    const outcome = await signInWithGoogleIdToken(TOKEN);
+    const outcome = await signInWithGoogleIdToken(TOKEN, NONCE);
 
     expect(outcome.status).toBe("authenticated");
     if (outcome.status === "authenticated") {
@@ -167,7 +184,7 @@ describe("signInWithGoogleIdToken — missing profile (path B)", () => {
   it("keeps the session and returns a needsProfile seed", async () => {
     missingProfileSetup();
 
-    const outcome = await signInWithGoogleIdToken(TOKEN);
+    const outcome = await signInWithGoogleIdToken(TOKEN, NONCE);
 
     expect(outcome.status).toBe("needsProfile");
     if (outcome.status === "needsProfile") {
@@ -189,7 +206,7 @@ describe("signInWithGoogleIdToken — missing profile (path B)", () => {
       error: null,
     });
 
-    const outcome = await signInWithGoogleIdToken(TOKEN);
+    const outcome = await signInWithGoogleIdToken(TOKEN, NONCE);
     expect(outcome.status).toBe("needsProfile");
     if (outcome.status === "needsProfile") expect(outcome.seed.avatarUrl).toBeNull();
   });
@@ -201,14 +218,14 @@ describe("signInWithGoogleIdToken — missing profile (path B)", () => {
     hoisted.getUser.mockResolvedValue({ data: { user: googleAuthUser() }, error: null });
     hoisted.single.mockResolvedValue({ data: null, error: { code: "42501", message: "denied" } });
 
-    await expect(signInWithGoogleIdToken(TOKEN)).rejects.toBe(original);
+    await expect(signInWithGoogleIdToken(TOKEN, NONCE)).rejects.toBe(original);
     expect(getToken()).toBe("session-token-1");
   });
 });
 
 describe("signInWithGoogleIdToken — rejections", () => {
   it("rejects an empty token without touching Supabase", async () => {
-    await expect(signInWithGoogleIdToken("")).rejects.toMatchObject({ name: "ApiError" });
+    await expect(signInWithGoogleIdToken("", NONCE)).rejects.toMatchObject({ name: "ApiError" });
     expect(hoisted.signInWithIdToken).not.toHaveBeenCalled();
   });
 
@@ -218,7 +235,7 @@ describe("signInWithGoogleIdToken — rejections", () => {
       error: { code: "invalid_jwt_xyz", message: "JWT aud mismatch internal detail", status: 400 },
     });
 
-    const err = await signInWithGoogleIdToken(TOKEN).catch((e: unknown) => e);
+    const err = await signInWithGoogleIdToken(TOKEN, NONCE).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     const message = (err as Error).message;
     expect(message).not.toContain("invalid_jwt_xyz");
@@ -322,7 +339,7 @@ describe("privacy guards", () => {
     try {
       hoisted.signInWithIdToken.mockResolvedValue(sessionResult());
       hoisted.fetchMe.mockResolvedValue({ ...EXISTING_USER });
-      await signInWithGoogleIdToken(TOKEN);
+      await signInWithGoogleIdToken(TOKEN, NONCE);
       hoisted.fetchMe.mockRejectedValueOnce(new ApiError("Could not load profile", 400));
       hoisted.getUser.mockResolvedValue({ data: { user: googleAuthUser() }, error: null });
       hoisted.single.mockResolvedValue({ data: null, error: { code: "PGRST116" } });
@@ -330,7 +347,7 @@ describe("privacy guards", () => {
         data: { session: { access_token: "t2", user: { id: "user-new" } }, user: { id: "user-new" } },
         error: null,
       });
-      await signInWithGoogleIdToken(TOKEN);
+      await signInWithGoogleIdToken(TOKEN, NONCE);
       await completeSocialProfile({
         username: "new_person",
         displayName: "New Person",
@@ -365,7 +382,7 @@ describe("privacy guards", () => {
 
     hoisted.signInWithIdToken.mockResolvedValue(sessionResult());
     hoisted.fetchMe.mockResolvedValue({ ...EXISTING_USER });
-    await signInWithGoogleIdToken(TOKEN);
+    await signInWithGoogleIdToken(TOKEN, NONCE);
     expect(getPendingReportRoute()).toBe(before);
 
     hoisted.fetchMe.mockRejectedValueOnce(new ApiError("Could not load profile", 400));
@@ -375,7 +392,7 @@ describe("privacy guards", () => {
       data: { session: { access_token: "t2", user: { id: "user-new" } }, user: { id: "user-new" } },
       error: null,
     });
-    await signInWithGoogleIdToken(TOKEN);
+    await signInWithGoogleIdToken(TOKEN, NONCE);
     expect(getPendingReportRoute()).toBe(before);
   });
 });

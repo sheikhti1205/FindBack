@@ -288,6 +288,7 @@ function configureGoogleSeams(outcome: GoogleSignInOutcome) {
     isGoogleAuthAvailable: () => true,
     startGoogleSignIn: async () => ({
       idToken: "fake-google-id-token",
+      nonce: "fake-google-nonce",
       email: GOOGLE_SEED.email,
       name: GOOGLE_SEED.name,
       avatarUrl: null,

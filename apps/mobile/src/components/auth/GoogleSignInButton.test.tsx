@@ -29,12 +29,13 @@ afterEach(() => {
 function configureAvailable(seams?: {
   start?: (opts: { mode: "signin" | "signup" }) => Promise<{
     idToken: string;
+    nonce: string;
     email?: string | null;
     name?: string | null;
     avatarUrl?: string | null;
     phone?: string | null;
   }>;
-  signIn?: (idToken: string) => Promise<GoogleSignInOutcome>;
+  signIn?: (idToken: string, nonce: string) => Promise<GoogleSignInOutcome>;
 }) {
   __setGoogleSignInSeams({
     isGoogleAuthAvailable: () => true,
@@ -79,13 +80,15 @@ describe("GoogleSignInButton (S3)", () => {
     };
     const start = vi.fn(async (_opts: { mode: "signin" | "signup" }) => ({
       idToken: "tok-abc",
+      nonce: "nonce-abc",
       email: seed.email,
       name: seed.name,
       avatarUrl: null,
       phone: null,
     }));
-    const signIn = vi.fn(async (idToken: string) => {
+    const signIn = vi.fn(async (idToken: string, nonce: string) => {
       expect(idToken).toBe("tok-abc");
+      expect(nonce).toBe("nonce-abc");
       return { status: "needsProfile", seed } as const;
     });
     const onDone = vi.fn();
@@ -94,19 +97,22 @@ describe("GoogleSignInButton (S3)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     expect(start).toHaveBeenCalledWith({ mode: "signin" });
-    expect(signIn).toHaveBeenCalledWith("tok-abc");
+    expect(signIn).toHaveBeenCalledWith("tok-abc", "nonce-abc");
     expect(onDone).toHaveBeenCalledWith({ status: "needsProfile", seed });
   });
 
   it("disables the button while the exchange is pending (no double submit)", async () => {
-    let release!: (value: { idToken: string }) => void;
-    const gate = new Promise<{ idToken: string }>((resolve) => {
+    let release!: (value: { idToken: string; nonce: string }) => void;
+    const gate = new Promise<{ idToken: string; nonce: string }>((resolve) => {
       release = resolve;
     });
     const onDone = vi.fn();
+    const signIn = vi.fn(
+      async (): Promise<GoogleSignInOutcome> => ({ status: "authenticated", user: FAKE_USER }),
+    );
     configureAvailable({
       start: () => gate,
-      signIn: async () => ({ status: "authenticated", user: FAKE_USER }),
+      signIn,
     });
     render(<GoogleSignInButton mode="signin" onDone={onDone} />);
     const button = screen.getByRole("button", { name: "Continue with Google" });
@@ -115,8 +121,9 @@ describe("GoogleSignInButton (S3)", () => {
     expect(button.getAttribute("aria-busy")).toBe("true");
     // Second activation while pending must not start a second exchange.
     fireEvent.click(button);
-    release({ idToken: "tok-pending" });
+    release({ idToken: "tok-pending", nonce: "nonce-pending" });
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(signIn).toHaveBeenCalledWith("tok-pending", "nonce-pending");
   });
 
   it("stays silent on provider cancel: no error, no onDone, button usable again", async () => {
@@ -165,7 +172,7 @@ describe("GoogleSignInButton (S3)", () => {
   it("maps a Supabase rejection to a human message without internals", async () => {
     const onDone = vi.fn();
     configureAvailable({
-      start: async () => ({ idToken: "tok-supabase-reject" }),
+      start: async () => ({ idToken: "tok-supabase-reject", nonce: "nonce-reject" }),
       signIn: async () => {
         throw new Error("PGRST116 unexpected");
       },
@@ -187,7 +194,7 @@ describe("GoogleSignInButton (S3)", () => {
     }
     const onDone = vi.fn();
     configureAvailable({
-      start: async () => ({ idToken: "tok-must-never-appear" }),
+      start: async () => ({ idToken: "tok-must-never-appear", nonce: "nonce-must-never-appear" }),
       signIn: async () => {
         throw new Error("boom");
       },
@@ -197,5 +204,26 @@ describe("GoogleSignInButton (S3)", () => {
     await screen.findByRole("alert");
     const dumped = JSON.stringify(logged);
     expect(dumped).not.toContain("tok-must-never-appear");
+    expect(dumped).not.toContain("nonce-must-never-appear");
+  });
+
+  it("fails closed when the S1 result carries no nonce: S2 never called, human error, no onDone", async () => {
+    const signIn = vi.fn(
+      async (): Promise<GoogleSignInOutcome> => ({ status: "authenticated", user: FAKE_USER }),
+    );
+    configureAvailable({
+      start: async () => ({ idToken: "tok-without-nonce", nonce: "" }),
+      signIn,
+    });
+    const onDone = vi.fn();
+    render(<GoogleSignInButton mode="signin" onDone={onDone} />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/failed.*try again/i);
+    expect(signIn).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Continue with Google" }).hasAttribute("disabled"),
+    ).toBe(false);
   });
 });

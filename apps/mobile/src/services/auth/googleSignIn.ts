@@ -165,12 +165,19 @@ export async function getNeedsProfileSeed(): Promise<GoogleProfileSeed | null> {
 /**
  * Sign in with a Google ID token from the native bridge (S1).
  * Uses the existing client + setToken; no second session store.
+ *
+ * `nonce` is the RAW single-use nonce generated natively (S1 `nonce` field):
+ * the hashed form went to Google as the ID-option nonce, and Supabase
+ * verifies SHA-256(raw) against the token's nonce claim server-side with
+ * skip-nonce-check OFF. Never logged.
  */
-export async function signInWithGoogleIdToken(idToken: string): Promise<GoogleSignInOutcome> {
+export async function signInWithGoogleIdToken(idToken: string, nonce: string): Promise<GoogleSignInOutcome> {
   if (!idToken) throw new ApiError("Google sign-in failed. Please try again.", 400);
+  if (!nonce) throw new ApiError("Google sign-in failed. Please try again.", 400);
   const { data, error } = await getSupabase().auth.signInWithIdToken({
     provider: "google",
     token: idToken,
+    nonce,
   });
   if (error) throw mapGoogleSignInError(error);
   if (!data.session) throw new ApiError("Google sign-in failed. Please try again.", 400);

@@ -27,6 +27,10 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption;
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.util.concurrent.Executor;
 
 /**
@@ -38,6 +42,17 @@ import java.util.concurrent.Executor;
  * {@code GOOGLE_WEB_CLIENT_ID} BuildConfig seam (see app/build.gradle); it is
  * a public identifier, never a secret, and no client secret exists anywhere in
  * this path.
+ *
+ * <p>Replay protection (W0-D): every {@code signIn} mints a fresh single-use
+ * raw nonce (SecureRandom, 32 bytes, lowercase-hex string). The SHA-256 hex
+ * digest goes to Google as the ID-option nonce; the RAW nonce is returned
+ * alongside the ID token so the JS layer can pass it as {@code nonce} to
+ * Supabase {@code signInWithIdToken}, which verifies SHA-256(raw) against
+ * the token's nonce claim server-side (skip-nonce-check stays OFF). The
+ * hashed encoding is lowercase hex of SHA-256 over the UTF-8 bytes of the
+ * raw string, exactly per Supabase's current native-Google (Credential
+ * Manager) guide: raw random string to Supabase, {@code "%02x"} hex digest
+ * to Google. Neither the token nor any nonce form is ever logged.
  *
  * <p>Fail-closed model (mirrors the S1 facade contract):
  * <ul>
@@ -64,6 +79,36 @@ public final class GoogleAuthPlugin extends Plugin {
 
     /** Guarded by the plugin instance lock: the call awaiting credentials. */
     private PluginCall pendingCall;
+
+    /** Single SecureRandom shared across requests (thread-safe); 32 fresh bytes per nonce. */
+    private static final SecureRandom NONCE_RANDOM = new SecureRandom();
+
+    private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
+
+    private static String toHex(byte[] bytes) {
+        StringBuilder out = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            out.append(HEX_DIGITS[(b >> 4) & 0x0f]);
+            out.append(HEX_DIGITS[b & 0x0f]);
+        }
+        return out.toString();
+    }
+
+    /** Fresh single-use raw nonce: 32 SecureRandom bytes, lowercase-hex string. */
+    private static String newRawNonce() {
+        byte[] bytes = new byte[32];
+        NONCE_RANDOM.nextBytes(bytes);
+        return toHex(bytes);
+    }
+
+    /**
+     * Hashed nonce for the Google ID option: lowercase hex of SHA-256 over
+     * the UTF-8 bytes of the raw nonce (Supabase native-Google encoding).
+     */
+    private static String hashNonce(String rawNonce) throws NoSuchAlgorithmException {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        return toHex(md.digest(rawNonce.getBytes(StandardCharsets.UTF_8)));
+    }
 
     private static String serverClientId() {
         String id = BuildConfig.GOOGLE_WEB_CLIENT_ID;
@@ -148,12 +193,21 @@ public final class GoogleAuthPlugin extends Plugin {
         }
 
         GetGoogleIdOption googleIdOption;
+        final String rawNonce = newRawNonce();
+        final String hashedNonce;
+        try {
+            hashedNonce = hashNonce(rawNonce);
+        } catch (NoSuchAlgorithmException digestError) {
+            rejectPending(call, "unknown", "Google sign-in could not start.");
+            return;
+        }
         try {
             googleIdOption = new GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(filterByAuthorizedAccounts)
                 .setServerClientId(clientId)
                 .setAutoSelectEnabled(filterByAuthorizedAccounts)
                 .setRequestVerifiedPhoneNumber(requestVerifiedPhoneNumber)
+                .setNonce(hashedNonce)
                 .build();
         } catch (Exception builderError) {
             rejectPending(call, "unknown", "Google sign-in could not start.");
@@ -189,7 +243,7 @@ public final class GoogleAuthPlugin extends Plugin {
                 new CredentialManagerCallback<GetCredentialResponse, GetCredentialException>() {
                     @Override
                     public void onResult(GetCredentialResponse response) {
-                        handleCredential(response, call);
+                        handleCredential(response, call, rawNonce);
                     }
 
                     @Override
@@ -202,7 +256,7 @@ public final class GoogleAuthPlugin extends Plugin {
         }
     }
 
-    private void handleCredential(GetCredentialResponse response, PluginCall call) {
+    private void handleCredential(GetCredentialResponse response, PluginCall call, String rawNonce) {
         Credential credential = response != null ? response.getCredential() : null;
         if (!(credential instanceof CustomCredential)
             || !GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL.equals(credential.getType())) {
@@ -223,6 +277,9 @@ public final class GoogleAuthPlugin extends Plugin {
         }
         JSObject result = new JSObject();
         result.put("idToken", idToken);
+        // Raw single-use nonce for the Supabase server-side nonce check.
+        // Never logged; the JS facade forwards it and never prints it.
+        result.put("nonce", rawNonce);
         String email = null;
         try {
             email = googleCredential.getEmail();

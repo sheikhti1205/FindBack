@@ -38,7 +38,7 @@ export type GoogleAuthFailureKind =
 export interface GoogleSignInSeams {
   isGoogleAuthAvailable: () => boolean;
   startGoogleSignIn: (opts: { mode: GoogleAuthMode }) => Promise<GoogleIdTokenResult>;
-  signInWithGoogleIdToken: (idToken: string) => Promise<GoogleSignInOutcome>;
+  signInWithGoogleIdToken: (idToken: string, nonce: string) => Promise<GoogleSignInOutcome>;
 }
 
 const WIRED_SEAMS: GoogleSignInSeams = {
@@ -118,10 +118,18 @@ export function GoogleSignInButton({
     setPending(true);
     let outcome: GoogleSignInOutcome;
     try {
-      // The id token is passed straight to the service seam and never
-      // logged, printed, or embedded in any error/message.
+      // The id token AND raw nonce go straight to the service seam and are
+      // never logged, printed, or embedded in any error/message. The nonce is
+      // required: S2 is never called without one (no downgrade to
+      // skip-nonce-check).
       const token = await activeSeams.startGoogleSignIn({ mode });
-      outcome = await activeSeams.signInWithGoogleIdToken(token.idToken);
+      if (!token.nonce) {
+        throw Object.assign(
+          new Error("Google sign-in failed. Please try again."),
+          { kind: "unknown" as GoogleAuthFailureKind },
+        );
+      }
+      outcome = await activeSeams.signInWithGoogleIdToken(token.idToken, token.nonce);
     } catch (err) {
       setError(humanMessageFor(err));
       setPending(false);

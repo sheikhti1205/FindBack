@@ -99,7 +99,7 @@ describe("isGoogleAuthAvailable", () => {
 
 describe("startGoogleSignIn option mapping", () => {
   it("signin uses authorized-accounts-only with no phone request", async () => {
-    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN });
+    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "n-signin" });
     await startGoogleSignIn({ mode: "signin" });
     expect(fakeBridge.signIn).toHaveBeenCalledTimes(1);
     const payload = fakeBridge.signIn.mock.calls[0]?.[0] as Record<string, unknown>;
@@ -108,7 +108,7 @@ describe("startGoogleSignIn option mapping", () => {
   });
 
   it("signup disables the authorized-accounts filter and requests verified phone", async () => {
-    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN });
+    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "n-signup" });
     await startGoogleSignIn({ mode: "signup" });
     expect(fakeBridge.signIn).toHaveBeenCalledTimes(1);
     expect(fakeBridge.signIn.mock.calls[0]?.[0]).toEqual({
@@ -124,7 +124,7 @@ describe("startGoogleSignIn option mapping", () => {
     vi.resetModules();
     registerPluginMock.mockClear().mockImplementation(() => fakeBridge);
     const fresh = await import("./googleAuth");
-    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN });
+    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "n-lazy" });
     await fresh.startGoogleSignIn({ mode: "signin" });
     expect(registerPluginMock).toHaveBeenCalledWith("GoogleAuth");
   });
@@ -132,9 +132,10 @@ describe("startGoogleSignIn option mapping", () => {
 
 describe("startGoogleSignIn results", () => {
   it("passes through idToken and normalizes missing profile fields to null", async () => {
-    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN });
+    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "raw-nonce-for-tests-only" });
     await expect(startGoogleSignIn({ mode: "signin" })).resolves.toEqual({
       idToken: TOKEN,
+      nonce: "raw-nonce-for-tests-only",
       email: null,
       name: null,
       avatarUrl: null,
@@ -145,6 +146,7 @@ describe("startGoogleSignIn results", () => {
   it("passes through email/name and a Google-hosted avatar", async () => {
     fakeBridge.signIn.mockResolvedValue({
       idToken: TOKEN,
+      nonce: "n-avatar",
       email: "user@example.com",
       name: "Test User",
       avatarUrl: "https://lh3.googleusercontent.com/a/avatar",
@@ -158,6 +160,7 @@ describe("startGoogleSignIn results", () => {
   it("nulls a non-Google avatar URL (never an arbitrary remote URL)", async () => {
     fakeBridge.signIn.mockResolvedValue({
       idToken: TOKEN,
+      nonce: "n-evil",
       avatarUrl: "https://evil.example.com/avatar.png",
     });
     const result = await startGoogleSignIn({ mode: "signin" });
@@ -167,6 +170,7 @@ describe("startGoogleSignIn results", () => {
   it("nulls a non-https avatar URL", async () => {
     fakeBridge.signIn.mockResolvedValue({
       idToken: TOKEN,
+      nonce: "n-http",
       avatarUrl: "http://lh3.googleusercontent.com/a/avatar",
     });
     const result = await startGoogleSignIn({ mode: "signin" });
@@ -174,13 +178,34 @@ describe("startGoogleSignIn results", () => {
   });
 
   it("passes through a legitimately returned phone on signup", async () => {
-    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, phone: "+8801XXXXXXXXX" });
+    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "n-phone", phone: "+8801XXXXXXXXX" });
     const result = await startGoogleSignIn({ mode: "signup" });
     expect(result.phone).toBe("+8801XXXXXXXXX");
   });
 
   it("rejects a missing idToken as unknown (never resolves empty success)", async () => {
     fakeBridge.signIn.mockResolvedValue({});
+    const err = await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GoogleAuthError);
+    expect((err as GoogleAuthError).kind).toBe("unknown");
+  });
+
+  it("passes through the native raw nonce alongside the idToken", async () => {
+    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "raw-nonce-abc123" });
+    const result = await startGoogleSignIn({ mode: "signup" });
+    expect(result.idToken).toBe(TOKEN);
+    expect(result.nonce).toBe("raw-nonce-abc123");
+  });
+
+  it("rejects a missing nonce as unknown (never resolves without the Supabase raw nonce)", async () => {
+    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN });
+    const err = await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GoogleAuthError);
+    expect((err as GoogleAuthError).kind).toBe("unknown");
+  });
+
+  it("rejects an empty nonce as unknown", async () => {
+    fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "" });
     const err = await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(GoogleAuthError);
     expect((err as GoogleAuthError).kind).toBe("unknown");
@@ -256,6 +281,7 @@ describe("token privacy", () => {
     try {
       fakeBridge.signIn.mockResolvedValue({
         idToken: TOKEN,
+        nonce: "n-privacy",
         email: "user@example.com",
       });
       await startGoogleSignIn({ mode: "signin" });
@@ -282,9 +308,36 @@ describe("token privacy", () => {
   it("never logs the idToken on the signup-with-phone path", async () => {
     const consoleCapture = captureConsole();
     try {
-      fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, phone: "+8801XXXXXXXXX" });
+      fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "n-privacy-phone", phone: "+8801XXXXXXXXX" });
       await startGoogleSignIn({ mode: "signup" });
       expectNoTokenLeak(consoleCapture.calls, TOKEN);
+    } finally {
+      consoleCapture.restore();
+    }
+  });
+
+  it("never logs the raw nonce on success", async () => {
+    const consoleCapture = captureConsole();
+    const rawNonce = "raw-nonce-must-never-be-logged";
+    try {
+      fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: rawNonce });
+      await startGoogleSignIn({ mode: "signin" });
+      expectNoTokenLeak(consoleCapture.calls, rawNonce);
+    } finally {
+      consoleCapture.restore();
+    }
+  });
+
+  it("never leaks the raw nonce into rejection messages", async () => {
+    const consoleCapture = captureConsole();
+    const rawNonce = "raw-nonce-must-never-leak";
+    try {
+      // A hostile/misbehaving bridge echoes the nonce inside its error.
+      fakeBridge.signIn.mockRejectedValue({ code: "unknown", message: `failed ${rawNonce}` });
+      const err = (await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e)) as GoogleAuthError;
+      expect(String(err.message)).not.toContain(rawNonce);
+      expect(JSON.stringify(err)).not.toContain(rawNonce);
+      expectNoTokenLeak(consoleCapture.calls, rawNonce);
     } finally {
       consoleCapture.restore();
     }
