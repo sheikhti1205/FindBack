@@ -23,6 +23,23 @@ export function resolveSupabaseBuildEnv(
 }
 
 /**
+ * Google Maps key derivation (A3): the client bundle reads
+ * `VITE_GOOGLE_MAPS_API_KEY`; the canonical local name is
+ * `GOOGLE_MAPS_API_KEY` (same env var feeds the Android manifest
+ * placeholder). Missing is NOT a build failure — the map surfaces fail
+ * closed at runtime. Mirrors {@link resolveSupabaseBuildEnv} precedence:
+ * VITE_* first, canonical fallback.
+ */
+export function resolveGoogleMapsBuildKey(
+  mode: string,
+  // FINDBACK_ENV_DIR isolates the env-file root for hermetic tests (see above).
+  envDir = process.env.FINDBACK_ENV_DIR || resolve(import.meta.dirname, "../.."),
+): string {
+  const env = loadEnv(mode, envDir, "");
+  return env.VITE_GOOGLE_MAPS_API_KEY?.trim() || env.GOOGLE_MAPS_API_KEY || "";
+}
+
+/**
  * S3 — sourcemap mode (sourcemap settings ONLY; S1/S2 own the rest of this file's contract).
  *
  * Local builds emit NO source maps: there is nothing to leak, package, or upload.
@@ -47,12 +64,16 @@ export default defineConfig(({ command, mode }) => {
     if (preflight.status !== 0) throw new Error("Supabase build configuration preflight failed");
   }
   const { publishableKey, url } = resolveSupabaseBuildEnv(mode);
+  const googleMapsKey = resolveGoogleMapsBuildKey(mode);
   const shareOrigin = loadEnv(mode, process.env.FINDBACK_ENV_DIR || resolve(import.meta.dirname, "../.."), "").VITE_PUBLIC_SHARE_ORIGIN?.trim() || "";
   if (command === "build") {
     // Derive the VITE_* names in the build environment from the canonical
     // local SUPABASE_* values; import.meta.env and define then agree.
     process.env.VITE_SUPABASE_URL = url;
     process.env.VITE_SUPABASE_PUBLISHABLE_KEY = publishableKey;
+    // Same derivation for the Maps key (missing stays missing: fail-closed
+    // at runtime, never a build failure).
+    process.env.VITE_GOOGLE_MAPS_API_KEY = googleMapsKey;
   }
   const sourcemap = resolveSourcemapMode(process.env);
   // Explicit local behavior (S3): say which mode we are in so a missing upload

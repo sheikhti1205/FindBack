@@ -10,8 +10,6 @@ import {
   Plus,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import "maplibre-gl/dist/maplibre-gl.css";
-import type { Map as MapLibreMap } from "maplibre-gl";
 import { BottomSheet } from "./BottomSheet";
 import { Button } from "./Button";
 import { announce } from "./LiveRegion";
@@ -27,10 +25,15 @@ import {
   type LocationAdapter,
 } from "../services/locationAdapter";
 import {
-  resolveMapSource,
-  type MapSourceOverride,
-} from "../services/location/mapSource";
-import { configureMapLibreWorker } from "../services/location/maplibreWorker";
+  isGoogleMapsConfigured,
+  resolveGoogleMapsConfig,
+  type GoogleMapsConfig,
+} from "../services/location/googleMapsConfig";
+import {
+  createNativeMap,
+  type NativeMapHandle,
+  type NativeMapLoader,
+} from "../services/location/nativeMap";
 import {
   MAP_LOAD_TIMEOUT_MS,
   RASTER_ATTRIBUTION,
@@ -42,11 +45,14 @@ import {
 import {
   NominatimRateLimitError,
   NominatimThrottler,
-  resolveNominatimConfig,
-  searchPlaces,
   type NominatimSearchOverride,
   type PlaceResult,
 } from "../services/location/nominatimSearch";
+import {
+  attributionForSource,
+  searchPlacesUnified,
+  type PlacesSearchSource,
+} from "../services/location/placesSearch";
 import {
   PIN_ZOOM,
   commitCenterAsLocation,
@@ -72,24 +78,35 @@ export interface MapPickerSheetProps {
   onConfirm: (next: LocationValue) => void;
   /** Chosen search result from a previous session — start-order #2. */
   initialSearchResult?: MapPickerSearchResult | null;
-  /** Tile-source seam (tests / self-hosted / commercial styles). */
-  mapSourceOverride?: MapSourceOverride;
-  /** Search-endpoint seam (the future controlled proxy plugs in here). */
+  /** Search-endpoint seam for the Nominatim fallback (the future controlled proxy plugs in here). */
   nominatimOverride?: NominatimSearchOverride;
+  /** Maps-key seam (tests force configured/unconfigured without env). */
+  mapsConfigOverride?: GoogleMapsConfig;
+  /** Map-transport seam (tests drive a fake handle; production uses the real plugin). */
+  mapLoader?: NativeMapLoader;
+  /** Native Places transport seam (tests; production uses the real bridge). */
+  nativeSearch?: (query: string) => Promise<PlaceResult[]>;
   locationAdapter?: LocationAdapter;
 }
 
-type MapPhase = "starting" | "ready" | "unsupported" | "error";
+type MapPhase = "starting" | "ready" | "unavailable" | "error";
 
 /** Collapses accidental double-taps on the Search button into one request. */
 const SUBMIT_DEBOUNCE_MS = 600;
 
+/** Native-map attribution (the SDK also draws its own logo/attribution). */
+const GOOGLE_ATTRIBUTION = "© Google";
+
+/** Consumer copy for the fail-closed missing-key state (never dev jargon). */
+const MAP_UNAVAILABLE_MESSAGE =
+  "The interactive map isn't available right now — you can still search for a place, use the buttons below to position the pin, and confirm.";
+
 interface PickerRasterFallbackProps {
   center: MapCenter;
   zoom: number;
-  /** Truthful status line (WebGL copy or the map error message). */
+  /** Truthful status line (unavailable copy or the map error message). */
   notice: string;
-  /** Retry is offered for load errors, not for WebGL-less devices. */
+  /** Retry is offered for load errors, not for the missing-key state. */
   onRetry: (() => void) | null;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -98,8 +115,8 @@ interface PickerRasterFallbackProps {
 
 /**
  * Dependency-free fallback map: a plain-<img> 3x3 OSM tile grid under a
- * fixed center pin, with zoom and nudge controls. Used when MapLibre cannot
- * start (WebGL unavailable, library/construct failure). The draft lives
+ * fixed center pin, with zoom and nudge controls. Used when the native Google
+ * map cannot start (no API key, construct failure, offline). The draft lives
  * outside the tile layer, so search, GPS preview, nudge, and Confirm all keep
  * working — including offline, where the grid simply shows no tiles.
  */
@@ -233,13 +250,15 @@ function PickerRasterFallback({
 /**
  * Interactive location picker in a bottom sheet.
  *
- * Fixed DOM center pin: the map moves under the pin and `moveend →
- * getCenter()` feeds the draft coordinates. Nothing is saved until Confirm,
- * which commits through the same approximate-by-default path as
- * LocationPicker (exact only via explicit opt-in). GPS only recenters the
- * preview — it never commits on its own. Manual positioning works offline:
- * the draft lives outside the tile layer, so a failed tile/style load shows
- * a non-blocking notice while Confirm stays usable.
+ * Native Google map with one draggable marker: tapping the map or dragging
+ * the marker moves the draft; panning the camera alone never does (the marker
+ * is the pin — there is no pan-under-pin coupling to misread). Nothing is
+ * saved until Confirm, which commits through the same approximate-by-default
+ * path as LocationPicker (exact only via explicit opt-in). GPS only recenters
+ * the preview — it never commits on its own. Manual positioning works
+ * offline: the draft lives outside the tile layer, so a failed map load shows
+ * a non-blocking notice while Confirm stays usable. Without a Maps API key
+ * the sheet fails closed to the raster fallback with consumer copy.
  */
 export function MapPickerSheet({
   open,
@@ -247,8 +266,10 @@ export function MapPickerSheet({
   value,
   onConfirm,
   initialSearchResult,
-  mapSourceOverride,
   nominatimOverride,
+  mapsConfigOverride,
+  mapLoader,
+  nativeSearch,
   locationAdapter,
 }: MapPickerSheetProps) {
   const [defaultAdapter] = useState(createProductionLocationAdapter);
@@ -256,7 +277,7 @@ export function MapPickerSheet({
   const fixGeneration = useRef(0);
   useEffect(() => () => { fixGeneration.current += 1; }, []);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<MapLibreMap | null>(null);
+  const mapRef = useRef<NativeMapHandle | null>(null);
   const searchThrottlerRef = useRef<NominatimThrottler | null>(null);
   if (searchThrottlerRef.current == null) {
     searchThrottlerRef.current = new NominatimThrottler();
@@ -266,8 +287,7 @@ export function MapPickerSheet({
   const [retryKey, setRetryKey] = useState(0);
   const [mapPhase, setMapPhase] = useState<MapPhase>("starting");
   const [mapMessage, setMapMessage] = useState<string | null>(null);
-  const [tileNotice, setTileNotice] = useState<string | null>(null);
-  // Raster-fallback camera: mirrors the GL camera so the fallback pin starts
+  // Raster-fallback camera: mirrors the native camera so the fallback pin starts
   // where the map would have, and search/GPS/nudge keep it in sync.
   const [fallbackCenter, setFallbackCenter] = useState<MapCenter>({ lat: 0, lng: 0 });
   const [fallbackZoom, setFallbackZoom] = useState(PIN_ZOOM);
@@ -279,6 +299,7 @@ export function MapPickerSheet({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [results, setResults] = useState<PlaceResult[]>([]);
+  const [searchSource, setSearchSource] = useState<PlacesSearchSource>("nominatim");
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [gpsPreview, setGpsPreview] = useState<MapCenter | null>(null);
@@ -286,13 +307,11 @@ export function MapPickerSheet({
   const [pendingFix, setPendingFix] = useState<MapCenter | null>(null);
   const [pendingAccuracy, setPendingAccuracy] = useState<number | null>(null);
 
-  const [mapSource] = useState(() => resolveMapSource(mapSourceOverride));
-  const [searchConfig] = useState(() => resolveNominatimConfig(nominatimOverride));
+  const [mapsConfig] = useState(() => mapsConfigOverride ?? resolveGoogleMapsConfig());
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    let resizeObserver: ResizeObserver | null = null;
     let loadTimer = 0;
 
     const reportPin =
@@ -320,159 +339,141 @@ export function MapPickerSheet({
       initialSearchResult?.label.trim() || value.label.trim() || "Pinned location",
     );
     setExact(false);
-    setMapPhase("starting");
-    setMapMessage(null);
-    setTileNotice(null);
     setSearchInput("");
     setSearchError(null);
     setResults([]);
+    setSearchSource("nominatim");
     setLocating(false);
     setGeoError(null);
     setPendingFix(null);
     setPendingAccuracy(null);
     setGpsPreview(null);
 
+    if (!isGoogleMapsConfigured(mapsConfig)) {
+      setMapPhase("unavailable");
+      setMapMessage(MAP_UNAVAILABLE_MESSAGE);
+      return () => {
+        cancelled = true;
+        fixGeneration.current += 1;
+      };
+    }
+    setMapPhase("starting");
+    setMapMessage(null);
+
     async function init(): Promise<void> {
-      let mod: typeof import("maplibre-gl");
+      const host = containerRef.current;
+      if (host == null) {
+        if (!cancelled) {
+          setMapPhase("error");
+          setMapMessage("The map container is missing — close and reopen the picker.");
+        }
+        return;
+      }
+      // A 0x0 container (BottomSheet open animation, first Android WebView
+      // layout) misplaces the native view: wait for layout first. The wait is
+      // bounded — worst case we build anyway and the stall timer below keeps
+      // Confirm usable.
+      await waitForContainerLayout(host);
+      if (cancelled) return;
+      if (containerRef.current == null) {
+        if (!cancelled) {
+          setMapPhase("error");
+          setMapMessage("The map container is missing — close and reopen the picker.");
+        }
+        return;
+      }
+      // A stalled native view must never spin on "Loading map…" forever:
+      // degrade to a usable error-with-retry state so search, GPS, and
+      // Confirm stay usable. A late-resolving create is destroyed on arrival.
+      let timedOut = false;
+      loadTimer = window.setTimeout(() => {
+        timedOut = true;
+        if (cancelled) return;
+        setMapMessage(
+          "The map is taking a while to load — you can still search for a place or confirm coordinates.",
+        );
+        setMapPhase("error");
+      }, MAP_LOAD_TIMEOUT_MS);
+      let next: NativeMapHandle;
       try {
-        mod = await import("maplibre-gl");
+        next = await createNativeMap(host, {
+          apiKey: mapsConfig.apiKey,
+          center: initial.center,
+          zoom: initial.zoom,
+          draggable: true,
+          loader: mapLoader,
+        });
+      } catch {
+        if (!cancelled) {
+          window.clearTimeout(loadTimer);
+          setMapPhase("error");
+          setMapMessage(
+            "The map could not start — you can still search for a place or confirm coordinates.",
+          );
+        }
+        return;
+      }
+      if (cancelled || timedOut) {
+        window.clearTimeout(loadTimer);
+        try {
+          await next.destroy();
+        } catch {
+          // Teardown is best-effort; the sheet is already gone or degraded.
+        }
+        return;
+      }
+      window.clearTimeout(loadTimer);
+      mapRef.current = next;
+      try {
+        if (initial.source !== "neutral-world") {
+          await next.setMarker(initial.center);
+        }
+        await next.onMapTap((pick) => {
+          if (cancelled || !isValidCenter(pick.center)) return;
+          // Tap places the marker AND the draft (the camera does not move).
+          void next.setMarker(pick.center).catch(() => {
+            // Marker sync is a convenience; the draft below is the source of
+            // truth and still commits.
+          });
+          fixGeneration.current += 1;
+          setLocating(false);
+          setDraft(pick.center);
+          setFallbackCenter(pick.center);
+        });
+        await next.onMarkerDragEnd((pick) => {
+          if (cancelled || !isValidCenter(pick.center)) return;
+          // The native marker already sits at the drop point — draft only.
+          fixGeneration.current += 1;
+          setLocating(false);
+          setDraft(pick.center);
+          setFallbackCenter(pick.center);
+        });
       } catch {
         if (!cancelled) {
           setMapPhase("error");
           setMapMessage(
-            "The map library could not load — you can still confirm coordinates or search once you are back online.",
+            "The map could not start — you can still search for a place or confirm coordinates.",
           );
         }
         return;
       }
-      if (cancelled) return;
-      // v6 removed the old supported() static: WebGL2 is required and the Map
-      // constructor throws GPUInitializationError instead. Honor a
-      // supported() export when present (older/newer lines), always keep the
-      // constructor try/catch as the real gate.
-      const legacy = (mod as unknown as { supported?: unknown }).supported;
-      if (typeof legacy === "function") {
-        let ok = true;
-        try {
-          ok = (legacy as () => boolean)();
-        } catch {
-          ok = false;
-        }
-        if (!ok) {
-          setMapPhase("unsupported");
-          return;
-        }
-      }
-      if (containerRef.current == null) {
-        setMapPhase("error");
-        setMapMessage("The map container is missing — close and reopen the picker.");
-        return;
-      }
-      // A 0x0 container (BottomSheet open animation, first Android WebView
-      // layout) builds a blank canvas that never recovers: wait for layout,
-      // then construct and resize. The wait is bounded — worst case we build
-      // anyway and the load timeout below keeps Confirm usable.
-      await waitForContainerLayout(containerRef.current);
-      if (cancelled) return;
-      const host = containerRef.current;
-      if (host == null) {
-        setMapPhase("error");
-        setMapMessage("The map container is missing — close and reopen the picker.");
-        return;
-      }
-      let next: MapLibreMap;
-      try {
-        configureMapLibreWorker(mod);
-        next = new mod.Map({
-          container: host,
-          style: mapSource.styleUrl,
-          center: [initial.center.lng, initial.center.lat],
-          zoom: initial.zoom,
-          attributionControl: false,
-        });
-      } catch (err) {
-        if (!cancelled) {
-          if (err instanceof mod.GPUInitializationError) {
-            setMapPhase("unsupported");
-          } else {
-            setMapPhase("error");
-            setMapMessage(
-              "The map could not start — you can still search for a place or confirm coordinates.",
-            );
-          }
-        }
-        return;
-      }
-      mapRef.current = next;
-      let loaded = false;
-      // A stalled style/load must never spin on "Loading map…" forever:
-      // degrade to a usable ready-with-notice state so the pin, search, and
-      // Confirm stay usable while tiles catch up (or never do, offline).
-      loadTimer = window.setTimeout(() => {
-        if (cancelled || loaded) return;
-        setTileNotice(
-          (prev) =>
-            prev ??
-            "The map is taking a while to load — you can still pan and confirm the pin.",
-        );
-        setMapPhase((prev) => (prev === "starting" ? "ready" : prev));
-        try {
-          next.resize();
-        } catch {
-          // Resize is best-effort; the notice already keeps Confirm usable.
-        }
-      }, MAP_LOAD_TIMEOUT_MS);
-      try {
-        next.addControl(new mod.NavigationControl({ showCompass: false }), "top-right");
-      } catch {
-        // Zoom buttons are a convenience; the picker works without them.
-      }
-      next.on("moveend", () => {
-        if (cancelled) return;
-        const center = next.getCenter();
-        if (Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
-          fixGeneration.current += 1;
-          setLocating(false);
-          setDraft({ lat: center.lat, lng: center.lng });
-        }
-      });
-      // Tile/style failures must never block a manual pick: the draft lives
-      // outside the tile layer, so this notice stays non-blocking. When the
-      // style fails before `load`, promote a stuck "starting" sheet to a
-      // degraded ready state so the center pin, search, and Confirm stay
-      // usable instead of spinning on "Loading map…" forever.
-      next.on("error", () => {
-        if (!cancelled) {
-          setTileNotice(
-            "Map tiles are unavailable — you can still pan and confirm the pin.",
-          );
-          setMapPhase((prev) => (prev === "starting" ? "ready" : prev));
-        }
-      });
-      // Resize after map load and on actual layout changes (including sheet
-      // sizing); the observer is disconnected with this map's lifecycle.
-      const container = host;
-      if (typeof ResizeObserver !== "undefined") {
-        resizeObserver = new ResizeObserver(() => { if (!cancelled) next.resize(); });
-        resizeObserver.observe(container);
-      }
-      next.on("load", () => {
-        if (cancelled) return;
-        loaded = true;
-        window.clearTimeout(loadTimer);
-        next.resize();
-        setMapPhase("ready");
-      });
+      if (!cancelled) setMapPhase("ready");
     }
 
     void init();
     return () => {
       cancelled = true;
       window.clearTimeout(loadTimer);
-      resizeObserver?.disconnect();
       fixGeneration.current += 1;
-      mapRef.current?.remove();
+      const handle = mapRef.current;
       mapRef.current = null;
+      if (handle) {
+        // Native-view teardown: the map must not survive the closed sheet
+        // (leaked views overlay later screens and later reopens).
+        void handle.destroy().catch(() => {
+          // Teardown is best-effort; the sheet is already gone.
+        });
+      }
     };
   }, [
     open,
@@ -481,13 +482,14 @@ export function MapPickerSheet({
     value.longitude,
     value.label,
     initialSearchResult,
-    mapSource.styleUrl,
+    mapsConfig,
+    mapLoader,
   ]);
 
   /**
-   * Eased camera recenter on capable devices; an instant jump when the user
-   * prefers reduced motion. Without a GL map (raster fallback) the fallback
-   * camera moves instead — the draft is updated by the caller either way.
+   * Eased camera recenter; an instant jump when the user prefers reduced
+   * motion. Without a native map (fallback phases) the fallback camera moves
+   * instead — the draft is updated by the caller either way.
    */
   function recenterCamera(center: MapCenter, zoom: number = PIN_ZOOM): void {
     const map = mapRef.current;
@@ -495,20 +497,18 @@ export function MapPickerSheet({
       setFallbackCenter(center);
       return;
     }
-    try {
-      const animated = map as unknown as { easeTo?: (options: object) => void };
-      if (!shouldReduceMotion() && typeof animated.easeTo === "function") {
-        animated.easeTo({ center: [center.lng, center.lat], zoom, duration: 600 });
-        return;
-      }
-    } catch {
-      // Fall through to the instant jump below.
-    }
-    try {
-      map.jumpTo({ center: [center.lng, center.lat], zoom });
-    } catch {
+    void map.setCamera(center, zoom, !shouldReduceMotion()).catch(() => {
       // The camera is a convenience; the draft is already updated.
-    }
+    });
+  }
+
+  /** Moves the native marker to the draft (GPS/search/nudge paths). */
+  function syncMarker(center: MapCenter): void {
+    const map = mapRef.current;
+    if (!map) return;
+    void map.setMarker(center).catch(() => {
+      // Marker sync is a convenience; the draft is the source of truth.
+    });
   }
 
   /** Nudge-pad pan for the raster fallback (also the offline manual path). */
@@ -533,6 +533,7 @@ export function MapPickerSheet({
     setPendingAccuracy(null);
     setDraft(fix);
     setFallbackCenter(fix);
+    syncMarker(fix);
     recenterCamera(fix);
     announce("Preview recentered on your location. Confirm to use it.");
   }
@@ -584,11 +585,16 @@ export function MapPickerSheet({
     setSearching(true);
     setSearchError(null);
     try {
-      const places = await searchPlaces(query, {
-        config: searchConfig,
+      // Native Places first, Nominatim fallback — submit-only either way
+      // (no keystroke autocomplete, per the search-usage policy).
+      const { places, source } = await searchPlacesUnified(query, {
+        nominatimOverride,
         throttler: searchThrottlerRef.current ?? undefined,
+        nativeSearch,
+        now,
       });
       setResults(places);
+      setSearchSource(source);
       if (places.length === 0) {
         setSearchError("No places found — pan the map and confirm the pin instead.");
       }
@@ -614,6 +620,7 @@ export function MapPickerSheet({
     setDraft(center);
     setDraftLabel(place.displayName);
     setFallbackCenter(center);
+    syncMarker(center);
     recenterCamera(center);
   }
 
@@ -637,13 +644,19 @@ export function MapPickerSheet({
       )
     : null;
   const readout = pending ? formatCoordinateReadout(pending) : null;
+  const searchAttribution =
+    results.length > 0
+      ? searchSource === "places"
+        ? attributionForSource("places")
+        : attributionForSource("nominatim")
+      : null;
 
   return (
     <BottomSheet
       open={open}
       onClose={onClose}
       title="Choose location"
-      description="Pan the map under the pin, or search. Nothing is saved until you confirm."
+      description="Drag the marker or tap the map to place the pin, or search. Nothing is saved until you confirm."
       height="large"
     >
       <div className="flex flex-col gap-3">
@@ -652,32 +665,20 @@ export function MapPickerSheet({
             <div
               ref={containerRef}
               data-testid="map-picker-map"
-              aria-label="Interactive map. Pan to move the pin."
+              aria-label="Interactive map. Drag the marker or tap to place the pin."
               className="absolute inset-0"
             />
           ) : null}
-          {mapPhase === "ready" || (mapPhase === "starting" && tileNotice) ? (
-            <motion.div
-              data-testid="map-picker-pin"
-              aria-hidden
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ duration: motionDurations.instant, ease: motionEasings.out }}
-              className="pointer-events-none absolute inset-0 flex items-center justify-center"
-            >
-              <MapPin size={32} className="text-on-surface drop-shadow" />
-            </motion.div>
-          ) : null}
-          {mapPhase === "starting" && !tileNotice ? (
+          {mapPhase === "starting" ? (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <p className="text-sm text-on-surface-variant">Loading map…</p>
             </div>
           ) : null}
-          {mapPhase === "unsupported" ? (
+          {mapPhase === "unavailable" ? (
             <PickerRasterFallback
               center={fallbackCenter}
               zoom={fallbackZoom}
-              notice="Interactive map is not available on this device (WebGL unavailable). You can still type a place, paste coordinates or a Maps link in the report form, or use Find location in Maps — the map preview and external handoff keep working."
+              notice={mapMessage ?? MAP_UNAVAILABLE_MESSAGE}
               onRetry={null}
               onZoomIn={() => setFallbackZoom((zoom) => clampRasterZoom(zoom + 1))}
               onZoomOut={() => setFallbackZoom((zoom) => clampRasterZoom(zoom - 1))}
@@ -700,9 +701,9 @@ export function MapPickerSheet({
           ) : null}
         </div>
         <p className="text-xs text-on-surface-variant">
-          {mapPhase === "unsupported" || mapPhase === "error"
+          {mapPhase === "unavailable" || mapPhase === "error"
             ? `${RASTER_ATTRIBUTION} · Fallback tiles`
-            : `${mapSource.attribution} · ${mapSource.name}`}
+            : GOOGLE_ATTRIBUTION}
         </p>
 
         {/* Deliberately NOT a <form>: this sheet renders inside the Report
@@ -728,9 +729,11 @@ export function MapPickerSheet({
             Search
           </Button>
         </div>
-        <p className="text-xs text-on-surface-variant">
-          Place results: {searchConfig.attribution}
-        </p>
+        {searchAttribution ? (
+          <p className="text-xs text-on-surface-variant">
+            Place results: {searchAttribution}
+          </p>
+        ) : null}
         {searchError ? (
           <p role="alert" className="text-xs text-error">
             {searchError}
@@ -774,8 +777,8 @@ export function MapPickerSheet({
           ) : (
             <span className="text-xs text-on-surface-variant">
               {viewSource === "neutral-world"
-                ? "No location yet — pan the map to place the pin."
-                : "Pan the map to adjust the pin."}
+                ? "No location yet — tap the map to place the pin."
+                : "Drag the marker or tap the map to adjust the pin."}
             </span>
           )}
         </div>
@@ -800,26 +803,6 @@ export function MapPickerSheet({
             Preview centered on your location — confirm to use it. Your location
             is never saved on its own.
           </p>
-        ) : null}
-        {tileNotice ? (
-          <div
-            data-testid="tile-notice"
-            className="flex flex-wrap items-center gap-2"
-          >
-            <p className="text-xs text-on-surface-variant">{tileNotice}</p>
-            <Button
-              type="button"
-              variant="text"
-              size="md"
-              onClick={() => {
-                setTileNotice(null);
-                setMapPhase("starting");
-                setRetryKey((key) => key + 1);
-              }}
-            >
-              Retry map tiles
-            </Button>
-          </div>
         ) : null}
 
         {draft && exact ? (

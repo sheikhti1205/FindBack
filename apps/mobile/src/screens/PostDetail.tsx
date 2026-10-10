@@ -1239,7 +1239,7 @@ export function PostDetail() {
             </div>
           </dl>
 
-          {/* MapLibre mounts only after the disclosure opens. */}
+          {/* Native map mounts only after the disclosure opens. */}
           {mapOpen && (post.latitude != null || post.locationLabel) && (
             <InteractiveLocationMap lat={post.latitude} lng={post.longitude} label={post.locationLabel} />
           )}

@@ -4,6 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { MapPickerSheet } from "./MapPickerSheet";
 import type { LocationValue } from "./LocationPicker";
 import type { LocationAdapter } from "../services/locationAdapter";
+import type { NativeMapHandle, NativeMapLoader } from "../services/location/nativeMap";
+import type { PlaceResult } from "../services/location/nominatimSearch";
 
 vi.mock("./LiveRegion", () => ({ announce: vi.fn() }));
 
@@ -32,93 +34,90 @@ vi.mock("../services/location/rasterTiles", async (importOriginal) => {
   return { ...actual, MAP_LOAD_TIMEOUT_MS: 500 };
 });
 
+interface FakeMapState {
+  center: { lat: number; lng: number };
+  taps: Array<(pick: { center: { lat: number; lng: number } }) => void>;
+  dragEnds: Array<(pick: { center: { lat: number; lng: number } }) => void>;
+  markers: Array<{ lat: number; lng: number }>;
+  cameras: Array<{ center: { lat: number; lng: number }; zoom?: number; animate?: boolean }>;
+  destroyed: boolean;
+}
+
+interface FakeLoader {
+  loader: NativeMapLoader;
+  creates: Array<{ element: HTMLElement; options: { center: { lat: number; lng: number }; zoom: number; draggable?: boolean } }>;
+  handles: FakeMapState[];
+  /** Next create() rejects instead of resolving (one-shot). */
+  failNextCreate: boolean;
+  /** Next create() never resolves (stall test). */
+  stallNextCreate: boolean;
+  stalledResolvers: Array<(handle: NativeMapHandle) => void>;
+}
+
+/** Fake native-map transport: deterministic, no plugin, no WebView. */
+function makeFakeLoader(): FakeLoader {
+  const fake: FakeLoader = {
+    creates: [],
+    handles: [],
+    failNextCreate: false,
+    stallNextCreate: false,
+    stalledResolvers: [],
+    loader: {
+      create: async (element, options) => {
+        fake.creates.push({
+          element,
+          options: { center: options.center, zoom: options.zoom, draggable: options.draggable },
+        });
+        if (fake.failNextCreate) {
+          fake.failNextCreate = false;
+          throw new Error("native map failed");
+        }
+        const state: FakeMapState = {
+          center: { ...options.center },
+          taps: [],
+          dragEnds: [],
+          markers: [],
+          cameras: [],
+          destroyed: false,
+        };
+        const handle: NativeMapHandle = {
+          setMarker: async (center) => { state.markers.push({ ...center }); },
+          setCamera: async (center, zoom, animate) => {
+            state.cameras.push({ center: { ...center }, zoom, animate });
+          },
+          onMapTap: async (callback) => { state.taps.push(callback); },
+          onMarkerDragEnd: async (callback) => { state.dragEnds.push(callback); },
+          onCameraIdle: async () => {},
+          destroy: async () => { state.destroyed = true; },
+        };
+        if (fake.stallNextCreate) {
+          fake.stallNextCreate = false;
+          await new Promise<NativeMapHandle>((resolve) => {
+            fake.stalledResolvers.push(resolve);
+          }).then((late) => {
+            Object.assign(handle, late);
+          });
+        }
+        fake.handles.push(state);
+        return handle;
+      },
+    },
+  };
+  return fake;
+}
+
+const CONFIGURED = { apiKey: "test-key" };
+const KEYLESS = { apiKey: "" };
+
 const behavior = vi.hoisted(() => ({
   loadDeadline: undefined as (() => void) | undefined,
-  workerUrl: null as string | null,
-  workerConfiguredAtConstruction: [] as boolean[],
-  throwOnConstruct: false,
-  reportUnsupported: false,
-  instances: [] as Array<{
-    opts: { style: string; center: [number, number]; zoom: number };
-    center: { lat: number; lng: number };
-    handlers: Record<string, () => void>;
-    jumpedTo: Array<{ center: [number, number]; zoom?: number }>;
-    easedTo: Array<{ center: [number, number]; zoom?: number; duration?: number }>;
-    resizeCalls: number;
-  }>,
 }));
-
-vi.mock("maplibre-gl", () => {
-  class GPUInitializationError extends Error {}
-  class NavigationControl {}
-  class FakeMap {
-    state: (typeof behavior.instances)[number];
-    constructor(opts: { style: string; center: [number, number]; zoom: number }) {
-      behavior.workerConfiguredAtConstruction.push(behavior.workerUrl !== null);
-      if (behavior.throwOnConstruct) {
-        throw new GPUInitializationError("WebGL unavailable");
-      }
-      const [lng, lat] = opts.center;
-      this.state = {
-        opts,
-        center: { lat, lng },
-        handlers: {},
-        jumpedTo: [],
-        easedTo: [],
-        resizeCalls: 0,
-      };
-      behavior.instances.push(this.state);
-    }
-    on(event: string, cb: () => void): void {
-      this.state.handlers[event] = cb;
-    }
-    getCenter(): { lat: number; lng: number } {
-      return { ...this.state.center };
-    }
-    jumpTo(next: { center: [number, number]; zoom?: number }): void {
-      const [lng, lat] = next.center;
-      this.state.center = { lat, lng };
-      this.state.jumpedTo.push(next);
-    }
-    easeTo(next: { center: [number, number]; zoom?: number; duration?: number }): void {
-      const [lng, lat] = next.center;
-      this.state.center = { lat, lng };
-      this.state.easedTo.push(next);
-    }
-    addControl(): void {}
-    resize(): void { this.state.resizeCalls += 1; }
-    remove(): void {}
-  }
-  return {
-    Map: FakeMap,
-    setWorkerUrl: (url: string) => { behavior.workerUrl = url; },
-    NavigationControl,
-    GPUInitializationError,
-    // Present on some MapLibre lines; the sheet honors it when available.
-    supported: () => !behavior.reportUnsupported,
-  };
-});
-
-function moveEnd(index: number, lat: number, lng: number): void {
-  const instance = behavior.instances[index];
-  if (!instance) throw new Error("no map instance");
-  instance.center = { lat, lng };
-  act(() => instance.handlers.moveend?.());
-}
-
-/** Host mounted ≠ map ready. Require event registration before camera work. */
-async function awaitMapEvents(index = 0): Promise<void> {
-  await waitFor(() => {
-    expect(behavior.instances[index]?.handlers.moveend).toBeTypeOf("function");
-    expect(behavior.instances[index]?.handlers.load).toBeTypeOf("function");
-  });
-}
 
 beforeEach(() => {
   // jsdom has no layout engine: provide a measured host instead of racing
   // the production two-frame 0x0 fallback against async search results.
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    return new DOMRect(0, 0, this.dataset.testid === "map-picker-map" ? 360 : 0, 320);
+    return new DOMRect(0, 0, 360, 320);
   });
   const setTimeout = window.setTimeout.bind(window);
   vi.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
@@ -135,11 +134,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   delete (navigator as unknown as Record<string, unknown>).geolocation;
-  behavior.throwOnConstruct = false;
-  behavior.reportUnsupported = false;
-  behavior.instances.length = 0;
-  behavior.workerUrl = null;
-  behavior.workerConfiguredAtConstruction.length = 0;
   behavior.loadDeadline = undefined;
 });
 
@@ -211,170 +205,195 @@ const empty: LocationValue = {
   preciseLongitude: null,
 };
 
-describe("MapPickerSheet", () => {
-  it("constructs only after the controlled two-frame zero-layout fallback", async () => {
-    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue(new DOMRect());
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
-    render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />);
-    await waitFor(() => expect(frames).toHaveLength(1));
-    expect(behavior.instances).toHaveLength(0);
-    act(() => frames.shift()!(16));
-    expect(frames).toHaveLength(1);
-    expect(behavior.instances).toHaveLength(0);
-    act(() => frames.shift()!(32));
-    await awaitMapEvents();
-    expect(behavior.instances).toHaveLength(1);
-  });
+function renderSheet(props: Partial<React.ComponentProps<typeof MapPickerSheet>> & { onConfirm: (v: LocationValue) => void }) {
+  const fake = makeFakeLoader();
+  const view = render(
+    <MapPickerSheet
+      open
+      onClose={vi.fn()}
+      value={pinned}
+      mapsConfigOverride={CONFIGURED}
+      mapLoader={fake.loader}
+      {...props}
+    />,
+  );
+  return { fake, ...view };
+}
 
-  it("does not construct a closed sheet when its pending layout frames complete", async () => {
-    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue(new DOMRect());
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
-    const props = { onClose: vi.fn(), value: pinned, onConfirm: vi.fn() };
-    const { rerender } = render(<MapPickerSheet {...props} open />);
-    await waitFor(() => expect(frames).toHaveLength(1));
-    rerender(<MapPickerSheet {...props} open={false} />);
-    await act(async () => {
-      frames.shift()!(16);
-      frames.shift()!(32);
-      await Promise.resolve();
-    });
-    expect(behavior.instances).toHaveLength(0);
-    expect(screen.queryByTestId("map-picker-map")).toBeNull();
-  });
+async function awaitMapReady(fake: FakeLoader, index = 0): Promise<FakeMapState> {
+  await waitFor(() => expect(fake.handles[index]).toBeDefined());
+  await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
+  const state = fake.handles[index];
+  if (!state) throw new Error("no map handle");
+  return state;
+}
 
-  it("configures a bundled worker before constructing the map and waits for load to be ready", async () => {
-    render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />);
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    expect(behavior.workerConfiguredAtConstruction).toEqual([true]);
-    expect(behavior.workerUrl).toBeTruthy();
-    expect(screen.getByText("Loading map…")).toBeTruthy();
-    expect(screen.queryByText(/Map tiles are unavailable/)).toBeNull();
-    act(() => behavior.instances[0]?.handlers.load?.());
-    await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
-    expect(behavior.instances[0]?.resizeCalls).toBeGreaterThan(0);
-  });
-
-  it("falls back to a usable pin when tiles error before load (P1)", async () => {
+describe("MapPickerSheet native map", () => {
+  it("creates one native map at the report pin, marks it, and destroys it on close", async () => {
     const onConfirm = vi.fn();
-    render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />);
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    act(() => behavior.instances[0]?.handlers.error?.());
-    expect(await screen.findByText(/Map tiles are unavailable/)).toBeTruthy();
-    // Load never arrives: the sheet must not stay stuck on "starting" forever.
-    await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
-    // Map stays mounted so pan/search still work; the center pin is visible.
-    expect(screen.getByTestId("map-picker-map")).toBeTruthy();
-    expect(screen.getByTestId("map-picker-pin")).toBeTruthy();
-    // Truthful copy: never claim tiles are visible/loaded.
-    expect(screen.queryByText(/tiles (are )?visible|tiles loaded/i)).toBeNull();
-    // Retry is offered and confirm stays usable for the manual pin.
-    expect(
-      screen.getByRole("button", { name: /retry map tiles|try again/i }),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /retry map tiles/i }));
-    await waitFor(() => expect(behavior.instances).toHaveLength(2));
-    expect(behavior.workerConfiguredAtConstruction).toEqual([true, true]);
-    act(() => behavior.instances[1]?.handlers.load?.());
-    await waitFor(() => expect(screen.getByTestId("map-picker-pin")).toBeTruthy());
+    const props = { onClose: vi.fn(), value: pinned, onConfirm };
+    const { fake, rerender } = renderSheet(props);
+    const state = await awaitMapReady(fake);
+    expect(fake.creates).toHaveLength(1);
+    expect(fake.creates[0]?.options.center).toEqual({ lat: 23.81, lng: 90.412 });
+    expect(fake.creates[0]?.options.zoom).toBe(15);
+    expect(fake.creates[0]?.options.draggable).toBe(true);
+    expect(state.markers).toEqual([{ lat: 23.81, lng: 90.412 }]);
+    expect(state.taps).toHaveLength(1);
+    expect(state.dragEnds).toHaveLength(1);
+
+    rerender(
+      <MapPickerSheet
+        open={false}
+        onClose={props.onClose}
+        value={pinned}
+        onConfirm={onConfirm}
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={fake.loader}
+      />,
+    );
+    await waitFor(() => expect(state.destroyed).toBe(true));
+  });
+
+  it("fails closed without a key: consumer copy, fallback grid, no retry, confirm stays usable", async () => {
+    const onConfirm = vi.fn();
+    renderSheet({ value: pinned, onConfirm, mapsConfigOverride: KEYLESS });
+    expect(await screen.findByTestId("map-picker-fallback")).toBeTruthy();
+    expect(await screen.findByText(/interactive map isn't available/i)).toBeTruthy();
+    // No retry is offered for the missing-key state (a key cannot appear at runtime).
+    expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
+    expect(screen.queryByTestId("map-picker-map")).toBeNull();
+    // The existing draft still commits approximate-by-default.
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ latitude: 23.81, precision: "APPROXIMATE" }),
+    );
+  });
+
+  it("recovers through retry when native creation fails", async () => {
+    const onConfirm = vi.fn();
+    const fake = makeFakeLoader();
+    fake.failNextCreate = true;
+    render(
+      <MapPickerSheet
+        open
+        onClose={vi.fn()}
+        value={pinned}
+        onConfirm={onConfirm}
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={fake.loader}
+      />,
+    );
+    await waitFor(() => expect(fake.creates).toHaveLength(1));
+    expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    // Two native attempts, one surviving map: only successful creates push a
+    // handle, so the retry's map is handles[0] while creates has length 2.
+    const state = await awaitMapReady(fake, 0);
+    expect(fake.creates).toHaveLength(2);
+    expect(state.markers).toEqual([{ lat: 23.81, lng: 90.412 }]);
     fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps search confirmation usable when tiles error before load with no pin yet", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve([{ display_name: "Mirpur, Dhaka", lat: "23.8103", lon: "90.4125" }]),
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it("degrades a stalled native view to error-with-retry and destroys late arrivals", async () => {
     const onConfirm = vi.fn();
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    act(() => behavior.instances[0]?.handlers.error?.());
-    expect(await screen.findByText(/Map tiles are unavailable/)).toBeTruthy();
-    await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
-    fireEvent.change(screen.getByLabelText("Search for a place"), {
-      target: { value: "mirpur" },
+    const fake = makeFakeLoader();
+    fake.stallNextCreate = true;
+    render(
+      <MapPickerSheet
+        open
+        onClose={vi.fn()}
+        value={pinned}
+        onConfirm={onConfirm}
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={fake.loader}
+      />,
+    );
+    await waitFor(() => expect(fake.creates).toHaveLength(1));
+    expect(screen.getByText("Loading map…")).toBeTruthy();
+    expect(behavior.loadDeadline).toBeTypeOf("function");
+    // The native view never resolves: the stall budget must rescue the sheet.
+    act(() => behavior.loadDeadline!());
+    expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
+    expect(screen.queryByText("Loading map…")).toBeNull();
+    // A late-resolving create is destroyed on arrival (no leaked native view).
+    const lateResolvers = [...fake.stalledResolvers];
+    expect(lateResolvers).toHaveLength(1);
+    const lateState: FakeMapState = {
+      center: { lat: 0, lng: 0 },
+      taps: [],
+      dragEnds: [],
+      markers: [],
+      cameras: [],
+      destroyed: false,
+    };
+    const lateHandle: NativeMapHandle = {
+      setMarker: async (center) => { lateState.markers.push(center); },
+      setCamera: async () => {},
+      onMapTap: async () => {},
+      onMarkerDragEnd: async () => {},
+      onCameraIdle: async () => {},
+      destroy: async () => { lateState.destroyed = true; },
+    };
+    await act(async () => {
+      lateResolvers[0]?.(lateHandle);
+      await Promise.resolve();
     });
-    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
-    expect(await screen.findByText("Mirpur, Dhaka")).toBeTruthy();
-    fireEvent.click(screen.getByText("Mirpur, Dhaka"));
+    expect(lateState.destroyed).toBe(true);
+    // Retry builds a fresh map that becomes ready and confirmable.
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    const state = await awaitMapReady(fake, 1);
+    expect(fake.creates).toHaveLength(2);
+    expect(state.markers).toEqual([{ lat: 23.81, lng: 90.412 }]);
     fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
-    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ label: "Mirpur, Dhaka" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it("resizes on sheet layout changes and disconnects its observer when closed", async () => {
-    let onResize: (() => void) | undefined;
-    const disconnect = vi.fn();
-    const observe = vi.fn();
-    vi.stubGlobal("ResizeObserver", class {
-      constructor(callback: () => void) { onResize = callback; }
-      observe = observe;
-      disconnect = disconnect;
-    });
-    const props = { onClose: vi.fn(), value: pinned, onConfirm: vi.fn() };
-    const { rerender } = render(<MapPickerSheet {...props} open />);
-    await waitFor(() => expect(observe).toHaveBeenCalledWith(screen.getByTestId("map-picker-map")));
-    onResize?.();
-    expect(behavior.instances[0]?.resizeCalls).toBe(1);
-    rerender(<MapPickerSheet {...props} open={false} />);
-    expect(disconnect).toHaveBeenCalledTimes(1);
-    onResize?.();
-    expect(behavior.instances[0]?.resizeCalls).toBe(1);
-  });
-  it("starts at the existing report pin and confirms approximate-by-default", async () => {
+  it("moves the draft on map tap (marker follows) and on marker drag-end (draft only)", async () => {
     const onConfirm = vi.fn();
-    const onClose = vi.fn();
-    render(
-      <MapPickerSheet open onClose={onClose} value={pinned} onConfirm={onConfirm} />,
-    );
+    const { fake } = renderSheet({ value: empty, onConfirm });
+    const state = await awaitMapReady(fake);
+    expect(screen.getByRole("button", { name: "Confirm location" })).toHaveProperty("disabled", true);
 
-    expect(await screen.findByText("Pin rounded to ~100 m precision.")).toBeTruthy();
-    // Construction now waits a frame for sheet layout — await the map itself.
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    expect(behavior.instances[0]?.opts.center).toEqual([90.412, 23.81]);
-    expect(behavior.instances[0]?.opts.zoom).toBe(15);
-    expect(behavior.instances[0]?.opts.style).toContain("tiles.openfreemap.org");
-
-    moveEnd(0, 23.810332, 90.412518);
-    expect(await screen.findByText("23.810, 90.413")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
-    expect(onConfirm).toHaveBeenCalledWith({
-      label: "Pinned location",
-      latitude: 23.81,
-      longitude: 90.413,
-      precision: "APPROXIMATE",
-      preciseLatitude: 23.810332,
-      preciseLongitude: 90.412518,
-    });
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps confirm disabled in the neutral world state until the user pans", async () => {
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />,
-    );
-    expect(
-      await screen.findByText("No location yet — pan the map to place the pin."),
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Confirm location" })).toHaveProperty(
-      "disabled",
-      true,
-    );
-
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    moveEnd(0, 23.5, 90.5);
+    act(() => state.taps[0]?.({ center: { lat: 23.5, lng: 90.5 } }));
     expect(await screen.findByText("23.500, 90.500")).toBeTruthy();
+    expect(state.markers).toEqual([{ lat: 23.5, lng: 90.5 }]);
     expect(screen.getByRole("button", { name: "Confirm location" })).toHaveProperty(
       "disabled",
       false,
     );
+
+    act(() => state.dragEnds[0]?.({ center: { lat: 24.125, lng: 91.125 } }));
+    expect(await screen.findByText("24.125, 91.125")).toBeTruthy();
+    // Drag-end moves the draft only — the native marker already sits there.
+    expect(state.markers).toEqual([{ lat: 23.5, lng: 90.5 }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ latitude: 24.125, longitude: 91.125, precision: "APPROXIMATE" }),
+    );
   });
 
-  it("searches only on submit and feeds the selection without autocomplete", async () => {
+  it("starts at the existing report pin and confirms approximate-by-default", async () => {
+    const onConfirm = vi.fn();
+    const onClose = vi.fn();
+    const { fake } = renderSheet({ value: pinned, onConfirm, onClose });
+    await awaitMapReady(fake);
+    expect(await screen.findByText("Pin rounded to ~100 m precision.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledWith({
+      label: "Pinned location",
+      latitude: 23.81,
+      longitude: 90.412,
+      precision: "APPROXIMATE",
+      preciseLatitude: 23.81,
+      preciseLongitude: 90.412,
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("searches only on submit via Nominatim fallback and recenters the marker", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () =>
@@ -382,30 +401,23 @@ describe("MapPickerSheet", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const onConfirm = vi.fn();
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />,
-    );
-    await screen.findByTestId("map-picker-map");
+    const { fake } = renderSheet({ value: empty, onConfirm });
+    const state = await awaitMapReady(fake);
 
-    // A DOM host alone does not prove the async map/event wiring is ready.
-    await awaitMapEvents();
-    expect(behavior.instances[0]?.handlers.moveend).toBeTypeOf("function");
-
-    // Keystrokes alone must not hit the network.
     fireEvent.change(screen.getByLabelText("Search for a place"), {
       target: { value: "mirpur" },
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    // The search control is deliberately NOT a nested <form> (it renders
-    // inside the Report form): both the Search button and Enter trigger it.
     expect(screen.getByLabelText("Search for a place").closest("form")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     expect(await screen.findByText("Mirpur, Dhaka")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/openstreetmap/i)).toBeTruthy();
 
     fireEvent.click(screen.getByText("Mirpur, Dhaka"));
-    expect(behavior.instances[0]?.easedTo[0]?.center).toEqual([90.4125, 23.8103]);
+    expect(state.markers.at(-1)).toEqual({ lat: 23.8103, lng: 90.4125 });
+    expect(state.cameras.at(-1)?.center).toEqual({ lat: 23.8103, lng: 90.4125 });
     fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -417,48 +429,68 @@ describe("MapPickerSheet", () => {
     );
   });
 
+  it("prefers native Places results and labels them Powered by Google", async () => {
+    const place: PlaceResult = { displayName: "Mirpur, Dhaka", latitude: 23.8103, longitude: 90.4125 };
+    const nativeSearch = vi.fn().mockResolvedValue([place]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { fake } = renderSheet({ value: empty, onConfirm: vi.fn(), nativeSearch });
+    await awaitMapReady(fake);
+    fireEvent.change(screen.getByLabelText("Search for a place"), {
+      target: { value: "mirpur" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    expect(await screen.findByText("Mirpur, Dhaka")).toBeTruthy();
+    expect(nativeSearch).toHaveBeenCalledWith("mirpur");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByText(/powered by google/i)).toBeTruthy();
+  });
+
   it("degrades gracefully when geolocation is unavailable", async () => {
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />,
-    );
-    await screen.findByTestId("map-picker-map");
+    const { fake } = renderSheet({ value: empty, onConfirm: vi.fn() });
+    await awaitMapReady(fake);
     fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
     expect(
       await screen.findByText(/location is not supported in this browser/i),
     ).toBeTruthy();
   });
 
-  it("keeps the pin committable when WebGL is unavailable (offline fallback)", async () => {
-    behavior.throwOnConstruct = true;
-    const onConfirm = vi.fn();
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />,
-    );
-    expect(await screen.findByText(/webgl unavailable/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
-    expect(onConfirm).toHaveBeenCalledWith(
-      expect.objectContaining({ latitude: 23.81, precision: "APPROXIMATE" }),
-    );
-  });
-
-  it("shows the fallback when the supported() gate fails", async () => {
-    behavior.reportUnsupported = true;
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />,
-    );
-    expect(await screen.findByText(/webgl unavailable/i)).toBeTruthy();
-    expect(behavior.instances).toHaveLength(0);
-  });
-
   it("offers an exact opt-in with the public-visibility warning", async () => {
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />,
-    );
+    const { fake } = renderSheet({ value: pinned, onConfirm: vi.fn() });
+    await awaitMapReady(fake);
     await screen.findByText("Pin rounded to ~100 m precision.");
     fireEvent.click(screen.getByRole("button", { name: "Use exact pin" }));
     expect(
       await screen.findByText(/exact pin and will be shown publicly/i),
     ).toBeTruthy();
+  });
+
+  it("jumps instead of easing when reduced motion is preferred", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }) as unknown as typeof window.matchMedia;
+    try {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve([{ display_name: "Mirpur, Dhaka", lat: "23.8103", lon: "90.4125" }]),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const { fake } = renderSheet({ value: empty, onConfirm: vi.fn() });
+      const state = await awaitMapReady(fake);
+      fireEvent.change(screen.getByLabelText("Search for a place"), {
+        target: { value: "mirpur" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+      fireEvent.click(await screen.findByText("Mirpur, Dhaka"));
+      await waitFor(() => expect(state.cameras).toHaveLength(1));
+      expect(state.cameras[0]).toMatchObject({ animate: false });
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 });
 
@@ -470,9 +502,17 @@ describe("MapPickerSheet one-time approximate location", () => {
       getCurrentPosition: () => new Promise((resolve) => { resolveFix = resolve; }),
     };
     const onConfirm = vi.fn();
-    const props = { onClose: vi.fn(), value: empty, onConfirm, locationAdapter: adapter };
+    const fake = makeFakeLoader();
+    const props = {
+      onClose: vi.fn(),
+      value: empty,
+      onConfirm,
+      locationAdapter: adapter,
+      mapsConfigOverride: CONFIGURED,
+      mapLoader: fake.loader,
+    };
     const { rerender } = render(<MapPickerSheet {...props} open />);
-    await screen.findByTestId("map-picker-map");
+    await awaitMapReady(fake);
     fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
     await waitFor(() => expect(resolveFix).toBeTypeOf("function"));
     rerender(<MapPickerSheet {...props} open={false} />);
@@ -484,19 +524,29 @@ describe("MapPickerSheet one-time approximate location", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("keeps a manually panned pin when an earlier GPS request finishes", async () => {
+  it("keeps a manually placed pin when an earlier GPS request finishes", async () => {
     let resolveFix!: (fix: { latitude: number; longitude: number; accuracyMeters: number }) => void;
     const adapter: LocationAdapter = {
       getPermission: async () => "granted",
       getCurrentPosition: () => new Promise((resolve) => { resolveFix = resolve; }),
     };
     const onConfirm = vi.fn();
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} locationAdapter={adapter} />);
-    await screen.findByTestId("map-picker-map");
+    const fake = makeFakeLoader();
+    render(
+      <MapPickerSheet
+        open
+        onClose={vi.fn()}
+        value={empty}
+        onConfirm={onConfirm}
+        locationAdapter={adapter}
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={fake.loader}
+      />,
+    );
+    const state = await awaitMapReady(fake);
     fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
     await waitFor(() => expect(resolveFix).toBeTypeOf("function"));
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    moveEnd(0, 24.123, 91.123);
+    act(() => state.taps[0]?.({ center: { lat: 24.123, lng: 91.123 } }));
     resolveFix({ latitude: 23.810332, longitude: 90.412518, accuracyMeters: 42 });
     await act(async () => { await Promise.resolve(); });
     expect(screen.getByText("24.123, 91.123")).toBeTruthy();
@@ -514,19 +564,18 @@ describe("MapPickerSheet one-time approximate location", () => {
 
   it("never prompts by itself — not on mount, not after the map is ready", async () => {
     const geo = installGeolocation();
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
-    await screen.findByTestId("map-picker-map");
+    const { fake } = renderSheet({ value: empty, onConfirm: vi.fn() });
+    await awaitMapReady(fake);
     expect(geo.getCurrentPosition).not.toHaveBeenCalled();
-    // A re-render of the open sheet must not prompt either.
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
+    renderSheet({ value: empty, onConfirm: vi.fn() });
     expect(geo.getCurrentPosition).not.toHaveBeenCalled();
   });
 
   it("asks once per explicit tap, coarsely, and never re-prompts after a denial", async () => {
     const geo = installGeolocation();
     const onConfirm = vi.fn();
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
-    await screen.findByTestId("map-picker-map");
+    const { fake } = renderSheet({ value: empty, onConfirm });
+    await awaitMapReady(fake);
 
     fireEvent.click(useMyLocation());
     await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
@@ -541,15 +590,14 @@ describe("MapPickerSheet one-time approximate location", () => {
     expect(screen.queryByText(/within 8 seconds/i)).toBeNull();
     expect(onConfirm).not.toHaveBeenCalled();
 
-    // Re-rendering after a denial must not prompt again.
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
+    renderSheet({ value: empty, onConfirm });
     expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
   });
 
   it("gives services-off and timeout their own copy instead of one generic error", async () => {
     const geo = installGeolocation();
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
-    await screen.findByTestId("map-picker-map");
+    const { fake } = renderSheet({ value: empty, onConfirm: vi.fn() });
+    await awaitMapReady(fake);
     fireEvent.click(useMyLocation());
     await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.reject(2);
@@ -558,8 +606,8 @@ describe("MapPickerSheet one-time approximate location", () => {
     cleanup();
 
     const geo2 = installGeolocation();
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
-    await screen.findByTestId("map-picker-map");
+    const { fake: fake2 } = renderSheet({ value: empty, onConfirm: vi.fn() });
+    await awaitMapReady(fake2);
     fireEvent.click(useMyLocation());
     await waitFor(() => expect(geo2.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo2.reject(3);
@@ -571,8 +619,8 @@ describe("MapPickerSheet one-time approximate location", () => {
   it("recentres the preview on a granted coarse fix without auto-confirming", async () => {
     const geo = installGeolocation();
     const onConfirm = vi.fn();
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
-    await screen.findByTestId("map-picker-map");
+    const { fake } = renderSheet({ value: empty, onConfirm });
+    const state = await awaitMapReady(fake);
     fireEvent.click(useMyLocation());
     await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.grant({ latitude: 23.8103321, longitude: 90.4125189, accuracy: 42 });
@@ -580,13 +628,19 @@ describe("MapPickerSheet one-time approximate location", () => {
     expect(await screen.findByText("23.810, 90.413")).toBeTruthy();
     expect(confirmButton()).toHaveProperty("disabled", false);
     expect(onConfirm).not.toHaveBeenCalled();
+    // The native marker and camera follow the preview (production adapter
+    // rounds the fix to 6 decimals before it reaches the sheet).
+    await waitFor(() => expect(state.markers.at(-1)).toEqual(
+      { lat: 23.810332, lng: 90.412519 },
+    ));
+    expect(state.cameras.at(-1)?.center).toEqual({ lat: 23.810332, lng: 90.412519 });
   });
 
   it("does not snap to a low-accuracy fix until it is confirmed explicitly", async () => {
     const geo = installGeolocation();
     const onConfirm = vi.fn();
-    render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={onConfirm} />);
-    await screen.findByTestId("map-picker-map");
+    const { fake } = renderSheet({ value: empty, onConfirm });
+    await awaitMapReady(fake);
     fireEvent.click(useMyLocation());
     await waitFor(() => expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1));
     geo.grant({ latitude: 23.8103321, longitude: 90.4125189, accuracy: 4200 });
@@ -612,14 +666,11 @@ describe("MapPickerSheet fallback and camera", () => {
     return document.querySelectorAll('[data-testid="map-picker-fallback"] img');
   }
 
-  it("renders a 3x3 raster grid with zoom when WebGL is unavailable", async () => {
-    behavior.throwOnConstruct = true;
+  it("renders a 3x3 raster grid with zoom when the key is missing", async () => {
     const onConfirm = vi.fn();
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />,
-    );
+    renderSheet({ value: pinned, onConfirm, mapsConfigOverride: KEYLESS });
     expect(await screen.findByTestId("map-picker-fallback")).toBeTruthy();
-    expect(await screen.findByText(/webgl unavailable/i)).toBeTruthy();
+    expect(await screen.findByText(/interactive map isn't available/i)).toBeTruthy();
     expect(screen.queryByTestId("map-picker-map")).toBeNull();
     const tiles = fallbackTiles();
     expect(tiles).toHaveLength(9);
@@ -634,7 +685,7 @@ describe("MapPickerSheet fallback and camera", () => {
         /^https:\/\/tile\.openstreetmap\.org\/16\/\d+\/\d+\.png$/,
       );
     }
-    // Confirm stays usable off the initial draft with no GL map at all.
+    // Confirm stays usable off the initial draft with no native map at all.
     expect(screen.getByText("23.810, 90.412")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
@@ -645,13 +696,10 @@ describe("MapPickerSheet fallback and camera", () => {
     // repeats z/x/y. Keys carry the grid position; without it React logs a
     // duplicate-key warning and corrupts reconciliation (production bug, not
     // test noise).
-    behavior.throwOnConstruct = true;
     const errors: unknown[][] = [];
     const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(args); });
     try {
-      render(
-        <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />,
-      );
+      renderSheet({ value: pinned, onConfirm: vi.fn(), mapsConfigOverride: KEYLESS });
       await screen.findByTestId("map-picker-fallback");
       for (let i = 0; i < 14; i += 1) {
         fireEvent.click(screen.getByRole("button", { name: /zoom out/i }));
@@ -669,10 +717,7 @@ describe("MapPickerSheet fallback and camera", () => {
   });
 
   it("hides fallback tiles that fail to load instead of broken glyphs", async () => {
-    behavior.throwOnConstruct = true;
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />,
-    );
+    renderSheet({ value: pinned, onConfirm: vi.fn(), mapsConfigOverride: KEYLESS });
     await screen.findByTestId("map-picker-fallback");
     expect(fallbackTiles()).toHaveLength(9);
     fireEvent.error(fallbackTiles()[0]!);
@@ -680,62 +725,13 @@ describe("MapPickerSheet fallback and camera", () => {
     expect((fallbackTiles()[1] as HTMLImageElement).style.display).not.toBe("none");
   });
 
-  it("nudges the fallback pin without WebGL", async () => {
-    behavior.throwOnConstruct = true;
-    render(
-      <MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={vi.fn()} />,
-    );
+  it("nudges the fallback pin without a key", async () => {
+    renderSheet({ value: pinned, onConfirm: vi.fn(), mapsConfigOverride: KEYLESS });
     await screen.findByTestId("map-picker-fallback");
     expect(screen.getByText("23.810, 90.412")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /move pin east/i }));
     expect(await screen.findByText("23.810, 90.423")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /move pin west/i }));
     expect(await screen.findByText("23.810, 90.412")).toBeTruthy();
-  });
-
-  it("degrades a stalled load to ready-with-notice instead of loading forever", async () => {
-    const onConfirm = vi.fn();
-    render(<MapPickerSheet open onClose={vi.fn()} value={pinned} onConfirm={onConfirm} />);
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    // Neither load nor error ever arrives: the timeout must rescue the sheet.
-    expect(screen.getByText("Loading map…")).toBeTruthy();
-    expect(behavior.loadDeadline).toBeTypeOf("function");
-    act(() => behavior.loadDeadline!());
-    expect(screen.getByText(/taking a while to load/)).toBeTruthy();
-    await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
-    expect(screen.getByTestId("map-picker-map")).toBeTruthy();
-    expect(screen.getByTestId("map-picker-pin")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
-    expect(onConfirm).toHaveBeenCalledTimes(1);
-  });
-
-  it("jumps instead of easing when reduced motion is preferred", async () => {
-    const originalMatchMedia = window.matchMedia;
-    window.matchMedia = vi.fn().mockReturnValue({
-      matches: true,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    }) as unknown as typeof window.matchMedia;
-    try {
-      const fetchMock = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () =>
-          Promise.resolve([{ display_name: "Mirpur, Dhaka", lat: "23.8103", lon: "90.4125" }]),
-      });
-      vi.stubGlobal("fetch", fetchMock);
-      render(<MapPickerSheet open onClose={vi.fn()} value={empty} onConfirm={vi.fn()} />);
-      await screen.findByTestId("map-picker-map");
-      await awaitMapEvents();
-      fireEvent.change(screen.getByLabelText("Search for a place"), {
-        target: { value: "mirpur" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
-      fireEvent.click(await screen.findByText("Mirpur, Dhaka"));
-      await waitFor(() => expect(behavior.instances[0]?.jumpedTo).toHaveLength(1));
-      expect(behavior.instances[0]?.jumpedTo[0]?.center).toEqual([90.4125, 23.8103]);
-      expect(behavior.instances[0]?.easedTo).toHaveLength(0);
-    } finally {
-      window.matchMedia = originalMatchMedia;
-    }
   });
 });

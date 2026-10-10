@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { InteractiveLocationMap } from "./InteractiveLocationMap";
+import type { NativeMapHandle, NativeMapLoader } from "../services/location/nativeMap";
 
 vi.mock("../services/location/rasterTiles", async (importOriginal) => {
   const actual =
@@ -10,139 +11,153 @@ vi.mock("../services/location/rasterTiles", async (importOriginal) => {
   return { ...actual, MAP_LOAD_TIMEOUT_MS: 500 };
 });
 
-const behavior = vi.hoisted(() => ({
-  workerUrl: null as string | null,
-  workerConfiguredAtConstruction: [] as boolean[],
-  throwOnConstruct: false,
-  throwGeneric: false,
-  reportUnsupported: false,
-  instances: [] as Array<{
-    opts: { style: string; center: [number, number]; zoom: number };
-    center: { lat: number; lng: number };
-    handlers: Record<string, () => void>;
-    zoomCalls: string[];
-    controls: number;
-  }>,
-  markers: [] as Array<[number, number]>,
-}));
+interface FakeMapState {
+  markers: Array<{ lat: number; lng: number }>;
+  cameras: Array<{ center: { lat: number; lng: number }; zoom?: number }>;
+  destroyed: boolean;
+}
 
-vi.mock("maplibre-gl", () => {
-  class GPUInitializationError extends Error {}
-  class NavigationControl {
-    constructor(_opts?: unknown) {}
-  }
-  class Marker {
-    coords: [number, number] | null = null;
-    setLngLat(coords: [number, number]): Marker {
-      this.coords = coords;
-      return this;
-    }
-    addTo(_map: unknown): Marker {
-      if (this.coords) behavior.markers.push(this.coords);
-      return this;
-    }
-    remove(): void {}
-  }
-  class FakeMap {
-    state: (typeof behavior.instances)[number];
-    constructor(opts: { style: string; center: [number, number]; zoom: number }) {
-      behavior.workerConfiguredAtConstruction.push(behavior.workerUrl !== null);
-      if (behavior.throwOnConstruct) {
-        if (behavior.throwGeneric) throw new Error("boom");
-        throw new GPUInitializationError("WebGL unavailable");
-      }
-      const [lng, lat] = opts.center;
-      this.state = {
-        opts,
-        center: { lat, lng },
-        handlers: {},
-        zoomCalls: [],
-        controls: 0,
-      };
-      behavior.instances.push(this.state);
-    }
-    on(event: string, cb: () => void): void {
-      this.state.handlers[event] = cb;
-    }
-    getCenter(): { lat: number; lng: number } {
-      return { ...this.state.center };
-    }
-    addControl(): void {
-      this.state.controls += 1;
-    }
-    zoomIn(): void {
-      this.state.zoomCalls.push("in");
-    }
-    zoomOut(): void {
-      this.state.zoomCalls.push("out");
-    }
-    resize(): void {}
-    remove(): void {}
-  }
-  return {
-    Map: FakeMap,
-    setWorkerUrl: (url: string) => { behavior.workerUrl = url; },
-    Marker,
-    NavigationControl,
-    GPUInitializationError,
-    supported: () => !behavior.reportUnsupported,
+interface FakeLoader {
+  loader: NativeMapLoader;
+  creates: Array<{ center: { lat: number; lng: number }; zoom: number; draggable?: boolean }>;
+  states: FakeMapState[];
+  failNextCreate: boolean;
+}
+
+function makeFakeLoader(): FakeLoader {
+  const fake: FakeLoader = {
+    creates: [],
+    states: [],
+    failNextCreate: false,
+    loader: {
+      create: async (_element, options) => {
+        fake.creates.push({
+          center: { ...options.center },
+          zoom: options.zoom,
+          draggable: options.draggable,
+        });
+        if (fake.failNextCreate) {
+          fake.failNextCreate = false;
+          throw new Error("native map failed");
+        }
+        const state: FakeMapState = { markers: [], cameras: [], destroyed: false };
+        const handle: NativeMapHandle = {
+          setMarker: async (center) => { state.markers.push({ ...center }); },
+          setCamera: async (center, zoom) => {
+            state.cameras.push({ center: { ...center }, zoom });
+          },
+          onMapTap: async () => {},
+          onMarkerDragEnd: async () => {},
+          onCameraIdle: async () => {},
+          destroy: async () => { state.destroyed = true; },
+        };
+        fake.states.push(state);
+        return handle;
+      },
+    },
   };
+  return fake;
+}
+
+const CONFIGURED = { apiKey: "test-key" };
+const KEYLESS = { apiKey: "" };
+
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 360, 320),
+  );
 });
 
 afterEach(() => {
   cleanup();
-  behavior.throwOnConstruct = false;
-  behavior.throwGeneric = false;
-  behavior.reportUnsupported = false;
-  behavior.instances.length = 0;
-  behavior.workerUrl = null;
-  behavior.workerConfiguredAtConstruction.length = 0;
-  behavior.markers.length = 0;
+  vi.restoreAllMocks();
 });
 
+async function awaitReadyMap(fake: FakeLoader, index = 0): Promise<FakeMapState> {
+  await waitFor(() => expect(fake.states[index]).toBeDefined());
+  await waitFor(() => expect(screen.queryByText("Loading map…")).toBeNull());
+  const state = fake.states[index];
+  if (!state) throw new Error("no map handle");
+  return state;
+}
+
 describe("InteractiveLocationMap", () => {
-  it("configures a bundled worker before construction and stays loading until map load", async () => {
-    render(<InteractiveLocationMap lat={23.8} lng={90.4} />);
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    expect(behavior.workerConfiguredAtConstruction).toEqual([true]);
-    expect(behavior.workerUrl).toBeTruthy();
-    expect(screen.getByText("Loading map…")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /zoom in/i })).toBeNull();
-    behavior.instances[0]?.handlers.load?.();
+  it("creates one fixed-marker map and destroys it on unmount", async () => {
+    const fake = makeFakeLoader();
+    const { unmount } = render(
+      <InteractiveLocationMap
+        lat={23.8}
+        lng={90.4}
+        label="Dhaka"
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={fake.loader}
+      />,
+    );
+    const state = await awaitReadyMap(fake);
+    expect(fake.creates).toHaveLength(1);
+    expect(fake.creates[0]?.center).toEqual({ lat: 23.8, lng: 90.4 });
+    expect(fake.creates[0]?.draggable).toBe(false);
+    expect(state.markers).toEqual([{ lat: 23.8, lng: 90.4 }]);
     expect(await screen.findByRole("button", { name: /zoom in/i })).toBeTruthy();
+    expect(screen.getByText("Dhaka")).toBeTruthy();
+    expect(screen.getByText("© Google")).toBeTruthy();
+    unmount();
+    await waitFor(() => expect(state.destroyed).toBe(true));
   });
 
-  it("falls back to raster tiles with retry when tiles error before load", async () => {
-    render(<InteractiveLocationMap lat={23.8} lng={90.4} />);
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    behavior.instances[0]?.handlers.error?.();
+  it("fails closed without a key: consumer copy, fallback grid, no retry", async () => {
+    const fake = makeFakeLoader();
+    render(
+      <InteractiveLocationMap
+        lat={23.8}
+        lng={90.4}
+        label="Dhaka"
+        mapsConfigOverride={KEYLESS}
+        mapLoader={fake.loader}
+      />,
+    );
     expect(await screen.findByTestId("interactive-fallback-map")).toBeTruthy();
-    expect(await screen.findByText(/fallback tiles instead/)).toBeTruthy();
-    // No infinite "Loading map…" and the pin location stays listed.
+    expect(await screen.findByText(/interactive map isn't available/i)).toBeTruthy();
+    expect(fake.creates).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
+    // The pin location stays listed below the fallback.
+    expect(screen.getByText("Dhaka")).toBeTruthy();
+  });
+
+  it("falls back to raster tiles with retry when creation fails", async () => {
+    const fake = makeFakeLoader();
+    fake.failNextCreate = true;
+    render(
+      <InteractiveLocationMap
+        lat={23.8}
+        lng={90.4}
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={fake.loader}
+      />,
+    );
+    await waitFor(() => expect(fake.creates).toHaveLength(1));
+    expect(await screen.findByTestId("interactive-fallback-map")).toBeTruthy();
+    expect(await screen.findByText(/could not start/)).toBeTruthy();
     expect(screen.queryByText("Loading map…")).toBeNull();
     const tiles = document.querySelectorAll('[data-testid="interactive-fallback-map"] img');
     expect(tiles).toHaveLength(9);
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
-    await waitFor(() => expect(behavior.instances).toHaveLength(2));
+    // Only successful creates push a handle: the retry's map is states[0].
+    await awaitReadyMap(fake, 0);
+    expect(fake.creates).toHaveLength(2);
   });
-  it("renders marker, attribution, and zoom controls for coordinates", async () => {
-    render(<InteractiveLocationMap lat={23.8} lng={90.4} label="Dhaka" />);
 
-    const mapEl = await screen.findByTestId("interactive-location-map");
-    expect(mapEl.getAttribute("aria-label")).toMatch(/pan|zoom/i);
-    expect(screen.getByRole("region", { name: "Location map: Dhaka" })).toBeTruthy();
-
-    // Construction now waits a frame for layout — await the map itself.
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    expect(behavior.instances[0]?.opts.center).toEqual([90.4, 23.8]);
-    expect(behavior.instances[0]?.opts.style).toContain("tiles.openfreemap.org");
-    expect(behavior.markers).toEqual([[90.4, 23.8]]);
-    expect(behavior.instances[0]?.controls).toBeGreaterThan(0);
-
-    expect(screen.getByText(/OpenStreetMap contributors/)).toBeTruthy();
-    expect(screen.getByText("Dhaka")).toBeTruthy();
-
-    behavior.instances[0]?.handlers.load?.();
+  it("zooms the native camera from the overlay buttons", async () => {
+    const fake = makeFakeLoader();
+    render(
+      <InteractiveLocationMap
+        lat={23.8}
+        lng={90.4}
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={fake.loader}
+      />,
+    );
+    const state = await awaitReadyMap(fake);
     const zoomIn = await screen.findByRole("button", { name: /zoom in/i });
     const zoomOut = screen.getByRole("button", { name: /zoom out/i });
     for (const zoomButton of [zoomIn, zoomOut]) {
@@ -152,52 +167,43 @@ describe("InteractiveLocationMap", () => {
     }
     fireEvent.click(zoomIn);
     fireEvent.click(zoomOut);
-    expect(behavior.instances[0]?.zoomCalls).toEqual(["in", "out"]);
+    await waitFor(() => expect(state.cameras).toHaveLength(2));
+    expect(state.cameras[0]?.zoom).toBe(16);
+    expect(state.cameras[1]?.zoom).toBe(15);
   });
 
   it("label-only renders a neutral fallback without fabricating coordinates", async () => {
-    render(<InteractiveLocationMap lat={null} lng={null} label="Near the park" />);
-
+    const fake = makeFakeLoader();
+    render(
+      <InteractiveLocationMap
+        lat={null}
+        lng={null}
+        label="Near the park"
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={fake.loader}
+      />,
+    );
     expect(await screen.findByText("Near the park")).toBeTruthy();
     expect(await screen.findByText(/without coordinates/i)).toBeTruthy();
     expect(screen.getByRole("status")).toBeTruthy();
-    expect(behavior.instances).toHaveLength(0);
-    expect(behavior.markers).toHaveLength(0);
+    expect(fake.creates).toHaveLength(0);
     expect(screen.queryByTestId("interactive-location-map")).toBeNull();
   });
 
-  it("shows a status fallback when WebGL is unavailable", async () => {
-    behavior.throwOnConstruct = true;
-    render(<InteractiveLocationMap lat={23.8} lng={90.4} label="Dhaka" />);
-
-    expect(await screen.findByText(/webgl unavailable/i)).toBeTruthy();
-    expect(screen.getByRole("status")).toBeTruthy();
-  });
-
-  it("shows a retryable load fallback on generic map failure", async () => {
-    behavior.throwOnConstruct = true;
-    behavior.throwGeneric = true;
-    render(<InteractiveLocationMap lat={23.8} lng={90.4} label="Dhaka" />);
-
-    expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
-  });
-
-  it("shows the fallback when the supported() gate fails", async () => {
-    behavior.reportUnsupported = true;
-    render(<InteractiveLocationMap lat={23.8} lng={90.4} />);
-
-    expect(await screen.findByText(/webgl unavailable/i)).toBeTruthy();
-    expect(behavior.instances).toHaveLength(0);
-  });
-
   it("renders a 3x3 raster grid with working zoom in the fallback", async () => {
-    behavior.throwOnConstruct = true;
-    render(<InteractiveLocationMap lat={23.8} lng={90.4} label="Dhaka" />);
-
+    const fake = makeFakeLoader();
+    render(
+      <InteractiveLocationMap
+        lat={23.8}
+        lng={90.4}
+        label="Dhaka"
+        mapsConfigOverride={KEYLESS}
+        mapLoader={fake.loader}
+      />,
+    );
     expect(await screen.findByTestId("interactive-fallback-map")).toBeTruthy();
-    expect(await screen.findByText(/webgl unavailable/i)).toBeTruthy();
+    expect(await screen.findByText(/isn't available/i)).toBeTruthy();
     expect(screen.getByRole("status")).toBeTruthy();
-    // The pin location stays listed below the fallback.
     expect(screen.getByText("Dhaka")).toBeTruthy();
     const tiles = () =>
       document.querySelectorAll('[data-testid="interactive-fallback-map"] img');
@@ -213,14 +219,21 @@ describe("InteractiveLocationMap", () => {
         /^https:\/\/tile\.openstreetmap\.org\/14\/\d+\/\d+\.png$/,
       );
     }
-    // No retry for WebGL-less devices — only for load errors.
+    // No retry for the missing-key state — only for load errors.
     expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
   });
 
   it("hides fallback tiles that fail to load instead of broken glyphs", async () => {
-    behavior.throwOnConstruct = true;
-    render(<InteractiveLocationMap lat={23.8} lng={90.4} label="Dhaka" />);
-
+    const fake = makeFakeLoader();
+    render(
+      <InteractiveLocationMap
+        lat={23.8}
+        lng={90.4}
+        label="Dhaka"
+        mapsConfigOverride={KEYLESS}
+        mapLoader={fake.loader}
+      />,
+    );
     await screen.findByTestId("interactive-fallback-map");
     const tiles = () =>
       document.querySelectorAll<HTMLImageElement>('[data-testid="interactive-fallback-map"] img');
@@ -230,13 +243,45 @@ describe("InteractiveLocationMap", () => {
     expect(tiles()[1]!.style.display).not.toBe("none");
   });
 
-  it("degrades a stalled load to the fallback instead of loading forever", async () => {    render(<InteractiveLocationMap lat={23.8} lng={90.4} />);
-    await waitFor(() => expect(behavior.instances).toHaveLength(1));
-    // Neither load nor error ever arrives: the timeout must rescue the view.
+  it("degrades a stalled load to the fallback instead of loading forever", async () => {
+    const fake = makeFakeLoader();
+    const stalled: Array<(h: NativeMapHandle) => void> = [];
+    const stallingLoader: NativeMapLoader = {
+      create: async (element, options) => {
+        fake.creates.push({
+          center: { ...options.center },
+          zoom: options.zoom,
+          draggable: options.draggable,
+        });
+        await new Promise<NativeMapHandle>((resolve) => {
+          stalled.push(resolve);
+        });
+        const state: FakeMapState = { markers: [], cameras: [], destroyed: false };
+        fake.states.push(state);
+        return {
+          setMarker: async () => {},
+          setCamera: async () => {},
+          onMapTap: async () => {},
+          onMarkerDragEnd: async () => {},
+          onCameraIdle: async () => {},
+          destroy: async () => {},
+        };
+      },
+    };
+    render(
+      <InteractiveLocationMap
+        lat={23.8}
+        lng={90.4}
+        mapsConfigOverride={CONFIGURED}
+        mapLoader={stallingLoader}
+      />,
+    );
+    await waitFor(() => expect(fake.creates).toHaveLength(1));
     expect(
       await screen.findByText(/taking a while to load/, undefined, { timeout: 3000 }),
     ).toBeTruthy();
     expect(await screen.findByTestId("interactive-fallback-map")).toBeTruthy();
     expect(screen.queryByText("Loading map…")).toBeNull();
+    expect(stalled).toHaveLength(1);
   });
 });

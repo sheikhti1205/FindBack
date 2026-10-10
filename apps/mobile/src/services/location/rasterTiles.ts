@@ -1,8 +1,8 @@
 /**
- * Dependency-free raster tile fallback for the MapLibre maps.
+ * Dependency-free raster tile fallback for the native Google maps.
  *
- * MapLibre + OpenFreeMap stays the primary renderer. When the GL map cannot
- * start (WebGL unavailable, library/construct failure) the picker and the
+ * The native Google map stays the primary renderer. When it cannot
+ * start (no API key, construct failure, offline) the picker and the
  * read-only location map fall back to a plain-<img> 3x3 OSM tile grid
  * computed from center/zoom — no new dependencies, no WebGL, no canvas.
  * The draft/confirm path never depends on either renderer: coordinates live
@@ -114,8 +114,8 @@ export function nudgeCenter(
 /**
  * Gate Map construction on a non-zero container.
  *
- * Building a MapLibre map inside a 0x0 box (BottomSheet open animation, first
- * layout pass on Android WebView) yields a blank canvas that never recovers.
+ * Building a native map inside a 0x0 box (BottomSheet open animation, first
+ * layout pass on Android WebView) misplaces the native view.
  * When the container already has size this resolves synchronously; otherwise
  * it waits a frame pair for layout and then resolves anyway — the caller
  * still constructs and follows up with `resize()`, so a pathological 0x0

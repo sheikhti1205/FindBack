@@ -12,7 +12,7 @@
  * is driven by `motionConfigValueFor` (reduce→always, full→never,
  * system→user) so Framer Motion degrades transform/layout travel to instant
  * while keeping opacity/color. Imperative, non-Motion work (scrollTo/
- * scrollIntoView, MapLibre camera, raw CSS transitions) cannot see
+ * scrollIntoView, map camera, raw CSS transitions) cannot see
  * MotionConfig — those call `useShouldReduceMotion()` (components) or
  * `shouldReduceMotion()` (plain modules), which read the SAME effective flag
  * (override-aware, not OS-only). Functional gesture tracking (drag, press)
@@ -167,7 +167,7 @@ export const dialogVariants = {
  * the OS setting (system→OS, reduce→true, full→false). Never throws
  * (SSR/jsdom without matchMedia or localStorage → full motion).
  *
- * Imperative code (scrollTo, scrollIntoView, MapLibre camera, raw CSS
+ * Imperative code (scrollTo, scrollIntoView, map camera, raw CSS
  * transitions) reads this at call time. Motion components do NOT need it:
  * the app-root `<MotionConfig>` (driven by `motionConfigValueFor`) degrades
  * them centrally.
