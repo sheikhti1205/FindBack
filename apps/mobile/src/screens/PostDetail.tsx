@@ -1301,6 +1301,7 @@ export function PostDetail() {
           ) : null}
 
           <form onSubmit={(e) => void onComment(e)} className="flex items-start gap-2">
+            <UserAvatar avatarUrl={user?.avatarUrl} username={user?.username} size={32} />
             <div className="relative flex-1">
               <input
                 ref={commentInputRef}

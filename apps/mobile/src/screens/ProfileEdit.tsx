@@ -6,6 +6,7 @@ import { saveProfilePhone } from "../services/auth";
 import { updateMyProfile } from "../services/profile";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
+import { ProfileAvatarEditor } from "../components/ProfileAvatarEditor";
 import {
   SettingsGroup,
   SettingsPage,
@@ -31,6 +32,9 @@ const MAX_LOCATION = 60;
  * - display name / bio / location: editable public identity, written through
  *   the self-only `update_my_profile` RPC (migration
  *   20261009020000_profile_identity).
+ * - profile photo: editable through the avatar service (canonical media
+ *   pipeline → `avatars/{uid}/…` Storage prefix → self-only
+ *   `update_my_avatar` RPC, migration 20261010000000_profile_avatar).
  * - phone: editable — `PublicUser.phone` is read from Auth user metadata
  *   (`fetchMe`), which `supabase.auth.updateUser({ data })` can write
  *   client-side. Validated with the same Bangladesh rule the backend
@@ -53,6 +57,8 @@ export function ProfileEdit() {
         />
         <SettingsRow title="Email" value={user.email} />
       </SettingsGroup>
+
+      <ProfileAvatarEditor />
 
       <ProfileIdentityEditor />
 

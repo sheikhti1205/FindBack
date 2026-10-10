@@ -101,6 +101,24 @@ describe("PostDetail comment identity (W7)", () => {
     expect(within(row2).getByTestId("user-avatar").textContent).toBe("PL");
   });
 
+  it("shows the signed-in user's avatar in the comment composer", async () => {
+    authState.user = {
+      id: "u9",
+      username: "commenter",
+      avatarUrl: "https://example.com/me.png",
+    } as { id: string; username: string };
+    postsMock.fetchComments.mockResolvedValue([makeComment("c1", "helper", "try the library desk")]);
+    renderDetail();
+
+    const input = await screen.findByLabelText("Comment");
+    const form = input.closest("form")!;
+    const composerAvatar = within(form).getByTestId("user-avatar");
+    expect((composerAvatar.querySelector("img") as HTMLImageElement)?.src).toBe(
+      "https://example.com/me.png",
+    );
+    authState.user = { id: "u2", username: "owner" } as { id: string; username: string };
+  });
+
   it("keeps @username, time, and the W3.3 reaction controls on avatar rows", async () => {
     postsMock.fetchComments.mockResolvedValue([makeComment("c1", "helper", "try the library desk")]);
     renderDetail();
