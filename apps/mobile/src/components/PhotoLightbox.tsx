@@ -1,7 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefCallback } from "react";
 import { AnimatePresence, motion, useIsPresent } from "framer-motion";
-import type { Variants } from "framer-motion";
 import { ChevronLeft, ChevronRight, ImageOff, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
@@ -11,10 +10,9 @@ import {
   dialogVariants,
   motionDurations,
   motionEasings,
-  pageBackwardVariants,
-  pageForwardVariants,
   pressFeedback,
   sheetTransition,
+  shouldReduceMotion,
 } from "./uiMotion";
 
 export interface PhotoLightboxPhoto {
@@ -51,8 +49,6 @@ export interface PhotoLightboxProps {
   title?: string;
 }
 
-type Direction = "forward" | "backward";
-
 /**
  * Live "still open" flag. `AnimatePresence` freezes the exiting child's
  * props, so an exiting element can only learn about a state change through
@@ -60,22 +56,6 @@ type Direction = "forward" | "backward";
  * a close begins instead of waiting for the exit animation to finish.
  */
 const OpenContext = createContext(true);
-
-/** Photo-to-photo crossfade: enters from the leading edge, leaves the other. */
-const photoCrossfadeVariants: Variants = {
-  hidden: (direction: Direction) =>
-    direction === "backward" ? pageBackwardVariants.hidden : pageForwardVariants.hidden,
-  visible: (direction: Direction) =>
-    direction === "backward" ? pageBackwardVariants.visible : pageForwardVariants.visible,
-  exit: (direction: Direction) =>
-    direction === "backward" ? pageBackwardVariants.exit : pageForwardVariants.exit,
-};
-
-const photoCrossfade = {
-  type: "tween",
-  duration: motionDurations.standard,
-  ease: motionEasings.out,
-} as const;
 
 const imageStateFade = {
   type: "tween",
@@ -90,12 +70,17 @@ const PANEL_CLASS = "relative flex max-h-full w-full max-w-3xl flex-col items-ce
  * must not hide identifying text, so the image is shown at natural size
  * inside a dismissible modal.
  *
- * Motion (Wave B): the panel grows out of the tapped thumbnail (two-pass
- * FLIP measurement, center scale as the fallback), the backdrop fades with
- * the backdrop token, adjacent photos crossfade with a directional nudge,
- * and closing collapses the panel back into the thumbnail. All values come
- * from `uiMotion` tokens; `<MotionConfig reducedMotion="user">` at the app
- * root collapses the travel to instant while keeping the opacity fades.
+ * Motion: the panel grows out of the tapped thumbnail (two-pass FLIP
+ * measurement, center scale as the fallback), the backdrop fades with the
+ * backdrop token, and closing collapses the panel back into the thumbnail.
+ * Photo-to-photo movement is the canonical continuous paging shared with the
+ * Home feed carousel: at fit zoom the stage is a native scroll-snap track,
+ * so one finger pages through photos with the finger tracked the whole way
+ * (swiping can never close or double-navigate). Pinch/double-tap zoom and
+ * pan-while-zoomed are retained; while zoomed the track locks so drags pan
+ * the photo instead of paging. All values come from `uiMotion` tokens;
+ * `<MotionConfig reducedMotion="user">` at the app root collapses travel to
+ * instant while keeping the opacity fades.
  */
 export function PhotoLightbox({
   photo,
@@ -122,19 +107,14 @@ export function PhotoLightbox({
   const activeIndex = photo ? index : lastRef.current?.index;
   const activeTotal = photo ? total : lastRef.current?.total;
 
-  // Direction of the current photo-to-photo change; resolved by the entering
-  // layer itself and handed to exiting layers through AnimatePresence's
-  // `custom`, so both sides of the crossfade always agree.
-  const directionRef = useRef<Direction>("forward");
-  const lastIndexRef = useRef<number | undefined>(undefined);
-  if (photo && index !== undefined) {
-    const previous = lastIndexRef.current;
-    lastIndexRef.current = index;
-    if (previous !== undefined && previous !== index) {
-      directionRef.current = index > previous ? "forward" : "backward";
-    }
-  }
-  const direction = directionRef.current;
+  // The pager gallery: the full `photos` array when one is provided,
+  // otherwise the single photo under inspection. Swiping pages only when
+  // there is more than one photo; single previews keep discrete nav.
+  const gallery = photos && photos.length > 0 ? photos : active ? [active] : [];
+  const pagerIndex =
+    activeIndex === undefined
+      ? 0
+      : Math.max(0, Math.min(gallery.length - 1, activeIndex));
 
   const caption =
     activeIndex !== undefined && activeTotal !== undefined
@@ -150,7 +130,8 @@ export function PhotoLightbox({
             key="photo-lightbox"
             caption={caption}
             photo={active}
-            direction={direction}
+            gallery={gallery}
+            pagerIndex={pagerIndex}
             originRect={originRect}
             onClose={onClose}
             onPrev={onPrev}
@@ -183,7 +164,10 @@ function BodyScrollLock(): null {
 interface LightboxShellProps {
   caption: string;
   photo: PhotoLightboxPhoto;
-  direction: Direction;
+  /** Full pager gallery (single entry when no `photos` array is provided). */
+  gallery: PhotoLightboxPhoto[];
+  /** Parent-driven page position, clamped by the caller. */
+  pagerIndex: number;
   originRect?: PhotoLightboxOriginRect | null;
   onClose: () => void;
   onPrev?: () => void;
@@ -217,7 +201,8 @@ function LightboxShell(props: LightboxShellProps): ReactNode {
 function LightboxPanel({
   caption,
   photo,
-  direction,
+  gallery,
+  pagerIndex,
   originRect,
   onClose,
   onPrev,
@@ -232,7 +217,55 @@ function LightboxPanel({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [origin, setOrigin] = useState<{ x: number; y: number; scale: number } | null>(null);
   const [measured, setMeasured] = useState(originRect == null);
-  const inspection = usePhotoViewport(photo.id, photo.previewUrl, onPrev, onNext);
+
+  // Continuous paging (C1): at fit zoom the stage is a native scroll-snap
+  // track — the same one-finger paging behavior as the Home feed carousel.
+  // The scroll position drives navigation through `onSelect`; the parent owns
+  // the index, so buttons, keys, thumbnails, and dots all converge on the
+  // same position and the track syncs to it without fighting the finger.
+  const pagerMode = gallery.length > 1;
+  const pagerTrackRef = useRef<HTMLDivElement | null>(null);
+  const [uncontrolledIndex, setUncontrolledIndex] = useState(pagerIndex);
+  const viewIndex = onSelect ? pagerIndex : Math.max(0, Math.min(gallery.length - 1, uncontrolledIndex));
+  const safeViewIndex = Math.max(0, Math.min(gallery.length - 1, viewIndex));
+  const activePhoto = gallery[safeViewIndex] ?? photo;
+
+  const inspection = usePhotoViewport(activePhoto.id, activePhoto.previewUrl, onPrev, onNext, {
+    // Pager-owned swipes navigate through scroll. Stepping on release too
+    // would advance twice per swipe; explicit controls still navigate.
+    swipeNav: !pagerMode,
+  });
+  const zoomed = inspection.viewport.scale > 1;
+
+  const onPagerScroll = () => {
+    if (!pagerMode) return;
+    const el = pagerTrackRef.current;
+    if (!el) return;
+    const width = el.clientWidth || 1;
+    const next = Math.max(0, Math.min(gallery.length - 1, Math.round(el.scrollLeft / width)));
+    if (next === safeViewIndex) return;
+    if (onSelect) onSelect(next);
+    else setUncontrolledIndex(next);
+  };
+
+  const firstSyncRef = useRef(true);
+  useLayoutEffect(() => {
+    const first = firstSyncRef.current;
+    firstSyncRef.current = false;
+    if (!pagerMode) return;
+    const el = pagerTrackRef.current;
+    if (!el) return;
+    const width = el.clientWidth || 0;
+    if (width <= 0) return;
+    const want = safeViewIndex * width;
+    // The user's own scroll already sits on the target page: the threshold
+    // turns that into a no-op instead of fighting the snap.
+    if (Math.abs(el.scrollLeft - want) > width / 2) {
+      const behavior: ScrollBehavior = first || shouldReduceMotion() ? "auto" : "smooth";
+      if (typeof el.scrollTo === "function") el.scrollTo({ left: want, behavior });
+      else el.scrollLeft = want;
+    }
+  }, [pagerMode, safeViewIndex, gallery.length]);
 
   // Two-pass measurement: while the origin is unknown the panel renders as an
   // invisible stand-in, its rect is read in a layout effect (before paint),
@@ -298,29 +331,70 @@ function LightboxPanel({
         </div>
         <span className="w-12" aria-hidden />
       </header>
-      <div
-        ref={inspection.stageRef}
-        className="relative h-[55dvh] min-h-40 w-full shrink-0 overflow-hidden rounded-m3-lg"
-        style={{ touchAction: "none" }}
-        data-testid="lightbox-stage"
-        {...inspection.handlers}
-      >
-        <div data-testid="lightbox-zoom-content" className="absolute inset-0" style={{ transform: `translate(${inspection.viewport.x}px, ${inspection.viewport.y}px) scale(${inspection.viewport.scale})` }}>
-        <AnimatePresence initial={false} custom={direction}>
-          <motion.div
-            key={photo.id}
-            data-testid="photo-layer"
-            custom={direction}
-            variants={photoCrossfadeVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            transition={photoCrossfade}
-            className="absolute inset-0 flex items-center justify-center"
-          >
-            <LightboxImage src={photo.previewUrl} alt={caption} />
-          </motion.div>
-        </AnimatePresence>
+      <div className="relative h-[55dvh] min-h-40 w-full shrink-0">
+        <div
+          ref={(element: HTMLDivElement | null) => {
+            pagerTrackRef.current = element;
+            inspection.stageRef.current = element;
+          }}
+          className={
+            pagerMode
+              ? `flex h-full w-full rounded-m3-lg ${
+                  zoomed ? "overflow-hidden" : "snap-x snap-mandatory overflow-x-auto"
+                }`
+              : "relative h-full w-full overflow-hidden rounded-m3-lg"
+          }
+          // At fit zoom the browser owns horizontal paging (pinch-zoom stays
+          // owned by the hook: pan-x/pan-y admits scroll, never page zoom).
+          // Zoomed — or the discrete single mode — the hook owns every touch.
+          style={{ touchAction: pagerMode && !zoomed ? "pan-x pan-y" : "none", scrollbarWidth: "none" }}
+          data-testid="lightbox-stage"
+          role={pagerMode ? "group" : undefined}
+          aria-label={pagerMode ? "Report photos" : undefined}
+          onScroll={pagerMode ? onPagerScroll : undefined}
+          {...inspection.handlers}
+        >
+          {pagerMode ? (
+            gallery.map((entry, i) => {
+              const isActive = i === safeViewIndex;
+              return (
+                <div
+                  key={entry.id}
+                  data-testid="lightbox-slide"
+                  className="flex h-full w-full shrink-0 snap-center items-center justify-center"
+                >
+                  <div
+                    {...(isActive ? { "data-testid": "lightbox-zoom-content" } : {})}
+                    className="flex h-full w-full items-center justify-center"
+                    style={
+                      isActive
+                        ? {
+                            transform: `translate(${inspection.viewport.x}px, ${inspection.viewport.y}px) scale(${inspection.viewport.scale})`,
+                          }
+                        : undefined
+                    }
+                  >
+                    <LightboxImage
+                      src={entry.previewUrl}
+                      alt={`Photo ${i + 1} of ${gallery.length}`}
+                    />
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div
+              data-testid="lightbox-zoom-content"
+              className="absolute inset-0"
+              style={{
+                transform: `translate(${inspection.viewport.x}px, ${inspection.viewport.y}px) scale(${inspection.viewport.scale})`,
+              }}
+            >
+              <div className="absolute inset-0 flex items-center justify-center">
+                <LightboxImage src={photo.previewUrl} alt={caption} />
+              </div>
+            </div>
+          )}
         </div>
         {showNav && onPrev && (
           <div className="absolute inset-y-0 left-0 flex items-center">
@@ -367,7 +441,7 @@ function LightboxPanel({
         <button type="button" aria-label="Zoom in" disabled={inspection.viewport.scale >= 4} onClick={inspection.zoomIn} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm disabled:opacity-40"><ZoomIn size={20} aria-hidden /></button>
         <button type="button" aria-label="Reset zoom" onClick={inspection.reset} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-m3-sm"><RotateCcw size={18} aria-hidden /></button>
       </div>
-      <p className="shrink-0 text-center text-xs text-white/80">{inspection.viewport.scale > 1 ? "Drag to pan · Reset zoom to swipe photos" : "Pinch or double-tap to zoom · Swipe to browse"}</p>
+      <p className="shrink-0 text-center text-xs text-white/80">{zoomed ? "Drag to pan · Reset zoom to swipe photos" : pagerMode ? "Swipe to browse photos · Pinch or double-tap to zoom" : "Pinch or double-tap to zoom · Swipe to browse"}</p>
     </motion.div>
   );
 }
@@ -375,7 +449,7 @@ function LightboxPanel({
 type ImageState = "loading" | "loaded" | "failed";
 
 /**
- * One photo layer: shimmer while loading, crossfade in on load, fade the
+ * One photo layer: shimmer while loading, fade in on load, fade the
  * failure fallback in (and the shimmer out) on error. The frame exposes
  * `data-state` so tests never have to time opacity frames.
  */

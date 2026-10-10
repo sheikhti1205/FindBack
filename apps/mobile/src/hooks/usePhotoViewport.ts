@@ -11,8 +11,18 @@ const point = (touch: { clientX: number; clientY: number }): Point => ({ x: touc
 const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
 /** Photo-local inspection state: gestures never carry across image selection.
- * Zoomed drags/arrow keys pan; explicit Prev/Next always navigate. */
-export function usePhotoViewport(photoId: string, photoUrl: string, onPrev?: () => void, onNext?: () => void) {
+ * Zoomed drags/arrow keys pan; explicit Prev/Next always navigate.
+ * Pass `swipeNav: false` when a scroll-snap pager owns one-finger swipes
+ * (continuous paging at fit zoom): the pager's scroll drives navigation and
+ * the hook must not ALSO step on touch release, or one swipe would advance
+ * twice. Pinch/double-tap zoom and pan-while-zoomed keep working. */
+export function usePhotoViewport(
+  photoId: string,
+  photoUrl: string,
+  onPrev?: () => void,
+  onNext?: () => void,
+  options?: { swipeNav?: boolean },
+) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [stored, setStored] = useState({ photoId, viewport: FIT });
   const viewport = stored.photoId === photoId ? stored.viewport : FIT;
@@ -119,7 +129,10 @@ export function usePhotoViewport(photoId: string, photoUrl: string, onPrev?: () 
       } else lastTap.current = { at: Date.now(), point: end };
     } else {
       lastTap.current = null;
-      if (!g.pan) {
+      // Pager-owned swipes (continuous paging) navigate through scroll, never
+      // through the release — stepping here too would advance twice and could
+      // fight the snap. Explicit buttons/keys/thumbnails still navigate.
+      if (!g.pan && options?.swipeNav !== false) {
         const direction = resolveHorizontalSwipe(dx, dy, 0);
         if (direction === "next") onNext?.();
         if (direction === "prev") onPrev?.();

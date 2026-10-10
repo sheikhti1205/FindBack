@@ -1,13 +1,12 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { MouseEvent } from "react";
 import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ImageOff } from "lucide-react";
 import {
   sharedElementTransition,
   sharedMediaLayoutId,
 } from "../PostCardContent";
-import { motionDurations, motionEasings } from "../uiMotion";
-import { resolveHorizontalSwipe } from "../../utils/detailSwipe";
+import { usePagerTap, useSnapPager } from "../photoPager";
 import type { PhotoLightboxOriginRect } from "../PhotoLightbox";
 
 export interface DetailHeroImage {
@@ -22,19 +21,25 @@ interface DetailHeroGalleryProps {
 }
 
 /**
- * Detail hero gallery: full card width, 16:10 cover frame, rounded 18-20px,
- * no photo border, stable reserved height, counter + dots, accessible
- * Prev/Next when multiple, horizontal touch swipe (left=next, right=prev).
- * Vertical-dominant gestures and small drags are ignored so page scroll wins.
- * Motion uses existing uiMotion tokens only — no carousel/gesture dependency.
+ * Detail hero gallery: the canonical continuous-paging behavior shared with
+ * the Home feed carousel — a 16:10 cover viewport with a native horizontal
+ * scroll-snap track, one-finger paging, vertical page scroll untouched, short
+ * drags snapping back. Every photo stays mounted side by side; the index is
+ * derived from scroll position, never from a touchEnd→index→fade swap.
+ *
+ * Chrome stays off the pixels: the position (counter) and the dot affordance
+ * live BELOW the frame, never overlaid, and tapping a photo (not swiping)
+ * opens the lightbox at that photo's index.
  */
 export function DetailHeroGallery({ postId, title, images, onOpenLightbox }: DetailHeroGalleryProps) {
-  const [selected, setSelected] = useState(0);
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const { trackRef, active, onScroll, goTo } = useSnapPager(images.length);
+  const { pressStart, isTap } = usePagerTap();
   const mediaId = sharedMediaLayoutId(postId);
 
   // Capture the tapped frame's rect so the lightbox can FLIP out of it.
+  // A press that travelled is a page gesture, never an open.
   function openAt(index: number, e: MouseEvent<HTMLButtonElement>) {
+    if (!isTap(e)) return;
     const rect = e.currentTarget.getBoundingClientRect();
     onOpenLightbox?.(
       index,
@@ -43,122 +48,105 @@ export function DetailHeroGallery({ postId, title, images, onOpenLightbox }: Det
   }
   if (images.length === 0) return null;
 
-  if (images.length === 1) {
-    const only = images[0]!;
-    return (
-      <div className="w-full overflow-hidden rounded-[18px]">
-        <button
-          type="button"
-          onClick={(e) => openAt(0, e)}
-          aria-label={`Open photo for ${title} fullscreen`}
-          className="block w-full"
-        >
-          <motion.img
-            key={only.fileUrl}
-            src={only.fileUrl}
-            alt={`Photo for ${title}`}
-            className="aspect-[16/10] w-full object-cover"
-            layoutId={mediaId}
-            data-shared-media={mediaId}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={sharedElementTransition}
-          />
-        </button>
-      </div>
-    );
-  }
-
-  const safeSelected = Math.min(selected, images.length - 1);
-  const current = images[safeSelected]!;
-  const go = (dir: "next" | "prev") =>
-    setSelected((s) => (dir === "next" ? (s + 1) % images.length : (s - 1 + images.length) % images.length));
+  const safeActive = Math.min(active, images.length - 1);
 
   return (
     <figure className="w-full">
-      <div
-        data-testid="detail-hero-stage"
-        className="relative w-full overflow-hidden rounded-[18px]"
-        onTouchStart={(e) => {
-          const t = e.touches[0];
-          if (t) touchStart.current = { x: t.clientX, y: t.clientY };
-        }}
-        onTouchMove={() => {
-          // Let vertical-dominant gestures scroll the page: do not preventDefault.
-        }}
-        onTouchEnd={(e) => {
-          const start = touchStart.current;
-          touchStart.current = null;
-          const end = e.changedTouches[0];
-          if (!start || !end) return;
-          const dir = resolveHorizontalSwipe(end.clientX - start.x, end.clientY - start.y, 0);
-          if (dir) go(dir);
-        }}
-      >
-        <button
-          type="button"
-          onClick={(e) => openAt(safeSelected, e)}
-          aria-label={`Open photo ${safeSelected + 1} of ${images.length} fullscreen`}
-          className="block w-full"
+      <div className="relative w-full overflow-hidden rounded-[18px]" style={{ aspectRatio: "16 / 10" }}>
+        <div
+          ref={trackRef}
+          data-testid="detail-hero-track"
+          role="group"
+          aria-label="Report photos"
+          onScroll={onScroll}
+          className="flex h-full w-full snap-x snap-mandatory overflow-x-auto"
+          style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}
         >
-          <motion.img
-            key={current.fileUrl}
-            src={current.fileUrl}
-            alt={`Photo ${safeSelected + 1} of ${images.length} for ${title}`}
-            className="aspect-[16/10] w-full object-cover"
-            layoutId={mediaId}
-            data-shared-media={mediaId}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
-          />
-        </button>
-        <span
-          role="status"
-          aria-label={`Photo ${safeSelected + 1} of ${images.length}`}
-          className="absolute right-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white"
-        >
-          {safeSelected + 1} / {images.length}
-        </span>
-        <button
-          type="button"
-          aria-label="Previous photo"
-          onClick={() => go("prev")}
-          className="absolute inset-y-0 left-0 flex items-center pl-1"
-        >
-          <span className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-surface/90 text-on-surface shadow">
-            <ChevronLeft size={20} aria-hidden />
-          </span>
-        </button>
-        <button
-          type="button"
-          aria-label="Next photo"
-          onClick={() => go("next")}
-          className="absolute inset-y-0 right-0 flex items-center pr-1"
-        >
-          <span className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-surface/90 text-on-surface shadow">
-            <ChevronRight size={20} aria-hidden />
-          </span>
-        </button>
+          {images.map((image, index) => (
+            <button
+              key={`${image.fileUrl}#${index}`}
+              type="button"
+              data-testid="detail-hero-slide"
+              onMouseDown={(e) => pressStart(e.clientX, e.clientY)}
+              onTouchStart={(e) => {
+                const t = e.touches[0];
+                if (t) pressStart(t.clientX, t.clientY);
+              }}
+              onClick={(e) => openAt(index, e)}
+              aria-label={
+                images.length === 1
+                  ? `Open photo for ${title} fullscreen`
+                  : `Open photo ${index + 1} of ${images.length} fullscreen`
+              }
+              className="block h-full w-full shrink-0 snap-center overflow-hidden p-0"
+            >
+              <HeroImage
+                fileUrl={image.fileUrl}
+                alt={
+                  images.length === 1
+                    ? `Photo for ${title}`
+                    : `Photo ${index + 1} of ${images.length} for ${title}`
+                }
+                sharedId={index === 0 ? mediaId : undefined}
+              />
+            </button>
+          ))}
+        </div>
       </div>
+      {images.length > 1 && (
+        <div className="mt-2 flex items-center justify-center gap-3">
+          <span role="status" aria-label={`Photo ${safeActive + 1} of ${images.length}`} className="text-xs font-medium tabular-nums text-on-surface-variant">
+            {safeActive + 1} / {images.length}
+          </span>
+          <div role="tablist" aria-label="Report photos" className="flex items-center justify-center gap-2">
+            {images.map((img, i) => (
+              <button
+                key={`${img.fileUrl}#${i}`}
+                type="button"
+                role="tab"
+                aria-selected={i === safeActive}
+                aria-label={`Show photo ${i + 1}`}
+                onClick={() => goTo(i)}
+                className={`h-2 rounded-full transition-colors ${
+                  i === safeActive ? "w-6 bg-on-surface" : "w-2 bg-outline-variant"
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
       <figcaption className="sr-only" role="status">
-        Photo {safeSelected + 1} of {images.length}
+        Photo {safeActive + 1} of {images.length}
       </figcaption>
-      <div role="tablist" aria-label="Report photos" className="mt-2 flex items-center justify-center gap-2">
-        {images.map((img, i) => (
-          <button
-            key={`${img.fileUrl}#${i}`}
-            type="button"
-            role="tab"
-            aria-selected={i === safeSelected}
-            aria-label={`Show photo ${i + 1}`}
-            onClick={() => setSelected(i)}
-            className={`h-2 rounded-full transition-colors ${
-              i === safeSelected ? "w-6 bg-on-surface" : "w-2 bg-outline-variant"
-            }`}
-          />
-        ))}
-      </div>
     </figure>
+  );
+}
+
+function HeroImage({ fileUrl, alt, sharedId }: { fileUrl: string; alt: string; sharedId?: string }) {
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const shared = sharedId ? { layoutId: sharedId, "data-shared-media": sharedId } : {};
+  if (failed) {
+    return (
+      <span className="flex aspect-[16/10] w-full items-center justify-center gap-1.5 bg-surface-container text-sm text-on-surface-variant" role="img" aria-label="Photo unavailable" {...shared}>
+        <ImageOff size={16} aria-hidden />
+        Photo unavailable
+      </span>
+    );
+  }
+  return (
+    <motion.img
+      src={fileUrl}
+      alt={alt}
+      loading={loaded ? undefined : "lazy"}
+      draggable={false}
+      className="aspect-[16/10] w-full object-cover"
+      {...shared}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: loaded ? 1 : 0 }}
+      transition={sharedElementTransition}
+      onLoad={() => setLoaded(true)}
+      onError={() => setFailed(true)}
+    />
   );
 }

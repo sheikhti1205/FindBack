@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { MouseEvent } from "react";
 import { motion } from "framer-motion";
 import { ImageOff } from "lucide-react";
 import { fadeVariants, motionDurations, motionEasings } from "./uiMotion";
+import { usePagerTap, useSnapPager } from "./photoPager";
 
 export interface FeedCarouselImage {
   id: string;
@@ -24,8 +25,6 @@ interface FeedMediaCarouselProps {
 
 type ImageState = "loading" | "loaded" | "failed";
 
-/** Movement beyond this many px between press and click is a swipe, not a tap. */
-const TAP_MOVE_SLOP_PX = 8;
 /** Above this many images the dots collapse to a window around the active one. */
 const MAX_VISIBLE_DOTS = 7;
 
@@ -41,47 +40,13 @@ const imageFade = { duration: motionDurations.fast, ease: motionEasings.inOut } 
  * it. The active index lives here and survives ordinary parent rerenders.
  */
 export function FeedMediaCarousel({ images, sharedMediaId, onOpenImage }: FeedMediaCarouselProps) {
-  const trackRef = useRef<HTMLDivElement | null>(null);
-  const pressRef = useRef<{ x: number; y: number } | null>(null);
-  const [active, setActive] = useState(0);
-
-  // A shorter image list (edit/refetch) clamps the reader's place instead of
-  // resetting it — ordinary rerenders leave it untouched.
-  useEffect(() => {
-    setActive((current) => (current >= images.length ? Math.max(0, images.length - 1) : current));
-  }, [images.length]);
-
-  const onScroll = useCallback(() => {
-    const el = trackRef.current;
-    if (!el) return;
-    const width = el.clientWidth || 1;
-    const next = Math.max(0, Math.min(images.length - 1, Math.round(el.scrollLeft / width)));
-    setActive((current) => (current === next ? current : next));
-  }, [images.length]);
-
-  const goTo = (index: number) => {
-    setActive(index);
-    const el = trackRef.current;
-    if (!el) return;
-    const width = el.clientWidth || el.offsetWidth || 0;
-    const left = index * width;
-    const scrollTo = (el as HTMLElement & { scrollTo?: (opts: ScrollToOptions) => void }).scrollTo;
-    if (typeof scrollTo === "function") scrollTo.call(el, { left, behavior: "smooth" });
-    else el.scrollLeft = left;
-  };
-
-  const onPressStart = (x: number, y: number) => {
-    pressRef.current = { x, y };
-  };
+  // Canonical continuous paging: native scroll-snap track; the active index
+  // is derived from scroll position and survives ordinary parent rerenders.
+  const { trackRef, active, onScroll, goTo } = useSnapPager(images.length);
+  const { pressStart, isTap } = usePagerTap();
 
   const onSlideClick = (index: number, event: MouseEvent<HTMLButtonElement>) => {
-    const start = pressRef.current;
-    pressRef.current = null;
-    if (start) {
-      const dx = Math.abs(event.clientX - start.x);
-      const dy = Math.abs(event.clientY - start.y);
-      if (dx > TAP_MOVE_SLOP_PX || dy > TAP_MOVE_SLOP_PX) return;
-    }
+    if (!isTap(event)) return;
     onOpenImage(index);
   };
 
@@ -106,10 +71,10 @@ export function FeedMediaCarousel({ images, sharedMediaId, onOpenImage }: FeedMe
             type="button"
             data-testid="feed-slide"
             aria-label={image.alt}
-            onMouseDown={(e) => onPressStart(e.clientX, e.clientY)}
+            onMouseDown={(e) => pressStart(e.clientX, e.clientY)}
             onTouchStart={(e) => {
               const t = e.touches[0];
-              if (t) onPressStart(t.clientX, t.clientY);
+              if (t) pressStart(t.clientX, t.clientY);
             }}
             onClick={(e) => onSlideClick(index, e)}
             className="relative block h-full w-full shrink-0 snap-center overflow-hidden p-0"

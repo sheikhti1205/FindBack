@@ -251,7 +251,7 @@ describe("PostDetail redesign (UXN-3)", () => {
     expect(rating.textContent).toContain("4.5");
     expect(screen.getByRole("radiogroup", { name: /your rating/i })).toBeTruthy();
     const summary = screen.getByRole("region", { name: /report summary/i });
-    const hero = screen.getByTestId("detail-hero-stage");
+    const hero = screen.getByTestId("detail-hero-track");
     expect(summary.compareDocumentPosition(hero) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(rating.compareDocumentPosition(screen.getByTestId("detail-overview")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

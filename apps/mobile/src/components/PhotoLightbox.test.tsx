@@ -107,50 +107,110 @@ describe("PhotoLightbox", () => {
     );
   });
 
-  it("crossfades to the next photo with directional travel", async () => {
-    const { rerender } = render(
-      <PhotoLightbox photo={photo("p1")} index={0} total={2} onClose={vi.fn()} />,
+  it("pages continuously through the gallery at fit zoom without closing", () => {
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    const onNext = vi.fn();
+    const photos = [photo("p1"), photo("p2"), photo("p3")];
+    render(
+      <PhotoLightbox
+        photo={photos[0]!}
+        index={0}
+        total={3}
+        photos={photos}
+        onSelect={onSelect}
+        onClose={onClose}
+        onPrev={vi.fn()}
+        onNext={onNext}
+      />,
     );
-    expect(screen.getAllByTestId("photo-layer")).toHaveLength(1);
+    const stage = screen.getByTestId("lightbox-stage");
+    // Native scroll-snap paging, same contract as the feed carousel.
+    expect(stage.className).toMatch(/overflow-x-auto/);
+    expect(stage.className).toMatch(/snap-x/);
+    expect(stage.className).toMatch(/snap-mandatory/);
+    // No fade-only swap: every gallery photo is mounted side by side.
+    expect(screen.getAllByTestId("lightbox-slide")).toHaveLength(3);
 
-    rerender(<PhotoLightbox photo={photo("p2")} index={1} total={2} onClose={vi.fn()} />);
+    // jsdom has no layout: force a viewport width so scroll math is real.
+    Object.defineProperty(stage, "clientWidth", { configurable: true, value: 300 });
+    stage.scrollLeft = 300;
+    fireEvent.scroll(stage);
 
-    const layers = screen.getAllByTestId("photo-layer");
-    expect(layers).toHaveLength(2);
-    const entering = layers.find((layer) => layer.querySelector('img[alt="Photo 2 of 2"]'));
-    expect(entering).toBeTruthy();
-    // pageForwardVariants.hidden — enters from the trailing edge.
-    expect(entering!.style.transform).toContain("16px");
-    expect(screen.getByRole("dialog", { name: "Photo 2 of 2" })).toBeTruthy();
-
-    await waitFor(
-      () => {
-        expect(screen.getAllByTestId("photo-layer")).toHaveLength(1);
-      },
-      EXIT_TIMEOUT,
-    );
+    // The swipe pages through scroll → onSelect, never close or double-step.
+    expect(onSelect).toHaveBeenCalledWith(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onNext).not.toHaveBeenCalled();
   });
 
-  it("crossfades back to the previous photo in the reverse direction", async () => {
+  it("syncs the track to parent-driven navigation (arrows, keys, thumbnails)", () => {
+    const onSelect = vi.fn();
+    const photos = [photo("p1"), photo("p2"), photo("p3")];
     const { rerender } = render(
-      <PhotoLightbox photo={photo("p2")} index={1} total={2} onClose={vi.fn()} />,
+      <PhotoLightbox
+        photo={photos[0]!}
+        index={0}
+        total={3}
+        photos={photos}
+        onSelect={onSelect}
+        onClose={vi.fn()}
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+      />,
     );
+    const stage = screen.getByTestId("lightbox-stage");
+    Object.defineProperty(stage, "clientWidth", { configurable: true, value: 300 });
 
-    rerender(<PhotoLightbox photo={photo("p1")} index={0} total={2} onClose={vi.fn()} />);
-
-    const layers = screen.getAllByTestId("photo-layer");
-    expect(layers).toHaveLength(2);
-    const entering = layers.find((layer) => layer.querySelector('img[alt="Photo 1 of 2"]'));
-    expect(entering).toBeTruthy();
-    // pageBackwardVariants.hidden — enters from the leading edge.
-    expect(entering!.style.transform).toContain("-16px");
-
-    await waitFor(
-      () => {
-        expect(screen.getAllByTestId("photo-layer")).toHaveLength(1);
-      },
-      EXIT_TIMEOUT,
+    rerender(
+      <PhotoLightbox
+        photo={photos[2]!}
+        index={2}
+        total={3}
+        photos={photos}
+        onSelect={onSelect}
+        onClose={vi.fn()}
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+      />,
     );
+    expect(stage.scrollLeft).toBe(600);
+
+    fireEvent.click(screen.getByRole("button", { name: "View photo 1" }));
+    expect(onSelect).toHaveBeenCalledWith(0);
+  });
+
+  it("locks paging while zoomed and keeps pinch/double-tap zoom plus pan", () => {
+    const photos = [photo("p1"), photo("p2")];
+    render(
+      <PhotoLightbox
+        photo={photos[0]!}
+        index={0}
+        total={2}
+        photos={photos}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+      />,
+    );
+    const stage = screen.getByTestId("lightbox-stage");
+
+    // Double-tap zooms to 200%.
+    const tap = { clientX: 150, clientY: 200 };
+    fireEvent.touchStart(stage, { touches: [tap] });
+    fireEvent.touchEnd(stage, { touches: [], changedTouches: [tap] });
+    fireEvent.touchStart(stage, { touches: [tap] });
+    fireEvent.touchEnd(stage, { touches: [], changedTouches: [tap] });
+    expect(screen.getByText("200%")).toBeTruthy();
+
+    // Paging locks while zoomed so drags pan instead of changing photo.
+    expect(stage.className).toMatch(/overflow-hidden/);
+    expect(stage.className).not.toMatch(/overflow-x-auto/);
+    expect(screen.getByText(/Reset zoom to swipe photos/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+    expect(screen.getByText("100%")).toBeTruthy();
+    expect(stage.className).toMatch(/overflow-x-auto/);
   });
 
   it("crossfades the loading shimmer out when the image loads", async () => {

@@ -51,7 +51,15 @@ describe("photo inspection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next photo" }));
     expect(screen.getByRole("dialog", { name: "Photo 2 of 3" })).toBeTruthy();
     expect(screen.getByTestId("lightbox-zoom-content").style.transform).toContain("scale(1)");
+    // At fit zoom one finger pages through scroll, never through the release:
+    // the same drag that used to step discretely now must not navigate twice.
     drag(220, 150, 80, 150);
+    expect(screen.getByRole("dialog", { name: "Photo 2 of 3" })).toBeTruthy();
+    // Continuous paging drives the change through scroll position instead.
+    const stage = screen.getByTestId("lightbox-stage");
+    Object.defineProperty(stage, "clientWidth", { configurable: true, value: 300 });
+    stage.scrollLeft = 600;
+    fireEvent.scroll(stage);
     expect(screen.getByRole("dialog", { name: "Photo 3 of 3" })).toBeTruthy();
   });
 
