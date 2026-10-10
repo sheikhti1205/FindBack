@@ -750,17 +750,17 @@ export function AiModels({
 
   return (
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-5">
-      <BackButton fallbackTo="/profile" label="Back to profile" />
-      <header className="flex flex-col gap-1">
+      <div className="fb-settings-sticky">
+        <BackButton fallbackTo="/profile" label="Back to profile" />
         <h1 className="text-xl font-semibold">AI &amp; Models</h1>
-        <p className="text-sm text-on-surface-variant">
-          Modes, on-device status, cloud keys, defaults, and the price-visible catalogue.
-        </p>
-      </header>
+      </div>
+      <p className="text-sm text-on-surface-variant">
+        How FindBack answers. Your photo stays on this device unless you choose cloud.
+      </p>
 
       <section aria-label="Assistant mode" className="flex flex-col gap-2">
         <h2 className="text-base font-semibold">Assistant mode</h2>
-        <div role="radiogroup" aria-label="Assistant mode" className="flex flex-col gap-2">
+        <div role="radiogroup" aria-label="Assistant mode" className="fb-ai-mode-list">
            {ASSISTANT_MODES.map((option) => {
             const checked = mode === option;
             return (
@@ -770,7 +770,7 @@ export function AiModels({
                 role="radio"
                 aria-checked={checked}
                 onClick={() => chooseMode(option)}
-                className="flex min-h-[48px] flex-col justify-center gap-0.5 rounded-m3-sm border border-outline-variant px-3 text-left hover:bg-surface-container"
+                className="fb-ai-mode-option text-left"
               >
                 <span className="text-sm font-medium">
                   {checked ? "● " : "○ "}
@@ -960,7 +960,7 @@ export function AiModels({
             Reading saved keys…
           </p>
         ) : (
-          <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col">
              {enabledProviders.map((provider) => {
               const slot = slots[provider] ?? { connected: false, saved: false, masked: null };
               const probe = probes[provider] ?? IDLE_PROBE;
@@ -983,7 +983,7 @@ export function AiModels({
                 <li
                   key={provider}
                   data-testid={`ai-provider-${provider}`}
-                  className="flex flex-col gap-2 rounded-m3-sm border border-outline-variant p-3"
+                  className="flex flex-col gap-1 border-t border-outline-variant py-2"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="flex items-center gap-2 text-sm font-semibold">

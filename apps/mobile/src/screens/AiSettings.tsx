@@ -3,6 +3,7 @@ import { Cloud, Cpu, SlidersHorizontal } from "lucide-react";
 import { useAuth } from "../auth";
 import { announce } from "../components/LiveRegion";
 import {
+  AdvancedDisclosure,
   SettingsGroup,
   SettingsPage,
   SettingsRow,
@@ -80,14 +81,14 @@ export function AiSettings({ accountId }: { accountId?: string }) {
         <div
           role="radiogroup"
           aria-label="AI mode"
-          className="flex flex-col gap-2"
+          className="fb-ai-mode-list"
         >
           {(Object.keys(MODE_COPY) as OfferedMode[]).map((option) => {
             const checked = mode === option;
             return (
               <label
                 key={option}
-                className="flex min-h-[48px] cursor-pointer flex-col justify-center gap-0.5 rounded-m3-sm border border-outline-variant px-3 py-2 hover:bg-surface-container focus-within:outline-2 focus-within:outline-solid focus-within:outline-offset-2 focus-within:outline-focus"
+                className="fb-ai-mode-option"
               >
                 <input
                   type="radio"
@@ -108,6 +109,15 @@ export function AiSettings({ accountId }: { accountId?: string }) {
             );
           })}
         </div>
+        <AdvancedDisclosure title="How Automatic chooses">
+          <p>
+            Automatic tries on-device processing first when a compatible tool is
+            downloaded. Text may fall back to a connected cloud model only after
+            local AI is unavailable or fails. Stopping a request never sends to
+            cloud. Model names, routing rules, and capability details live in
+            Advanced and Diagnostics.
+          </p>
+        </AdvancedDisclosure>
       </SettingsGroup>
 
       <SettingsGroup title="Options">
@@ -160,14 +170,14 @@ type OfferedMode = AssistantModePreference;
 const MODE_COPY: Record<OfferedMode, { label: string; detail: string }> = {
   automatic: {
     label: "Automatic",
-    detail: "On-device first when compatible tools are downloaded. Text can fall back to a connected cloud model if local AI is unavailable or fails. Stopping never sends to cloud.",
+    detail: "On-device first when ready. Your photo stays on this device; cloud is used only after you allow it.",
   },
   "on-device-only": {
     label: "On-device only",
-    detail: "Answers stay on this phone. Needs the Android app and downloaded on-device tools; otherwise the request is refused. Never sends to cloud.",
+    detail: "On-device processing. Your photo stays on this device and is never sent to the internet.",
   },
   "cloud-only": {
     label: "Cloud only",
-    detail: "Never runs on-device tools.",
+    detail: "Cloud processing, sent only after you allow it. Never runs on this device.",
   },
 };

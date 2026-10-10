@@ -231,7 +231,7 @@ export function ModelCatalogSheet({
         <p className="text-sm text-on-surface-variant">No models match this filter.</p>
       ) : null}
       {visible.length > 0 ? (
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col">
           {/* Filtering the catalogue is a list edit: rows rise in, filtered-out
               rows leave, and the rest re-flow on Motion `layout` instead of
               jumping. */}
@@ -247,7 +247,7 @@ export function ModelCatalogSheet({
                 animate="visible"
                 exit="exit"
                 transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
-                className="flex flex-col gap-1 rounded-m3-sm border border-outline bg-surface px-3 py-2"
+                className="flex flex-col gap-1 border-t border-outline-variant py-2"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-sm font-medium">{displayNameForCatalogRecord(model)}</span>
@@ -352,7 +352,7 @@ function AssistantPickerSections({
         animate="visible"
         exit="exit"
         transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
-        className="flex flex-col gap-1 rounded-m3-sm border border-outline bg-surface px-3 py-2"
+        className="flex flex-col gap-1 border-t border-outline-variant py-2"
       >
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-sm font-medium">{displayNameForCatalogRecord(model)}</span>

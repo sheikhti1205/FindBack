@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("AppearanceSettings", () => {
-  it("renders one heading, three theme options, and seven accent options as native radios", () => {
+  it("renders one heading, three theme options, and twelve accent options as native radios", () => {
     renderScreen();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1, name: "Appearance" })).toBeTruthy();
@@ -39,7 +39,7 @@ describe("AppearanceSettings", () => {
       expect(screen.getByRole("radio", { name: new RegExp(`^${name}`) })).toBeTruthy();
     }
     expect(screen.queryByRole("radio", { name: /^AMOLED/ })).toBeNull();
-    for (const name of ["Emerald", "Blue", "Violet", "Rose", "Amber", "Teal", "Mono"]) {
+    for (const name of ["Emerald", "Blue", "Violet", "Rose", "Amber", "Teal", "Mono", "Indigo", "Cyan", "Lime", "Orange", "Pink"]) {
       expect(screen.getByRole("radio", { name })).toBeTruthy();
     }
   });

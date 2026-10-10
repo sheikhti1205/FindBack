@@ -38,11 +38,11 @@ export function SettingsPage({ title, description, children, backTo, backLabel =
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus({ preventScroll: true }); }, [title]);
   return <section className={`fb-settings-page ${className}`}>
-    <header className="fb-settings-page-header">
+    <div className="fb-settings-sticky">
       {backTo && <BackButton fallbackTo={backTo} label={backLabel} />}
       <h1 ref={heading} tabIndex={-1}>{title}</h1>
-      {description && <p className="fb-settings-page-description">{description}</p>}
-    </header>
+    </div>
+    {description && <p className="fb-settings-page-description">{description}</p>}
     <div className="fb-settings-page-content">{children}</div>
   </section>;
 }

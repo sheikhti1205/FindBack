@@ -70,14 +70,15 @@ export function PublicProfile() {
         <>
           <section
             aria-label="Public profile"
-            className="flex min-w-0 flex-col items-center gap-3 rounded-m3-md border border-outline-variant bg-surface-container-low p-6 text-center"
+            className="flex min-w-0 items-center gap-3 py-2"
           >
-            <UserAvatar avatarUrl={profile.avatarUrl} username={profile.username} size={96} />
-            {profile.displayName && <p className="text-xl font-semibold">{profile.displayName}</p>}
-            <p className="text-sm text-on-surface-variant">@{profile.username}</p>
+            <UserAvatar avatarUrl={profile.avatarUrl} username={profile.username} size={48} />
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-start">
+            {profile.displayName && <p className="truncate text-base font-semibold">{profile.displayName}</p>}
+            <p className="truncate text-sm text-on-surface-variant">@{profile.username}</p>
             <p className="text-xs text-on-surface-variant">{formatJoined(profile.createdAt)}</p>
             {(profile.emailVerified || profile.phoneVerified) && (
-              <p className="flex flex-wrap justify-center gap-2">
+              <p className="flex flex-wrap gap-2">
                 {profile.emailVerified && <StatusPill tone="success">Email verified</StatusPill>}
                 {profile.phoneVerified && <StatusPill tone="neutral">Phone verified</StatusPill>}
               </p>
@@ -86,6 +87,7 @@ export function PublicProfile() {
             {profile.locationLabel && (
               <p className="text-sm text-on-surface-variant">{profile.locationLabel}</p>
             )}
+            </div>
           </section>
 
           <SettingsGroup title="Reports">

@@ -39,7 +39,7 @@ export const APPEARANCE_STORAGE_KEY = "findback.appearance.v1";
 /** Window event fired on every save so other tabs/mounts re-apply. */
 export const APPEARANCE_EVENT = "findback:appearance";
 
-export type AccentId = "emerald" | "blue" | "violet" | "rose" | "amber" | "teal" | "mono";
+export type AccentId = "emerald" | "blue" | "violet" | "rose" | "amber" | "teal" | "mono" | "indigo" | "cyan" | "lime" | "orange" | "pink";
 
 export interface AccentOption {
   id: AccentId;
@@ -54,7 +54,7 @@ export interface AccentOption {
   darkContainer: string;
 }
 
-/** Curated set — small on purpose; every swatch keeps AA vs its onAccent. */
+/** Curated set — twelve swatches; every swatch keeps AA vs its onAccent. */
 export const ACCENT_OPTIONS: readonly AccentOption[] = [
   { id: "emerald", label: "Emerald", swatch: "#256c4a", onAccent: "#ffffff", darkSwatch: "#82d5aa", darkOnAccent: "#00391e", container: "#e1f2e8", darkContainer: "#153c29" },
   { id: "blue", label: "Blue", swatch: "#3568d4", onAccent: "#ffffff", darkSwatch: "#adc7ff", darkOnAccent: "#082b60", container: "#e8eeff", darkContainer: "#1c355c" },
@@ -63,6 +63,11 @@ export const ACCENT_OPTIONS: readonly AccentOption[] = [
   { id: "amber", label: "Amber", swatch: "#7a5700", onAccent: "#ffffff", darkSwatch: "#e9c46a", darkOnAccent: "#3d2d00", container: "#f8edce", darkContainer: "#46391c" },
   { id: "teal", label: "Teal", swatch: "#006a6a", onAccent: "#ffffff", darkSwatch: "#7bd8d8", darkOnAccent: "#003838", container: "#ddf2f1", darkContainer: "#153c3c" },
   { id: "mono", label: "Mono", swatch: "#212529", onAccent: "#ffffff", darkSwatch: "#e9ecef", darkOnAccent: "#212529", container: "#e9ecef", darkContainer: "#343a40" },
+  { id: "indigo", label: "Indigo", swatch: "#4350b8", onAccent: "#ffffff", darkSwatch: "#b9c0ff", darkOnAccent: "#1a215e", container: "#e8ebff", darkContainer: "#232a5e" },
+  { id: "cyan", label: "Cyan", swatch: "#0b6b8a", onAccent: "#ffffff", darkSwatch: "#8ed4ea", darkOnAccent: "#003544", container: "#ddf2fa", darkContainer: "#0f3542" },
+  { id: "lime", label: "Lime", swatch: "#4e6a00", onAccent: "#ffffff", darkSwatch: "#c2d879", darkOnAccent: "#2a3800", container: "#eaf2c8", darkContainer: "#2f3d0a" },
+  { id: "orange", label: "Orange", swatch: "#924500", onAccent: "#ffffff", darkSwatch: "#ffb87a", darkOnAccent: "#4a2400", container: "#ffead4", darkContainer: "#4a2a10" },
+  { id: "pink", label: "Pink", swatch: "#94366d", onAccent: "#ffffff", darkSwatch: "#ffaed6", darkOnAccent: "#51092f", container: "#fbe3ef", darkContainer: "#4c1a35" },
 ];
 
 /** Accepts old IDs only at the persistence boundary; UI always uses new IDs. */

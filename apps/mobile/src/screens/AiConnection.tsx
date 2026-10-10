@@ -6,6 +6,7 @@ import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { ModelCatalogSheet, priceLineCopy } from "../components/ModelCatalogSheet";
 import {
+  AdvancedDisclosure,
   SettingsGroup,
   SettingsPage,
   StatusPill,
@@ -455,7 +456,7 @@ export function AiConnection({
   return (
     <SettingsPage
       title="Cloud connections"
-      description={`Use your own ${providerLabel} key for cloud AI. FindBack uses free models automatically; availability and daily allowance depend on your provider account. Reports, search and other core features work without AI.`}
+      description={`Use your own ${providerLabel} key for optional cloud help. Your key stays on this device. Reports, search and other core features work without AI.`}
       backTo="/settings/ai"
       backLabel="Back to AI & intelligence"
     >
@@ -557,9 +558,14 @@ export function AiConnection({
       {showCatalogue ? (
         <SettingsGroup title="Models">
           <p className="text-xs text-on-surface-variant">
-            Selection mode: {mode === "paid-explicit" ? "explicit consent" : "free-only"}.
-            Paid models always need explicit per-model, per-price confirmation.
+            Free options are used automatically. Anything that may cost money always asks first.
           </p>
+          <AdvancedDisclosure title="Technical details">
+            <p className="text-xs text-on-surface-variant">
+              Selection mode: {mode === "paid-explicit" ? "explicit consent" : "free-only"}.
+              Model names, routing rules, and capability tables live here for troubleshooting.
+            </p>
+          </AdvancedDisclosure>
           <ul className="flex flex-col gap-1">
              {PROVIDER_AVAILABILITY.filter((entry) => isProviderEnabled(account, entry.provider)).map((entry) => (
               <li key={entry.provider} className="text-xs text-on-surface-variant">{entry.copy}</li>

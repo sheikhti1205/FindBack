@@ -19,9 +19,9 @@ export function Profile() {
     <SettingsPage title="Profile">
       <section
         aria-label="Account"
-        className="flex min-w-0 items-center gap-4 rounded-m3-md border border-outline-variant bg-surface-container-low p-4"
+        className="flex min-w-0 items-center gap-3 py-2"
       >
-        <UserAvatar avatarUrl={user.avatarUrl} username={user.username} size={64} />
+        <UserAvatar avatarUrl={user.avatarUrl} username={user.username} size={48} />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           {user.displayName && <p className="truncate text-lg font-semibold">{user.displayName}</p>}
           <p className="truncate text-sm text-on-surface-variant">@{user.username}</p>
