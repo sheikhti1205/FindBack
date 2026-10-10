@@ -27,12 +27,18 @@ type PullDirection = "none" | "vertical" | "horizontal";
 /**
  * Touch-based pull-to-refresh at scrollTop 0 only.
  *
- * Requirements:
+ * Refresh contract (C4):
  * - only at real scrollTop 0
  * - resistance (pull distance is dampened)
  * - threshold before refresh triggers
- * - visual indicator
- * - below-threshold cancel snaps back
+ * - the pull reveals ONLY a compact pill/circular refresh glyph that
+ *   animates with progress (rotation tracks the finger, the pill scales in).
+ *   No text states for sighted users — position is exposed through the
+ *   status role's accessible name and a visually-hidden label only.
+ * - the list stays visually in place: the indicator floats in a zero-height
+ *   sticky slot, so there is no yank, no push-down, and no blank flash
+ * - the spinner persists on the pill for the whole request
+ * - below-threshold cancel snaps back (pill unmounts)
  * - exactly ONE refresh per release: a release is consumed once per gesture,
  *   an in-flight refresh is guarded synchronously (no stale-closure double
  *   fire), and `disabled` is honoured at release so a gesture can never stack
@@ -44,14 +50,14 @@ type PullDirection = "none" | "vertical" | "horizontal";
  *   vertical refresh: direction is locked only once a move is decisive, and a
  *   horizontal-dominant move cancels the pull outright
  * - a cancelled gesture leaves no stale pull distance behind
-  * - no map gesture conflict (horizontal swipe locks out)
-  * - motion pass: the indicator always animates (rotation tracks pull
-  *   distance, spinner while refreshing)
-  * - P6: the finger-tracked visual is NEVER React state. Touch moves write a
- *   ref and paint the indicator through one rAF callback; React commits only
- *   at gesture start (indicator mount), release (unmount/refresh) and
+ * - P6: the finger-tracked visual is NEVER React state. Touch moves write a
+ *   ref and paint the pill through one rAF callback; React commits only
+ *   at gesture start (pill mount), release (unmount/refresh) and
  *   refresh settle. No setState — and no layout-height animation — runs per
  *   touch move.
+ * - reduced motion: the refresh spinner resolves to a static glyph
+ *   (`motion-reduce:animate-none`); finger-tracked progress is functional
+ *   tracking and is never disabled.
  *
  * The component IS the scroll container; the parent can read scrollTop and
  * scroll to top through the forwarded handle.
@@ -75,8 +81,8 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
     // P6: finger-tracked visual state. Never in React state — painted by rAF.
     const pullRef = useRef(0);
     const rafRef = useRef<number | null>(null);
-    const indicatorRef = useRef<HTMLDivElement | null>(null);
-    const labelRef = useRef<HTMLSpanElement | null>(null);
+    const pillRef = useRef<HTMLSpanElement | null>(null);
+    const labelRef = useRef<HTMLDivElement | null>(null);
     const labelTextRef = useRef<HTMLSpanElement | null>(null);
     const iconRef = useRef<SVGSVGElement | null>(null);
 
@@ -103,19 +109,21 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       }
     }, []);
 
-    // P6: the ONLY visual writer for the pull indicator. Reads refs, mutates
-    // the mounted indicator DOM directly, commits nothing to React.
+    // P6: the ONLY visual writer for the refresh pill. Reads refs, mutates
+    // the mounted pill DOM directly, commits nothing to React. The pill
+    // floats in a zero-height slot: painting here never moves the list.
     const paintVisual = useCallback(() => {
       rafRef.current = null;
-      const box = indicatorRef.current;
-      if (!box) return;
+      const pill = pillRef.current;
+      if (!pill) return;
       const active = refreshingRef.current;
       const distance = active ? THRESHOLD : pullRef.current;
       const progress = active ? 1 : Math.min(distance / THRESHOLD, 1);
-      box.style.height = `${distance}px`;
-      const label = active ? "Refreshing feed" : distance >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
+      pill.style.opacity = progress <= 0 && !active ? "0" : "1";
+      pill.style.transform = `translate(-50%, 0) scale(${active ? 1 : 0.6 + 0.4 * progress})`;
+      const label = active ? "Refreshing" : distance >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
       labelRef.current?.setAttribute("aria-label", label);
-      if (labelTextRef.current) labelTextRef.current.textContent = active ? "Refreshing…" : distance >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
+      if (labelTextRef.current) labelTextRef.current.textContent = label;
       // Rotation tracks pull distance one-to-one (transform only, rAF-throttled).
       if (iconRef.current) iconRef.current.style.transform = `rotate(${progress * 360}deg)`;
     }, []);
@@ -260,10 +268,10 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       void runRefresh();
     }, [disabled, runRefresh]);
 
-    // P6: the indicator mounts once per gesture and unmounts at release;
-    // its height/label/rotation are painted by rAF (see paintVisual), never
-    // by React state. No height transition: the visual tracks the finger
-    // exactly per frame instead of animating layout height behind it.
+    // P6: the pill mounts once per gesture (and for the whole refresh) and
+    // unmounts at release/settle; its opacity/scale/rotation are painted by
+    // rAF (see paintVisual), never by React state. The slot is zero-height
+    // and sticky, so the list never shifts while the pill is visible.
     const showIndicator = pulling || refreshing;
 
     return (
@@ -277,20 +285,22 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       >
         {showIndicator && (
           <div
-            ref={indicatorRef}
-            className="flex items-center justify-center overflow-hidden"
-            style={{ height: 0 }}
+            ref={labelRef}
+            data-testid="refresh-pill-slot"
+            className="pointer-events-none sticky top-2 z-10 flex h-0 justify-center overflow-visible"
             aria-live="polite"
             role="status"
+            aria-label={refreshing ? "Refreshing" : "Pull to refresh"}
           >
             <span
-              ref={labelRef}
-              className="inline-flex items-center gap-1.5 text-xs text-on-surface-variant"
-              aria-label={refreshing ? "Refreshing feed" : "Pull to refresh"}
+              ref={pillRef}
+              data-testid="refresh-pill"
+              className="absolute left-1/2 inline-flex h-9 w-9 items-center justify-center rounded-full bg-surface-container-high text-on-surface shadow"
+              style={{ opacity: 0, transform: "translate(-50%, 0) scale(0.6)" }}
             >
               <svg
                 ref={iconRef}
-                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                className={`h-4 w-4 ${refreshing ? "animate-spin motion-reduce:animate-none" : ""}`}
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -299,7 +309,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
               >
                 <path d="M21 12a9 9 0 11-6.219-8.56" />
               </svg>
-              <span ref={labelTextRef}>{refreshing ? "Refreshing…" : "Pull to refresh"}</span>
+              <span ref={labelTextRef} className="sr-only">{refreshing ? "Refreshing" : "Pull to refresh"}</span>
             </span>
           </div>
         )}

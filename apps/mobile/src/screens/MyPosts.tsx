@@ -101,7 +101,6 @@ export function MyPosts() {
         <PostList
           items={items}
           loading={loading}
-          refreshing={refreshing}
           loadingMore={loadingMore}
           error={error}
           hasMore={hasMore}

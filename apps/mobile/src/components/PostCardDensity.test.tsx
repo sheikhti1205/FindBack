@@ -125,7 +125,6 @@ describe("PostCardContent classic default", () => {
 describe("PostList density", () => {
   const base = {
     loading: false,
-    refreshing: false,
     loadingMore: false,
     error: null,
     hasMore: false,
@@ -156,7 +155,6 @@ describe("PostList density", () => {
 describe("PostList home-feed density (reference-inspired Home redesign)", () => {
   const base = {
     loading: false,
-    refreshing: false,
     loadingMore: false,
     error: null,
     hasMore: false,

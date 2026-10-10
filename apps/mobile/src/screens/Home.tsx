@@ -547,7 +547,6 @@ export function Home() {
           <PostList
             items={items}
             loading={loading}
-            refreshing={refreshing}
             loadingMore={loadingMore}
             error={error}
             hasMore={hasMore}

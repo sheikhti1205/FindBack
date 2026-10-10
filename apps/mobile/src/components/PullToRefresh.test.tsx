@@ -222,11 +222,12 @@ describe("PullToRefresh — no state per touch move", () => {
 
     // Gesture start only — never one React commit per move event.
     expect(commits).toBeLessThanOrEqual(2);
-    // …yet the visual indicator still tracks the finger through the DOM.
-    const indicator = screen.getByRole("status");
-    expect(Number.parseFloat((indicator as HTMLElement).style.height)).toBeGreaterThan(0);
+    // …yet the pill still tracks the finger through the DOM.
+    const pill = screen.getByTestId("refresh-pill") as HTMLElement;
+    expect(pill.style.opacity).toBe("1");
+    expect(pill.style.transform).toContain("scale(");
 
-    // Below-threshold release: no refresh, indicator snaps back.
+    // Below-threshold release: no refresh, pill snaps back.
     act(() => {
       fireEvent.touchEnd(el);
     });
@@ -234,6 +235,80 @@ describe("PullToRefresh — no state per touch move", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
     expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("PullToRefresh — pill-only indicator, list never moves", () => {
+  it("reveals only a glyph pill while pulling: no visible text, zero-height slot", async () => {
+    const { container } = render(
+      <PullToRefresh onRefresh={pendingRefresh()}>
+        <ul data-testid="feed">
+          <li>Lost keys</li>
+        </ul>
+      </PullToRefresh>,
+    );
+    const el = container.firstElementChild!;
+    const flush = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+    // Below threshold: the pull is tracked, the list does not move.
+    act(() => {
+      fireEvent.touchStart(el, { touches: [pt(20, 20)] });
+      fireEvent.touchMove(el, { touches: [pt(20, 120)] });
+    });
+    await flush();
+
+    const status = screen.getByRole("status");
+    // Zero-height sticky slot: the list is never pushed down.
+    expect(status.className).toMatch(/h-0/);
+    // The only text is visually hidden (screen-reader position only).
+    const pill = screen.getByTestId("refresh-pill");
+    const hidden = pill.querySelector(".sr-only");
+    expect(hidden?.textContent).toMatch(/pull to refresh/i);
+    expect(status.textContent).toBe(hidden?.textContent);
+    // …and the visible affordance is just the circular glyph.
+    expect(pill.querySelector("svg")).toBeTruthy();
+    // The feed stays mounted, same nodes, underneath.
+    expect(screen.getByText("Lost keys")).toBeTruthy();
+
+    // Past the threshold the accessible name advances — still glyph-only.
+    act(() => {
+      fireEvent.touchMove(el, { touches: [pt(20, 260)] });
+    });
+    await flush();
+    expect(pill.querySelector(".sr-only")?.textContent).toMatch(/release to refresh/i);
+    expect(screen.getByTestId("refresh-pill").querySelector("svg")).toBeTruthy();
+  });
+
+  it("keeps a reduced-motion-safe spinner on the pill for the whole request", async () => {
+    const { container } = render(
+      <PullToRefresh onRefresh={pendingRefresh()}>
+        <div data-testid="feed">Lost keys</div>
+      </PullToRefresh>,
+    );
+    const el = container.firstElementChild!;
+    const before = screen.getByText("Lost keys");
+
+    act(() => {
+      pull(el);
+    });
+    act(() => {
+      fireEvent.touchEnd(el);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    // Still refreshing: the pill persists with the spinner, the list intact.
+    const status = screen.getByRole("status");
+    expect(status.getAttribute("aria-label")).toBe("Refreshing");
+    const spinner = screen.getByTestId("refresh-pill").querySelector("svg")!;
+    expect(spinner.className.baseVal ?? spinner.getAttribute("class")).toMatch(/animate-spin/);
+    // Reduced motion resolves the spin to a static glyph.
+    expect(spinner.getAttribute("class")).toMatch(/motion-reduce:animate-none/);
+    expect(screen.getByText("Lost keys")).toBe(before);
   });
 });
 

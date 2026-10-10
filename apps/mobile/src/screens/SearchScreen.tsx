@@ -120,7 +120,7 @@ export function SearchScreen(props: {
     setQParam(appliedQuery);
   }, [appliedQuery, setQParam]);
 
-  const { items, total, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
+  const { items, total, loading, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
     {
       type: type === "ALL" ? "" : type,
       category: advanced.category || undefined,
@@ -320,7 +320,6 @@ export function SearchScreen(props: {
         <PostList
           items={items}
           loading={loading}
-          refreshing={refreshing}
           loadingMore={loadingMore}
           error={error}
           hasMore={hasMore}

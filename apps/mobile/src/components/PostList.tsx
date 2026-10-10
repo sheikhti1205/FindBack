@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import type { PostItem } from "@findback/shared";
 import { AnimatePresence, motion } from "framer-motion";
 import { FileQuestion } from "lucide-react";
@@ -6,12 +6,11 @@ import { PostCard } from "./PostCard";
 import { OwnerReportCard } from "./OwnerReportCard";
 import { PostCardContent, type PostCardLayout } from "./PostCardContent";
 import { EmptyState, Spinner } from "./PostCard";
-import { fadeVariants, motionDurations, motionEasings } from "./uiMotion";
+import { fadeVariants, listItemVariants, motionDurations, motionEasings } from "./uiMotion";
 
 interface PostListProps {
   items: PostItem[];
   loading: boolean;
-  refreshing?: boolean;
   loadingMore: boolean;
   error: string | null;
   hasMore: boolean;
@@ -30,7 +29,6 @@ interface PostListProps {
 export function PostList({
   items,
   loading,
-  refreshing = false,
   loadingMore,
   error,
   hasMore,
@@ -82,6 +80,21 @@ export function PostList({
   // Opacity is preserved under reduced motion by the root MotionConfig.
   const stateTransition = { duration: motionDurations.fast, ease: motionEasings.inOut };
   const state = loading && items.length === 0 ? "loading" : error && items.length === 0 ? "error" : items.length === 0 ? "empty" : "content";
+
+  // Refresh reconcile (C4): rows the reader has already seen stay exactly
+  // in place; rows that arrive after the first paint (a refresh that found
+  // new/changed reports) enter with one short subtle fade/position step on
+  // the fast token. First paint is the baseline, so initial load never
+  // cascades. Reduced motion collapses the rise centrally (root
+  // MotionConfig); the opacity acknowledgement is preserved by policy.
+  const seenIdsRef = useRef<Set<string> | null>(null);
+  if (seenIdsRef.current === null) {
+    seenIdsRef.current = new Set(items.map((post) => post.id));
+  }
+  useEffect(() => {
+    const seen = seenIdsRef.current!;
+    for (const post of items) seen.add(post.id);
+  }, [items]);
 
   return (
     <AnimatePresence initial={false}>
@@ -142,11 +155,6 @@ export function PostList({
           transition={stateTransition}
         >
           <div className={listClass}>
-            {refreshing && items.length > 0 && (
-              <p role="status" className="py-1 text-center text-xs text-on-surface-variant">
-                Refreshing…
-              </p>
-            )}
             {error && (
               <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
                 <span>{error}</span>
@@ -159,20 +167,35 @@ export function PostList({
                 </button>
               </div>
             )}
-            {items.map((post, i) => (
-              isOwnerFeed ? (
-                <OwnerReportCard key={post.id} post={post} />
+            {items.map((post, i) => {
+              const card = isOwnerFeed ? (
+                <OwnerReportCard post={post} />
               ) : (
                 <PostCard
-                  key={post.id}
                   to={`/posts/${post.id}`}
                   index={i}
                   variant={layout === "home-feed" ? "home-feed" : "default"}
                 >
                   <PostCardContent post={post} layout={layout} enableSharedMedia />
                 </PostCard>
-              )
-            ))}
+              );
+              // Already-seen rows render untouched (no remount, no flash).
+              if (seenIdsRef.current!.has(post.id)) {
+                return <Fragment key={post.id}>{card}</Fragment>;
+              }
+              return (
+                <motion.div
+                  key={post.id}
+                  data-reconcile="enter"
+                  variants={listItemVariants}
+                  initial="hidden"
+                  animate="visible"
+                  transition={stateTransition}
+                >
+                  {card}
+                </motion.div>
+              );
+            })}
             <div ref={sentinelRef} aria-hidden />
             {loadingMore && <Spinner label="Loading more…" />}
             {!hasMore && items.length > 0 && (
