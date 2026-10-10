@@ -49,8 +49,14 @@ describe("live photo grounding transport", () => {
     await expect(groundReportPhoto(file, "backpack", false, { deps: d })).rejects.toThrow(/Confirm/);
     await expect(groundReportPhoto(file, " ", true, { deps: d })).rejects.toThrow(/describe/i);
     await expect(groundReportPhoto(file, "x".repeat(141), true, { deps: d })).rejects.toThrow(/140/);
-    await expect(groundReportPhoto(new File(["x"], "x.gif", { type: "image/gif" }), "bag", true, { deps: d })).rejects.toThrow(/JPEG/);
+    // Empty sources refuse before normalization; GIF now normalizes first
+    // (no MIME pre-gate) and attempts inference.
+    await expect(groundReportPhoto(new File([], "empty.jpg", { type: "image/jpeg" }), "bag", true, { deps: d })).rejects.toThrow(/photo/i);
     expect(normalized).not.toHaveBeenCalled(); expect(d.local).not.toHaveBeenCalled(); expect(d.cloud).not.toHaveBeenCalled();
+    const gifDeps = deps();
+    normalized.mockResolvedValueOnce(encoded);
+    await expect(groundReportPhoto(new File(["gif"], "x.gif", { type: "image/gif" }), "bag", true, { deps: gifDeps, photoEngine: "cloud-only" })).resolves.toMatchObject({ ok: true });
+    expect(normalized).toHaveBeenCalled();
   });
   it("binds normalized photo bytes to local-first ground-objects generation and returns only validated selectors", async () => {
     const d = deps(); const signal = new AbortController().signal;
@@ -96,10 +102,15 @@ describe("live photo grounding transport", () => {
     await expect(groundReportPhoto(file, "bag", true, { deps: throwing })).rejects.toMatchObject({ name: "AbortError" });
     expect(throwing.cloud).not.toHaveBeenCalled();
   });
-  it("rejects normalized image bounds and invalid cloud boxes", async () => {
-    const d = deps(); normalized.mockResolvedValueOnce({ ...encoded, width: 1921 });
-    await expect(groundReportPhoto(file, "bag", true, { deps: d })).rejects.toThrow(/JPEG/);
+  it("rejects degenerate normalized images but accepts large derivatives (no 1920px skip)", async () => {
+    const d = deps(); normalized.mockResolvedValueOnce({ ...encoded, width: 0 });
+    await expect(groundReportPhoto(file, "bag", true, { deps: d })).rejects.toThrow(/photo/i);
     expect(d.local).not.toHaveBeenCalled(); expect(d.cloud).not.toHaveBeenCalled();
+    // A 1921px derivative now attempts inference instead of refusing.
+    const wide = deps();
+    normalized.mockResolvedValueOnce({ ...encoded, width: 1921, height: 1280 });
+    await expect(groundReportPhoto(file, "bag", true, { deps: wide })).resolves.toMatchObject({ ok: true });
+    expect(wide.local).toHaveBeenCalled();
     d.cloud.mockResolvedValue('{"coordinateSpace":"pixels","boxes":[]}');
     const result = await groundReportPhoto(file, "bag", true, { deps: d, photoEngine: "cloud-only" });
     expect(result.ok).toBe(false);

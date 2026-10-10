@@ -117,15 +117,17 @@ describe("photo source", () => {
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob([original], { type: "image/jpeg" })) }));
     await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/huge.jpg", format: "jpg", id: "huge" }))
-      .rejects.toThrow("under 8 MB");
+      .rejects.toThrow("still too large after preparing");
   });
 
   it("rejects originals above the decode safety bound without decoding", async () => {
-    const original = new Uint8Array(49 * 1024 * 1024);
+    // 100 MB source bound: a 101 MB original dies on its reported size
+    // without ever invoking the decoder.
+    const original = new Uint8Array(101 * 1024 * 1024);
     original[0] = 255; original[1] = 216; original[2] = 255; original[3] = 224;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(new Blob([original], { type: "image/jpeg" })) }));
     await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/enormous.jpg", format: "jpg", id: "enormous" }))
-      .rejects.toThrow("too large to process");
+      .rejects.toThrow("100 MB");
     expect(normalizeImageMock).not.toHaveBeenCalled();
   });
 
@@ -135,24 +137,24 @@ describe("photo source", () => {
   });
 
   it("rejects a huge native blob by size before reading bytes or decoding", async () => {
-    // A 100 MB native image must die on its reported size: arrayBuffer must
+    // A 101 MB native image must die on its reported size: arrayBuffer must
     // never be called and the decoder must never run. The fake Blob carries
     // no allocation at all.
     const arrayBuffer = vi.fn(() => { throw new Error("bytes must not be read"); });
-    const huge = { size: 100 * 1024 * 1024, arrayBuffer } as unknown as Blob;
+    const huge = { size: 101 * 1024 * 1024, arrayBuffer } as unknown as Blob;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(huge) }));
     await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/huge.jpg", format: "jpg", id: "huge" }))
-      .rejects.toThrow("too large to process");
+      .rejects.toThrow("100 MB");
     expect(arrayBuffer).not.toHaveBeenCalled();
     expect(normalizeImageMock).not.toHaveBeenCalled();
   });
 
   it("rejects an oversized HEIC before calling the decoder", async () => {
     const arrayBuffer = vi.fn(() => { throw new Error("bytes must not be read"); });
-    const hugeHeic = { size: 60 * 1024 * 1024, arrayBuffer } as unknown as Blob;
+    const hugeHeic = { size: 101 * 1024 * 1024, arrayBuffer } as unknown as Blob;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(hugeHeic) }));
     await expect(photoToFile({ nativeUri: "content://x", webPath: "http://localhost/big.heic", format: "heic", id: "heic-big" }))
-      .rejects.toThrow("too large to process");
+      .rejects.toThrow("100 MB");
     expect(arrayBuffer).not.toHaveBeenCalled();
     expect(normalizeImageMock).not.toHaveBeenCalled();
   });

@@ -71,12 +71,22 @@ describe("OpenRouter photo suggestions", () => {
     expect(send).toHaveBeenCalledWith(expect.stringContaining("suggestedTitle"), "data:image/jpeg;base64,/9g=", true, expect.any(Object));
   });
 
-  it("rejects malformed data and unsupported image formats", async () => {
-    const send = vi.fn(async () => '{"suggestedTitle":"unsafe"}');
+  it("accepts sparse model output via the tolerant parser; truly unusable output still fails", async () => {
+    // Sparse (single-key) output stays usable under the tolerant parser.
+    const sparse = vi.fn(async () => '{"suggestedTitle":"Black umbrella"}');
     const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
     const file = new File(["jpeg"], "item.jpg", { type: "image/jpeg" });
-    await expect(analyzeReportPhoto(file, true, { deps: { encode, send, ...cloudOnly() } })).rejects.toMatchObject({ code: "UNUSABLE_RESPONSE" });
-    await expect(analyzeReportPhoto(new File(["gif"], "item.gif", { type: "image/gif" }), true, { deps: { encode, send, ...cloudOnly() } })).rejects.toMatchObject({ code: "INVALID_IMAGE" });
+    await expect(analyzeReportPhoto(file, true, { deps: { encode, send: sparse, ...cloudOnly() } })).resolves.toMatchObject({
+      suggestedTitle: "Black umbrella",
+    });
+    // No JSON at all is still UNUSABLE.
+    const garbage = vi.fn(async () => "not json at all");
+    await expect(analyzeReportPhoto(file, true, { deps: { encode, send: garbage, ...cloudOnly() } })).rejects.toMatchObject({ code: "UNUSABLE_RESPONSE" });
+    // GIF sources normalize first and stay usable (no pre-gate rejection).
+    const gifSend = vi.fn(async () => JSON.stringify(result));
+    await expect(analyzeReportPhoto(new File(["gif"], "item.gif", { type: "image/gif" }), true, { deps: { encode, send: gifSend, ...cloudOnly() } })).resolves.toMatchObject({
+      suggestedTitle: "Black umbrella",
+    });
   });
 
   it("supports abort signal for cancellation", async () => {
@@ -118,12 +128,12 @@ describe("OpenRouter photo suggestions", () => {
     });
   });
 
-  it("rejects an unknown category from the model", async () => {
+  it("drops an unknown category to null but keeps the usable suggestion", async () => {
     const send = vi.fn(async () => JSON.stringify({ ...result, suggestedCategory: "Unrecognized" }));
     const file = new File(["jpeg"], "item.jpg", { type: "image/jpeg" });
     await expect(analyzeReportPhoto(file, true, { deps: {
       encode: async () => "data:image/jpeg;base64,/9g=", send, ...cloudOnly(),
-    } })).rejects.toMatchObject({ code: "UNUSABLE_RESPONSE" });
+    } })).resolves.toMatchObject({ suggestedTitle: "Black umbrella", suggestedCategory: null });
   });
 
   it("never logs photo bytes, EXIF, coordinates or API keys", async () => {
@@ -315,7 +325,7 @@ describe("photo engine preference", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("consent and image validation run first regardless of engine", async () => {
+  it("consent runs first; GIF/image sources normalize instead of pre-gate rejection", async () => {
     const analyzeLocally = vi.fn(async () => result);
     const send = vi.fn(async () => JSON.stringify(result));
     const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
@@ -324,12 +334,13 @@ describe("photo engine preference", () => {
     ).rejects.toMatchObject({ code: "CONSENT_REQUIRED" });
     expect(analyzeLocally).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+    // GIF is no longer INVALID_IMAGE up front: on-device-only analyzes it.
     await expect(
       analyzeReportPhoto(new File(["gif"], "item.gif", { type: "image/gif" }), true, {
         photoEngine: "on-device-only",
         deps: { encode, send, analyzeLocally },
       }),
-    ).rejects.toMatchObject({ code: "INVALID_IMAGE" });
+    ).resolves.toMatchObject({ engine: "on-device" });
   });
 
   it("preserves MISSING_KEY and UNUSABLE_RESPONSE on the cloud path", async () => {
@@ -340,7 +351,7 @@ describe("photo engine preference", () => {
     await expect(
       analyzeReportPhoto(file(), true, { photoEngine: "cloud-only", deps: { encode, send: missing, analyzeLocally: async () => null } }),
     ).rejects.toMatchObject({ code: "MISSING_KEY" });
-    const unusable = vi.fn(async () => '{"suggestedTitle":"unsafe"}');
+    const unusable = vi.fn(async () => "definitely not json");
     await expect(
       analyzeReportPhoto(file(), true, { photoEngine: "cloud-only", deps: { encode, send: unusable, analyzeLocally: async () => null } }),
     ).rejects.toMatchObject({ code: "UNUSABLE_RESPONSE" });

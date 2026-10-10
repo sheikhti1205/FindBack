@@ -3,13 +3,16 @@
  *
  * Mirrors the Node sharp pipeline so a phone-camera file never consumes more
  * Storage than needed: honor EXIF orientation, cap the longest edge at 1920px
- * without enlarging, and re-encode by type (JPEG/WebP at the persisted photo
- * quality tier — 82% standard, 92% when the High Quality Photo flag is on;
- * PNG lossless for transparency). Dimension/byte caps stay hard regardless
- * of tier. Animated GIFs are passed through untouched so their animation
- * survives. `createImageBitmap` is preferred; an `<img>` fallback covers WebViews
- * without it. The browser APIs are injectable so the decision logic is unit
- * testable without a real canvas.
+ * without enlarging for the upload/AI derivatives (source acceptance itself
+ * has no megapixel cap — large dimensions downsample, never reject), and
+ * re-encode by type (JPEG/WebP at the persisted photo quality tier — 82%
+ * standard, 92% when the High Quality Photo flag is on; PNG lossless for
+ * transparency; HEIC/HEIF/AVIF normalize to JPEG). Dimension/byte caps stay
+ * hard regardless of tier. Animated GIFs are passed through untouched so
+ * their animation survives. `createImageBitmap` is preferred; an `<img>`
+ * fallback covers WebViews without it. The browser APIs are injectable so
+ * the decision logic is unit testable without a real canvas. Sampling uses
+ * decode-time resize so a 100 MB source never fully materializes in JS.
  */
 export const MAX_EDGE = 1920;
 export const JPEG_QUALITY = 0.82;
@@ -42,7 +45,7 @@ export const IMAGE_STAGE_TIMEOUT_MS = 30_000;
 export const DECODE_TOO_LARGE =
   "That photo's dimensions are too large to process safely on this device. Export a smaller version and try again.";
 
-const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
+const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/avif", "image/bmp"];
 
 /**
  * Marks a decode failure as either a genuinely missing decoder

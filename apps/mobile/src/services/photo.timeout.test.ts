@@ -54,7 +54,7 @@ describe("photo pipeline hardening (Lane C part 2)", () => {
         blob,
       }),
     );
-    await expect(photoToFile(picked())).rejects.toThrow("too large to process");
+    await expect(photoToFile(picked())).rejects.toThrow("100 MB");
     expect(blob).not.toHaveBeenCalled();
     expect(normalizeImageMock).not.toHaveBeenCalled();
   });
@@ -65,7 +65,7 @@ describe("photo pipeline hardening (Lane C part 2)", () => {
     });
     const huge = { size: MAX_ORIGINAL_BYTES + 1024, arrayBuffer } as unknown as Blob;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(huge) }));
-    await expect(photoToFile(picked())).rejects.toThrow("too large to process");
+    await expect(photoToFile(picked())).rejects.toThrow("100 MB");
     expect(arrayBuffer).not.toHaveBeenCalled();
     expect(normalizeImageMock).not.toHaveBeenCalled();
   });

@@ -72,16 +72,47 @@ function onDeviceUnavailable(): Error & { code: string } {
 }
 
 async function encodePhoto(file: File): Promise<string> {
-  const normalized = await normalizeImage(file);
-  if (normalized.blob.size > 2_000_000 || normalized.width > 1920 || normalized.height > 1920) {
-    throw new OpenRouterError("INVALID_IMAGE");
+  // Canonical AI derivative: normalize (sampled decode, oriented, 1920px
+  // upload bound) then fit the ~2 MB transport ceiling via a quality ladder —
+  // never reject an otherwise readable source for the AI bound. GIF animation
+  // samples to a still JPEG when over bound; PNG over bound re-encodes to
+  // JPEG for the AI leg (transparency is irrelevant to inference).
+  const first = await normalizeImage(file);
+  if (first.blob.size <= 2_000_000 && first.width <= 1920 && first.height <= 1920) {
+    return toDataUrl(first.blob, first.mimeType);
   }
-  const bytes = new Uint8Array(await normalized.blob.arrayBuffer());
+  // Over-bound: step down quality on the derivative itself.
+  const derivativeFile = new File([first.blob], "ai-derivative", { type: first.mimeType });
+  for (const quality of [0.7, 0.55, 0.4]) {
+    try {
+      const attempt = await normalizeImage(derivativeFile, undefined, { quality: { jpeg: quality, webp: quality } });
+      if (attempt.blob.size <= 2_000_000) return toDataUrl(attempt.blob, attempt.mimeType);
+    } catch {
+      break;
+    }
+  }
+  // PNG/GIF still over bound: sample to a JPEG still for the AI leg.
+  if (first.mimeType === "image/png" || first.mimeType === "image/gif") {
+    const asJpeg = new File([first.blob], "ai-derivative.jpg", { type: "image/jpeg" });
+    for (const quality of [0.82, 0.7, 0.55, 0.4]) {
+      try {
+        const attempt = await normalizeImage(asJpeg, undefined, { quality: { jpeg: quality, webp: quality } });
+        if (attempt.blob.size <= 2_000_000) return toDataUrl(attempt.blob, attempt.mimeType);
+      } catch {
+        break;
+      }
+    }
+  }
+  throw new OpenRouterError("INVALID_IMAGE");
+}
+
+async function toDataUrl(blob: Blob, mimeType: string): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   for (let i = 0; i < bytes.length; i += 8192) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
   }
-  return `data:${normalized.mimeType};base64,${btoa(binary)}`;
+  return `data:${mimeType};base64,${btoa(binary)}`;
 }
 
 function isAbort(error: unknown): boolean {
@@ -117,9 +148,13 @@ export async function analyzeReportPhoto(
   }
 ): Promise<PhotoAnalysis> {
   if (!consent) throw new OpenRouterError("CONSENT_REQUIRED");
-  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8_000_000) {
-    throw new OpenRouterError("INVALID_IMAGE");
-  }
+  // Source acceptance mirrors the media pipeline: up to 100 MB when
+  // platform-readable. No MIME pre-gate here — HEIC/HEIF/AVIF/GIF normalize
+  // first via the canonical derivative pipeline; only empty files and absurd
+  // sources refuse up front. The AI transport ceiling applies to the
+  // normalized derivative inside encodePhoto, never to the user's source.
+  if (file.size === 0) throw new OpenRouterError("INVALID_IMAGE");
+  if (file.size > 100 * 1024 * 1024) throw new OpenRouterError("INVALID_IMAGE");
 
   const accountId = options?.accountId ?? "local";
   const rawEngine =

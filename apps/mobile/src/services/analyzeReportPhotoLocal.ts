@@ -3,10 +3,11 @@
  *
  * The DEFAULT engine for report-photo suggestions is the on-device vision
  * model. This module is the only place that calls `route("analyze-image")`
- * for the report-photo flow; it NEVER makes a cloud call. It normalizes and
- * re-encodes the selected photo (same <=2MB / <=1920px guards as the cloud
- * path), routes the base64 to the `local-vision` runtime with explicit
- * consent, and parses the structured `photo-analysis/v2` text.
+ * for the report-photo flow; it NEVER makes a cloud call. It normalizes via
+ * the canonical derivative pipeline (sampled decode, oriented, bounded —
+ * never a full-res source in JS) and routes the base64 to the `local-vision`
+ * runtime with explicit consent. There is no 2 MB / 1920px skip: a readable
+ * source always attempts inference; downsampling happens inside normalization.
  *
  * Availability is fail-open to the caller: any non-abort failure (no Android
  * runtime, model not installed, unparseable output) resolves `null` so the
@@ -31,9 +32,6 @@ Allowed suggestedCategory: ${JSON.stringify(CATEGORIES)}. Mark uncertain details
 export const PHOTO_CATEGORY_CANONICALS: readonly string[] = CATEGORY_CATALOG.map(
   (option) => option.canonical,
 );
-
-const MAX_LOCAL_IMAGE_BYTES = 2_000_000;
-const MAX_LOCAL_IMAGE_EDGE = 1920;
 
 /**
  * Injectable route seam. Matches the shape this module needs from
@@ -70,16 +68,18 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 /** Normalize + base64-encode without the `data:` URL prefix the bridge does not want. */
 async function encodeImageBase64(file: File, signal?: AbortSignal): Promise<string | null> {
-  const normalized = await normalizeImage(file, undefined, { signal });
-  throwIfAborted(signal);
-  if (
-    normalized.blob.size > MAX_LOCAL_IMAGE_BYTES ||
-    normalized.width > MAX_LOCAL_IMAGE_EDGE ||
-    normalized.height > MAX_LOCAL_IMAGE_EDGE
-  ) {
+  try {
+    const normalized = await normalizeImage(file, undefined, { signal });
+    throwIfAborted(signal);
+    // No size/edge skip: the canonical pipeline already downsamples (sampled
+    // decode, 1920px derivative bound). A readable source always attempts
+    // inference; oversized derivatives are still sent — the runtime, not the
+    // picker, owns any model-specific bound.
+    return bytesToBase64(new Uint8Array(await normalized.blob.arrayBuffer()));
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) throw error;
     return null;
   }
-  return bytesToBase64(new Uint8Array(await normalized.blob.arrayBuffer()));
 }
 
 function textOf(value: unknown): string | null {

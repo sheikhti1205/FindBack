@@ -37,7 +37,13 @@ function importedDerivative(result: NativeMediaDerivative, options: NativeMediaO
   try { bytes = Uint8Array.from(atob(result.derivativeBase64), (char) => char.charCodeAt(0)); } catch { throw invalid(); }
   const kind = sniffImage(bytes);
   const dimensions = kind ? probeDimensions(bytes, kind) : null;
-  if (bytes.length === 0 || bytes.length > IMPORT_MAX_DERIVATIVE_BYTES || !dimensions || dimensions.width !== result.width || dimensions.height !== result.height || result.width > IMPORT_MAX_EDGE || result.height > IMPORT_MAX_EDGE || (result.mimeType !== "image/jpeg" && result.mimeType !== "image/png") || (kind !== "jpeg" && kind !== "png") || result.mimeType !== `image/${kind}`) throw invalid();
+  const allowedMime = result.mimeType === "image/jpeg" || result.mimeType === "image/png" || result.mimeType === "image/webp" || result.mimeType === "image/gif";
+  const kindBase = kind === null ? null : kind.replace("-animated", "");
+  const mimeBase = result.mimeType.slice("image/".length);
+  // Sampled stills (over-cap animation → JPEG) are disclosed via sampledStill;
+  // otherwise the derivative container must match its sniffed bytes.
+  const mimeMatches = kindBase !== null && (mimeBase === kindBase || (result.mimeType === "image/jpeg" && kind !== null && kind.endsWith("-animated")) || (result.mimeType === "image/png" && kindBase === "png"));
+  if (bytes.length === 0 || bytes.length > IMPORT_MAX_DERIVATIVE_BYTES || !dimensions || dimensions.width !== result.width || dimensions.height !== result.height || result.width > IMPORT_MAX_EDGE || result.height > IMPORT_MAX_EDGE || !allowedMime || !mimeMatches) throw invalid();
   const kinds: readonly string[] = ["jpeg", "png", "png-animated", "webp", "webp-animated", "gif", "gif-animated", "bmp", "heic", "heif", "avif", "tiff"];
   if (!kinds.includes(result.sourceKind) || !Number.isSafeInteger(result.originalByteLength) || result.originalByteLength <= 0 || !Number.isSafeInteger(result.videoBytesStripped) || result.videoBytesStripped < 0 || !Number.isInteger(result.orientation) || result.orientation < 1 || result.orientation > 8) throw invalid();
   const id = `img_${crypto.randomUUID().replaceAll("-", "_")}`;

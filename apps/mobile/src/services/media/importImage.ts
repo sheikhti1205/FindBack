@@ -17,11 +17,13 @@ import { detectMotionPhoto, hasMotionPhotoMetadata, hasUnsupportedMotionContaine
 
 /**
  * Downsample-first intake: ordinary modern camera media (32–50 MP, large
- * compressed files, Motion Photo containers) is normalized to a bounded
- * derivative instead of being refused. Only pathological inputs — absurd
- * dimensions, impossible lengths, malformed headers — are rejected.
+ * compressed files, Motion Photo containers, HEIC/HEIF/AVIF stills) is
+ * normalized to a bounded derivative instead of being refused. Only
+ * pathological inputs — absurd dimensions, impossible lengths, malformed
+ * headers — are rejected. Source acceptance is 100 MB when platform-readable;
+ * derivatives stay bounded (preview/upload/AI are separate concerns).
  */
-export const IMPORT_MAX_INPUT_BYTES = 48_000_000;
+export const IMPORT_MAX_INPUT_BYTES = 100_000_000;
 /**
  * Pathological decode ceiling (120 MP, 32k edge): ordinary 32–50 MP camera
  * photos pass through to downsampling; only absurd declarations refuse.
@@ -139,7 +141,7 @@ export interface ImportedImage {
   };
 }
 
-const UNSUPPORTED_KINDS: ReadonlySet<string> = new Set(["heic", "heif", "avif", "tiff"]);
+const UNSUPPORTED_KINDS: ReadonlySet<string> = new Set(["tiff"]);
 
 const DECLARED_TO_BASE: Readonly<Record<string, string>> = {
   "image/jpeg": "jpeg",
@@ -554,16 +556,113 @@ function defaultId(): string {
 }
 
 function unsupportedMessage(sniffed: SniffedKind, fileName: string): string {
-  const label =
-    sniffed === "heic" || sniffed === "heif"
-      ? "HEIC/HEIF"
-      : sniffed === "avif"
-        ? "AVIF"
-        : "TIFF";
+  const label = "TIFF";
   return (
     `"${fileName}" looks like ${label}, which this app cannot decode here. ` +
-    "Please pick a JPEG, PNG, WebP, GIF, or BMP version instead — nothing was imported."
+    "Please pick a JPEG, PNG, WebP, GIF, HEIC, HEIF, AVIF, or BMP version instead — nothing was imported."
   );
+}
+
+/** Scan a leading slice for an ISO-BMFF `ispe` box (HEIC/HEIF/AVIF extents). Metadata only, never a decode. */
+function readIspeExtents(bytes: Uint8Array): { width: number; height: number } | null {
+  for (let i = 0; i + 16 <= bytes.length; i += 1) {
+    if (bytes[i] === 0x69 && bytes[i + 1] === 0x73 && bytes[i + 2] === 0x70 && bytes[i + 3] === 0x65) {
+      const width = (bytes[i + 8]! * 0x1000000) + (bytes[i + 9]! << 16) + (bytes[i + 10]! << 8) + bytes[i + 11]!;
+      const height = (bytes[i + 12]! * 0x1000000) + (bytes[i + 13]! << 16) + (bytes[i + 14]! << 8) + bytes[i + 15]!;
+      if (
+        Number.isSafeInteger(width) && Number.isSafeInteger(height)
+        && width > 0 && height > 0 && width <= 30000 && height <= 30000
+      ) {
+        return { width, height };
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Unprobeable ISO-BMFF still (HEIC/HEIF/AVIF with no readable `ispe` in the
+ * leading slice): never refuse up front. Attempt a bounded decode via the
+ * injected transcode seam (sampled, oriented, EXIF-stripped by the platform)
+ * and normalize to a JPEG derivative. A platform that can read the bytes
+ * succeeds; one that cannot fails here with an actionable, retryable error
+ * instead of a pre-gate rejection.
+ */
+async function importUnprobeableIsoBmff(
+  input: ImportInput,
+  deps: ImportDeps,
+  ctx: {
+    bytes: Uint8Array;
+    still: Uint8Array;
+    sniffed: SniffedKind;
+    fileName: string;
+    motionStillUsed: boolean;
+    videoBytesStripped: number;
+  },
+): Promise<ImportedImage> {
+  const { still, sniffed, fileName, motionStillUsed, videoBytesStripped } = ctx;
+  const target = { width: IMPORT_MAX_EDGE, height: IMPORT_MAX_EDGE };
+  const ladder = input.highQuality === true ? IMPORT_QUALITY_LADDER_HQ : IMPORT_QUALITY_LADDER;
+  let picked: { bytes: Uint8Array; quality: number } | null = null;
+  for (const candidate of ladder) {
+    try {
+      const encoded = await deps.transcode({
+        bytes: still,
+        sniffed,
+        targetWidth: target.width,
+        targetHeight: target.height,
+        mimeType: "image/jpeg",
+        quality: candidate,
+      });
+      if (encoded.length <= IMPORT_MAX_DERIVATIVE_BYTES) {
+        picked = { bytes: encoded, quality: candidate };
+        break;
+      }
+    } catch {
+      throw new MediaError(
+        "CORRUPT_IMAGE",
+        `"${fileName}" could not be decoded on this device. Export it as JPEG and try again — nothing was imported.`,
+      );
+    }
+  }
+  if (picked === null) {
+    throw new MediaError(
+      "DERIVATIVE_TOO_LARGE",
+      `"${fileName}" stays over the 2 MB derivative bound even at the lowest quality. ` +
+        "Please pick a smaller photo — nothing was imported.",
+    );
+  }
+  const id = deps.createId ? deps.createId() : defaultId();
+  return {
+    id,
+    fileName,
+    text: input.text ?? "",
+    sniffed,
+    declaredMimeType: (input.declaredMimeType ?? "").trim().toLowerCase(),
+    originalByteLength: still.length,
+    animated: false,
+    motionStillUsed,
+    videoBytesStripped,
+    sampledStill: false,
+    exifOrientationApplied: 1,
+    locationMetadataStripped: true,
+    derivative: {
+      bytes: picked.bytes,
+      mimeType: "image/jpeg",
+      byteLength: picked.bytes.length,
+      width: target.width,
+      height: target.height,
+      quality: picked.quality,
+    },
+    preview: {
+      mimeType: "image/jpeg",
+      width: target.width,
+      height: target.height,
+      byteLength: picked.bytes.length,
+      animated: false,
+    },
+  };
 }
 
 export async function importImage(input: ImportInput, deps: ImportDeps): Promise<ImportedImage> {
@@ -578,7 +677,7 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
   if (containerSniffed === null) {
     throw new MediaError(
       "UNRECOGNIZED_FORMAT",
-      `"${fileName}" is not a recognized photo (JPEG, PNG, WebP, GIF, BMP). ` +
+      `"${fileName}" is not a recognized photo (JPEG, PNG, WebP, GIF, BMP, HEIC, HEIF, AVIF). ` +
         "The file may be corrupt or a renamed non-photo — nothing was imported.",
     );
   }
@@ -623,8 +722,30 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
   if (UNSUPPORTED_KINDS.has(sniffed)) {
     throw new MediaError("UNSUPPORTED_FORMAT", unsupportedMessage(sniffed, fileName));
   }
-  const probed = probeDimensions(still, sniffed);
+  // Header probe first (sampled, never full decode). ISO-BMFF stills
+  // (HEIC/HEIF/AVIF) report null from the generic probe; the `ispe` extents
+  // box carries their dimensions — metadata only, never a decode.
+  const genericProbed = probeDimensions(still, sniffed);
+  const ispeProbed =
+    genericProbed === null && (sniffed === "heic" || sniffed === "heif" || sniffed === "avif")
+      ? readIspeExtents(still.subarray(0, Math.min(still.length, 65536)))
+      : null;
+  const probed = genericProbed ?? ispeProbed;
   if (probed === null) {
+    // HEIC/HEIF/AVIF without readable extents still deserve a decode attempt:
+    // the platform decoder (native) may read what the header probe cannot.
+    // Route them to the transcode seam with a bounded target instead of
+    // refusing up front; only truly header-damaged probeable kinds fail here.
+    if (sniffed === "heic" || sniffed === "heif" || sniffed === "avif") {
+      return importUnprobeableIsoBmff(input, deps, {
+        bytes,
+        still,
+        sniffed,
+        fileName,
+        motionStillUsed,
+        videoBytesStripped,
+      });
+    }
     throw new MediaError(
       "CORRUPT_IMAGE",
       `"${fileName}" looks like ${baseKindOf(sniffed)} but its header is damaged or ` +
@@ -696,6 +817,22 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
       sampledStill = true;
     }
   } else {
+    if (sniffed === "heic" || sniffed === "heif" || sniffed === "avif") {
+      // Platform-decodable BMFF still with readable extents: normalize to a
+      // bounded JPEG derivative (orientation applied, location stripped).
+      const ladder = input.highQuality === true ? IMPORT_QUALITY_LADDER_HQ : IMPORT_QUALITY_LADDER;
+      derivativeMime = "image/jpeg";
+      const picked = await transcodeLadder(still, sniffed, target, derivativeMime, ladder);
+      if (picked === null) {
+        throw new MediaError(
+          "DERIVATIVE_TOO_LARGE",
+          `"${fileName}" stays over the 2 MB derivative bound even at the lowest quality. ` +
+            "Please pick a smaller photo — nothing was imported.",
+        );
+      }
+      derivativeBytes = picked.bytes;
+      quality = picked.quality;
+    } else {
     derivativeMime =
       sniffed === "jpeg"
         ? "image/jpeg"
@@ -703,6 +840,10 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
           ? "image/png"
           : sniffed === "webp" && deps.webpEncodeSupported
             ? "image/webp"
+            : sniffed === "webp"
+              ? "image/png"
+          : sniffed === "bmp" || sniffed === "gif"
+            ? "image/png"
             : "image/png";
     const lossy = derivativeMime === "image/jpeg" || derivativeMime === "image/webp";
     if (lossy) {
@@ -734,6 +875,7 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
             "Please pick a JPEG still instead — nothing was imported.",
         );
       }
+    }
     }
   }
 

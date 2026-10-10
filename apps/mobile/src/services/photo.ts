@@ -88,14 +88,16 @@ export async function chooseFromGallery(): Promise<PickedPhoto | null> {
 /** Final upload limit enforced against the normalized derivative, not the original. */
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 /**
- * Decode safety bound for the ORIGINAL file. A 12 MB camera original can
- * normalize down to ~1 MB and must be accepted; an unbounded original risks
- * OOM during decode, so genuinely huge inputs are still rejected up front.
+ * Source acceptance bound: user-selected originals up to 100 MB are accepted
+ * when the platform can read them. This is a sampled-decode safety bound,
+ * never a user-facing resolution/megapixel cap — large dimensions are handled
+ * by downsampling, not rejection. Probing reads metadata first; full-res
+ * 100 MB sources are never decoded into JS memory.
  */
-export const MAX_ORIGINAL_BYTES = 48 * 1024 * 1024;
+export const MAX_ORIGINAL_BYTES = 100 * 1024 * 1024;
 
-export const TOO_LARGE_TO_PROCESS = "That photo is too large to process on this device. Choose a smaller image.";
-export const TOO_LARGE_FOR_UPLOAD = "That photo is too large. Choose an image under 8 MB.";
+export const TOO_LARGE_TO_PROCESS = "That photo is over the 100 MB source limit and can't be prepared on this device. Choose a smaller image.";
+export const TOO_LARGE_FOR_UPLOAD = "That photo is still too large after preparing. Try a smaller image or re-save it as JPEG.";
 export const DECODE_FAILED =
   "couldn't be decoded on this device. The file may be damaged — re-save or export it and try again.";
 
@@ -179,12 +181,13 @@ function withVideoTailInfo(file: File, videoBytesStripped: number): PhotoFile {
 
 /**
  * Shared normalize-first contract for native AND web picks: decode and
- * normalize (1920px longest edge, EXIF-oriented, re-encoded; animated GIFs
- * pass through untouched), then enforce the upload limit against the
- * RESULTING derivative. When this environment cannot decode (no canvas /
- * bitmap support, e.g. tests), the original bytes are kept and the upload
- * limit still applies to them — so a large-but-decodable original is only
- * ever rejected for its original size above MAX_ORIGINAL_BYTES.
+ * normalize (1920px longest edge for the upload derivative, EXIF-oriented,
+ * re-encoded; animated GIFs pass through untouched), then enforce the upload
+ * transport ceiling against the RESULTING derivative. When this environment
+ * cannot decode (no canvas / bitmap support, e.g. tests), the original bytes
+ * are kept and the upload ceiling still applies to them — so a large-but-
+ * decodable original is only ever rejected for its original size above
+ * MAX_ORIGINAL_BYTES (100 MB source bound).
  */
 export async function normalizeForUpload(source: File, opts?: PhotoPipelineOpts): Promise<File> {
   throwIfAborted(opts?.signal);
@@ -243,8 +246,8 @@ export async function normalizeForUpload(source: File, opts?: PhotoPipelineOpts)
     }
     if (!FALLBACK_ACCEPTED_KINDS.has(kind)) {
       throw new PhotoImportError(
-        kind === "heic" || kind === "heif"
-          ? "This HEIC/HEIF photo could not be decoded on this device. Export it as JPEG and try again."
+        kind === "heic" || kind === "heif" || kind === "avif"
+          ? "This photo needs decoding this device can't do here. Export it as JPEG and try again."
           : `"${source.name}" looks like ${fallbackBaseKind(kind).toUpperCase()}, which isn't supported here. Choose a JPEG, PNG, WebP, or GIF photo.`,
       );
     }
@@ -272,6 +275,7 @@ const FALLBACK_ACCEPTED_KINDS: ReadonlySet<string> = new Set([
   "gif-animated",
   "webp",
   "webp-animated",
+  "bmp",
 ]);
 
 function fallbackBaseKind(kind: string): string {
@@ -285,6 +289,9 @@ function declaredImageBase(mimeType: string): string | null {
   if (declared === "image/png") return "png";
   if (declared === "image/gif") return "gif";
   if (declared === "image/webp") return "webp";
+  if (declared === "image/bmp" || declared === "image/x-ms-bmp") return "bmp";
+  if (declared === "image/heic" || declared === "image/heif") return declared.slice(6);
+  if (declared === "image/avif") return "avif";
   // application/octet-stream and unknown types: no claim to check against.
   return null;
 }
@@ -352,7 +359,7 @@ export async function photoToFile(photo: PickedPhoto, name?: string, opts?: Phot
   // trailing MP4 count is surfaced on the result for the UI status line so a
   // stripped container never passes silently.
   const videoBytesStripped = strippedVideoBytes(bytes.length, still?.stillEnd ?? null);
-  if (kind === "heic" || kind === "heif") {
+  if (kind === "heic" || kind === "heif" || kind === "avif") {
     try {
       const source = new File([blob], name ?? `photo.${kind}`, { type: `image/${kind}` });
       const converted = await withTimeout(
@@ -370,13 +377,14 @@ export async function photoToFile(photo: PickedPhoto, name?: string, opts?: Phot
       if (isAbort(err, signal)) throw err;
       if (err instanceof PhotoStageTimeoutError) throw err;
       if (err instanceof Error && err.message === TOO_LARGE_FOR_UPLOAD) throw err;
-      throw new PhotoImportError("This HEIC/HEIF photo could not be decoded on this device. Export it as JPEG and try again.");
+      throw new PhotoImportError("This photo could not be decoded on this device. Export it as JPEG and try again.");
     }
   }
   const mime = kind === "jpeg" ? "image/jpeg" : kind === "png" || kind === "png-animated" ? "image/png"
     : kind === "webp" || kind === "webp-animated" ? "image/webp"
-    : kind === "gif" || kind === "gif-animated" ? "image/gif" : null;
-  if (!mime) throw new PhotoImportError("Unsupported or unreadable photo. Choose a JPEG, PNG, WebP, or GIF image.");
+    : kind === "gif" || kind === "gif-animated" ? "image/gif"
+    : kind === "bmp" ? "image/bmp" : null;
+  if (!mime) throw new PhotoImportError("Unsupported or unreadable photo. Choose a JPEG, PNG, WebP, GIF, HEIC, HEIF, or AVIF image.");
   const payload = still ? blob.slice(0, still.stillEnd, mime) : blob;
   // Still-level backstop: the still alone must fit the decode bound even when
   // the container already passed it (tail accounted separately above).

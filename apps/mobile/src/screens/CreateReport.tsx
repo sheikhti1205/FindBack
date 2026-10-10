@@ -81,8 +81,11 @@ const uploadBarTransition = {
   ease: motionEasings.out,
 } as const;
 
-/** Server bucket policy mirrored client-side so doomed uploads fail fast. */
-const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+/** Upload transport ceiling (mirrors the bucket safety bound) applied to the
+ * normalized derivative, never to the user's source. Sources up to 100 MB in
+ * JPEG/PNG/WebP/GIF/HEIC/HEIF/AVIF/BMP are accepted when platform-readable;
+ * normalization downsamples to a bounded derivative first. */
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif", "image/avif", "image/bmp", "image/jpg"];
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
 /** Client-side validation mirrors server (W6 #17). */
@@ -1018,8 +1021,8 @@ function ReportForm() {
               hashRegistryRef.current.delete(hash);
               unreadable += 1;
               failures.push(`Photo ${position}: ${file.size > MAX_IMAGE_BYTES
-                ? "that photo is too large. Choose an image under 8 MB."
-                : "that file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo."}`);
+                ? "that photo is still too large after preparing. Try a smaller image or re-save it as JPEG."
+                : "that file isn't a supported photo. Choose a JPEG, PNG, WebP, GIF, HEIC, HEIF, or AVIF photo."}`);
               return;
             }
             acceptPickedPhoto(file, item, hash);
@@ -1094,8 +1097,12 @@ function ReportForm() {
         overflow += 1;
         continue;
       }
-      if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-        failures.push(`${file.name}: that file isn't an image. Choose a PNG, JPEG, WebP, or GIF photo.`);
+      // Normalize-first: HEIC/HEIF/AVIF/BMP sources normalize to a bounded
+      // JPEG/PNG/WebP derivative. The pre-gate only rejects empty files and
+      // obvious non-images; anything image-like goes through preparation so a
+      // readable source is never refused for its declared type.
+      if (file.size === 0) {
+        failures.push(`${file.name}: that file is empty. Choose a photo file and try again.`);
         unreadable += 1;
         continue;
       }
@@ -1104,6 +1111,12 @@ function ReportForm() {
         payload = await normalizeForUpload(file);
       } catch (err) {
         failures.push(`${file.name}: ${friendlyError(err).message}`);
+        unreadable += 1;
+        continue;
+      }
+      // Transport ceiling applies to the normalized derivative only.
+      if (!ACCEPTED_IMAGE_TYPES.includes(payload.type) || payload.size > MAX_IMAGE_BYTES) {
+        failures.push(`${file.name}: that photo is still too large after preparing. Try a smaller image or re-save it as JPEG.`);
         unreadable += 1;
         continue;
       }

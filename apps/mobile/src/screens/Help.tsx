@@ -253,11 +253,15 @@ export function refuseHelpSend(input: {
     if (!getApplicationAi().android || input.record === null) return honestOfflineDetail(new Error(OFFLINE_NOT_AVAILABLE));
     if (!getApplicationAi().manager.statusOf(input.record.id)?.checksumVerified) return "Install and verify this on-device model in Settings → AI & models → On-device AI first.";
     if (!isAssistantSelectableOfflineRecord(input.record)) return "That on-device engine runs automatically in the background and can't answer chat directly. Use Automatic or pick a listed chat model — your draft is kept.";
+    // Vision-only models (SmolVLM2) never own text-only chat: an explicit pin
+    // gets a routing choice, never a fake image demand. Automatic (no pin)
+    // never lands here for text-only — send-time routing picks a qualified
+    // text model or the configured cloud/built-in fallback instead.
     if (!supportsAssistantMessage(input.record, input.hasImages)) return input.hasImages
       ? "This model cannot read images. Use Automatic or choose a vision model — your draft is kept."
-      : "This model needs an approved image and is not qualified for text chat. Attach a photo or use Automatic.";
+      : "This photo model can't answer text-only chat. Use Automatic for a text answer, or attach a photo for image chat — your draft is kept.";
     if (input.hasImages && !input.record.input.includes("image")) return "This on-device model accepts text only; select SmolVLM2 for an approved image.";
-    if (!input.hasImages && input.record.input.includes("image")) return "SmolVLM2 needs one approved image — attach a photo or use Automatic for a text answer.";
+    if (!input.hasImages && input.record.input.includes("image")) return "This photo model can't answer text-only chat. Use Automatic for a text answer, or attach a photo for image chat — your draft is kept.";
   }
   if (input.record !== null && input.provider !== "offline" && !supportsAssistantMessage(input.record, input.hasImages)) {
     return "This model is not qualified for this message. Use Automatic or choose a compatible model — your draft is kept.";
@@ -327,15 +331,16 @@ function canPreview(): boolean {
 
 /**
  * Derivative MIME types the import pipeline can produce and every AI path
- * accepts. GIF is deliberately absent: the offline image resolver and the
- * report-photo analyzers only ever accept jpeg/png/webp, so offering a GIF
- * would dead-end. Anything else resolves null so the adapter fails loudly
- * (draft kept) instead of sending unexpected content.
+ * accepts. Animated GIF passes through (or samples to a disclosed still when
+ * over the derivative bound), so it must resolve — never dead-end. Anything
+ * else resolves null so the adapter fails loudly (draft kept) instead of
+ * sending unexpected content.
  */
 const TRAY_IMAGE_MIME_ALLOWLIST: ReadonlySet<string> = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
+  "image/gif",
 ]);
 
 /** DOM-free data-URL encoder over one approved derivative (chunked btoa). */

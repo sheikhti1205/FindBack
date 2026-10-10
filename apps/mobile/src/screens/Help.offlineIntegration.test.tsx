@@ -223,7 +223,7 @@ it.each(["automatic", "on-device-only"] as const)("%s keeps text pinned to image
   renderHelp({ getKey: cloud.getKey });
   send(appQuestion);
   const error = await screen.findByTestId("chat-error");
-  expect(error.textContent).toMatch(/needs an approved image|not qualified for text chat/i);
+  expect(error.textContent).toMatch(/can't answer text-only chat|Use Automatic/i);
   expect(composer().value).toBe(appQuestion);
   expect(screen.getByTestId("chat-retry")).toBeTruthy();
   expect(screen.queryByText("Built-in answer")).toBeNull();

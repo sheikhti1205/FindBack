@@ -44,12 +44,21 @@ describe("VlmSuggestions — Draft description from photo", () => {
   });
 
   it("shows compact disabled callout when no usable photo", () => {
-    const file = makeFile("photo.gif", "image/gif"); // unsupported
+    const file = makeFile("notes.txt", "text/plain"); // unsupported
     render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn()} /></MemoryRouter>);
 
     expandPanel();
     expect(screen.getByText("Add a photo to draft text")).toBeTruthy();
     expect(screen.queryByLabelText(/Analyze this photo on your device/)).toBeNull();
+  });
+
+  it("treats GIF photos as usable (no dead-end callout)", () => {
+    const file = makeFile("photo.gif", "image/gif");
+    render(<MemoryRouter><VlmSuggestions file={file} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn()} /></MemoryRouter>);
+
+    expandPanel();
+    expect(screen.queryByText("Add a photo to draft text")).toBeNull();
+    expect(screen.getByLabelText(/Analyze this photo on your device/)).toBeTruthy();
   });
 
   it("expands on click showing consent checkbox unchecked by default", () => {

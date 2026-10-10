@@ -263,7 +263,7 @@ describe("importImage intake", () => {
   });
 
   it("rejects inputs over the byte cap with an actionable message", async () => {
-    const huge = new Uint8Array(49_000_000);
+    const huge = new Uint8Array(101_000_000);
     huge.set([0xff, 0xd8, 0xff, 0xe0]);
     await expect(
       importImage({ bytes: huge, fileName: "huge.jpg" }, deps()),
@@ -359,18 +359,41 @@ describe("importImage intake", () => {
     expect(still.sniffed).toBe("webp");
   });
 
-  it("rejects AVIF/HEIC/TIFF with an actionable unsupported-format error", async () => {
-    for (const bytes of [buildAvifFtyp(), buildHeicFtyp(), buildTiff()]) {
-      await expect(importImage({ bytes, fileName: "photo.bin" }, deps())).rejects.toMatchObject({
-        code: "UNSUPPORTED_FORMAT",
-      });
+  it("accepts HEIC/AVIF via a bounded JPEG derivative; TIFF stays unsupported", async () => {
+    for (const bytes of [buildAvifFtyp(), buildHeicFtyp()]) {
+      const result = await importImage({ bytes, fileName: "photo.bin" }, deps());
+      expect(result.derivative.mimeType).toBe("image/jpeg");
+      expect(result.locationMetadataStripped).toBe(true);
     }
+    await expect(importImage({ bytes: buildTiff(), fileName: "photo.tiff" }, deps())).rejects.toMatchObject({
+      code: "UNSUPPORTED_FORMAT",
+    });
     try {
-      await importImage({ bytes: buildAvifFtyp(), fileName: "photo.avif" }, deps());
+      await importImage({ bytes: buildTiff(), fileName: "photo.tiff" }, deps());
       expect.unreachable();
     } catch (error) {
       expect((error as Error).message).toMatch(/JPEG|PNG/i);
     }
+  });
+
+  it("normalizes an HEIC still with readable ispe extents to a bounded JPEG", async () => {
+    // Minimal ftyp + ispe (800x1200): the header probe supplies dimensions so
+    // the main ladder path normalizes instead of the unprobeable fallback.
+    const ftyp = buildHeicFtyp();
+    const ispe = new Uint8Array(20);
+    ispe.set([0, 0, 0, 12, 105, 115, 112, 101, 0, 0, 0, 0, 0, 0, 3, 32, 0, 0, 4, 176]);
+    const bytes = new Uint8Array(ftyp.length + ispe.length);
+    bytes.set(ftyp);
+    bytes.set(ispe, ftyp.length);
+    const seen: TranscodeRequest[] = [];
+    const result = await importImage(
+      { bytes, fileName: "photo.heic", declaredMimeType: "image/heic" },
+      deps({ transcode: fakeTranscode([512_000], seen) }),
+    );
+    expect(result.sniffed).toBe("heic");
+    expect(result.derivative.mimeType).toBe("image/jpeg");
+    expect(seen[0]?.targetWidth).toBeLessThanOrEqual(1920);
+    expect(seen[0]?.targetHeight).toBeLessThanOrEqual(1920);
   });
 
   it("re-encodes still GIF and BMP inputs to PNG derivatives", async () => {

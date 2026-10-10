@@ -11,12 +11,15 @@ const { publishReportMock, publishReportWithPhotosMock, photo } = vi.hoisted(() 
     chooseFromGallery: vi.fn(),
     chooseReportPhotos: vi.fn(),
     photoToFile: vi.fn(),
-    // Production normalizeForUpload enforces the 8 MB upload limit against
-    // the derivative (or the original when no decoder exists, as here): the
-    // mock mirrors that fallback edge so the rejection path stays covered.
-    // The normalize-first acceptance path is unit-tested in photo.test.ts.
+    // Production normalizeForUpload enforces the upload transport ceiling
+    // against the derivative (100 MB source bound, normalize-first): the mock
+    // mirrors that edge so the rejection path stays covered. The
+    // normalize-first acceptance path is unit-tested in photo.test.ts.
     normalizeForUpload: vi.fn(async (file: File) => {
-      if (file.size > 8 * 1024 * 1024) throw new Error("That photo is too large. Choose an image under 8 MB.");
+      if (!file.type.startsWith("image/") && file.type !== "" && file.type !== "application/octet-stream") {
+        throw new Error(`"${file.name}" doesn't look like a photo file. It may be corrupt or renamed.`);
+      }
+      if (file.size > 8 * 1024 * 1024) throw new Error("That photo is still too large after preparing. Try a smaller image or re-save it as JPEG.");
       return file;
     }),
     toNativeImageUri: vi.fn(),
@@ -463,8 +466,8 @@ describe("CreateReport", () => {
     fireEvent.change(input, { target: { files: [notImage, tooBig] } });
     // Both filenames appear with their distinct reasons — not one generic
     // message describing only the last failure.
-    await screen.findByText(/notes\.txt: that file isn't an image/i);
-    expect(screen.getByText(/huge\.jpg:.*under 8 mb/i)).toBeTruthy();
+    await screen.findByText(/notes\.txt:.*doesn't look like a photo/i);
+    expect(screen.getByText(/huge\.jpg:.*still too large after preparing/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull();
   });
 
@@ -639,7 +642,7 @@ describe("CreateReport", () => {
       fireEvent.click(screen.getByRole("button", { name: /choose up to/i }));
       // The oversized first item is rejected with an alert and must not
       // consume one of the five slots...
-      await screen.findByText(/that photo is too large/i, undefined, { timeout: 5000 });
+      await screen.findByText(/still too large after preparing/i, undefined, { timeout: 5000 });
       // ...while all five valid items still fill the lane. The six-item batch
       // (native conversion + SHA-256 + re-render per item) exceeds the default
       // 1s waitFor budget under full-suite worker load, so allow headroom.
@@ -739,7 +742,7 @@ describe("CreateReport", () => {
     render(<CreateReport />);
     pickFile(new File(["abc"], "notes.txt", { type: "text/plain" }));
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/image/i);
+    expect(alert.textContent).toMatch(/photo/i);
     expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull();
     expect(publishReportMock).not.toHaveBeenCalled();
   });

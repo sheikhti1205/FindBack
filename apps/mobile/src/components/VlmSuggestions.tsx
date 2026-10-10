@@ -108,7 +108,14 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     abortControllerRef.current?.abort();
   }, []);
 
-  const isSupportedImage = file !== null && ["image/jpeg", "image/png", "image/webp"].includes(file.type);
+  const isSupportedImage = file !== null && (
+    file.type.startsWith("image/") ||
+    // Normalized derivatives without a declared type (object URLs, native
+    // revives) still attempt analysis — the analyzer normalizes first and
+    // fails honestly instead of dead-ending the panel.
+    file.type === "" ||
+    file.type === "application/octet-stream"
+  );
 
   async function analyze() {
     if (!consented || busy || !file) return;

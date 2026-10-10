@@ -28,7 +28,7 @@ const COPY: Record<OpenRouterErrorCode, string> = {
   RATE_LIMITED: "OpenRouter is limiting requests. Please try again later.",
   FREE_CAPABILITY_UNAVAILABLE: "No compatible free model supports this request right now. Please try again later or use the manual form.",
   NO_FREE_MODEL: "No compatible free model is available right now. Please try again later.",
-  INVALID_IMAGE: "Choose a JPEG, PNG or WebP image smaller than 2 MB.",
+  INVALID_IMAGE: "That photo couldn't be prepared for AI. Try a different photo or re-save it as JPEG.",
   CONSENT_REQUIRED: "Confirm before sending this photo to OpenRouter.",
   CANCELLED: "AI request cancelled.",
   TIMEOUT: "OpenRouter took too long to respond. Please try again.",
@@ -116,7 +116,7 @@ function errorFromStatus(status: number, body: unknown): OpenRouterError {
 }
 
 function checkedImageDataUrl(image: string): string {
-  const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
+  const match = /^data:image\/(jpeg|png|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
   if (!match || match[2]!.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 || match[2]!.length < 4) {
     throw new OpenRouterError("INVALID_IMAGE");
   }

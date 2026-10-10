@@ -87,23 +87,72 @@ export async function groundReportPhoto(
   const referringExpression = expression.trim();
   if (!referringExpression) throw new Error("Describe the item to look for in the photo.");
   if (referringExpression.length > GROUND_EXPRESSION_MAX_CHARS) throw new Error("Use at most 140 characters to describe the item.");
-  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 8_000_000 || file.size === 0) {
+  // Source acceptance mirrors the media pipeline (≤100 MB, any image-like
+  // source). No MIME pre-gate: HEIC/HEIF/AVIF/GIF normalize first; the AI
+  // ceiling applies to the derivative below, never to the user's source.
+  if (file.size === 0 || file.size > 100 * 1024 * 1024) {
     throw new OpenRouterError("INVALID_IMAGE");
   }
   const accountId = options.accountId ?? "local";
   const engine = options.photoEngine ?? effectivePhotoEngine(accountId);
   const normalized = await normalizeImage(file, undefined, { signal: options.signal });
   throwIfAborted(options.signal);
-  if (normalized.blob.size === 0 || normalized.blob.size > 2_000_000 || normalized.width <= 0 || normalized.height <= 0 ||
-      normalized.width > 1920 || normalized.height > 1920 || !["image/jpeg", "image/png", "image/webp"].includes(normalized.mimeType)) {
+  // The normalized derivative is the exact image inference sees (orientation
+  // applied, EXIF stripped). No 2 MB / 1920px skip: a readable source always
+  // attempts grounding; the ladder below fits the cloud transport instead of
+  // refusing.
+  if (normalized.blob.size === 0 || normalized.width <= 0 || normalized.height <= 0) {
     throw new OpenRouterError("INVALID_IMAGE");
   }
-  const bytes = new Uint8Array(await normalized.blob.arrayBuffer());
+  // Fit the cloud transport (~2 MB) via a quality ladder instead of refusing.
+  // The on-device leg uses the same fitted derivative: smaller is always
+  // safe for grounding, and one exact image keeps orientation/boxes honest.
+  let fittedBlob = normalized.blob;
+  let fittedMime = normalized.mimeType;
+  if (fittedBlob.size > 2_000_000) {
+    const derivativeFile = new File([fittedBlob], "ground-derivative", { type: fittedMime });
+    let fitted: { blob: Blob; mimeType: string } | null = null;
+    for (const quality of [0.7, 0.55, 0.4]) {
+      try {
+        const attempt = await normalizeImage(derivativeFile, undefined, {
+          signal: options.signal,
+          quality: { jpeg: quality, webp: quality },
+        });
+        if (attempt.blob.size <= 2_000_000) {
+          fitted = attempt;
+          break;
+        }
+      } catch {
+        break;
+      }
+    }
+    if (fitted === null && (fittedMime === "image/png" || fittedMime === "image/gif")) {
+      const asJpeg = new File([fittedBlob], "ground-derivative.jpg", { type: "image/jpeg" });
+      for (const quality of [0.82, 0.7, 0.55, 0.4]) {
+        try {
+          const attempt = await normalizeImage(asJpeg, undefined, {
+            signal: options.signal,
+            quality: { jpeg: quality, webp: quality },
+          });
+          if (attempt.blob.size <= 2_000_000) {
+            fitted = attempt;
+            break;
+          }
+        } catch {
+          break;
+        }
+      }
+    }
+    if (fitted === null) throw new OpenRouterError("INVALID_IMAGE");
+    fittedBlob = fitted.blob;
+    fittedMime = fitted.mimeType;
+  }
+  const bytes = new Uint8Array(await fittedBlob.arrayBuffer());
   throwIfAborted(options.signal);
   let binary = "";
   for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
   const imageBase64 = btoa(binary);
-  const imageUrl = `data:${normalized.mimeType};base64,${imageBase64}`;
+  const imageUrl = `data:${fittedMime};base64,${imageBase64}`;
   const profile = profileFor(VISION_MODEL)!;
 
   async function run(used: "on-device" | "cloud"): Promise<AiResult<LiveGroundedOptions>> {

@@ -189,7 +189,7 @@ describe("Help photo per-send binding (G12 photo gap)", () => {
     await expect(resolve("data:image/png;base64,AQID")).resolves.toBeNull();
   });
 
-  it("never resolves a GIF derivative — every AI path rejects GIF, so the tray must not offer one", async () => {
+  it("resolves a GIF derivative — GIF stays usable via sampled stills, never dead-ends", async () => {
     const mod = (await import("./Help")) as unknown as Record<string, unknown>;
     const createResolver = mod["createChatTrayImageResolver"] as
       | undefined
@@ -206,6 +206,6 @@ describe("Help photo per-send binding (G12 photo gap)", () => {
       },
     };
     const resolve = createResolver!([gifItem]);
-    await expect(resolve("gif-1")).resolves.toBeNull();
+    await expect(resolve("gif-1")).resolves.toBe("data:image/gif;base64,R0lG");
   });
 });

@@ -84,18 +84,18 @@ describe("analyzeReportPhotoLocally", () => {
     expect(route).not.toHaveBeenCalled();
   });
 
-  it("returns null when normalization exceeds the local size guard", async () => {
+  it("attempts inference even for large derivatives (no 2MB/1920px skip)", async () => {
     normalizeImage.mockResolvedValueOnce({
       blob: new Blob([new Uint8Array(2_000_001)]),
       mimeType: "image/jpeg",
-      width: 1200,
-      height: 900,
+      width: 2400,
+      height: 1800,
     });
     const route = vi.fn(async () => ({ ok: true, value: { text: JSON.stringify(ANALYSIS) } }));
     await expect(
       analyzeReportPhotoLocally(new File(["jpeg"], "item.jpg", { type: "image/jpeg" }), { route }),
-    ).resolves.toBeNull();
-    expect(route).not.toHaveBeenCalled();
+    ).resolves.toEqual(ANALYSIS);
+    expect(route).toHaveBeenCalledTimes(1);
   });
 
   it("rethrows AbortError instead of reporting unavailability", async () => {

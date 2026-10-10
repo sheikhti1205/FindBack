@@ -28,14 +28,19 @@ describe("parseVlmOutput", () => {
     expect(parseVlmOutput(`Here you go: ${valid} Thanks!`, CATEGORIES)?.objectName).toBe("black umbrella");
   });
 
-  it("rejects an unknown category", () => {
+  it("drops an unknown category to null but keeps the usable title/description", () => {
     const bad = JSON.stringify({ ...JSON.parse(valid), suggestedCategory: "Weapons" });
-    expect(parseVlmOutput(bad, CATEGORIES)).toBeNull();
+    const parsed = parseVlmOutput(bad, CATEGORIES)!;
+    expect(parsed.suggestedCategory).toBeNull();
+    expect(parsed.suggestedTitle).toBe("Black umbrella");
   });
 
-  it("rejects non-JSON and unbalanced objects", () => {
+  it("rejects non-JSON; repairs an unterminated looped object to its usable prefix", () => {
     expect(parseVlmOutput("no json here", CATEGORIES)).toBeNull();
-    expect(parseVlmOutput('{"objectName":"x"', CATEGORIES)).toBeNull();
+    // Unterminated SmolVLM loop: the balanced prefix still carries signal.
+    const partial = parseVlmOutput('{"objectName":"umbrella","colors":["black"]', CATEGORIES);
+    expect(partial?.objectName).toBe("umbrella");
+    expect(partial?.colors).toEqual(["black"]);
   });
 
   it("clamps over-long strings and drops newlines", () => {
@@ -45,12 +50,17 @@ describe("parseVlmOutput", () => {
     expect(parsed.suggestedDescription).not.toMatch(/\n/);
   });
 
-  it("rejects structurally incomplete JSON (missing canonical keys)", () => {
-    expect(parseVlmOutput('{"objectName":null}', CATEGORIES)).toBeNull();
-    expect(parseVlmOutput("{}", CATEGORIES)).toBeNull();
-    const missingArray = JSON.parse(valid) as Record<string, unknown>;
-    delete missingArray.colors;
-    expect(parseVlmOutput(JSON.stringify(missingArray), CATEGORIES)).toBeNull();
+  it("tolerates structurally sparse JSON (missing keys default, aliases map)", () => {
+    // SmolVLM frequently drops keys or uses snake_case/shorthand: sparse
+    // output stays usable instead of UNUSABLE.
+    const sparse = parseVlmOutput('{"objectName":"umbrella"}', CATEGORIES)!;
+    expect(sparse.objectName).toBe("umbrella");
+    expect(sparse.colors).toEqual([]);
+    expect(sparse.suggestedTitle).toBeNull();
+    expect(parseVlmOutput("{}", CATEGORIES)).not.toBeNull();
+    const aliased = parseVlmOutput('{"title":"Keys","category":"clothing","color":"black"}', CATEGORIES)!;
+    expect(aliased.suggestedTitle).toBe("Keys");
+    expect(aliased.colors).toEqual(["black"]);
   });
 
   it("accepts a complete object whose values are legitimately null/empty", () => {
@@ -71,11 +81,11 @@ describe("parseVlmOutput", () => {
     expect(parsed.colors).toEqual([]);
   });
 
-  it("rejects wrong-typed fields instead of silently nulling them", () => {
-    const bad = JSON.stringify({ ...JSON.parse(valid), objectName: 42 });
-    expect(parseVlmOutput(bad, CATEGORIES)).toBeNull();
-    const badArray = JSON.stringify({ ...JSON.parse(valid), colors: "black" });
-    expect(parseVlmOutput(badArray, CATEGORIES)).toBeNull();
+  it("coerces wrong-typed fields instead of failing the whole output", () => {
+    const coerced = JSON.stringify({ ...JSON.parse(valid), objectName: 42 });
+    expect(parseVlmOutput(coerced, CATEGORIES)?.objectName).toBe("42");
+    const wrapped = JSON.stringify({ ...JSON.parse(valid), colors: "black" });
+    expect(parseVlmOutput(wrapped, CATEGORIES)?.colors).toEqual(["black"]);
   });
 
   it("redacts email/phone/card/IDs/OTP/QR on all Stage-2 text fields", () => {
@@ -94,9 +104,26 @@ describe("parseVlmOutput", () => {
     expect(parsed.objectName).toBe("[redacted]");
     expect(parsed.colors).toEqual(["[redacted]"]);
     expect(parsed.visibleBrand).toBe("[redacted]");
-    expect(parsed.visibleText).toEqual(["[redacted]", "[redacted]", "[redacted]"]);
+    // Redacted duplicates collapse to one entry (echo-loop dedupe).
+    expect(parsed.visibleText).toEqual(["[redacted]"]);
     expect(parsed.identifyingFeatures).toContain("[redacted]");
     expect(parsed.suggestedTitle).toBe("[redacted]");
     expect(parsed.suggestedDescription).toBe("[redacted]");
+  });
+
+  it("collapses echo loops to a single instance", () => {
+    const looped = JSON.stringify({
+      ...JSON.parse(valid),
+      suggestedTitle: "black umbrella black umbrella black umbrella black umbrella black umbrella black umbrella black umbrella",
+      colors: ["black", "black", "BLACK"],
+    });
+    const parsed = parseVlmOutput(looped, CATEGORIES)!;
+    expect(parsed.suggestedTitle).toBe("black umbrella");
+    expect(parsed.colors).toEqual(["black"]);
+  });
+
+  it("matches categories case-insensitively to the canonical", () => {
+    const lower = JSON.stringify({ ...JSON.parse(valid), suggestedCategory: "clothing" });
+    expect(parseVlmOutput(lower, CATEGORIES)?.suggestedCategory).toBe("Clothing");
   });
 });
