@@ -322,9 +322,16 @@ public final class GoogleAuthPlugin extends Plugin {
             return "cancelled";
         }
         if (error instanceof NoCredentialException
-            || error instanceof GetCredentialUnsupportedException
-            || error instanceof GetCredentialProviderConfigurationException) {
+            || error instanceof GetCredentialUnsupportedException) {
             return "unavailable";
+        }
+        if (error instanceof GetCredentialProviderConfigurationException) {
+            // Provider configuration failures are console-side, not device
+            // state: missing/disabled Google ID services, an unregistered
+            // Android OAuth client, or a SHA-1 mismatch. Surfaced as
+            // `misconfigured` so the user sees setup copy (never a
+            // device-blaming message) instead of `unavailable`.
+            return "misconfigured";
         }
         if (error instanceof GetCredentialCustomException) {
             Throwable cause = error.getCause();
@@ -343,6 +350,8 @@ public final class GoogleAuthPlugin extends Plugin {
                 return "Google sign-in was cancelled.";
             case "unavailable":
                 return "Google sign-in is not available.";
+            case "misconfigured":
+                return "Google sign-in is not configured.";
             case "network":
                 return "Could not reach Google sign-in.";
             default:

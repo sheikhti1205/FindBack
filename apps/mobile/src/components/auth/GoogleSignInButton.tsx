@@ -90,7 +90,12 @@ function failureKindOf(err: unknown): GoogleAuthFailureKind {
 function humanMessageFor(err: unknown): string | null {
   const kind = failureKindOf(err);
   if (kind === "cancelled") return null;
-  if (kind === "unavailable" || kind === "misconfigured") {
+  if (kind === "misconfigured") {
+    // Owner-side setup (console OAuth clients / provider enablement), never
+    // device state: say so instead of blaming the device.
+    return "Google sign-in isn't set up yet. Please try another sign-in method.";
+  }
+  if (kind === "unavailable") {
     return "Google sign-in isn't available on this device right now.";
   }
   if (kind === "network") {

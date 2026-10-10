@@ -148,8 +148,8 @@ describe("GoogleSignInButton (S3)", () => {
   });
 
   it.each([
-    { kind: "unavailable", pattern: /isn't available/i },
-    { kind: "misconfigured", pattern: /isn't available/i },
+    { kind: "unavailable", pattern: /isn't available on this device/i },
+    { kind: "misconfigured", pattern: /isn't set up yet/i },
     { kind: "network", pattern: /connection/i },
     { kind: "unknown", pattern: /failed.*try again/i },
   ])("maps failure kind '$kind' to a human message", async ({ kind, pattern }) => {
@@ -166,6 +166,23 @@ describe("GoogleSignInButton (S3)", () => {
     expect(alert.textContent).toMatch(pattern);
     // Raw internals must never surface.
     expect(alert.textContent).not.toContain(`raw-${kind}-detail`);
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("never blames the device for a console-side misconfiguration", async () => {
+    const start = vi.fn(async () => {
+      const err = new Error("raw-misconfigured-detail") as Error & { kind: string };
+      err.kind = "misconfigured";
+      throw err;
+    });
+    const onDone = vi.fn();
+    configureAvailable({ start });
+    render(<GoogleSignInButton mode="signin" onDone={onDone} />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/isn't set up yet/i);
+    expect(alert.textContent).not.toMatch(/device/i);
+    expect(alert.textContent).not.toContain("raw-misconfigured-detail");
     expect(onDone).not.toHaveBeenCalled();
   });
 
