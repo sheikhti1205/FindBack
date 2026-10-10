@@ -1,5 +1,4 @@
-import { useEffect, useRef } from "react";
-import { Heart, Lightbulb, HeartHandshake, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type {
   CanonicalReactionKind,
   ReactionCounts,
@@ -8,36 +7,27 @@ import type {
 import { CANONICAL_REACTION_KINDS } from "@findback/shared";
 import { REACTION_KINDS, normalizeReactionKind } from "../services/reactions";
 import { REACTION_KIND_FUNCTIONAL } from "../design/functionalColors";
+import { ReactionArt } from "./ReactionArt";
 
 /**
- * W3.3 multi-kind reaction tray: the shared picker for posts and comments.
+ * C2 floating reaction pill: the shared picker for posts and comments.
  *
- * Controlled (`open`): the caller owns tap suppression (see `useLongPress`)
- * and server writes — this component only collects the user's choice through
- * pointer, keyboard (arrows + Enter, no long-press needed), and screen-reader
- * (menu/menuitemradio semantics) paths. Escape closes and returns focus to
- * `triggerId`. Haptic (`navigator.vibrate`) fires once on open, guarded so
- * unsupported platforms stay a silent no-op; no native code is involved.
+ * - Floating pill anchored above the trigger (the caller positions it
+ *   `absolute bottom-full`); icon-only, no labels or counts inside.
+ * - Large expressive filled SVG artwork (see `ReactionArt` — never an
+ *   emoji-font glyph), one 44px hit target per kind, 30px visual art.
+ * - Hold (~400 ms, owned by the caller's `useLongPress`) opens; haptic
+ *   (`navigator.vibrate`) fires once on open. While held, the finger may
+ *   slide across choices (`hovered` lifts/scales); release selects; a
+ *   predominantly-vertical move cancels (handled by the caller's
+ *   `useSlideSelect` + scroll listener here).
+ * - Normal tap on the trigger (not the tray) toggles the default/current
+ *   reaction — owned by the caller. Direct taps on a tray option select it.
+ * - Keyboard/screen-reader: `menu`/`menuitemradio`, arrows + Home/End move,
+ *   Enter/Space selects, Escape closes and returns focus to `triggerId`.
+ *   An explicit "Choose reaction" button (owned by the caller) opens the
+ *   same tray with no long-press needed.
  */
-
-const KIND_ICONS: Record<CanonicalReactionKind, typeof Heart> = {
-  LOVE: Heart,
-  HELPFUL: Lightbulb,
-  SUPPORT: HeartHandshake,
-  WOW: Sparkles,
-};
-
-/**
- * W5 functional kind colors (Love rose, Helpful blue, Support teal-green,
- * Wow bronze). Icon + count only, on the neutral tray surface — the label
- * keeps the surrounding tone and the user accent never applies here.
- */
-const KIND_COLOR_VAR: Record<CanonicalReactionKind, string> = {
-  LOVE: "var(--fb-reaction-love)",
-  HELPFUL: "var(--fb-reaction-helpful)",
-  SUPPORT: "var(--fb-reaction-support)",
-  WOW: "var(--fb-reaction-wow)",
-};
 
 export function reactionKindLabel(kind: CanonicalReactionKind): string {
   return REACTION_KINDS.find((m) => m.kind === kind)?.label ?? kind;
@@ -68,22 +58,41 @@ export interface ReactionTrayProps {
   onClose: () => void;
   /** Element id to restore focus to on Escape (the tray trigger). */
   triggerId: string;
+  /**
+   * Controlled slide hover (set by the caller's `useSlideSelect` while the
+   * opening finger is still held). When omitted the tray tracks hover from
+   * its own pointer events.
+   */
+  hoveredKind?: CanonicalReactionKind | null;
+  onHoverChange?: (kind: CanonicalReactionKind | null) => void;
 }
 
 export function ReactionTray({
   open,
   myReaction,
-  counts,
-  total,
+  counts: _counts,
+  total: _total,
   pending = false,
   onSelect,
   onClose,
   triggerId,
+  hoveredKind,
+  onHoverChange,
 }: ReactionTrayProps) {
-  const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const selectRef = useRef(onSelect);
+  selectRef.current = onSelect;
+  const [innerHover, setInnerHover] = useState<CanonicalReactionKind | null>(null);
+  const hovered = hoveredKind !== undefined ? hoveredKind : innerHover;
+  const setHover = onHoverChange ?? setInnerHover;
+  // Pointer-down inside the tray (direct tap) vs a drag that started on the
+  // trigger and slid over the tray: only the drag path selects on pointerup —
+  // a direct tap selects through click. `dragSelected` swallows the stray
+  // click some browsers emit after a drag-release select.
+  const downInsideRef = useRef(false);
+  const dragSelectedRef = useRef(false);
   const activeKind =
     myReaction === null ? null : (normalizeReactionKind(myReaction) as CanonicalReactionKind);
 
@@ -102,6 +111,14 @@ export function ReactionTray({
     } catch {
       // Vibration is a nicety; never break the tray.
     }
+  }, [open]);
+
+  // A scroll while open cancels (the gesture became a scroll, not a pick).
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = () => closeRef.current();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, [open ]);
 
   if (!open) return null;
@@ -143,33 +160,44 @@ export function ReactionTray({
         const kind = el?.dataset.kind as CanonicalReactionKind | undefined;
         if (kind && CANONICAL_REACTION_KINDS.includes(kind)) {
           e.preventDefault();
-          onSelect(kind);
+          selectRef.current(kind);
         }
         break;
       }
       case "Escape":
         e.preventDefault();
         closeRef.current();
-        // Focus returns to the trigger so keyboard/screen-reader users land
-        // back where they opened the tray.
         document.getElementById(triggerId)?.focus();
         break;
     }
   }
 
+  function handleTrayPointerUp() {
+    // Drag-release from the trigger: the pointer went down outside the tray,
+    // slid over a choice, and lifted — select the hovered kind.
+    if (!downInsideRef.current && hovered !== null) {
+      dragSelectedRef.current = true;
+      window.setTimeout(() => {
+        dragSelectedRef.current = false;
+      }, 350);
+      selectRef.current(hovered);
+    }
+    downInsideRef.current = false;
+  }
+
   return (
     <div
-      ref={menuRef}
       role="menu"
       data-testid="reaction-tray"
-      aria-label={`Choose a reaction, ${total} ${total === 1 ? "reaction" : "reactions"} so far`}
+      aria-label="Choose a reaction"
       onKeyDown={onMenuKeyDown}
-      className="flex items-stretch gap-1 rounded-m3-lg border border-outline-variant bg-surface-container p-1 shadow-md"
+      onPointerUp={handleTrayPointerUp}
+      onPointerLeave={() => setHover(null)}
+      className="flex items-center gap-0.5 rounded-full border border-outline-variant bg-surface-container px-1.5 py-1 shadow-lg"
     >
       {CANONICAL_REACTION_KINDS.map((kind, index) => {
-        const Icon = KIND_ICONS[kind];
-        const count = counts[kind] ?? 0;
         const checked = activeKind === kind;
+        const lifted = hovered === kind;
         return (
           <button
             key={kind}
@@ -179,18 +207,41 @@ export function ReactionTray({
             type="button"
             role="menuitemradio"
             aria-checked={checked}
+            aria-label={checked ? `${reactionKindLabel(kind)}, active` : reactionKindLabel(kind)}
             data-testid={`reaction-option-${kind}`}
             data-kind={kind}
+            data-hovered={lifted ? "true" : "false"}
             data-functional-color={REACTION_KIND_FUNCTIONAL[kind]}
             disabled={pending}
-            onClick={() => onSelect(kind)}
-            className={`flex min-h-[44px] min-w-[44px] flex-1 flex-col items-center justify-center gap-0.5 rounded-m3-md px-2 py-1 text-xs font-medium ${
-              checked ? "bg-surface-container-high text-on-surface" : "text-on-surface-variant"
-            }`}
+            onPointerEnter={() => setHover(kind)}
+            onPointerMove={() => {
+              if (hovered !== kind) setHover(kind);
+            }}
+            onPointerDown={() => {
+              downInsideRef.current = true;
+            }}
+            onClick={() => {
+              // Swallow the stray click after a drag-release select so one
+              // gesture never writes twice.
+              if (dragSelectedRef.current) return;
+              selectRef.current(kind);
+            }}
+            className="relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full p-1 transition-transform duration-150 motion-reduce:transition-none"
+            style={{
+              transform: lifted ? "scale(1.3) translateY(-4px)" : checked ? "scale(1.12)" : "scale(1)",
+              backgroundColor: checked ? "var(--fb-surface-container-high)" : "transparent",
+              zIndex: lifted ? 1 : 0,
+            }}
           >
-            <Icon size={20} aria-hidden fill={checked ? "currentColor" : "none"} style={{ color: KIND_COLOR_VAR[kind] }} />
-            <span>{reactionKindLabel(kind)}</span>
-            <span aria-hidden className="tabular-nums" style={{ color: KIND_COLOR_VAR[kind] }}>{count}</span>
+            <ReactionArt kind={kind} size={30} />
+            {checked && (
+              <span
+                aria-hidden="true"
+                data-testid={`reaction-active-${kind}`}
+                className="absolute bottom-1 h-1 w-1 rounded-full"
+                style={{ backgroundColor: `var(--fb-reaction-${kind.toLowerCase()})` }}
+              />
+            )}
           </button>
         );
       })}

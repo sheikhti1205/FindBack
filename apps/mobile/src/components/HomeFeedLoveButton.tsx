@@ -1,10 +1,13 @@
-import { useState } from "react";
-import { ChevronDown, Heart } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { CanonicalReactionKind } from "@findback/shared";
 import { announce } from "./LiveRegion";
 import { useFeedLove } from "../hooks/useFeedLove";
 import { ReactionTray, reactionKindLabel } from "./ReactionTray";
+import { ReactionArt } from "./ReactionArt";
+import { ReactionPreviewStack } from "./ReactionPreviewStack";
 import { useLongPress } from "../hooks/useLongPress";
+import { useSlideSelect } from "../hooks/useSlideSelect";
 import {
   nextLoveReaction,
   seedSummaryFromItem,
@@ -19,21 +22,16 @@ import {
 } from "../services/reactions";
 
 /**
- * Home-feed reaction control (W3.3, UXN-2 flat row preserved).
+ * C2 home-feed reaction control: floating pill + slide-to-select + preview.
  *
- * Always a SIBLING of the detail link — never nested inside it (see
- * PostCardContent home-feed block). The visible control stays the Love
- * toggle (same `home-feed-love` testid, same flat `fb-report-action`
- * styling, same LIKE/null default-tap wire), and gains:
- *
- * - press-and-hold (~400 ms) opens the multi-kind ReactionTray;
- * - an explicit "Choose reaction" menu button (no long-press needed);
- * - kind-aware labels (`Helpful, 5 reactions`) once the caller reacted.
- *
- * Inside a FeedLoveProvider (Home) the button hydrates from the batch call,
- * patches the feed cache optimistically, and reads the live counts. Outside
- * a provider it degrades to self-contained local state over the same real
- * RPCs so the card never crashes.
+ * - Tap toggles the default Love (LIKE/null wire); hold (~400 ms) opens the
+ *   floating pill; the finger may slide across choices while held (hovered
+ *   lifts) and release selects; vertical travel cancels; the hold's own click
+ *   never toggles (`claimTap`).
+ * - An explicit "Choose reaction" menu button opens the same pill for
+ *   keyboard/screen-reader users (no long-press needed).
+ * - The row shows the top-3 preview stack + the total count OUTSIDE the tray;
+ *   the tray itself is icon-only (no labels/counts).
  */
 export function HomeFeedLoveButton({
   postId,
@@ -46,13 +44,13 @@ export function HomeFeedLoveButton({
   const [localReaction, setLocalReaction] = useState<ReactionKind | null>(null);
   const [localSummary, setLocalSummary] = useState<ReactionSummary | null>(null);
   const [localPending, setLocalPending] = useState(false);
-  // A failed toggle reverts silently at the data layer — the visible +
-  // announced message here is the only failure signal (PostDetail actionError
-  // pattern: inline role="alert" + announce).
   const [failed, setFailed] = useState(false);
-  // Tray opener decides where Escape returns focus (main vs choose button).
   const [trayOpener, setTrayOpener] = useState<"main" | "choose" | null>(null);
   const trayOpen = trayOpener !== null;
+  // True between the opening pointerdown and its pointerup — the window the
+  // slide tracker uses to resolve the hovered kind under the finger.
+  const [holding, setHolding] = useState(false);
+  const holdingRef = useRef(false);
 
   const myReaction: ReactionKind | null = love?.myReaction ?? localReaction;
   const myKind = myReaction === null ? null : normalizeReactionKind(myReaction);
@@ -61,8 +59,6 @@ export function HomeFeedLoveButton({
   const summary: ReactionSummary | null =
     love?.summary ?? localSummary ?? seedSummaryFromItem(likeCount, 0, myReaction);
   const total = love?.total ?? summary.total;
-  // The visible number stays the feed like count until a kind-aware summary
-  // is known; then it is the server-truth total.
   const count = love?.summary || localSummary ? total : (love?.likeCount ?? likeCount);
   const pending = love?.pending ?? localPending;
   const errorId = `home-feed-love-error-${postId}`;
@@ -70,6 +66,11 @@ export function HomeFeedLoveButton({
   const chooseId = `home-feed-choose-${postId}`;
 
   const press = useLongPress(() => setTrayOpener("main"), { disabled: pending || trayOpen });
+  const slide = useSlideSelect(trayOpen, holding, () => setTrayOpener(null));
+  const slideHoverRef = useRef(slide.hovered);
+  slideHoverRef.current = slide.hovered;
+  const selectKindRef = useRef((_kind: CanonicalReactionKind) => {});
+  const closeRef = useRef(() => setTrayOpener(null));
 
   function failLove() {
     setFailed(true);
@@ -77,15 +78,16 @@ export function HomeFeedLoveButton({
   }
 
   function closeTray() {
+    slide.reset();
     setTrayOpener(null);
   }
+  closeRef.current = closeTray;
 
   function focusMain() {
     document.getElementById(mainId)?.focus({ preventScroll: true });
   }
 
   async function onToggle() {
-    // A tap while the tray is open dismisses it instead of toggling.
     if (trayOpen) {
       closeTray();
       return;
@@ -110,11 +112,6 @@ export function HomeFeedLoveButton({
     }
   }
 
-  /**
-   * Tray write path: the tapped canonical kind goes to the real multi-kind
-   * RPC (never faked over LIKE); tapping the active kind clears it. The
-   * default tap above keeps the legacy LIKE/null wire.
-   */
   async function onSelectKind(kind: CanonicalReactionKind) {
     closeTray();
     focusMain();
@@ -139,11 +136,52 @@ export function HomeFeedLoveButton({
       setLocalPending(false);
     }
   }
+  selectKindRef.current = (kind) => {
+    void onSelectKind(kind);
+  };
+
+  // Slide-release: while the opening finger is still held, a window pointerup
+  // over a tray choice selects it. Lifting without sliding leaves the tray
+  // open for a follow-up tap (the hold's own click is still swallowed via
+  // claimTap); only a vertical-cancel scroll closes without selecting.
+  useEffect(() => {
+    if (!trayOpen || trayOpener !== "main") return;
+    function onUp() {
+      const hovered = slideHoverRef.current;
+      setHolding(false);
+      holdingRef.current = false;
+      if (hovered !== null) selectKindRef.current(hovered);
+      slide.reset();
+    }
+    function onCancel() {
+      setHolding(false);
+      holdingRef.current = false;
+      closeRef.current();
+    }
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [trayOpen, trayOpener]);
+
+  function markHolding() {
+    holdingRef.current = true;
+    setHolding(true);
+  }
+
+  function clearHolding() {
+    holdingRef.current = false;
+    setHolding(false);
+  }
 
   const label =
     myKind === null || loved
       ? `${active ? "Loved — tap to unlove this report" : "Love this report"}, ${count} ${count === 1 ? "love" : "loves"}`
       : `${reactionKindLabel(myKind as CanonicalReactionKind)}, ${count} ${count === 1 ? "reaction" : "reactions"}`;
+
+  const showStack = count > 0 && (love?.summary || localSummary || total > 0);
 
   return (
     <span className="relative flex min-w-0 flex-col gap-1">
@@ -156,25 +194,38 @@ export function HomeFeedLoveButton({
           aria-label={label}
           aria-describedby={failed ? errorId : undefined}
           data-pending={pending ? "true" : "false"}
-          // Disabled while in flight: a rapid second tap must not reach the
-          // hook's in-flight guard (which reports "not failed") and surface a
-          // false "Couldn't save" message for a request that is still running.
           disabled={pending}
           aria-busy={pending}
-          onPointerDown={press.onPointerDown}
+          onPointerDown={(e) => {
+            markHolding();
+            press.onPointerDown(e);
+          }}
           onPointerMove={press.onPointerMove}
-          onPointerUp={press.onPointerUp}
-          onPointerCancel={press.onPointerCancel}
+          onPointerUp={() => {
+            clearHolding();
+            press.onPointerUp();
+          }}
+          onPointerCancel={() => {
+            clearHolding();
+            press.onPointerCancel();
+          }}
           onClick={() => {
-            // A hold that opened the tray still fires click on pointerup —
-            // swallow exactly that tap so it never toggles.
             if (press.claimTap()) return;
             void onToggle();
           }}
           className={`fb-report-action min-h-[44px] min-w-[44px] flex-1 ${active ? "bg-surface-container text-on-surface" : "text-on-surface-variant"}`}
         >
-          <Heart size={18} aria-hidden fill={active ? "currentColor" : "none"} />
-          <span aria-hidden>{count}</span>
+          {showStack ? (
+            <>
+              <ReactionPreviewStack counts={summary.counts} />
+              <span aria-hidden className="tabular-nums">{count}</span>
+            </>
+          ) : (
+            <>
+              <ReactionArt kind="LOVE" size={18} filled={active} />
+              <span aria-hidden className="tabular-nums">{count}</span>
+            </>
+          )}
         </button>
         <button
           type="button"
@@ -198,6 +249,8 @@ export function HomeFeedLoveButton({
             counts={summary.counts}
             total={summary.total}
             pending={pending}
+            hoveredKind={holding ? slide.hovered : undefined}
+            onHoverChange={holding ? slide.setHovered : undefined}
             onSelect={(kind) => void onSelectKind(kind)}
             onClose={closeTray}
             triggerId={trayOpener === "choose" ? chooseId : mainId}

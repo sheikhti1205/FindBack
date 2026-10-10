@@ -64,26 +64,63 @@ describe("ReactionTray", () => {
     expect(screen.queryByTestId("reaction-tray")).toBeNull();
   });
 
-  it("offers the four canonical kinds with counts and marks the active one", () => {
+  it("offers the four canonical kinds as icon-only pill choices with the active one marked", () => {
     render(<OpenTray myReaction="HELPFUL" />);
     const tray = screen.getByTestId("reaction-tray");
     expect(tray.getAttribute("role")).toBe("menu");
+    // Floating pill, not a rectangular labeled card.
+    expect(tray.className).toMatch(/rounded-full/);
     for (const kind of ["LOVE", "HELPFUL", "SUPPORT", "WOW"] as const) {
-      expect(screen.getByTestId(`reaction-option-${kind}`)).toBeTruthy();
+      const option = screen.getByTestId(`reaction-option-${kind}`);
+      expect(option).toBeTruthy();
+      // Screen-reader name retained; no visible label or count inside.
+      expect(option.getAttribute("aria-label")).toMatch(/love|helpful|support|wow/i);
+      expect(option.textContent?.trim()).toBe("");
+      // Large filled SVG artwork, never an emoji-font glyph.
+      const art = option.querySelector(`[data-testid="reaction-art-${kind}"]`);
+      expect(art).toBeTruthy();
+      expect(art?.tagName.toLowerCase()).toBe("svg");
     }
     expect(screen.getByTestId("reaction-option-HELPFUL").getAttribute("aria-checked")).toBe("true");
     expect(screen.getByTestId("reaction-option-LOVE").getAttribute("aria-checked")).toBe("false");
-    expect(screen.getByTestId("reaction-option-LOVE").textContent).toContain("3");
     // Legacy LIKE reads as the canonical Love.
     cleanup();
     render(<OpenTray myReaction="LIKE" />);
     expect(screen.getByTestId("reaction-option-LOVE").getAttribute("aria-checked")).toBe("true");
   });
 
-  it("selects a kind through the real service value (no fake mapping)", () => {
+  it("lifts the hovered choice (slide-to-select visual)", () => {
+    render(<OpenTray />);
+    const love = screen.getByTestId("reaction-option-LOVE");
+    fireEvent.pointerEnter(love);
+    expect(love.getAttribute("data-hovered")).toBe("true");
+    expect(love.style.transform).toContain("scale(1.3)");
+    const helpful = screen.getByTestId("reaction-option-HELPFUL");
+    expect(helpful.getAttribute("data-hovered")).toBe("false");
+  });
+
+  it("selects the hovered choice on drag-release from the trigger (no second tap)", () => {
     const onSelect = vi.fn();
     render(<OpenTray onSelect={onSelect} />);
-    fireEvent.click(screen.getByTestId("reaction-option-SUPPORT"));
+    const love = screen.getByTestId("reaction-option-LOVE");
+    // Finger slid from the trigger onto LOVE while held: hover tracks it.
+    fireEvent.pointerEnter(love);
+    // Release: pointerup bubbles from the tray (down was outside, so this is
+    // the drag path — click must not double-fire).
+    fireEvent.pointerUp(screen.getByTestId("reaction-tray"));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith("LOVE");
+    fireEvent.click(love);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("selects a kind through a direct tap (click path)", () => {
+    const onSelect = vi.fn();
+    render(<OpenTray onSelect={onSelect} />);
+    const option = screen.getByTestId("reaction-option-SUPPORT");
+    fireEvent.pointerDown(option);
+    fireEvent.pointerUp(option);
+    fireEvent.click(option);
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith("SUPPORT");
   });
@@ -140,7 +177,6 @@ describe("ReactionTray", () => {
       expect(vibrate).toHaveBeenCalledTimes(1);
       expect(vibrate).toHaveBeenCalledWith(10);
     } finally {
-      // jsdom has no vibrate by default; restore the absent state.
       Object.defineProperty(navigator, "vibrate", { configurable: true, value: undefined });
     }
     cleanup();

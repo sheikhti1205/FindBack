@@ -135,10 +135,15 @@ describe("PostDetail comments", () => {
 
   afterEach(cleanup);
 
-  it("comment input has maxLength=1000", async () => {
+  it("comment composer enforces the 1000-char budget on send (hint + disabled, never truncated)", async () => {
     renderDetail();
     const input = await screen.findByPlaceholderText("Write a helpful comment…");
-    expect(input.getAttribute("maxlength")).toBe("1000");
+    // Deliberately no maxlength: IME composition and media-aware budgeting
+    // stay intact; the budget is enforced at send time instead.
+    expect(input.getAttribute("maxlength")).toBeNull();
+    fireEvent.change(input, { target: { value: "x".repeat(1001) } });
+    expect(await screen.findByTestId("comment-limit-hint")).toBeTruthy();
+    expect(screen.getByTestId("comment-send")).toHaveProperty("disabled", true);
   });
 
   it("rejects submit when comment exceeds 1000 chars (defensive client-side)", async () => {
@@ -146,7 +151,8 @@ describe("PostDetail comments", () => {
     const input = await screen.findByPlaceholderText("Write a helpful comment…");
     const longText = "x".repeat(1001);
     fireEvent.change(input, { target: { value: longText } });
-    const submitButton = screen.getByRole("button", { name: "Post" });
+    const submitButton = screen.getByTestId("comment-send");
+    expect(submitButton).toHaveProperty("disabled", true);
     fireEvent.click(submitButton);
     // addComment should NOT be called
     expect(postsMock.addComment).not.toHaveBeenCalled();
@@ -157,24 +163,25 @@ describe("PostDetail comments", () => {
     const input = await screen.findByPlaceholderText("Write a helpful comment…");
     const exactText = "x".repeat(1000);
     fireEvent.change(input, { target: { value: exactText } });
-    const submitButton = screen.getByRole("button", { name: "Post" });
+    const submitButton = screen.getByRole("button", { name: "Send comment" });
     fireEvent.click(submitButton);
-    expect(postsMock.addComment).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(postsMock.addComment).toHaveBeenCalledTimes(1));
   });
 
   it("allows submit when comment is under 1000 chars", async () => {
     renderDetail();
     const input = await screen.findByPlaceholderText("Write a helpful comment…");
     fireEvent.change(input, { target: { value: "valid comment" } });
-    const submitButton = screen.getByRole("button", { name: "Post" });
+    const submitButton = screen.getByRole("button", { name: "Send comment" });
     fireEvent.click(submitButton);
-    expect(postsMock.addComment).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(postsMock.addComment).toHaveBeenCalledTimes(1));
   });
 
   it("rejects empty comment submit", async () => {
     renderDetail();
-    await waitFor(() => screen.getByRole("button", { name: "Post" }));
-    const submitButton = screen.getByRole("button", { name: "Post" });
+    await waitFor(() => screen.getByTestId("comment-send"));
+    const submitButton = screen.getByTestId("comment-send");
+    expect(submitButton).toHaveProperty("disabled", true);
     fireEvent.click(submitButton);
     expect(postsMock.addComment).not.toHaveBeenCalled();
   });
@@ -669,7 +676,7 @@ describe("PostDetail threaded replies", () => {
 
     const input = screen.getByPlaceholderText("Reply to @commenter…");
     fireEvent.change(input, { target: { value: "me too" } });
-    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
 
     await waitFor(() => expect(postsMock.addComment).toHaveBeenCalledWith("p1", "me too", "c1"));
     await waitFor(() => expect(screen.queryByText(/replying to/i)).toBeNull());

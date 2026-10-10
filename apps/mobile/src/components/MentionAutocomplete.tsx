@@ -12,8 +12,8 @@ export interface MentionCandidate {
 }
 
 export interface MentionAutocompleteProps {
-  /** Ref to the controlled comment <input> this listbox is bound to. */
-  inputRef: RefObject<HTMLInputElement | null>;
+  /** Ref to the controlled comment field (input or expanding textarea). */
+  inputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   /** Current composer text (controlled by the parent). */
   value: string;
   /** Discussion participants, already ranked first. */
@@ -187,19 +187,20 @@ export function MentionAutocomplete({
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
-    const onKeyDown = (e: KeyboardEvent) => {
+    const onKeyDown = (e: Event) => {
+      const ke = e as KeyboardEvent;
       if (!token || dismissedKey === tokenKey || blurClosed || suggestions.length === 0) return;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
+      if (ke.key === "ArrowDown") {
+        ke.preventDefault();
         setActiveIndex((i) => (i + 1) % suggestions.length);
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
+      } else if (ke.key === "ArrowUp") {
+        ke.preventDefault();
         setActiveIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
-      } else if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault();
+      } else if (ke.key === "Enter" || ke.key === "Tab") {
+        ke.preventDefault();
         choose(activeIndex);
-      } else if (e.key === "Escape") {
-        e.preventDefault();
+      } else if (ke.key === "Escape") {
+        ke.preventDefault();
         setDismissedKey(tokenKey);
         el.focus();
       }

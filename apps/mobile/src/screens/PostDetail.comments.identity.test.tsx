@@ -111,8 +111,9 @@ describe("PostDetail comment identity (W7)", () => {
     renderDetail();
 
     const input = await screen.findByLabelText("Comment");
-    const form = input.closest("form")!;
-    const composerAvatar = within(form).getByTestId("user-avatar");
+    const composer = screen.getByTestId("comment-composer");
+    expect(composer.contains(input)).toBe(true);
+    const composerAvatar = within(composer).getByTestId("user-avatar");
     expect((composerAvatar.querySelector("img") as HTMLImageElement)?.src).toBe(
       "https://example.com/me.png",
     );

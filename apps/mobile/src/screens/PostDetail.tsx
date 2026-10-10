@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, ChevronDown, CornerDownRight, ExternalLink, Heart, HeartHandshake, Lightbulb, MapPin, MessageCircle, Sparkles, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
+import { CalendarDays, ChevronDown, CornerDownRight, ExternalLink, MapPin, MessageCircle, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
 import type { CanonicalReactionKind, CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -20,7 +20,8 @@ import { DetailHeroGallery } from "../components/detail/DetailHeroGallery";
 import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
 import { PhotoLightbox } from "../components/PhotoLightbox";
 import { MarkdownView } from "../components/MarkdownView";
-import { MentionAutocomplete } from "../components/MentionAutocomplete";
+import { CommentComposer } from "../components/CommentComposer";
+import { parseCommentBody } from "../services/commentBodyMedia";
 import { RatingStars } from "../components/RatingStars";
 import { ReportShareButton } from "../components/ReportShareButton";
 import { PossibleMatches } from "../components/PossibleMatches";
@@ -32,7 +33,10 @@ import { openInMaps } from "../utils/location";
 import { formatEventDate, formatTimestamp } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
 import { ReactionTray, reactionKindLabel, topReactionKind } from "../components/ReactionTray";
+import { ReactionArt } from "../components/ReactionArt";
+import { ReactionPreviewStack } from "../components/ReactionPreviewStack";
 import { useLongPress } from "../hooks/useLongPress";
+import { useSlideSelect } from "../hooks/useSlideSelect";
 import {
   addComment,
   deleteComment,
@@ -80,18 +84,13 @@ function scrollToSection(id: string) {
   el.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" });
 }
 
-const COMMENT_KIND_ICONS: Record<CanonicalReactionKind, typeof Heart> = {
-  LOVE: Heart,
-  HELPFUL: Lightbulb,
-  SUPPORT: HeartHandshake,
-  WOW: Sparkles,
-};
-
 /**
- * Compact per-comment reaction control (W3.3). Tap toggles the default Love,
- * press-and-hold opens the shared ReactionTray, and the chevron "Choose
- * reaction" button opens the same tray for keyboard/screen-reader users (no
- * long-press needed). Writes go to the real comment RPC via the parent's
+ * C2 compact per-comment reaction control. Tap toggles the default Love,
+ * press-and-hold opens the floating pill (slide while held, release selects,
+ * vertical travel cancels), and the chevron "Choose reaction" button opens
+ * the same pill for keyboard/screen-reader users (no long-press needed).
+ * The row shows the top preview art + the total OUTSIDE the tray; the tray
+ * itself is icon-only. Writes go to the real comment RPC via the parent's
  * onToggle/onSelect; failures revert there and surface through the page's
  * existing inline actionError + announce pattern.
  */
@@ -110,6 +109,7 @@ function CommentReactionControl({
 }) {
   const [trayOpen, setTrayOpen] = useState(false);
   const [opener, setOpener] = useState<"main" | "choose">("main");
+  const [holding, setHolding] = useState(false);
   const press = useLongPress(
     () => {
       setOpener("main");
@@ -117,6 +117,11 @@ function CommentReactionControl({
     },
     { disabled: pending || trayOpen },
   );
+  const slide = useSlideSelect(trayOpen, holding, () => setTrayOpen(false));
+  const slideHoverRef = useRef(slide.hovered);
+  slideHoverRef.current = slide.hovered;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
   const mainId = `detail-comment-react-${comment.id}`;
   const chooseId = `detail-comment-choose-${comment.id}`;
   const mine =
@@ -125,7 +130,6 @@ function CommentReactionControl({
       : (normalizeReactionKind(summary.myReaction) as CanonicalReactionKind);
   const top = topReactionKind(summary.counts);
   const display: CanonicalReactionKind | null = mine ?? top;
-  const Icon = display ? COMMENT_KIND_ICONS[display] : Heart;
   const countWord = summary.total === 1 ? "reaction" : "reactions";
   const label =
     mine !== null
@@ -133,6 +137,43 @@ function CommentReactionControl({
       : top !== null && summary.total > 0
         ? `${reactionKindLabel(top)}, ${summary.total} ${countWord}`
         : `React to comment by ${comment.author.username}`;
+
+  function closeTray() {
+    slide.reset();
+    setTrayOpen(false);
+  }
+
+  // Slide-release while the opening finger is still held: select the hovered
+  // choice, else leave the tray open for a follow-up tap (claimTap still
+  // swallows the click).
+  useEffect(() => {
+    if (!trayOpen || opener !== "main") return;
+    function onUp() {
+      const hovered = slideHoverRef.current;
+      setHolding(false);
+      if (hovered !== null) {
+        const kind = hovered;
+        slide.reset();
+        setTrayOpen(false);
+        document.getElementById(mainId)?.focus({ preventScroll: true });
+        onSelectRef.current(kind);
+      } else {
+        slide.reset();
+      }
+    }
+    function onCancel() {
+      setHolding(false);
+      slide.reset();
+      setTrayOpen(false);
+    }
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [trayOpen, opener, mainId]);
+
   return (
     <span className="relative ml-auto flex items-center gap-0.5">
       <button
@@ -143,21 +184,34 @@ function CommentReactionControl({
         aria-label={label}
         disabled={pending}
         aria-busy={pending}
-        onPointerDown={press.onPointerDown}
+        onPointerDown={(e) => {
+          setHolding(true);
+          press.onPointerDown(e);
+        }}
         onPointerMove={press.onPointerMove}
-        onPointerUp={press.onPointerUp}
-        onPointerCancel={press.onPointerCancel}
+        onPointerUp={() => {
+          setHolding(false);
+          press.onPointerUp();
+        }}
+        onPointerCancel={() => {
+          setHolding(false);
+          press.onPointerCancel();
+        }}
         onClick={() => {
           if (press.claimTap()) return;
           if (trayOpen) {
-            setTrayOpen(false);
+            closeTray();
             return;
           }
           onToggle();
         }}
         className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-2 text-xs font-medium text-on-surface-variant"
       >
-        <Icon size={13} aria-hidden fill={mine !== null ? "currentColor" : "none"} />
+        {display ? (
+          <ReactionArt kind={display} size={15} filled={mine !== null} />
+        ) : (
+          <ReactionArt kind="LOVE" size={15} filled={false} />
+        )}
         <span aria-hidden className="tabular-nums">{summary.total}</span>
       </button>
       <button
@@ -184,12 +238,14 @@ function CommentReactionControl({
             counts={summary.counts}
             total={summary.total}
             pending={pending}
+            hoveredKind={holding ? slide.hovered : undefined}
+            onHoverChange={holding ? slide.setHovered : undefined}
             onSelect={(kind) => {
-              setTrayOpen(false);
+              closeTray();
               document.getElementById(mainId)?.focus({ preventScroll: true });
               onSelect(kind);
             }}
-            onClose={() => setTrayOpen(false)}
+            onClose={closeTray}
             triggerId={opener === "choose" ? chooseId : mainId}
           />
         </span>
@@ -211,11 +267,6 @@ export function PostDetail() {
   // canonical LOVE/HELPFUL/SUPPORT/WOW). LIKE reads as LOVE for display.
   const [myReaction, setMyReaction] = useState<ReactionKind | null>(null);
   const [myRating, setMyRating] = useState<number | null>(null);
-  const [commentText, setCommentText] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Mention autocomplete anchor: the composer input owns the caret, the
-  // listbox only reads it through this ref (W3.2).
-  const commentInputRef = useRef<HTMLInputElement | null>(null);
   /**
    * Mention sources (W3.2): unique comment authors on this post rank first,
    * the report owner second, server prefix-search last (inside the
@@ -303,7 +354,9 @@ export function PostDetail() {
   const commentsRef = useRef<CommentItem[]>([]);
   commentsRef.current = comments;
   // Press-and-hold on the post Love button opens the tray; a quick release
-  // is a plain tap (the click handler consults claimTap).
+  // is a plain tap (the click handler consults claimTap). While held, the
+  // finger may slide across the pill (hovered lifts) and release selects.
+  const [postHolding, setPostHolding] = useState(false);
   const postPress = useLongPress(
     () => {
       setTrayOpener("main");
@@ -311,6 +364,39 @@ export function PostDetail() {
     },
     { disabled: reactionPendingRef.current },
   );
+  const postSlide = useSlideSelect(trayTarget === "post", postHolding, () => setTrayTarget(null));
+  // Slide-release refs live above the post-shell early return: hooks must
+  // stay unconditional (loading renders return early below). The actual
+  // write callback is assigned once the post resolves.
+  const reactToKindRef = useRef<(kind: CanonicalReactionKind) => void>(() => {});
+  const postSlideHoverRef = useRef<CanonicalReactionKind | null>(null);
+  postSlideHoverRef.current = postSlide.hovered;
+  const postSlideResetRef = useRef(postSlide.reset);
+  postSlideResetRef.current = postSlide.reset;
+
+  // Slide-release on the post pill while the opening finger is still held:
+  // a release over a choice selects it; lifting without sliding leaves the
+  // tray open for a follow-up tap (claimTap still swallows the hold's click).
+  useEffect(() => {
+    if (trayTarget !== "post" || trayOpener !== "main") return;
+    function onUp() {
+      const hovered = postSlideHoverRef.current;
+      setPostHolding(false);
+      if (hovered !== null) reactToKindRef.current(hovered);
+      else postSlideResetRef.current();
+    }
+    function onCancel() {
+      setPostHolding(false);
+      postSlideResetRef.current();
+      setTrayTarget(null);
+    }
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [trayTarget, trayOpener]);
 
   const loadPost = useCallback(
     async (gen: number) => {
@@ -610,10 +696,12 @@ export function PostDetail() {
 
   /** Tray write path: the tapped canonical kind goes to the real multi-kind RPC. */
   function reactToKind(kind: CanonicalReactionKind) {
+    postSlide.reset();
     setTrayTarget(null);
     document.getElementById("detail-love")?.focus({ preventScroll: true });
     void applyReaction(nextReactionForTap(myReaction, kind));
   }
+  reactToKindRef.current = reactToKind;
 
   /** Secondary "Not helpful" control (lives in the Community card). */
   function toggleDislike() {
@@ -651,37 +739,22 @@ export function PostDetail() {
     }
   }
 
-  function handleMentionInsert(next: string, caretPos: number) {
-    setCommentText(next);
-    // Restore the caret after the inserted "@username " once React commits.
-    requestAnimationFrame(() => {
-      const el = commentInputRef.current;
-      if (el) {
-        el.focus();
-        el.setSelectionRange(caretPos, caretPos);
-      }
-    });
+  /**
+   * C3 comment write path: the composer owns text, mentions, emoji, and
+   * attachments and hands over a complete body (text + `https://` media
+   * lines, never base64). The 1000-character backend limit is enforced here
+   * too — the composer already blocks over-limit sends, this stays as the
+   * defensive second gate. Failures surface inline + announce (never silent).
+   */
+  async function postCommentBody(body: string) {
+    if (!body.trim() || body.length > 1000) return;
+    const comment = await addComment(current.id, body, replyTo?.id ?? null);
+    setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
   }
 
-  async function onComment(e: React.FormEvent) {
-    e.preventDefault();
-    const body = commentText.trim();
-    if (!body) return;
-    // Defensive client-side limit (backend is authoritative).
-    if (body.length > 1000) return;
-    setBusy(true);
-    try {
-      const comment = await addComment(current.id, body, replyTo?.id ?? null);
-      setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
-      setCommentText("");
-      setReplyTo(null);
-    } catch (err) {
-      const message = friendlyError(err).message;
-      setActionError(message);
-      announce(message);
-    } finally {
-      setBusy(false);
-    }
+  function commentFailed(message: string) {
+    setActionError(message);
+    announce(message);
   }
 
   async function onDeleteComment(commentId: string) {
@@ -880,6 +953,9 @@ export function PostDetail() {
 
   const renderComment = (c: CommentItem, level = 0): React.ReactNode => {
     const canDelete = c.author.id === user?.id || isOwner;
+    // C3 body media: `https://` attachment lines lift out into a gallery;
+    // the remaining text keeps the existing markdown path untouched.
+    const bodyParts = parseCommentBody(c.body);
     const children = childrenByParent.get(c.id) ?? [];
     const { visible, remaining } = visibleRepliesFor(c);
     const expandedBeyondDefault = visible.length > COMMENT_FIRST_REPLIES;
@@ -947,8 +1023,37 @@ export function PostDetail() {
           </span>
         </div>
         <div className="mt-1 text-sm leading-relaxed">
-          <MarkdownView text={c.body} linkMentions />
+          <MarkdownView text={bodyParts.text || c.body} linkMentions />
         </div>
+        {bodyParts.media.length > 0 && (
+          <div
+            data-testid={`comment-media-${c.id}`}
+            className="mt-2 flex flex-wrap gap-1.5"
+            aria-label={`Attachments on comment by ${c.author.username}`}
+          >
+            {bodyParts.media.map((m, i) =>
+              m.kind === "video" ? (
+                <video
+                  key={`${m.url}-${i}`}
+                  src={m.url}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  aria-label={`Attached video ${i + 1}`}
+                  className="h-24 max-w-full rounded-m3-sm border border-outline-variant object-cover"
+                />
+              ) : (
+                <img
+                  key={`${m.url}-${i}`}
+                  src={m.url}
+                  alt={`Attached photo ${i + 1}`}
+                  loading="lazy"
+                  className="h-24 w-auto rounded-m3-sm border border-outline-variant object-cover"
+                />
+              ),
+            )}
+          </div>
+        )}
         <div className="mt-2 flex items-center gap-1">
           <button
             type="button"
@@ -1047,6 +1152,7 @@ export function PostDetail() {
               onClick={() => {
                 if (postPress.claimTap()) return;
                 if (trayTarget !== null) {
+                  postSlide.reset();
                   setTrayTarget(null);
                   return;
                 }
@@ -1056,12 +1162,31 @@ export function PostDetail() {
               aria-busy={reactionPending}
               aria-label={postLoveLabel}
               aria-pressed={postActiveKind !== null}
-              onPointerDown={postPress.onPointerDown}
+              onPointerDown={(e) => {
+                setPostHolding(true);
+                postPress.onPointerDown(e);
+              }}
               onPointerMove={postPress.onPointerMove}
-              onPointerUp={postPress.onPointerUp}
-              onPointerCancel={postPress.onPointerCancel}
+              onPointerUp={() => {
+                setPostHolding(false);
+                postPress.onPointerUp();
+              }}
+              onPointerCancel={() => {
+                setPostHolding(false);
+                postPress.onPointerCancel();
+              }}
             >
-              <Heart size={20} aria-hidden fill={postActiveKind !== null ? "currentColor" : "none"} /> {post.likeCount}
+              {postSummary.total > 0 ? (
+                <>
+                  <ReactionPreviewStack counts={postSummary.counts} />
+                  <span aria-hidden className="tabular-nums">{postSummary.total}</span>
+                </>
+              ) : (
+                <>
+                  <ReactionArt kind="LOVE" size={20} filled={postActiveKind !== null} />
+                  <span aria-hidden className="tabular-nums">{postSummary.total}</span>
+                </>
+              )}
             </button>
             <button
               type="button"
@@ -1087,8 +1212,13 @@ export function PostDetail() {
                   counts={postSummary.counts}
                   total={postSummary.total}
                   pending={reactionPending}
+                  hoveredKind={postHolding ? postSlide.hovered : undefined}
+                  onHoverChange={postHolding ? postSlide.setHovered : undefined}
                   onSelect={reactToKind}
-                  onClose={() => setTrayTarget(null)}
+                  onClose={() => {
+                    postSlide.reset();
+                    setTrayTarget(null);
+                  }}
                   triggerId={trayOpener === "choose" ? "detail-choose-reaction" : "detail-love"}
                 />
               </span>
@@ -1300,34 +1430,20 @@ export function PostDetail() {
             </div>
           ) : null}
 
-          <form onSubmit={(e) => void onComment(e)} className="flex items-start gap-2">
-            <UserAvatar avatarUrl={user?.avatarUrl} username={user?.username} size={32} />
-            <div className="relative flex-1">
-              <input
-                ref={commentInputRef}
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                placeholder={replyTo ? `Reply to @${replyTo.author.username}…` : "Write a helpful comment…"}
-                aria-label="Comment"
-                maxLength={1000}
-                className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
-              />
-              <MentionAutocomplete
-                inputRef={commentInputRef}
-                value={commentText}
-                participants={mentionParticipants}
-                owner={{
-                  username: current.author.username,
-                  displayName: current.author.displayName ?? null,
-                  avatarUrl: current.author.avatarUrl ?? null,
-                }}
-                onInsert={handleMentionInsert}
-              />
-            </div>
-            <Button type="submit" loading={busy} disabled={!commentText.trim()}>
-              {replyTo ? "Reply" : "Post"}
-            </Button>
-          </form>
+          <CommentComposer
+            postId={current.id}
+            replyToUsername={replyTo?.author.username ?? null}
+            currentUser={user}
+            participants={mentionParticipants}
+            owner={{
+              username: current.author.username,
+              displayName: current.author.displayName ?? null,
+              avatarUrl: current.author.avatarUrl ?? null,
+            }}
+            onSubmit={(body) => postCommentBody(body)}
+            onError={commentFailed}
+            onSent={() => setReplyTo(null)}
+          />
 
           {commentsLoading ? (
             <p role="status" className="text-sm text-on-surface-variant">

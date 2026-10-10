@@ -205,4 +205,52 @@ describe("HomeFeedLoveButton reactions (W3.3)", () => {
     fireEvent.keyDown(tray, { key: "Escape" });
     await waitFor(() => expect(screen.queryByTestId("reaction-tray")).toBeNull());
   });
+
+  it("slide-to-select: hold, slide onto a choice while held, release selects it", async () => {
+    vi.useFakeTimers();
+    try {
+      renderButton();
+      const love = screen.getByTestId("home-feed-love");
+      fireEvent.pointerDown(love, { clientX: 10, clientY: 10, button: 0 });
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(screen.getByTestId("reaction-tray")).toBeTruthy();
+      // Finger slides onto SUPPORT while still held: the hovered choice lifts.
+      const support = screen.getByTestId("reaction-option-SUPPORT");
+      (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint =
+        () => support;
+      try {
+        fireEvent.pointerMove(window, { clientX: 60, clientY: 12 });
+        expect(support.getAttribute("data-hovered")).toBe("true");
+        // Release while held selects the hovered kind (no second tap needed).
+        fireEvent.pointerUp(window);
+      } finally {
+        delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
+      }
+      // The hold's own click on the trigger must not toggle.
+      fireEvent.pointerUp(love);
+      fireEvent.click(love);
+      expect(loveToggleMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+    await waitFor(() => expect(reactKindMock).toHaveBeenCalledWith("p1", null, "SUPPORT"));
+    expect(screen.queryByTestId("reaction-tray")).toBeNull();
+  });
+
+  it("shows the top-3 preview stack with the count outside the tray", async () => {
+    reactKindMock.mockResolvedValue({
+      counts: { LOVE: 20, WOW: 3, HELPFUL: 1 },
+      myReaction: "WOW",
+      total: 24,
+    });
+    renderButton();
+    fireEvent.click(screen.getByTestId("home-feed-choose-reaction"));
+    fireEvent.click(await screen.findByTestId("reaction-option-WOW"));
+    await waitFor(() => expect(screen.getByTestId("reaction-preview-stack")).toBeTruthy());
+    expect(screen.getByTestId("reaction-preview-LOVE")).toBeTruthy();
+    // Counts live on the row, never inside the icon-only tray.
+    expect(screen.getByTestId("home-feed-love").textContent).toContain("24");
+  });
 });

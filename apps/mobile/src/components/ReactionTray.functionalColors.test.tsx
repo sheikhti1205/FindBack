@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // W5 ReactionTray kind colors: each option carries its functional mapping and
-// renders the kind color on icon + count — never the user accent.
+// renders the kind color on the filled art — never the user accent. The tray
+// is icon-only: no labels or counts are rendered inside it.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReactionTray } from "./ReactionTray";
@@ -37,7 +38,7 @@ describe("ReactionTray functional kind colors (W5)", () => {
     }
   });
 
-  it("paints icon + count with the kind var and never the accent", () => {
+  it("paints the filled art with the kind var and never the accent (no counts inside)", () => {
     const onSelect = vi.fn();
     render(
       <div>
@@ -56,12 +57,14 @@ describe("ReactionTray functional kind colors (W5)", () => {
     for (const kind of ["LOVE", "HELPFUL", "SUPPORT", "WOW"] as const) {
       const option = screen.getByTestId(`reaction-option-${kind}`);
       const svg = option.querySelector("svg");
+      expect(svg?.getAttribute("fill")).toBe("currentColor");
       expect(svg?.style.color).toBe(`var(${KIND_VAR[kind]})`);
-      const count = option.querySelector(".tabular-nums") as HTMLElement | null;
-      expect(count?.style.color).toBe(`var(${KIND_VAR[kind]})`);
+      // Icon-only tray: no visible label or count text.
+      expect(option.textContent?.trim()).toBe("");
+      expect(option.querySelector(".tabular-nums")).toBeNull();
       // No accent/primary binding anywhere on the option.
       expect(option.className).not.toMatch(/accent/);
-      expect(`${svg?.style.color}${count?.style.color}`).not.toMatch(/--fb-primary|--fb-accent/);
+      expect(`${svg?.style.color}`).not.toMatch(/--fb-primary|--fb-accent/);
     }
   });
 });

@@ -225,7 +225,7 @@ describe("PostDetail inline comment threads", () => {
     const input = screen.getByPlaceholderText("Reply to @cU…");
     fireEvent.change(input, { target: { value: "deep answer" } });
     // Submit through the composer: the write carries the true parent id.
-    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
     await waitFor(() => expect(postsMock.addComment).toHaveBeenCalledWith("p1", "deep answer", "cc"));
   });
 
@@ -325,7 +325,7 @@ describe("PostDetail inline comment threads", () => {
     const scope = document.getElementById("detail-comment-ce") as HTMLElement;
     fireEvent.click(within(scope).getByRole("button", { name: "Reply to eU" }));
     fireEvent.change(screen.getByPlaceholderText("Reply to @eU…"), { target: { value: "deepest answer" } });
-    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
     await waitFor(() => expect(postsMock.addComment).toHaveBeenCalledWith("p1", "deepest answer", "ce"));
   });
 
