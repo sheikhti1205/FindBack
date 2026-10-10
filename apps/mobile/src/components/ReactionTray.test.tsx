@@ -192,4 +192,58 @@ describe("ReactionTray", () => {
       expect(option.className).toMatch(/min-w-\[44px\]/);
     }
   });
+
+  it("subscribes to scroll in the capture phase so inner-container flings cancel the tray", () => {
+    const addSpy = vi.spyOn(window, "addEventListener");
+    try {
+      render(<OpenTray />);
+      const scrollCalls = addSpy.mock.calls.filter(([type]) => type === "scroll");
+      expect(scrollCalls.length).toBeGreaterThan(0);
+      expect(scrollCalls.some(([, , options]) => (options as AddEventListenerOptions)?.capture === true)).toBe(
+        true,
+      );
+    } finally {
+      addSpy.mockRestore();
+    }
+    cleanup();
+  });
+
+  it("closes on inner-container scroll (capture) and on visualViewport resize/scroll", () => {
+    const onClose = vi.fn();
+    const listeners = new Map<string, Set<EventListener>>();
+    const viewport = {
+      addEventListener: vi.fn((type: string, listener: EventListener) => {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type)!.add(listener);
+      }),
+      removeEventListener: vi.fn((type: string, listener: EventListener) => {
+        listeners.get(type)?.delete(listener);
+      }),
+    };
+    const previous = window.visualViewport;
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+    try {
+      render(<OpenTray onClose={onClose} />);
+      // Inner Shell scroller flings: a non-bubbling scroll dispatched on a
+      // descendant still reaches the window capture-phase listener.
+      const scroller = document.createElement("div");
+      document.body.appendChild(scroller);
+      try {
+        scroller.dispatchEvent(new Event("scroll", { bubbles: false, cancelable: true }));
+      } finally {
+        scroller.remove();
+      }
+      expect(onClose).toHaveBeenCalled();
+      onClose.mockClear();
+      // Keyboard/zoom-driven viewport moves close the tray too.
+      for (const type of ["scroll", "resize"]) {
+        for (const listener of listeners.get(type) ?? []) {
+          listener(new Event(type));
+        }
+      }
+      expect(onClose).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: previous });
+    }
+  });
 });

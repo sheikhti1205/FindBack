@@ -162,8 +162,9 @@ describe("AiModels control center (AI-022)", () => {
     expect(photoSelect.value).toBe("automatic");
     expect(matchesSelect.value).toBe("use");
     // Only free rows are offered as the persisted default — paid never is.
-    // Needle stays locked without installed/verified evidence.
-    const needleOption = within(matchesSelect).getByText(/needle/i) as HTMLOptionElement;
+    // On-device matching stays locked without installed/verified evidence
+    // (consumer label; the Needle engine name lives behind Technical details).
+    const needleOption = within(matchesSelect).getByText(/on-device matching/i) as HTMLOptionElement;
     expect(needleOption.disabled).toBe(true);
     // Persist choices for exactly this account (after the catalogue rows load).
     await waitFor(() => {
@@ -181,12 +182,12 @@ describe("AiModels control center (AI-022)", () => {
     await screen.findByTestId("ai-provider-openai");
   });
 
-  it("unlocks the needle matches engine only with installed/verified evidence", () => {
+  it("unlocks on-device matching only with installed/verified evidence (Needle lives in Technical details)", () => {
     renderModels({
       needleEvidence: { measured: true, correctnessPass: true, fresh: true },
     });
     const matchesSelect = screen.getByLabelText("Matches engine") as HTMLSelectElement;
-    const needleOption = within(matchesSelect).getByText(/needle/i) as HTMLOptionElement;
+    const needleOption = within(matchesSelect).getByText(/on-device matching/i) as HTMLOptionElement;
     expect(needleOption.disabled).toBe(false);
     fireEvent.change(matchesSelect, { target: { value: "needle" } });
     expect(loadAiPreferences("u1").matchesEngine).toBe("needle");

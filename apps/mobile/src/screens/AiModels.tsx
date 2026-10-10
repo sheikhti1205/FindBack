@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../auth";
-import { BackButton } from "../components/BackButton";
 import { Button } from "../components/Button";
 import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
 import { announce } from "../components/LiveRegion";
+import { AdvancedDisclosure, SettingsPage } from "../components/settings";
 import { aiCredentials, SUPPORTED_AI_PROVIDERS } from "../services/aiCredentials";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
 import { EXPERIMENTAL_PROVIDER_NOTICE, experimentalProvidersEnabled, isExperimentalProvider, isProviderEnabled, setExperimentalProvidersEnabled } from "../services/ai/providerStatus";
@@ -73,7 +73,14 @@ export const ASSISTANT_MODES: readonly EffectiveAssistantMode[] = ["auto", "offl
 
 /** Honest platform requirement; no dormant fourth mode is advertised. */
 export const OFFLINE_BETA_COPY =
-  "On-device AI requires the Android app and an installed, checksum-verified model. On-device only never sends to cloud; on web it refuses instead. Needle extracts structured text; SmolVLM2 answers approved image questions.";
+  "On-device AI requires the Android app and an installed, checksum-verified model. On-device only never sends to cloud; on web it refuses instead.";
+
+/**
+ * Developer detail for the Advanced disclosure only: engine names never
+ * appear on the ordinary consumer surface.
+ */
+export const OFFLINE_TECHNICAL_COPY =
+  "Needle extracts structured text; SmolVLM2 answers approved image questions.";
 
 const ASSISTANT_MODE_COPY: Record<EffectiveAssistantMode, { label: string; detail: string }> = {
   auto: {
@@ -551,12 +558,44 @@ export function AiModels({
     announce(`Assistant mode ${ASSISTANT_MODE_COPY[next].label}.`);
   }
 
+  // Assistant-mode radiogroup keyboard support: roving tabindex (checked is
+  // the single tab stop) plus arrow/Home/End handling so keyboard users never
+  // need a pointer. Focus follows the newly checked option.
+  const modeButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  function onModeKeyDown(event: React.KeyboardEvent, index: number) {
+    let next: number | null = null;
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        next = (index + 1) % ASSISTANT_MODES.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        next = (index - 1 + ASSISTANT_MODES.length) % ASSISTANT_MODES.length;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = ASSISTANT_MODES.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const target = ASSISTANT_MODES[next];
+    if (target !== undefined) {
+      chooseMode(target);
+      modeButtonRefs.current[next]?.focus();
+    }
+  }
+
   /** Lane A: persist one preference patch for exactly this account. */
   function choosePrefs(patch: Partial<AiPreferences>, notice: string) {
     const next = updateAiPreferences(account, patch);
     setPrefs(next);
     if (patch.matchesEngine !== undefined && !applyMatchesEngineToRuntime(next.matchesEngine)) {
-      announce("Matches engine saved. The on-device Needle runtime is unavailable here, so matching stays on USE until the model is installed and verified.");
+      announce("Matching choice saved. On-device matching is unavailable here, so matching stays on automatic until a tool is installed and verified.");
       return;
     }
     announce(notice);
@@ -749,27 +788,30 @@ export function AiModels({
   const gpuCopy = getGpuCapabilityCopy(measuredFlags).join(" ");
 
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-5">
-      <div className="fb-settings-sticky">
-        <BackButton fallbackTo="/profile" label="Back to profile" />
-        <h1 className="text-xl font-semibold">AI &amp; Models</h1>
-      </div>
-      <p className="text-sm text-on-surface-variant">
-        How FindBack answers. Your photo stays on this device unless you choose cloud.
-      </p>
-
+    <SettingsPage
+      title="AI & Models"
+      description="How FindBack answers. Your photo stays on this device unless you choose cloud."
+      backTo="/profile"
+      backLabel="Back to profile"
+    >
       <section aria-label="Assistant mode" className="flex flex-col gap-2">
         <h2 className="text-base font-semibold">Assistant mode</h2>
         <div role="radiogroup" aria-label="Assistant mode" className="fb-ai-mode-list">
-           {ASSISTANT_MODES.map((option) => {
+           {ASSISTANT_MODES.map((option, index) => {
             const checked = mode === option;
             return (
               <button
+                ref={(el) => {
+                  modeButtonRefs.current[index] = el;
+                }}
                 key={option}
                 type="button"
                 role="radio"
                 aria-checked={checked}
+                data-checked={checked}
+                tabIndex={checked ? 0 : -1}
                 onClick={() => chooseMode(option)}
+                onKeyDown={(event) => onModeKeyDown(event, index)}
                 className="fb-ai-mode-option text-left"
               >
                 <span className="text-sm font-medium">
@@ -790,6 +832,9 @@ export function AiModels({
         >
           {OFFLINE_BETA_COPY}
         </p>
+        <AdvancedDisclosure title="Technical details">
+          <p>{OFFLINE_TECHNICAL_COPY}</p>
+        </AdvancedDisclosure>
         {isOfflineMode(mode) ? (
           <p
             role="status"
@@ -875,16 +920,22 @@ export function AiModels({
             }}
             className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
           >
-            <option value="use">Use (default)</option>
+            <option value="use">Automatic matching (default)</option>
             <option value="needle" disabled={!needleReady}>
-              Needle (needs an installed, verified on-device model)
+              On-device matching (needs a downloaded tool)
             </option>
           </select>
           {needleReady ? null : (
             <p className="text-xs text-on-surface-variant">
-              Needle unlocks after an on-device model is installed and verified on this device.
+              On-device matching unlocks after a tool is installed and verified on this device.
             </p>
           )}
+          <AdvancedDisclosure title="Matching engine details">
+            <p className="text-xs text-on-surface-variant">
+              On-device matching runs on Needle once an installed model is verified; otherwise
+              matching stays on the default engine. Needle produces structured item records.
+            </p>
+          </AdvancedDisclosure>
         </div>
       </section>
 
@@ -893,11 +944,6 @@ export function AiModels({
         <p data-testid="ai-offline-status" role="status" className="text-sm text-on-surface-variant">
           {offlineDetail ?? "No offline models are ready yet."}
         </p>
-        <p className="text-sm text-on-surface-variant">
-           Android installs pinned models in app-private storage after an explicit download.
-           Needle produces structured item records; SmolVLM2 describes approved images.
-           General offline chat quality and device performance are not yet measured.
-         </p>
          {offlineTools}
         {offlineDownload === null ? (
           <div className="flex gap-2">
@@ -921,10 +967,15 @@ export function AiModels({
         ) : (
           <OfflineDownloadSection controls={offlineDownload} />
         )}
+        <AdvancedDisclosure title="How on-device answers work">
+          <p className="text-sm text-on-surface-variant">
+            Android installs pinned models in app-private storage after an explicit download.
+            {OFFLINE_TECHNICAL_COPY} General offline chat quality and device performance are not yet measured.
+          </p>
+        </AdvancedDisclosure>
       </section>
 
-      <section aria-label="On-device measurements" className="flex flex-col gap-2">
-        <h2 className="text-base font-semibold">On-device measurements</h2>
+      <AdvancedDisclosure title="Measurements & performance">
         <p className="text-xs text-on-surface-variant">
           Automatic, offline, Needle, and GPU details appear only with fresh,
           correctness-passing measurements on this device. Otherwise the safe
@@ -942,19 +993,27 @@ export function AiModels({
         <div data-testid="ai-gate-gpu" className="text-sm text-on-surface-variant">
           <span className="font-medium text-on-surface">GPU: </span>{gpuCopy}
         </div>
-      </section>
+      </AdvancedDisclosure>
 
       <section aria-label="Cloud providers" className="flex flex-col gap-3">
         <h2 className="text-base font-semibold">Cloud providers</h2>
-        <label className="flex min-h-[48px] items-center gap-3 text-sm">
-          <input type="checkbox" checked={experimental} aria-describedby="models-experimental-notice" onChange={(event) => {
-            setExperimentalProvidersEnabled(account, event.target.checked);
-            refreshExperimental((value) => value + 1);
-            announce(`Experimental providers ${event.target.checked ? "enabled" : "disabled"}.`);
-          }} />
-          Experimental providers
-        </label>
-        <p id="models-experimental-notice" className="text-xs text-on-surface-variant">{EXPERIMENTAL_PROVIDER_NOTICE}</p>
+        <AdvancedDisclosure title="Experimental, pricing & endpoints">
+          <div className="flex flex-col gap-2">
+            <label className="flex min-h-[48px] items-center gap-3 text-sm">
+              <input type="checkbox" checked={experimental} aria-describedby="models-experimental-notice" onChange={(event) => {
+                setExperimentalProvidersEnabled(account, event.target.checked);
+                refreshExperimental((value) => value + 1);
+                announce(`Experimental providers ${event.target.checked ? "enabled" : "disabled"}.`);
+              }} />
+              Experimental providers
+            </label>
+            <p id="models-experimental-notice" className="text-xs text-on-surface-variant">{EXPERIMENTAL_PROVIDER_NOTICE}</p>
+            <p className="text-xs text-on-surface-variant">
+              Providers whose full catalogue is unknown-priced cannot chat until pricing is verified.
+              A custom endpoint needs its base URL before its key can be used.
+            </p>
+          </div>
+        </AdvancedDisclosure>
         {slotsLoading ? (
           <p role="status" className="text-sm text-on-surface-variant">
             Reading saved keys…
@@ -968,17 +1027,13 @@ export function AiModels({
               const experimental = isExperimentalProvider(provider);
               const genericInsecure = (genericEndpoint ?? "").startsWith("http://");
               const pricingUnknown = slot.connected && providerPricingUnknown[provider] === true;
+              // Ordinary surface stays consumer-only: connection state alone.
+              // Pricing and endpoint detail live in the Advanced disclosure below.
               const status = slot.connected
-                ? `Connected${slot.masked ? ` · key ending ${slot.masked}` : ""}${
-                    pricingUnknown ? " — chat unavailable until pricing can be verified." : ""
-                  }`
+                ? `Connected${slot.masked ? ` · key ending ${slot.masked}` : ""}`
                 : slot.saved
                   ? "A saved key is locked. Manage it on the Cloud connections screen (Settings → AI & intelligence → Cloud connections) to unlock."
                   : "Not connected.";
-              const genericSuffix =
-                generic && genericEndpoint === null
-                  ? " No endpoint set — a key alone cannot be used."
-                  : "";
               return (
                 <li
                   key={provider}
@@ -997,7 +1052,7 @@ export function AiModels({
                         </span>
                       ) : null}
                     </span>
-                    <span className="text-xs text-on-surface-variant">{status}{genericSuffix}</span>
+                    <span className="text-xs text-on-surface-variant">{status}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Link
@@ -1026,9 +1081,23 @@ export function AiModels({
                       </Button>
                     ) : null}
                   </div>
+                  {pricingUnknown ? (
+                    <AdvancedDisclosure title="Pricing details">
+                      <p className="text-xs text-on-surface-variant">
+                        Chat unavailable until pricing can be verified for this provider.
+                      </p>
+                    </AdvancedDisclosure>
+                  ) : null}
+                  {generic && genericEndpoint === null ? (
+                    <AdvancedDisclosure title="Endpoint details">
+                      <p className="text-xs text-on-surface-variant">
+                        No endpoint set — a key alone cannot be used.
+                      </p>
+                    </AdvancedDisclosure>
+                  ) : null}
                   {generic ? (
-                    <div className="flex flex-col gap-2 rounded-m3-sm border border-outline-variant p-3">
-                      <h3 className="text-sm font-semibold">Custom endpoint</h3>
+                    <AdvancedDisclosure title="Custom endpoint">
+                      <div className="flex flex-col gap-2 border-t border-outline-variant pt-2">
                       {genericEndpoint !== null ? (
                         <p className="text-xs text-on-surface-variant">
                           Endpoint: {genericEndpoint}
@@ -1087,7 +1156,8 @@ export function AiModels({
                           {genericNotice}
                         </p>
                       ) : null}
-                    </div>
+                      </div>
+                    </AdvancedDisclosure>
                   ) : null}
                   {probe.notice !== null ? (
                     <p
@@ -1104,8 +1174,7 @@ export function AiModels({
         )}
       </section>
 
-      <section aria-label="Defaults and fallback policy" className="flex flex-col gap-2">
-        <h2 className="text-base font-semibold">Defaults and fallback</h2>
+      <AdvancedDisclosure title="Defaults and fallback">
         <p className="text-sm text-on-surface-variant">
           Default route: {defaults.modelId} · mode: free-only. Paid or unknown-price routes
           always need explicit per-model, per-price confirmation — a key alone is not consent.
@@ -1120,7 +1189,7 @@ export function AiModels({
             {fallbackPreview}
           </p>
         ) : null}
-      </section>
+      </AdvancedDisclosure>
 
       <section aria-label="Model catalogue" className="flex flex-col gap-2">
         <h2 className="text-base font-semibold">Model catalogue</h2>
@@ -1144,6 +1213,6 @@ export function AiModels({
           <ModelCatalogSheet models={visibleCatalog} retrievedAt={retrievedAt} offlineDetail={offlineDetail} />
         ) : null}
       </section>
-    </main>
+    </SettingsPage>
   );
 }

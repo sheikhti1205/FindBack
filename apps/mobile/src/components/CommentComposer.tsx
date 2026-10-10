@@ -11,7 +11,7 @@ import {
   validateAttachableFile,
   type CommentAttachment,
 } from "../services/commentAttachments";
-import { appendBodyMedia, MAX_COMMENT_BODY } from "../services/commentBodyMedia";
+import { appendBodyMedia, bodyHasInlineData, MAX_COMMENT_BODY } from "../services/commentBodyMedia";
 import {
   KLIPY_ATTRIBUTION,
   KLIPY_ATTRIBUTION_URL,
@@ -269,6 +269,17 @@ export function CommentComposer({
 
   async function onSend() {
     if (sendDisabled) return;
+    // Free-text paste guard: attachments travel as `https://` remote URLs, so
+    // a pasted `data:` URL in the text would inline base64 into the body
+    // (payload bloat that never renders as gallery media). Block with copy —
+    // never silently strip user content, and never allow it under the length
+    // cap (no wont-fix: even small payloads break the https-only invariant).
+    if (bodyHasInlineData(text)) {
+      onError(
+        "That text holds pasted image data. Remove it and attach the photo instead so it uploads cleanly.",
+      );
+      return;
+    }
     const body = appendBodyMedia(
       text,
       readyToPost.map((a) => ({ kind: a.kind, remoteUrl: a.remoteUrl as string })),

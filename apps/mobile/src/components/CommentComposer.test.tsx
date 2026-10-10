@@ -200,8 +200,32 @@ describe("CommentComposer attachments", () => {
   });
 });
 
-describe("CommentComposer Klipy", () => {
-  it("hides the GIF control when the key is absent (graceful)", () => {
+describe("CommentComposer pasted data URLs", () => {
+  it("blocks free-text sends holding a data: URL with copy (never inlines base64)", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onError = vi.fn();
+    render(<CommentComposer {...baseProps({ onSubmit, onError })} />);
+    fireEvent.change(screen.getByTestId("comment-input"), {
+      target: { value: "look data:image/png;base64,AAA" },
+    });
+    fireEvent.click(screen.getByTestId("comment-send"));
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError.mock.calls[0]![0] as string).toMatch(/pasted image data|attach the photo/i);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("still posts ordinary text with no inline data", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onError = vi.fn();
+    render(<CommentComposer {...baseProps({ onSubmit, onError })} />);
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "plain hello" } });
+    fireEvent.click(screen.getByTestId("comment-send"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("plain hello"));
+    expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+describe("CommentComposer Klipy", () => {  it("hides the GIF control when the key is absent (graceful)", () => {
     render(<CommentComposer {...baseProps()} />);
     expect(screen.queryByTestId("comment-gif")).toBeNull();
   });

@@ -66,6 +66,13 @@ describe("validateAttachableFile", () => {
     expect(validateAttachableFile(file("b.mp4", "video/mp4", 5_000_000))).toBeNull();
   });
 
+  it("accepts AVIF and BMP like the report pipeline (parity, no comment-scope exclusion)", () => {
+    expect(validateAttachableFile(file("a.avif", "image/avif"))).toBeNull();
+    expect(validateAttachableFile(file("b.bmp", "image/bmp"))).toBeNull();
+    expect(createCommentAttachment(file("a.avif", "image/avif")).kind).toBe("photo");
+    expect(createCommentAttachment(file("b.bmp", "image/bmp")).kind).toBe("photo");
+  });
+
   it("rejects non-media, empty, and oversized files with consumer copy", () => {
     expect(validateAttachableFile(file("a.pdf", "application/pdf"))).toMatch(/photo|video/i);
     expect(validateAttachableFile(file("a.jpg", "image/jpeg", 0))).toMatch(/empty/i);

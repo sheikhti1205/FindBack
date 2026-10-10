@@ -114,11 +114,21 @@ export function ReactionTray({
   }, [open]);
 
   // A scroll while open cancels (the gesture became a scroll, not a pick).
+  // Shell scrolls an inner container, so a window bubble-phase listener misses
+  // flings: capture-phase catches container scrolls, and visualViewport covers
+  // keyboard/zoom-driven moves that never emit a document scroll.
   useEffect(() => {
     if (!open) return;
     const onScroll = () => closeRef.current();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+    const viewport = window.visualViewport ?? null;
+    viewport?.addEventListener("scroll", onScroll, { passive: true });
+    viewport?.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll, { capture: true });
+      viewport?.removeEventListener("scroll", onScroll);
+      viewport?.removeEventListener("resize", onScroll);
+    };
   }, [open ]);
 
   if (!open) return null;

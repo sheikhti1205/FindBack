@@ -32,6 +32,12 @@ const PHOTO_MIME = new Set([
   "image/gif",
   "image/heic",
   "image/heif",
+  // Parity with the report pipeline (services/image.ts ALLOWED_MIME): AVIF
+  // and BMP decode through the same normalizeImage path, so comments accept
+  // them too. No comment-scope exclusion — a narrower set here would be a
+  // deliberate user-visible inconsistency, not a safety bound.
+  "image/avif",
+  "image/bmp",
 ]);
 const VIDEO_MIME = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const VIDEO_EXT = new Set(["mp4", "webm", "mov"]);
@@ -84,12 +90,14 @@ function extensionFor(mimeType: string, name: string): string {
   if (mimeType === "image/png") return "png";
   if (mimeType === "image/webp") return "webp";
   if (mimeType === "image/gif") return "gif";
+  if (mimeType === "image/avif") return "avif";
+  if (mimeType === "image/bmp") return "bmp";
   if (mimeType === "video/mp4") return "mp4";
   if (mimeType === "video/webm") return "webm";
   if (mimeType === "video/quicktime") return "mov";
   const fromName = name.split(".").pop()?.trim().toLowerCase() ?? "";
   if (VIDEO_EXT.has(fromName)) return fromName;
-  if (fromName === "png" || fromName === "webp" || fromName === "gif") return fromName;
+  if (fromName === "png" || fromName === "webp" || fromName === "gif" || fromName === "avif" || fromName === "bmp") return fromName;
   return "jpg";
 }
 

@@ -36,7 +36,15 @@ export interface SettingsPageProps {
 /** Content only: Shell remains the sole viewport/safe-area/scroll owner. */
 export function SettingsPage({ title, description, children, backTo, backLabel = "Back to Settings", className = "" }: SettingsPageProps) {
   const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => { heading.current?.focus({ preventScroll: true }); }, [title]);
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    heading.current?.focus({ preventScroll: true });
+    return () => {
+      // Focus return: leaving the page restores the invoker so keyboard and
+      // screen-reader users do not lose their place.
+      previouslyFocused?.focus?.({ preventScroll: true });
+    };
+  }, [title]);
   return <section className={`fb-settings-page ${className}`}>
     <div className="fb-settings-sticky">
       {backTo && <BackButton fallbackTo={backTo} label={backLabel} />}
