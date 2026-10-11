@@ -1,17 +1,16 @@
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
-import { IMAGES_BUCKET } from "./postsUpload";
 import { normalizeImage } from "./image";
 import { diag } from "./diag";
 
 /**
  * C3 comment attachment model (local photo/video attach).
  *
- * - Real Storage uploads: files go to the public `findback-images` bucket
- *   under the caller's own folder (`<uid>/<uuid>.<ext>`), the same
- *   ownership-scoped RLS path as report photos — no new bucket, no new
- *   policies. Photos are normalized on-device first (EXIF/orientation, edge
- *   cap — the canonical image pipeline); videos upload as-is.
+ * - Real Storage uploads: files go to the public `findback-comment-media`
+ *   bucket under the caller's own folder (`<uid>/<uuid>.<ext>`), the same
+ *   ownership-scoped RLS convention as report photos. Photos are normalized
+ *   on-device first (EXIF/orientation, edge cap — the canonical image
+ *   pipeline); videos upload as-is.
  * - Never base64 in text: previews are `blob:` object URLs (or the provider
  *   URL for Klipy picks); the comment body carries only `https://` remote
  *   URLs (see `commentBodyMedia`). The body never contains `data:` URLs.
@@ -23,6 +22,19 @@ import { diag } from "./diag";
 
 export const COMMENT_ATTACH_MAX = 4;
 export const COMMENT_ATTACH_MAX_BYTES = 25_000_000;
+
+/**
+ * Dedicated public bucket for comment attachments (FBX-013).
+ *
+ * Comment media cannot share the report image bucket: that bucket's row pins
+ * 8 MB and an images-only MIME list, while comment attachments allow 25 MB
+ * and video. Storage enforces the bucket row server-side, so a shared bucket
+ * made every video attach (and any photo over 8 MB) fail after the client had
+ * already promised success. The report bucket keeps its 8 MB images-only
+ * policy untouched; this bucket's `file_size_limit` mirrors
+ * `COMMENT_ATTACH_MAX_BYTES` exactly so the two caps cannot drift apart.
+ */
+export const COMMENT_MEDIA_BUCKET = "findback-comment-media";
 
 const PHOTO_MIME = new Set([
   "image/jpeg",
@@ -190,17 +202,17 @@ export async function uploadCommentAttachment(
   }
   const objectKey = `${userData.user.id}/${newId()}.${extensionFor(mimeType, attachment.fileName)}`;
   const { error: uploadError } = await supabase.storage
-    .from(IMAGES_BUCKET)
+    .from(COMMENT_MEDIA_BUCKET)
     .upload(objectKey, payload, { contentType: mimeType, upsert: false });
   if (uploadError) {
     diag(
       "comments.attach.storage_error",
-      { bucket: IMAGES_BUCKET, objectKey, message: uploadError.message },
+      { bucket: COMMENT_MEDIA_BUCKET, objectKey, message: uploadError.message },
       { traceId: options.traceId },
     );
     throw new ApiError(uploadError.message || "Upload failed", 502);
   }
-  const remoteUrl = supabase.storage.from(IMAGES_BUCKET).getPublicUrl(objectKey).data.publicUrl;
+  const remoteUrl = supabase.storage.from(COMMENT_MEDIA_BUCKET).getPublicUrl(objectKey).data.publicUrl;
   options.onProgress?.({ loaded: file.size, total: file.size });
   diag(
     "comments.attach.success",
@@ -225,7 +237,7 @@ export async function removeCommentAttachment(attachment: CommentAttachment): Pr
   }
   if (attachment.objectKey && attachment.remoteUrl) {
     try {
-      await getSupabase().storage.from(IMAGES_BUCKET).remove([attachment.objectKey]);
+      await getSupabase().storage.from(COMMENT_MEDIA_BUCKET).remove([attachment.objectKey]);
     } catch {
       // Orphan cleanup is best-effort; the row was never created server-side.
     }

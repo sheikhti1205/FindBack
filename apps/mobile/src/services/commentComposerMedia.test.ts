@@ -7,6 +7,7 @@ const { supaMock } = vi.hoisted(() => ({
     getPublicUrl: vi.fn(),
     remove: vi.fn(),
     getUser: vi.fn(),
+    fromBucket: vi.fn(),
   },
 }));
 
@@ -14,11 +15,14 @@ vi.mock("./supabaseClient", () => ({
   getSupabase: () => ({
     auth: { getUser: supaMock.getUser },
     storage: {
-      from: () => ({
-        upload: supaMock.upload,
-        getPublicUrl: supaMock.getPublicUrl,
-        remove: supaMock.remove,
-      }),
+      from: (bucket: string) => {
+        supaMock.fromBucket(bucket);
+        return {
+          upload: supaMock.upload,
+          getPublicUrl: supaMock.getPublicUrl,
+          remove: supaMock.remove,
+        };
+      },
     },
   }),
 }));
@@ -39,6 +43,7 @@ vi.mock("./image", async (importOriginal) => {
 import {
   COMMENT_ATTACH_MAX,
   COMMENT_ATTACH_MAX_BYTES,
+  COMMENT_MEDIA_BUCKET,
   createCommentAttachment,
   createKlipyAttachment,
   removeCommentAttachment,
@@ -58,7 +63,11 @@ function file(name: string, type: string, size = 1000): File {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  supaMock.fromBucket.mockClear();
 });
+
+const TRUSTED_STORAGE = (bucket: string, path: string) =>
+  `https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/${bucket}/${path}`;
 
 describe("validateAttachableFile", () => {
   it("accepts photos and short videos within the cap", () => {
@@ -119,18 +128,23 @@ describe("createKlipyAttachment", () => {
 });
 
 describe("uploadCommentAttachment", () => {
-  it("uploads through the owner-scoped Storage path and resolves a public URL", async () => {
+  it("uploads through the owner-scoped path of the dedicated comment-media bucket", async () => {
     supaMock.getUser.mockResolvedValue({ data: { user: { id: "u-1" } }, error: null });
     supaMock.upload.mockResolvedValue({ error: null });
-    supaMock.getPublicUrl.mockReturnValue({ data: { publicUrl: "https://cdn/x.mp4" } });
+    supaMock.getPublicUrl.mockReturnValue({
+      data: { publicUrl: TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/x.mp4") },
+    });
     const f = file("v.mp4", "video/mp4", 2048);
     const entry = createCommentAttachment(f);
     const seen: { loaded: number; total: number }[] = [];
     const res = await uploadCommentAttachment(entry, f, {
       onProgress: (p) => seen.push(p),
     });
-    expect(res.remoteUrl).toBe("https://cdn/x.mp4");
+    expect(res.remoteUrl).toBe(TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/x.mp4"));
     expect(res.objectKey.startsWith("u-1/")).toBe(true);
+    expect(supaMock.fromBucket).toHaveBeenCalledWith(COMMENT_MEDIA_BUCKET);
+    // The report image bucket must never receive comment media (FBX-013).
+    expect(supaMock.fromBucket).not.toHaveBeenCalledWith("findback-images");
     expect(seen[0]).toEqual({ loaded: 0, total: 2048 });
     expect(seen[seen.length - 1]).toEqual({ loaded: 2048, total: 2048 });
     expect(supaMock.upload).toHaveBeenCalledTimes(1);
