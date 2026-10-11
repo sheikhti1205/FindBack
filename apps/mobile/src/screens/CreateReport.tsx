@@ -98,7 +98,7 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
  */
 interface NativePick {
   picked: PickedPhoto;
-  resolve: () => Promise<File>;
+  resolve: (opts?: { signal?: AbortSignal }) => Promise<File>;
 }
 
 /** Client-side validation mirrors server (W6 #17). */
@@ -1012,7 +1012,9 @@ function ReportForm() {
   function onPickBatch(picks: NativePick[], opts?: { coalescable?: boolean }): void {
     setError(null);
     setPhotoFileErrors([]);
-    setFailedPicks([]);
+    // Sibling failed rows are preserved: a retry removes only its own row
+    // (retryFailedPick) and a new batch appends its failures at completion,
+    // so re-picking while failures are pending never destroys them.
     enqueuePending({ kind: "native", coalescable: opts?.coalescable ?? false, nativeItems: picks });
   }
 
@@ -1076,7 +1078,9 @@ function ReportForm() {
           {
             signal: controller.signal,
             // FBX-001: the canonical native processor (never photoToFile's fetch).
-            convert: () => item.resolve(),
+            // The batch signal reaches the native import so a cancel aborts
+            // the in-flight item instead of waiting it out.
+            convert: (_photo, opts) => item.resolve({ signal: opts?.signal }),
           },
         );
         duplicates += result.duplicates.length;
@@ -1097,7 +1101,9 @@ function ReportForm() {
         }
       }
       setPhotoFileErrors(policyFailures);
-      setFailedPicks(failedRows);
+      // Append: failures from an earlier batch (or a retried row's
+      // siblings) stay until the user retries or dismisses them.
+      setFailedPicks((current) => [...current, ...failedRows]);
       const notice = formatBatchNotice(accepted, duplicates, unreadable, overflow);
       setPhotoLimitNotice(
         cancelled
@@ -1232,8 +1238,8 @@ function ReportForm() {
         const picked: PickedPhoto = { nativeUri: uri, webPath: uri, format: "jpg", id: crypto.randomUUID() };
         return {
           picked,
-          resolve: async () => {
-            const imported = await importNativeImageUri(uri);
+          resolve: async (opts) => {
+            const imported = await importNativeImageUri(uri, { signal: opts?.signal });
             picked.motionPhoto = imported.motionStillUsed;
             return importedImageToFile(imported);
           },

@@ -2,19 +2,30 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { publishReportMock, publishReportWithPhotosMock, photo } = vi.hoisted(() => ({
+const { publishReportMock, publishReportWithPhotosMock, photo, nativeMedia } = vi.hoisted(() => ({
   publishReportMock: vi.fn(),
   publishReportWithPhotosMock: vi.fn(),
   photo: {
     isNativeCameraAvailable: vi.fn(() => false),
-    takePhoto: vi.fn(),
-    chooseFromGallery: vi.fn(),
-    chooseReportPhotos: vi.fn(),
-    photoToFile: vi.fn(),
     normalizeForUpload: vi.fn(async (file: File) => file),
-    toNativeImageUri: vi.fn(),
+  },
+  nativeMedia: {
+    chooseNativeImage: vi.fn(),
+    chooseNativeImages: vi.fn(),
+    importNativeImageUri: vi.fn(),
   },
 }));
+
+/** ImportedImage-shaped fixture: only the fields importedImageToFile touches. */
+function imported(bytes: Uint8Array | string, opts?: { fileName?: string; motionStillUsed?: boolean }) {
+  const data = typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes;
+  return {
+    id: crypto.randomUUID(),
+    fileName: opts?.fileName ?? "photo.jpg",
+    motionStillUsed: opts?.motionStillUsed ?? false,
+    derivative: { bytes: data, mimeType: "image/jpeg", byteLength: data.length, width: 8, height: 8, quality: 0.82 },
+  };
+}
 
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" },
@@ -31,6 +42,15 @@ vi.mock("../services/posts", async (importOriginal) => {
   };
 });
 vi.mock("../services/photo", () => photo);
+vi.mock("../services/media/nativeMedia", () => ({
+  chooseNativeImage: nativeMedia.chooseNativeImage,
+  chooseNativeImages: nativeMedia.chooseNativeImages,
+  importNativeImageUri: nativeMedia.importNativeImageUri,
+  // Faithful copy of the production helper (pure): the real module registers
+  // the Capacitor plugin at import time, which the web-platform mock lacks.
+  importedImageToFile: (item: { fileName?: string; derivative: { bytes: Uint8Array; mimeType: string } }) =>
+    new File([item.derivative.bytes.slice()], item.fileName || "photo.jpg", { type: item.derivative.mimeType }),
+}));
 
 import { CreateReport } from "./CreateReport";
 import { clearDraft, saveDraft } from "../services/reportDraft";
@@ -88,8 +108,8 @@ beforeEach(() => {
   publishReportMock.mockResolvedValue("p1");
   photo.isNativeCameraAvailable.mockReset();
   photo.isNativeCameraAvailable.mockReturnValue(false);
-  photo.chooseReportPhotos.mockReset();
-  photo.photoToFile.mockReset();
+  nativeMedia.chooseNativeImages.mockReset();
+  nativeMedia.importNativeImageUri.mockReset();
   photo.normalizeForUpload.mockClear();
   clearDraft();
   clearPhotoStore();
@@ -119,20 +139,16 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
       render(<CreateReport />);
       await fillTitleCategory("Lost phone");
 
-      photo.chooseReportPhotos.mockResolvedValueOnce([
-        { nativeUri: "content://media/1", webPath: "content://media/1", format: "jpg", id: "n1" },
-        { nativeUri: "content://media/2", webPath: "content://media/2", format: "jpg", id: "n2" },
-      ]);
-      const first = new File(["first-bytes"], "ok1.jpg", { type: "image/jpeg" });
-      const second = new File(["second-bytes"], "ok2.jpg", { type: "image/jpeg" });
-      photo.photoToFile.mockImplementationOnce(async () => first);
-      photo.photoToFile.mockImplementationOnce(async () => {
-        // Wide cancel window (test-only): the click below must land while
-        // this conversion is still in flight even when parallel load slows
-        // the test steps; the abort is observed when this resolves.
-        await delay(1000);
-        return second;
-      });
+      nativeMedia.chooseNativeImages.mockResolvedValueOnce(["content://media/1", "content://media/2"]);
+      nativeMedia.importNativeImageUri
+        .mockImplementationOnce(async () => imported("first-bytes", { fileName: "ok1.jpg" }))
+        .mockImplementationOnce(async () => {
+          // Wide cancel window (test-only): the click below must land while
+          // this conversion is still in flight even when parallel load slows
+          // the test steps; the abort is observed when this resolves.
+          await delay(1000);
+          return imported("second-bytes", { fileName: "ok2.jpg" });
+        });
 
       fireEvent.click(screen.getByRole("button", { name: /choose up to \d+ photos/i }));
 
@@ -158,8 +174,8 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
       expect(screen.queryByText(/processing \d+ of/i)).toBeNull();
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.chooseReportPhotos.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImages.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   }, 15000);
 
@@ -222,20 +238,16 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
 
       // First batch hangs in conversion; the second gallery tap queues behind
       // it instead of racing the hash registry — and the backlog is visible.
-      let releaseFirst!: (file: File) => void;
-      const firstGate = new Promise<File>((resolve) => {
+      let releaseFirst!: (value: ReturnType<typeof imported>) => void;
+      const firstGate = new Promise<ReturnType<typeof imported>>((resolve) => {
         releaseFirst = resolve;
       });
-      photo.chooseReportPhotos
-        .mockResolvedValueOnce([
-          { nativeUri: "content://media/1", webPath: "content://media/1", format: "jpg", id: "n1" },
-        ])
-        .mockResolvedValueOnce([
-          { nativeUri: "content://media/2", webPath: "content://media/2", format: "jpg", id: "n2" },
-        ]);
-      photo.photoToFile
+      nativeMedia.chooseNativeImages
+        .mockResolvedValueOnce(["content://media/1"])
+        .mockResolvedValueOnce(["content://media/2"]);
+      nativeMedia.importNativeImageUri
         .mockImplementationOnce(() => firstGate)
-        .mockImplementation(async () => new File(["second-bytes"], "ok2.jpg", { type: "image/jpeg" }));
+        .mockImplementation(async () => imported("second-bytes", { fileName: "ok2.jpg" }));
 
       const gallery = screen.getByRole("button", { name: /choose up to \d+ photos/i });
       fireEvent.click(gallery);
@@ -243,13 +255,13 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
       fireEvent.click(gallery);
       await screen.findByText(/1 batch queued/);
 
-      releaseFirst(new File(["first-bytes"], "ok1.jpg", { type: "image/jpeg" }));
+      releaseFirst(imported("first-bytes", { fileName: "ok1.jpg" }));
       await screen.findByRole("img", { name: /photo 2 of 2/i });
       await waitFor(() => expect(screen.queryByText(/batch queued/)).toBeNull());
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.chooseReportPhotos.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImages.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   });
 
@@ -260,26 +272,20 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
       render(<CreateReport />);
       await fillTitleCategory("Lost phone");
 
-      let releaseFirst!: (file: File) => void;
-      const firstGate = new Promise<File>((resolve) => {
+      let releaseFirst!: (value: ReturnType<typeof imported>) => void;
+      const firstGate = new Promise<ReturnType<typeof imported>>((resolve) => {
         releaseFirst = resolve;
       });
-      photo.chooseReportPhotos
-        .mockResolvedValueOnce([
-          { nativeUri: "content://media/1", webPath: "content://media/1", format: "jpg", id: "n1" },
-        ])
-        .mockResolvedValueOnce([
-          { nativeUri: "content://media/2", webPath: "content://media/2", format: "jpg", id: "n2" },
-        ])
-        .mockResolvedValueOnce([
-          { nativeUri: "content://media/3", webPath: "content://media/3", format: "jpg", id: "n3" },
-        ]);
-      const convertedIds: string[] = [];
-      photo.photoToFile
+      nativeMedia.chooseNativeImages
+        .mockResolvedValueOnce(["content://media/1"])
+        .mockResolvedValueOnce(["content://media/2"])
+        .mockResolvedValueOnce(["content://media/3"]);
+      const convertedUris: string[] = [];
+      nativeMedia.importNativeImageUri
         .mockImplementationOnce(() => firstGate)
-        .mockImplementation(async (picked: { id: string }) => {
-          convertedIds.push(picked.id);
-          return new File([`${picked.id}-bytes`], `${picked.id}.jpg`, { type: "image/jpeg" });
+        .mockImplementation(async (uri: string) => {
+          convertedUris.push(uri);
+          return imported(`${uri}-bytes`, { fileName: `${uri.split("/").pop()}.jpg` });
         });
 
       const gallery = screen.getByRole("button", { name: /choose up to \d+ photos/i });
@@ -289,15 +295,15 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
       // batch is obsolete and dropped, only the latest runs.
       fireEvent.click(gallery);
       fireEvent.click(gallery);
-      releaseFirst(new File(["first-bytes"], "ok1.jpg", { type: "image/jpeg" }));
+      releaseFirst(imported("first-bytes", { fileName: "ok1.jpg" }));
 
       await screen.findByRole("img", { name: /photo 2 of 2/i });
-      expect(convertedIds).toEqual(["n3"]);
+      expect(convertedUris).toEqual(["content://media/3"]);
       expect(screen.queryByRole("img", { name: /photo 3 of/i })).toBeNull();
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.chooseReportPhotos.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImages.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   });
 

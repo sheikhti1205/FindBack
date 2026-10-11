@@ -2,19 +2,30 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { publishReportMock, publishReportWithPhotosMock, photo } = vi.hoisted(() => ({
+const { publishReportMock, publishReportWithPhotosMock, photo, nativeMedia } = vi.hoisted(() => ({
   publishReportMock: vi.fn(),
   publishReportWithPhotosMock: vi.fn(),
   photo: {
     isNativeCameraAvailable: vi.fn(() => false),
-    takePhoto: vi.fn(),
-    chooseFromGallery: vi.fn(),
-    chooseReportPhotos: vi.fn(),
-    photoToFile: vi.fn(),
     normalizeForUpload: vi.fn(async (file: File) => file),
-    toNativeImageUri: vi.fn(),
+  },
+  nativeMedia: {
+    chooseNativeImage: vi.fn(),
+    chooseNativeImages: vi.fn(),
+    importNativeImageUri: vi.fn(),
   },
 }));
+
+/** ImportedImage-shaped fixture: only the fields importedImageToFile touches. */
+function imported(bytes: Uint8Array | string, opts?: { fileName?: string; motionStillUsed?: boolean }) {
+  const data = typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes;
+  return {
+    id: crypto.randomUUID(),
+    fileName: opts?.fileName ?? "photo.jpg",
+    motionStillUsed: opts?.motionStillUsed ?? false,
+    derivative: { bytes: data, mimeType: "image/jpeg", byteLength: data.length, width: 8, height: 8, quality: 0.82 },
+  };
+}
 
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" },
@@ -31,6 +42,15 @@ vi.mock("../services/posts", async (importOriginal) => {
   };
 });
 vi.mock("../services/photo", () => photo);
+vi.mock("../services/media/nativeMedia", () => ({
+  chooseNativeImage: nativeMedia.chooseNativeImage,
+  chooseNativeImages: nativeMedia.chooseNativeImages,
+  importNativeImageUri: nativeMedia.importNativeImageUri,
+  // Faithful copy of the production helper (pure): the real module registers
+  // the Capacitor plugin at import time, which the web-platform mock lacks.
+  importedImageToFile: (item: { fileName?: string; derivative: { bytes: Uint8Array; mimeType: string } }) =>
+    new File([item.derivative.bytes.slice()], item.fileName || "photo.jpg", { type: item.derivative.mimeType }),
+}));
 
 import { CreateReport } from "./CreateReport";
 import { clearDraft, saveDraft } from "../services/reportDraft";
@@ -86,8 +106,8 @@ beforeEach(() => {
   publishReportMock.mockResolvedValue("p1");
   photo.isNativeCameraAvailable.mockReset();
   photo.isNativeCameraAvailable.mockReturnValue(false);
-  photo.chooseReportPhotos.mockReset();
-  photo.photoToFile.mockReset();
+  nativeMedia.chooseNativeImages.mockReset();
+  nativeMedia.importNativeImageUri.mockReset();
   clearDraft();
   clearPhotoStore();
   (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => "blob:preview");
@@ -131,14 +151,12 @@ describe("CreateReport media motion", () => {
       render(<CreateReport />);
       await fillTitleCategory("Lost phone");
 
-      let release!: (file: File) => void;
-      const gate = new Promise<File>((resolve) => {
+      let release!: (value: ReturnType<typeof imported>) => void;
+      const gate = new Promise<ReturnType<typeof imported>>((resolve) => {
         release = resolve;
       });
-      photo.chooseReportPhotos.mockResolvedValueOnce([
-        { nativeUri: "content://media/1", webPath: "content://media/1", format: "jpg", id: "n1" },
-      ]);
-      photo.photoToFile.mockImplementationOnce(() => gate);
+      nativeMedia.chooseNativeImages.mockResolvedValueOnce(["content://media/1"]);
+      nativeMedia.importNativeImageUri.mockImplementationOnce(() => gate);
 
       fireEvent.click(screen.getByRole("button", { name: /choose up to \d+ photos/i }));
 
@@ -146,7 +164,7 @@ describe("CreateReport media motion", () => {
       expect(processing.getAttribute("data-status")).toBe("processing");
       expect(screen.getByRole("button", { name: /^cancel$/i })).toBeTruthy();
 
-      release(new File(["first-bytes"], "ok1.jpg", { type: "image/jpeg" }));
+      release(imported("first-bytes", { fileName: "ok1.jpg" }));
 
       // The processing slot and the notice coexist only for the crossfade
       // window; settle on the final notice with exactly one status left.
@@ -163,8 +181,8 @@ describe("CreateReport media motion", () => {
       expect(settled[0]!.getAttribute("data-status")).toBe("notice");
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.chooseReportPhotos.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImages.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   }, 15000);
 

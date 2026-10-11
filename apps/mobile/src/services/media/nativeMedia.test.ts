@@ -38,6 +38,25 @@ describe("native media intake seam", () => {
     await expect(chooseNativeImage({ source: "photos" })).rejects.toMatchObject({ code: "UNSUPPORTED_FORMAT" });
     expect(native.chooseImage).not.toHaveBeenCalled();
   });
+  it("rejects before touching the bridge when already cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(importNativeImageUri("content://media/external/images/123", { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(native.importUri).not.toHaveBeenCalled();
+  });
+  it("stops awaiting an in-flight import when the pick is cancelled", async () => {
+    let release!: (value: unknown) => void;
+    const gate = new Promise((resolve) => { release = resolve; });
+    native.importUri.mockReturnValueOnce(gate);
+    const controller = new AbortController();
+    const pending = importNativeImageUri("content://media/external/images/123", { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    // The orphaned bridge settlement stays observed by the race, so it never
+    // surfaces as an unhandled rejection and is never committed.
+    release(result());
+    await expect(gate).resolves.toBeTruthy();
+  });
 });
 describe("native multi-select intake (FBX-001)", () => {
   it("returns the ordered granted content URIs and never prepares them here", async () => {

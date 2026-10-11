@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { photo } = vi.hoisted(() => ({
+const { photo, nativeMedia } = vi.hoisted(() => ({
   photo: {
     isNativeCameraAvailable: vi.fn(() => false),
     takePhoto: vi.fn(),
@@ -10,6 +10,11 @@ const { photo } = vi.hoisted(() => ({
     photoToFile: vi.fn(),
     normalizeForUpload: vi.fn(async (file: File) => file),
     toNativeImageUri: vi.fn(),
+  },
+  nativeMedia: {
+    chooseNativeImage: vi.fn(),
+    chooseNativeImages: vi.fn(),
+    importNativeImageUri: vi.fn(),
   },
 }));
 
@@ -20,6 +25,15 @@ vi.mock("@capacitor/core", () => ({
 vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../services/photo", () => photo);
+vi.mock("../services/media/nativeMedia", () => ({
+  chooseNativeImage: nativeMedia.chooseNativeImage,
+  chooseNativeImages: nativeMedia.chooseNativeImages,
+  importNativeImageUri: nativeMedia.importNativeImageUri,
+  // Faithful copy of the production helper (pure): the real module registers
+  // the Capacitor plugin at import time, which the web-platform mock lacks.
+  importedImageToFile: (item: { fileName?: string; derivative: { bytes: Uint8Array; mimeType: string } }) =>
+    new File([item.derivative.bytes.slice()], item.fileName || "photo.jpg", { type: item.derivative.mimeType }),
+}));
 
 import { CreateReport } from "./CreateReport";
 import { clearDraft, saveDraft } from "../services/reportDraft";

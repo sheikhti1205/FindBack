@@ -2,7 +2,19 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 import { IMPORT_MAX_DERIVATIVE_BYTES, IMPORT_MAX_EDGE, MediaError, probeDimensions, sniffImage, type ImportedImage, type SniffedKind } from "./importImage";
 
 export type NativeMediaSource = "photos" | "camera" | "files";
-export interface NativeMediaOptions { highQuality?: boolean; text?: string; fileName?: string }
+export interface NativeMediaOptions {
+  highQuality?: boolean; text?: string; fileName?: string;
+  /**
+   * Cancellation for an in-flight import. The Capacitor plugin bridge
+   * exposes no cancellation token, so the native operation itself cannot
+   * be aborted mid-flight: instead the returned promise rejects as soon
+   * as the signal fires and any late bridge settlement is discarded by
+   * the caller (the report batch treats a post-abort settlement as
+   * cancelled and never commits it). A pre-aborted signal rejects before
+   * the bridge is even touched.
+   */
+  signal?: AbortSignal;
+}
 export interface NativeMediaDerivative {
   derivativeBase64: string;
   width: number;
@@ -69,7 +81,17 @@ export async function chooseNativeImage(options: NativeMediaOptions & { source: 
 export async function importNativeImageUri(uri: string, options: NativeMediaOptions = {}): Promise<ImportedImage> {
   requireAndroid();
   if (!/^content:\/\/[^/]+\//.test(uri)) throw new MediaError("UNRECOGNIZED_FORMAT", "Please choose a photo through the device photo picker.");
-  return importedDerivative(await plugin.importUri({ uri, highQuality: options.highQuality === true }), options);
+  const { signal } = options;
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Import cancelled.", "AbortError");
+  const pending = plugin.importUri({ uri, highQuality: options.highQuality === true });
+  if (!signal) return importedDerivative(await pending, options);
+  // No bridge-level cancel exists (see NativeMediaOptions.signal): stop
+  // awaiting on abort; the orphaned bridge settlement stays observed by the
+  // race below, so it never surfaces as an unhandled rejection.
+  const aborted = new Promise<never>((_, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason ?? new DOMException("Import cancelled.", "AbortError")), { once: true });
+  });
+  return importedDerivative(await Promise.race([pending, aborted]), options);
 }
 
 /**
