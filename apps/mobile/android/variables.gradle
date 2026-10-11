@@ -23,6 +23,12 @@ ext {
     // Google Maven (maven-metadata: latest 0.17.1).
     litertLmVersion = '0.17.1'
     coroutinesVersion = '1.10.2'
+    // Keyless map renderer (MAP pivot): MapLibre Native Android, OpenGL ES
+    // backend only (widest compatibility, smallest ABI weight vs the
+    // multi-backend artifact). Pinned exact — never floating or dynamic — so
+    // every build resolves the same AAR. Single version source: referenced as
+    // $mapLibreVersion in app/build.gradle; release gates assert the pin.
+    mapLibreVersion = '13.6.1'
     // Pinned NDK + CMake for `findback_probe` (see ndkVersion /
     // externalNativeBuild in app/build.gradle). Kept here so the toolchain
     // pin lives next to every other version pin.

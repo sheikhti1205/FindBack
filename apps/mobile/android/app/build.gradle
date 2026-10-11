@@ -80,6 +80,17 @@ def googleMapsApiKey() {
     return key.trim()
 }
 
+// Keyless map style (MAP pivot): the MapLibre-compatible style URL the native
+// picker/viewer/snapshotter render. Canonical local env name
+// FINDBACK_MAP_STYLE_URL; default is the owner-decided OpenFreeMap Liberty
+// style. This is NON-SECRET provider config (a public style endpoint), never
+// a credential — safe to ship in BuildConfig and safe to log. Switching
+// providers means changing this URL only; no picker logic changes.
+def findbackMapStyleUrl() {
+    def url = System.getenv("FINDBACK_MAP_STYLE_URL") ?: "https://tiles.openfreemap.org/styles/liberty"
+    return url.trim()
+}
+
 android {
     namespace = "com.findback.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -119,6 +130,10 @@ android {
         // exists anywhere in this path. Never hard-code a real value here.
         def googleWebClientId = System.getenv("GOOGLE_WEB_CLIENT_ID") ?: ""
         buildConfigField "String", "GOOGLE_WEB_CLIENT_ID", "\"${googleWebClientId}\""
+        // Keyless map style endpoint (see findbackMapStyleUrl above). Public
+        // non-secret config; validated natively before use (HTTPS, non-empty,
+        // non-placeholder) with the OpenFreeMap default as fallback.
+        buildConfigField "String", "MAP_STYLE_URL", "\"${findbackMapStyleUrl()}\""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -280,6 +295,11 @@ dependencies {
     // Report location-services check + enable dialog (SettingsClient). The
     // Geolocation fix itself comes from @capacitor/geolocation (fused provider).
     implementation "com.google.android.gms:play-services-location:21.3.0"
+    // Keyless map renderer (MAP pivot): MapLibre Native Android, OpenGL ES
+    // backend only. Pinned exact via $mapLibreVersion in variables.gradle —
+    // never floating. Coexists with the A3 Google map layer until the native
+    // picker bridge is green (removal commit drops the Google entries).
+    implementation "org.maplibre.gl:android-sdk-opengl:$mapLibreVersion"
     // Native map layer (A3): official @capacitor/google-maps SDK (the JS
     // dependency lives in apps/mobile/package.json) + Places SDK for the
     // FindbackPlaces autocomplete bridge. Pinned exact — never floating.
