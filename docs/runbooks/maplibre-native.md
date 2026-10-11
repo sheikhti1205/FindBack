@@ -36,6 +36,16 @@ to the default at runtime (validated natively, never a build failure). Any
 MapLibre-compatible style URL works; switching providers means changing this
 URL only. The URL is public config, safe to share and safe to log.
 
+Nominatim contact (optional override, same non-secret class):
+
+```sh
+FINDBACK_MAP_CONTACT=https://your-public-contact-page
+```
+
+Default is the app's public site. It goes into the native search
+`User-Agent` (`FindBack/<version> (Android; contact: <contact>)`) per the
+Nominatim usage policy — keep it a working public contact.
+
 ## Search policy (do not "improve" into autocomplete)
 
 - Explicit Search-button submit only — never per keystroke.

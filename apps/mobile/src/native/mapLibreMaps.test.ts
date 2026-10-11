@@ -134,6 +134,20 @@ describe("mapLibreMaps bridge facade", () => {
     expect((error as Error).message).not.toContain("ActivityNotFoundException");
   });
 
+  it("preserves snapshot specificity instead of collapsing to a generic failure", async () => {
+    bridgeState.isNative = true;
+    bridgeState.registerImpl = nativeBridge;
+    bridgeState.snapshotError = { code: "MAP_SNAPSHOT_FAILED", message: "native detail" };
+    const error = await renderMapSnapshotNative({
+      latitude: 23.8,
+      longitude: 90.4,
+      width: 512,
+      height: 320,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(FindbackMapError);
+    expect((error as FindbackMapError).code).toBe("MAP_SNAPSHOT_FAILED");
+  });
+
   it("opens the viewer for valid coordinates and rejects invalid ones before the bridge", async () => {
     bridgeState.isNative = true;
     const bridge = nativeBridge();

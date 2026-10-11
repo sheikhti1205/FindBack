@@ -66,6 +66,17 @@ class NominatimClientTest {
         assertEquals(0L, gate.retryAfterMs(11_100L))
     }
 
+    @Test fun userAgentCarriesContact() {
+        assertEquals(
+            "FindBack/1.0.0 (Android; contact: https://findbackapp.social)",
+            NominatimClient.userAgent("1.0.0", "https://findbackapp.social"),
+        )
+        assertEquals(
+            "FindBack/unknown (Android; contact: unknown)",
+            NominatimClient.userAgent("", "  "),
+        )
+    }
+
     @Test fun blankQueryIsRejectedBeforeNetwork() {
         assertFailsWith<NominatimException> {
             NominatimClient.fetchResults(

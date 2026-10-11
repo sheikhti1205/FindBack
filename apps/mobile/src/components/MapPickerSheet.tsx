@@ -263,16 +263,36 @@ export function MapPickerSheet({
   const [pendingAccuracy, setPendingAccuracy] = useState<number | null>(null);
 
   // Native path: forward to the Activity; Cancel closes with no mutation.
+  // `launchedRef` makes the launch once-per-open: a mid-flight value change
+  // must not fire a second Activity (which would reject BUSY and spuriously
+  // close the sheet while the first Activity still owns the interaction).
+  // `launchStateRef` freezes the launch inputs: the in-flight result is
+  // honored with the open-time value/label/callbacks, so a mid-flight change
+  // can neither relaunch nor orphan the pending Activity result. (Reading
+  // props through a ref keeps this effect subscribed only to open/picker.)
+  const launchedRef = useRef(false);
+  const launchStateRef = useRef({ value, initialSearchResult, onConfirm, onClose });
+  launchStateRef.current = { value, initialSearchResult, onConfirm, onClose };
   useEffect(() => {
-    if (!open || resolvedPicker == null) return;
+    if (!open) launchedRef.current = false;
+  }, [open]);
+  useEffect(() => {
+    if (!open || resolvedPicker == null || launchedRef.current) return;
+    launchedRef.current = true;
     let stale = false;
+    const {
+      value: launchValue,
+      initialSearchResult: launchSearch,
+      onConfirm: confirm,
+      onClose: close,
+    } = launchStateRef.current;
     const reportPin =
-      value.latitude != null && value.longitude != null
-        ? { lat: value.latitude, lng: value.longitude }
+      launchValue.latitude != null && launchValue.longitude != null
+        ? { lat: launchValue.latitude, lng: launchValue.longitude }
         : null;
     const searchStart =
-      initialSearchResult != null
-        ? { lat: initialSearchResult.lat, lng: initialSearchResult.lng }
+      launchSearch != null
+        ? { lat: launchSearch.lat, lng: launchSearch.lng }
         : null;
     const initial = resolveInitialView({
       reportPin: isValidCenter(reportPin) ? reportPin : null,
@@ -280,19 +300,23 @@ export function MapPickerSheet({
       gpsPreview: null,
     });
     const label =
-      initialSearchResult?.label.trim() || value.label.trim() || "Pinned location";
-    void resolvedPicker({
-      latitude: initial.center.lat,
-      longitude: initial.center.lng,
-      zoom: initial.zoom,
-      label,
-    }).then(
+      launchSearch?.label.trim() || launchValue.label.trim() || "Pinned location";
+    // Neutral-world start sends NO camera seed: the native side shows its
+    // display-only default with a null draft (Confirm disabled) instead of a
+    // fabricated pin at (0,0) — which would pass validation and look real.
+    // The seed zoom is omitted too so a world-zoom value cannot override the
+    // native neutral framing.
+    const seed =
+      initial.source === "neutral-world"
+        ? {}
+        : { latitude: initial.center.lat, longitude: initial.center.lng, zoom: initial.zoom };
+    void resolvedPicker({ ...seed, label }).then(
       (result) => {
         if (stale) return;
         if (!result.cancelled) {
           // Approximate-by-default, identical to every other entry path;
           // exact opt-in lives in LocationPicker's toggle.
-          onConfirm(
+          confirm(
             commitCenterAsLocation(
               label,
               { lat: result.latitude, lng: result.longitude },
@@ -301,16 +325,16 @@ export function MapPickerSheet({
           );
           announce("Approximate location selected (~100 m).");
         }
-        onClose();
+        close();
       },
       () => {
-        if (!stale) onClose();
+        if (!stale) close();
       },
     );
     return () => {
       stale = true;
     };
-  }, [open, resolvedPicker, value.latitude, value.longitude, value.label, initialSearchResult, onConfirm, onClose]);
+  }, [open, resolvedPicker]);
 
   // Fallback path: reset the sheet draft whenever it opens.
   useEffect(() => {

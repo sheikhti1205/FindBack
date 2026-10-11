@@ -66,11 +66,21 @@ class FindbackMapActivity : AppCompatActivity() {
         private const val LOCATION_PERMISSION_CODE = 0xFB4A
         private const val LOCATION_TIMEOUT_MS = 15_000L
         private const val SEARCH_CAMERA_ANIMATION_MS = 1200
+
+        /**
+         * Display-only neutral camera (central Bangladesh): used when no valid
+         * initial coordinate was supplied. The draft stays null, so this can
+         * never become a committed pin — Confirm waits for a user gesture.
+         */
+        private val NEUTRAL_CENTER = LatLng(23.70, 90.35)
+        private const val NEUTRAL_ZOOM = 6.0
     }
 
     private lateinit var mapView: MapView
     private var map: MapLibreMap? = null
     private var idleListener: MapLibreMap.OnCameraIdleListener? = null
+    private var moveStartedListener: MapLibreMap.OnCameraMoveStartedListener? = null
+    private var destroyed = false
     private var styleLoaded = false
     private var styleFailed = false
 
@@ -122,16 +132,21 @@ class FindbackMapActivity : AppCompatActivity() {
 
         mapView.onCreate(savedInstanceState)
         mapView.getMapAsync { mapLibreMap ->
+            // Backed out before the map loaded: touch nothing — the Activity
+            // is finishing and the MapView is (being) destroyed.
+            if (destroyed || isFinishing || isDestroyed) return@getMapAsync
             map = mapLibreMap
             val ui = mapLibreMap.uiSettings
             ui.isAttributionEnabled = true
             ui.isLogoEnabled = true
             mapLibreMap.moveCamera(CameraUpdateFactory.newLatLngZoom(initialCamera(), draftZoom))
-            mapLibreMap.addOnCameraMoveStartedListener { reason ->
+            val moveStarted = MapLibreMap.OnCameraMoveStartedListener { reason ->
                 if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                     lastGestureMove = true
                 }
             }
+            moveStartedListener = moveStarted
+            mapLibreMap.addOnCameraMoveStartedListener(moveStarted)
             val idle = MapLibreMap.OnCameraIdleListener {
                 val camera = mapLibreMap.cameraPosition
                 val target = camera.target ?: return@OnCameraIdleListener
@@ -199,10 +214,13 @@ class FindbackMapActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         locationTimeout.removeCallbacksAndMessages(null)
         locationCancel?.cancel()
         idleListener?.let { map?.removeOnCameraIdleListener(it) }
         idleListener = null
+        moveStartedListener?.let { map?.removeOnCameraMoveStartedListener(it) }
+        moveStartedListener = null
         mapView.onDestroy()
         super.onDestroy()
     }
@@ -254,10 +272,16 @@ class FindbackMapActivity : AppCompatActivity() {
         if (MapValidation.isValidCenter(lat, lng)) {
             draftLat = lat
             draftLng = lng
+            draftZoom = MapValidation.clampZoom(
+                intent.getDoubleExtra(EXTRA_ZOOM, MapValidation.DEFAULT_ZOOM).takeIf { it.isFinite() },
+            )
+        } else {
+            // Neutral display-only camera (central Bangladesh). The draft
+            // stays null — Confirm enables only after a user gesture — and
+            // the seed zoom is ignored so a world-zoom seed cannot override
+            // the neutral framing.
+            draftZoom = NEUTRAL_ZOOM
         }
-        draftZoom = MapValidation.clampZoom(
-            intent.getDoubleExtra(EXTRA_ZOOM, MapValidation.DEFAULT_ZOOM).takeIf { it.isFinite() },
-        )
     }
 
     private fun initialTitle(): String {
@@ -271,7 +295,7 @@ class FindbackMapActivity : AppCompatActivity() {
     private fun initialCamera(): LatLng {
         val lat = draftLat
         val lng = draftLng
-        return if (lat != null && lng != null) LatLng(lat, lng) else LatLng(0.0, 0.0)
+        return if (lat != null && lng != null) LatLng(lat, lng) else NEUTRAL_CENTER
     }
 
     private fun updateReadout() {
@@ -449,7 +473,12 @@ class FindbackMapActivity : AppCompatActivity() {
         } catch (e: Exception) {
             "unknown"
         }
-        return "FindBack/$version (Android)"
+        val contact = try {
+            BuildConfig.MAP_SEARCH_CONTACT
+        } catch (e: Exception) {
+            "unknown"
+        }
+        return NominatimClient.userAgent(version, contact)
     }
 
     // endregion

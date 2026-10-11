@@ -79,6 +79,14 @@ def findbackMapStyleUrl() {
     return url.trim()
 }
 
+// Public contact for the Nominatim User-Agent (usage policy requires an
+// identifying contact). Canonical local env name FINDBACK_MAP_CONTACT;
+// default is the app's public site. NON-SECRET — safe to ship and log.
+def findbackMapContact() {
+    def contact = System.getenv("FINDBACK_MAP_CONTACT") ?: "https://findbackapp.social"
+    return contact.trim()
+}
+
 android {
     namespace = "com.findback.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -122,6 +130,8 @@ android {
         // non-secret config; validated natively before use (HTTPS, non-empty,
         // non-placeholder) with the OpenFreeMap default as fallback.
         buildConfigField "String", "MAP_STYLE_URL", "\"${findbackMapStyleUrl()}\""
+        // Public Nominatim contact (see findbackMapContact above). Non-secret.
+        buildConfigField "String", "MAP_SEARCH_CONTACT", "\"${findbackMapContact()}\""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

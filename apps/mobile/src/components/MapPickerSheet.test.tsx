@@ -128,6 +128,51 @@ describe("MapPickerSheet (native picker path)", () => {
     expect(committed.label).toBe("Pinned location");
   });
 
+  it("omits coordinates on a neutral start so no pin is fabricated", async () => {
+    const calls: MapPickerInput[] = [];
+    const nativePicker = vi.fn(async (options: MapPickerInput): Promise<MapPickerResult> => {
+      calls.push(options);
+      return { cancelled: true };
+    });
+    const onClose = vi.fn();
+    render(
+      <MapPickerSheet
+        open
+        onClose={onClose}
+        value={EMPTY_VALUE}
+        onConfirm={vi.fn()}
+        nativePicker={nativePicker}
+      />,
+    );
+    await waitFor(() => expect(nativePicker).toHaveBeenCalledTimes(1));
+    // Neutral world view: display-only camera, null native draft — (0,0)
+    // must never cross the bridge as if it were a pin.
+    expect(calls[0]?.latitude).toBeUndefined();
+    expect(calls[0]?.longitude).toBeUndefined();
+    expect(calls[0]?.zoom).toBeUndefined();
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("launches the native picker once even when the value changes mid-flight", async () => {
+    const gate = deferred<MapPickerResult>();
+    const nativePicker = vi.fn(() => gate.promise);
+    const onConfirm = vi.fn();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <MapPickerSheet open onClose={onClose} value={EMPTY_VALUE} onConfirm={onConfirm} nativePicker={nativePicker} />,
+    );
+    rerender(
+      <MapPickerSheet open onClose={onClose} value={PINNED_VALUE} onConfirm={onConfirm} nativePicker={nativePicker} />,
+    );
+    expect(nativePicker).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      gate.resolve({ cancelled: false, latitude: 22.35, longitude: 91.78, zoom: 15 });
+      await gate.promise;
+    });
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("starts the native camera at the existing report pin first", async () => {
     const calls: MapPickerInput[] = [];
     const nativePicker = vi.fn(async (options: MapPickerInput): Promise<MapPickerResult> => {

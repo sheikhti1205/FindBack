@@ -52,6 +52,16 @@ object NominatimClient {
     const val TIMEOUT_MS = 12_000
     const val MAX_BODY_BYTES = 256 * 1024
 
+    /**
+     * Policy-compliant User-Agent: app identity + platform + public contact.
+     * The contact is owner-configured build config (never a secret).
+     */
+    fun userAgent(appVersion: String, contact: String): String {
+        val version = appVersion.trim().ifEmpty { "unknown" }
+        val contactValue = contact.trim().ifEmpty { "unknown" }
+        return "FindBack/$version (Android; contact: $contactValue)"
+    }
+
     fun buildSearchUrl(endpoint: String, query: String, limit: Int = MAX_RESULTS): String {
         val base = endpoint.trim().trimEnd('/')
         // Match the web path's encodeURIComponent form (%20, not form-style +).

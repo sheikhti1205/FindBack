@@ -21,6 +21,7 @@ export type MapFailureCode =
   | "busy"
   | "invalid-coordinates"
   | "invalid-result"
+  | "snapshot-failed"
   | "failed";
 
 const CODE_FOR_MESSAGE: Record<MapFailureCode, string> = {
@@ -28,6 +29,7 @@ const CODE_FOR_MESSAGE: Record<MapFailureCode, string> = {
   busy: "MAP_PICKER_BUSY",
   "invalid-coordinates": "MAP_INVALID_COORDINATES",
   "invalid-result": "MAP_INVALID_RESULT",
+  "snapshot-failed": "MAP_SNAPSHOT_FAILED",
   failed: "MAP_FAILED",
 };
 
@@ -43,7 +45,9 @@ export class FindbackMapError extends Error {
             ? "A map needs valid coordinates."
             : kind === "invalid-result"
               ? "The map returned an invalid result."
-              : "The map failed.",
+              : kind === "snapshot-failed"
+                ? "The map preview failed."
+                : "The map failed.",
     );
     this.name = "FindbackMapError";
     this.code = CODE_FOR_MESSAGE[kind];
@@ -55,6 +59,7 @@ function fromNativeCode(code: unknown): MapFailureCode {
   if (typeof code !== "string") return "failed";
   if (code === "MAP_PICKER_BUSY") return "busy";
   if (code === "MAP_INVALID_COORDINATES") return "invalid-coordinates";
+  if (code === "MAP_SNAPSHOT_FAILED") return "snapshot-failed";
   return "failed";
 }
 

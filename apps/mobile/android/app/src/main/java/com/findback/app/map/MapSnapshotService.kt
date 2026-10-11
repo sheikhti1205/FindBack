@@ -121,9 +121,12 @@ object MapSnapshotService {
             snapshotter?.cancel()
             settle(Result.failure(SnapshotFailedException("The map preview timed out.")))
         }
-        main.postDelayed(timeout, SNAPSHOT_TIMEOUT_MS)
 
         fun start() {
+            // The stall budget starts WITH the snapshotter, never before it:
+            // both post to the same main queue in order, so a congested main
+            // thread cannot burn the timeout before start() runs.
+            main.postDelayed(timeout, SNAPSHOT_TIMEOUT_MS)
             val options = MapSnapshotter.Options(width, height)
                 .withStyle(effectiveStyle)
                 .withCameraPosition(
