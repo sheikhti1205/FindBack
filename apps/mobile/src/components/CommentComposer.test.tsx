@@ -151,7 +151,7 @@ describe("CommentComposer attachments", () => {
     attachMock.upload.mockImplementation(
       () =>
         new Promise((resolve) => {
-          resolveUpload = () => resolve({ remoteUrl: "https://cdn/p.jpg", objectKey: "u-9/x.jpg" });
+          resolveUpload = () => resolve({ remoteUrl: "https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg", objectKey: "u-9/x.jpg" });
         }),
     );
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -169,7 +169,7 @@ describe("CommentComposer attachments", () => {
     fireEvent.click(screen.getByTestId("comment-send"));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const body = onSubmit.mock.calls[0]![0] as string;
-    expect(body).toContain("![photo](https://cdn/p.jpg)");
+    expect(body).toContain("![photo](https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg)");
     expect(body).not.toContain("data:");
     expect(body).not.toContain("blob:");
   });
