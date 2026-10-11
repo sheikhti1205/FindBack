@@ -53,6 +53,7 @@ import {
 import {
   appendBodyMedia,
   bodyHasInlineData,
+  commentMediaProvenance,
   parseCommentBody,
 } from "./commentBodyMedia";
 
@@ -175,24 +176,26 @@ describe("uploadCommentAttachment", () => {
 describe("commentBodyMedia", () => {
   it("appends media as https lines (never base64 in text)", () => {
     const body = appendBodyMedia("Nice find!", [
-      { kind: "photo", remoteUrl: "https://cdn/a.jpg" },
+      { kind: "photo", remoteUrl: TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/a.jpg") },
       { kind: "gif", remoteUrl: "https://media.klipy.com/h.gif" },
-      { kind: "video", remoteUrl: "https://cdn/b.mp4" },
+      { kind: "video", remoteUrl: TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/b.mp4") },
     ]);
     expect(body).toContain("Nice find!");
-    expect(body).toContain("![photo](https://cdn/a.jpg)");
+    expect(body).toContain(`![photo](${TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/a.jpg")})`);
     expect(body).toContain("![gif](https://media.klipy.com/h.gif)");
-    expect(body).toContain("[video](https://cdn/b.mp4)");
+    expect(body).toContain(`[video](${TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/b.mp4")})`);
     expect(bodyHasInlineData(body)).toBe(false);
   });
 
   it("parses media back out, leaving markdown text intact", () => {
-    const body = "Hello **there**\n\n![photo](https://cdn/a.jpg)\n\n[video](https://cdn/b.mp4)";
+    const photoUrl = TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/a.jpg");
+    const videoUrl = TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/b.mp4");
+    const body = `Hello **there**\n\n![photo](${photoUrl})\n\n[video](${videoUrl})`;
     const parsed = parseCommentBody(body);
     expect(parsed.text).toBe("Hello **there**");
     expect(parsed.media).toEqual([
-      { kind: "photo", url: "https://cdn/a.jpg", alt: "Attached photo" },
-      { kind: "video", url: "https://cdn/b.mp4", alt: "Attached video" },
+      { kind: "photo", url: photoUrl, alt: "Attached photo" },
+      { kind: "video", url: videoUrl, alt: "Attached video" },
     ]);
   });
 
@@ -205,5 +208,91 @@ describe("commentBodyMedia", () => {
   it("detects inline base64 payloads", () => {
     expect(bodyHasInlineData("![x](data:image/png;base64,AAA)")).toBe(true);
     expect(bodyHasInlineData("plain text")).toBe(false);
+  });
+});
+
+describe("commentMediaProvenance (FBX-014)", () => {
+  it("accepts own-storage and klipy https URLs", () => {
+    expect(commentMediaProvenance(TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/a.jpg"))).toBe(
+      "storage",
+    );
+    expect(commentMediaProvenance(TRUSTED_STORAGE("findback-images", "u-1/legacy.png"))).toBe(
+      "storage",
+    );
+    expect(commentMediaProvenance("https://media.klipy.com/gifs/happy.gif")).toBe("klipy");
+    expect(commentMediaProvenance("https://klipy.com/gifs/happy.gif")).toBe("klipy");
+  });
+
+  it("rejects non-https, foreign hosts, foreign buckets and ownerless paths", () => {
+    const own = TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/a.jpg");
+    expect(commentMediaProvenance(own.replace("https://", "http://"))).toBeNull();
+    expect(commentMediaProvenance("https://evil.example/x.jpg")).toBeNull();
+    expect(commentMediaProvenance("data:image/png;base64,AAA")).toBeNull();
+    expect(commentMediaProvenance("not a url")).toBeNull();
+    // Foreign bucket: same trusted host, but not a media bucket we serve.
+    expect(
+      commentMediaProvenance(
+        TRUSTED_STORAGE("some-other-bucket", "u-1/a.jpg"),
+      ),
+    ).toBeNull();
+    // Missing owner segment (`<bucket>/<file>` has no owner directory).
+    expect(
+      commentMediaProvenance(
+        `https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/${COMMENT_MEDIA_BUCKET}/a.jpg`,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects the substring-attack shape (marker inside a foreign URL)", () => {
+    expect(
+      commentMediaProvenance(
+        "https://evil.example/x/storage/v1/object/public/findback-images/u-1/f.png",
+      ),
+    ).toBeNull();
+    expect(
+      commentMediaProvenance(
+        "https://evil.example/?next=/storage/v1/object/public/findback-images/u-1/f.png",
+      ),
+    ).toBeNull();
+    expect(
+      commentMediaProvenance(
+        "https://nfjhpigbsyyoaaktfaev.supabase.co.evil.example/storage/v1/object/public/findback-images/u-1/f.png",
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("provenance enforcement (FBX-014)", () => {
+  it("keeps an untrusted image-markdown line as inert text, never gallery media", () => {
+    const parsed = parseCommentBody("Look at this\n\n![x](https://evil.example/p.png)");
+    expect(parsed.media).toEqual([]);
+    expect(parsed.text).toContain("![x](https://evil.example/p.png)");
+  });
+
+  it("keeps an untrusted bare video URL as inert text", () => {
+    const parsed = parseCommentBody("https://evil.example/x.mp4");
+    expect(parsed.media).toEqual([]);
+    expect(parsed.text).toBe("https://evil.example/x.mp4");
+  });
+
+  it("lifts only provenance-checked media lines (klipy and own storage)", () => {
+    const klipy = "https://media.klipy.com/gifs/happy.gif";
+    const storagePhoto = TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/pic.png");
+    const storageVideo = TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/clip.mp4");
+    const parsed = parseCommentBody(`![a](${klipy})\n![b](${storagePhoto})\n[video](${storageVideo})`);
+    expect(parsed.media.map((m) => m.url)).toEqual([klipy, storagePhoto, storageVideo]);
+  });
+
+  it("refuses to append untrusted URLs (write-side guard)", () => {
+    const body = appendBodyMedia("hi", [
+      { kind: "photo", remoteUrl: "https://evil.example/p.png" },
+      {
+        kind: "video",
+        remoteUrl:
+          "http://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-1/x.mp4",
+      },
+    ]);
+    expect(body).toBe("hi");
+    expect(bodyHasInlineData(body)).toBe(false);
   });
 });

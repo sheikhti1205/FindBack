@@ -48,3 +48,81 @@ describe("comment media bucket migration (FBX-013)", () => {
     expect(report).not.toMatch(/video\//);
   });
 });
+
+const COMMENT_ATTACHMENTS_SQL = migration("20261011020000_comment_attachments_relation.sql");
+
+/**
+ * FBX-014 lifecycle: the typed relation records who attached what to which
+ * comment, so provenance is enforceable server-side instead of being
+ * inferred from markdown text at render time.
+ */
+describe("comment attachments relation migration (FBX-014)", () => {
+  it("1/8 creates the relation keyed by a text id with a cascading comment FK", () => {
+    const text = COMMENT_ATTACHMENTS_SQL;
+    expect(text).toMatch(/create table if not exists public\.comment_attachments/i);
+    expect(text).toMatch(/id\s+text\s+primary key/i);
+    expect(text).toMatch(/comment_id\s+text\s+not null\s+references public\.comments\(id\) on delete cascade/i);
+  });
+
+  it("2/8 binds every row to its owner with a cascading user FK", () => {
+    const text = COMMENT_ATTACHMENTS_SQL;
+    expect(text).toMatch(/user_id\s+text\s+not null\s+references public\.users\(id\) on delete cascade/i);
+  });
+
+  it("3/8 restricts kind to the client attachment vocabulary", () => {
+    expect(COMMENT_ATTACHMENTS_SQL).toMatch(
+      /constraint comment_attachments_kind_check\s+check \(kind in \('photo', 'video', 'gif'\)\)/i,
+    );
+  });
+
+  it("4/8 keeps display_order bounded and unique per comment", () => {
+    const text = COMMENT_ATTACHMENTS_SQL;
+    expect(text).toMatch(/display_order\s+integer\s+not null/i);
+    expect(text).toMatch(/unique \(comment_id, display_order\)/i);
+    expect(text).toMatch(/check \(display_order between 1 and 4\)/i);
+  });
+
+  it("5/8 requires exactly one source: a storage path XOR a klipy reference", () => {
+    const text = COMMENT_ATTACHMENTS_SQL;
+    expect(text).toMatch(/storage_path\s+text/i);
+    expect(text).toMatch(/klipy_slug\s+text/i);
+    // Exactly-one enforcement: both-null and both-set must be impossible.
+    expect(text).toMatch(/constraint comment_attachments_source_xor\s+check/i);
+    expect(text).toMatch(/=\s*1\)/);
+    expect(text).not.toMatch(/storage_path\s+text\s+not null/i);
+    expect(text).not.toMatch(/klipy_slug\s+text\s+not null/i);
+  });
+
+  it("6/8 enables RLS with owner-only policies for all four commands", () => {
+    const text = COMMENT_ATTACHMENTS_SQL;
+    expect(text).toMatch(/alter table public\.comment_attachments enable row level security/i);
+    for (const command of ["select", "insert", "update", "delete"]) {
+      expect(text).toMatch(new RegExp(`comment_attachments_${command}_own`, "i"));
+    }
+    const ownerOnly = /user_id = \(select auth\.uid\(\)\)::text/g;
+    expect((text.match(ownerOnly) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("7/8 revokes the default ACL and narrows authenticated to row DML", () => {
+    const text = COMMENT_ATTACHMENTS_SQL;
+    expect(text).toMatch(
+      /revoke all on public\.comment_attachments from anon, authenticated/i,
+    );
+    // Narrow re-grant: row DML only — never truncate/trigger/references.
+    expect(text).toMatch(
+      /grant select, insert, update, delete on public\.comment_attachments to authenticated/i,
+    );
+    expect(text).not.toMatch(/grant\s+all\s+on\s+public\.comment_attachments/i);
+  });
+
+  it("8/8 lets only the comment's own author attach (insert binds caller to comment)", () => {
+    const text = COMMENT_ATTACHMENTS_SQL;
+    const insert = /create policy comment_attachments_insert_own[\s\S]*?with check \(([\s\S]*?)\);/i.exec(
+      text,
+    );
+    expect(insert?.[1] ?? "").toMatch(/user_id = \(select auth\.uid\(\)\)::text/);
+    expect(insert?.[1] ?? "").toMatch(
+      /exists \(select 1 from public\.comments c where c\.id = comment_attachments\.comment_id and c\.user_id = \(select auth\.uid\(\)\)::text\)/i,
+    );
+  });
+});
