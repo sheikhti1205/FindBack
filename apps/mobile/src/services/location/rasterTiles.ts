@@ -1,12 +1,13 @@
 /**
- * Dependency-free raster tile fallback for the native Google maps.
+ * Dependency-free keyless map layer for the web/dev fallback (and the
+ * in-sheet map when the native bridge is unavailable).
  *
- * The native Google map stays the primary renderer. When it cannot
- * start (no API key, construct failure, offline) the picker and the
- * read-only location map fall back to a plain-<img> 3x3 OSM tile grid
- * computed from center/zoom — no new dependencies, no WebGL, no canvas.
- * The draft/confirm path never depends on either renderer: coordinates live
- * outside the tile layer, so Confirm stays usable offline in every phase.
+ * On Android the native MapLibre picker owns the interaction; everywhere else
+ * the picker and the read-only location map render a plain-<img> 3x3 OSM tile
+ * grid computed from center/zoom — no API key, no new dependencies, no WebGL,
+ * no canvas. The draft/confirm path never depends on either renderer:
+ * coordinates live outside the tile layer, so Confirm stays usable offline in
+ * every phase.
  */
 
 /** Pixels per raster tile edge (OSM standard). */

@@ -1,17 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { attributionForSource, searchPlacesUnified } from "./placesSearch";
-import { PlacesSearchError } from "../../native/googlePlaces";
-import type { PlaceResult } from "./nominatimSearch";
-
-const googlePlace: PlaceResult = {
-  displayName: "Mirpur, Dhaka",
-  latitude: 23.8103,
-  longitude: 90.4125,
-};
+import { NominatimRateLimitError, NominatimThrottler } from "./nominatimSearch";
 
 const nominatimPayload = [
   { display_name: "Mirpur, Dhaka", lat: "23.8103", lon: "90.4125" },
+  { display_name: "  ", lat: "1", lon: "2" },
+  { display_name: "No coords", lat: "NaN", lon: "2" },
 ];
 
 function nominatimFetch(): typeof fetch {
@@ -21,72 +16,44 @@ function nominatimFetch(): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-describe("placesSearch (unified)", () => {
-  it("prefers native Places results when the bridge answers", async () => {
-    const nativeSearch = vi.fn().mockResolvedValue([googlePlace]);
+describe("placesSearch (unified, Nominatim-only)", () => {
+  it("searches Nominatim directly with no native bridge involved", async () => {
     const fetcher = nominatimFetch();
-    const result = await searchPlacesUnified("mirpur", { nativeSearch, fetcher });
-    expect(result).toEqual({ places: [googlePlace], source: "places" });
-    expect(nativeSearch).toHaveBeenCalledWith("mirpur");
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it("falls back to Nominatim when native is unavailable (web/keyless)", async () => {
-    const nativeSearch = vi.fn().mockRejectedValue(new PlacesSearchError("unavailable"));
-    const fetcher = nominatimFetch();
-    const result = await searchPlacesUnified("mirpur", { nativeSearch, fetcher });
-    expect(result.source).toBe("nominatim");
-    expect(result.places).toEqual([googlePlace]);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
-
-  it("falls back to Nominatim when native is misconfigured or fails", async () => {
-    for (const kind of ["misconfigured", "failed"] as const) {
-      const nativeSearch = vi.fn().mockRejectedValue(new PlacesSearchError(kind));
-      const result = await searchPlacesUnified("mirpur", {
-        nativeSearch,
-        fetcher: nominatimFetch(),
-      });
-      expect(result.source).toBe("nominatim");
-      expect(result.places).toEqual([googlePlace]);
-    }
-  });
-
-  it("sanitizes native results and caps them at maxResults", async () => {
-    const nativeSearch = vi.fn().mockResolvedValue([
-      googlePlace,
-      { displayName: "  ", latitude: 1, longitude: 2 },
-      { displayName: "No coords", latitude: Number.NaN, longitude: 2 },
-      { displayName: "Second", latitude: 1, longitude: 2 },
-    ]);
-    const result = await searchPlacesUnified("mirpur", {
-      nativeSearch,
-      fetcher: nominatimFetch(),
-      maxResults: 1,
+    const result = await searchPlacesUnified("mirpur", { fetcher });
+    expect(result).toEqual({
+      places: [{ displayName: "Mirpur, Dhaka", latitude: 23.8103, longitude: 90.4125 }],
+      source: "nominatim",
     });
-    expect(result).toEqual({ places: [googlePlace], source: "places" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const calls = (fetcher as unknown as { mock: { calls: Array<[string]> } }).mock.calls;
+    expect(calls[0]?.[0] ?? "").toContain("nominatim.openstreetmap.org");
   });
 
-  it("lets unexpected (non-bridge) errors propagate instead of masking them", async () => {
-    const nativeSearch = vi.fn().mockRejectedValue(new TypeError("boom"));
-    await expect(
-      searchPlacesUnified("mirpur", { nativeSearch, fetcher: nominatimFetch() }),
-    ).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it("returns empty without touching any provider for blank queries", async () => {
-    const nativeSearch = vi.fn();
+  it("caps results at maxResults", async () => {
     const fetcher = nominatimFetch();
-    expect(await searchPlacesUnified("   ", { nativeSearch, fetcher })).toEqual({
+    const result = await searchPlacesUnified("mirpur", { fetcher, maxResults: 1 });
+    expect(result.places).toHaveLength(1);
+  });
+
+  it("surfaces the Nominatim rate limit so the UI can say 'wait a moment'", async () => {
+    const throttler = new NominatimThrottler();
+    const fetcher = nominatimFetch();
+    await searchPlacesUnified("mirpur", { fetcher, throttler, now: 1_000 });
+    await expect(
+      searchPlacesUnified("mirpur", { fetcher, throttler, now: 1_000 }),
+    ).rejects.toBeInstanceOf(NominatimRateLimitError);
+  });
+
+  it("returns empty without touching the network for blank queries", async () => {
+    const fetcher = nominatimFetch();
+    expect(await searchPlacesUnified("   ", { fetcher })).toEqual({
       places: [],
       source: "nominatim",
     });
-    expect(nativeSearch).not.toHaveBeenCalled();
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("labels attributions per answering source", () => {
-    expect(attributionForSource("places")).toMatch(/google/i);
-    expect(attributionForSource("nominatim")).toMatch(/openstreetmap/i);
+  it("labels attribution for the answering source", () => {
+    expect(attributionForSource()).toMatch(/openstreetmap/i);
   });
 });
