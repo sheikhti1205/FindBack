@@ -126,6 +126,8 @@ jobs:
         run: |
           npm audit --audit-level=high
           npm audit --omit=dev --audit-level=high
+      - name: Keyless map provider gate (no Google Maps/Places, MapLibre pin intact)
+        run: node scripts/check-map-provider.mjs
       - name: API tests
         run: npm test -w @findback/api
       - name: Mobile tests
@@ -133,7 +135,7 @@ jobs:
       - name: Release-infra script tests (signing, ABI, manifest, publish type)
         # Same suites CI gates; enforced here too so a tag build cannot sign
         # with a verifier that has drifted from the ABI/signing contract.
-        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs
+        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-map-provider.test.mjs
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
       - name: Restore Firebase Android client configuration
