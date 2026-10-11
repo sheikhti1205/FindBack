@@ -1,4 +1,4 @@
-import { photoToFile, type PickedPhoto } from "../photo";
+import { photoToFile, type PhotoPipelineOpts, type PickedPhoto } from "../photo";
 import { computeSha256Hex, createHashRegistry, type PhotoHashRegistry } from "./dedupe";
 
 /**
@@ -47,6 +47,13 @@ export interface ReportBatchProgress {
 export interface ProcessReportBatchOptions {
   signal?: AbortSignal;
   onProgress?: (progress: ReportBatchProgress) => void;
+  /**
+   * FBX-001: how one picked item becomes an uploadable File. Defaults to the
+   * HTML/File `photoToFile` bridge (web). The Android report lane injects the
+   * canonical native processor instead, so a native failure is surfaced as an
+   * unreadable item and NEVER falls back to fetching a File/`webPath`.
+   */
+  convert?: (photo: PickedPhoto, opts?: PhotoPipelineOpts) => Promise<File>;
 }
 
 /**
@@ -96,7 +103,8 @@ export async function processReportBatch(
 
     let file: File;
     try {
-      file = await photoToFile(photo, undefined, { signal: options.signal });
+      const convert = options.convert ?? ((p: PickedPhoto, o?: PhotoPipelineOpts) => photoToFile(p, undefined, o));
+      file = await convert(photo, { signal: options.signal });
     } catch (err) {
       if (options.signal?.aborted) {
         cancelled = true;

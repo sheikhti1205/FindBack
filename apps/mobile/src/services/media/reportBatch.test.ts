@@ -331,6 +331,39 @@ describe("reportBatch", () => {
     });
   });
 
+  describe("injected convert seam (FBX-001)", () => {
+    it("uses the provided converter and never falls back to fetching the photo webPath", async () => {
+      const bytes = new Uint8Array([9, 8, 7]);
+      const { photo, file } = createMockPhoto("p1", bytes);
+      // A fetch would resolve for this webPath; the seam must make it unused.
+      setupFetchMock(new Map<string, File>([[photo.webPath, file]]));
+      const fetchSpy = global.fetch as ReturnType<typeof vi.fn>;
+      const convert = vi.fn(async (_photo: { nativeUri: string }) => new File([new Uint8Array([1, 1, 1])], "native.jpg", { type: "image/jpeg" }));
+
+      const result = await processReportBatch([photo], 0, undefined, undefined, 0, { convert });
+      expect(convert).toHaveBeenCalledTimes(1);
+      expect(convert.mock.calls[0]?.[0]).toBe(photo);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result.accepted.length).toBe(1);
+      expect(result.unreadable).toHaveLength(0);
+    });
+    it("a converter rejection becomes an unreadable item with its position, not a thrown error", async () => {
+      const { photo } = createMockPhoto("p1", new Uint8Array([1, 2, 3]));
+      const convert = vi.fn(async () => { throw new Error("Couldn't safely prepare this photo."); });
+      const result = await processReportBatch([photo], 0, undefined, undefined, 0, { convert });
+      expect(result.accepted).toHaveLength(0);
+      expect(result.unreadable).toHaveLength(1);
+      expect(result.unreadable[0]?.index).toBe(0);
+      expect(result.unreadable[0]?.reason).toBe("Could not read the selected photo");
+    });
+    it("default converter still uses photoToFile when no seam is supplied", async () => {
+      const { photo, file } = createMockPhoto("p1", new Uint8Array([3, 2, 1]));
+      setupFetchMock(new Map<string, File>([[photo.webPath, file]]));
+      const result = await processReportBatch([photo], 0);
+      expect(result.accepted.length).toBe(1);
+    });
+  });
+
   describe("digest not logged", () => {
     it("hash is not exposed in notice or result structure", async () => {
       const bytes = new Uint8Array([1, 2, 3]);

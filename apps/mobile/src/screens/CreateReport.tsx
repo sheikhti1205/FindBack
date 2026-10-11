@@ -18,7 +18,8 @@ import { MAX_REPORT_PHOTOS, publishReport, publishReportWithPhotos } from "../se
 import { clearDraft, draftGeneration, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
 import type { ReportDraft, ReportPhotoRef } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
-import { isNativeCameraAvailable, takePhoto, chooseReportPhotos, normalizeForUpload, photoToFile, type PickedPhoto } from "../services/photo";
+import { isNativeCameraAvailable, normalizeForUpload, type PickedPhoto } from "../services/photo";
+import { chooseNativeImage, chooseNativeImages, importNativeImageUri, importedImageToFile } from "../services/media/nativeMedia";
 import { ReportDatePicker } from "../components/ReportDatePicker";
 import { AnimatePresence, motion } from "framer-motion";
 import { ReportMediaPicker } from "../components/ReportMediaPicker";
@@ -88,6 +89,18 @@ const uploadBarTransition = {
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif", "image/avif", "image/bmp", "image/jpg"];
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+/**
+ * FBX-001: one native selection item. Preparation is deferred to `resolve` so
+ * the batch can convert items one at a time (order, per-item failure, progress,
+ * cancel) through the canonical native processor — never through a File/HTML
+ * bridge fallback. A camera capture resolves its already-bounded derivative; a
+ * gallery item imports its granted `content://` URI.
+ */
+interface NativePick {
+  picked: PickedPhoto;
+  resolve: () => Promise<File>;
+}
+
 /** Client-side validation mirrors server (W6 #17). */
 const TITLE_MIN = 3;
 const TITLE_MAX = 120;
@@ -131,8 +144,8 @@ function canCreateObjectUrl(): boolean {
 /**
  * Preview URL for a report photo. ALWAYS the validated File's object URL —
  * never the picker's original URI. Picker format metadata is unreliable (an
- * HEIC file mislabeled as JPG converts fine in photoToFile but would preview
- * as a broken original), while the File bytes are exactly what was validated,
+ * HEIC file mislabeled as JPG converts fine in the native processor but would
+ * preview as a broken original), while the File bytes are exactly what was validated,
  * hashed and will be published. The original native URI is retained
  * separately on `picked` for recovery and provenance. Callers revoke blob
  * URLs on remove/clear/unmount.
@@ -181,7 +194,7 @@ function refToPicked(ref: ReportPhotoRef | null): PickedPhoto | null {
   };
 }
 
-/** Draft photos with a native ref but no stashed File (revivable via photoToFile). */
+/** Draft photos with a native ref but no stashed File (revivable via importNativeImageUri). */
 function findPendingNativeRestores(
   draft: ReportDraft | null,
 ): { id: string; picked: PickedPhoto }[] {
@@ -318,7 +331,7 @@ function ReportForm() {
     kind: "native" | "web";
     /** A still-queued batch with coalescable=true is superseded by a newer one. */
     coalescable: boolean;
-    nativeItems?: PickedPhoto[];
+    nativeItems?: NativePick[];
     webItems?: File[];
   }
   const pickQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -383,6 +396,18 @@ function ReportForm() {
   // single generic message could only describe the last failure when several
   // files failed for different reasons.
   const [photoFileErrors, setPhotoFileErrors] = useState<string[]>([]);
+  // FBX-001: a native item that could not be prepared becomes a named, retryable
+  // row (not a silent drop, not a File-bridge fallback). The row keeps the item's
+  // own resolver so Retry re-runs the canonical native processor for just that
+  // item; Remove discards it. Reset on every new pick.
+  interface FailedPick {
+    key: string;
+    /** 1-based label within the selection that produced it. */
+    position: number;
+    reason: string;
+    pick: NativePick;
+  }
+  const [failedPicks, setFailedPicks] = useState<FailedPick[]>([]);
   const [fieldErrors, setFieldErrors] = useState<{
     title?: string;
     description?: string;
@@ -550,8 +575,8 @@ function ReportForm() {
   });
 
   // Durable mount restore: rehydrate persisted photo bytes,
-  // then revive native-capture refs (all 5 slots) via photoToFile, then merge
-  // everything into state in draft order. Never touches the editor instance.
+  // then revive native-ref slots (all 5) via the canonical native processor,
+  // then merge everything into state in draft order. Never touches the editor.
   // Unrecoverable slots are NAMED (failedPhotoIds) instead of a bare boolean:
   // publish stays blocked until the user retries or explicitly removes the
   // unavailable photos, so a report can never silently publish with missing
@@ -577,10 +602,23 @@ function ReportForm() {
       const pendings = findPendingNativeRestores(initialDraft);
       const converted = new Map<string, { file: File; picked: PickedPhoto }>();
       for (const pending of pendings) {
+        // FBX-030: revive through the canonical native processor only. A durable
+        // ref must be a granted content URI; anything else (a blob:, a deleted
+        // capture with no stashed File) is a named unavailable slot below. The
+        // old HTML/File revive (photoToFile) is gone: it could not read a
+        // content URI and silently produced a dead attachment.
+        const uri = pending.picked.nativeUri;
+        if (!uri.startsWith("content://")) {
+          missing.add(pending.id);
+          continue;
+        }
         try {
-          const file = await photoToFile(pending.picked);
+          const imported = await importNativeImageUri(uri);
           if (isCancelled() || generation !== draftGeneration(accountId)) return;
-          converted.set(pending.id, { file, picked: pending.picked });
+          converted.set(pending.id, {
+            file: importedImageToFile(imported),
+            picked: { ...pending.picked, motionPhoto: imported.motionStillUsed },
+          });
         } catch {
           // Native revive failed: named below; the draft text is unaffected.
           missing.add(pending.id);
@@ -971,10 +1009,11 @@ function ReportForm() {
    * still-queued selection is superseded by the latest); camera captures are
    * irreplaceable and always run.
    */
-  function onPickBatch(picked: PickedPhoto[], opts?: { coalescable?: boolean }): void {
+  function onPickBatch(picks: NativePick[], opts?: { coalescable?: boolean }): void {
     setError(null);
     setPhotoFileErrors([]);
-    enqueuePending({ kind: "native", coalescable: opts?.coalescable ?? false, nativeItems: picked });
+    setFailedPicks([]);
+    enqueuePending({ kind: "native", coalescable: opts?.coalescable ?? false, nativeItems: picks });
   }
 
   /**
@@ -985,9 +1024,10 @@ function ReportForm() {
    * R-068, R-071, R-081). Cancelling aborts the remaining items;
    * already-accepted tiles stay. Failures are labeled by selection position
    * ("Photo 2") — never by native URIs, which must not leak into the
-   * interface.
+   * interface. FBX-001: preparation goes through the injected native
+   * converter, so a failure becomes a retryable row instead of a File fallback.
    */
-  async function runNativeBatch(picked: PickedPhoto[]): Promise<void> {
+  async function runNativeBatch(picks: NativePick[]): Promise<void> {
     await restorePromiseRef.current;
     const remaining = MAX_REPORT_PHOTOS - photosRef.current.length;
     if (remaining <= 0) {
@@ -998,52 +1038,66 @@ function ReportForm() {
     }
     const controller = new AbortController();
     pickAbortRef.current = controller;
-    setPickProgress({ done: 0, total: picked.length });
+    setPickProgress({ done: 0, total: picks.length });
     let accepted = 0;
     let duplicates = 0;
     let unreadable = 0;
     let overflow = 0;
-    const failures: string[] = [];
+    // Policy rejections (a converted file that is still over the transport
+    // ceiling or not a supported type) stay plain messages: retrying the same
+    // bytes cannot help. Preparation failures become retryable rows instead.
+    const policyFailures: string[] = [];
+    const failedRows: FailedPick[] = [];
     let cancelled = false;
     try {
-      for (const [selectionIndex, photo] of picked.entries()) {
+      for (const [selectionIndex, item] of picks.entries()) {
         if (controller.signal.aborted) {
           cancelled = true;
           break;
         }
         const position = selectionIndex + 1;
         const result = await processReportBatch(
-          [photo],
+          [item.picked],
           photosRef.current.length,
           hashRegistryRef.current,
-          (item, file, hash) => {
+          (photo, file, hash) => {
             if (!ACCEPTED_IMAGE_TYPES.includes(file.type) || file.size > MAX_IMAGE_BYTES) {
               hashRegistryRef.current.delete(hash);
               unreadable += 1;
-              failures.push(`Photo ${position}: ${file.size > MAX_IMAGE_BYTES
+              policyFailures.push(`Photo ${position}: ${file.size > MAX_IMAGE_BYTES
                 ? "that photo is still too large after preparing. Try a smaller image or re-save it as JPEG."
                 : "that file isn't a supported photo. Choose a JPEG, PNG, WebP, GIF, HEIC, HEIF, or AVIF photo."}`);
               return;
             }
-            acceptPickedPhoto(file, item, hash);
+            acceptPickedPhoto(file, photo, hash);
             accepted += 1;
           },
           selectionIndex,
-          { signal: controller.signal },
+          {
+            signal: controller.signal,
+            // FBX-001: the canonical native processor (never photoToFile's fetch).
+            convert: () => item.resolve(),
+          },
         );
         duplicates += result.duplicates.length;
         unreadable += result.unreadable.length;
         overflow += result.overflow.length;
         for (const failed of result.unreadable) {
-          failures.push(`Photo ${failed.index + 1}: ${failed.reason}`);
+          failedRows.push({
+            key: item.picked.id,
+            position: failed.index + 1,
+            reason: failed.reason,
+            pick: item,
+          });
         }
-        setPickProgress({ done: selectionIndex + 1, total: picked.length });
+        setPickProgress({ done: selectionIndex + 1, total: picks.length });
         if (controller.signal.aborted || result.cancelled) {
           cancelled = true;
           break;
         }
       }
-      setPhotoFileErrors(failures);
+      setPhotoFileErrors(policyFailures);
+      setFailedPicks(failedRows);
       const notice = formatBatchNotice(accepted, duplicates, unreadable, overflow);
       setPhotoLimitNotice(
         cancelled
@@ -1051,7 +1105,7 @@ function ReportForm() {
           : notice || null,
       );
       diag("report.picker.batch", {
-        picked: picked.length,
+        picked: picks.length,
         accepted,
         duplicates,
         unreadable,
@@ -1062,6 +1116,19 @@ function ReportForm() {
       pickAbortRef.current = null;
       setPickProgress(null);
     }
+  }
+
+  /** FBX-001: re-run the canonical native processor for one failed item. */
+  function retryFailedPick(key: string): void {
+    const target = failedPicks.find((f) => f.key === key);
+    if (!target) return;
+    setFailedPicks((current) => current.filter((f) => f.key !== key));
+    onPickBatch([{ picked: target.pick.picked, resolve: target.pick.resolve }]);
+  }
+
+  /** FBX-001: discard one failed item without touching the recovered photos. */
+  function dismissFailedPick(key: string): void {
+    setFailedPicks((current) => current.filter((f) => f.key !== key));
   }
 
   /**
@@ -1155,20 +1222,52 @@ function ReportForm() {
       return;
     }
     try {
-      const picked = await chooseReportPhotos(remaining);
-      if (picked.length === 0) return;
-      onPickBatch(picked, { coalescable: true });
+      // FBX-001: the canonical permissionless picker returns ordered granted
+      // content URIs; each is imported one at a time by the batch so an
+      // unreadable item fails alone, keeps its position, and is never read
+      // through a File/HTML bridge fallback.
+      const uris = await chooseNativeImages({ source: "photos", limit: remaining });
+      if (!uris || uris.length === 0) return;
+      const picks: NativePick[] = uris.map((uri) => {
+        const picked: PickedPhoto = { nativeUri: uri, webPath: uri, format: "jpg", id: crypto.randomUUID() };
+        return {
+          picked,
+          resolve: async () => {
+            const imported = await importNativeImageUri(uri);
+            picked.motionPhoto = imported.motionStillUsed;
+            return importedImageToFile(imported);
+          },
+        };
+      });
+      onPickBatch(picks, { coalescable: true });
     } catch (err) {
       setError(friendlyError(err).message);
     }
   }
 
-  function onAddCamera(): void {
+  async function onAddCamera(): Promise<void> {
     if (!isNativeCameraAvailable()) {
       fileInputRef.current?.click();
       return;
     }
-    void capturePhoto(takePhoto);
+    try {
+      // FBX-001: the delegated camera capture returns its already-bounded
+      // derivative (the private capture file is deleted at cleanup), so there is
+      // no URI to revive later — the stashed File is the durable artifact.
+      const imported = await chooseNativeImage({ source: "camera", highQuality: false });
+      if (!imported) return; // cancelled
+      const file = importedImageToFile(imported);
+      const picked: PickedPhoto = {
+        nativeUri: "",
+        webPath: "",
+        format: file.type === "image/png" ? "png" : "jpg",
+        id: crypto.randomUUID(),
+        motionPhoto: imported.motionStillUsed,
+      };
+      onPickBatch([{ picked, resolve: async () => file }]);
+    } catch (err) {
+      setError(friendlyError(err).message);
+    }
   }
 
   function removePhoto(id: string): void {
@@ -1206,18 +1305,7 @@ function ReportForm() {
     setPreviewPhotoId(null);
     setPhotoLimitNotice(null);
     setPhotoFileErrors([]);
-  }
-
-  // Native capture/conversion rejects on real failures (cancellation returns
-  // null). Never leave the button dead with an unhandled rejection.
-  async function capturePhoto(pick: () => Promise<PickedPhoto | null>) {
-    try {
-      const picked = await pick();
-      if (!picked) return;
-      onPickBatch([picked]);
-    } catch (err) {
-      setError(friendlyError(err).message);
-    }
+    setFailedPicks([]);
   }
 
   /**
@@ -1822,6 +1910,29 @@ function ReportForm() {
               ))}
             </ul>
           </div>
+        )}
+        {failedPicks.length > 0 && (
+          <ul className="flex flex-col gap-2" role="list" aria-label="Photos that couldn't be added">
+            {failedPicks.map((failed) => (
+              <li
+                key={failed.key}
+                className="flex items-start justify-between gap-3 rounded-m3-sm border border-error/40 px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-error">Photo {failed.position} couldn&apos;t be added.</p>
+                  <p className="text-xs text-on-surface-variant">{failed.reason}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button type="button" variant="text" size="md" onClick={() => retryFailedPick(failed.key)}>
+                    Retry
+                  </Button>
+                  <Button type="button" variant="text" size="md" onClick={() => dismissFailedPick(failed.key)}>
+                    Remove
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
         {!isNativeCameraAvailable() && (
           <input

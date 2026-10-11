@@ -88,4 +88,18 @@ public class MediaRequestStateTest {
         assertNull(restored.restore(before));
         assertFalse(restored.isBusy());
     }
+    /** FBX-001: chooseImages returns URIs then finishes; each importUri is its own PROCESSING request. */
+    @Test public void multiPickReleasesThePickerSoEachUriImportCanRunSequentially() {
+        MediaRequestState state = new MediaRequestState(new MediaRequestState.Registry());
+        MediaRequestState.Request picking = state.begin("photos", MediaRequestState.Phase.PICKING);
+        assertTrue(state.owns(picking.id, MediaRequestState.Phase.PICKING));
+        assertTrue(state.finish(picking));
+        for (int i = 0; i < 5; i++) {
+            MediaRequestState.Request importing = state.begin("uri", MediaRequestState.Phase.PROCESSING);
+            assertEquals("uri", importing.source);
+            assertTrue(state.owns(importing.id, MediaRequestState.Phase.PROCESSING));
+            assertTrue(state.finish(importing));
+        }
+        assertFalse(state.isBusy());
+    }
 }

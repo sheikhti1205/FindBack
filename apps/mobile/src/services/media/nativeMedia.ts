@@ -19,6 +19,7 @@ export interface NativeMediaDerivative {
 }
 interface MediaPlugin {
   chooseImage(options: { source: NativeMediaSource; highQuality: boolean }): Promise<NativeMediaDerivative | { cancelled: true }>;
+  chooseImages(options: { source: "photos" | "files"; limit: number }): Promise<{ uris?: string[] } | { cancelled: true }>;
   importUri(options: { uri: string; highQuality: boolean }): Promise<NativeMediaDerivative>;
 }
 const plugin = registerPlugin<MediaPlugin>("FindbackMedia");
@@ -69,4 +70,30 @@ export async function importNativeImageUri(uri: string, options: NativeMediaOpti
   requireAndroid();
   if (!/^content:\/\/[^/]+\//.test(uri)) throw new MediaError("UNRECOGNIZED_FORMAT", "Please choose a photo through the device photo picker.");
   return importedDerivative(await plugin.importUri({ uri, highQuality: options.highQuality === true }), options);
+}
+
+/**
+ * FBX-001: multi-select Photos/Files through the canonical permissionless
+ * picker. Returns the ordered granted `content://` URIs (null on cancel).
+ * Preparation is deliberately NOT done here: each URI is imported with
+ * {@link importNativeImageUri}, so one unreadable item fails alone, keeps its
+ * selection position, and never falls back to reading a File/HTML bridge.
+ */
+export async function chooseNativeImages(options: { source: "photos" | "files"; limit: number }): Promise<string[] | null> {
+  requireAndroid();
+  const limit = Math.max(1, Math.floor(options.limit));
+  const result = await plugin.chooseImages({ source: options.source, limit });
+  if ("cancelled" in result) return null;
+  const uris = Array.isArray(result?.uris) ? result.uris : [];
+  return uris.filter((uri): uri is string => typeof uri === "string");
+}
+
+/**
+ * FBX-001/030: an already-bounded native derivative becomes an ordinary File
+ * for the report tray and the durable draft stash. The bytes are the
+ * metadata-free, size-capped derivative — never a source original.
+ */
+export function importedImageToFile(item: ImportedImage): File {
+  // Fresh ArrayBuffer-backed copy: the shared view may sit on a SharedArrayBuffer.
+  return new File([item.derivative.bytes.slice()], item.fileName || "photo.jpg", { type: item.derivative.mimeType });
 }

@@ -2,15 +2,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-const { publishReportMock, publishReportWithPhotosMock, photo } = vi.hoisted(() => ({
+const { publishReportMock, publishReportWithPhotosMock, photo, nativeMedia } = vi.hoisted(() => ({
   publishReportMock: vi.fn(),
   publishReportWithPhotosMock: vi.fn(),
   photo: {
     isNativeCameraAvailable: vi.fn(() => false),
-    takePhoto: vi.fn(),
-    chooseFromGallery: vi.fn(),
-    chooseReportPhotos: vi.fn(),
-    photoToFile: vi.fn(),
     // Production normalizeForUpload enforces the upload transport ceiling
     // against the derivative (100 MB source bound, normalize-first): the mock
     // mirrors that edge so the rejection path stays covered. The
@@ -22,9 +18,24 @@ const { publishReportMock, publishReportWithPhotosMock, photo } = vi.hoisted(() 
       if (file.size > 8 * 1024 * 1024) throw new Error("That photo is still too large after preparing. Try a smaller image or re-save it as JPEG.");
       return file;
     }),
-    toNativeImageUri: vi.fn(),
+  },
+  nativeMedia: {
+    chooseNativeImage: vi.fn(),
+    chooseNativeImages: vi.fn(),
+    importNativeImageUri: vi.fn(),
   },
 }));
+
+/** ImportedImage-shaped fixture: only the fields importedImageToFile touches. */
+function imported(bytes: Uint8Array | string, opts?: { fileName?: string; motionStillUsed?: boolean }) {
+  const data = typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes;
+  return {
+    id: crypto.randomUUID(),
+    fileName: opts?.fileName ?? "photo.jpg",
+    motionStillUsed: opts?.motionStillUsed ?? false,
+    derivative: { bytes: data, mimeType: "image/jpeg", byteLength: data.length, width: 8, height: 8, quality: 0.82 },
+  };
+}
 
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" },
@@ -41,6 +52,15 @@ vi.mock("../services/posts", async (importOriginal) => {
   };
 });
 vi.mock("../services/photo", () => photo);
+vi.mock("../services/media/nativeMedia", () => ({
+  chooseNativeImage: nativeMedia.chooseNativeImage,
+  chooseNativeImages: nativeMedia.chooseNativeImages,
+  importNativeImageUri: nativeMedia.importNativeImageUri,
+  // Faithful copy of the production helper (pure): the real module registers
+  // the Capacitor plugin at import time, which the web-platform mock lacks.
+  importedImageToFile: (item: { fileName?: string; derivative: { bytes: Uint8Array; mimeType: string } }) =>
+    new File([item.derivative.bytes.slice()], item.fileName || "photo.jpg", { type: item.derivative.mimeType }),
+}));
 
 import { CreateReport } from "./CreateReport";
 import { clearDraft, saveDraft } from "../services/reportDraft";
@@ -309,9 +329,9 @@ describe("CreateReport", () => {
       photoIds: ["r1"],
       photoRefs: [{ id: "r1", nativeUri: "content://photo", webPath: "content://photo", format: "jpg" }],
     }, "u1");
-    const converted = new File(["jpeg-bytes"], "photo.jpg", { type: "image/jpeg" });
-    photo.photoToFile.mockRejectedValueOnce(new Error("revive failed"));
-    photo.photoToFile.mockResolvedValueOnce(converted);
+    const converted = imported("jpeg-bytes");
+    nativeMedia.importNativeImageUri.mockRejectedValueOnce(new Error("revive failed"));
+    nativeMedia.importNativeImageUri.mockResolvedValueOnce(converted);
     try {
       render(<CreateReport />);
       // The failure names the slot instead of a bare boolean.
@@ -325,7 +345,7 @@ describe("CreateReport", () => {
       expect(screen.queryByText(/could not be recovered/i)).toBeNull();
       expect(screen.getByRole("img", { name: /photo 1 of/i })).toBeTruthy();
     } finally {
-      photo.photoToFile.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   });
 
@@ -378,10 +398,9 @@ describe("CreateReport", () => {
         { id: "p3", nativeUri: "content://p3", webPath: "content://p3", format: "jpg" },
       ],
     }, "u1");
-    photo.photoToFile.mockImplementation((picked: { nativeUri: string }) => {
-      if (picked.nativeUri === "content://p2") return Promise.reject(new Error("revive failed"));
-      const tag = picked.nativeUri === "content://p1" ? "one" : "three";
-      return Promise.resolve(new File([`${tag}-bytes`], `${tag}.jpg`, { type: "image/jpeg" }));
+    nativeMedia.importNativeImageUri.mockImplementation(async (uri: string) => {
+      if (uri === "content://p2") throw new Error("revive failed");
+      return imported(uri === "content://p1" ? "one-bytes" : "three-bytes");
     });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     try {
@@ -408,7 +427,7 @@ describe("CreateReport", () => {
       expect(await files[1]!.text()).toBe("three-bytes");
     } finally {
       confirmSpy.mockRestore();
-      photo.photoToFile.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   });
 
@@ -506,7 +525,7 @@ describe("CreateReport", () => {
       photoIds: ["h1"],
       photoRefs: [{ id: "h1", nativeUri: "content://heic-photo", webPath: "content://heic-photo", format: "heic" }],
     }, "u1");
-    photo.photoToFile.mockResolvedValueOnce(new File(["jpeg-bytes"], "photo.jpg", { type: "image/jpeg" }));
+    nativeMedia.importNativeImageUri.mockResolvedValueOnce(imported("jpeg-bytes"));
     try {
       render(<CreateReport />);
       const img = await screen.findByRole("img", { name: /photo 1 of/i });
@@ -514,7 +533,7 @@ describe("CreateReport", () => {
       // JPEG object URL, never the original HEIC resource.
       expect(img.getAttribute("src")).toBe("blob:preview");
     } finally {
-      photo.photoToFile.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   });
 
@@ -557,7 +576,7 @@ describe("CreateReport", () => {
 
   it("surfaces a friendly error when native capture fails", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
-    photo.takePhoto.mockRejectedValue(new Error("camera busy"));
+    nativeMedia.chooseNativeImage.mockRejectedValue(new Error("camera busy"));
     try {
       render(<CreateReport />);
       fireEvent.click(await screen.findByRole("button", { name: /take photo/i }));
@@ -565,16 +584,13 @@ describe("CreateReport", () => {
       expect(alert.textContent).toMatch(/camera busy/i);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.takePhoto.mockReset();
+      nativeMedia.chooseNativeImage.mockReset();
     }
   });
 
   it("never adds a sixth photo when native captures resolve together", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
-    photo.takePhoto.mockImplementation(async () => ({ nativeUri: "file:///photo", webPath: "file:///photo", format: "jpg", id: crypto.randomUUID() }));
-    photo.photoToFile.mockImplementation(async (picked: { id: string }) =>
-      new File([picked.id], `${picked.id}.jpg`, { type: "image/jpeg" }),
-    );
+    nativeMedia.chooseNativeImage.mockImplementation(async () => imported(crypto.randomUUID()));
     try {
       render(<CreateReport />);
       const capture = await screen.findByRole("button", { name: /take photo/i });
@@ -588,15 +604,13 @@ describe("CreateReport", () => {
       expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.takePhoto.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImage.mockReset();
     }
   });
 
   it("rejects an exact-byte duplicate between two native camera captures", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
-    photo.takePhoto.mockImplementation(async () => ({ nativeUri: "file:///photo", webPath: "file:///photo", format: "jpg", id: crypto.randomUUID() }));
-    photo.photoToFile.mockImplementation(async () => new File(["same-still"], "capture.jpg", { type: "image/jpeg" }));
+    nativeMedia.chooseNativeImage.mockResolvedValue(imported("same-still"));
     try {
       render(<CreateReport />);
       const capture = await screen.findByRole("button", { name: /take photo/i });
@@ -607,15 +621,13 @@ describe("CreateReport", () => {
       expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.takePhoto.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImage.mockReset();
     }
   });
 
   it("rejects an oversized native capture before it can be published", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
-    photo.takePhoto.mockResolvedValue({ nativeUri: "file:///large", webPath: "file:///large", format: "jpg", id: "large" });
-    photo.photoToFile.mockResolvedValue(new File([new Uint8Array(8 * 1024 * 1024 + 1)], "large.jpg", { type: "image/jpeg" }));
+    nativeMedia.chooseNativeImage.mockResolvedValue(imported(new Uint8Array(8 * 1024 * 1024 + 1), { fileName: "large.jpg" }));
     try {
       render(<CreateReport />);
       fireEvent.click(screen.getByRole("button", { name: /take photo/i }));
@@ -623,20 +635,16 @@ describe("CreateReport", () => {
       expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull();
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.takePhoto.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImage.mockReset();
     }
   });
 
   it("does not let an invalid gallery item consume one of the five photo slots", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
-    photo.chooseReportPhotos.mockResolvedValue(Array.from({ length: 6 }, (_, i) => ({
-      nativeUri: `file:///photo-${i}`, webPath: `file:///photo-${i}`, format: "jpg", id: `${i}`,
-    })));
-    photo.photoToFile.mockImplementation(async (picked: { id: string }) => new File(
-      [picked.id === "0" ? new Uint8Array(8 * 1024 * 1024 + 1) : picked.id],
-      `${picked.id}.jpg`, { type: "image/jpeg" },
-    ));
+    nativeMedia.chooseNativeImages.mockResolvedValue(Array.from({ length: 6 }, (_, i) => `content://media/${i}`));
+    nativeMedia.importNativeImageUri.mockImplementation(async (uri: string) => uri.endsWith("/0")
+      ? imported(new Uint8Array(8 * 1024 * 1024 + 1), { fileName: "0.jpg" })
+      : imported(uri));
     try {
       render(<CreateReport />);
       fireEvent.click(screen.getByRole("button", { name: /choose up to/i }));
@@ -652,16 +660,16 @@ describe("CreateReport", () => {
       );
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.chooseReportPhotos.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImages.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   });
 
   it("rejects a camera capture matching a previously chosen gallery photo", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
-    photo.chooseReportPhotos.mockResolvedValue([{ nativeUri: "file:///gallery", webPath: "file:///gallery", format: "jpg", id: "gallery" }]);
-    photo.takePhoto.mockResolvedValue({ nativeUri: "file:///camera", webPath: "file:///camera", format: "jpg", id: "camera" });
-    photo.photoToFile.mockImplementation(async () => new File(["same"], "photo.jpg", { type: "image/jpeg" }));
+    nativeMedia.chooseNativeImages.mockResolvedValue(["content://media/gallery"]);
+    nativeMedia.importNativeImageUri.mockResolvedValue(imported("same"));
+    nativeMedia.chooseNativeImage.mockResolvedValue(imported("same"));
     try {
       render(<CreateReport />);
       fireEvent.click(await screen.findByRole("button", { name: /choose up to/i }));
@@ -671,15 +679,14 @@ describe("CreateReport", () => {
       expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.takePhoto.mockReset();
-      photo.photoToFile.mockReset();
-      photo.chooseReportPhotos.mockReset();
+      nativeMedia.chooseNativeImage.mockReset();
+      nativeMedia.chooseNativeImages.mockReset();
+      nativeMedia.importNativeImageUri.mockReset();
     }
   });
 
   it("rejects a native capture matching a web-selected photo while hashing is queued", async () => {
-    photo.takePhoto.mockResolvedValue({ nativeUri: "file:///camera", webPath: "file:///camera", format: "jpg", id: "camera" });
-    photo.photoToFile.mockResolvedValue(new File(["same"], "capture.jpg", { type: "image/jpeg" }));
+    nativeMedia.chooseNativeImage.mockResolvedValue(imported("same"));
     try {
       render(<CreateReport />);
       pickFile(new File(["same"], "gallery.jpg", { type: "image/jpeg" }));
@@ -689,15 +696,13 @@ describe("CreateReport", () => {
       expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.takePhoto.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImage.mockReset();
     }
   });
 
   it("rejects a camera capture matching a restored draft photo", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
-    photo.takePhoto.mockResolvedValue({ nativeUri: "file:///camera", webPath: "file:///camera", format: "jpg", id: "camera" });
-    photo.photoToFile.mockResolvedValue(new File(["same"], "capture.jpg", { type: "image/jpeg" }));
+    nativeMedia.chooseNativeImage.mockResolvedValue(imported("same"));
     const id = stashPhotoFile(new File(["same"], "draft.jpg", { type: "image/jpeg" }), { accountId: "u1" });
     seedDescription("the restored photo");
     saveDraft({ ...loadDraft("u1")!, photoId: id, photoIds: [id] }, "u1");
@@ -710,8 +715,7 @@ describe("CreateReport", () => {
       expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
-      photo.takePhoto.mockReset();
-      photo.photoToFile.mockReset();
+      nativeMedia.chooseNativeImage.mockReset();
     }
   });
 

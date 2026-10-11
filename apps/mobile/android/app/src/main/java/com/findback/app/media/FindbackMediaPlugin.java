@@ -16,8 +16,11 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.json.JSONArray;
 
 /** Native permissionless photo picker/document picker and delegated camera capture. */
 @CapacitorPlugin(name = "FindbackMedia")
@@ -60,6 +63,93 @@ public final class FindbackMediaPlugin extends Plugin {
             finish(request);
             call.reject("Couldn't open the device photo picker or camera.", "MEDIA_PICKER_UNAVAILABLE");
         }
+    }
+    /**
+     * FBX-001: multi-select Photos/Files. Returns the ordered granted content
+     * URIs only — no derivative bytes, no original bytes — so the caller imports
+     * each one through {@link #importUri} (the same canonical processor the
+     * single picker uses). Per-item preparation stays independent: one bad URI
+     * never discards its siblings, and selection order is preserved.
+     */
+    @PluginMethod public void chooseImages(PluginCall call) {
+        String source = call.getString("source", "photos");
+        if (!"photos".equals(source) && !"files".equals(source)) {
+            call.reject("Choose Photos or Files.", "MEDIA_INVALID_SOURCE"); return;
+        }
+        int limit = call.getInt("limit", 5);
+        if (limit < 1) limit = 1;
+        MediaRequestState.Request request = begin(call, source, MediaRequestState.Phase.PICKING);
+        if (request == null) return;
+        try {
+            call.getData().put("mediaRequestId", request.id);
+            Intent intent;
+            if ("photos".equals(source) && Build.VERSION.SDK_INT >= 33) {
+                intent = new Intent(MediaStore.ACTION_PICK_IMAGES);
+                intent.setType("image/*");
+                intent.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, Math.min(limit, MediaStore.getPickImagesMaxLimit()));
+            } else {
+                intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("image/*");
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] { "image/*" });
+                // A persistable grant lets the caller re-open the URI later (draft
+                // recovery); photo-picker grants above are session-scoped instead.
+                intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            }
+            getActivity().runOnUiThread(() -> {
+                try { startActivityForResult(call, intent, "imagesChosen"); }
+                catch (RuntimeException e) { finish(request); call.reject("Couldn't open the device photo picker.", "MEDIA_PICKER_UNAVAILABLE"); }
+            });
+        } catch (Exception e) {
+            finish(request);
+            call.reject("Couldn't open the device photo picker.", "MEDIA_PICKER_UNAVAILABLE");
+        }
+    }
+    @ActivityCallback private void imagesChosen(PluginCall call, ActivityResult result) {
+        MediaRequestState.Request request = requests.current();
+        // Without the saved call's request id this may be a stale callback. It owns no cleanup.
+        if (call == null) return;
+        if (request == null || !requests.owns(call.getString("mediaRequestId", ""), MediaRequestState.Phase.PICKING)) {
+            call.reject("Photo preparation was interrupted. Please choose the photos again.", "MEDIA_INTERRUPTED"); return;
+        }
+        if (result.getResultCode() != Activity.RESULT_OK) {
+            finish(request);
+            JSObject cancelled = new JSObject(); cancelled.put("cancelled", true); call.resolve(cancelled); return;
+        }
+        List<Uri> uris = collectUris(result);
+        if (uris.isEmpty()) {
+            finish(request);
+            call.reject("Couldn't read these photos. Choose them again.", "MEDIA_INVALID_URI"); return;
+        }
+        if (Build.VERSION.SDK_INT < 33 || "files".equals(request.source)) {
+            for (Uri uri : uris) {
+                try { getContext().getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+                catch (RuntimeException ignored) { /* Some providers refuse persistence; the session grant still applies. */ }
+            }
+        }
+        finish(request);
+        JSONArray array = new JSONArray();
+        for (Uri uri : uris) array.put(uri.toString());
+        JSObject out = new JSObject(); out.put("uris", array); call.resolve(out);
+    }
+    /** Selection order first (ClipData), else a single data URI. Non-content URIs are dropped. */
+    private static List<Uri> collectUris(ActivityResult result) {
+        List<Uri> out = new ArrayList<>();
+        Intent data = result.getData();
+        if (data == null) return out;
+        ClipData clip = data.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                Uri uri = clip.getItemAt(i).getUri();
+                if (uri != null && "content".equals(uri.getScheme())) out.add(uri);
+            }
+        }
+        if (out.isEmpty()) {
+            Uri single = data.getData();
+            if (single != null && "content".equals(single.getScheme())) out.add(single);
+        }
+        return out;
     }
     @ActivityCallback private void imageChosen(PluginCall call, ActivityResult result) {
         MediaRequestState.Request request = requests.current();
