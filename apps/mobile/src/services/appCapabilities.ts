@@ -22,7 +22,7 @@ export const APP_VERSION: string = packageJson.version;
  * Matches the newest data-contract migration prefix the app was built
  * against; shown in Profile → About for release diagnosis.
  */
-export const BACKEND_SCHEMA_VERSION = "20261010000000";
+export const BACKEND_SCHEMA_VERSION = "20261011000000";
 
 export interface AppCapabilities {
   version: string;
@@ -63,7 +63,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Tapping the active Home tab refreshes and scrolls to top.",
   ],
   social: [
-    "Each post supports one like or dislike per user, 1–5 star ratings, and comments.",
+    "Each post supports one reaction per user (Love, Helpful, Support or Wow), 1–5 star ratings, and comments.",
     "Community average rating and your own rating are shown separately.",
     "Comments and reactions update live while viewing a post.",
   ],
@@ -80,7 +80,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "USE text embeddings are the default. On Android, an installed Needle model can be explicitly selected as the matching challenger in AI & Models for this session; it is not an automatic quality upgrade.",
   ],
   notifications: [
-    "The bell opens a notification inbox for likes, dislikes, comments, mentions and status changes. Opening it never marks everything read.",
+    "The bell opens a notification inbox for reactions, comments, mentions and status changes. Opening it never marks everything read.",
     "Each row can be marked read or unread, and deleted; a delete can be undone for a few seconds. Swipe right to toggle read, swipe left to delete, and the same actions are available as buttons.",
     "Android shows a system notification for report activity when push is allowed; comment notifications can be answered directly from the notification.",
   ],

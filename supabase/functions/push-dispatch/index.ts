@@ -63,6 +63,7 @@ export function categoryFor(type: string): keyof Pick<PreferenceRow, "likes" | "
   switch (type) {
     case "LIKE":
     case "DISLIKE":
+    case "REACTION":
       return "likes";
     case "COMMENT":
       return "comments";
@@ -78,6 +79,7 @@ export function categoryFor(type: string): keyof Pick<PreferenceRow, "likes" | "
 const BODY: Record<string, string> = {
   LIKE: "Someone liked your report",
   DISLIKE: "Someone disliked your report",
+  REACTION: "Someone reacted to your report",
   COMMENT: "New comment on your report",
   MENTION: "You were mentioned in a comment",
   STATUS: "A report you follow was updated",

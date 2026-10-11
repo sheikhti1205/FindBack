@@ -47,7 +47,7 @@ export function notificationRoute(item: {
   if (item.type === "COMMENT" || item.type === "MENTION") {
     return `/posts/${item.postId}#detail-comments`;
   }
-  if (item.type === "LIKE" || item.type === "DISLIKE") {
+  if (item.type === "LIKE" || item.type === "DISLIKE" || item.type === "REACTION") {
     return `/posts/${item.postId}#detail-activity`;
   }
   if (item.type === "STATUS") return `/posts/${item.postId}#detail-manage`;
@@ -60,6 +60,8 @@ function typeLabel(type: NotificationType): string {
       return "liked your report";
     case "DISLIKE":
       return "disliked your report";
+    case "REACTION":
+      return "reacted to your report";
     case "COMMENT":
       return "commented on your report";
     case "MENTION":

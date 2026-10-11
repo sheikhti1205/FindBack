@@ -182,3 +182,14 @@ describe("Notifications inbox", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("Notifications REACTION kind (W1-A FBX-009)", () => {
+  it("labels a REACTION row as a reaction and routes it to activity", async () => {
+    fetchMock.mockResolvedValue([item({ id: "n7", type: "REACTION", preview: "Lost wallet" })]);
+    renderNotifications();
+
+    expect(await screen.findByText(/reacted to your report/i)).toBeTruthy();
+    const link = screen.getByRole("link", { name: /bob.*reacted to your report/i });
+    expect(link.getAttribute("href")).toBe("/posts/p1#detail-activity");
+  });
+});

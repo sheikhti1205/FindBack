@@ -42,6 +42,14 @@ export type Category = (typeof CATEGORIES)[number];
 export const REACTION_TYPES = ["LIKE", "DISLIKE"] as const;
 export type ReactionType = (typeof REACTION_TYPES)[number];
 
+/**
+ * Notification inbox kinds (W1-A). LIKE/DISLIKE are legacy compat rows;
+ * every canonical reaction kind (LOVE/HELPFUL/SUPPORT/WOW) notifies as a
+ * single REACTION row carrying the kind in `reaction_kind`.
+ */
+export const NOTIFICATION_TYPES = ["LIKE", "DISLIKE", "COMMENT", "MENTION", "STATUS", "REACTION"] as const;
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
 export const VERIFICATION_CHANNELS = ["EMAIL", "PHONE"] as const;
 export type VerificationChannel = (typeof VERIFICATION_CHANNELS)[number];
 

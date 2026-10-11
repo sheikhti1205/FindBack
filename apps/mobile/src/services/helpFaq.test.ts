@@ -66,6 +66,13 @@ describe("builtInHelp", () => {
     expect(push).not.toMatch(/does not have|not available|not in this build/i);
   });
 
+  it("describes inbox activity as reactions, not legacy likes/dislikes (W1-A FBX-035)", () => {
+    const push = builtInHelp("What notifications will I get?");
+    expect(push).toMatch(/reactions, comments, mentions/i);
+    expect(push).not.toMatch(/likes, dislikes/i);
+    expect(push).not.toMatch(/like or dislike/i);
+  });
+
   it("answers the shipped account-deletion flow and keeps negatives for the rest", () => {
     const deletion = builtInHelp("How do I delete my FindBack account?");
     expect(deletion).toMatch(/Settings.*Account.*Delete account/i);

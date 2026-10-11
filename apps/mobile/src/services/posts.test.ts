@@ -555,3 +555,38 @@ describe("fetchSocialState canonical reaction (W3.3)", () => {
     expect(state).toEqual({ myReaction: "SUPPORT", myRating: null });
   });
 });
+
+describe("fetchFeed canonical reaction truth (W1-A FBX-010)", () => {
+  it("attaches the RPC reaction_counts as the summary instead of synthesizing from legacy counts", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [
+        row({
+          like_count: 0,
+          dislike_count: 0,
+          reaction_counts: { LOVE: 2, HELPFUL: 1 },
+          reaction_total: 3,
+          my_reaction: "HELPFUL",
+        }),
+      ],
+      error: null,
+    });
+
+    const post = (await fetchFeed({})).items[0]!;
+
+    expect(post.reactionSummary).toEqual({
+      counts: { LOVE: 2, HELPFUL: 1 },
+      myReaction: "HELPFUL",
+      total: 3,
+    });
+  });
+
+  it("leaves legacy rows without RPC truth on like/dislike counts only", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row()], error: null });
+
+    const post = (await fetchFeed({})).items[0]!;
+
+    expect(post.likeCount).toBe(2);
+    expect(post.dislikeCount).toBe(1);
+    expect(post.reactionSummary).toBeUndefined();
+  });
+});

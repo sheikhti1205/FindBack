@@ -96,8 +96,8 @@ export const CURRENT_KNOWLEDGE_FACTS: KnowledgeFacts = Object.freeze({
   tabs: Object.freeze(["Home", "Search", "Report", "Profile"]),
   features: Object.freeze([
     "Report: Lost or Found — title, description, category, date, photo, location, YouTube link; statuses OPEN, MATCHED, RECOVERED, CLOSED",
-    "Comments, 1–5 star ratings, one like/dislike; up to 3 Possible Matches by similarity, not probability",
-    "Notifications for likes, dislikes, comments, mentions, status changes; mark read/unread or delete; swipe right toggles read, swipe left deletes",
+    "Comments, 1–5 star ratings, one reaction per user; up to 3 Possible Matches by similarity, not probability",
+    "Notifications for reactions, comments, mentions, status changes; mark read/unread or delete; swipe right toggles read, swipe left deletes",
     "Photo analysis only on consent",
     "Account deletion under Settings",
     "Search: listing text, category, status, sort, Lost/Found; results are listings, not AI",

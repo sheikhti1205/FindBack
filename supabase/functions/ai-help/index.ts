@@ -153,7 +153,7 @@ export function fallbackAnswer(questionRaw: string): string {
     return "Open any post and type in the comment box at the bottom. Comments appear live — the other person sees them without refreshing.";
   }
   if (has("like", "dislike", "rating", "star", "rate")) {
-    return "Under each post you can like or dislike (one per user) and give a 1-5 star rating. Counts and the average update live for everyone viewing the post.";
+    return "Under each post you can react (Love, Helpful, Support or Wow — one per user) and give a 1-5 star rating. Counts and the average update live for everyone viewing the post.";
   }
   if (has("photo", "image", "upload", "picture", "attach")) {
     return "When creating a report you can attach one photo. It is normalized on your device, uploaded to secure cloud storage, and shown on the post page.";
@@ -175,7 +175,7 @@ export function fallbackAnswer(questionRaw: string): string {
   }
   return (
     "I can only help with FindBack app questions — for example reporting a lost or found item, " +
-    "changing its status, searching and filtering, comments, likes/ratings, photos, and " +
+    "changing its status, searching and filtering, comments, reactions/ratings, photos, and " +
     "verification. Try rephrasing your question."
   );
 }

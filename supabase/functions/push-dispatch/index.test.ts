@@ -48,10 +48,20 @@ const delivery = (overrides: Partial<Delivery> = {}): Delivery => ({
 Deno.test("categoryFor maps every notification type", () => {
   assertEquals(categoryFor("LIKE"), "likes");
   assertEquals(categoryFor("DISLIKE"), "likes");
+  assertEquals(categoryFor("REACTION"), "likes");
   assertEquals(categoryFor("COMMENT"), "comments");
   assertEquals(categoryFor("MENTION"), "mentions");
   assertEquals(categoryFor("STATUS"), "status");
   assertEquals(categoryFor("UNKNOWN"), null);
+});
+
+Deno.test("buildFcmMessage renders a REACTION notification (W1-A FBX-009)", () => {
+  const message = buildFcmMessage(
+    delivery({ type: "REACTION", commentId: null }),
+    "https://findbackapp.social",
+  ) as { data: Record<string, string> };
+  assertEquals(message.data.type, "REACTION");
+  assertEquals(message.data.body, "Someone reacted to your report");
 });
 
 Deno.test("planDeliveries defaults to all-on and fans out per token", () => {

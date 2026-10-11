@@ -58,6 +58,7 @@ describe("fetchNotifications", () => {
         postId: "p1",
         postTitle: "Lost wallet",
         commentId: null,
+        reactionKind: null,
       },
       expect.objectContaining({ id: "n2", type: "MENTION", read: true }),
     ]);
@@ -201,5 +202,28 @@ describe("deleteNotifications / restoreNotifications", () => {
       error: { message: "denied", code: "42501" },
     });
     await expect(deleteNotifications(["n1"])).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("fetchNotifications REACTION kind (W1-A FBX-009)", () => {
+  it("maps a REACTION row with its canonical reaction_kind", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [row({ id: "n7", type: "REACTION", reaction_kind: "WOW" })],
+      error: null,
+    });
+
+    const items = await fetchNotifications();
+
+    expect(items).toEqual([
+      expect.objectContaining({ id: "n7", type: "REACTION", reactionKind: "WOW" }),
+    ]);
+  });
+
+  it("maps a legacy LIKE row with a null reactionKind", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({ type: "LIKE" })], error: null });
+
+    const items = await fetchNotifications();
+
+    expect(items[0]).toEqual(expect.objectContaining({ type: "LIKE", reactionKind: null }));
   });
 });

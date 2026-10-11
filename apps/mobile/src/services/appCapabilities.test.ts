@@ -93,6 +93,19 @@ describe("capability docs", () => {
     expect(mobileCopy).not.toMatch(/\bAUTO\b|\bQUALITY\b/);
     expect(edgeSummary).not.toMatch(/Model modes: AUTO/);
   });
+
+  it("describes post feedback as reactions on both mirrors (W1-A FBX-035)", () => {
+    const socialCopy = APP_CAPABILITIES.social.join(" ");
+    expect(socialCopy).toMatch(/one reaction per user/i);
+    expect(socialCopy).not.toMatch(/like or dislike/i);
+    const inboxCopy = APP_CAPABILITIES.notifications.join(" ");
+    expect(inboxCopy).toMatch(/inbox for reactions, comments, mentions/i);
+    expect(inboxCopy).not.toMatch(/likes, dislikes/i);
+    expect(edgeSummary).toMatch(/one reaction per user/i);
+    expect(edgeSummary).toMatch(/inbox for reactions, comments, mentions/i);
+    expect(edgeSummary).not.toMatch(/one like\/dislike per user/);
+    expect(edgeSummary).not.toMatch(/inbox for likes, dislikes/);
+  });
 });
 
 describe("backend schema version parity", () => {

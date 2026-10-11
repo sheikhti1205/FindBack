@@ -1,7 +1,15 @@
+import type { NotificationType, ReactionKind } from "@findback/shared";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 
-export type NotificationType = "LIKE" | "DISLIKE" | "COMMENT" | "MENTION" | "STATUS";
+export type { NotificationType };
+
+function isReactionKind(value: unknown): value is ReactionKind {
+  return (
+    typeof value === "string" &&
+    ["LIKE", "DISLIKE", "LOVE", "HELPFUL", "SUPPORT", "WOW"].includes(value)
+  );
+}
 
 export interface NotificationItem {
   id: string;
@@ -16,6 +24,12 @@ export interface NotificationItem {
   postId: string | null;
   postTitle: string | null;
   commentId: string | null;
+  /**
+   * Canonical reaction kind carried by REACTION rows (W1-A). Null on every
+   * legacy row (LIKE/DISLIKE/COMMENT/MENTION/STATUS): absence renders the
+   * generic reaction copy, never a wrong kind.
+   */
+  reactionKind: ReactionKind | null;
 }
 
 interface NotificationRow {
@@ -29,6 +43,7 @@ interface NotificationRow {
   post_id: string | null;
   post_title: string | null;
   comment_id: string | null;
+  reaction_kind?: unknown;
 }
 
 function mapNotification(row: NotificationRow): NotificationItem {
@@ -43,6 +58,7 @@ function mapNotification(row: NotificationRow): NotificationItem {
     postId: row.post_id ?? null,
     postTitle: row.post_title ?? null,
     commentId: row.comment_id ?? null,
+    reactionKind: isReactionKind(row.reaction_kind) ? row.reaction_kind : null,
   };
 }
 

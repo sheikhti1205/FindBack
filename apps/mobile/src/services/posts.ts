@@ -83,8 +83,8 @@ export interface AttachmentRow {
   created_at: unknown;
   /**
    * 1-based position from `public.attachments.display_order` (D1 migration).
-   * The feed/detail RPC payload does not carry it yet (D1 follow-up), so it
-   * is optional here: rows without it keep their relative order.
+   * The feed RPCs carry it (W1-A) and rank by it; rows without it keep their
+   * relative order. Optional so legacy/detail rows stay valid.
    */
   display_order?: unknown;
 }
@@ -148,6 +148,13 @@ interface ClientPostRow {
   comment_count: number | null;
   attachments: AttachmentRow[] | null;
   total_count: number | null;
+  /**
+   * Canonical reaction truth from the feed RPCs (W1-A FBX-010). Absent on
+   * rows from older backends — callers fall back to likeCount/dislikeCount.
+   */
+  reaction_counts?: unknown;
+  reaction_total?: unknown;
+  my_reaction?: unknown;
 }
 
 function decodeCursor(cursor?: string): PostCursor | null {
@@ -174,6 +181,13 @@ function encodeCursor(createdAt: string, id: string): string {
 
 /** A feed RPC row carries only public author fields — never email/phone. */
 function mapClientPost(row: ClientPostRow): PostItem {
+  // RPC truth wins when present (W1-A FBX-010); legacy rows without it stay
+  // on likeCount/dislikeCount. reaction_total is advisory — the summary
+  // total is derived from the canonical counts so the two can never disagree.
+  const reactionSummary = reactionSummaryFromRow({
+    reaction_counts: row.reaction_counts,
+    my_reaction: row.my_reaction,
+  });
   return {
     id: row.id,
     userId: row.user_id,
@@ -203,6 +217,7 @@ function mapClientPost(row: ClientPostRow): PostItem {
     commentCount: Number(row.comment_count ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(reactionSummary ? { reactionSummary } : {}),
   };
 }
 

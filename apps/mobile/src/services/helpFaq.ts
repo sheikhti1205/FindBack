@@ -62,7 +62,7 @@ export function builtInHelp(question: string): string {
     return "You can attach a photo while preparing a report. It is uploaded when you publish. AI photo analysis is optional and sends the selected image to your connected AI provider only with your consent.";
   }
   if (/notification|push|bell|inbox|unread|mark all read|swipe/.test(q)) {
-    return "Open the bell to see notifications for likes, dislikes, comments, mentions and status changes. Opening it does not mark everything read; swipe right to toggle read, swipe left to delete, or use the row buttons. On Android you can also get a system notification, and comment notifications can be answered directly.";
+    return "Open the bell to see notifications for reactions, comments, mentions and status changes. Opening it does not mark everything read; swipe right to toggle read, swipe left to delete, or use the row buttons. On Android you can also get a system notification, and comment notifications can be answered directly.";
   }
   if (/comment|rating|like/.test(q)) {
     return "Open a post to comment, react or rate it. Comments and counts update while the post is open.";
