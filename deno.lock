@@ -30,7 +30,8 @@
         "npm:typescript@~5.9.3"
       ],
       "overrides": {
-        "uuid": "^11.1.1"
+        "uuid": "^11.1.1",
+        "@graphql-tools/utils": "12.0.1"
       }
     },
     "members": {
@@ -65,7 +66,6 @@
             "npm:framer-motion@^13.2.0",
             "npm:jsdom@^30.0.1",
             "npm:lucide-react@^1.43.0",
-            "npm:maplibre-gl@^6.10.0",
             "npm:react-aria-components@^1.21.1",
             "npm:react-dom@^19.2.8",
             "npm:react-markdown@10.1.0",
