@@ -58,6 +58,18 @@
 
         </activity>
 
+        <!--
+          Keyless MapLibre map surface (MAP pivot): the picker/viewer Activity
+          owns its own view hierarchy — never embedded under the WebView.
+          Not exported (launched only from this app's Capacitor bridge).
+        -->
+        <activity
+            android:name=".map.FindbackMapActivity"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

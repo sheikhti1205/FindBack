@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Keyless MapLibre picker/viewer (MAP pivot). Plain LinearLayout stack — no
+  overlap tricks, no WebView hosting: the MapView owns its own Activity, so
+  there is no transparency/z-order contract. All touch targets ≥ 48dp.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <!-- Top bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:minHeight="56dp"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="8dp">
+
+        <ImageButton
+            android:id="@+id/map_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/findback_map_back"
+            android:src="?attr/homeAsUpIndicator" />
+
+        <TextView
+            android:id="@+id/map_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/findback_map_choose_location"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/map_confirm"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/findback_map_confirm" />
+    </LinearLayout>
+
+    <!-- Explicit-submit search (no keystroke autocomplete, per usage policy) -->
+    <LinearLayout
+        android:id="@+id/map_search_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp">
+
+        <EditText
+            android:id="@+id/map_search_input"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="@string/findback_map_search_hint"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:maxLength="120"
+            android:minHeight="48dp"
+            android:importantForAutofill="no" />
+
+        <Button
+            android:id="@+id/map_search_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:minHeight="48dp"
+            android:text="@string/findback_map_search" />
+    </LinearLayout>
+
+    <!-- Map + fixed center pin -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <org.maplibre.android.maps.MapView
+            android:id="@+id/map_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <ImageView
+            android:id="@+id/map_center_pin"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="center"
+            android:clickable="false"
+            android:focusable="false"
+            android:contentDescription="@string/findback_map_pin_description"
+            android:src="@drawable/map_center_pin" />
+
+        <ProgressBar
+            android:id="@+id/map_loading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:contentDescription="@string/findback_map_loading" />
+
+        <!-- Readout + attribution strip -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="#CCFFFFFF"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp">
+
+            <TextView
+                android:id="@+id/map_readout"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/findback_map_no_pin"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/findback_map_attribution"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Search results (max 5, explicit tap recenters — never commits) -->
+    <ListView
+        android:id="@+id/map_results"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxHeight="168dp"
+        android:visibility="gone" />
+
+    <!-- Status line + retry (style/search/location states) -->
+    <LinearLayout
+        android:id="@+id/map_status_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/map_status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/map_retry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/findback_map_retry"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- One-shot location (picker only) -->
+    <LinearLayout
+        android:id="@+id/map_footer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="12dp">
+
+        <Button
+            android:id="@+id/map_my_location"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/findback_map_use_my_location" />
+    </LinearLayout>
+</LinearLayout>

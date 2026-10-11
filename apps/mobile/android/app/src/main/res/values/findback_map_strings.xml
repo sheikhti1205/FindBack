@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Keyless MapLibre map Activity (MAP pivot). Consumer copy only — no dev jargon. -->
+    <string name="findback_map_choose_location">Choose location</string>
+    <string name="findback_map_back">Back</string>
+    <string name="findback_map_confirm">Confirm</string>
+    <string name="findback_map_close">Close</string>
+    <string name="findback_map_search_hint">Search for a place</string>
+    <string name="findback_map_search">Search</string>
+    <string name="findback_map_searching">Searching…</string>
+    <string name="findback_map_empty_query">Type a place name first.</string>
+    <string name="findback_map_rate_limited">Please wait a moment and try the search again.</string>
+    <string name="findback_map_search_offline">Search could not connect — check your connection and try again.</string>
+    <string name="findback_map_search_failed">Place search failed — pan the map and confirm the pin instead.</string>
+    <string name="findback_map_no_results">No places found — pan the map and confirm the pin instead.</string>
+    <string name="findback_map_use_my_location">Use my location once</string>
+    <string name="findback_map_locating">Locating…</string>
+    <string name="findback_map_location_ready">Preview centered on your location — confirm to use it.</string>
+    <string name="findback_map_location_unavailable">Your location could not be determined — pan the map and confirm the pin instead.</string>
+    <string name="findback_map_location_denied">Location permission was denied — you can still pan the map and confirm the pin.</string>
+    <string name="findback_map_location_timeout">Locating took too long — try again or pan the map instead.</string>
+    <string name="findback_map_loading">Loading map…</string>
+    <string name="findback_map_style_failed">The map could not load — check your connection.</string>
+    <string name="findback_map_retry">Try again</string>
+    <string name="findback_map_no_pin">No location yet — pan the map to place the pin.</string>
+    <string name="findback_map_attribution">© OpenStreetMap contributors</string>
+    <string name="findback_map_search_results">© OpenStreetMap contributors (Nominatim)</string>
+    <string name="findback_map_pin_description">Map pin — the map moves underneath it</string>
+    <string name="findback_map_view">Location map</string>
+</resources>
