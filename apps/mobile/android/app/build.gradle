@@ -68,18 +68,6 @@ def shareLinkHostname() {
     return out.toString().trim()
 }
 
-// Google Maps / Places API key (A3) for the native map layer. Canonical local
-// env name GOOGLE_MAPS_API_KEY (VITE_GOOGLE_MAPS_API_KEY is accepted as an
-// alias so CI jobs that already export VITE_* work unchanged). Missing is
-// NEVER a build failure: the manifest entry is injected empty and both map
-// surfaces fail closed at runtime with consumer copy (search + manual pin
-// keep working). This is an Android-app-restricted public identifier, NOT a
-// secret — never hard-code a real value here.
-def googleMapsApiKey() {
-    def key = System.getenv("GOOGLE_MAPS_API_KEY") ?: System.getenv("VITE_GOOGLE_MAPS_API_KEY") ?: ""
-    return key.trim()
-}
-
 // Keyless map style (MAP pivot): the MapLibre-compatible style URL the native
 // picker/viewer/snapshotter render. Canonical local env name
 // FINDBACK_MAP_STYLE_URL; default is the owner-decided OpenFreeMap Liberty
@@ -114,7 +102,7 @@ android {
         versionCode gitVersionCode()
         versionName appVersionName()
         resValue "string", "findback_build_git_sha", gitCommitSha()
-        manifestPlaceholders = [findbackShareHost: shareLinkHostname(), googleMapsApiKey: googleMapsApiKey()]
+        manifestPlaceholders = [findbackShareHost: shareLinkHostname()]
         // Native direct-reply endpoint. The Supabase URL is public (it is baked
         // into the web bundle); the publishable key is NOT needed here — the
         // reply-comment function is token-authenticated. Env override first so
@@ -297,15 +285,8 @@ dependencies {
     implementation "com.google.android.gms:play-services-location:21.3.0"
     // Keyless map renderer (MAP pivot): MapLibre Native Android, OpenGL ES
     // backend only. Pinned exact via $mapLibreVersion in variables.gradle —
-    // never floating. Coexists with the A3 Google map layer until the native
-    // picker bridge is green (removal commit drops the Google entries).
+    // never floating.
     implementation "org.maplibre.gl:android-sdk-opengl:$mapLibreVersion"
-    // Native map layer (A3): official @capacitor/google-maps SDK (the JS
-    // dependency lives in apps/mobile/package.json) + Places SDK for the
-    // FindbackPlaces autocomplete bridge. Pinned exact — never floating.
-    // Places 3.5.0 carries the stable autocomplete + fetchPlace surface
-    // (AutocompleteSessionToken, DISPLAY_NAME); newer majors are unvetted.
-    implementation "com.google.android.libraries.places:places:3.5.0"
     // Google Sign-In (W0-A S1): Android Credential Manager + Google ID option.
     // Pinned exact — never floating. Stable 1.6.0 line (April 2026) +
     // googleid 1.2.1 (Sept 2026, carries GetGoogleIdOption incl.

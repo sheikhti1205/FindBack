@@ -14,7 +14,6 @@ dependencies {
     implementation project(':capacitor-browser')
     implementation project(':capacitor-camera')
     implementation project(':capacitor-geolocation')
-    implementation project(':capacitor-google-maps')
     implementation project(':capacitor-push-notifications')
     implementation project(':sentry-capacitor')
 

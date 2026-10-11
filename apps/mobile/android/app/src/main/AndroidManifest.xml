@@ -81,17 +81,6 @@
         </provider>
 
         <!--
-          Native Google Maps / Places API key (A3). Injected by Gradle from
-          GOOGLE_MAPS_API_KEY (see app/build.gradle); empty when the owner has
-          not provided one — the map surfaces fail closed at runtime. Create
-          the restricted key per docs/runbooks/google-maps-key.md; never
-          hard-code a real value here.
-        -->
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="${googleMapsApiKey}" />
-
-        <!--
           FindBack owns FCM presentation: the Capacitor plugin's service is
           removed so data-only messages can be shown with a RemoteInput reply
           action. The service still forwards to the plugin for foreground JS

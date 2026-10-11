@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveGoogleMapsBuildKey, resolveSupabaseBuildEnv } from "../vite.config";
+import { resolveSupabaseBuildEnv } from "../vite.config";
 
 let envDir = "";
 
@@ -15,8 +15,6 @@ const ENV_KEYS = [
   "VITE_SUPABASE_PUBLISHABLE_KEY",
   "SUPABASE_URL",
   "SUPABASE_PUBLISHABLE_KEY",
-  "VITE_GOOGLE_MAPS_API_KEY",
-  "GOOGLE_MAPS_API_KEY",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -75,26 +73,5 @@ describe("resolveSupabaseBuildEnv", () => {
       if (prevKey === undefined) delete process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
       else process.env.VITE_SUPABASE_PUBLISHABLE_KEY = prevKey;
     }
-  });
-});
-
-describe("resolveGoogleMapsBuildKey", () => {
-  it("derives the client key from the canonical GOOGLE_MAPS_API_KEY", async () => {
-    envDir = await mkdtemp(join(tmpdir(), "findback-vite-env-"));
-    await writeFile(join(envDir, ".env.production"),
-      "GOOGLE_MAPS_API_KEY=test-maps-key\nVITE_GOOGLE_MAPS_API_KEY=\n");
-    expect(resolveGoogleMapsBuildKey("production", envDir)).toBe("test-maps-key");
-  });
-
-  it("prefers an explicit VITE_GOOGLE_MAPS_API_KEY over the canonical name", async () => {
-    envDir = await mkdtemp(join(tmpdir(), "findback-vite-env-"));
-    await writeFile(join(envDir, ".env.production"),
-      "GOOGLE_MAPS_API_KEY=canonical-key\nVITE_GOOGLE_MAPS_API_KEY=vite-key\n");
-    expect(resolveGoogleMapsBuildKey("production", envDir)).toBe("vite-key");
-  });
-
-  it("resolves empty when no key is provided (fail-closed at runtime, never a build failure)", async () => {
-    envDir = await mkdtemp(join(tmpdir(), "findback-vite-env-"));
-    expect(resolveGoogleMapsBuildKey("production", envDir)).toBe("");
   });
 });

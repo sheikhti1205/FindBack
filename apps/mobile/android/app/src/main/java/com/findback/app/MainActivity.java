@@ -1,7 +1,6 @@
 package com.findback.app;
 
 import com.findback.app.LocationServicesPlugin;
-import com.findback.app.FindbackPlacesPlugin;
 import com.findback.app.map.FindbackMapPlugin;
 import com.findback.app.GoogleAuthPlugin;
 import com.findback.app.FindbackNotificationsPlugin;
@@ -28,7 +27,6 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(OpenRouterKeyPlugin.class);
         registerPlugin(EmbeddingPlugin.class);
         registerPlugin(LocationServicesPlugin.class);
-        registerPlugin(FindbackPlacesPlugin.class);
         registerPlugin(FindbackMapPlugin.class);
         registerPlugin(GoogleAuthPlugin.class);
         registerPlugin(FindbackNotificationsPlugin.class);

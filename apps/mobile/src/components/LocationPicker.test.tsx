@@ -491,9 +491,12 @@ describe("LocationPicker one-time approximate location", () => {
 describe("LocationPicker in-app preview vs external map app", () => {
   it("keeps the in-app preview closed until it is deliberately opened", () => {
     renderPicker(approxValue);
-    expect(document.querySelector('iframe[title="Map"]')).toBeNull();
+    // Keyless preview: no third-party iframe, ever — just the raster grid.
+    expect(document.querySelector("iframe")).toBeNull();
+    expect(screen.queryByTestId("map-embed-frame")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /preview map in app/i }));
-    expect(document.querySelector('iframe[title="Map"]')).not.toBeNull();
+    expect(screen.getByTestId("map-embed-frame")).toBeTruthy();
+    expect(document.querySelector("iframe")).toBeNull();
   });
 
   it("the external handoff opens Maps without the in-app preview or the picker sheet", async () => {
