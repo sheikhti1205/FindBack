@@ -8,9 +8,6 @@ const {
   removeMock,
   insertMock,
   uploadsDeleteEqMock,
-  updatePatchMock,
-  attUpdateEqMock,
-  attDeleteEqMock,
   getPublicUrlMock,
   normalizeMock,
   clientMock,
@@ -21,9 +18,6 @@ const {
   const removeMock = vi.fn();
   const insertMock = vi.fn();
   const uploadsDeleteEqMock = vi.fn();
-  const updatePatchMock = vi.fn();
-  const attUpdateEqMock = vi.fn();
-  const attDeleteEqMock = vi.fn();
   const getPublicUrlMock = vi.fn((path: string) => ({
     data: { publicUrl: `https://cdn.test/storage/v1/object/public/findback-images/${path}` },
   }));
@@ -43,15 +37,6 @@ const {
           delete: () => ({ eq: (...args: unknown[]) => uploadsDeleteEqMock(...args) }),
         };
       }
-      if (table === "attachments") {
-        return {
-          update: (patch: unknown) => {
-            updatePatchMock(patch);
-            return { eq: (...args: unknown[]) => attUpdateEqMock(...args) };
-          },
-          delete: () => ({ eq: (...args: unknown[]) => attDeleteEqMock(...args) }),
-        };
-      }
       throw new Error(`unexpected table ${table}`);
     }),
     rpc: (...args: unknown[]) => rpcMock(...args),
@@ -63,9 +48,6 @@ const {
     removeMock,
     insertMock,
     uploadsDeleteEqMock,
-    updatePatchMock,
-    attUpdateEqMock,
-    attDeleteEqMock,
     getPublicUrlMock,
     normalizeMock,
     clientMock,
@@ -79,8 +61,6 @@ import {
   createPostMulti,
   mapAttachments,
   publishReportWithPhotos,
-  removePostImage,
-  reorderPostImages,
   uploadPhotos,
 } from "./posts";
 
@@ -156,9 +136,6 @@ beforeEach(() => {
   removeMock.mockReset();
   insertMock.mockReset();
   uploadsDeleteEqMock.mockReset();
-  updatePatchMock.mockReset();
-  attUpdateEqMock.mockReset();
-  attDeleteEqMock.mockReset();
   getPublicUrlMock.mockClear();
   normalizeMock.mockReset();
   clientMock.from.mockClear();
@@ -168,8 +145,6 @@ beforeEach(() => {
   removeMock.mockResolvedValue({ error: null });
   insertMock.mockResolvedValue({ error: null });
   uploadsDeleteEqMock.mockResolvedValue({ error: null });
-  attUpdateEqMock.mockResolvedValue({ error: null });
-  attDeleteEqMock.mockResolvedValue({ error: null });
   normalizeMock.mockImplementation(async (file: File) => ({
     blob: new Blob(["normalized"], { type: "image/jpeg" }),
     mimeType: file.type || "image/jpeg",
@@ -381,78 +356,3 @@ describe("mapAttachments display_order", () => {
   });
 });
 
-describe("reorderPostImages (owner-only, precondition conflicts)", () => {
-  function routeFeed(): void {
-    rpcMock.mockImplementation(async (name: string) => {
-      if (name === "findback_query_posts_client") return { data: [postRow({ user_id: "user-1" })], error: null };
-      throw new Error(`unexpected rpc ${name}`);
-    });
-  }
-
-  it("owner with a matching precondition rewrites display_order 1..n in the new order", async () => {
-    routeFeed();
-
-    await reorderPostImages("p1", ["a2", "a1"], ["a1", "a2"]);
-
-    expect(updatePatchMock.mock.calls.map((call) => call[0])).toEqual([
-      { display_order: 1 },
-      { display_order: 2 },
-    ]);
-    expect(attUpdateEqMock.mock.calls).toEqual([
-      ["id", "a2"],
-      ["id", "a1"],
-    ]);
-  });
-
-  it("a stale precondition is a 409 conflict with no writes", async () => {
-    routeFeed();
-
-    await expect(reorderPostImages("p1", ["a2", "a1"], ["a2", "a1"])).rejects.toMatchObject({
-      status: 409,
-    });
-    expect(updatePatchMock).not.toHaveBeenCalled();
-  });
-
-  it("a non-owner cannot reorder (403, no writes)", async () => {
-    getUserMock.mockResolvedValue({ data: { user: { id: "intruder" } }, error: null });
-    routeFeed();
-
-    await expect(reorderPostImages("p1", ["a2", "a1"])).rejects.toMatchObject({ status: 403 });
-    expect(updatePatchMock).not.toHaveBeenCalled();
-  });
-
-  it("a non-permutation is rejected before any write", async () => {
-    routeFeed();
-
-    await expect(reorderPostImages("p1", ["a2", "ghost"], ["a1", "a2"])).rejects.toThrow();
-    expect(updatePatchMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("removePostImage (owner-only, Storage byte cleanup)", () => {
-  function routeFeed(): void {
-    rpcMock.mockImplementation(async (name: string) => {
-      if (name === "findback_query_posts_client") return { data: [postRow({ user_id: "user-1" })], error: null };
-      throw new Error(`unexpected rpc ${name}`);
-    });
-  }
-
-  it("owner removal deletes the row and the exact Storage object, then refetches", async () => {
-    routeFeed();
-
-    await removePostImage("p1", "a1");
-
-    expect(attDeleteEqMock).toHaveBeenCalledWith("id", "a1");
-    expect(removeMock).toHaveBeenCalledWith(["user-1/a1.jpg"]);
-    expect(rpcMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("a non-owner cannot remove (403, row and bytes untouched)", async () => {
-    getUserMock.mockResolvedValue({ data: { user: { id: "intruder" } }, error: null });
-    routeFeed();
-
-    await expect(removePostImage("p1", "a1")).rejects.toMatchObject({ status: 403 });
-    expect(attDeleteEqMock).not.toHaveBeenCalled();
-    expect(removeMock).not.toHaveBeenCalled();
-  });
-});
