@@ -66,7 +66,7 @@ export function About() {
         />
         <SettingsRow
           title="Notifications"
-          description="Likes, comments, and mentions on your reports."
+          description="Reactions, comments, and mentions on your reports."
           icon={Bell}
           iconTone="about"
           route="/notifications"

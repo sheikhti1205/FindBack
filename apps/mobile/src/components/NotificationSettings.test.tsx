@@ -55,11 +55,20 @@ describe("NotificationSettings", () => {
     saveMock.mockRejectedValue(new Error("offline"));
     render(<NotificationSettings />);
 
-    const likes = await screen.findByRole("switch", { name: "Likes" });
+    const likes = await screen.findByRole("switch", { name: "Reactions" });
     fireEvent.click(likes);
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     expect(likes.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("labels the report-activity toggle with reactions copy (FBX-035)", async () => {
+    fetchMock.mockResolvedValue(allOn());
+    render(<NotificationSettings />);
+
+    expect(await screen.findByRole("switch", { name: "Reactions" })).toBeTruthy();
+    expect(screen.getByText("Someone reacts to your report.")).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: "Likes" })).toBeNull();
   });
 
   it("groups switches under Comments & mentions, Report activity, and Report updates", async () => {

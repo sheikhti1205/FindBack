@@ -1,15 +1,9 @@
 import type { NotificationType, ReactionKind } from "@findback/shared";
+import { isReactionKind } from "./reactions";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 
 export type { NotificationType };
-
-function isReactionKind(value: unknown): value is ReactionKind {
-  return (
-    typeof value === "string" &&
-    ["LIKE", "DISLIKE", "LOVE", "HELPFUL", "SUPPORT", "WOW"].includes(value)
-  );
-}
 
 export interface NotificationItem {
   id: string;

@@ -59,6 +59,15 @@ describe("About", () => {
     expect(hrefs).toContain("/ai-connection");
   });
 
+  it("names reactions (not likes) on the notifications row (FBX-035)", async () => {
+    bridge.getBuildInfo.mockResolvedValue({ buildGitSha: "abc123", versionCode: 1 });
+    render(<MemoryRouter><About /></MemoryRouter>);
+    expect(
+      await screen.findByText("Reactions, comments, and mentions on your reports."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Likes, comments, and mentions/)).toBeNull();
+  });
+
   it("keeps technical details inside the disclosure", async () => {
     bridge.getBuildInfo.mockResolvedValue({
       buildGitSha: "fdbd355abc123def456",

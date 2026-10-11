@@ -159,6 +159,9 @@ describe("Notifications inbox", () => {
 
     expect(await screen.findByRole("heading", { name: "Notifications" })).toBeTruthy();
     expect(screen.getByText(/no notifications/i)).toBeTruthy();
+    // FBX-035 reactions copy: the empty state names reactions, not likes.
+    expect(screen.getByText(/Reactions, comments, and mentions on your reports/i)).toBeTruthy();
+    expect(screen.queryByText(/Likes, comments/i)).toBeNull();
     expect(markReadMock).not.toHaveBeenCalled();
   });
 

@@ -288,7 +288,7 @@ export function Notifications() {
           <p className="max-w-xs text-sm text-on-surface-variant">
             {view === "deleted"
               ? "Deleted notifications you can restore will appear here."
-              : "You're all caught up. Likes, comments, and mentions on your reports will show up here."}
+              : "You're all caught up. Reactions, comments, and mentions on your reports will show up here."}
           </p>
         </section>
       ) : (

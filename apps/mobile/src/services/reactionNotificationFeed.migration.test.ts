@@ -1,15 +1,26 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = resolve(process.cwd(), "../..");
+// File-relative (not process.cwd()): the suite also passes when invoked
+// from the repo root or another cwd.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const MIGRATION = resolve(
   REPO_ROOT,
   "supabase/migrations/20261011000000_reaction_notification_feed.sql",
 );
+const FIX_MIGRATION = resolve(
+  REPO_ROOT,
+  "supabase/migrations/20261011010000_reaction_notification_fix.sql",
+);
 
 function sql(): string {
   return readFileSync(MIGRATION, "utf8");
+}
+
+function fixSql(): string {
+  return readFileSync(FIX_MIGRATION, "utf8");
 }
 
 describe("reaction/notification/feed migration (W1-A: FBX-009/010/011)", () => {
@@ -86,5 +97,37 @@ describe("reaction/notification/feed migration (W1-A: FBX-009/010/011)", () => {
       /grant execute on function public\.findback_query_posts_nearby_client\([\s\S]*?to authenticated/i,
     );
     expect(text).toMatch(/set search_path = public, pg_temp/i);
+  });
+});
+
+describe("reaction notification fix migration (W1-A-FIX: kind-switch-after-read)", () => {
+  it("never edits the pushed base migration and stays additive/non-destructive", () => {
+    const text = fixSql();
+    expect(text).not.toMatch(/drop table/i);
+    expect(text).not.toMatch(/drop column/i);
+    expect(text).not.toMatch(/truncate table/i);
+    expect(text).not.toMatch(/delete from public\.\w+/i);
+    expect(text).toMatch(/create or replace function public\.findback_insert_notification/);
+  });
+
+  it("keeps the 7-argument signature, defaults, guards, and grants unchanged", () => {
+    const text = fixSql();
+    expect(text).toMatch(/p_reaction_kind text default null/);
+    expect(text).toMatch(/p_user_id is null or p_user_id = p_actor_id/);
+    expect(text).toMatch(/p_actor_id is null and p_type <> 'STATUS'/);
+    expect(text).toMatch(/revoke all on function\s+public\.findback_insert_notification/);
+  });
+
+  it("keys the REACTION dedupe on kind so a switch after read notifies (decision a)", () => {
+    const text = fixSql();
+    // Different kind after read inserts (LOVE history never blocks WOW);
+    // same-kind re-reacts stay suppressed; other types dedupe as before.
+    expect(text).toMatch(/p_type <> 'REACTION'/);
+    expect(text).toMatch(/n\.reaction_kind is not distinct from p_reaction_kind/);
+  });
+
+  it("no longer claims read rows block re-notify exactly like LIKE/DISLIKE", () => {
+    const text = fixSql();
+    expect(text).not.toMatch(/exactly like LIKE\/DISLIKE/);
   });
 });

@@ -38,7 +38,7 @@ const GROUPS: Array<{ title: string; description: string; toggles: ToggleDef[] }
     title: "Report activity",
     description: "Reactions to your reports.",
     toggles: [
-      { key: "likes", label: "Likes", hint: "Someone likes or dislikes your report.", icon: Heart },
+      { key: "likes", label: "Reactions", hint: "Someone reacts to your report.", icon: Heart },
     ],
   },
   {

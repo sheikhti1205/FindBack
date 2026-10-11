@@ -72,7 +72,7 @@ const TOPICS: readonly HelpTopic[] = [
   {
     id: "notifications",
     title: "Notifications",
-    description: "Likes, comments, and mentions land in your inbox.",
+    description: "Reactions, comments, and mentions land in your inbox.",
     route: "/notifications",
     icon: Bell,
     iconTone: "notifications",

@@ -45,6 +45,16 @@ describe("HelpGuide", () => {
     expect(screen.getByTestId("location").textContent).toBe("/settings");
   });
 
+  it("names reactions (not likes) on the notifications topic (FBX-035)", () => {
+    renderGuide();
+
+    // The topic description renders as the row's accessible description.
+    expect(
+      screen.getByText("Reactions, comments, and mentions land in your inbox."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Likes, comments, and mentions/)).toBeNull();
+  });
+
   it("filters topics locally with no backend", () => {
     renderGuide();
 
