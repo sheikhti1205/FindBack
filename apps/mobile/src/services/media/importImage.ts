@@ -14,7 +14,7 @@
  */
 
 import { detectMotionPhoto, hasMotionPhotoMetadata, hasUnsupportedMotionContainer, strippedVideoBytes } from "./motionPhoto";
-import { SOURCE_MAX_BYTES } from "./mediaPolicy";
+import { ACCEPTED_STILL_FORMATS_LABEL, SOURCE_MAX_BYTES } from "./mediaPolicy";
 
 /**
  * Downsample-first intake: ordinary modern camera media (32–50 MP, large
@@ -561,7 +561,7 @@ function unsupportedMessage(sniffed: SniffedKind, fileName: string): string {
   const label = "TIFF";
   return (
     `"${fileName}" looks like ${label}, which this app cannot decode here. ` +
-    "Please pick a JPEG, PNG, WebP, GIF, HEIC, HEIF, AVIF, or BMP version instead — nothing was imported."
+    `Please pick a ${ACCEPTED_STILL_FORMATS_LABEL} version instead — nothing was imported.`
   );
 }
 
@@ -679,7 +679,7 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
   if (containerSniffed === null) {
     throw new MediaError(
       "UNRECOGNIZED_FORMAT",
-      `"${fileName}" is not a recognized photo (JPEG, PNG, WebP, GIF, BMP, HEIC, HEIF, AVIF). ` +
+      `"${fileName}" is not a recognized photo — choose a ${ACCEPTED_STILL_FORMATS_LABEL} file. ` +
         "The file may be corrupt or a renamed non-photo — nothing was imported.",
     );
   }

@@ -1,7 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { IMPORT_MAX_INPUT_BYTES } from "./importImage";
 import { MAX_ORIGINAL_BYTES, PhotoImportError, SOURCE_LIMIT_MESSAGE, normalizeForUpload } from "../photo";
-import { MAX_EDGE, MAX_DERIVATIVE_BYTES, PROBE_BYTES, SOURCE_MAX_BYTES, UPLOAD_MAX_BYTES, isWithinSourceCap } from "./mediaPolicy";
+import { ACCEPTED_STILL_FORMATS_LABEL, MAX_EDGE, MAX_DERIVATIVE_BYTES, PROBE_BYTES, SOURCE_MAX_BYTES, UPLOAD_MAX_BYTES, isWithinSourceCap } from "./mediaPolicy";
 
 /**
  * FBX-004: ONE semantic source cap across the JS intake path and the Android
@@ -50,5 +51,33 @@ describe("media policy source cap", () => {
     Object.defineProperty(justUnder, "size", { value: 99 * 1024 * 1024 });
     const err = await normalizeForUpload(justUnder).then(() => null, (e: unknown) => e);
     expect(err === null || !(err instanceof Error && err.message === SOURCE_LIMIT_MESSAGE)).toBe(true);
+  });
+});
+
+/**
+ * FBX-003: ONE advertised accepted-container list. The rejection copy and the
+ * accept maps must agree — a container that intake accepts is advertised, and
+ * a container that is advertised is accepted. The label is a single exported
+ * constant so the sentence and the map cannot drift again.
+ */
+describe("accepted still formats label (FBX-003)", () => {
+  it("advertises every container the JS intake maps accept", () => {
+    // The photo.ts final MIME map and FALLBACK_ACCEPTED_KINDS, plus the
+    // HEIC/HEIF/AVIF normalize branch, cover exactly this set.
+    for (const label of ["JPEG", "PNG", "WebP", "GIF", "BMP", "HEIC", "HEIF", "AVIF"]) {
+      expect(ACCEPTED_STILL_FORMATS_LABEL).toContain(label);
+    }
+  });
+
+  it("is the single source of the advertised set in the intake services", () => {
+    const photoSource = readFileSync(new URL("../photo.ts", import.meta.url), "utf8");
+    const importSource = readFileSync(new URL("./importImage.ts", import.meta.url), "utf8");
+    expect(photoSource).toContain("ACCEPTED_STILL_FORMATS_LABEL");
+    expect(importSource).toContain("ACCEPTED_STILL_FORMATS_LABEL");
+    // No hand-written advertised list may survive beside the shared label.
+    expect(photoSource).not.toMatch(/Choose a JPEG, PNG/);
+    expect(photoSource).not.toMatch(/pick a JPEG, PNG/);
+    expect(importSource).not.toMatch(/pick a JPEG, PNG/);
+    expect(importSource).not.toMatch(/recognized photo \(JPEG/);
   });
 });

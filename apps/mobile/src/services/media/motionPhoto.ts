@@ -1,6 +1,7 @@
 import { readMotionXmp, type MotionXmp } from "./xmpMotion";
+import { PROBE_BYTES } from "./mediaPolicy";
 
-const headerOf = (bytes: Uint8Array) => new TextDecoder("latin1").decode(bytes.subarray(0, 65536));
+const headerOf = (bytes: Uint8Array) => new TextDecoder("latin1").decode(bytes.subarray(0, PROBE_BYTES));
 function number(value: string | null): number | null {
   if (value === null || !/^\d+$/.test(value)) return null;
   const result = Number(value); return Number.isSafeInteger(result) ? result : null;
@@ -36,30 +37,113 @@ export function hasMotionPhotoMetadata(bytes: Uint8Array): boolean {
   try { const mode = readMotionXmp(header).mode; return mode === "modern" || mode === "legacy"; }
   catch { return /(?:MotionPhoto|MicroVideo)(?:\s*=|>)/.test(header); }
 }
-function validFtyp(bytes: Uint8Array, start: number, length: number): boolean {
-  if (start < 4 || start + 12 > bytes.length) return false;
-  const boxSize = new DataView(bytes.buffer, bytes.byteOffset + start, 4).getUint32(0);
-  return boxSize >= 8 && boxSize <= length && String.fromCharCode(...bytes.subarray(start + 4, start + 8)) === "ftyp";
+function validFtypWindow(window: Uint8Array, declaredLength: number): boolean {
+  if (window.length !== 12) return false;
+  const boxSize = new DataView(window.buffer, window.byteOffset, 4).getUint32(0);
+  return boxSize >= 8 && boxSize <= declaredLength && String.fromCharCode(...window.subarray(4, 8)) === "ftyp";
 }
-/** Namespace-aware modern metadata is authoritative, including disabled values. */
-export function detectMotionPhoto(bytes: Uint8Array): { stillEnd: number } | null {
-  if (bytes.length < 32 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+
+/** Absolute [start, end) byte window the detector must read to decide. */
+export type MotionPhotoWindow = readonly [start: number, end: number];
+
+interface MotionPlanModern {
+  kind: "modern";
+  stillEnd: number;
+  videoLength: number;
+  /** Still EOI first, then the video resource's ftyp box — both tiny. */
+  windows: readonly [MotionPhotoWindow, MotionPhotoWindow];
+}
+interface MotionPlanLegacy {
+  kind: "legacy";
+  scanStart: number;
+  videoLength: number;
+  /** Video ftyp box first, then the short EOI/padding scan band. */
+  windows: readonly [MotionPhotoWindow, MotionPhotoWindow];
+}
+type MotionPlan = MotionPlanModern | MotionPlanLegacy;
+
+/**
+ * FBX-002: which absolute byte windows a Motion Photo container needs, from
+ * its leading XMP header and declared length ALONE. Neither the still payload
+ * nor the video tail is ever materialized: validation later reads two tiny
+ * targeted windows (a 12-byte ftyp box and a ≤34-byte EOI band), so a 100 MB
+ * container costs a few dozen bytes of JS, never 100 MB.
+ */
+function planMotionPhoto(header: Uint8Array, total: number): MotionPlan | null {
+  if (total < 32 || header.length < 2 || header[0] !== 0xff || header[1] !== 0xd8) return null;
   let metadata: MotionXmp;
-  try { metadata = readMotionXmp(headerOf(bytes)); } catch { return null; }
+  try { metadata = readMotionXmp(new TextDecoder("latin1").decode(header.subarray(0, PROBE_BYTES))); } catch { return null; }
   if (metadata.mode === "none" || metadata.mode === "disabled") return null;
   if (metadata.mode === "modern") {
-    const modern = layout(metadata, bytes.length);
-    if (!modern || modern.stillEnd < 4 || bytes[modern.stillEnd - 2] !== 255 || bytes[modern.stillEnd - 1] !== 217 || !validFtyp(bytes, modern.videoStart, modern.videoLength)) return null;
-    return { stillEnd: modern.stillEnd };
+    const modern = layout(metadata, total);
+    if (!modern || modern.stillEnd < 4 || modern.videoStart < 4) return null;
+    return {
+      kind: "modern",
+      stillEnd: modern.stillEnd,
+      videoLength: modern.videoLength,
+      windows: [
+        [modern.stillEnd - 2, modern.stillEnd],
+        [modern.videoStart, modern.videoStart + 12],
+      ],
+    };
   }
   const length = number(metadata.offset);
   if (length === null || length < 16) return null;
-  const start = bytes.length - length;
-  if (!validFtyp(bytes, start, length)) return null;
-  for (let i = start - 2; i >= Math.max(2, start - 34); i--) {
-    if (bytes[i] === 255 && bytes[i + 1] === 217 && bytes.subarray(i + 2, start).every((value) => value === 0)) return { stillEnd: i + 2 };
+  const start = total - length;
+  if (start < 4) return null;
+  return {
+    kind: "legacy",
+    scanStart: Math.max(2, start - 34),
+    videoLength: length,
+    windows: [
+      [start, start + 12],
+      [Math.max(2, start - 34), start],
+    ],
+  };
+}
+
+/** Validate the planned windows, in plan order. Pure; no I/O. */
+function confirmMotionPhoto(plan: MotionPlan, windows: readonly Uint8Array[]): { stillEnd: number } | null {
+  if (plan.kind === "modern") {
+    const eoi = windows[0]!;
+    const ftyp = windows[1]!;
+    if (eoi.length !== 2 || eoi[0] !== 255 || eoi[1] !== 217) return null;
+    if (!validFtypWindow(ftyp, plan.videoLength)) return null;
+    return { stillEnd: plan.stillEnd };
+  }
+  const ftyp = windows[0]!;
+  const scan = windows[1]!;
+  if (!validFtypWindow(ftyp, plan.videoLength)) return null;
+  for (let i = scan.length - 2; i >= 0; i--) {
+    if (scan[i] === 255 && scan[i + 1] === 217 && scan.subarray(i + 2).every((value) => value === 0)) return { stillEnd: plan.scanStart + i + 2 };
   }
   return null;
+}
+
+/** Namespace-aware modern metadata is authoritative, including disabled values. */
+export function detectMotionPhoto(bytes: Uint8Array): { stillEnd: number } | null {
+  const plan = planMotionPhoto(bytes.subarray(0, Math.min(bytes.length, PROBE_BYTES)), bytes.length);
+  if (!plan) return null;
+  const windows = plan.windows.map(([start, end]) => bytes.subarray(start, Math.min(end, bytes.length)));
+  return confirmMotionPhoto(plan, windows);
+}
+
+/**
+ * FBX-002: the bounded-window twin of {@link detectMotionPhoto}. `header` is
+ * the leading PROBE_BYTES window the caller already read for sniffing; `read`
+ * fetches each planned window on demand. The source is never materialized, so
+ * the same container decides identically on a 12-byte read budget.
+ */
+export async function detectMotionPhotoBounded(
+  header: Uint8Array,
+  total: number,
+  read: (start: number, end: number) => Promise<Uint8Array>,
+): Promise<{ stillEnd: number } | null> {
+  const plan = planMotionPhoto(header, total);
+  if (!plan) return null;
+  const windows: Uint8Array[] = [];
+  for (const [start, end] of plan.windows) windows.push(await read(start, Math.min(end, total)));
+  return confirmMotionPhoto(plan, windows);
 }
 /** Top-level box walk only; never search image/video payload for a marker string. */
 export function hasUnsupportedMotionContainer(bytes: Uint8Array): boolean {

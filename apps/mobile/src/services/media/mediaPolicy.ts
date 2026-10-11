@@ -33,6 +33,17 @@ export const UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
  */
 export const PROBE_BYTES = 65_536;
 
+/**
+ * FBX-003: the ONE advertised accepted-container list. Every intake path
+ * advertises this exact set (photo.ts rejection copy, importImage.ts
+ * rejection copy) and every accept map is checked against it, so the
+ * advertisement and the enforcement can never drift apart again.
+ *
+ * Order matches the user-facing sentence: raster stills first, then the
+ * modern containers that normalize through the shared decode policy.
+ */
+export const ACCEPTED_STILL_FORMATS_LABEL = "JPEG, PNG, WebP, GIF, BMP, HEIC, HEIF, or AVIF";
+
 /** True when a source length is inside the single source cap. */
 export function isWithinSourceCap(byteLength: number): boolean {
   return Number.isFinite(byteLength) && byteLength >= 0 && byteLength <= SOURCE_MAX_BYTES;

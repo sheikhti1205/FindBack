@@ -1945,7 +1945,10 @@ function ReportForm() {
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/png,image/jpeg,image/webp,image/gif"
+            // FBX-003: the picker advertises EXACTLY the accepted set — one
+            // source of truth, so the file dialog and the post-prepare gate
+            // can never disagree about which containers are welcome.
+            accept={ACCEPTED_IMAGE_TYPES.join(",")}
             className="sr-only"
             onChange={(e) => {
               onPickFiles(e.target.files);

@@ -29,6 +29,7 @@ export const MAX_DECODE_PIXELS = 30_000_000;
 
 import { BootTimeoutError, throwIfAborted, withTimeout } from "./timeout";
 import { currentPhotoQuality } from "../appearance";
+import { PROBE_BYTES } from "./media/mediaPolicy";
 
 /** Encode-quality tier (jpeg/webp) honoring the High Quality Photo flag. */
 export interface PhotoQuality {
@@ -250,7 +251,7 @@ async function probeFileDimensions(
 ): Promise<{ width: number; height: number } | null> {
   try {
     throwIfAborted(signal);
-    const head = file.slice(0, 65536);
+    const head = file.slice(0, PROBE_BYTES);
     const buffer = typeof head.arrayBuffer === "function" ? await head.arrayBuffer() : null;
     throwIfAborted(signal);
     if (!buffer) return null;
@@ -277,7 +278,7 @@ async function probeHeicExtents(
 ): Promise<{ width: number; height: number } | null> {
   try {
     throwIfAborted(signal);
-    const head = file.slice(0, 65536);
+    const head = file.slice(0, PROBE_BYTES);
     const buffer = typeof head.arrayBuffer === "function" ? await head.arrayBuffer() : null;
     throwIfAborted(signal);
     if (!buffer) return null;

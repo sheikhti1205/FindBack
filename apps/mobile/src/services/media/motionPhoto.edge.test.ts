@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { detectMotionPhoto } from "./motionPhoto";
+import { detectMotionPhoto, detectMotionPhotoBounded } from "./motionPhoto";
+import { PROBE_BYTES } from "./mediaPolicy";
 
 /**
  * Edge-case coverage for detectMotionPhoto (motionPhoto.ts).
@@ -171,5 +172,62 @@ describe("detectMotionPhoto edge cases", () => {
 
   it("rejects a container with no EOI before the MP4 box", () => {
     expect(detectMotionPhoto(buildMotionPhoto({ includeEoi: false }).bytes)).toBeNull();
+  });
+});
+
+/**
+ * FBX-002: the bounded-window detector must decide IDENTICALLY to the
+ * whole-buffer one, from a header window plus two tiny targeted tail reads —
+ * never from the still payload or the video tail.
+ */
+describe("bounded motion detection (FBX-002)", () => {
+  async function bounded(bytes: Uint8Array) {
+    const header = bytes.subarray(0, Math.min(bytes.length, PROBE_BYTES));
+    const reads: Array<[number, number]> = [];
+    const result = await detectMotionPhotoBounded(header, bytes.length, async (start, end) => {
+      reads.push([start, end]);
+      return bytes.subarray(start, Math.min(end, bytes.length));
+    });
+    return { result, reads };
+  }
+
+  it.each([
+    {},
+    { padLen: 8 },
+    { padLen: 8, padFill: 0x01 },
+    { boxType: "free" },
+    { includeEoi: false },
+    { declaredOffset: 999_999 },
+    { declaredOffset: null },
+    { prefix: PNG_MAGIC },
+    { microVideo: "0" },
+  ])("agrees with the whole-buffer detector and only reads tiny windows: %o", async (options) => {
+    const { bytes, stillEnd } = buildMotionPhoto(options);
+    const { result, reads } = await bounded(bytes);
+    expect(result).toEqual(detectMotionPhoto(bytes));
+    if (result !== null) expect(result.stillEnd).toBe(stillEnd);
+    for (const [start, end] of reads) {
+      expect(end - start).toBeLessThanOrEqual(34);
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(end).toBeLessThanOrEqual(bytes.length);
+    }
+  });
+
+  it("decides a multi-megabyte Motion Photo from a few dozen bytes of tail", async () => {
+    // A realistic container: XMP in the leading header (where every real
+    // Motion Photo keeps it), a multi-MB JPEG still body, and a small MP4
+    // tail. Detection must cost the header window plus two tiny tail reads —
+    // never a proportional slice of the body.
+    const trailer = trailerBox("ftyp", 4096);
+    const still = concat(SOI, xmp("1", trailer.length), new Uint8Array(3 * 1024 * 1024).fill(0xcd), EOI);
+    const bytes = concat(still, trailer);
+    const stillEnd = still.length;
+    expect(bytes.length).toBeGreaterThan(3 * 1024 * 1024);
+    expect(detectMotionPhoto(bytes)).toEqual({ stillEnd });
+    const { result, reads } = await bounded(bytes);
+    expect(result).toEqual({ stillEnd });
+    const totalRead = reads.reduce((sum, [start, end]) => sum + (end - start), 0);
+    expect(totalRead).toBeLessThanOrEqual(34 * reads.length);
+    expect(totalRead).toBeLessThan(bytes.length / 10_000);
   });
 });

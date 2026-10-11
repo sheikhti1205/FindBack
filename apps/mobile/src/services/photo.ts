@@ -1,8 +1,8 @@
 import { Camera, MediaType, MediaTypeSelection, CameraErrorCode } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
-import { SOURCE_LIMIT_MESSAGE, SOURCE_MAX_BYTES, UPLOAD_MAX_BYTES } from "./media/mediaPolicy";
+import { ACCEPTED_STILL_FORMATS_LABEL, PROBE_BYTES, SOURCE_LIMIT_MESSAGE, SOURCE_MAX_BYTES, UPLOAD_MAX_BYTES } from "./media/mediaPolicy";
 import { probeDimensions, sniffImage } from "./media/importImage";
-import { detectMotionPhoto, strippedVideoBytes } from "./media/motionPhoto";
+import { detectMotionPhotoBounded, strippedVideoBytes } from "./media/motionPhoto";
 import { normalizeImage } from "./image";
 import { BootTimeoutError, throwIfAborted, withTimeout } from "./timeout";
 
@@ -233,27 +233,25 @@ export async function normalizeForUpload(source: File, opts?: PhotoPipelineOpts)
     // original. Magic bytes reject renamed non-photos, the declared-type
     // cross-check rejects mislabeled files, and the header probe rejects
     // truncated/corrupt images that would otherwise fail later at publish.
+    // FBX-002: verification reads a bounded header window only — every check
+    // below lives in the leading PROBE_BYTES, so a source never becomes a
+    // source-sized JS allocation just to be inspected.
     throwIfAborted(signal);
-    const bytes = new Uint8Array(await withTimeout(
-      () => blobBytes(source),
-      budget,
-      "Photo read timed out",
-      signal,
-    ).catch((readErr: unknown) => {
+    const bytes = await readWindow(source, 0, PROBE_BYTES, budget, signal).catch((readErr: unknown) => {
       throw toStageError(readErr, "read");
-    }));
+    });
     throwIfAborted(signal);
     const kind = sniffImage(bytes);
     if (!kind) {
       throw new PhotoImportError(
-        `"${source.name}" doesn't look like a photo file. It may be corrupt or renamed — choose a JPEG, PNG, WebP, or GIF photo.`,
+        `"${source.name}" doesn't look like a photo file. It may be corrupt or renamed — choose a ${ACCEPTED_STILL_FORMATS_LABEL} photo.`,
       );
     }
     if (!FALLBACK_ACCEPTED_KINDS.has(kind)) {
       throw new PhotoImportError(
         kind === "heic" || kind === "heif" || kind === "avif"
           ? "This photo needs decoding this device can't do here. Export it as JPEG and try again."
-          : `"${source.name}" looks like ${fallbackBaseKind(kind).toUpperCase()}, which isn't supported here. Choose a JPEG, PNG, WebP, or GIF photo.`,
+          : `"${source.name}" looks like ${fallbackBaseKind(kind).toUpperCase()}, which isn't supported here. Choose a ${ACCEPTED_STILL_FORMATS_LABEL} photo.`,
       );
     }
     const declaredBase = declaredImageBase(source.type);
@@ -340,30 +338,37 @@ export async function photoToFile(photo: PickedPhoto, name?: string, opts?: Phot
     throw new PhotoImportError("Could not read the selected photo");
   }
   // Memory guard backstop: reject huge natives (camera originals, Motion Photo
-  // containers, HEIC) by their reported size before materializing the full
-  // bytes or invoking any decoder. Applies to every kind, including HEIC.
+  // containers, HEIC) by their reported size before reading any window or
+  // invoking any decoder. Applies to every kind, including HEIC.
   if (blob.size > MAX_ORIGINAL_BYTES) throw new PhotoImportError(TOO_LARGE_TO_PROCESS);
-  let bytes: Uint8Array;
+  // FBX-002: the source is NEVER materialized in JS. Sniffing reads one
+  // bounded leading window; Motion Photo layout reads two more tiny targeted
+  // windows; the platform Blob then goes to the decoder, which downsamples AT
+  // DECODE TIME (createImageBitmap resize) — so a 100 MB original never
+  // becomes a 100 MB Uint8Array on the intake path.
+  let header: Uint8Array;
   try {
-    bytes = new Uint8Array(await withTimeout(
-      () => blobBytes(blob),
-      budget,
-      "Photo read timed out",
-      signal,
-    ));
+    header = await readWindow(blob, 0, PROBE_BYTES, budget, signal);
   } catch (err) {
     if (isAbort(err, signal)) throw err;
     if (err instanceof BootTimeoutError) throw new PhotoStageTimeoutError("read", err.message);
     throw new PhotoImportError("Could not read the selected photo");
   }
   throwIfAborted(signal);
-  const kind = sniffImage(bytes);
-  const still = kind === "jpeg" ? detectMotionPhoto(bytes) : null;
+  const kind = sniffImage(header);
+  const still = kind === "jpeg"
+    ? await detectMotionPhotoBounded(header, blob.size, (start, end) => readWindow(blob, start, end, budget, signal))
+      .catch((err: unknown) => {
+        if (isAbort(err, signal)) throw err;
+        if (err instanceof BootTimeoutError) throw new PhotoStageTimeoutError("read", err.message);
+        throw new PhotoImportError("Could not read the selected photo");
+      })
+    : null;
   photo.motionPhoto = still !== null;
   // Still/tail accounting: only the still reaches the decoder and upload; the
   // trailing MP4 count is surfaced on the result for the UI status line so a
   // stripped container never passes silently.
-  const videoBytesStripped = strippedVideoBytes(bytes.length, still?.stillEnd ?? null);
+  const videoBytesStripped = strippedVideoBytes(blob.size, still?.stillEnd ?? null);
   if (kind === "heic" || kind === "heif" || kind === "avif") {
     try {
       const source = new File([blob], name ?? `photo.${kind}`, { type: `image/${kind}` });
@@ -389,7 +394,7 @@ export async function photoToFile(photo: PickedPhoto, name?: string, opts?: Phot
     : kind === "webp" || kind === "webp-animated" ? "image/webp"
     : kind === "gif" || kind === "gif-animated" ? "image/gif"
     : kind === "bmp" ? "image/bmp" : null;
-  if (!mime) throw new PhotoImportError("Unsupported or unreadable photo. Choose a JPEG, PNG, WebP, GIF, HEIC, HEIF, or AVIF image.");
+  if (!mime) throw new PhotoImportError(`Unsupported or unreadable photo. Choose a ${ACCEPTED_STILL_FORMATS_LABEL} image.`);
   const payload = still ? blob.slice(0, still.stillEnd, mime) : blob;
   // Still-level backstop: the still alone must fit the decode bound even when
   // the container already passed it (tail accounted separately above).
@@ -399,8 +404,23 @@ export async function photoToFile(photo: PickedPhoto, name?: string, opts?: Phot
   return withVideoTailInfo(normalized, videoBytesStripped);
 }
 
-function blobBytes(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
+/**
+ * FBX-002: the ONLY way the intake path touches source bytes. Always reads a
+ * bounded `[start, end)` window through `Blob.slice` — never the whole source
+ * — so sniffing and Motion Photo layout cost at most PROBE_BYTES plus two
+ * tiny targeted tail reads no matter how large the original is. A Blob that
+ * cannot be windowed is unreadable here rather than a reason to fall back to
+ * a full-source read.
+ */
+async function readWindow(blob: Blob, start: number, end: number, budget: number, signal?: AbortSignal): Promise<Uint8Array> {
+  if (typeof blob.slice !== "function") throw new Error("unreadable file");
+  const window = blob.slice(start, end);
+  const buffer = await withTimeout(() => windowBytes(window), budget, "Photo read timed out", signal);
+  return new Uint8Array(buffer);
+}
+
+function windowBytes(window: Blob): Promise<ArrayBuffer> {
+  if (typeof window.arrayBuffer === "function") return window.arrayBuffer();
   // Older Android WebViews and jsdom may expose FileReader but not Blob.arrayBuffer.
   // Same deterministic contract as photoBytes.buffer: current-realm copy,
   // current-realm Error, no hang when FileReader is absent.
@@ -416,7 +436,7 @@ function blobBytes(blob: Blob): Promise<ArrayBuffer> {
     };
     reader.onerror = () => reject(new Error("unreadable file"));
     try {
-      reader.readAsArrayBuffer(blob);
+      reader.readAsArrayBuffer(window);
     } catch {
       reject(new Error("unreadable file"));
     }

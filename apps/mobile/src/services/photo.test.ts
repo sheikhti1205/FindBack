@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const camera = vi.hoisted(() => ({ takePhoto: vi.fn(), chooseFromGallery: vi.fn() }));
@@ -26,6 +27,7 @@ vi.mock("./image", async (importOriginal) => {
 import { chooseFromGallery, isCancellation, normalizeForUpload, photoToFile, takePhoto } from "./photo";
 import { DecodeError } from "./image";
 import { detectMotionPhoto } from "./media/motionPhoto";
+import { PROBE_BYTES } from "./media/mediaPolicy";
 
 /** Minimal valid 1x1 JPEG header (SOI + SOF0 + EOI) for fallback probing. */
 const SOF0_1X1 = [255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0];
@@ -203,5 +205,146 @@ describe("photo source", () => {
     normalizeImageMock.mockRejectedValueOnce(new DecodeError("rejected", "bad pixel data"));
     const damaged = new File([VALID_JPEG], "photo.jpg", { type: "image/jpeg" });
     await expect(normalizeForUpload(damaged)).rejects.toThrow("couldn't be decoded");
+  });
+});
+
+/**
+ * FBX-002: the web intake path never materializes the source in JS. Every
+ * byte read goes through a bounded `Blob.slice` window — a leading
+ * PROBE_BYTES sniff plus, for Motion Photos, two tiny targeted tail reads —
+ * and the platform Blob then reaches the decoder, which downsamples at decode
+ * time. A 100 MB original must never become a 100 MB Uint8Array.
+ */
+describe("bounded web intake (FBX-002)", () => {
+  /**
+   * Wrap a real Blob so every window is metered and any whole-source read
+   * fails. A bare `slice(start, end)` is an intake READ; `slice(start, end,
+   * type)` is the lazy still hand-off to the decoder (a Blob view that never
+   * becomes JS bytes), so the two are metered separately.
+   */
+  function metered(blob: Blob, meter: { read: number; handOff: number }): Blob {
+    return {
+      size: blob.size,
+      type: blob.type,
+      slice: (start?: number, end?: number, contentType?: string) => {
+        const view = contentType === undefined ? blob.slice(start, end) : blob.slice(start, end, contentType);
+        if (contentType === undefined) meter.read += view.size; else meter.handOff += view.size;
+        return view;
+      },
+      arrayBuffer: () => Promise.reject(new Error("whole-source arrayBuffer is forbidden on the intake path")),
+    } as unknown as Blob;
+  }
+
+  function concat(...parts: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const out = new Uint8Array(new ArrayBuffer(total));
+    let at = 0;
+    for (const part of parts) { out.set(part, at); at += part.length; }
+    return out;
+  }
+
+  it("reads at most one leading window from a large non-motion source", async () => {
+    const original = new Uint8Array(12 * 1024 * 1024);
+    original[0] = 255; original[1] = 216; original[2] = 255; original[3] = 224;
+    normalizeImageMock.mockResolvedValueOnce({
+      blob: new Blob([new Uint8Array(1024)], { type: "image/jpeg" }),
+      mimeType: "image/jpeg",
+      width: 1920,
+      height: 1280,
+    });
+    const meter = { read: 0, handOff: 0 };
+    const source = metered(new Blob([original], { type: "image/jpeg" }), meter);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(source) }));
+    const file = await photoToFile({ nativeUri: "content://x", webPath: "http://localhost/big.jpg", format: "jpg", id: "bounded" });
+    expect(file.type).toBe("image/jpeg");
+    expect(meter.read).toBe(PROBE_BYTES);
+    expect(meter.read).toBeLessThan(original.length / 100);
+  });
+
+  it("keeps a Motion Photo decision to the header window plus tiny tail reads", async () => {
+    const mp4 = new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 109, 112, 52, 50, 0, 0, 0, 0]);
+    const xmp = new TextEncoder().encode(
+      '<rdf:Description xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GCamera="http://ns.google.com/photos/1.0/camera/" GCamera:MicroVideo="1" GCamera:MicroVideoOffset="16"/>',
+    );
+    const appLength = xmp.length + 2;
+    const still = concat(
+      new Uint8Array([255, 216, 255, 225, (appLength >>> 8) & 0xff, appLength & 0xff]),
+      xmp,
+      new Uint8Array(2 * 1024 * 1024).fill(0xab),
+      new Uint8Array(SOF0_1X1),
+      new Uint8Array([255, 217]),
+    );
+    const combined = concat(still, mp4);
+    normalizeImageMock.mockResolvedValueOnce({
+      blob: new Blob([still], { type: "image/jpeg" }),
+      mimeType: "image/jpeg",
+      width: 1,
+      height: 1,
+    });
+    const meter = { read: 0, handOff: 0 };
+    const source = metered(new Blob([combined], { type: "image/jpeg" }), meter);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(source) }));
+    const picked = { nativeUri: "content://x", webPath: "http://localhost/motion.jpg", format: "jpg", id: "motion", motionPhoto: false };
+    const stillFile = await photoToFile(picked);
+    expect(picked.motionPhoto).toBe(true);
+    expect(stillFile.size).toBe(still.length);
+    // Header window + a 34-byte EOI band + a 12-byte ftyp window. The 2 MB
+    // still is handed to the decoder as a lazy Blob view, never as JS bytes.
+    expect(meter.read).toBeLessThanOrEqual(PROBE_BYTES + 34 + 12);
+    expect(meter.handOff).toBe(still.length);
+  });
+
+  it("verifies the no-decoder fallback from a bounded header window only", async () => {
+    const original = new Uint8Array(6 * 1024 * 1024);
+    original.set(VALID_JPEG, 0);
+    let bytesRead = 0;
+    const source = {
+      size: original.length,
+      type: "image/jpeg",
+      name: "big.jpg",
+      slice: (start?: number, end?: number) => {
+        const view = new Blob([original]).slice(start, end);
+        bytesRead += view.size;
+        return view;
+      },
+      arrayBuffer: () => Promise.reject(new Error("whole-source arrayBuffer is forbidden on the intake path")),
+    } as unknown as File;
+    const out = await normalizeForUpload(source);
+    expect(out).toBe(source);
+    expect(bytesRead).toBeLessThanOrEqual(PROBE_BYTES);
+  });
+});
+
+/**
+ * FBX-002 static guard: the production intake sources may not read a whole
+ * source blob. Any direct `arrayBuffer()` of the response/source (rather than
+ * of a `Blob.slice` window) is a regression back to a source-sized JS
+ * allocation, so this fails the suite before the runtime meter can.
+ */
+describe("intake production-path guard (FBX-002)", () => {
+  // cwd-relative (vitest runs from apps/mobile), matching the repo's other
+  // static source guards — `import.meta.url` is an http URL under jsdom.
+  const photoSource = readFileSync("src/services/photo.ts", "utf8");
+  const importSource = readFileSync("src/services/media/importImage.ts", "utf8");
+  const imageSource = readFileSync("src/services/image.ts", "utf8");
+
+  it("photo.ts has no whole-source byte materialization", () => {
+    expect(photoSource).not.toMatch(/blobBytes\s*\(/);
+    expect(photoSource).not.toMatch(/response\s*\.\s*arrayBuffer\s*\(/);
+    expect(photoSource).not.toMatch(/(?:blob|source|response|file)\s*\.\s*arrayBuffer\s*\(/);
+    // The bounded reader is present and is what touches bytes.
+    expect(photoSource).toMatch(/function readWindow\s*\(/);
+    expect(photoSource).toMatch(/blob\.slice\s*\(/);
+  });
+
+  it("the pure importImage probe path stays free of DOM byte reads", () => {
+    expect(importSource).not.toMatch(/\.arrayBuffer\s*\(/);
+    expect(importSource).not.toMatch(/FileReader/);
+    expect(importSource).not.toMatch(/createImageBitmap/);
+  });
+
+  it("image.ts probes only via bounded slices, never the whole File", () => {
+    expect(imageSource).not.toMatch(/(?:file|source|blob)\s*\.\s*arrayBuffer\s*\(/);
+    expect(imageSource).toMatch(/file\.slice\s*\(\s*0\s*,/);
   });
 });
