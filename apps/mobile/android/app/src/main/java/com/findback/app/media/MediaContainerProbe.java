@@ -35,7 +35,7 @@ public final class MediaContainerProbe {
                 byte[] extended = read.read(offset + 8, 8);
                 if (extended.length != 8) throw invalid();
                 long high = u32(extended, 0), low = u32(extended, 4);
-                // Sources already have a 256 MB ceiling. Reject impossible 64-bit lengths.
+                // Sources already have the 100 MiB source cap. Reject impossible 64-bit lengths.
                 if (high != 0) throw invalid();
                 size = low; minimum = 16;
             }

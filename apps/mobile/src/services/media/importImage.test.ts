@@ -10,6 +10,7 @@ import {
   type ImportDeps,
   type TranscodeRequest,
 } from "./importImage";
+import { SOURCE_MAX_BYTES } from "./mediaPolicy";
 import {
   ascii,
   buildAvifFtyp,
@@ -263,7 +264,8 @@ describe("importImage intake", () => {
   });
 
   it("rejects inputs over the byte cap with an actionable message", async () => {
-    const huge = new Uint8Array(101_000_000);
+    // One byte over the shared 100 MiB source cap (mediaPolicy.SOURCE_MAX_BYTES).
+    const huge = new Uint8Array(SOURCE_MAX_BYTES + 1);
     huge.set([0xff, 0xd8, 0xff, 0xe0]);
     await expect(
       importImage({ bytes: huge, fileName: "huge.jpg" }, deps()),

@@ -19,4 +19,14 @@ public class MediaPolicyTest {
         assertEquals(8, MediaPolicy.sampleSize(8000, 6000));
         assertEquals(1, MediaPolicy.sampleSize(32, 64));
     }
+    /**
+     * FBX-004: the native source cap is the SAME 100 MiB semantic bound the JS
+     * intake path enforces (services/media/mediaPolicy.ts SOURCE_MAX_BYTES),
+     * with the same user-facing copy. Derivative caps are separate.
+     */
+    @Test public void sourceCapMatchesTheJsIntakePath() {
+        assertEquals(100L * 1024 * 1024, MediaPolicy.MAX_SOURCE_BYTES);
+        assertEquals("That photo is over the 100 MB source limit and can't be prepared on this device. Choose a smaller image.", MediaPolicy.sourceLimitMessage());
+        assertTrue(MediaPolicy.MAX_DERIVATIVE_BYTES < MediaPolicy.MAX_SOURCE_BYTES);
+    }
 }

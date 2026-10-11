@@ -14,16 +14,18 @@
  */
 
 import { detectMotionPhoto, hasMotionPhotoMetadata, hasUnsupportedMotionContainer, strippedVideoBytes } from "./motionPhoto";
+import { SOURCE_MAX_BYTES } from "./mediaPolicy";
 
 /**
  * Downsample-first intake: ordinary modern camera media (32–50 MP, large
  * compressed files, Motion Photo containers, HEIC/HEIF/AVIF stills) is
  * normalized to a bounded derivative instead of being refused. Only
  * pathological inputs — absurd dimensions, impossible lengths, malformed
- * headers — are rejected. Source acceptance is 100 MB when platform-readable;
- * derivatives stay bounded (preview/upload/AI are separate concerns).
+ * headers — are rejected. Source acceptance follows the single shared
+ * SOURCE_MAX_BYTES cap when platform-readable; derivatives stay bounded
+ * (preview/upload/AI are separate concerns).
  */
-export const IMPORT_MAX_INPUT_BYTES = 100_000_000;
+export const IMPORT_MAX_INPUT_BYTES = SOURCE_MAX_BYTES;
 /**
  * Pathological decode ceiling (120 MP, 32k edge): ordinary 32–50 MP camera
  * photos pass through to downsampling; only absurd declarations refuse.
@@ -693,7 +695,8 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
   const still = motionStillUsed ? bytes.subarray(0, motion.stillEnd) : bytes;
   if (still.length > IMPORT_MAX_INPUT_BYTES) {
     const mb = (still.length / 1_000_000).toFixed(1);
-    const cap = (IMPORT_MAX_INPUT_BYTES / 1_000_000).toFixed(0);
+    // The cap is 100 MiB; advertise the rounded megabyte figure the user sees.
+    const cap = (IMPORT_MAX_INPUT_BYTES / (1024 * 1024)).toFixed(0);
     throw new MediaError(
       "OVERSIZED_INPUT",
       `"${fileName}" is about ${mb} MB, over the ${cap} MB intake cap. ` +

@@ -25,19 +25,23 @@ final class NativeImageProcessor {
 
     JSObject prepare(Uri uri, boolean highQuality) throws IOException {
         if (!"content".equals(uri.getScheme())) throw new MediaPolicy.Failure("Please choose a photo through the device picker.");
-        // A streaming probe handles providers with unknown/lying lengths. At most 64 KiB retained.
+        // FBX-005: the provider's own length is the fast path. When it is known the
+        // probe reads the 64 KiB header and stops — no source-sized scan, no
+        // source-sized allocation. A lying/missing length falls back to the
+        // single counting pass, which is also the still/tail accounting pass.
+        long knownLength = providerLength(uri);
         MediaStreams.Probe probe;
         try (InputStream input = open(uri)) {
-            probe = MediaStreams.probe(input);
+            probe = MediaStreams.probe(input, knownLength);
         }
         byte[] prefix = probe.prefix;
         long total = probe.total;
         if (total == 0) throw new MediaPolicy.Failure("This photo is empty. Choose another photo.");
         String kind = sniff(prefix);
         if (kind == null) throw new MediaPolicy.Failure("This photo format isn't supported on this device. Try a JPEG or PNG.");
-        MotionPhotoMetadata.Layout motion = MotionPhotoMetadata.detect(prefix, total, (offset, count) -> readAt(uri, offset, count));
+        MotionPhotoMetadata.Layout motion = MotionPhotoMetadata.detect(prefix, total, (offset, count) -> readAt(prefix, uri, offset, count));
         long stillLength = motion == null ? total : motion.stillEnd;
-        if (stillLength > MediaPolicy.MAX_STILL_BYTES) throw new MediaPolicy.Failure("This photo is too large to prepare safely. Try exporting a smaller JPEG.");
+        if (stillLength > MediaPolicy.MAX_SOURCE_BYTES) throw new MediaPolicy.Failure(MediaPolicy.sourceLimitMessage());
         File stillFile = null;
         Bitmap bitmap = null;
         final boolean[] animated = { false };
@@ -123,10 +127,37 @@ final class NativeImageProcessor {
         if (input == null) throw new IOException("This photo isn't available. Choose it again.");
         return input;
     }
+    /**
+     * FBX-005: length hint from the provider, or -1 when it has none. Lets the
+     * probe take the prefix fast-path instead of a full counting scan.
+     */
+    private long providerLength(Uri uri) {
+        try (android.database.Cursor cursor = resolver.query(
+                uri, new String[] { android.provider.OpenableColumns.SIZE }, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE);
+                if (index >= 0 && !cursor.isNull(index)) {
+                    long size = cursor.getLong(index);
+                    if (size >= 0) return size;
+                }
+            }
+        } catch (RuntimeException ignored) { /* Providers may refuse the hint; the counting probe is the backstop. */ }
+        return -1;
+    }
     private InputStream openStill(Uri uri, File still) throws IOException {
         return still == null ? open(uri) : new java.io.FileInputStream(still);
     }
-    private byte[] readAt(Uri uri, long start, int count) throws IOException {
+    /**
+     * FBX-005: the prefix captured by the probe answers every in-window range
+     * read (XMP/GCamera tags sit there), so motion detection does not re-open
+     * and re-skip the source. Only a genuine out-of-window read reopens once.
+     */
+    private byte[] readAt(byte[] prefix, Uri uri, long start, int count) throws IOException {
+        if (start >= 0 && count >= 0 && start + count <= prefix.length) {
+            byte[] slice = new byte[count];
+            System.arraycopy(prefix, (int) start, slice, 0, count);
+            return slice;
+        }
         try (InputStream input = open(uri)) {
             long remaining = start;
             while (remaining > 0) {

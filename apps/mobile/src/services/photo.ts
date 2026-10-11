@@ -1,5 +1,6 @@
 import { Camera, MediaType, MediaTypeSelection, CameraErrorCode } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
+import { SOURCE_LIMIT_MESSAGE, SOURCE_MAX_BYTES, UPLOAD_MAX_BYTES } from "./media/mediaPolicy";
 import { probeDimensions, sniffImage } from "./media/importImage";
 import { detectMotionPhoto, strippedVideoBytes } from "./media/motionPhoto";
 import { normalizeImage } from "./image";
@@ -86,17 +87,21 @@ export async function chooseFromGallery(): Promise<PickedPhoto | null> {
 }
 
 /** Final upload limit enforced against the normalized derivative, not the original. */
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = UPLOAD_MAX_BYTES;
 /**
- * Source acceptance bound: user-selected originals up to 100 MB are accepted
- * when the platform can read them. This is a sampled-decode safety bound,
- * never a user-facing resolution/megapixel cap — large dimensions are handled
- * by downsampling, not rejection. Probing reads metadata first; full-res
- * 100 MB sources are never decoded into JS memory.
+ * Source acceptance bound: user-selected originals up to the single
+ * semantic SOURCE_MAX_BYTES cap are accepted when the platform can read
+ * them. This is a sampled-decode safety bound, never a user-facing
+ * resolution/megapixel cap — large dimensions are handled by downsampling,
+ * not rejection. Probing reads metadata first; full-resolution sources are
+ * never decoded into JS memory. Shared with the Android native processor so
+ * both languages refuse the same threshold with the same copy.
  */
-export const MAX_ORIGINAL_BYTES = 100 * 1024 * 1024;
+export const MAX_ORIGINAL_BYTES = SOURCE_MAX_BYTES;
+/** Shared copy; also owned by mediaPolicy so the two languages cannot drift. */
+export { SOURCE_LIMIT_MESSAGE } from "./media/mediaPolicy";
 
-export const TOO_LARGE_TO_PROCESS = "That photo is over the 100 MB source limit and can't be prepared on this device. Choose a smaller image.";
+export const TOO_LARGE_TO_PROCESS = SOURCE_LIMIT_MESSAGE;
 export const TOO_LARGE_FOR_UPLOAD = "That photo is still too large after preparing. Try a smaller image or re-save it as JPEG.";
 export const DECODE_FAILED =
   "couldn't be decoded on this device. The file may be damaged — re-save or export it and try again.";
