@@ -3,6 +3,7 @@ package com.findback.app.map
 import android.app.Activity
 import android.content.Intent
 import androidx.activity.result.ActivityResult
+import com.findback.app.BuildConfig
 import com.findback.app.map.FindbackMapActivity.Companion.EXTRA_ALLOW_CURRENT_LOCATION
 import com.findback.app.map.FindbackMapActivity.Companion.EXTRA_LABEL
 import com.findback.app.map.FindbackMapActivity.Companion.EXTRA_LATITUDE
@@ -141,5 +142,53 @@ class FindbackMapPlugin : Plugin() {
         val closed = JSObject()
         closed.put("closed", true)
         call.resolve(closed)
+    }
+
+    @PluginMethod
+    fun renderSnapshot(call: PluginCall) {
+        val lat = call.getDouble(EXTRA_LATITUDE)
+        val lng = call.getDouble(EXTRA_LONGITUDE)
+        if (!MapValidation.isValidCenter(lat, lng)) {
+            call.reject("A map preview needs valid coordinates.", "MAP_INVALID_COORDINATES")
+            return
+        }
+        val zoom = MapValidation.clampZoom(call.getDouble(EXTRA_ZOOM))
+        val width = MapValidation.clampSnapshotEdge(call.getInt("width") ?: 640)
+        val height = MapValidation.clampSnapshotEdge(call.getInt("height") ?: 360)
+        val density = call.getDouble("density")?.takeIf { it.isFinite() }?.toFloat()
+        val theme = call.getString("theme", "light")
+        val styleUrl = MapValidation.validateStyleUrl(BuildConfig.MAP_STYLE_URL)
+        val context = context
+        try {
+            MapSnapshotService.render(
+                context,
+                lat!!,
+                lng!!,
+                zoom,
+                width,
+                height,
+                density,
+                theme,
+                styleUrl,
+            ) { outcome ->
+                outcome.fold(
+                    onSuccess = { snapshot ->
+                        val result = JSObject()
+                        result.put("uri", snapshot.file.toURI().toString())
+                        result.put("width", snapshot.widthPx)
+                        result.put("height", snapshot.heightPx)
+                        result.put("cacheKey", snapshot.cacheKey)
+                        call.resolve(result)
+                    },
+                    onFailure = {
+                        call.reject("The map preview failed.", "MAP_SNAPSHOT_FAILED")
+                    },
+                )
+            }
+        } catch (e: IllegalArgumentException) {
+            call.reject("A map preview needs valid coordinates.", "MAP_INVALID_COORDINATES")
+        } catch (e: Exception) {
+            call.reject("The map preview failed.", "MAP_SNAPSHOT_FAILED")
+        }
     }
 }
