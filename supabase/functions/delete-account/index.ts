@@ -9,7 +9,11 @@
  * service-role client inside this function.
  *
  * Purge order (each step scoped to the JWT uid):
- *   1. storage `findback-images` objects under `<uid>/` (paginated remove);
+ *   1. every owned storage namespace (OWNED_STORAGE_NAMESPACES: legacy
+ *      report photos under `findback-images/<uid>/`, avatars under
+ *      `findback-images/avatars/<uid>/`, comment attachments under
+ *      `findback-comment-media/<uid>/`) — offset-0-until-empty sweep with
+ *      a no-progress stall guard;
  *   2. `public.users` row — every user-owned table references it
  *      `on delete cascade` (item_posts, comments, reactions, ratings,
  *      verification_challenges, uploads, notifications, device_tokens,
@@ -29,7 +33,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
-const STORAGE_BUCKET = "findback-images";
 const STORAGE_PAGE_SIZE = 1000;
 
 export interface StorageObject {
@@ -43,6 +46,20 @@ export interface StorageAdmin {
   }>;
   remove(paths: string[]): Promise<{ error: { message: string } | null }>;
 }
+
+/**
+ * Every storage namespace a user's bytes can live in (FBX-023). Registered
+ * here so account deletion sweeps ALL of them; a namespace added elsewhere
+ * MUST be registered here in the same change, or deletion orphans it.
+ */
+export const OWNED_STORAGE_NAMESPACES: readonly {
+  bucket: string;
+  prefixFor(uid: string): string;
+}[] = [
+  { bucket: "findback-images", prefixFor: (uid: string) => `${uid}/` },
+  { bucket: "findback-images", prefixFor: (uid: string) => `avatars/${uid}/` },
+  { bucket: "findback-comment-media", prefixFor: (uid: string) => `${uid}/` },
+];
 
 export interface TableAdmin {
   delete(): {
@@ -80,26 +97,62 @@ export function extractBearer(header: string | null): string | null {
 }
 
 /**
- * Removes the user's storage objects and profile row. Storage first (files
- * are unrecoverable once the row cascades), then the `users` row which
- * cascades every owned table. Throws on the first failure so the caller can
- * report partial progress honestly.
+ * Removes every object under `prefix` with an offset-0-until-empty loop:
+ * a successful `remove` shrinks the set, so re-listing offset 0 always
+ * advances and a page past the first can never be missed (the old
+ * offset-walk left orphans whenever remove shrank the set underneath it).
+ * The no-progress stall guard trips when a full remove is followed by an
+ * identical page — the silent-no-op case that would otherwise spin
+ * forever. Throws with the provider message on any list/remove failure.
+ */
+async function sweepNamespace(bucket: StorageAdmin, prefix: string): Promise<number> {
+  let removed = 0;
+  let previousPage: string[] | null = null;
+  for (;;) {
+    const listed = await bucket.list(prefix, { limit: STORAGE_PAGE_SIZE, offset: 0 });
+    if (listed.error) throw new Error(`storage list failed: ${listed.error.message}`);
+    const names: string[] = (listed.data ?? []).map((o) => o.name);
+    if (names.length === 0) break;
+    const previous: string[] | null = previousPage;
+    const stalled =
+      previous !== null &&
+      names.length === previous.length &&
+      names.every((name, i) => name === previous[i]);
+    if (stalled) {
+      throw new Error(`storage sweep stalled at ${prefix}: page unchanged after remove`);
+    }
+    const removedNow = await bucket.remove(names.map((name) => `${prefix}${name}`));
+    if (removedNow.error) throw new Error(`storage remove failed: ${removedNow.error.message}`);
+    removed += names.length;
+    previousPage = names;
+  }
+  return removed;
+}
+
+/**
+ * Removes the user's storage objects across every registered namespace and
+ * the profile row. Storage first (files are unrecoverable once the row
+ * cascades), then the `users` row which cascades every owned table. Throws
+ * on the first failure so the caller can report partial progress honestly;
+ * the error carries the count already removed so a mid-sweep failure never
+ * reads as "nothing was deleted".
  */
 export async function purgeUserData(
   clients: DeletionClients,
   uid: string,
 ): Promise<{ storageRemoved: number }> {
-  const bucket = clients.storage.from(STORAGE_BUCKET);
   let storageRemoved = 0;
-  for (let offset = 0; ; offset += STORAGE_PAGE_SIZE) {
-    const listed = await bucket.list(uid, { limit: STORAGE_PAGE_SIZE, offset });
-    if (listed.error) throw new Error(`storage list failed: ${listed.error.message}`);
-    const objects = listed.data ?? [];
-    if (objects.length === 0) break;
-    const removed = await bucket.remove(objects.map((o) => `${uid}/${o.name}`));
-    if (removed.error) throw new Error(`storage remove failed: ${removed.error.message}`);
-    storageRemoved += objects.length;
-    if (objects.length < STORAGE_PAGE_SIZE) break;
+  try {
+    for (const namespace of OWNED_STORAGE_NAMESPACES) {
+      storageRemoved += await sweepNamespace(
+        clients.storage.from(namespace.bucket),
+        namespace.prefixFor(uid),
+      );
+    }
+  } catch (err) {
+    throw Object.assign(err instanceof Error ? err : new Error("storage sweep failed"), {
+      storageRemoved,
+    });
   }
   const deleted = await clients.from("users").delete().eq("id", uid);
   if (deleted.error) {
