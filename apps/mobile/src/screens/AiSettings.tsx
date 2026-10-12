@@ -88,7 +88,7 @@ export function AiSettings({ accountId }: { accountId?: string }) {
             return (
               <label
                 key={option}
-                className="fb-ai-mode-option"
+                className="fb-ai-mode-option focus-within:outline-2 focus-within:outline-solid focus-within:outline-offset-2 focus-within:outline-focus"
               >
                 <input
                   type="radio"

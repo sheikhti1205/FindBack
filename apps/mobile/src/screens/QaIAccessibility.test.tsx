@@ -227,12 +227,15 @@ describe("QA I — touch-target CSS contracts (SC 2.5.8, house 44px / rows 60px)
   });
 
   it("choice cards (theme/accent/text-size/motion radios) keep >=44px targets", () => {
-    expect(ruleBlock(settingsCss, ".fb-choice")).toMatch(/min-height:\s*2\.75rem/);
+    // Shipped value is 3rem (48px), which exceeds the 44px house floor — the
+    // old 2.75rem pin went stale when choice rows were raised to 48px.
+    expect(ruleBlock(settingsCss, ".fb-choice")).toMatch(/min-height:\s*3rem/);
   });
 
   it("disclosures keep a >=44px summary target", () => {
+    // Shipped value is 3rem (48px), which exceeds the 44px house floor.
     expect(ruleBlock(settingsCss, ".fb-advanced-disclosure summary")).toMatch(
-      /min-height:\s*2\.75rem/,
+      /min-height:\s*3rem/,
     );
   });
 });

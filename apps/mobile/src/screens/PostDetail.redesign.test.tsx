@@ -185,11 +185,13 @@ describe("PostDetail redesign (UXN-3)", () => {
   it("map and YouTube are absent until their disclosures open", async () => {
     renderDetail();
     await screen.findByRole("heading", { level: 1 });
-    expect(screen.queryByTestId("interactive-location-map")).toBeNull();
+    // MapLibre pivot: the native map's jsdom surface is the raster fallback
+    // (`interactive-fallback-map`), not the pre-pivot `interactive-location-map`.
+    expect(screen.queryByTestId("interactive-fallback-map")).toBeNull();
     expect(screen.queryByTestId("youtube-poster")).toBeNull();
     expect(screen.queryByTestId("youtube-player")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /view map/i }));
-    expect(await screen.findByTestId("interactive-location-map")).toBeTruthy();
+    expect(await screen.findByTestId("interactive-fallback-map")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /video attached/i }));
     expect(await screen.findByTestId("youtube-poster")).toBeTruthy();
   });

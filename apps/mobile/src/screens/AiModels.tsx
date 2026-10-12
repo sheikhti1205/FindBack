@@ -812,7 +812,7 @@ export function AiModels({
                 tabIndex={checked ? 0 : -1}
                 onClick={() => chooseMode(option)}
                 onKeyDown={(event) => onModeKeyDown(event, index)}
-                className="fb-ai-mode-option text-left"
+                className="fb-ai-mode-option text-left focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-focus"
               >
                 <span className="text-sm font-medium">
                   {checked ? "● " : "○ "}

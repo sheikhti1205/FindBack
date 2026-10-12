@@ -41,7 +41,9 @@ describe("Help product naming", () => {
     expect(screen.queryByText(/I am the FindBack Help & FAQ/)).toBeNull();
     // U2/P2: no permanent privacy wall in the conversation — a concise sheet
     // with a "Full details" destination replaces the inline dump.
-    expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
+    // Shipped AiPrivacy wording is "on their own" (same promise: only
+    // user-picked photos are ever shared) — pin the shipped sentence.
+    expect(screen.queryByText(/Photos are never attached on their own/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /more options/i }));
     fireEvent.click(screen.getByRole("button", { name: /^privacy & ai$/i }));
     const fullDetails = await screen.findByRole("button", { name: /full details/i });
@@ -49,7 +51,7 @@ describe("Help product naming", () => {
     expect(screen.queryByText(/local-first/)).toBeNull();
     fireEvent.click(fullDetails);
     // F02: the full disclosure is truth-complete across transports.
-    await waitFor(() => expect(screen.getByText(/Photos are never attached automatically/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Photos are never attached on their own/)).toBeTruthy());
     expect(screen.getByText(/built-in FindBack guidance/)).toBeTruthy();
     expect(screen.getByText(/local generation/)).toBeTruthy();
     expect(screen.getByText(/On-device only/)).toBeTruthy();
