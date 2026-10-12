@@ -1769,14 +1769,42 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
               { value: "chat", label: "Chat" },
               { value: "guide", label: "Guide" },
             ] as const
-          ).map((tab) => (
+          ).map((tab, index, tabs) => (
             <button
               key={tab.value}
               type="button"
               role="tab"
               aria-selected={assistantTab === tab.value}
+              tabIndex={assistantTab === tab.value ? 0 : -1}
               data-testid={`assistant-tab-${tab.value}`}
               onClick={() => setAssistantTab(tab.value)}
+              onKeyDown={(event) => {
+                // Roving-tabindex tablist: arrows move between Chat/Guide.
+                if (
+                  event.key !== "ArrowRight" &&
+                  event.key !== "ArrowLeft" &&
+                  event.key !== "Home" &&
+                  event.key !== "End"
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                const order = tabs.map((t) => t.value);
+                let next = order.indexOf(tab.value);
+                if (event.key === "ArrowRight") next = (next + 1) % order.length;
+                else if (event.key === "ArrowLeft") next = (next - 1 + order.length) % order.length;
+                else if (event.key === "Home") next = 0;
+                else next = order.length - 1;
+                setAssistantTab(order[next]!);
+                // Focus follows selection so keyboard users stay on the tab.
+                requestAnimationFrame(() => {
+                  document
+                    .querySelector<HTMLElement>(
+                      `[data-testid="assistant-tab-${order[next]}"]`,
+                    )
+                    ?.focus();
+                });
+              }}
               className={`min-h-[48px] border-b-2 px-3 text-sm font-medium ${
                 assistantTab === tab.value
                   ? "border-on-surface text-on-surface"

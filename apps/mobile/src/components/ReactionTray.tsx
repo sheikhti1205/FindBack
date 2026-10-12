@@ -221,7 +221,7 @@ export function ReactionTray({
   });
 
   // Anchor to the trigger by id: callers pass the id of whichever control
-  // opened the tray (the main button or the "Choose reaction" chevron).
+  // opened the tray (the main button or the compact "Choose reaction" trigger).
   useEffect(() => {
     if (open) refs.setReference(document.getElementById(triggerId));
   }, [open, refs, triggerId]);

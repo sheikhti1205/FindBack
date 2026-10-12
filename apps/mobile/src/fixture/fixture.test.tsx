@@ -57,6 +57,19 @@ describe("visual fixture route (static preflight)", () => {
     }
   });
 
+  it("every section index link resolves to a unique in-page anchor", () => {
+    const { container } = renderRoute();
+    for (const id of SECTIONS) {
+      const anchor = container.querySelector(`#fixture-${CSS.escape(id)}`);
+      expect(anchor, `missing anchor: #fixture-${id}`).toBeTruthy();
+      // One anchor per id — duplicate ids break reviewer deep-links.
+      expect(
+        container.querySelectorAll(`#fixture-${CSS.escape(id)}`).length,
+        `duplicate anchor: #fixture-${id}`,
+      ).toBe(1);
+    }
+  });
+
   it.each(SECTIONS)("section %s renders every variant without crashing", (section) => {
     renderRoute();
     const root = screen.getByTestId(`fixture-section-${section}`);

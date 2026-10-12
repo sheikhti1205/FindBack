@@ -98,10 +98,11 @@ export function FixtureSection({
 }) {
   return (
     <section
+      id={`fixture-${id}`}
       aria-label={title}
       data-testid={`fixture-section-${id}`}
       data-fixture-section-root={id}
-      className="flex flex-col gap-3"
+      className="flex flex-col gap-3 scroll-mt-4"
     >
       <div>
         <h2 className="text-lg font-semibold">{title}</h2>

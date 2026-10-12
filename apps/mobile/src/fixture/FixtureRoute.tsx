@@ -59,19 +59,19 @@ export function FixtureRoute() {
           </ul>
         </nav>
       </header>
-      <div id="fixture-home">
+      <div>
         <HomeFixtures />
       </div>
-      <div id="fixture-detail">
+      <div>
         <DetailFixtures />
       </div>
-      <div id="fixture-create">
+      <div>
         <CreateFixtures />
       </div>
-      <div id="fixture-social">
+      <div>
         <SocialFixtures />
       </div>
-      <div id="fixture-system">
+      <div>
         <SystemFixtures />
       </div>
     </main>

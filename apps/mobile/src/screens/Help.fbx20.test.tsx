@@ -76,6 +76,19 @@ describe("Help FBX-020 (mode tabs, composer chip, configure, retry)", () => {
     expect(screen.queryByTestId("assistant-guide")).toBeNull();
   });
 
+  it("moves between Chat and Guide with arrow keys (roving tabindex)", () => {
+    renderHelp({ createAdapter: () => cannedAdapter("ok") });
+    const chat = screen.getByTestId("assistant-tab-chat");
+    const guide = screen.getByTestId("assistant-tab-guide");
+    expect(chat.tabIndex).toBe(0);
+    expect(guide.tabIndex).toBe(-1);
+    fireEvent.keyDown(chat, { key: "ArrowRight" });
+    expect(screen.getByTestId("assistant-tab-guide").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("assistant-guide")).toBeTruthy();
+    fireEvent.keyDown(guide, { key: "ArrowLeft" });
+    expect(screen.getByTestId("assistant-tab-chat").getAttribute("aria-selected")).toBe("true");
+  });
+
   it("opens the Guide wizard with compact structured options, never fake prose", () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
     fireEvent.click(screen.getByTestId("assistant-tab-guide"));
