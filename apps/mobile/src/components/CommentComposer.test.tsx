@@ -19,6 +19,9 @@ vi.mock("../services/commentAttachments", async (importOriginal) => {
     ...actual,
     uploadCommentAttachment: attachMock.upload,
     removeCommentAttachment: attachMock.remove,
+    // The real helper dynamically imports @capacitor/core; steer it here so
+    // web/jsdom stays on the file input unless a test opts into native.
+    isNativeCommentPhotoIntakeAvailable: async () => nativeMediaMock.available,
   };
 });
 
@@ -48,6 +51,41 @@ vi.mock("../services/klipy", async (importOriginal) => {
   };
 });
 
+const { emojiMock } = vi.hoisted(() => ({
+  emojiMock: {
+    available: false,
+    pick: vi.fn(),
+  },
+}));
+
+vi.mock("../services/emojiPicker", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/emojiPicker")>();
+  return {
+    ...actual,
+    isNativeEmojiAvailable: () => emojiMock.available,
+    pickNativeEmoji: (...args: unknown[]) => (emojiMock.pick as (...a: unknown[]) => unknown)(...args),
+  };
+});
+
+const { nativeMediaMock } = vi.hoisted(() => ({
+  nativeMediaMock: {
+    available: false,
+    chooseImages: vi.fn(),
+    importUri: vi.fn(),
+    toFile: vi.fn(),
+  },
+}));
+
+vi.mock("../services/media/nativeMedia", () => ({
+  isNativeMediaIntakeAvailable: () => nativeMediaMock.available,
+  chooseNativeImages: (...args: unknown[]) =>
+    (nativeMediaMock.chooseImages as (...a: unknown[]) => unknown)(...args),
+  importNativeImageUri: (...args: unknown[]) =>
+    (nativeMediaMock.importUri as (...a: unknown[]) => unknown)(...args),
+  importedImageToFile: (...args: unknown[]) =>
+    (nativeMediaMock.toFile as (...a: unknown[]) => unknown)(...args),
+}));
+
 function file(name: string, type: string, size = 2048): File {
   return new File([new Uint8Array(size)], name, { type });
 }
@@ -76,6 +114,13 @@ beforeEach(() => {
   klipyMock.track.mockReset();
   klipyMock.searchGifs.mockResolvedValue([]);
   klipyMock.searchStickers.mockResolvedValue([]);
+  emojiMock.available = false;
+  emojiMock.pick.mockReset();
+  emojiMock.pick.mockResolvedValue(null);
+  nativeMediaMock.available = false;
+  nativeMediaMock.chooseImages.mockReset();
+  nativeMediaMock.importUri.mockReset();
+  nativeMediaMock.toFile.mockReset();
   vi.stubEnv("VITE_KLIPY_API_KEY", "");
 });
 
@@ -273,8 +318,7 @@ describe("CommentComposer attachment tiling (display_order + provenance)", () =>
   });
 });
 
-describe("CommentComposer Klipy", () => {  it("hides the GIF control when the key is absent (graceful)", () => {
-    render(<CommentComposer {...baseProps()} />);
+describe("CommentComposer Klipy", () => {  it("hides the GIF control when the key is absent (graceful)", () => {    render(<CommentComposer {...baseProps()} />);
     expect(screen.queryByTestId("comment-gif")).toBeNull();
   });
 
@@ -312,5 +356,130 @@ describe("CommentComposer Klipy", () => {  it("hides the GIF control when the ke
     expect(body).toContain("![gif](https://media.klipy.com/happy.gif)");
     await waitFor(() => expect(klipyMock.track).toHaveBeenCalledTimes(1));
     expect(klipyMock.track).toHaveBeenCalledWith("gifs", "happy-1", expect.any(String));
+  });
+});
+
+describe("CommentComposer emoji bridge (FBX-016)", () => {
+  it("opens the native sheet on Android and inserts the pick at the caret (no panel)", async () => {
+    emojiMock.available = true;
+    emojiMock.pick.mockResolvedValue("🚀");
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "Wow " } });
+    fireEvent.click(screen.getByTestId("comment-emoji"));
+    await waitFor(() => expect(emojiMock.pick).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toContain("🚀"),
+    );
+    // Native path never opens the web fallback panel.
+    expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
+  });
+
+  it("leaves the draft untouched when the native sheet is cancelled", async () => {
+    emojiMock.available = true;
+    emojiMock.pick.mockResolvedValue(null);
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "Wow " } });
+    fireEvent.click(screen.getByTestId("comment-emoji"));
+    await waitFor(() => expect(emojiMock.pick).toHaveBeenCalledTimes(1));
+    expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toBe("Wow ");
+    expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
+  });
+});
+
+describe("CommentComposer Klipy search states", () => {
+  function klipyResult(slug: string) {
+    return {
+      kind: "gifs" as const,
+      slug,
+      title: slug,
+      mediaUrl: `https://media.klipy.com/${slug}.gif`,
+      previewUrl: `https://media.klipy.com/${slug}.gif`,
+      raw: {},
+    };
+  }
+
+  it("keeps the latest search results when responses race (latest-wins)", async () => {
+    vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
+    let resolveFirst!: (items: unknown[]) => void;
+    let resolveSecond!: (items: unknown[]) => void;
+    klipyMock.searchGifs
+      .mockImplementationOnce(() => new Promise<unknown[]>((r) => { resolveFirst = r; }))
+      .mockImplementationOnce(() => new Promise<unknown[]>((r) => { resolveSecond = r; }));
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-gif"));
+    // Panel open fires the trending search; typing supersedes it.
+    await waitFor(() => expect(klipyMock.searchGifs).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByTestId("comment-gif-search"), { target: { value: "ab" } });
+    await waitFor(() => expect(klipyMock.searchGifs).toHaveBeenCalledTimes(2));
+    // Stale first response resolves first — and must be discarded.
+    resolveFirst([klipyResult("stale-1")]);
+    resolveSecond([klipyResult("fresh-1")]);
+    expect(await screen.findByTestId("comment-gif-result-fresh-1")).toBeTruthy();
+    expect(screen.queryByTestId("comment-gif-result-stale-1")).toBeNull();
+  });
+
+  it("shows a retryable error when search fails, then recovers", async () => {
+    vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
+    klipyMock.searchGifs.mockRejectedValueOnce(new Error("offline"));
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-gif"));
+    expect(await screen.findByTestId("comment-gif-retry")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toMatch(/couldn't load/i);
+    klipyMock.searchGifs.mockResolvedValue([]);
+    fireEvent.click(screen.getByTestId("comment-gif-retry"));
+    await waitFor(() => expect(screen.queryByTestId("comment-gif-retry")).toBeNull());
+  });
+});
+
+describe("CommentComposer native photo intake (FBX-038)", () => {
+  it("picks photos through the canonical intake on Android and uploads them", async () => {
+    nativeMediaMock.available = true;
+    nativeMediaMock.chooseImages.mockResolvedValue(["content://media/external/1"]);
+    nativeMediaMock.importUri.mockResolvedValue({ id: "img_1" });
+    nativeMediaMock.toFile.mockReturnValue(file("photo.jpg", "image/jpeg"));
+    attachMock.upload.mockResolvedValue({
+      remoteUrl:
+        "https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg",
+      objectKey: "u-9/x.jpg",
+    });
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-attach"));
+    await waitFor(() =>
+      expect(nativeMediaMock.chooseImages).toHaveBeenCalledWith({ source: "photos", limit: 4 }),
+    );
+    expect(await screen.findByTestId("comment-attachments")).toBeTruthy();
+    await waitFor(() => expect(attachMock.upload).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps prepared siblings when one native URI fails", async () => {
+    nativeMediaMock.available = true;
+    nativeMediaMock.chooseImages.mockResolvedValue(["content://media/1", "content://media/2"]);
+    nativeMediaMock.importUri
+      .mockRejectedValueOnce(new Error("bad item"))
+      .mockResolvedValueOnce({ id: "img_2" });
+    nativeMediaMock.toFile.mockReturnValue(file("photo.jpg", "image/jpeg"));
+    attachMock.upload.mockResolvedValue({
+      remoteUrl:
+        "https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg",
+      objectKey: "u-9/x.jpg",
+    });
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-attach"));
+    await waitFor(() => expect(nativeMediaMock.chooseImages).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("comment-attachments")).toBeTruthy();
+    expect(await screen.findByTestId("comment-attach-notice")).toBeTruthy();
+    expect(screen.getByTestId("comment-attach-notice").textContent).toMatch(/rest are uploading/i);
+    await waitFor(() => expect(attachMock.upload).toHaveBeenCalledTimes(1));
+  });
+
+  it("treats a cancelled native pick as a silent no-op", async () => {
+    nativeMediaMock.available = true;
+    nativeMediaMock.chooseImages.mockResolvedValue(null);
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-attach"));
+    await waitFor(() => expect(nativeMediaMock.chooseImages).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("comment-attachments")).toBeNull();
+    expect(screen.queryByTestId("comment-attach-notice")).toBeNull();
+    expect(attachMock.upload).not.toHaveBeenCalled();
   });
 });

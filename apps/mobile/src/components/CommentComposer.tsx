@@ -3,24 +3,27 @@ import { ImagePlus, SendHorizonal, Smile, Sticker, X } from "lucide-react";
 import { UserAvatar } from "./UserAvatar";
 import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
 import {
+  COMMENT_ATTACH_ACCEPT,
   COMMENT_ATTACH_MAX,
   createCommentAttachment,
   createKlipyAttachment,
+  importCommentPhotoFromNativeUri,
+  isNativeCommentPhotoIntakeAvailable,
   removeCommentAttachment,
   uploadCommentAttachment,
   validateAttachableFile,
   type CommentAttachment,
 } from "../services/commentAttachments";
 import {
-  appendBodyMedia,
-  bodyHasInlineData,
-  commentMediaProvenance,
-  MAX_COMMENT_BODY,
-} from "../services/commentBodyMedia";
+  EMOJI_WEB_FALLBACK,
+  isNativeEmojiAvailable,
+  pickNativeEmoji,
+} from "../services/emojiPicker";
 import {
   KLIPY_ATTRIBUTION,
   KLIPY_ATTRIBUTION_URL,
   KLIPY_SEARCH_PLACEHOLDER,
+  createKlipySearchController,
   isKlipyEnabled,
   klipyCustomerId,
   searchKlipyGifs,
@@ -28,25 +31,42 @@ import {
   trackKlipyShare,
   type KlipyItem,
   type KlipyKind,
+  type KlipySearchController,
+  type KlipySearchState,
 } from "../services/klipy";
+import {
+  appendBodyMedia,
+  bodyHasInlineData,
+  commentMediaProvenance,
+  MAX_COMMENT_BODY,
+} from "../services/commentBodyMedia";
 import { friendlyError } from "../utils/friendlyErrors";
 
 /**
  * C3 compact social comment composer: avatar + expandable input + send icon.
  *
- * - `@` mentions through the shared `MentionAutocomplete` (avatar +
- *   display name + @username, anchored to the composer, keyboard/touch safe).
- * - Emoji through a web picker panel (grid of buttons inserting at the
- *   caret) — never a vendor-keyboard hack.
- * - Local photo/video attach: picked files preview from `blob:` object URLs
- *   and upload to Storage under the caller's own folder (same RLS path as
- *   report photos) with progress / retry / remove. The comment body carries
- *   only `https://` remote URLs — never base64.
+ * - `@` mentions through the shared `MentionAutocomplete` (ranked
+ *   participants > owner > server fallback, keyboard nav, caret insertion),
+ *   anchored to the composer, keyboard/touch safe.
+ * - Emoji through the native `FindbackEmoji` bottom-sheet bridge on Android
+ *   (`pickNativeEmoji`, inserted at the caret); everywhere else a web
+ *   fallback panel (`EMOJI_WEB_FALLBACK`) — the composer owns no emoji set
+ *   itself, and never a vendor-keyboard hack.
+ * - Local photo/video attach: on Android photos come through the canonical
+ *   native intake (`FindbackMedia` multi-pick + per-URI import, FBX-038);
+ *   video and all other runtimes use the deliberate file-input path whose
+ *   preview is a `blob:` object-URI and whose upload streams bytes to
+ *   Storage under the caller's own folder (same RLS path as report photos)
+ *   with progress / retry / remove and the shared max-count cap. The comment
+ *   body carries only `https://` remote URLs — never base64.
  * - GIF/Sticker through the Klipy adapter behind the `VITE_KLIPY_API_KEY`
- *   config flag: stable customer_id, high content filter, "Search KLIPY"
- *   placeholder, provider URLs/data preserved and loaded directly,
- *   share-tracking only after the comment posts, "Powered by KLIPY"
- *   attribution. The control is hidden entirely when the key is absent.
+ *   config flag: the search controller owns debounce, latest-request-wins,
+ *   stale-request cancellation, trending-on-empty, pagination, and
+ *   loading/empty/error states; stable customer_id, high content filter,
+ *   "Search KLIPY" placeholder, provider URLs/data preserved and loaded
+ *   directly, share-tracking only after the comment posts, "Powered by
+ *   KLIPY" attribution. The control is hidden entirely when the key is
+ *   absent. Only live-key verification stays deferred (FBX-015).
  */
 
 export interface CommentComposerProps {
@@ -63,16 +83,6 @@ export interface CommentComposerProps {
   /** Parent clears reply affordances after a successful post. */
   onSent?: () => void;
 }
-
-/** Compact web emoji set for the picker panel (content, not icon font). */
-const EMOJI_SET = [
-  "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "🥳",
-  "😎", "🤔", "😅", "😭", "😡", "👍", "👎", "🙏",
-  "👏", "🎉", "❤️", "💔", "🔥", "⭐", "✅", "❌",
-  "👀", "💡", "🎁", "🐶", "🐱", "🌸", "🍀", "🌈",
-  "⚽", "🚗", "🏠", "📱", "💻", "📷", "🎵", "📚",
-  "☕", "🍕", "🎂", "💰", "🔑", "🧳", "⛺", "🌍",
-];
 
 /** Insert `insert` at the caret; returns the next value + caret. Pure (tested via UI). */
 export function insertAtCaret(
@@ -107,14 +117,39 @@ export function CommentComposer({
   const [gifOpen, setGifOpen] = useState(false);
   const [gifTab, setGifTab] = useState<GifTab>("gifs");
   const [gifQuery, setGifQuery] = useState("");
-  const [gifResults, setGifResults] = useState<KlipyItem[]>([]);
-  const [gifLoading, setGifLoading] = useState(false);
+  const [gifState, setGifState] = useState<KlipySearchState>({
+    status: "idle",
+    tab: "gifs",
+    query: "",
+    items: [],
+    page: 1,
+    error: null,
+  });
+  const gifResults: KlipyItem[] = gifState.items;
+  const gifLoading = gifState.status === "loading";
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const filesRef = useRef(new Map<string, File>());
-  const gifSeq = useRef(0);
+  const klipyCtl = useRef<KlipySearchController | null>(null);
   const gifEnabled = isKlipyEnabled();
+
+  function klipyController(): KlipySearchController {
+    if (!klipyCtl.current) {
+      klipyCtl.current = createKlipySearchController({
+        customerId: () => klipyCustomerId(currentUser?.id),
+        // Passed explicitly (not via the adapter default) so the picker's
+        // search seam stays mockable in tests and swappable in product.
+        searchGifs: (...args) => searchKlipyGifs(...args),
+        searchStickers: (...args) => searchKlipyStickers(...args),
+        onState: (next) => setGifState(next),
+      });
+    }
+    return klipyCtl.current;
+  }
+
+  // The controller outlives the panel: cancel in-flight work on unmount.
+  useEffect(() => () => klipyCtl.current?.dispose(), []);
 
   // Auto-grow 1→5 lines from scrollHeight (never animated per keystroke).
   useEffect(() => {
@@ -131,21 +166,23 @@ export function CommentComposer({
     el.style.overflowY = el.scrollHeight > cap ? "auto" : "hidden";
   }, [text]);
 
-  // Debounced Klipy search (trending while the query is empty). Latest-wins.
+  // Klipy picker search, owned by the adapter controller: debounced,
+  // latest-request-wins, stale requests cancelled, trending while the query
+  // is empty. Fires on open, tab, and keystrokes; cancels on close.
   useEffect(() => {
-    if (!gifOpen || !gifEnabled) return;
-    const id = ++gifSeq.current;
-    setGifLoading(true);
-    const timer = window.setTimeout(() => {
-      const run = gifTab === "gifs" ? searchKlipyGifs : searchKlipyStickers;
-      void run(gifQuery, { customerId: klipyCustomerId(currentUser?.id) }).then((items) => {
-        if (gifSeq.current !== id) return;
-        setGifResults(items);
-        setGifLoading(false);
-      });
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [gifOpen, gifEnabled, gifTab, gifQuery, currentUser?.id]);
+    if (!gifOpen || !gifEnabled) {
+      klipyCtl.current?.cancel();
+      return;
+    }
+    klipyController().search(gifQuery, gifTab);
+    // The controller instance is stable for the component lifetime; the
+    // signed-in user id is read through the creation thunk, so it is not a
+    // dependency here.
+  }, [gifOpen, gifEnabled, gifTab, gifQuery]);
+
+  function retryGifSearch() {
+    klipyController().search(gifQuery, gifTab);
+  }
 
   function focusAt(caret: number) {
     requestAnimationFrame(() => {
@@ -170,6 +207,18 @@ export function CommentComposer({
     const { next, caret } = insertAtCaret(text, el?.selectionStart ?? null, el?.selectionEnd ?? null, emoji);
     setText(next);
     focusAt(caret);
+  }
+
+  // FBX-016: native bottom-sheet pick on Android, web fallback panel
+  // elsewhere. The composer owns no emoji set — see `emojiPicker`.
+  async function handleEmojiButton() {
+    if (isNativeEmojiAvailable()) {
+      const picked = await pickNativeEmoji();
+      if (picked) insertEmoji(picked);
+      return;
+    }
+    setGifOpen(false);
+    setEmojiOpen((o) => !o);
   }
 
   function patchAttachment(id: string, patch: Partial<CommentAttachment>) {
@@ -229,6 +278,59 @@ export function CommentComposer({
       return;
     }
     void startUpload(entry, file);
+  }
+
+  // FBX-038: photos prefer the canonical native intake on Android
+  // (permissionless multi-pick, per-URI preparation so one bad item never
+  // discards its siblings, cancel is a silent no-op). Video and every other
+  // runtime use the deliberate file-input streaming path below. The bridge
+  // is dynamically imported so the composer load graph never touches the
+  // plugin registry (see commentAttachments).
+  async function pickNativePhotos() {
+    const room = COMMENT_ATTACH_MAX - attachments.length;
+    if (room <= 0) {
+      setAttachNotice(`Comments hold up to ${COMMENT_ATTACH_MAX} attachments. Remove one first.`);
+      return;
+    }
+    setAttachNotice(null);
+    let uris: string[] | null;
+    try {
+      const { chooseNativeImages } = await import("../services/media/nativeMedia");
+      uris = await chooseNativeImages({ source: "photos", limit: room });
+    } catch (err) {
+      // Broken bridge must not strand the user: fall back to the file input.
+      setAttachNotice(friendlyError(err).message);
+      fileInputRef.current?.click();
+      return;
+    }
+    if (!uris || uris.length === 0) return;
+    let failed = 0;
+    for (const uri of uris.slice(0, room)) {
+      try {
+        const { entry, file } = await importCommentPhotoFromNativeUri(uri);
+        filesRef.current.set(entry.id, file);
+        setAttachments((prev) => [...prev, entry]);
+        void startUpload(entry, file);
+      } catch {
+        failed += 1;
+      }
+    }
+    if (failed > 0) {
+      setAttachNotice(
+        failed >= uris.length
+          ? "Those photos couldn't be prepared. Try them again or pick different ones."
+          : "Some photos couldn't be prepared. The rest are uploading.",
+      );
+    }
+  }
+
+  async function handleAttachClick() {
+    if (disabled || sending) return;
+    if (await isNativeCommentPhotoIntakeAvailable()) {
+      await pickNativePhotos();
+      return;
+    }
+    fileInputRef.current?.click();
   }
 
   async function removeAttachment(entry: CommentAttachment) {
@@ -368,7 +470,7 @@ export function CommentComposer({
           <button
             type="button"
             data-testid="comment-attach"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => void handleAttachClick()}
             disabled={disabled || sending}
             aria-label="Attach a photo or video"
             className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container disabled:opacity-60"
@@ -379,7 +481,7 @@ export function CommentComposer({
             ref={fileInputRef}
             data-testid="comment-file-input"
             type="file"
-            accept="image/*,video/mp4,video/webm,video/quicktime"
+            accept={COMMENT_ATTACH_ACCEPT}
             multiple
             disabled={disabled || sending}
             onChange={(e) => {
@@ -393,10 +495,7 @@ export function CommentComposer({
           <button
             type="button"
             data-testid="comment-emoji"
-            onClick={() => {
-              setGifOpen(false);
-              setEmojiOpen((o) => !o);
-            }}
+            onClick={() => void handleEmojiButton()}
             disabled={disabled || sending}
             aria-label="Add emoji"
             aria-expanded={emojiOpen}
@@ -549,7 +648,7 @@ export function CommentComposer({
             className="mt-1 rounded-m3-md border border-outline-variant bg-surface-container p-2 shadow-lg"
           >
             <div role="grid" aria-label="Emojis" className="grid max-h-48 grid-cols-8 gap-0.5 overflow-y-auto">
-              {EMOJI_SET.map((emoji) => (
+              {EMOJI_WEB_FALLBACK.map((emoji) => (
                 <button
                   key={emoji}
                   type="button"
@@ -598,7 +697,19 @@ export function CommentComposer({
               aria-label="Search GIFs and stickers"
               className="mb-1 w-full rounded-m3-sm border border-outline-variant bg-surface px-3 py-2 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
             />
-            {gifLoading ? (
+            {gifState.status === "error" ? (
+              <div role="alert" className="px-1 py-3">
+                <p className="text-xs text-error">{gifState.error ?? "Couldn't load GIFs."}</p>
+                <button
+                  type="button"
+                  data-testid="comment-gif-retry"
+                  onClick={retryGifSearch}
+                  className="mt-1 min-h-[44px] rounded-full px-3 text-xs font-semibold text-on-surface underline"
+                >
+                  Try again
+                </button>
+              </div>
+            ) : gifLoading ? (
               <p role="status" className="px-1 py-3 text-xs text-on-surface-variant">
                 Searching…
               </p>
@@ -607,19 +718,26 @@ export function CommentComposer({
                 No results. Try another search.
               </p>
             ) : (
-              <div className="grid max-h-56 grid-cols-3 gap-1 overflow-y-auto">
-                {gifResults.map((item) => (
-                  <button
-                    key={`${item.kind}:${item.slug}`}
-                    type="button"
-                    data-testid={`comment-gif-result-${item.slug}`}
-                    onClick={() => pickGif(item)}
-                    aria-label={`Add ${item.title}`}
-                    className="min-h-[44px] overflow-hidden rounded-m3-sm border border-outline-variant"
-                  >
-                    <img src={item.previewUrl} alt="" loading="lazy" className="h-20 w-full object-cover" />
-                  </button>
-                ))}
+              <div>
+                {gifQuery.trim() === "" && (
+                  <p data-testid="comment-gif-trending" className="px-1 pb-1 text-[10px] text-on-surface-variant">
+                    Trending now
+                  </p>
+                )}
+                <div className="grid max-h-56 grid-cols-3 gap-1 overflow-y-auto">
+                  {gifResults.map((item) => (
+                    <button
+                      key={`${item.kind}:${item.slug}`}
+                      type="button"
+                      data-testid={`comment-gif-result-${item.slug}`}
+                      onClick={() => pickGif(item)}
+                      aria-label={`Add ${item.title}`}
+                      className="min-h-[44px] overflow-hidden rounded-m3-sm border border-outline-variant"
+                    >
+                      <img src={item.previewUrl} alt="" loading="lazy" className="h-20 w-full object-cover" />
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             <p className="mt-1 px-1 text-[10px] text-on-surface-variant">

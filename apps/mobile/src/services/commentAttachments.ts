@@ -2,6 +2,8 @@ import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 import { normalizeImage } from "./image";
 import { diag } from "./diag";
+import { ACCEPTED_STILL_MIME_TYPES } from "./media/mediaPolicy";
+import type { ImportedImage } from "./media/importImage";
 
 /**
  * C3 comment attachment model (local photo/video attach).
@@ -24,6 +26,23 @@ export const COMMENT_ATTACH_MAX = 4;
 export const COMMENT_ATTACH_MAX_BYTES = 25_000_000;
 
 /**
+ * Deliberate video path: short clips upload by streaming the picked
+ * File/Blob bytes straight to Storage (never base64, never a data: URL in
+ * the body). The client pre-upload cap below is intentionally IDENTICAL to
+ * the bucket `file_size_limit` enforced server-side (see the FBX-013
+ * migration test), so a clip the client accepts can never fail the Storage
+ * gate after the UI promised success. There is no duration probe on the
+ * client — length is bounded by the byte cap plus the picker's short-clip
+ * affordance, a conservative policy documented here instead of enforced by
+ * an unreliable metadata read.
+ */
+export const COMMENT_VIDEO_MAX_BYTES = COMMENT_ATTACH_MAX_BYTES;
+/** Video containers the picker, the client gate, and the bucket all accept. */
+export const COMMENT_VIDEO_MIME: readonly string[] = ["video/mp4", "video/webm", "video/quicktime"];
+/** Single `accept` string for the composer file input (photos + short video). */
+export const COMMENT_ATTACH_ACCEPT = "image/*,video/mp4,video/webm,video/quicktime";
+
+/**
  * Dedicated public bucket for comment attachments (FBX-013).
  *
  * Comment media cannot share the report image bucket: that bucket's row pins
@@ -36,21 +55,14 @@ export const COMMENT_ATTACH_MAX_BYTES = 25_000_000;
  */
 export const COMMENT_MEDIA_BUCKET = "findback-comment-media";
 
-const PHOTO_MIME = new Set([
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "image/heic",
-  "image/heif",
-  // Parity with the report pipeline (services/image.ts ALLOWED_MIME): AVIF
-  // and BMP decode through the same normalizeImage path, so comments accept
-  // them too. No comment-scope exclusion — a narrower set here would be a
-  // deliberate user-visible inconsistency, not a safety bound.
-  "image/avif",
-  "image/bmp",
-]);
+/**
+ * Photo MIME set — derived from the canonical ACCEPTED_STILL_MIME_TYPES
+ * (L-CONSOLIDATE: mediaPolicy owns the value; the 25 MB cap and the
+ * dedicated bucket below stay comment-specific and untouched). Comments
+ * accept exactly the stills the report pipeline advertises — a narrower set
+ * here would be a deliberate user-visible inconsistency, not a safety bound.
+ */
+const PHOTO_MIME = new Set<string>(ACCEPTED_STILL_MIME_TYPES);
 const VIDEO_MIME = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const VIDEO_EXT = new Set(["mp4", "webm", "mov"]);
 
@@ -166,6 +178,57 @@ export function createKlipyAttachment(input: {
     klipySlug: input.slug,
     klipyKind: input.kind,
   };
+}
+
+/**
+ * Canonical native photo intake for comments (FBX-038): an already-prepared
+ * native derivative (`FindbackMedia` — EXIF applied, edges capped,
+ * metadata stripped) becomes the composer entry plus its upload File. The
+ * bytes are the bounded derivative, never a source original, and the preview
+ * is a `blob:` object URL, never base64. Videos never enter through here —
+ * they use the deliberate streaming file-input path above.
+ *
+ * The native bridge is dynamically imported (never a static import): this
+ * module sits in the composer import graph, which loads in suites that
+ * partially mock `@capacitor/core`, so touching the plugin registry at load
+ * would break them.
+ */
+export async function createCommentAttachmentFromImportedImage(item: ImportedImage): Promise<{
+  entry: CommentAttachment;
+  file: File;
+}> {
+  const { importedImageToFile } = await import("./media/nativeMedia");
+  const file = importedImageToFile(item);
+  return { entry: createCommentAttachment(file), file };
+}
+
+/**
+ * True only in the Android app with the canonical photo intake registered.
+ * Async for the same load-graph reason as above: the platform probe
+ * dynamically imports `@capacitor/core` instead of binding it at load.
+ */
+export async function isNativeCommentPhotoIntakeAvailable(): Promise<boolean> {
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    return Capacitor.getPlatform() === "android" && Capacitor.isPluginAvailable("FindbackMedia");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One native photo URI → a ready composer entry plus its upload File, via
+ * the canonical intake (`importNativeImageUri` preparation, then the
+ * derivative-to-entry wrapper above). Rejects when the URI is unreadable —
+ * callers keep successfully prepared siblings and report the failure with
+ * consumer copy, never a dropped strip.
+ */
+export async function importCommentPhotoFromNativeUri(uri: string): Promise<{
+  entry: CommentAttachment;
+  file: File;
+}> {
+  const { importNativeImageUri } = await import("./media/nativeMedia");
+  return createCommentAttachmentFromImportedImage(await importNativeImageUri(uri));
 }
 
 export interface UploadAttachmentOptions {

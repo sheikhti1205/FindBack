@@ -1,15 +1,21 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  KLIPY_BUILD_CONFIG_KEY,
   KLIPY_CONTENT_FILTER,
   KLIPY_SEARCH_PLACEHOLDER,
+  buildKlipyShareRequest,
+  createKlipySearchController,
   isKlipyEnabled,
+  isKlipyMediaUrl,
   klipyAppKey,
   klipyCustomerId,
   normalizeKlipyItem,
   searchKlipyGifs,
   searchKlipyStickers,
   trackKlipyShare,
+  type KlipyItem,
+  type KlipySearchState,
 } from "./klipy";
 
 afterEach(() => {
@@ -91,7 +97,7 @@ describe("searchKlipy", () => {
     const items = await searchKlipyGifs("happy", {
       env: { VITE_KLIPY_API_KEY: "test-key" },
       customerId: "findback:u-1",
-      fetchImpl: okFetch({ data: { content_items: [{ slug: "a", url: "https://m/a.gif" }] } }, seen),
+      fetchImpl: okFetch({ data: { content_items: [{ slug: "a", url: "https://media.klipy.com/a.gif" }] } }, seen),
     });
     expect(items).toHaveLength(1);
     const url = seen[0]!;
@@ -139,6 +145,293 @@ describe("trackKlipyShare", () => {
     const fetchImpl = vi.fn();
     await trackKlipyShare("gifs", "s", "c", { env: {}, fetchImpl });
     await trackKlipyShare("gifs", "  ", "c", { env: { VITE_KLIPY_API_KEY: "k" }, fetchImpl });
+    await trackKlipyShare("gifs", "s", "   ", { env: { VITE_KLIPY_API_KEY: "k" }, fetchImpl });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * OFFICIAL-SHAPED, SANITIZED fixtures (spec 24 static completion): the live
+ * KLIPY docs were unreachable from the sandbox on 2026-10-12, so these
+ * mirror the documented contract shape (key-scoped path, page/per_page/
+ * customer_id/content_filter params, search vs trending, data.content_items
+ * nesting with media-variant tolerance) with invented slugs and the
+ * documented media hosts only. No production data, no key. Revalidate
+ * against the live docs before enabling with a production key.
+ */
+const OFFICIAL_SHAPED_SEARCH_FIXTURE = {
+  data: {
+    content_items: [
+      {
+        slug: "fixture-happy-dance-1",
+        title: "Fixture happy dance",
+        media: {
+          gif: {
+            url: "https://media.klipy.com/fixture/happy.gif",
+            preview: "https://media.klipy.com/fixture/happy-preview.gif",
+            width: 480,
+            height: 270,
+          },
+        },
+      },
+      {
+        id: "fixture-sticker-9",
+        alt: "Fixture sticker",
+        images: { original: "https://media.klipy.com/fixture/s.webp" },
+      },
+    ],
+  },
+};
+
+describe("klipy provider URL allowlist (spec 24 URL safety)", () => {
+  it("trusts https klipy hosts only", () => {
+    expect(isKlipyMediaUrl("https://media.klipy.com/a.gif")).toBe(true);
+    expect(isKlipyMediaUrl("https://klipy.com/a.gif")).toBe(true);
+    expect(isKlipyMediaUrl("http://media.klipy.com/a.gif")).toBe(false);
+    expect(isKlipyMediaUrl("https://evil.example/a.gif")).toBe(false);
+    expect(isKlipyMediaUrl("https://media.klipy.com.evil.example/a.gif")).toBe(false);
+    expect(isKlipyMediaUrl("data:image/gif;base64,AAA")).toBe(false);
+    expect(isKlipyMediaUrl("not a url")).toBe(false);
+  });
+
+  it("parses the official-shaped nested fixture (media variants + dims)", () => {
+    const items = OFFICIAL_SHAPED_SEARCH_FIXTURE.data.content_items
+      .map((raw) => normalizeKlipyItem("gifs", raw))
+      .filter((item): item is KlipyItem => item !== null);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+      slug: "fixture-happy-dance-1",
+      mediaUrl: "https://media.klipy.com/fixture/happy.gif",
+      previewUrl: "https://media.klipy.com/fixture/happy-preview.gif",
+      width: 480,
+      height: 270,
+    });
+    expect(items[1]?.slug).toBe("fixture-sticker-9");
+  });
+
+  it("rejects a malicious provider URL (no arbitrary-host injection)", () => {
+    expect(normalizeKlipyItem("gifs", { slug: "evil", url: "https://evil.example/x.gif" })).toBeNull();
+    expect(normalizeKlipyItem("gifs", { slug: "evil", url: "http://media.klipy.com/x.gif" })).toBeNull();
+  });
+
+  it("falls back to the media URL when the preview is untrusted", () => {
+    const item = normalizeKlipyItem("gifs", {
+      slug: "s",
+      url: "https://media.klipy.com/s.gif",
+      preview_url: "https://evil.example/s.gif",
+    });
+    expect(item?.previewUrl).toBe("https://media.klipy.com/s.gif");
+  });
+});
+
+describe("buildKlipyShareRequest", () => {
+  it("builds the POST share request with an encoded customer id", () => {
+    const request = buildKlipyShareRequest("stickers", "happy-1", "findback:u-1", {
+      VITE_KLIPY_API_KEY: "test-key",
+    });
+    expect(request?.method).toBe("POST");
+    expect(request?.url).toContain("/test-key/stickers/share/happy-1");
+    expect(request?.url).toContain("customer_id=findback%3Au-1");
+  });
+
+  it("returns null when tracking must not fire (fail-closed, never logs the key)", () => {
+    expect(buildKlipyShareRequest("gifs", "s", "c", {})).toBeNull();
+    expect(
+      buildKlipyShareRequest("gifs", "  ", "c", { VITE_KLIPY_API_KEY: "k" }),
+    ).toBeNull();
+    expect(
+      buildKlipyShareRequest("gifs", "s", "  ", { VITE_KLIPY_API_KEY: "k" }),
+    ).toBeNull();
+  });
+
+  it("reads the key through the single build-config seam", () => {
+    expect(KLIPY_BUILD_CONFIG_KEY).toBe("VITE_KLIPY_API_KEY");
+    expect(klipyAppKey({ [KLIPY_BUILD_CONFIG_KEY]: " k " })).toBe("k");
+  });
+});
+
+describe("searchKlipy pagination and cancellation", () => {
+  function okFetch(payload: unknown, seen: string[]) {
+    return (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(String(input));
+      void init;
+      return { ok: true, json: async () => payload } as Response;
+    }) as typeof fetch;
+  }
+
+  it("sends page/per_page for trending pagination", async () => {
+    const seen: string[] = [];
+    await searchKlipyGifs("", {
+      page: 2,
+      perPage: 10,
+      env: { VITE_KLIPY_API_KEY: "test-key" },
+      customerId: "c1",
+      fetchImpl: okFetch({ data: { content_items: [] } }, seen),
+    });
+    expect(seen[0]).toContain("/test-key/gifs/trending");
+    expect(seen[0]).toContain("page=2");
+    expect(seen[0]).toContain("per_page=10");
+  });
+
+  it("resolves [] (never throws) when the request is aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchImpl = (async () => {
+      throw new DOMException("Aborted", "AbortError");
+    }) as unknown as typeof fetch;
+    await expect(
+      searchKlipyStickers("x", {
+        env: { VITE_KLIPY_API_KEY: "k" },
+        signal: controller.signal,
+        fetchImpl,
+      }),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe("createKlipySearchController", () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function klipyItem(slug: string): KlipyItem {
+    return {
+      kind: "gifs",
+      slug,
+      title: slug,
+      mediaUrl: `https://media.klipy.com/${slug}.gif`,
+      previewUrl: `https://media.klipy.com/${slug}.gif`,
+      raw: {},
+    };
+  }
+
+  it("debounces keystrokes into one trailing search", async () => {
+    const seenQueries: string[] = [];
+    const searchGifs = vi.fn(async (query: string) => {
+      seenQueries.push(query);
+      return [klipyItem("b")];
+    });
+    const states: KlipySearchState[] = [];
+    const ctl = createKlipySearchController({
+      debounceMs: 10,
+      searchGifs,
+      env: { VITE_KLIPY_API_KEY: "k" },
+      onState: (s) => states.push(s),
+    });
+    ctl.search("a", "gifs");
+    ctl.search("ab", "gifs");
+    await sleep(40);
+    expect(searchGifs).toHaveBeenCalledTimes(1);
+    expect(seenQueries).toEqual(["ab"]);
+    expect(ctl.getState()).toMatchObject({ status: "ready", query: "ab" });
+    expect(states.map((s) => s.status)).toContain("loading");
+    ctl.dispose();
+  });
+
+  it("keeps the latest request's results when responses race (latest-wins)", async () => {
+    let resolveFirst!: (items: KlipyItem[]) => void;
+    let resolveSecond!: (items: KlipyItem[]) => void;
+    const searchGifs = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<KlipyItem[]>((r) => { resolveFirst = r; }))
+      .mockImplementationOnce(() => new Promise<KlipyItem[]>((r) => { resolveSecond = r; }));
+    const ctl = createKlipySearchController({
+      debounceMs: 0,
+      searchGifs,
+      env: { VITE_KLIPY_API_KEY: "k" },
+    });
+    ctl.search("aaa", "gifs");
+    await sleep(5);
+    ctl.search("aab", "gifs");
+    await sleep(5);
+    expect(searchGifs).toHaveBeenCalledTimes(2);
+    // The stale first response resolves first — and must be discarded.
+    resolveFirst([klipyItem("stale")]);
+    await sleep(5);
+    expect(ctl.getState().status).toBe("loading");
+    resolveSecond([klipyItem("fresh")]);
+    await sleep(5);
+    expect(ctl.getState()).toMatchObject({ status: "ready", query: "aab" });
+    expect(ctl.getState().items.map((i) => i.slug)).toEqual(["fresh"]);
+    ctl.dispose();
+  });
+
+  it("cancels a pending search so no request fires (picker closed)", async () => {
+    const searchGifs = vi.fn(async () => []);
+    const ctl = createKlipySearchController({
+      debounceMs: 20,
+      searchGifs,
+      env: { VITE_KLIPY_API_KEY: "k" },
+    });
+    ctl.search("a", "gifs");
+    ctl.cancel();
+    await sleep(40);
+    expect(searchGifs).not.toHaveBeenCalled();
+    ctl.dispose();
+  });
+
+  it("aborts the in-flight fetch when superseded", async () => {
+    const signals: AbortSignal[] = [];
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal);
+      await sleep(30);
+      return { ok: true, json: async () => ({ data: { content_items: [] } }) } as Response;
+    }) as typeof fetch;
+    const ctl = createKlipySearchController({
+      debounceMs: 0,
+      env: { VITE_KLIPY_API_KEY: "k" },
+      fetchImpl,
+    });
+    ctl.search("aaa", "gifs");
+    await sleep(5);
+    ctl.search("aab", "gifs");
+    await sleep(60);
+    expect(signals.length).toBeGreaterThanOrEqual(1);
+    expect(signals[0]?.aborted).toBe(true);
+    ctl.dispose();
+  });
+
+  it("surfaces a retryable error when the search rejects", async () => {
+    const searchGifs = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce([klipyItem("ok")]);
+    const ctl = createKlipySearchController({
+      debounceMs: 0,
+      searchGifs,
+      env: { VITE_KLIPY_API_KEY: "k" },
+    });
+    ctl.search("a", "gifs");
+    await sleep(10);
+    expect(ctl.getState().status).toBe("error");
+    expect(ctl.getState().error).toMatch(/couldn't load/i);
+    ctl.search("a", "gifs");
+    await sleep(10);
+    expect(ctl.getState().status).toBe("ready");
+    expect(ctl.getState().items.map((i) => i.slug)).toEqual(["ok"]);
+    ctl.dispose();
+  });
+
+  it("paginates trending with more() appended (no-op unless ready)", async () => {
+    const seenPages: unknown[] = [];
+    const searchGifs = vi.fn(async (query: string, opts?: { page?: number }) => {
+      seenPages.push(opts?.page);
+      return [klipyItem(`${query}-p${opts?.page ?? 1}`)];
+    });
+    const ctl = createKlipySearchController({
+      debounceMs: 0,
+      searchGifs,
+      env: { VITE_KLIPY_API_KEY: "k" },
+    });
+    // more() before any search is a silent no-op.
+    ctl.more();
+    expect(searchGifs).not.toHaveBeenCalled();
+    ctl.search("", "gifs");
+    await sleep(10);
+    expect(seenPages[0]).toBe(1);
+    ctl.more();
+    await sleep(10);
+    expect(seenPages[1]).toBe(2);
+    expect(ctl.getState().items.map((i) => i.slug)).toEqual(["-p1", "-p2"]);
+    expect(ctl.getState().page).toBe(2);
+    ctl.dispose();
   });
 });

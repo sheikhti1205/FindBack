@@ -27,7 +27,8 @@ import { describe, expect, it } from "vitest";
  * providers, so no server-held key or relay function may reappear),
  * `LLM_MODEL`/`LLM_BASE_URL`, `sk-or-` literals outside tests,
  * `VITE_OPENROUTER_API_KEY`, `api/v1/byok`, unapproved `/api/v1` base
- * URLs/proxies (only `openrouter.ai` approved), and calling an
+ * URLs/proxies (only `openrouter.ai` and the approved GIF provider
+ * `api.klipy.com` spared), and calling an
  * OpenRouter-served model a "direct connection" (it is `Via OpenRouter`, never direct).
  *
  * Static + import-graph scan (CI-safe: no network, no build, no key, no subprocess).
@@ -199,7 +200,9 @@ const SHIPPED_RULES: Array<{ id: string; re: RegExp }> = [
   { id: "byok provider endpoint", re: /api\/v1\/byok/ },
   {
     id: "unapproved API base URL/proxy",
-    re: /https?:\/\/(?!openrouter\.ai)[A-Za-z0-9.-]+\/api\/v1/,
+    // Approved: openrouter.ai (BYOK catalogue route) and api.klipy.com
+    // (approved GIF/sticker provider per handover spec 24 — not an LLM route).
+    re: /https?:\/\/(?!openrouter\.ai|api\.klipy\.com)[A-Za-z0-9.-]+\/api\/v1/,
   },
   {
     id: "direct-connection labeling of OpenRouter model",
@@ -343,6 +346,7 @@ describe("legacy AI route absence (WB-02 client guard)", () => {
     expect(directLabel).toBeDefined();
     expect(baseUrl?.re.test("https://proxy.example.com/api/v1/chat")).toBe(true);
     expect(baseUrl?.re.test("https://openrouter.ai/api/v1/models")).toBe(false);
+    expect(baseUrl?.re.test("https://api.klipy.com/api/v1/search")).toBe(false);
     expect(directLabel?.re.test("Direct connection to openai/gpt-4")).toBe(true);
     expect(directLabel?.re.test("Generated via OpenRouter free model")).toBe(false);
   });
