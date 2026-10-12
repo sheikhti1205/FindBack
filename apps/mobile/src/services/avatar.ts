@@ -12,8 +12,10 @@ import { IMAGES_BUCKET } from "./postsUpload";
  * media pipeline in both cases, so EXIF/location metadata is stripped before
  * anything crosses the network) is uploaded to the ownership-scoped prefix
  * `avatars/{uid}/…` inside the existing public `findback-images` bucket, then
- * the self-only `update_my_avatar` RPC points the caller's `avatar_url` at
- * the new public URL (migration 20261010000000_profile_avatar).
+ * the self-only `update_my_avatar_by_key` RPC (Storage existence verified
+ * server-side; legacy `update_my_avatar` fallback only when the key RPC is
+ * unreachable) points the caller's `avatar_url` at the new public URL
+ * (migration 20261010000000_profile_avatar).
  *
  * Invariants:
  * - clients hold NO table UPDATE privilege; the URL is written only through
@@ -113,6 +115,16 @@ export function objectKeyFromAvatarUrl(url: string | null | undefined): string |
   const segments = key.split("/");
   if (segments.length !== 3 || !segments[1] || !segments[2]) return null;
   return key;
+}
+
+/**
+ * True when a Supabase error means "this RPC does not exist on the backend"
+ * (PostgREST PGRST202 / HTTP 404). Only this narrow case may fall back to the
+ * legacy direct-URL avatar RPC in uploadAvatar.
+ */
+function isMissingFunctionError(error: { code?: string; status?: number; message?: string }): boolean {
+  if (error.code === "PGRST202" || error.status === 404) return true;
+  return (error.message ?? "").includes("update_my_avatar_by_key");
 }
 
 /**
@@ -227,9 +239,19 @@ export async function uploadAvatar(
     throw new ApiError("Could not upload your photo. Check your connection and try again.", 502);
   }
 
-  const { error: saveError } = await supabase.rpc("update_my_avatar", {
+  // Primary: exact-key RPC — the server re-validates the key shape and
+  // verifies the Storage object exists before pointing avatar_url at it.
+  // Fallback: backends where the key RPC is not deployed yet (PostgREST
+  // PGRST202 / HTTP 404) keep working through the legacy direct-URL RPC;
+  // the object was already uploaded and client-validated here, and any
+  // other error still fails closed below.
+  let saveError = (await supabase.rpc("update_my_avatar_by_key", {
+    p_object_key: objectKey,
     p_avatar_url: fileUrl,
-  });
+  })).error;
+  if (saveError && isMissingFunctionError(saveError)) {
+    saveError = (await supabase.rpc("update_my_avatar", { p_avatar_url: fileUrl })).error;
+  }
   if (saveError) {
     await supabase.storage.from(AVATAR_BUCKET).remove([objectKey]);
     throw new ApiError("Could not save your profile photo. Check your connection and try again.", 400);

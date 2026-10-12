@@ -356,6 +356,7 @@ describe("authenticated phone change", () => {
     clientMock.auth.resend.mockResolvedValue({ data: {}, error: null });
     clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: USER, access_token: "original", refresh_token: "original-refresh" } }, error: null });
     clientMock.auth.setSession.mockResolvedValue({ data: {}, error: null });
+    clientMock.rpc.mockResolvedValue({ data: [{ eligible: true, eligible_at: null }], error: null });
   });
 
   it("isolates mutations from persistent account state with refresh disabled", async () => {
@@ -383,6 +384,24 @@ describe("authenticated phone change", () => {
     await sendPhoneChangeCode("u1", "01812345678", true);
     expect(clientMock.auth.resend).toHaveBeenCalledWith({ type: "phone_change", phone: "+8801812345678" });
     expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("asks the replacement gate before creating the phone-change challenge", async () => {
+    await sendPhoneChangeCode("u1", "01812345678");
+    expect(clientMock.rpc).toHaveBeenCalledWith("request_phone_change", {
+      p_new_phone: "+8801812345678",
+    });
+  });
+
+  it("blocks the challenge when the server gate holds the replacement", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "PHONE_CHANGE_COOLDOWN eligible_at=2027-04-12T00:00:00.000Z", code: "P0001" },
+    });
+
+    await expect(sendPhoneChangeCode("u1", "01812345678")).rejects.toThrow(/2027/);
+    expect(clientMock.auth.updateUser).not.toHaveBeenCalled();
+    expect(clientMock.auth.resend).not.toHaveBeenCalled();
   });
 
   it("verifies phone_change and reloads the server-owned public badge", async () => {

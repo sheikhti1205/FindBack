@@ -19,6 +19,7 @@ import {
   verifyPendingEmailCode,
 } from "./services/auth";
 import {
+  beginAccountSwitch,
   clearAllAuth,
   getPendingEmail,
   onSignedOut,
@@ -247,6 +248,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [pendingEmail]);
 
   const logout = useCallback(async () => {
+    // Account A -> B switch starts here: drop this session's token cache and
+    // pending email and notify signed-out handlers BEFORE the sign-out call,
+    // so no A-owned slice can leak into the next account's calls.
+    beginAccountSwitch();
     // Capture the account before clearing state: signing out wipes that
     // account's AI provider credentials (session + persisted/remembered
     // keys) from this device by default.

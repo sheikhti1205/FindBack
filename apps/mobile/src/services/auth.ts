@@ -10,6 +10,7 @@ import { createOpenRouterClient, OpenRouterError } from "./openRouter";
 import { getConnectedOpenRouterKey } from "./aiCredentials";
 import { builtInHelp } from "./helpFaq";
 import { buildGroundedPrompt, groundAppAnswer } from "./ai/appKnowledge";
+import { requestPhoneChange } from "./profile";
 
 /** Same validated, publishable-only Vite configuration as getSupabase(). */
 declare const __SUPABASE_URL__: string;
@@ -463,6 +464,10 @@ export async function sendPhoneChangeCode(userId: string, phone: string, resend 
   const normalized = requirePhone(phone);
   const user = await phoneAccount(userId);
   requireDestination(user, normalized, resend);
+  // Server-authoritative replacement gate (spec 25): runs before any SMS
+  // challenge is created or resent. A held gate rejects with a 409 naming the
+  // eligible date; the write below never runs.
+  await requestPhoneChange(normalized);
   const { error } = await phoneMutation(userId, normalized, resend, async (auth) => resend
     ? auth.resend({ type: "phone_change", phone: normalized })
     : auth.updateUser({ phone: normalized }));

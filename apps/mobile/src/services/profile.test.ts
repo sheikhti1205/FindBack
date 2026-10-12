@@ -413,6 +413,8 @@ describe("requestPhoneChange", () => {
     const failure = await requestPhoneChange("01911111111").catch((err) => err);
     expect(failure.status).toBe(409);
     expect(failure.message).toMatch(/2027/);
+    // Status-only detection: the mapped error carries no internal marker
+    // (it is never user-facing); consumers detect the cooldown by the 409.
     expect(isPhoneChangeCooldownError(failure)).toBe(false);
   });
 

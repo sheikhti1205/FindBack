@@ -253,6 +253,10 @@ export async function requestPhoneChange(phone: string): Promise<PhoneChangeElig
     const message = (error as { message?: string }).message ?? "";
     if (message.includes(PHONE_CHANGE_COOLDOWN)) {
       const when = formatPhoneChangeEligibleAt(parsePhoneCooldownEligibleAt(message));
+      // The mapped 409 is the cooldown signal for consumers — status-only
+      // detection. The internal marker is deliberately NOT copied into the
+      // user-facing message (never shown on a consumer surface); the human
+      // copy names the eligible date instead.
       throw new ApiError(
         when
           ? `You can change your mobile number ${when}.`

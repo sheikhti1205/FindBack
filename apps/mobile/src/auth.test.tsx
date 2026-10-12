@@ -10,11 +10,13 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicUser } from "@findback/shared";
+import { clearUserScopedLocalState } from "./services/userScopedState";
 
 const hoisted = vi.hoisted(() => ({
   apiLogout: vi.fn(),
   restoreSession: vi.fn(),
   onAuthStateChange: vi.fn(),
+  beginAccountSwitch: vi.fn(),
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -39,6 +41,11 @@ vi.mock("./services/supabaseClient", () => ({
       onAuthStateChange: (...args: unknown[]) => hoisted.onAuthStateChange(...args),
     },
   }),
+}));
+
+vi.mock("./services/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./services/session")>()),
+  beginAccountSwitch: hoisted.beginAccountSwitch,
 }));
 
 vi.mock("./services/realtime", () => ({
@@ -165,5 +172,21 @@ describe("F08 AuthProvider logout purges AI provider credentials", () => {
     expect(purge).toHaveBeenCalledWith(USER_A.id);
     expect(capture.current!.user).toBeNull();
     purge.mockRestore();
+  });
+
+  it("logout starts the account switch (beginAccountSwitch + user-scoped wipe)", async () => {
+    const capture: { current: { logout: () => Promise<void>; user: PublicUser | null } | null } = {
+      current: null,
+    };
+    render(probeHarness(capture)({}));
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+
+    await act(async () => {
+      await capture.current!.logout();
+    });
+
+    expect(hoisted.beginAccountSwitch).toHaveBeenCalledTimes(1);
+    expect(clearUserScopedLocalState).toHaveBeenCalled();
+    expect(capture.current!.user).toBeNull();
   });
 });

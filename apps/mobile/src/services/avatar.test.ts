@@ -6,7 +6,7 @@ import type { PublicUser } from "@findback/shared";
 const { clientMock, fetchMeMock, uploadMock, removeMock, rpcMock } = vi.hoisted(() => {
     const uploadMock = vi.fn(async () => ({ error: null as { message?: string } | null }));
     const removeMock = vi.fn(async () => ({ error: null as { message?: string } | null }));
-    const rpcMock = vi.fn(async () => ({ error: null as { message?: string } | null }));
+    const rpcMock = vi.fn(async () => ({ error: null as { message?: string; code?: string; status?: number } | null }));
     const getPublicUrlMock = vi.fn(
       (path: string) => ({
         data: { publicUrl: `https://ref.supabase.co/storage/v1/object/public/findback-images/${path}` },
@@ -171,14 +171,12 @@ describe("uploadAvatar", () => {
       { contentType: "image/jpeg", upsert: false },
     );
     expect(clientMock.storage.from).toHaveBeenCalledWith(AVATAR_BUCKET);
-    expect(rpcMock).toHaveBeenCalledWith(
-      "update_my_avatar",
-      {
-        p_avatar_url: expect.stringMatching(
-          /^https:\/\/ref\.supabase\.co\/storage\/v1\/object\/public\/findback-images\/avatars\/user-1\//,
-        ),
-      },
-    );
+    expect(rpcMock).toHaveBeenCalledWith("update_my_avatar_by_key", {
+      p_object_key: expect.stringMatching(/^avatars\/user-1\/[0-9a-f-]{36}\.jpg$/),
+      p_avatar_url: expect.stringMatching(
+        /^https:\/\/ref\.supabase\.co\/storage\/v1\/object\/public\/findback-images\/avatars\/user-1\//,
+      ),
+    });
     expect(fetchMeMock).toHaveBeenCalledTimes(1);
     expect(result).toBe(refreshed);
   });
@@ -219,6 +217,42 @@ describe("uploadAvatar", () => {
     expect(removeMock).toHaveBeenCalledWith([
       expect.stringMatching(/^avatars\/user-1\/[0-9a-f-]{36}\.jpg$/),
     ]);
+    expect(fetchMeMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the legacy URL RPC only when the key RPC is not deployed", async () => {
+    rpcMock.mockResolvedValueOnce({
+      error: {
+        code: "PGRST202",
+        message: "Could not find the function public.update_my_avatar_by_key in the schema cache",
+      },
+    });
+
+    const result = await uploadAvatar(avatarSource());
+
+    expect(rpcMock).toHaveBeenNthCalledWith(1, "update_my_avatar_by_key", {
+      p_object_key: expect.stringMatching(/^avatars\/user-1\/[0-9a-f-]{36}\.jpg$/),
+      p_avatar_url: expect.stringMatching(
+        /^https:\/\/ref\.supabase\.co\/storage\/v1\/object\/public\/findback-images\/avatars\/user-1\//,
+      ),
+    });
+    expect(rpcMock).toHaveBeenNthCalledWith(2, "update_my_avatar", {
+      p_avatar_url: expect.stringMatching(
+        /^https:\/\/ref\.supabase\.co\/storage\/v1\/object\/public\/findback-images\/avatars\/user-1\//,
+      ),
+    });
+    expect(result).toBe(refreshed);
+  });
+
+  it("does not fall back when the key RPC fails for another reason", async () => {
+    rpcMock.mockResolvedValueOnce({
+      error: { message: "new row violates row-level security policy for table users" },
+    });
+
+    await expect(uploadAvatar(avatarSource())).rejects.toThrow(/could not save/i);
+
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(removeMock).toHaveBeenCalledTimes(1);
     expect(fetchMeMock).not.toHaveBeenCalled();
   });
 
