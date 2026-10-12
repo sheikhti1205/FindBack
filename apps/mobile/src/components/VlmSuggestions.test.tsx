@@ -589,3 +589,62 @@ describe("VlmSuggestions — mode-honest consent copy", () => {
     expect(analyze).toHaveBeenCalledWith(expect.any(File), true, expect.objectContaining({ accountId: "owner-7" }));
   });
 });
+
+describe("VlmSuggestions — cancellation is honest", () => {
+  const makeFile = () => new File([new Uint8Array(1000)], "photo.jpg", { type: "image/jpeg" });
+
+  async function startAnalysis() {
+    render(
+      <MemoryRouter>
+        <VlmSuggestions file={makeFile()} currentTitle="" currentDescription="" currentCategory="" onApply={vi.fn(() => true)} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Expand photo suggestions/i }));
+    fireEvent.click(screen.getByLabelText(/otherwise it is sent to OpenRouter/));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest title & description" }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
+  }
+
+  it("Stop aborts the analyzer's signal and reports the request as cancelled", async () => {
+    let captured: AbortSignal | undefined;
+    analyze.mockImplementationOnce((_file: File, _consent: boolean, options?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        captured = options?.signal;
+        options?.signal?.addEventListener(
+          "abort",
+          () => {
+            const error = new Error("Aborted");
+            error.name = "AbortError";
+            reject(error);
+          },
+          { once: true },
+        );
+      }));
+
+    await startAnalysis();
+    expect(captured).toBeDefined();
+    expect(captured?.aborted).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("AI request cancelled."));
+    expect(captured?.aborted).toBe(true);
+    expect(screen.queryByText(/Couldn't draft text/)).toBeNull();
+    expect(screen.queryByText("Analyzing photo…")).toBeNull();
+  });
+
+  it("a CANCELLED transport error renders as cancelled, not a failure", async () => {
+    // The OpenRouter client's own abort race throws OpenRouterError("CANCELLED"),
+    // not a raw AbortError — the panel must map it to the same cancelled copy.
+    analyze.mockImplementationOnce(async () => {
+      const error = new Error("AI request cancelled.") as Error & { code?: string };
+      error.name = "OpenRouterError";
+      error.code = "CANCELLED";
+      throw error;
+    });
+
+    await startAnalysis();
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("AI request cancelled."));
+    expect(screen.queryByText(/Couldn't draft text/)).toBeNull();
+    expect(screen.queryByText("Analyzing photo…")).toBeNull();
+  });
+});

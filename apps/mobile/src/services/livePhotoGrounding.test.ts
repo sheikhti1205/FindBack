@@ -223,3 +223,28 @@ it("default local production adapter propagates user abort to native generation 
   await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   expect(p.seen()?.signal.aborted).toBe(true); expect(fetcher).not.toHaveBeenCalled();
 });
+
+describe("live photo grounding local timeout", () => {
+  it("a local run stalled past 30s times out and automatic mode falls back to cloud", async () => {
+    vi.useFakeTimers();
+    try {
+      const d = deps();
+      // The on-device generator never settles: only withTimeout's 30s budget
+      // can end this leg.
+      d.local.mockImplementation(() => new Promise<string | null>(() => {}));
+      const pending = groundReportPhoto(file, "bag", true, { deps: d, photoEngine: "automatic" });
+      // Microtasks only: we reach the stalled local leg, and nothing has
+      // fallen back yet — the cloud leg is time-gated, not instant.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(d.local).toHaveBeenCalledTimes(1);
+      expect(d.cloud).not.toHaveBeenCalled();
+      // Cross the 30s budget: the timeout rejects the local leg and the
+      // automatic engine runs the consented cloud fallback.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await pending).toMatchObject({ ok: true, value: { engine: "cloud" } });
+      expect(d.cloud).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

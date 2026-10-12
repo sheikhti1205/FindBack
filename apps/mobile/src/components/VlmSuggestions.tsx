@@ -135,7 +135,7 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
       setEngine(used === "on-device" || used === "cloud" ? used : null);
       // An unreleased category is dropped, not fatal: the title and
       // description are still useful and applying is fully manual.
-       if (result.categoryUnavailable || (result.suggestedCategory && !isReleasedCategory(result.suggestedCategory))) {
+      if (result.categoryUnavailable || (result.suggestedCategory && !isReleasedCategory(result.suggestedCategory))) {
         setSuggestion({ ...result, suggestedCategory: null });
         setNotice(DROPPED_CATEGORY_NOTE);
         setEditedCategory("");
@@ -151,7 +151,12 @@ export function VlmSuggestions({ file, currentTitle, currentDescription, current
     catch (err) {
       if (generation.current !== gen) return;
       setEngine(null);
+      // Two cancellation shapes reach this catch: a raw AbortError (local leg,
+      // pre-abort) and OpenRouterError("CANCELLED") (the transport's own abort
+      // race). Both mean the user pressed Stop — never a failure.
       if (err instanceof Error && err.name === "AbortError") {
+        setError("AI request cancelled.");
+      } else if ((err as { code?: string } | null)?.code === "CANCELLED") {
         setError("AI request cancelled.");
       } else if ((err as { code?: string } | null)?.code === "MISSING_KEY") {
         setError(MISSING_KEY_ERROR);

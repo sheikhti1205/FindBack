@@ -1,14 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { analyzeReportPhoto } from "./analyzeReportPhoto";
+import { analyzeReportPhoto, hasUsefulPhotoSignal } from "./analyzeReportPhoto";
 
 // Session + credential boundary for the real-send account-binding tests.
 // resolveAccountOpenRouterKey mirrors the production contract exactly
 // (single session lookup, fail closed — pinned for real in
 // aiCredentials.test.ts); the credentialGet spy proves a foreign account's
 // slot is never even read on a switch.
-const { analyzeSession, analyzeCredentialGet } = vi.hoisted(() => ({
+const { analyzeSession, analyzeCredentialGet, diagSpy, normalizedMock } = vi.hoisted(() => ({
   analyzeSession: { current: null as string | null, throws: false },
   analyzeCredentialGet: vi.fn(async (_accountId: string, _provider: string) => "test-only-placeholder"),
+  // Records every diagnostic the flow emits so the no-byte-logging contract
+  // can be asserted against the real payload set (not a vacuous empty spy).
+  diagSpy: vi.fn<(event: string, fields?: Record<string, unknown>, opts?: unknown) => void>(),
+  // Decoding seam: keeps the real encodePhoto pipeline running (so its stage
+  // diagnostics are exercised) without a real image decoder in the test env.
+  normalizedMock: vi.fn(async () => ({
+    blob: new Blob(["photo"], { type: "image/jpeg" }),
+    mimeType: "image/jpeg",
+    width: 100,
+    height: 100,
+  })),
+}));
+vi.mock("./image", () => ({ normalizeImage: normalizedMock }));
+vi.mock("./diag", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./diag")>()),
+  diag: diagSpy,
 }));
 vi.mock("./supabaseClient", () => ({
   getSupabase: () => ({
@@ -38,6 +54,7 @@ beforeEach(() => {
   analyzeSession.current = null;
   analyzeSession.throws = false;
   analyzeCredentialGet.mockClear();
+  diagSpy.mockClear();
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -136,20 +153,43 @@ describe("OpenRouter photo suggestions", () => {
     } })).resolves.toMatchObject({ suggestedTitle: "Black umbrella", suggestedCategory: null });
   });
 
-  it("never logs photo bytes, EXIF, coordinates or API keys", async () => {
+  it("never logs photo bytes, EXIF, coordinates or API keys on any engine path", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const IMAGE_PAYLOAD = "data:image/jpeg;base64,/9j/SECRET_PHOTO_BYTES==";
+    // Exercise the REAL encodePhoto (normalize seam mocked) so the derivative
+    // stage is included in the scanned payload set.
+    normalizedMock.mockResolvedValue({
+      blob: new Blob(["photo"], { type: "image/jpeg" }),
+      mimeType: "image/jpeg",
+      width: 100,
+      height: 100,
+    });
     const send = vi.fn(async () => JSON.stringify(result));
-    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
     const file = new File(["jpeg"], "item.jpg", { type: "image/jpeg" });
-    await analyzeReportPhoto(file, true, { deps: { encode, send, ...cloudOnly() } });
-    // Verify no sensitive data was logged
+    // Cloud leg with the real derivative pipeline (send stubbed, no encode seam).
+    await analyzeReportPhoto(file, true, { deps: { send, analyzeLocally: async () => null } });
+    // On-device leg (local seam returns a full analysis).
+    await analyzeReportPhoto(file, true, { deps: { encode: async () => IMAGE_PAYLOAD, send, analyzeLocally: async () => result } });
+    // Non-vacuous: the flow really emitted stage diagnostics during those runs.
+    const events = diagSpy.mock.calls.map((call) => call[0]);
+    expect(events).toContain("photo.source_accept");
+    expect(events).toContain("photo.derivative_prep");
+    expect(events).toContain("photo.cloud_send");
+    expect(events).toContain("photo.useful_signal");
+    // Every diagnostic name and payload is scanned for photo bytes / EXIF /
+    // coordinates / key material — counts and booleans only, never content.
+    const forbidden = [/base64/i, /exif/i, /gps/i, /latitude/i, /longitude/i, /sk-or-/i, /api[_-]?key/i, /SECRET_PHOTO_BYTES/, /data:image/i];
+    for (const [event, fields, opts] of diagSpy.mock.calls) {
+      const serialized = JSON.stringify([event, fields ?? {}, opts ?? {}]);
+      for (const pattern of forbidden) {
+        expect(serialized, `diag payload for ${String(event)} leaked ${String(pattern)}`).not.toMatch(pattern);
+      }
+    }
     const allLogs = [...consoleSpy.mock.calls, ...consoleErrorSpy.mock.calls].flat().join(" ");
-    expect(allLogs).not.toContain("base64");
-    expect(allLogs).not.toContain("EXIF");
-    expect(allLogs).not.toContain("coordinate");
-    expect(allLogs).not.toContain("API");
-    expect(allLogs).not.toContain("key");
+    for (const pattern of forbidden) {
+      expect(allLogs).not.toMatch(pattern);
+    }
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
   });
@@ -432,5 +472,121 @@ describe("account-bound cloud sends (real transport, stubbed HTTP)", () => {
     ).rejects.toThrow(/account changed/i);
     expect(fetcher).not.toHaveBeenCalled();
     expect(analyzeCredentialGet).not.toHaveBeenCalled();
+  });
+});
+
+describe("useful-signal gating", () => {
+  const file = () => new File(["jpeg"], "item.jpg", { type: "image/jpeg" });
+  const emptyAnalysis = {
+    objectName: null, suggestedCategory: null, colors: [], visibleBrand: null,
+    visibleText: [], identifyingFeatures: [], suggestedTitle: null,
+    suggestedDescription: null, uncertainFields: [],
+  };
+
+  it("hasUsefulPhotoSignal is true only for a title, description or category the panel can draft", () => {
+    expect(hasUsefulPhotoSignal({ suggestedTitle: "Black umbrella", suggestedDescription: null, suggestedCategory: null })).toBe(true);
+    expect(hasUsefulPhotoSignal({ suggestedTitle: "  ", suggestedDescription: null, suggestedCategory: null })).toBe(false);
+    expect(hasUsefulPhotoSignal({ suggestedTitle: null, suggestedDescription: "A black umbrella.", suggestedCategory: null })).toBe(true);
+    expect(hasUsefulPhotoSignal({ suggestedTitle: null, suggestedDescription: null, suggestedCategory: "Phones & Tablets" })).toBe(true);
+    expect(hasUsefulPhotoSignal({ suggestedTitle: null, suggestedDescription: null, suggestedCategory: null })).toBe(false);
+    expect(hasUsefulPhotoSignal({ suggestedTitle: "", suggestedDescription: "   ", suggestedCategory: "" })).toBe(false);
+  });
+
+  it("automatic mode treats an empty local answer as no answer and falls back to cloud", async () => {
+    const analyzeLocally = vi.fn(async () => emptyAnalysis);
+    const send = vi.fn(async () => JSON.stringify(result));
+    const suggestion = await analyzeReportPhoto(file(), true, { deps: { analyzeLocally, send } });
+    expect(suggestion).toMatchObject({ engine: "cloud", suggestedTitle: "Black umbrella" });
+    expect(analyzeLocally).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    // Stage contract: the fallback is attributed, not silent.
+    expect(diagSpy.mock.calls).toContainEqual(["photo.cloud_fallback", { reason: "local-empty" }, {}]);
+  });
+
+  it("on-device-only refuses an empty local answer as UNUSABLE_RESPONSE without cloud", async () => {
+    const send = vi.fn(async () => JSON.stringify(result));
+    await expect(
+      analyzeReportPhoto(file(), true, {
+        photoEngine: "on-device-only",
+        deps: { analyzeLocally: async () => emptyAnalysis, send },
+      }),
+    ).rejects.toMatchObject({ code: "UNUSABLE_RESPONSE" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("cloud parses an all-null model answer but still refuses it as UNUSABLE_RESPONSE", async () => {
+    const send = vi.fn(async () => JSON.stringify(emptyAnalysis));
+    await expect(
+      analyzeReportPhoto(file(), true, {
+        photoEngine: "cloud-only",
+        deps: { analyzeLocally: async () => null, send },
+      }),
+    ).rejects.toMatchObject({ code: "UNUSABLE_RESPONSE" });
+  });
+
+  it("restores canonical category casing from the local analyzer and drops unknown categories", async () => {
+    const send = vi.fn(async () => JSON.stringify(result));
+    const wrongCase = await analyzeReportPhoto(file(), true, {
+      photoEngine: "on-device-only",
+      deps: { analyzeLocally: async () => ({ ...emptyAnalysis, suggestedTitle: "Phone", suggestedCategory: "phones & tablets" }), send },
+    });
+    expect(wrongCase.suggestedCategory).toBe("Phones & Tablets");
+    const unknown = await analyzeReportPhoto(file(), true, {
+      photoEngine: "on-device-only",
+      deps: { analyzeLocally: async () => ({ ...emptyAnalysis, suggestedTitle: "Phone", suggestedCategory: "Portal Gun" }), send },
+    });
+    expect(unknown.suggestedCategory).toBeNull();
+    expect(unknown.suggestedTitle).toBe("Phone");
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("abort propagation through every stage", () => {
+  const file = () => new File(["jpeg"], "item.jpg", { type: "image/jpeg" });
+
+  it("a pre-aborted signal stops before local, encode, or send", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const encode = vi.fn(async () => "data:image/jpeg;base64,/9g=");
+    const send = vi.fn(async () => JSON.stringify(result));
+    const analyzeLocally = vi.fn(async () => result);
+    await expect(
+      analyzeReportPhoto(file(), true, { signal: controller.signal, deps: { encode, send, analyzeLocally } }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(analyzeLocally).not.toHaveBeenCalled();
+    expect(encode).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(diagSpy.mock.calls.some((call) => call[0] === "photo.source_accept")).toBe(false);
+  });
+
+  it("forwards the caller's signal into derivative preparation", async () => {
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    const encode = vi.fn(async (_file: File, opts?: { signal?: AbortSignal }) => {
+      seen = opts?.signal;
+      return "data:image/jpeg;base64,/9g=";
+    });
+    await analyzeReportPhoto(file(), true, {
+      signal: controller.signal,
+      deps: { encode, send: async () => JSON.stringify(result), analyzeLocally: async () => null },
+    });
+    expect(seen).toBe(controller.signal);
+  });
+
+  it("an abort during derivative prep blocks the network send", async () => {
+    const controller = new AbortController();
+    const send = vi.fn(async () => JSON.stringify(result));
+    const encode = vi.fn(async () => {
+      controller.abort();
+      return "data:image/jpeg;base64,/9g=";
+    });
+    await expect(
+      analyzeReportPhoto(file(), true, {
+        signal: controller.signal,
+        deps: { encode, send, analyzeLocally: async () => null },
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(send).not.toHaveBeenCalled();
+    expect(diagSpy.mock.calls.some((call) => call[0] === "photo.cloud_send")).toBe(false);
   });
 });
