@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createOpenRouterClient, OPENROUTER_MODEL, OpenRouterError, REQUEST_TIMEOUT_MS } from "./openRouter";
+import { AI_TRANSPORT_MAX_IMAGE_BYTES, createOpenRouterClient, OPENROUTER_MODEL, OpenRouterError, REQUEST_TIMEOUT_MS } from "./openRouter";
 
 function completed(text = "A black backpack") {
   return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: text } }] }), {
@@ -30,6 +30,10 @@ function stalledBody(onSignal?: AbortSignal) {
 describe("fixed OpenRouter free route", () => {
   it("exposes openrouter/free as the single enforced model constant", () => {
     expect(OPENROUTER_MODEL).toBe("openrouter/free");
+  });
+
+  it("pins the AI transport image ceiling at 2 MB under its canonical name", () => {
+    expect(AI_TRANSPORT_MAX_IMAGE_BYTES).toBe(2_000_000);
   });
 
   it("uses only openrouter/free even when a caller smuggles a model override", async () => {

@@ -46,6 +46,29 @@ class PushDataTest {
         assertFalse(PushData.fromData(valid() - "replyToken")!!.canReply)
         assertFalse(PushData.fromData(valid() - "commentId")!!.canReply)
         assertFalse(PushData.fromData(valid() + ("type" to "LIKE"))!!.canReply)
+        assertFalse(PushData.fromData(valid() + ("type" to "REACTION"))!!.canReply)
+    }
+
+    @Test
+    fun `reaction notifications carry an allowlisted kind and never reply`() {
+        val reaction = valid() + ("type" to "REACTION") + ("reactionKind" to "WOW")
+        val push = PushData.fromData(reaction)!!
+        assertEquals(PushData.TYPE_REACTION, push.type)
+        assertEquals("WOW", push.kind)
+        assertFalse(push.canReply)
+    }
+
+    @Test
+    fun `a non-allowlisted reaction kind fails closed to null`() {
+        val push = PushData.fromData(valid() + ("type" to "REACTION") + ("reactionKind" to "LIKE"))!!
+        assertNull(push.kind)
+    }
+
+    @Test
+    fun `a kind on a non-reaction type is ignored`() {
+        val push = PushData.fromData(valid() + ("reactionKind" to "WOW"))!!
+        assertNull(push.kind)
+        assertTrue(push.canReply)
     }
 
     @Test

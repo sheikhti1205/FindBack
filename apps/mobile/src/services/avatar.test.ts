@@ -100,6 +100,47 @@ describe("isAvatarStorageUrl", () => {
     expect(isAvatarStorageUrl("not a url", "user-1")).toBe(false);
     expect(isAvatarStorageUrl("", "user-1")).toBe(false);
   });
+
+  it("rejects lookalike hosts carrying our exact path (FBX-022)", () => {
+    const path = "/storage/v1/object/public/findback-images/avatars/user-1/a.jpg";
+    // Foreign host with our path — the old substring check accepted this.
+    expect(isAvatarStorageUrl(`https://evil.example.com${path}`, "user-1")).toBe(false);
+    // Suffix trick: the marker host is not the URL host.
+    expect(isAvatarStorageUrl(`https://ref.supabase.co.evil.com${path}`, "user-1")).toBe(false);
+    // Multi-label subdomain under supabase.co is never a project ref.
+    expect(isAvatarStorageUrl(`https://a.ref.supabase.co${path}`, "user-1")).toBe(false);
+    // Marker buried in a query string never counts.
+    expect(
+      isAvatarStorageUrl(`https://evil.example.com/x?u=https://ref.supabase.co${path}`, "user-1"),
+    ).toBe(false);
+  });
+
+  it("rejects wrong buckets, bare prefixes, traversal, and missing objects (FBX-022)", () => {
+    expect(
+      isAvatarStorageUrl(
+        "https://ref.supabase.co/storage/v1/object/public/other-bucket/avatars/user-1/a.jpg",
+        "user-1",
+      ),
+    ).toBe(false);
+    // Bare prefix with no object name.
+    expect(
+      isAvatarStorageUrl(
+        "https://ref.supabase.co/storage/v1/object/public/findback-images/avatars/user-1/",
+        "user-1",
+      ),
+    ).toBe(false);
+    // Traversal collapses out of the prefix (URL normalizes `..` away).
+    expect(
+      isAvatarStorageUrl(
+        "https://ref.supabase.co/storage/v1/object/public/findback-images/avatars/user-1/../x.jpg",
+        "user-1",
+      ),
+    ).toBe(false);
+    // No public-object marker at all.
+    expect(isAvatarStorageUrl("https://ref.supabase.co/findback-images/avatars/user-1/a.jpg", "user-1")).toBe(
+      false,
+    );
+  });
 });
 
 describe("objectKeyFromAvatarUrl", () => {
@@ -412,6 +453,35 @@ describe("updateMyAvatarByKey", () => {
     await expect(updateMyAvatarByKey(key, "http://ref.supabase.co/storage/v1/object/public/findback-images/avatars/user-1/a.jpg")).rejects.toThrow(
       /invalid/i,
     );
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(fetchMeMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects lookalike-host URLs even when the key matches (FBX-022)", async () => {
+    // Same key embedded, but the host is not our Storage host.
+    await expect(
+      updateMyAvatarByKey(
+        key,
+        "https://evil.example.com/storage/v1/object/public/findback-images/avatars/user-1/a.jpg",
+      ),
+    ).rejects.toThrow(/invalid/i);
+    await expect(
+      updateMyAvatarByKey(
+        key,
+        "https://ref.supabase.co.evil.com/storage/v1/object/public/findback-images/avatars/user-1/a.jpg",
+      ),
+    ).rejects.toThrow(/invalid/i);
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(fetchMeMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a same-host URL embedding a different key (FBX-022)", async () => {
+    await expect(
+      updateMyAvatarByKey(
+        key,
+        "https://ref.supabase.co/storage/v1/object/public/findback-images/avatars/user-1/other.jpg",
+      ),
+    ).rejects.toThrow(/invalid/i);
     expect(rpcMock).not.toHaveBeenCalled();
     expect(fetchMeMock).not.toHaveBeenCalled();
   });

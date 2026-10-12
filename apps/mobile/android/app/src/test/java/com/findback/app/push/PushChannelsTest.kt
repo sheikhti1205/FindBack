@@ -15,6 +15,7 @@ class PushChannelsTest {
     fun `reactions use the activity channel`() {
         assertEquals(PushChannels.ACTIVITY, PushChannels.channelIdFor(PushData.TYPE_LIKE))
         assertEquals(PushChannels.ACTIVITY, PushChannels.channelIdFor(PushData.TYPE_DISLIKE))
+        assertEquals(PushChannels.ACTIVITY, PushChannels.channelIdFor(PushData.TYPE_REACTION))
     }
 
     @Test

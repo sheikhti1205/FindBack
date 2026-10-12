@@ -14,22 +14,33 @@
  * the decision logic is unit testable without a real canvas. Sampling uses
  * decode-time resize so a 100 MB source never fully materializes in JS.
  */
-export const MAX_EDGE = 1920;
+import { BootTimeoutError, throwIfAborted, withTimeout } from "./timeout";
+import { currentPhotoQuality } from "../appearance";
+import {
+  isAcceptedStillMime,
+  MAX_EDGE as CANONICAL_MAX_EDGE,
+  PROBE_BYTES,
+} from "./media/mediaPolicy";
+
+/**
+ * Longest-edge downsample target for the bounded derivative — re-exported
+ * from the single source-acceptance policy (L-CONSOLIDATE: mediaPolicy owns
+ * the value, image.ts only aliases it so existing importers keep working).
+ */
+export const MAX_EDGE = CANONICAL_MAX_EDGE;
 export const JPEG_QUALITY = 0.82;
 export const WEBP_QUALITY = 0.82;
 /**
- * Decode pixel bound, mirroring the import pipeline's IMPORT_MAX_DECODE_PIXELS.
- * A small compressed file can still describe enormous dimensions; decoding it
- * at full resolution would OOM the renderer. Images over the bound are
- * downsampled AT DECODE TIME (createImageBitmap resize) — never rejected for
- * being high-resolution — with an actionable error only where the device
- * cannot downsample safely.
+ * Web decode working-set bound (L-CONSOLIDATE note: this is deliberately NOT
+ * the import pipeline's IMPORT_MAX_DECODE_PIXELS pathological ceiling — the
+ * old "mirroring" comment was stale drift (30M vs 120M). The web normalize
+ * path decodes in a memory-constrained renderer/WebView, so over-bound
+ * stills downsample AT DECODE TIME at this tighter bound; the byte
+ * pipeline's pathological ceiling stays looser. The ordering invariant (web
+ * bound never looser than the pathological ceiling) is pinned in
+ * image.test.ts so the two can never cross silently.
  */
 export const MAX_DECODE_PIXELS = 30_000_000;
-
-import { BootTimeoutError, throwIfAborted, withTimeout } from "./timeout";
-import { currentPhotoQuality } from "../appearance";
-import { PROBE_BYTES } from "./media/mediaPolicy";
 
 /** Encode-quality tier (jpeg/webp) honoring the High Quality Photo flag. */
 export interface PhotoQuality {
@@ -45,8 +56,6 @@ export const IMAGE_STAGE_TIMEOUT_MS = 30_000;
 
 export const DECODE_TOO_LARGE =
   "That photo's dimensions are too large to process safely on this device. Export a smaller version and try again.";
-
-const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/avif", "image/bmp"];
 
 /**
  * Marks a decode failure as either a genuinely missing decoder
@@ -149,7 +158,7 @@ export async function normalizeImage(
   opts?: NormalizeOpts,
 ): Promise<NormalizedImage> {
   throwIfAborted(opts?.signal);
-  if (!ALLOWED_MIME.includes(file.type)) {
+  if (!isAcceptedStillMime(file.type)) {
     throw new Error("Unsupported image type");
   }
   const maxPixels = opts?.maxDecodePixels ?? MAX_DECODE_PIXELS;

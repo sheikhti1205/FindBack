@@ -253,6 +253,20 @@ describe("PostDetail mutation locks", () => {
 
   afterEach(cleanup);
 
+  it("hydrates the summary from the row-derived reactionSummary, not legacy buckets", async () => {
+    postsMock.fetchPost.mockResolvedValue({
+      ...basePost,
+      likeCount: 0,
+      dislikeCount: 0,
+      reactionSummary: { counts: { LOVE: 2, HELPFUL: 1 }, myReaction: "HELPFUL", total: 3 },
+    });
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: "HELPFUL", myRating: null });
+    renderDetail();
+    // Row truth (total 3) wins over the legacy-bucket seed (which would read 1).
+    const loveButton = await screen.findByRole("button", { name: "Helpful, 3 reactions" });
+    expect(loveButton.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("sends one Love RPC on a rapid double tap and shares the lock with Not helpful", async () => {
     renderDetail();
     const likeButton = await screen.findByRole("button", { name: /Love/ });

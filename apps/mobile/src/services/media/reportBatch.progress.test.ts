@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { processReportBatch } from "./reportBatch";
+import { photoToFile, type PhotoPipelineOpts, type PickedPhoto } from "../photo";
+
+// L-CONSOLIDATE: the batch convert seam is required — the web lane passes
+// its photoToFile bridge explicitly (exactly the old silent default, now
+// visible at every call site).
+function webConvert(photo: PickedPhoto, opts?: PhotoPipelineOpts): Promise<File> {
+  return photoToFile(photo, undefined, opts);
+}
 
 // jsdom has no image decoder: reject normalization so the batch exercises the
 // no-decoder fallback instead of hanging on a never-settling <img> decode.
@@ -67,7 +75,7 @@ describe("processReportBatch progress + cancellation (Lane C)", () => {
       undefined,
       undefined,
       0,
-      { onProgress: (p) => seen.push({ ...p }) },
+      { convert: webConvert, onProgress: (p) => seen.push({ ...p }) },
     );
 
     expect(result.accepted.length).toBe(3);
@@ -87,6 +95,7 @@ describe("processReportBatch progress + cancellation (Lane C)", () => {
     controller.abort();
 
     const result = await processReportBatch([photo], 0, undefined, undefined, 0, {
+      convert: webConvert,
       signal: controller.signal,
       onProgress: (p) => seen.push(p),
     });
@@ -117,6 +126,7 @@ describe("processReportBatch progress + cancellation (Lane C)", () => {
       },
       0,
       {
+        convert: webConvert,
         signal: controller.signal,
         onProgress: (p) => {
           seen.push({ done: p.done, total: p.total });
@@ -148,7 +158,7 @@ describe("processReportBatch progress + cancellation (Lane C)", () => {
       undefined,
       undefined,
       0,
-      { onProgress: (p) => seen.push(p.done) },
+      { convert: webConvert, onProgress: (p) => seen.push(p.done) },
     );
 
     expect(result.accepted.length).toBe(1);
@@ -157,13 +167,12 @@ describe("processReportBatch progress + cancellation (Lane C)", () => {
     expect(seen).toEqual([1, 2, 3]);
   });
 
-  it("without options the result is not cancelled (backward compatible)", async () => {
+  it("fails fast without an explicit convert instead of running deaf", async () => {
     const { photo, file } = createMockPhoto("p1", new Uint8Array([1, 2, 3]));
     setupFetchMock(new Map([[photo.webPath, file]]));
 
-    const result = await processReportBatch([photo], 0);
-    expect(result.accepted.length).toBe(1);
-    expect(result.cancelled).toBe(false);
+    await expect(processReportBatch([photo], 0)).rejects.toThrow(/explicit convert/i);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("aborts in-flight decode (photoToFile) when the signal fires mid-fetch", async () => {
@@ -181,6 +190,7 @@ describe("processReportBatch progress + cancellation (Lane C)", () => {
     }) as unknown) as typeof fetch;
     const controller = new AbortController();
     const pending = processReportBatch([photo], 0, undefined, undefined, 0, {
+      convert: webConvert,
       signal: controller.signal,
     });
     setTimeout(() => controller.abort(), 20);
@@ -209,6 +219,7 @@ describe("processReportBatch progress + cancellation (Lane C)", () => {
     try {
       const controller = new AbortController();
       const pending = processReportBatch([photo], 0, undefined, undefined, 0, {
+        convert: webConvert,
         signal: controller.signal,
       });
       setTimeout(() => controller.abort(), 20);

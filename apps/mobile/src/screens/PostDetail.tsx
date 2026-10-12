@@ -55,6 +55,7 @@ import {
   nextReactionForTap,
   normalizeReactionKind,
   reactionCountsFromJson,
+  reactionSummaryFromCounts,
   setCommentReaction,
 } from "../services/reactions";
 import {
@@ -548,17 +549,14 @@ export function PostDetail() {
         // my_reaction — it is counts-only).
         if (typeof p.commentId === "string") {
           const counts = reactionCountsFromJson(p.reactionCounts);
-          const total = Object.values(counts).reduce<number>((s, n) => s + (n ?? 0), 0);
           setCommentSummaries((prev) => ({
             ...prev,
-            [p.commentId as string]: {
+            [p.commentId as string]: reactionSummaryFromCounts(
               counts,
-              total,
-              myReaction:
-                prev[p.commentId as string]?.myReaction ??
+              prev[p.commentId as string]?.myReaction ??
                 commentsRef.current.find((c) => c.id === p.commentId)?.reactionSummary?.myReaction ??
                 null,
-            },
+            ),
           }));
           return;
         }
@@ -572,9 +570,8 @@ export function PostDetail() {
             : prev,
         );
         if (p.reactionCounts !== undefined) {
-          const counts = reactionCountsFromJson(p.reactionCounts);
-          const total = Object.values(counts).reduce<number>((s, n) => s + (n ?? 0), 0);
-          setPostCountsOverride({ postId: p.postId, counts, total });
+          const summary = reactionSummaryFromCounts(reactionCountsFromJson(p.reactionCounts), null);
+          setPostCountsOverride({ postId: p.postId, counts: summary.counts, total: summary.total });
         }
       }),
       onRealtime("rating:changed", (payload) => {
@@ -646,15 +643,20 @@ export function PostDetail() {
   }
 
   // W3.3 post summary: server-truth counts/total once a write or realtime
-  // event delivers them, else seeded from the legacy buckets (+1 for an own
-  // canonical kind, which the legacy buckets never contain). The caller's
-  // own reaction always comes from state, never from the override.
+  // event delivers them, else the row-derived summary the detail fetch
+  // already mapped via `reactionSummaryFromRow` (L-CONSOLIDATE — legacy
+  // buckets seed only when the row carries no reaction columns, i.e. older
+  // backends; +1 for an own canonical kind, which those buckets never
+  // contain). The caller's own reaction always comes from state, never from
+  // the override or the row.
   const postActiveKind =
     myReaction === null ? null : (normalizeReactionKind(myReaction) as CanonicalReactionKind);
   const postSummary: ReactionSummary =
     postCountsOverride !== null && postCountsOverride.postId === current.id
       ? { counts: postCountsOverride.counts, total: postCountsOverride.total, myReaction }
-      : seedSummaryFromItem(current.likeCount, current.dislikeCount, myReaction);
+      : current.reactionSummary
+        ? { counts: current.reactionSummary.counts, total: current.reactionSummary.total, myReaction }
+        : seedSummaryFromItem(current.likeCount, current.dislikeCount, myReaction);
   const postLoveLabel =
     postActiveKind === null || postActiveKind === "LOVE"
       ? `Love, ${current.likeCount} ${current.likeCount === 1 ? "love" : "loves"}`
@@ -814,7 +816,7 @@ export function PostDetail() {
   function commentSummaryFor(c: CommentItem): ReactionSummary {
     return (
       commentSummaries[c.id] ??
-      c.reactionSummary ?? { counts: {}, myReaction: null, total: 0 }
+      c.reactionSummary ?? reactionSummaryFromCounts({}, null)
     );
   }
 
@@ -827,12 +829,10 @@ export function PostDetail() {
     if (commentPending[c.id]) return;
     const prev = commentSummaryFor(c);
     const snap = { postId: current.id, viewer: user?.id };
-    const counts = applyReactionDeltas(prev.counts, prev.myReaction, next);
-    const optimistic: ReactionSummary = {
-      counts,
-      myReaction: next,
-      total: Object.values(counts).reduce<number>((s, n) => s + (n ?? 0), 0),
-    };
+    const optimistic: ReactionSummary = reactionSummaryFromCounts(
+      applyReactionDeltas(prev.counts, prev.myReaction, next),
+      next,
+    );
     setCommentPending((p) => ({ ...p, [c.id]: true }));
     setCommentSummaries((p) => ({ ...p, [c.id]: optimistic }));
     try {

@@ -123,12 +123,50 @@ export function summarizeReactions(
     const key = normalizeReactionKind(row.type);
     counts[key] = (counts[key] ?? 0) + 1;
   }
-  const total = Object.values(counts).reduce<number>((sum, n) => sum + (n ?? 0), 0);
+  return reactionSummaryFromCounts(counts, myReaction);
+}
+
+/**
+ * THE ONE counts→summary aggregator (L-CONSOLIDATE): every surface that
+ * holds canonical per-kind counts plus the caller's own reaction builds its
+ * `ReactionSummary` here, so totals can never disagree with the counts.
+ * `summarizeReactions`, `reactionSummaryFromRow`, and the PostDetail
+ * realtime/optimistic paths all delegate — the feed `seedSummaryFromItem`
+ * shim stays separate INTENTIONALLY (legacy buckets, no server counts).
+ */
+export function reactionSummaryFromCounts(
+  counts: ReactionCounts,
+  myReaction: ReactionKind | null,
+): ReactionSummary {
+  const merged: ReactionCounts = {};
+  for (const [rawKey, rawCount] of Object.entries(counts)) {
+    if (!isReactionKind(rawKey)) continue;
+    const n = typeof rawCount === "number" ? rawCount : Number(rawCount);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    const key = normalizeReactionKind(rawKey);
+    merged[key] = (merged[key] ?? 0) + n;
+  }
   return {
-    counts,
+    counts: merged,
     myReaction: myReaction === null ? null : normalizeReactionKind(myReaction),
-    total,
+    total: totalOf(merged),
   };
+}
+
+/**
+ * Up to `n` canonical kinds with a positive count, best first; ties resolve
+ * in canonical tray order (LOVE/HELPFUL/SUPPORT/WOW). THE ONE top-kinds
+ * helper (L-CONSOLIDATE): ReactionPreviewStack imports this; ReactionTray's
+ * single-best `topReactionKind` swap is reserved for the coordinator.
+ */
+export function topKinds(counts: ReactionCounts, n = 3): CanonicalReactionKind[] {
+  return CANONICAL_REACTION_KINDS.filter((k) => (counts[k] ?? 0) > 0)
+    .sort((a, b) => {
+      const diff = (counts[b] ?? 0) - (counts[a] ?? 0);
+      if (diff !== 0) return diff;
+      return CANONICAL_REACTION_KINDS.indexOf(a) - CANONICAL_REACTION_KINDS.indexOf(b);
+    })
+    .slice(0, n);
 }
 
 function totalOf(counts: ReactionCounts): number {
@@ -205,12 +243,10 @@ export function reactionSummaryFromRow(row: {
   my_reaction?: unknown;
 }): ReactionSummary | undefined {
   if (row.reaction_counts === undefined && row.my_reaction === undefined) return undefined;
-  const counts = reactionCountsFromJson(row.reaction_counts);
-  return {
-    counts,
-    myReaction: isReactionKind(row.my_reaction) ? normalizeReactionKind(row.my_reaction) : null,
-    total: totalOf(counts),
-  };
+  return reactionSummaryFromCounts(
+    reactionCountsFromJson(row.reaction_counts),
+    isReactionKind(row.my_reaction) ? row.my_reaction : null,
+  );
 }
 
 /** Validate that `kind` is a known reaction kind (used by callers before RPCs). */

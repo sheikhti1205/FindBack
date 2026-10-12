@@ -6,11 +6,13 @@ import {
   nextReactionForTap,
   normalizeReactionKind,
   reactionCountsFromJson,
+  reactionSummaryFromCounts,
   reactionSummaryFromRow,
   reactionToggleDeltas,
   setCommentReaction,
   setPostReaction,
   summarizeReactions,
+  topKinds,
 } from "./reactions";
 
 const { clientMock } = vi.hoisted(() => ({ clientMock: { rpc: vi.fn() } }));
@@ -159,6 +161,49 @@ describe("reactionSummaryFromRow", () => {
       myReaction: null,
       total: 0,
     });
+  });
+
+  it("normalizes a lone my_reaction through the one aggregator (LIKE→LOVE, unknown→null)", () => {
+    expect(reactionSummaryFromRow({ my_reaction: "LIKE" })).toEqual({
+      counts: {},
+      myReaction: "LOVE",
+      total: 0,
+    });
+    expect(reactionSummaryFromRow({ my_reaction: "BOGUS" })).toEqual({
+      counts: {},
+      myReaction: null,
+      total: 0,
+    });
+  });
+});
+
+describe("reactionSummaryFromCounts (the one aggregator)", () => {
+  it("totals exactly its counts and normalizes LIKE→LOVE", () => {
+    expect(reactionSummaryFromCounts({ LOVE: 2, LIKE: 1, WOW: 0, BOGUS: 5 } as never, "LIKE")).toEqual({
+      counts: { LOVE: 3 },
+      myReaction: "LOVE",
+      total: 3,
+    });
+  });
+
+  it("agrees with summarizeReactions and reactionSummaryFromRow on the same truth", () => {
+    const rows = [{ type: "LIKE" }, { type: "WOW" }, { type: "BOGUS" }];
+    expect(summarizeReactions(rows, "WOW")).toEqual(
+      reactionSummaryFromCounts({ LOVE: 1, WOW: 1 }, "WOW"),
+    );
+    expect(reactionSummaryFromRow({ reaction_counts: { LIKE: 1, WOW: 1 }, my_reaction: "WOW" })).toEqual(
+      reactionSummaryFromCounts({ LOVE: 1, WOW: 1 }, "WOW"),
+    );
+  });
+});
+
+describe("topKinds (the one top-kinds helper)", () => {
+  it("orders best-first with canonical-order ties and honors n", () => {
+    expect(topKinds({ LOVE: 1, WOW: 4, HELPFUL: 2 })).toEqual(["WOW", "HELPFUL", "LOVE"]);
+    expect(topKinds({ WOW: 2, LOVE: 2 })).toEqual(["LOVE", "WOW"]);
+    expect(topKinds({ LOVE: 4, HELPFUL: 3, SUPPORT: 2, WOW: 1 }, 2)).toEqual(["LOVE", "HELPFUL"]);
+    expect(topKinds({})).toEqual([]);
+    expect(topKinds({ LOVE: 1 }, 0)).toEqual([]);
   });
 });
 

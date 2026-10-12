@@ -54,6 +54,17 @@ export interface ModelProfile {
   readonly supportsText: boolean;
   readonly supportsVision: boolean;
   readonly supportsGeneral: boolean;
+  /**
+   * L-CONSOLIDATE one-source direction: these are LAB-CORPUS DESCRIPTIVE
+   * roles (what the coded evaluation runs evidenced for this exact pin) —
+   * they NEVER gate production routing. The AUTHORITATIVE production role
+   * map is `ModelDescriptor.taskRoles` in modelDescriptors.ts (read by
+   * qualifiedUiRolesForOfflineModel, the runtime router, and the lab
+   * promotion gates). A lab profile's roles may be a strict subset of its
+   * descriptor's taskRoles (lab evidence is narrower than shipped policy);
+   * widening production serving means changing the descriptor with device
+   * evidence, never reading this field for routing.
+   */
   readonly roles: readonly NarrowOp[];
   readonly maturity: ModelMaturity;
   readonly roleNotes: string;

@@ -104,12 +104,20 @@ describe("accepted still formats label (FBX-003)", () => {
       expect(labelTokens).toContain(kind);
     }
 
-    // Real map 3 — CreateReport's ACCEPTED_IMAGE_TYPES accept map.
-    const acceptedTypes = [...(reportSource.match(/const ACCEPTED_IMAGE_TYPES = \[([^\]]*)\]/)?.[1] ?? "").matchAll(/"([a-z/]+)"/g)].map((m) => m[1]!);
-    expect(acceptedTypes.length).toBeGreaterThan(0);
-    for (const mime of acceptedTypes) expect(labelTokens).toContain(baseOf(mime));
-    // …and the reverse: every advertised container really is accepted there.
-    for (const token of labelTokens) expect(acceptedTypes).toContain(`image/${token}`);
+    // Real map 3 — CreateReport's transport gate reads the canonical policy
+    // (L-CONSOLIDATE: no local ACCEPTED_IMAGE_TYPES list — the accept map,
+    // the gate predicate, and the byte ceiling all alias the canonicals).
+    expect(reportSource).toMatch(
+      /import \{[^}]*ACCEPTED_STILL_MIME_TYPES[^}]*isAcceptedStillMime[^}]*UPLOAD_MAX_BYTES[^}]*\} from "\.\.\/services\/media\/mediaPolicy"/,
+    );
+    expect(reportSource).not.toMatch(/const ACCEPTED_IMAGE_TYPES = \[/);
+    expect(reportSource).not.toMatch(/const MAX_IMAGE_BYTES = 8 \* 1024 \* 1024/);
+    const acceptedAlias = reportSource.match(/const ACCEPTED_IMAGE_TYPES[^=]*=\s*([^\n;]*)/)?.[1] ?? "";
+    expect(acceptedAlias).toContain("ACCEPTED_STILL_MIME_TYPES");
+    for (const mime of ACCEPTED_STILL_MIME_TYPES) expect(labelTokens).toContain(baseOf(mime));
+    // …and the reverse: every advertised container really is accepted there
+    // (by construction — the alias IS the canonical list).
+    for (const token of labelTokens) expect(ACCEPTED_STILL_MIME_TYPES.some((mime) => baseOf(mime) === token)).toBe(true);
   });
 
   it("ties the exported MIME list to the sentence in both directions", () => {

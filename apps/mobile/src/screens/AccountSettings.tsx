@@ -88,13 +88,18 @@ export function AccountSettings() {
   if (!user) return null;
   const userId = user.id;
 
-  const mobileCooldown =
-    phoneEligibility && !phoneEligibility.eligible
-      ? formatPhoneChangeEligibleAt(phoneEligibility.eligibleAt)
-      : "";
+  // Held gate without a date still names the block (never the default copy):
+  // matches the dateless request_phone_change 409 ("You cannot change your
+  // mobile number yet. Try again later.") in row-length form.
+  const mobileGateHeld = phoneEligibility !== null && !phoneEligibility.eligible;
+  const mobileCooldown = mobileGateHeld
+    ? formatPhoneChangeEligibleAt(phoneEligibility.eligibleAt)
+    : "";
   const mobileDescription = mobileCooldown
     ? `Number change available ${mobileCooldown}.`
-    : "Bangladesh mobile number.";
+    : mobileGateHeld
+      ? "Number change is not available yet. Try again later."
+      : "Bangladesh mobile number.";
 
   function runLogout() {
     if (loggingOut) return;

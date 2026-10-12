@@ -18,6 +18,13 @@ data class PushData(
     val notificationId: String,
     val commentId: String?,
     val replyToken: String?,
+    /**
+     * Canonical reaction kind (LOVE/HELPFUL/SUPPORT/WOW) for REACTION rows so
+     * the notification can render the matching icon. Null on every other
+     * type and on any non-allowlisted value (fail closed — the server
+     * sanitizes upstream, this is the defense-in-depth second gate).
+     */
+    val kind: String?,
 ) {
     /** Only comment notifications with a parent comment and a minted token reply inline. */
     val canReply: Boolean
@@ -26,12 +33,16 @@ data class PushData(
     companion object {
         const val TYPE_LIKE = "LIKE"
         const val TYPE_DISLIKE = "DISLIKE"
+        /** Multi-kind reaction (W1-A): canonical kind travels in `kind`. */
+        const val TYPE_REACTION = "REACTION"
         const val TYPE_COMMENT = "COMMENT"
         const val TYPE_MENTION = "MENTION"
         const val TYPE_STATUS = "STATUS"
         const val MAX_REPLY_LENGTH = 1000
         const val DEFAULT_TITLE = "FindBack"
         const val DEFAULT_BODY = "New activity on your report"
+        /** Canonical reaction kinds, mirroring push-dispatch + shared schema. */
+        val REACTION_KINDS = setOf("LOVE", "HELPFUL", "SUPPORT", "WOW")
 
         /**
          * Parses a RemoteMessage data map. Returns null when the payload is not a
@@ -44,15 +55,20 @@ data class PushData(
             if (postId.isEmpty() || url.isEmpty()) return null
             if (!url.startsWith("https://")) return null
             val notificationId = data["notificationId"]?.trim().orEmpty().ifEmpty { postId }
+            val type = data["type"].orEmpty()
+            // Only REACTION rows carry a kind, and only an allowlisted one.
+            val kind = data["reactionKind"]?.trim()?.takeIf { it.isNotEmpty() }
+                ?.takeIf { type == TYPE_REACTION && REACTION_KINDS.contains(it) }
             return PushData(
                 title = data["title"]?.takeIf { it.isNotBlank() } ?: DEFAULT_TITLE,
                 body = data["body"]?.takeIf { it.isNotBlank() } ?: DEFAULT_BODY,
-                type = data["type"].orEmpty(),
+                type = type,
                 postId = postId,
                 url = url,
                 notificationId = notificationId,
                 commentId = data["commentId"]?.trim()?.takeIf { it.isNotEmpty() },
                 replyToken = data["replyToken"]?.trim()?.takeIf { it.isNotEmpty() },
+                kind = kind,
             )
         }
 

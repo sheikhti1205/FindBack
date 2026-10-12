@@ -274,6 +274,15 @@ describe("AccountSettings", () => {
     expect(row.getAttribute("href")).toBe("/profile/edit");
   });
 
+  it("names the block (not the default copy) when the gate holds without a date", async () => {
+    mockFetchEligibility.mockResolvedValue({ eligible: false, eligibleAt: null, phoneVerified: true });
+    renderAccount();
+    const row = await screen.findByRole("link", { name: /mobile number/i });
+    expect(row.textContent).toMatch(/not available yet/i);
+    expect(row.textContent).not.toContain("Bangladesh mobile number.");
+    expect(row.getAttribute("href")).toBe("/profile/edit");
+  });
+
   it("keeps the default mobile copy when the availability read fails", async () => {
     mockFetchEligibility.mockRejectedValue(new Error("offline"));
     renderAccount();

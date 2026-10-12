@@ -13,6 +13,8 @@ import {
   productionModelRegistry,
   SMOL_VISION_DESCRIPTOR,
 } from "./modelDescriptors";
+import { profileFor } from "./modelProfiles";
+import { qualifiedUiRolesForOfflineModel } from "./uiModelRoles";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 
 describe("modelDescriptors", () => {
@@ -64,5 +66,29 @@ describe("modelDescriptors", () => {
     expect(modelSupportsAbi(NEEDLE_DESCRIPTOR, "x86_64")).toBe(false);
     expect(modelSupportsAbi(SMOL_VISION_DESCRIPTOR, "x86_64")).toBe(false);
     expect(modelSupportsAbi(NEEDLE_DESCRIPTOR, "")).toBe(false);
+  });
+
+  it("declares descriptor.taskRoles the ONE authoritative production role map (L-CONSOLIDATE)", () => {
+    // Production advertised roles live on the descriptor, not the lab profile.
+    expect([...NEEDLE_DESCRIPTOR.taskRoles]).toEqual([
+      "extract-report-fields",
+      "extract-search-filters",
+      "classify-category",
+      "embed-texts",
+    ]);
+    // Lab profile roles are descriptive evidence and may be narrower: the
+    // needle lab pin evidences extraction only, yet production serves the
+    // full descriptor set — routing must never read the profile field.
+    const needleProfileRoles = profileFor(NEEDLE_MODEL_ID)?.roles ?? [];
+    for (const role of needleProfileRoles) {
+      expect(NEEDLE_DESCRIPTOR.taskRoles).toContain(role);
+    }
+    expect(needleProfileRoles).not.toContain("embed-texts");
+    // Routing proof: consumer qualification derives embeddings from the
+    // descriptor's embed-texts role (the lab profile alone yields no such
+    // signal through task roles).
+    expect(qualifiedUiRolesForOfflineModel(NEEDLE_MODEL_ID)).toContain("embeddings");
+    expect(qualifiedUiRolesForOfflineModel(NEEDLE_MODEL_ID)).toContain("tools");
+    expect(qualifiedUiRolesForOfflineModel(NEEDLE_MODEL_ID)).not.toContain("chat");
   });
 });

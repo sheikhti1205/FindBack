@@ -9,7 +9,13 @@ const MODEL = OPENROUTER_MODEL;
 export const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_PROMPT = 2_400;
 const MAX_ANSWER = 6_000;
-const MAX_IMAGE_BYTES = 2_000_000;
+/**
+ * L-CONSOLIDATE: AI transport ceiling (was the generic MAX_IMAGE_BYTES —
+ * renamed so it can never be confused with the 8 MB upload ceiling or the
+ * 100 MB source cap). Value unchanged: 2 MB of decoded image bytes per
+ * request.
+ */
+export const AI_TRANSPORT_MAX_IMAGE_BYTES = 2_000_000;
 /** Response bodies are streamed with a hard cap so a huge payload cannot be buffered. */
 const MAX_RESPONSE_BYTES = 1_000_000;
 
@@ -117,13 +123,13 @@ function errorFromStatus(status: number, body: unknown): OpenRouterError {
 
 function checkedImageDataUrl(image: string): string {
   const match = /^data:image\/(jpeg|png|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
-  if (!match || match[2]!.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 || match[2]!.length < 4) {
+  if (!match || match[2]!.length > Math.ceil(AI_TRANSPORT_MAX_IMAGE_BYTES / 3) * 4 || match[2]!.length < 4) {
     throw new OpenRouterError("INVALID_IMAGE");
   }
   // Bounded base64 validation; never fetch arbitrary URLs or read private files.
   try {
     const binary = atob(match[2]!);
-    if (binary.length > MAX_IMAGE_BYTES || binary.length === 0) throw new Error("size");
+    if (binary.length > AI_TRANSPORT_MAX_IMAGE_BYTES || binary.length === 0) throw new Error("size");
   } catch {
     throw new OpenRouterError("INVALID_IMAGE");
   }

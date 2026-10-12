@@ -69,6 +69,22 @@ describe("ProfileHero", () => {
     expect(screen.queryByText("TE")).toBeNull();
   });
 
+  it("renders identity through the canonical UserAvatar at 64px", () => {
+    const { container } = renderHero({ ...verifiedUser, avatarUrl: "https://example.com/a.png" });
+    const avatar = container.querySelector('[data-testid="user-avatar"]') as HTMLElement;
+    expect(avatar).toBeTruthy();
+    expect(avatar.style.width).toBe("64px");
+    expect(avatar.style.height).toBe("64px");
+    expect(avatar.querySelector("img")?.getAttribute("src")).toBe("https://example.com/a.png");
+  });
+
+  it("falls back through the canonical UserAvatar initials tier without a URL", () => {
+    const { container } = renderHero();
+    const avatar = container.querySelector('[data-testid="user-avatar"]') as HTMLElement;
+    expect(avatar).toBeTruthy();
+    expect(avatar.textContent).toBe("TE");
+  });
+
   it("never renders phone content or phone-verification copy", () => {
     renderHero();
     expect(screen.queryByText("+10000000000")).toBeNull();

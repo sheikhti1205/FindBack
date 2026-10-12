@@ -1,4 +1,4 @@
-import { photoToFile, type PhotoPipelineOpts, type PickedPhoto } from "../photo";
+import type { PhotoPipelineOpts, PickedPhoto } from "../photo";
 import { computeSha256Hex, createHashRegistry, type PhotoHashRegistry } from "./dedupe";
 
 /**
@@ -48,12 +48,14 @@ export interface ProcessReportBatchOptions {
   signal?: AbortSignal;
   onProgress?: (progress: ReportBatchProgress) => void;
   /**
-   * FBX-001: how one picked item becomes an uploadable File. Defaults to the
-   * HTML/File `photoToFile` bridge (web). The Android report lane injects the
-   * canonical native processor instead, so a native failure is surfaced as an
-   * unreadable item and NEVER falls back to fetching a File/`webPath`.
+   * L-CONSOLIDATE: how one picked item becomes an uploadable File — REQUIRED.
+   * The web lane passes its `photoToFile` bridge explicitly and the Android
+   * report lane injects the canonical native processor, so a native failure
+   * is surfaced as an unreadable item and NEVER falls back to fetching a
+   * File/`webPath`. The old silent default (photoToFile) hid which lane a
+   * batch ran on; omitting the seam now fails fast before any item runs.
    */
-  convert?: (photo: PickedPhoto, opts?: PhotoPipelineOpts) => Promise<File>;
+  convert: (photo: PickedPhoto, opts?: PhotoPipelineOpts) => Promise<File>;
 }
 
 /**
@@ -74,8 +76,15 @@ export async function processReportBatch(
    * the selection position here to keep failure labels ("Photo 2") truthful.
    */
   indexBase = 0,
-  options: ProcessReportBatchOptions = {},
+  options?: ProcessReportBatchOptions,
 ): Promise<ReportBatchResult> {
+  // L-CONSOLIDATE: the convert seam is required — no silent default lane.
+  // Omitting it (or the whole options bag) fails fast here instead of
+  // laundering every item into "unreadable" below.
+  if (typeof options?.convert !== "function") {
+    throw new Error("processReportBatch requires an explicit convert function");
+  }
+  const convert = options.convert;
   const capacity = Math.max(0, 5 - alreadySelectedCount);
   const registry = existingHashRegistry ?? createHashRegistry();
   const accepted: PickedPhoto[] = [];
@@ -103,7 +112,6 @@ export async function processReportBatch(
 
     let file: File;
     try {
-      const convert = options.convert ?? ((p: PickedPhoto, o?: PhotoPipelineOpts) => photoToFile(p, undefined, o));
       file = await convert(photo, { signal: options.signal });
     } catch (err) {
       if (options.signal?.aborted) {

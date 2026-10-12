@@ -554,6 +554,24 @@ describe("fetchSocialState canonical reaction (W3.3)", () => {
 
     expect(state).toEqual({ myReaction: "SUPPORT", myRating: null });
   });
+
+  it("hydrates a legacy LIKE as canonical LOVE via the one row aggregator", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ my_reaction: "LIKE", my_rating: null }],
+      error: null,
+    });
+
+    expect(await fetchSocialState("p1")).toEqual({ myReaction: "LOVE", myRating: null });
+  });
+
+  it("fails an unknown wire reaction closed to null", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ my_reaction: "BOGUS", my_rating: 3 }],
+      error: null,
+    });
+
+    expect(await fetchSocialState("p1")).toEqual({ myReaction: null, myRating: 3 });
+  });
 });
 
 describe("fetchFeed canonical reaction truth (W1-A FBX-010)", () => {

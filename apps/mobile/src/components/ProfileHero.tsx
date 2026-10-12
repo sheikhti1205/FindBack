@@ -1,14 +1,10 @@
 import { Link } from "react-router";
 import type { PublicUser } from "@findback/shared";
 import { StatusPill } from "./settings";
+import { UserAvatar } from "./UserAvatar";
 
-/** Two-letter initials from a display name; never touches other fields. */
-export function initialsFor(username: string): string {
-  const parts = username.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
-  return `${parts[0]![0]!}${parts[parts.length - 1]![0]!}`.toUpperCase();
-}
+/** Re-exported from the canonical avatar module (single home, no import cycle). */
+export { initialsFor } from "./UserAvatar";
 
 /**
  * Profile identity hero: 64px avatar-or-initials, @username, email status,
@@ -21,22 +17,7 @@ export function ProfileHero({ user }: { user: PublicUser }) {
       aria-label="Account"
       className="flex min-w-0 items-center gap-4 rounded-m3-md border border-outline-variant bg-surface-container-low p-4"
     >
-      {user.avatarUrl ? (
-        <img
-          src={user.avatarUrl}
-          alt=""
-          width={64}
-          height={64}
-          className="h-16 w-16 flex-none rounded-full object-cover"
-        />
-      ) : (
-        <span
-          aria-hidden="true"
-          className="flex h-16 w-16 flex-none items-center justify-center rounded-full bg-surface-container text-lg font-semibold"
-        >
-          {initialsFor(user.username)}
-        </span>
-      )}
+      <UserAvatar avatarUrl={user.avatarUrl} username={user.username} size={64} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <p className="truncate text-lg font-semibold">@{user.username}</p>
         {user.emailVerified ? (

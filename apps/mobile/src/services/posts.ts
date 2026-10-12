@@ -490,8 +490,13 @@ export async function fetchSocialState(
   });
   if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
   const row = ((data ?? []) as { my_reaction: string | null; my_rating: number | null }[])[0];
+  // L-CONSOLIDATE: the caller's reaction parses through the ONE row
+  // aggregator, so a legacy LIKE hydrates as canonical LOVE (exactly like
+  // the feed/detail row mapping) and an unknown wire value fails closed to
+  // null instead of leaking through the cast.
+  const summary = reactionSummaryFromRow({ my_reaction: row?.my_reaction });
   return {
-    myReaction: (row?.my_reaction as ReactionKind | null) ?? null,
+    myReaction: summary?.myReaction ?? null,
     myRating: row?.my_rating == null ? null : Number(row.my_rating),
   };
 }

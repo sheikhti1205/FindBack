@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { processReportBatch, createHashRegistry } from "./reportBatch";
+import { photoToFile, type PhotoPipelineOpts, type PickedPhoto } from "../photo";
+
+// L-CONSOLIDATE: the batch convert seam is required — the web lane passes
+// its photoToFile bridge explicitly (exactly the old silent default, now
+// visible at every call site).
+function webConvert(photo: PickedPhoto, opts?: PhotoPipelineOpts): Promise<File> {
+  return photoToFile(photo, undefined, opts);
+}
+const WEB_BATCH = { convert: webConvert };
 
 // jsdom has no image decoder: reject normalization so the batch exercises the
 // no-decoder fallback instead of hanging on a never-settling <img> decode.
@@ -70,7 +79,7 @@ describe("reportBatch", () => {
       const { photo, file } = createMockPhoto("p1", bytes);
       setupFetchMock(new Map<string, File>([[photo.webPath, file]]));
 
-      const result = await processReportBatch([photo], 0);
+      const result = await processReportBatch([photo], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(1);
       expect(result.notice).toBe("1 photo added");
     });
@@ -85,7 +94,7 @@ describe("reportBatch", () => {
       setupFetchMock(photoFileMap);
       const photos = photoFilePairs.map(({ photo }) => photo);
 
-      const result = await processReportBatch(photos, 3);
+      const result = await processReportBatch(photos, 3, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(2);
       expect(result.overflow.length).toBe(1);
       expect(result.unreadable).toHaveLength(0);
@@ -98,7 +107,7 @@ describe("reportBatch", () => {
       const { photo, file } = createMockPhoto("p1", bytes);
       setupFetchMock(new Map<string, File>([[photo.webPath, file]]));
 
-      const result = await processReportBatch([photo], 5);
+      const result = await processReportBatch([photo], 5, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(0);
       expect(result.overflow.length).toBe(1);
       expect(result.unreadable).toHaveLength(0);
@@ -113,7 +122,7 @@ describe("reportBatch", () => {
       setupFetchMock(photoFileMap);
       const photos = photoFilePairs.map(({ photo }) => photo);
 
-      const result = await processReportBatch(photos, 0);
+      const result = await processReportBatch(photos, 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(5);
       expect(result.overflow.length).toBe(2);
       expect(result.unreadable).toHaveLength(0);
@@ -126,7 +135,7 @@ describe("reportBatch", () => {
       setupFetchMock(photoFileMap);
       const photos = photoFilePairs.map(({ photo }) => photo);
 
-      const result = await processReportBatch(photos, 3);
+      const result = await processReportBatch(photos, 3, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(2);
       expect(result.overflow.length).toBe(5);
       expect(result.unreadable).toHaveLength(0);
@@ -145,7 +154,7 @@ describe("reportBatch", () => {
       ]);
       setupFetchMock(photoFileMap);
 
-      const result = await processReportBatch([photo1, photo2], 0);
+      const result = await processReportBatch([photo1, photo2], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(1);
       expect(result.duplicates.length).toBe(1);
       expect(result.notice).toBe("1 photo added · 1 already selected");
@@ -158,14 +167,14 @@ describe("reportBatch", () => {
       // First batch
       const { photo: photo1, file: file1 } = createMockPhoto("p1", bytes);
       setupFetchMock(new Map<string, File>([[photo1.webPath, file1]]));
-      const result1 = await processReportBatch([photo1], 0, registry);
+      const result1 = await processReportBatch([photo1], 0, registry, undefined, 0, WEB_BATCH);
       expect(result1.accepted.length).toBe(1);
       expect(result1.duplicates.length).toBe(0);
 
       // Second batch with same bytes
       const { photo: photo2, file: file2 } = createMockPhoto("p2", bytes);
       setupFetchMock(new Map<string, File>([[photo2.webPath, file2]]));
-      const result2 = await processReportBatch([photo2], 1, registry);
+      const result2 = await processReportBatch([photo2], 1, registry, undefined, 0, WEB_BATCH);
       expect(result2.accepted.length).toBe(0);
       expect(result2.duplicates.length).toBe(1);
       expect(result2.notice).toBe("1 already selected");
@@ -182,7 +191,7 @@ describe("reportBatch", () => {
       ]);
       setupFetchMock(photoFileMap);
 
-      const result = await processReportBatch([photo1, photo2], 0);
+      const result = await processReportBatch([photo1, photo2], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(2);
       expect(result.duplicates.length).toBe(0);
       expect(result.notice).toBe("2 photos added");
@@ -220,7 +229,7 @@ describe("reportBatch", () => {
       global.fetch = mockFetch as typeof fetch;
 
       const allPhotos = [...goodPairs.map(({ photo }) => photo), badPhoto];
-      const result = await processReportBatch(allPhotos, 0);
+      const result = await processReportBatch(allPhotos, 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(4);
       expect(result.unreadable.length).toBe(1);
       expect(result.notice).toBe("4 photos added · 1 unreadable");
@@ -232,7 +241,7 @@ describe("reportBatch", () => {
       const mockFetch = vi.fn().mockRejectedValue(new Error("Network error"));
       global.fetch = mockFetch as typeof fetch;
 
-      const result = await processReportBatch([photo], 0);
+      const result = await processReportBatch([photo], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(0);
       expect(result.unreadable.length).toBe(1);
       expect(result.unreadable[0]?.reason).toBe("Could not read the selected photo");
@@ -256,7 +265,7 @@ describe("reportBatch", () => {
       ]);
       setupFetchMock(map);
 
-      const result = await processReportBatch([photo1, heicPhoto, photo3], 0);
+      const result = await processReportBatch([photo1, heicPhoto, photo3], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(2);
       expect(result.unreadable.length).toBe(1);
       expect(result.unreadable[0]?.index).toBe(1);
@@ -270,7 +279,7 @@ describe("reportBatch", () => {
       setupFetchMock(new Map<string, File>([[photo.webPath, new File(["x"], "p.jpg", { type: "image/jpeg" })]]));
       global.fetch = vi.fn().mockRejectedValue(new Error("Network error")) as typeof fetch;
 
-      const result = await processReportBatch([photo], 0, undefined, undefined, 2);
+      const result = await processReportBatch([photo], 0, undefined, undefined, 2, WEB_BATCH);
       expect(result.unreadable.length).toBe(1);
       expect(result.unreadable[0]?.index).toBe(2);
     });
@@ -283,7 +292,7 @@ describe("reportBatch", () => {
       const originalDigest = crypto.subtle.digest;
       crypto.subtle.digest = vi.fn().mockRejectedValue(new Error("Digest failed"));
 
-      const result = await processReportBatch([photo], 0);
+      const result = await processReportBatch([photo], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(0);
       expect(result.unreadable.length).toBe(1);
       expect(result.unreadable[0]?.reason).toBe("Could not compute file hash");
@@ -324,7 +333,7 @@ describe("reportBatch", () => {
       });
       global.fetch = mockFetch as typeof fetch;
 
-      const result = await processReportBatch([photo1, photo2, photo3], 0);
+      const result = await processReportBatch([photo1, photo2, photo3], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.accepted.length).toBe(2); // p1 and p3
       expect(result.unreadable.length).toBe(1); // p2
       expect(result.accepted.map((p) => p.id).sort()).toEqual(["p1", "p3"]);
@@ -356,11 +365,14 @@ describe("reportBatch", () => {
       expect(result.unreadable[0]?.index).toBe(0);
       expect(result.unreadable[0]?.reason).toBe("Could not read the selected photo");
     });
-    it("default converter still uses photoToFile when no seam is supplied", async () => {
+    it("requires an explicit convert and fails fast without one", async () => {
       const { photo, file } = createMockPhoto("p1", new Uint8Array([3, 2, 1]));
       setupFetchMock(new Map<string, File>([[photo.webPath, file]]));
-      const result = await processReportBatch([photo], 0);
-      expect(result.accepted.length).toBe(1);
+      await expect(processReportBatch([photo], 0)).rejects.toThrow(/explicit convert/i);
+      await expect(
+        processReportBatch([photo], 0, undefined, undefined, 0, {} as never),
+      ).rejects.toThrow(/explicit convert/i);
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 
@@ -370,7 +382,7 @@ describe("reportBatch", () => {
       const { photo, file } = createMockPhoto("p1", bytes);
       setupFetchMock(new Map<string, File>([[photo.webPath, file]]));
 
-      const result = await processReportBatch([photo], 0);
+      const result = await processReportBatch([photo], 0, undefined, undefined, 0, WEB_BATCH);
       const resultString = JSON.stringify(result);
       // Hash should not appear in notice or any result field
       expect(resultString).not.toMatch(/[a-f0-9]{64}/);
@@ -384,7 +396,7 @@ describe("reportBatch", () => {
       const { photo, file } = createMockPhoto("p1", bytes);
       setupFetchMock(new Map<string, File>([[photo.webPath, file]]));
 
-      const result = await processReportBatch([photo], 0);
+      const result = await processReportBatch([photo], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.notice).toBe("1 photo added");
       expect(result.notice).not.toContain("already selected");
       expect(result.notice).not.toContain("unreadable");
@@ -399,7 +411,7 @@ describe("reportBatch", () => {
       ]);
       setupFetchMock(photoFileMap);
 
-      const result = await processReportBatch([photo1, photo2], 0);
+      const result = await processReportBatch([photo1, photo2], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.notice).toBe("2 photos added");
     });
 
@@ -434,7 +446,7 @@ describe("reportBatch", () => {
       });
       global.fetch = mockFetch as typeof fetch;
 
-      const result = await processReportBatch([photo1, photo2, photo3], 0);
+      const result = await processReportBatch([photo1, photo2, photo3], 0, undefined, undefined, 0, WEB_BATCH);
       expect(result.notice).toBe("1 photo added · 1 already selected · 1 unreadable");
     });
   });

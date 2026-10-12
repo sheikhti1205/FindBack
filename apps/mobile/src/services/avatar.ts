@@ -32,6 +32,9 @@ export const AVATAR_BUCKET = IMAGES_BUCKET;
 export const AVATAR_PREFIX = "avatars";
 export const MAX_AVATAR_URL_LENGTH = 2048;
 
+/** Supabase Storage public-object path marker (same as commentBodyMedia). */
+const AVATAR_STORAGE_PUBLIC_MARKER = "/storage/v1/object/public/";
+
 const AVATAR_MIME_TYPES: Readonly<Record<string, string>> = {
   "image/jpeg": "jpg",
   "image/jpg": "jpg",
@@ -60,12 +63,18 @@ export function avatarObjectKey(uid: string, extension: string): string {
 
 /**
  * True when `url` is an https URL into this bucket's `avatars/{uid}/` prefix
- * for the given uid. Client-side fast path only — the RPC re-checks
- * server-side (fail closed), so a mismatch here never reaches the backend.
+ * for the given uid. FBX-022 exact-host bind (the same discipline as
+ * `commentBodyMedia.commentMediaProvenance`): the host must be a single-label
+ * `<project-ref>.supabase.co` and the path must start (position 0) with
+ * `/storage/v1/object/public/findback-images/avatars/{uid}/` followed by an
+ * object name. Lookalike hosts, subdomain/suffix tricks, foreign buckets,
+ * other uids, bare prefixes, and traversal shapes all fail. Client-side fast
+ * path only — the RPC re-checks server-side (fail closed), so a mismatch
+ * here never reaches the backend.
  */
 export function isAvatarStorageUrl(url: string, uid: string): boolean {
   const trimmed = url.trim();
-  if (!trimmed || trimmed.length > MAX_AVATAR_URL_LENGTH) return false;
+  if (!trimmed || !uid || trimmed.length > MAX_AVATAR_URL_LENGTH) return false;
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
@@ -73,7 +82,20 @@ export function isAvatarStorageUrl(url: string, uid: string): boolean {
     return false;
   }
   if (parsed.protocol !== "https:") return false;
-  return parsed.pathname.includes(`/${AVATAR_BUCKET}/${AVATAR_PREFIX}/${uid}/`);
+  const host = parsed.hostname.toLowerCase();
+  if (!host.endsWith(".supabase.co")) return false;
+  // Single-label project ref only: `evil.supabase.co.evil.com` (caught
+  // above) and `a.b.supabase.co` never reach the path checks.
+  const projectRef = host.slice(0, -".supabase.co".length);
+  if (projectRef === "" || projectRef.includes(".")) return false;
+  const prefix = `${AVATAR_STORAGE_PUBLIC_MARKER}${AVATAR_BUCKET}/${AVATAR_PREFIX}/${uid}/`;
+  if (!parsed.pathname.startsWith(prefix)) return false;
+  // An object name must follow the prefix — the bare prefix is not a URL.
+  if (parsed.pathname.length <= prefix.length) return false;
+  if (parsed.pathname.includes("..")) return false;
+  // Encoded dots decode server-side — reject them here too.
+  if (parsed.pathname.toLowerCase().includes("%2e")) return false;
+  return true;
 }
 
 /**
@@ -158,7 +180,17 @@ export async function updateMyAvatarByKey(objectKey: string, avatarUrl: string):
   if (parsed.protocol !== "https:") {
     throw new ApiError("That photo link looks invalid. Try uploading again.", 400);
   }
-  if (!trimmedUrl.includes(`/findback-images/${objectKey}`)) {
+  // FBX-022 exact bind: the URL must be our own avatar URL for this caller
+  // (exact host + path prefix) AND embed exactly the key being saved — a
+  // lookalike host, a foreign bucket/uid, or a key/URL mismatch fails here,
+  // before the backend is touched.
+  if (!isAvatarStorageUrl(trimmedUrl, uid)) {
+    throw new ApiError("That photo link looks invalid. Try uploading again.", 400);
+  }
+  const marker = `${AVATAR_STORAGE_PUBLIC_MARKER}${AVATAR_BUCKET}/`;
+  const at = parsed.pathname.indexOf(marker);
+  const embeddedKey = at < 0 ? null : parsed.pathname.slice(at + marker.length);
+  if (embeddedKey !== objectKey) {
     throw new ApiError("That photo link looks invalid. Try uploading again.", 400);
   }
 

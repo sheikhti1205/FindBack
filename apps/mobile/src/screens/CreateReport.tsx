@@ -20,7 +20,7 @@ import type { ReportDraft, ReportPhotoRef } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
 import { isNativeCameraAvailable, normalizeForUpload, type PickedPhoto } from "../services/photo";
 import { chooseNativeImage, chooseNativeImages, importNativeImageUri, importedImageToFile } from "../services/media/nativeMedia";
-import { ACCEPTED_STILL_FORMATS_LABEL } from "../services/media/mediaPolicy";
+import { ACCEPTED_STILL_FORMATS_LABEL, ACCEPTED_STILL_MIME_TYPES, isAcceptedStillMime, UPLOAD_MAX_BYTES } from "../services/media/mediaPolicy";
 import { ReportDatePicker } from "../components/ReportDatePicker";
 import { AnimatePresence, motion } from "framer-motion";
 import { ReportMediaPicker } from "../components/ReportMediaPicker";
@@ -83,12 +83,16 @@ const uploadBarTransition = {
   ease: motionEasings.out,
 } as const;
 
-/** Upload transport ceiling (mirrors the bucket safety bound) applied to the
- * normalized derivative, never to the user's source. Sources up to 100 MB in
- * JPEG/PNG/WebP/GIF/HEIC/HEIF/AVIF/BMP are accepted when platform-readable;
- * normalization downsamples to a bounded derivative first. */
-const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif", "image/avif", "image/bmp", "image/jpg"];
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+/** Upload transport ceiling (canonical UPLOAD_MAX_BYTES — mirrors the bucket
+ * safety bound) applied to the normalized derivative, never to the user's
+ * source. The accepted set is the canonical ACCEPTED_STILL_MIME_TYPES and
+ * the gate is isAcceptedStillMime (L-CONSOLIDATE: no local list — the
+ * picker, the gates below, and the advertised sentence all read one
+ * source). Sources up to 100 MB in JPEG/PNG/WebP/GIF/HEIC/HEIF/AVIF/BMP
+ * are accepted when platform-readable; normalization downsamples to a
+ * bounded derivative first. */
+const ACCEPTED_IMAGE_TYPES: readonly string[] = ACCEPTED_STILL_MIME_TYPES;
+const MAX_IMAGE_BYTES = UPLOAD_MAX_BYTES;
 
 /**
  * FBX-001: one native selection item. Preparation is deferred to `resolve` so
@@ -1054,7 +1058,7 @@ function ReportForm() {
           photosRef.current.length,
           hashRegistryRef.current,
           (photo, file, hash) => {
-            if (!ACCEPTED_IMAGE_TYPES.includes(file.type) || file.size > MAX_IMAGE_BYTES) {
+            if (!isAcceptedStillMime(file.type) || file.size > MAX_IMAGE_BYTES) {
               hashRegistryRef.current.delete(hash);
               unreadable += 1;
               policyFailures.push(`Photo ${position}: ${file.size > MAX_IMAGE_BYTES
@@ -1179,7 +1183,7 @@ function ReportForm() {
         continue;
       }
       // Transport ceiling applies to the normalized derivative only.
-      if (!ACCEPTED_IMAGE_TYPES.includes(payload.type) || payload.size > MAX_IMAGE_BYTES) {
+      if (!isAcceptedStillMime(payload.type) || payload.size > MAX_IMAGE_BYTES) {
         failures.push(`${file.name}: that photo is still too large after preparing. Try a smaller image or re-save it as JPEG.`);
         unreadable += 1;
         continue;

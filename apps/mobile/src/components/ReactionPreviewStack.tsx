@@ -1,5 +1,5 @@
 import type { CanonicalReactionKind, ReactionCounts } from "@findback/shared";
-import { CANONICAL_REACTION_KINDS } from "@findback/shared";
+import { topKinds } from "../services/reactions";
 import { ReactionArt } from "./ReactionArt";
 
 /**
@@ -10,15 +10,13 @@ import { ReactionArt } from "./ReactionArt";
  * count beside the stack so the tray itself never carries labels or counts.
  */
 
-/** Up to `n` kinds with a positive count, best first. */
+/**
+ * Up to `n` kinds with a positive count, best first. Single-source alias
+ * over the canonical `topKinds` in `services/reactions.ts` (L-CONSOLIDATE)
+ * — kept under this name for existing importers.
+ */
 export function topReactionKinds(counts: ReactionCounts, n = 3): CanonicalReactionKind[] {
-  return CANONICAL_REACTION_KINDS.filter((k) => (counts[k] ?? 0) > 0)
-    .sort((a, b) => {
-      const diff = (counts[b] ?? 0) - (counts[a] ?? 0);
-      if (diff !== 0) return diff;
-      return CANONICAL_REACTION_KINDS.indexOf(a) - CANONICAL_REACTION_KINDS.indexOf(b);
-    })
-    .slice(0, n);
+  return topKinds(counts, n);
 }
 
 export interface ReactionPreviewStackProps {

@@ -53,6 +53,7 @@ class ReplyReceiver : BroadcastReceiver() {
             notificationId = getStringExtra(EXTRA_NOTIFICATION_ID)?.takeIf { it.isNotBlank() } ?: postId,
             commentId = commentId,
             replyToken = token,
+            kind = null,
         )
     }
 

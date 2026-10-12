@@ -9,6 +9,8 @@ import {
   outputTypeFor,
   type ImageDeps,
 } from "./image";
+import { ACCEPTED_STILL_MIME_TYPES, MAX_EDGE as POLICY_MAX_EDGE } from "./media/mediaPolicy";
+import { IMPORT_MAX_DECODE_PIXELS, IMPORT_MAX_EDGE } from "./media/importImage";
 
 /** Minimal JPEG header declaring the given dimensions (SOI + SOF0 + EOI). */
 function jpegHeader(width: number, height: number): Uint8Array<ArrayBuffer> {
@@ -47,6 +49,38 @@ describe("fitWithin", () => {
 
   it("caps portrait images too", () => {
     expect(fitWithin(MAX_EDGE, 1000, 4000)).toEqual({ width: 480, height: 1920 });
+  });
+});
+
+describe("canonical media policy bindings (L-CONSOLIDATE)", () => {
+  it("re-exports the single longest-edge cap (no second 1920 to drift)", () => {
+    expect(MAX_EDGE).toBe(POLICY_MAX_EDGE);
+    expect(MAX_EDGE).toBe(IMPORT_MAX_EDGE);
+  });
+
+  it("keeps the web decode bound tighter than the pathological ceiling", () => {
+    // The web normalize path decodes in a constrained renderer: its working
+    // set must never exceed the byte pipeline's absurdity ceiling, and the
+    // two bounds overlap (a web-bound breach is always pathological too).
+    expect(MAX_DECODE_PIXELS).toBeLessThan(IMPORT_MAX_DECODE_PIXELS);
+    expect(MAX_DECODE_PIXELS).toBe(30_000_000);
+  });
+
+  it("accepts exactly the canonical still set (no local MIME list)", async () => {
+    for (const mime of ACCEPTED_STILL_MIME_TYPES) {
+      const kinder = deps();
+      const probeable: Record<string, Uint8Array<ArrayBuffer>> = {
+        "image/jpeg": jpegHeader(1, 1),
+        "image/png": new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+      };
+      const header = probeable[mime] ?? new Uint8Array([0]);
+      await expect(
+        normalizeImage(new File([header], `a.${mime.split("/")[1]}`, { type: mime }), kinder),
+      ).resolves.toBeTruthy();
+    }
+    await expect(
+      normalizeImage(new File(["x"], "a.svg", { type: "image/svg+xml" }), deps()),
+    ).rejects.toThrow("Unsupported image type");
   });
 });
 

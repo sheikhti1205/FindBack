@@ -26,7 +26,7 @@ object PushChannels {
     /** COMMENT / MENTION. */
     const val COMMENTS = "findback.comments.v1"
 
-    /** LIKE / DISLIKE. */
+    /** LIKE / DISLIKE / REACTION. */
     const val ACTIVITY = "findback.activity.v1"
 
     /** STATUS. */
@@ -42,7 +42,7 @@ object PushChannels {
      */
     fun channelIdFor(type: String): String = when (type) {
         PushData.TYPE_COMMENT, PushData.TYPE_MENTION -> COMMENTS
-        PushData.TYPE_LIKE, PushData.TYPE_DISLIKE -> ACTIVITY
+        PushData.TYPE_LIKE, PushData.TYPE_DISLIKE, PushData.TYPE_REACTION -> ACTIVITY
         PushData.TYPE_STATUS -> UPDATES
         else -> UPDATES
     }
