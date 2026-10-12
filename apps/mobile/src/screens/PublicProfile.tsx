@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
-import { fetchPublicProfile } from "../services/profile";
+import { fetchPublicProfile, appendReportPage, hasMoreReports } from "../services/profile";
 import { fetchFeed } from "../services/posts";
 import { UserAvatar } from "../components/UserAvatar";
 import { SettingsGroup, SettingsPage, SettingsRow, StatusPill } from "../components/settings";
@@ -24,15 +24,20 @@ export function PublicProfile() {
   const { username = "" } = useParams();
   const [profile, setProfile] = useState<PublicProfileShape | null>(null);
   const [reports, setReports] = useState<PostItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setError(null);
+    setMoreError(null);
     setProfile(null);
     setReports([]);
+    setNextCursor(null);
     (async () => {
       try {
         const found = await fetchPublicProfile(username);
@@ -40,7 +45,10 @@ export function PublicProfile() {
         setProfile(found);
         try {
           const page = await fetchFeed({ userId: found.id });
-          if (alive) setReports(page.items);
+          if (alive) {
+            setReports(page.items);
+            setNextCursor(page.nextCursor ?? null);
+          }
         } catch {
           // Reports are supplementary: a feed failure never hides the profile.
         }
@@ -54,6 +62,22 @@ export function PublicProfile() {
       alive = false;
     };
   }, [username]);
+
+  async function loadMoreReports() {
+    if (!profile || !nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setMoreError(null);
+    try {
+      const page = await fetchFeed({ userId: profile.id }, nextCursor);
+      setReports((previous) => appendReportPage(previous, page));
+      setNextCursor(page.nextCursor ?? null);
+    } catch {
+      // The loaded profile and reports stay: only the next page failed.
+      setMoreError("Could not load more reports. Check your connection and try again.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   return (
     <SettingsPage title="Profile" backTo="/" backLabel="Back">
@@ -102,6 +126,24 @@ export function PublicProfile() {
                   route={`/posts/${report.id}`}
                 />
               ))
+            )}
+            {hasMoreReports({ items: reports, nextCursor }) && (
+              <div className="flex flex-col gap-2 p-4">
+                {moreError && (
+                  <p role="alert" className="text-sm text-error">
+                    {moreError}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void loadMoreReports()}
+                  disabled={loadingMore}
+                  aria-busy={loadingMore}
+                  className="min-h-[44px] rounded-m3-sm border border-outline-variant px-3 py-2 text-sm font-medium text-on-surface"
+                >
+                  {loadingMore ? "Loading more reports…" : "Load more reports"}
+                </button>
+              </div>
             )}
           </SettingsGroup>
         </>

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogOut } from "lucide-react";
 import { useAuth } from "../auth";
 import { requestAccountDeletion } from "../services/auth";
+import { fetchPhoneChangeEligibility, formatPhoneChangeEligibleAt } from "../services/profile";
 import { Button } from "../components/Button";
 import { UserAvatar } from "../components/UserAvatar";
 import {
@@ -40,6 +41,35 @@ export function AccountSettings() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleted, setDeleted] = useState(false);
+  // Six-month replacement gate (spec 25, W5-IDENTITY): server-read only.
+  // A fetch failure leaves this null and the row keeps its default copy —
+  // availability is never guessed locally and no countdown is fabricated.
+  const [phoneEligibility, setPhoneEligibility] = useState<{
+    eligible: boolean;
+    eligibleAt: string | null;
+  } | null>(null);
+
+  // Server-read replacement availability for the mobile row. Runs once per
+  // account; failures are supplementary (default copy stays). Declared before
+  // the early returns below so hook order stays stable.
+  const accountId = user?.id ?? null;
+  useEffect(() => {
+    let alive = true;
+    setPhoneEligibility(null);
+    if (!accountId) return () => {
+      alive = false;
+    };
+    void fetchPhoneChangeEligibility()
+      .then((gate) => {
+        if (alive) setPhoneEligibility({ eligible: gate.eligible, eligibleAt: gate.eligibleAt });
+      })
+      .catch(() => {
+        if (alive) setPhoneEligibility(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [accountId]);
 
   // After a confirmed deletion the logout wipe signs the user out; the
   // success panel stays mounted so the outcome is never a silent landing.
@@ -57,6 +87,14 @@ export function AccountSettings() {
 
   if (!user) return null;
   const userId = user.id;
+
+  const mobileCooldown =
+    phoneEligibility && !phoneEligibility.eligible
+      ? formatPhoneChangeEligibleAt(phoneEligibility.eligibleAt)
+      : "";
+  const mobileDescription = mobileCooldown
+    ? `Number change available ${mobileCooldown}.`
+    : "Bangladesh mobile number.";
 
   function runLogout() {
     if (loggingOut) return;
@@ -160,7 +198,7 @@ export function AccountSettings() {
         )}
         <SettingsRow
           title="Mobile number"
-          description="Bangladesh mobile number."
+          description={mobileDescription}
           value={user.phone}
           route="/profile/edit"
         />

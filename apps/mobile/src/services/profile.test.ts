@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import type { PostItem, PublicUser } from "@findback/shared";
 
 const { clientMock, fetchMeMock } = vi.hoisted(() => ({
   clientMock: { rpc: vi.fn() },
@@ -18,7 +18,20 @@ vi.mock("./auth", async (importOriginal) => {
   return { ...actual, fetchMe: (...args: unknown[]) => fetchMeMock(...args) };
 });
 
-import { fetchPublicProfile, searchProfilesByPrefix, updateMyProfile } from "./profile";
+import {
+  PHONE_CHANGE_COOLDOWN,
+  appendReportPage,
+  fetchPhoneChangeEligibility,
+  fetchPublicProfile,
+  formatPhoneChangeEligibleAt,
+  hasMoreReports,
+  isOwnAvatarKey,
+  isPhoneChangeCooldownError,
+  parsePhoneCooldownEligibleAt,
+  requestPhoneChange,
+  searchProfilesByPrefix,
+  updateMyProfile,
+} from "./profile";
 
 const row = {
   id: "u2",
@@ -240,5 +253,261 @@ describe("searchProfilesByPrefix", () => {
     clientMock.rpc.mockResolvedValue({ data: null, error: { message: "boom", code: "400" } });
 
     await expect(searchProfilesByPrefix("al")).rejects.toThrow(/could not be searched/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W5-IDENTITY appended cases: phone-change cooldown (spec 25), public-report
+// pagination, and avatar-key ownership. The migration auto-applies on push;
+// live Auth/SMS verification stays LIVE-PENDING (owner-deferred).
+// ---------------------------------------------------------------------------
+
+const COOLDOWN_MIGRATION = "supabase/migrations/20261012000000_phone_cooldown_avatar_key.sql";
+
+function cooldownSql(): string {
+  // Vitest may run from the repo root or apps/mobile — resolve by trial so
+  // the contract holds from either cwd.
+  for (const candidate of [COOLDOWN_MIGRATION, `../../${COOLDOWN_MIGRATION}`]) {
+    try {
+      return readFileSync(candidate, "utf8");
+    } catch {
+      // Not under this cwd — try the next candidate.
+    }
+  }
+  throw new Error(`cannot locate ${COOLDOWN_MIGRATION} from cwd ${process.cwd()}`);
+}
+
+/**
+ * Pins the additive-safety + server-authority contract: private nullable
+ * columns only (no client table grants), session-resolved callers, server
+ * clock comparisons, a stable PHONE_CHANGE_COOLDOWN marker with the eligible
+ * date, an owned object-key avatar writer with existence check, and the
+ * missing owner-scoped UPDATE policy.
+ */
+describe("phone cooldown + avatar-key migration", () => {
+  it("adds the private cooldown columns additively, never dropping data", () => {
+    const text = cooldownSql();
+    expect(text).toMatch(/alter table public\.users\s+add column if not exists phone_verified_at text/i);
+    expect(text).toMatch(/alter table public\.users\s+add column if not exists phone_last_changed_at text/i);
+    expect(text).toMatch(/alter table public\.users\s+add column if not exists phone_change_eligible_at text/i);
+    expect(text).not.toMatch(/drop table|drop column|delete from|truncate/i);
+  });
+
+  it("grants no table access for the new columns (RPC/trigger-owned only)", () => {
+    const text = cooldownSql();
+    expect(text).not.toMatch(/grant (select|update|insert|delete) on public\.users/i);
+  });
+
+  it("maintains the cooldown in a trigger: first stamp, same-number keep, different restamp", () => {
+    const text = cooldownSql();
+    expect(text).toMatch(/create trigger users_phone_cooldown/i);
+    expect(text).toMatch(/before update of phone, phone_verified on public\.users/i);
+    expect(text).toMatch(/maintain_phone_change_cooldown/i);
+    expect(text).toMatch(/interval '6 months'/i);
+    expect(text).toMatch(/security definer\s+set search_path = public, pg_temp/i);
+    expect(text).toMatch(/revoke all on function public\.maintain_phone_change_cooldown\(\) from public, anon, authenticated/i);
+  });
+
+  it("reads eligibility self-only on the server clock, revoked from anon", () => {
+    const text = cooldownSql();
+    expect(text).toMatch(/create or replace function public\.phone_change_eligibility\(\)/i);
+    expect(text).toMatch(/v_uid\s+text := public\.findback_uid\(\)/i);
+    expect(text).toMatch(/now\(\) at time zone 'utc'\) >= \(v_eligible_at\)::timestamptz/i);
+    expect(text).not.toMatch(/p_now|p_client_time/i);
+    expect(text).toMatch(/revoke execute on function public\.phone_change_eligibility\(\) from anon/i);
+    expect(text).toMatch(/grant execute on function public\.phone_change_eligibility\(\) to authenticated/i);
+  });
+
+  it("gates replacement server-side: first/same-number allowed, different held with the stable marker", () => {
+    const text = cooldownSql();
+    expect(text).toMatch(/create or replace function public\.request_phone_change\(p_new_phone text\)/i);
+    expect(text).toMatch(/findback_normalize_bd_phone/i);
+    expect(text).toMatch(/PHONE_CHANGE_COOLDOWN eligible_at=%/i);
+    expect(text).toMatch(/using errcode = 'P0001'/i);
+    expect(text).toMatch(/revoke execute on function public\.request_phone_change\(text\) from anon/i);
+    expect(text).toMatch(/grant execute on function public\.request_phone_change\(text\) to authenticated/i);
+  });
+
+  it("adds the missing owner-scoped avatar UPDATE policy without touching report policies", () => {
+    const text = cooldownSql();
+    expect(text).toMatch(/findback_images_avatar_update_own/i);
+    expect(text).toMatch(/for update to authenticated/i);
+    expect(text).toMatch(/\(storage\.foldername\(name\)\)\[1\] = 'avatars'/i);
+    expect(text).toMatch(/\(storage\.foldername\(name\)\)\[2\] = \(select auth\.uid\(\)\)::text/i);
+    expect(text).not.toMatch(/insert into storage\.buckets/i);
+  });
+
+  it("writes avatars through an owned object-key RPC that verifies Storage existence", () => {
+    const text = cooldownSql();
+    expect(text).toMatch(/create or replace function public\.update_my_avatar_by_key\(\s*p_object_key text,\s*p_avatar_url text\s*\)/i);
+    expect(text).toMatch(/security definer\s+set search_path = public, pg_temp/i);
+    expect(text).toMatch(/v_uid\s+text := public\.findback_uid\(\)/i);
+    expect(text).not.toMatch(/p_user_id|p_uid/i);
+    expect(text).toMatch(/v_parts\[1\] <> 'avatars'/i);
+    expect(text).toMatch(/v_parts\[2\] <> v_uid/i);
+    expect(text).toMatch(/position\('..' in v_key\)/i);
+    expect(text).toMatch(/storage\.objects/i);
+    expect(text).toMatch(/avatar object not found/i);
+    expect(text).toMatch(/\/findback-images\//i);
+    expect(text).toMatch(/revoke execute on function public\.update_my_avatar_by_key\(text, text\) from anon/i);
+    expect(text).toMatch(/grant execute on function public\.update_my_avatar_by_key\(text, text\) to authenticated/i);
+  });
+});
+
+describe("fetchPhoneChangeEligibility", () => {
+  it("reads the gate through the self-only eligibility RPC", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [{ eligible: false, eligible_at: "2027-04-12T00:00:00.000Z", phone_verified: true }],
+      error: null,
+    });
+
+    const gate = await fetchPhoneChangeEligibility();
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("phone_change_eligibility");
+    expect(gate).toEqual({
+      eligible: false,
+      eligibleAt: "2027-04-12T00:00:00.000Z",
+      phoneVerified: true,
+    });
+  });
+
+  it("treats an empty row set as eligible with no date (never fabricates one)", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [], error: null });
+
+    await expect(fetchPhoneChangeEligibility()).resolves.toEqual({
+      eligible: true,
+      eligibleAt: null,
+      phoneVerified: false,
+    });
+  });
+
+  it("maps transport failures to a human error", async () => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: { message: "boom", code: "400" } });
+
+    await expect(fetchPhoneChangeEligibility()).rejects.toThrow(/could not check your number change/i);
+  });
+});
+
+describe("requestPhoneChange", () => {
+  it("normalizes before calling the server gate", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [{ eligible: true, eligible_at: null }], error: null });
+
+    await requestPhoneChange("01812345678");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("request_phone_change", {
+      p_new_phone: "+8801812345678",
+    });
+  });
+
+  it("rejects an invalid number before touching the backend", async () => {
+    await expect(requestPhoneChange("not-a-number")).rejects.toThrow(/valid Bangladesh/i);
+    expect(clientMock.rpc).not.toHaveBeenCalled();
+  });
+
+  it("maps the held gate to a 409 naming the eligible date", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "PHONE_CHANGE_COOLDOWN eligible_at=2027-04-12T00:00:00.000Z", code: "P0001" },
+    });
+
+    const failure = await requestPhoneChange("01911111111").catch((err) => err);
+    expect(failure.status).toBe(409);
+    expect(failure.message).toMatch(/2027/);
+    expect(isPhoneChangeCooldownError(failure)).toBe(false);
+  });
+
+  it("maps non-gate failures to a human error", async () => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: { message: "boom", code: "400" } });
+
+    await expect(requestPhoneChange("01911111111")).rejects.toThrow(/could not start/i);
+  });
+});
+
+describe("phone cooldown pure helpers", () => {
+  it("exposes the stable server marker", () => {
+    expect(PHONE_CHANGE_COOLDOWN).toBe("PHONE_CHANGE_COOLDOWN");
+  });
+
+  it("parses the eligible date out of the server message", () => {
+    expect(parsePhoneCooldownEligibleAt("PHONE_CHANGE_COOLDOWN eligible_at=2027-04-12T00:00:00.000Z")).toBe(
+      "2027-04-12T00:00:00.000Z",
+    );
+    expect(parsePhoneCooldownEligibleAt("PHONE_CHANGE_COOLDOWN")).toBeNull();
+    expect(parsePhoneCooldownEligibleAt("something else")).toBeNull();
+  });
+
+  it("detects gate rejections in any error shape", () => {
+    expect(isPhoneChangeCooldownError(new Error("PHONE_CHANGE_COOLDOWN eligible_at=x"))).toBe(true);
+    expect(isPhoneChangeCooldownError("PHONE_CHANGE_COOLDOWN")).toBe(true);
+    expect(isPhoneChangeCooldownError({ message: "PHONE_CHANGE_COOLDOWN" })).toBe(true);
+    expect(isPhoneChangeCooldownError(new Error("boom"))).toBe(false);
+    expect(isPhoneChangeCooldownError(null)).toBe(false);
+  });
+
+  it("formats the eligible date tolerantly, never fabricating one", () => {
+    expect(formatPhoneChangeEligibleAt("2027-04-12T00:00:00.000Z")).toMatch(/2027/);
+    expect(formatPhoneChangeEligibleAt(null)).toBe("");
+    expect(formatPhoneChangeEligibleAt(undefined)).toBe("");
+    expect(formatPhoneChangeEligibleAt("not-a-date")).toBe("");
+  });
+});
+
+describe("public-reports pagination helpers", () => {
+  const first: PostItem = {
+    id: "p1",
+    userId: "u2",
+    author: {
+      id: "u2",
+      username: "owner",
+      emailVerified: true,
+      phoneVerified: false,
+      avatarUrl: null,
+      createdAt: "2026-01-05T00:00:00.000Z",
+    },
+    type: "FOUND",
+    title: "Found a wallet",
+    description: "Brown leather wallet near the park.",
+    category: "Bags & Wallets",
+    status: "OPEN",
+    eventDate: "2026-01-02",
+    latitude: null,
+    longitude: null,
+    locationLabel: "Dhaka",
+    youtubeUrl: null,
+    attachments: [],
+    likeCount: 0,
+    dislikeCount: 0,
+    ratingAvg: null,
+    ratingCount: 0,
+    commentCount: 0,
+    createdAt: "2026-01-05T00:00:00.000Z",
+    updatedAt: "2026-01-05T00:00:00.000Z",
+  };
+
+  it("hasMoreReports follows only the server cursor", () => {
+    expect(hasMoreReports({ items: [], nextCursor: "abc" })).toBe(true);
+    expect(hasMoreReports({ items: [], nextCursor: null })).toBe(false);
+    expect(hasMoreReports({ items: [], nextCursor: "" })).toBe(false);
+  });
+
+  it("appendReportPage appends without mutating and dedupes repeated cursors", () => {
+    const previous = [{ ...first }];
+    const next = { ...first, id: "p2", title: "Lost keys" };
+    const merged = appendReportPage(previous, { items: [next], nextCursor: null });
+
+    expect(merged).toHaveLength(2);
+    expect(previous).toHaveLength(1);
+    expect(appendReportPage(merged, { items: [{ ...first }, { ...next }], nextCursor: null })).toHaveLength(2);
+    expect(appendReportPage(previous, { items: [], nextCursor: null })).toBe(previous);
+  });
+});
+
+describe("isOwnAvatarKey", () => {
+  it("accepts the caller's own key and rejects foreign/traversal shapes", () => {
+    expect(isOwnAvatarKey("avatars/user-1/a.jpg", "user-1")).toBe(true);
+    expect(isOwnAvatarKey("avatars/user-2/a.jpg", "user-1")).toBe(false);
+    expect(isOwnAvatarKey("avatars/user-1/../x.jpg", "user-1")).toBe(false);
+    expect(isOwnAvatarKey("user-1/a.jpg", "user-1")).toBe(false);
+    expect(isOwnAvatarKey("", "user-1")).toBe(false);
   });
 });

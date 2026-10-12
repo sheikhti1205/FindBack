@@ -37,6 +37,9 @@ const AVATAR_MIME_TYPES: Readonly<Record<string, string>> = {
   "image/webp": "webp",
 };
 
+const AVATAR_KEY_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.(jpg|jpeg|png|webp)$/i;
+const MAX_AVATAR_KEY_LENGTH = 512;
+
 /** Normalized still image ready for avatar upload (canonical pipeline output). */
 export interface AvatarSource {
   blob: Blob;
@@ -72,6 +75,24 @@ export function isAvatarStorageUrl(url: string, uid: string): boolean {
 }
 
 /**
+ * Strict client-side check that `key` is exactly `avatars/{uid}/{filename}`
+ * for the given uid: three segments, own uid segment, no traversal, sane
+ * filename with a still-image extension. Mirrors the `update_my_avatar_by_key`
+ * server checks (which additionally verify the Storage object exists), so a
+ * mismatch here fails before the backend is touched — fail closed.
+ */
+export function isValidAvatarObjectKey(key: string, uid: string): boolean {
+  if (!key || !uid) return false;
+  const trimmed = key.trim();
+  if (!trimmed || trimmed.length > MAX_AVATAR_KEY_LENGTH || trimmed.includes("..")) return false;
+  const segments = trimmed.split("/");
+  if (segments.length !== 3) return false;
+  const [prefix, owner, file] = segments as [string, string, string];
+  if (prefix !== AVATAR_PREFIX || owner !== uid || !file) return false;
+  return AVATAR_KEY_FILENAME_PATTERN.test(file);
+}
+
+/**
  * Storage object key (`avatars/{uid}/file`) parsed out of one of our public
  * avatar URLs, or null when the URL is not ours (e.g. a Google-seeded avatar
  * — those live on Google hosts and must never be deleted from here).
@@ -92,6 +113,50 @@ export function objectKeyFromAvatarUrl(url: string | null | undefined): string |
   const segments = key.split("/");
   if (segments.length !== 3 || !segments[1] || !segments[2]) return null;
   return key;
+}
+
+/**
+ * Point the signed-in user's `avatar_url` at an already-uploaded owned object
+ * key through `update_my_avatar_by_key` (exact-key RPC: validates the key
+ * shape server-side and verifies the Storage object exists), then reload the
+ * full profile so the caller can `setUser`. Client pre-validates the key, the
+ * uid binding, and the URL-key embedding before touching the backend.
+ */
+export async function updateMyAvatarByKey(objectKey: string, avatarUrl: string): Promise<PublicUser> {
+  const supabase = getSupabase();
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData.user) {
+    throw new ApiError("Sign in again to change your profile photo.", 401);
+  }
+  const uid = userData.user.id;
+
+  if (!isValidAvatarObjectKey(objectKey, uid)) {
+    throw new ApiError("That photo link looks invalid. Try uploading again.", 400);
+  }
+  const trimmedUrl = avatarUrl.trim();
+  if (!trimmedUrl || trimmedUrl.length > MAX_AVATAR_URL_LENGTH) {
+    throw new ApiError("That photo link looks invalid. Try uploading again.", 400);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmedUrl);
+  } catch {
+    throw new ApiError("That photo link looks invalid. Try uploading again.", 400);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new ApiError("That photo link looks invalid. Try uploading again.", 400);
+  }
+  if (!trimmedUrl.includes(`/findback-images/${objectKey}`)) {
+    throw new ApiError("That photo link looks invalid. Try uploading again.", 400);
+  }
+
+  const { error } = await supabase.rpc("update_my_avatar_by_key", {
+    p_object_key: objectKey,
+    p_avatar_url: trimmedUrl,
+  });
+  if (error) throw new ApiError("Could not save your profile photo. Check your connection and try again.", 400);
+
+  return fetchMe();
 }
 
 /**

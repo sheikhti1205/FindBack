@@ -1,7 +1,9 @@
-import type { PublicProfile, PublicUser, SearchedProfile } from "@findback/shared";
+import type { PostItem, PublicProfile, PublicUser, SearchedProfile } from "@findback/shared";
+import { normalizePhone } from "@findback/shared";
 import { getSupabase } from "./supabaseClient";
 import { ApiError } from "./session";
 import { fetchMe } from "./auth";
+import { isValidAvatarObjectKey } from "./avatar";
 
 /**
  * Profile identity service.
@@ -144,4 +146,165 @@ export async function updateMyProfile(input: UpdateMyProfileInput): Promise<Publ
   if (error) throw new ApiError("Could not save your profile. Check your connection and try again.", 400);
 
   return fetchMe();
+}
+
+// ---------------------------------------------------------------------------
+// Phone-change cooldown client (spec 25, W5-IDENTITY).
+//
+// The six-month replacement gate is server-authoritative: `request_phone_change`
+// resolves the caller from the session and compares against the server clock,
+// so a tampered device clock cannot move the outcome. These helpers only
+// surface that gate — first verified phone and same-number reverification
+// never wait. Live Auth/SMS challenge wiring stays LIVE-PENDING (owner-
+// deferred); no OTP is sent from here.
+// ---------------------------------------------------------------------------
+
+/** Stable server marker for a held replacement gate (see spec 25). */
+export const PHONE_CHANGE_COOLDOWN = "PHONE_CHANGE_COOLDOWN";
+
+export interface PhoneChangeEligibility {
+  eligible: boolean;
+  eligibleAt: string | null;
+  phoneVerified: boolean;
+}
+
+/** Row shape returned by `phone_change_eligibility` (self-only, server clock). */
+interface PhoneEligibilityRow {
+  eligible: boolean | null;
+  eligible_at: string | null;
+  phone_verified: boolean | null;
+}
+
+/** Row shape returned by `request_phone_change` (self-only gate). */
+interface PhoneChangeGateRow {
+  eligible: boolean | null;
+  eligible_at: string | null;
+}
+
+/** First table row, or null when the RPC returns no rows. */
+function firstGateRow<T>(data: unknown): T | null {
+  const rows = (data ?? []) as T[];
+  return rows[0] ?? null;
+}
+
+/**
+ * Eligible date (`eligible_at=…`) embedded in a PHONE_CHANGE_COOLDOWN server
+ * message, or null when the message carries no date. Pure — safe to call on
+ * any error text.
+ */
+export function parsePhoneCooldownEligibleAt(message: string): string | null {
+  const match = /PHONE_CHANGE_COOLDOWN(?:\s+eligible_at=(\S+))?/.exec(message ?? "");
+  if (!match) return null;
+  return match[1] ?? null;
+}
+
+/** True when `err` is the server's held-gate rejection (any shape). */
+export function isPhoneChangeCooldownError(err: unknown): boolean {
+  if (typeof err === "string") return err.includes(PHONE_CHANGE_COOLDOWN);
+  if (err instanceof Error) return err.message.includes(PHONE_CHANGE_COOLDOWN);
+  const message = (err as { message?: unknown } | null)?.message;
+  return typeof message === "string" && message.includes(PHONE_CHANGE_COOLDOWN);
+}
+
+/**
+ * Human date fragment for an eligible-at timestamp (`"on 12 April 2027"`),
+ * or "" when missing/unparseable — callers fall back to dateless copy so no
+ * fake countdown is ever shown.
+ */
+export function formatPhoneChangeEligibleAt(eligibleAt: string | null | undefined): string {
+  if (!eligibleAt) return "";
+  const date = new Date(eligibleAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return `on ${date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}`;
+}
+
+/**
+ * Read the signed-in account's replacement-gate state (server clock).
+ * Transport failures map to a human error — never a fabricated date.
+ */
+export async function fetchPhoneChangeEligibility(): Promise<PhoneChangeEligibility> {
+  const { data, error } = await getSupabase().rpc("phone_change_eligibility");
+  if (error) {
+    throw new ApiError("Could not check your number change status. Check your connection and try again.", 400);
+  }
+  const row = firstGateRow<PhoneEligibilityRow>(data);
+  return {
+    eligible: row?.eligible ?? true,
+    eligibleAt: row?.eligible_at ?? null,
+    phoneVerified: Boolean(row?.phone_verified),
+  };
+}
+
+/**
+ * Ask the server gate whether `phone` may replace the verified number.
+ * Resolves the eligibility on success; rejects with a 409 naming the
+ * eligible date while the gate holds. Sends no SMS — the Auth challenge
+ * itself stays LIVE-PENDING.
+ */
+export async function requestPhoneChange(phone: string): Promise<PhoneChangeEligibility> {
+  const normalized = normalizePhone(phone);
+  if (!normalized) {
+    throw new ApiError("Enter a valid Bangladesh mobile number (e.g., 01812345678).", 400);
+  }
+  const { data, error } = await getSupabase().rpc("request_phone_change", {
+    p_new_phone: normalized,
+  });
+  if (error) {
+    const message = (error as { message?: string }).message ?? "";
+    if (message.includes(PHONE_CHANGE_COOLDOWN)) {
+      const when = formatPhoneChangeEligibleAt(parsePhoneCooldownEligibleAt(message));
+      throw new ApiError(
+        when
+          ? `You can change your mobile number ${when}.`
+          : "You cannot change your mobile number yet. Try again later.",
+        409,
+      );
+    }
+    throw new ApiError("Could not start your number change. Check your connection and try again.", 400);
+  }
+  const row = firstGateRow<PhoneChangeGateRow>(data);
+  return { eligible: true, eligibleAt: row?.eligible_at ?? null, phoneVerified: false };
+}
+
+// ---------------------------------------------------------------------------
+// Public-reports pagination client parts (W5-IDENTITY).
+//
+// PublicProfile pages a member's reports through the existing feed API one
+// cursor at a time. These pure helpers keep that traversal honest: `hasMore`
+// is driven only by the server cursor (never a local count), and appends
+// dedupe by report id so a repeated cursor can never duplicate rows.
+// ---------------------------------------------------------------------------
+
+/** One server page of a member's public reports (FeedPage subset). */
+export interface PublicReportsPage {
+  items: PostItem[];
+  nextCursor: string | null;
+}
+
+/** True only when the server handed a non-empty cursor for the next page. */
+export function hasMoreReports(page: PublicReportsPage): boolean {
+  return page.nextCursor !== null && page.nextCursor !== "";
+}
+
+/** Append a page, dropping rows already present (by id). Never mutates. */
+export function appendReportPage(previous: PostItem[], page: PublicReportsPage): PostItem[] {
+  if (page.items.length === 0) return previous;
+  const seen = new Set(previous.map((item) => item.id));
+  const fresh = page.items.filter((item) => !seen.has(item.id));
+  if (fresh.length === 0) return previous;
+  return [...previous, ...fresh];
+}
+
+// ---------------------------------------------------------------------------
+// Avatar object-key surface for profile screens (W5-IDENTITY).
+//
+// Profile/account surfaces check key ownership without importing the upload
+// service directly. The canonical validator lives in `./avatar` (mirroring
+// `update_my_avatar_by_key` server-side); the server re-checks and verifies
+// Storage existence, so a client slip can never persist.
+// ---------------------------------------------------------------------------
+
+/** True when `objectKey` is exactly `avatars/{uid}/{filename}` (own uid). */
+export function isOwnAvatarKey(objectKey: string, uid: string): boolean {
+  return isValidAvatarObjectKey(objectKey, uid);
 }

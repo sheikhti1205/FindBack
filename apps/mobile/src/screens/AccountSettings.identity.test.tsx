@@ -19,6 +19,12 @@ vi.mock("../auth", () => ({
   }),
 }));
 
+vi.mock("../services/profile", () => ({
+  fetchPhoneChangeEligibility: () =>
+    Promise.resolve({ eligible: true, eligibleAt: null, phoneVerified: false }),
+  formatPhoneChangeEligibleAt: () => "",
+}));
+
 import { AccountSettings } from "./AccountSettings";
 
 const verifiedUser: PublicUser = {

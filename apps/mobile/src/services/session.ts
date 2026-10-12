@@ -64,6 +64,24 @@ export function clearAllAuth(): void {
   setPendingEmail(null);
 }
 
+/**
+ * Account-switch isolation (W5-IDENTITY).
+ *
+ * Starts an A -> sign out -> B switch without a process restart: clears this
+ * session's token cache and pending verification email, then notifies
+ * signed-out handlers so providers drop A-owned user state. Callers must ALSO
+ * run the user-scoped wipe (`clearUserScopedLocalState`: drafts, staged
+ * photos, feed caches, Nearby session, local-AI residency) plus realtime and
+ * push teardown — `auth.tsx` owns those on every sign-out path. This helper
+ * covers the session-owned slice so a stale token or pending email can never
+ * leak into B's calls. Never touches stored credentials of any account.
+ */
+export function beginAccountSwitch(): void {
+  setToken(null);
+  setPendingEmail(null);
+  notifySignedOut();
+}
+
 // ---- signed-out notification (mid-session refresh failure) ----
 
 const signedOutHandlers = new Set<() => void>();

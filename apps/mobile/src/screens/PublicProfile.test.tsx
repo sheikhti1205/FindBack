@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
@@ -9,7 +9,10 @@ const { fetchPublicProfileMock, fetchFeedMock } = vi.hoisted(() => ({
   fetchFeedMock: vi.fn(),
 }));
 
-vi.mock("../services/profile", () => ({ fetchPublicProfile: fetchPublicProfileMock }));
+vi.mock("../services/profile", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/profile")>();
+  return { ...actual, fetchPublicProfile: fetchPublicProfileMock };
+});
 vi.mock("../services/posts", () => ({ fetchFeed: fetchFeedMock }));
 
 import { PublicProfile } from "./PublicProfile";
@@ -124,5 +127,44 @@ describe("PublicProfile", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/could not be found/i);
     expect(fetchFeedMock).not.toHaveBeenCalled();
+  });
+
+  // W5-IDENTITY appended cases: cursor pagination for a member's reports.
+  it("offers no load-more action when the server reports no cursor", async () => {
+    fetchFeedMock.mockResolvedValue({ items: [post], nextCursor: null, total: 1 });
+    renderRoute();
+    expect(await screen.findByText("Found a wallet")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /load more reports/i })).toBeNull();
+  });
+
+  it("pages forward with the server cursor and appends without duplicating", async () => {
+    const second = { ...post, id: "p2", title: "Lost keys" };
+    fetchFeedMock
+      .mockResolvedValueOnce({ items: [post], nextCursor: "cursor-1", total: 2 })
+      .mockResolvedValueOnce({ items: [post, second], nextCursor: null, total: 2 });
+    renderRoute();
+    const more = await screen.findByRole("button", { name: /load more reports/i });
+    fireEvent.click(more);
+    await waitFor(() =>
+      expect(fetchFeedMock).toHaveBeenCalledWith({ userId: "u2" }, "cursor-1"),
+    );
+    expect(await screen.findByText("Lost keys")).toBeTruthy();
+    // The repeated first-page row is deduped, not rendered twice.
+    expect(screen.getAllByRole("link", { name: "Found a wallet" })).toHaveLength(1);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /load more reports/i })).toBeNull(),
+    );
+  });
+
+  it("keeps the loaded reports when the next page fails", async () => {
+    fetchFeedMock
+      .mockResolvedValueOnce({ items: [post], nextCursor: "cursor-1", total: 2 })
+      .mockRejectedValueOnce(new Error("feed down"));
+    renderRoute();
+    fireEvent.click(await screen.findByRole("button", { name: /load more reports/i }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Found a wallet")).toBeTruthy();
+    // The cursor is retained so the user can retry.
+    expect(screen.getByRole("button", { name: /load more reports/i })).toBeTruthy();
   });
 });

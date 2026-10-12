@@ -34,8 +34,10 @@ import {
   AVATAR_PREFIX,
   avatarObjectKey,
   isAvatarStorageUrl,
+  isValidAvatarObjectKey,
   objectKeyFromAvatarUrl,
   removeAvatar,
+  updateMyAvatarByKey,
   updateMyAvatarUrl,
   uploadAvatar,
 } from "./avatar";
@@ -323,5 +325,125 @@ describe("profile avatar migration", () => {
     expect(AVATAR_BUCKET).toBe("findback-images");
     expect(AVATAR_PREFIX).toBe("avatars");
     expect(avatarSql()).toMatch(/bucket_id = 'findback-images'/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W5-IDENTITY appended cases: owned object-key validation, the exact-key
+// writer, and the migration pins for the UPDATE policy + key RPC.
+// ---------------------------------------------------------------------------
+
+describe("isValidAvatarObjectKey", () => {
+  it("accepts exactly avatars/{uid}/{filename} with a still-image extension", () => {
+    expect(isValidAvatarObjectKey("avatars/user-1/a.jpg", "user-1")).toBe(true);
+    expect(isValidAvatarObjectKey("avatars/user-1/photo.jpeg", "user-1")).toBe(true);
+    expect(isValidAvatarObjectKey("avatars/user-1/a.PNG", "user-1")).toBe(true);
+    expect(isValidAvatarObjectKey("avatars/user-1/a.webp", "user-1")).toBe(true);
+  });
+
+  it("rejects foreign uids, traversal, wrong shapes, and non-stills", () => {
+    expect(isValidAvatarObjectKey("avatars/user-2/a.jpg", "user-1")).toBe(false);
+    expect(isValidAvatarObjectKey("avatars/user-1/../x.jpg", "user-1")).toBe(false);
+    expect(isValidAvatarObjectKey("avatars/user-1/a.gif", "user-1")).toBe(false);
+    expect(isValidAvatarObjectKey("avatars/user-1/a", "user-1")).toBe(false);
+    expect(isValidAvatarObjectKey("avatars/user-1/", "user-1")).toBe(false);
+    expect(isValidAvatarObjectKey("user-1/a.jpg", "user-1")).toBe(false);
+    expect(isValidAvatarObjectKey("avatars/user-1/nested/a.jpg", "user-1")).toBe(false);
+    expect(isValidAvatarObjectKey("", "user-1")).toBe(false);
+    expect(isValidAvatarObjectKey("avatars/user-1/a.jpg", "")).toBe(false);
+  });
+});
+
+describe("updateMyAvatarByKey", () => {
+  const key = "avatars/user-1/a.jpg";
+  const url = "https://ref.supabase.co/storage/v1/object/public/findback-images/avatars/user-1/a.jpg";
+
+  it("writes through the exact-key RPC then reloads the profile", async () => {
+    const result = await updateMyAvatarByKey(key, url);
+
+    expect(rpcMock).toHaveBeenCalledWith("update_my_avatar_by_key", {
+      p_object_key: key,
+      p_avatar_url: url,
+    });
+    expect(fetchMeMock).toHaveBeenCalledTimes(1);
+    expect(result).toBe(refreshed);
+  });
+
+  it("rejects foreign keys, traversal, and URL/key mismatches before the backend", async () => {
+    await expect(updateMyAvatarByKey("avatars/user-2/a.jpg", url)).rejects.toThrow(/invalid/i);
+    await expect(updateMyAvatarByKey("avatars/user-1/../x.jpg", url)).rejects.toThrow(/invalid/i);
+    await expect(
+      updateMyAvatarByKey(key, "https://ref.supabase.co/storage/v1/object/public/findback-images/avatars/user-2/a.jpg"),
+    ).rejects.toThrow(/invalid/i);
+    await expect(updateMyAvatarByKey(key, "http://ref.supabase.co/storage/v1/object/public/findback-images/avatars/user-1/a.jpg")).rejects.toThrow(
+      /invalid/i,
+    );
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(fetchMeMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses without a session and maps RPC failures to a human save error", async () => {
+    clientMock.auth.getUser.mockResolvedValueOnce({ data: { user: null }, error: null });
+    await expect(updateMyAvatarByKey(key, url)).rejects.toThrow(/sign in again/i);
+
+    rpcMock.mockResolvedValue({ error: { message: "avatar object not found" } });
+    await expect(updateMyAvatarByKey(key, url)).rejects.toThrow(/could not save your profile photo/i);
+    expect(fetchMeMock).not.toHaveBeenCalled();
+  });
+});
+
+const AVATAR_KEY_MIGRATION = "supabase/migrations/20261012000000_phone_cooldown_avatar_key.sql";
+
+function avatarKeySql(): string {
+  // Vitest may run from the repo root or apps/mobile — resolve by trial so
+  // the contract holds from either cwd.
+  for (const candidate of [AVATAR_KEY_MIGRATION, `../../${AVATAR_KEY_MIGRATION}`]) {
+    try {
+      return readFileSync(candidate, "utf8");
+    } catch {
+      // Not under this cwd — try the next candidate.
+    }
+  }
+  throw new Error(`cannot locate ${AVATAR_KEY_MIGRATION} from cwd ${process.cwd()}`);
+}
+
+/**
+ * The migration auto-applies on push; these pin the object-key discipline:
+ * the missing owner-scoped UPDATE policy plus an exact-key writer that binds
+ * the caller uid, rejects traversal, and verifies the Storage object exists.
+ */
+describe("avatar object-key migration", () => {
+  it("adds the owner-scoped UPDATE policy for the avatars prefix", () => {
+    const text = avatarKeySql();
+    expect(text).toMatch(/findback_images_avatar_update_own/i);
+    expect(text).toMatch(/for update to authenticated/i);
+    expect(text).toMatch(/\(storage\.foldername\(name\)\)\[1\] = 'avatars'/i);
+    expect(text).toMatch(/\(storage\.foldername\(name\)\)\[2\] = \(select auth\.uid\(\)\)::text/i);
+  });
+
+  it("writes through an exact-key SECURITY DEFINER RPC with a locked search_path", () => {
+    const text = avatarKeySql();
+    expect(text).toMatch(/create or replace function public\.update_my_avatar_by_key\(/i);
+    expect(text).toMatch(/security definer\s+set search_path = public, pg_temp/i);
+    expect(text).toMatch(/v_uid\s+text := public\.findback_uid\(\)/i);
+    expect(text).toMatch(/update public\.users[\s\S]*where id = v_uid/i);
+    expect(text).not.toMatch(/p_user_id|p_uid/i);
+  });
+
+  it("binds the key to the caller, rejects traversal, and verifies existence", () => {
+    const text = avatarKeySql();
+    expect(text).toMatch(/v_parts\[1\] <> 'avatars'/i);
+    expect(text).toMatch(/v_parts\[2\] <> v_uid/i);
+    expect(text).toMatch(/position\('..' in v_key\)/i);
+    expect(text).toMatch(/storage\.objects/i);
+    expect(text).toMatch(/avatar object not found/i);
+    expect(text).toMatch(/\/findback-images\//i);
+  });
+
+  it("revokes the key writer from anon and grants it only to authenticated", () => {
+    const text = avatarKeySql();
+    expect(text).toMatch(/revoke all on function public\.update_my_avatar_by_key\(text, text\) from public/i);
+    expect(text).toMatch(/revoke execute on function public\.update_my_avatar_by_key\(text, text\) from anon/i);
+    expect(text).toMatch(/grant execute on function public\.update_my_avatar_by_key\(text, text\) to authenticated/i);
   });
 });

@@ -4,9 +4,10 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicUser } from "@findback/shared";
 
-const { mockLogout, mockUser, mockRequestDeletion } = vi.hoisted(() => ({
+const { mockLogout, mockUser, mockRequestDeletion, mockFetchEligibility } = vi.hoisted(() => ({
   mockLogout: vi.fn(),
   mockRequestDeletion: vi.fn(),
+  mockFetchEligibility: vi.fn(),
   mockUser: {
     value: null as PublicUser | null,
   },
@@ -22,6 +23,16 @@ vi.mock("../auth", () => ({
 
 vi.mock("../services/auth", () => ({
   requestAccountDeletion: (...args: unknown[]) => mockRequestDeletion(...args),
+}));
+
+vi.mock("../services/profile", () => ({
+  fetchPhoneChangeEligibility: (...args: unknown[]) => mockFetchEligibility(...args),
+  formatPhoneChangeEligibleAt: (eligibleAt: string | null | undefined) => {
+    if (!eligibleAt) return "";
+    const date = new Date(eligibleAt);
+    if (Number.isNaN(date.getTime())) return "";
+    return `on ${date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}`;
+  },
 }));
 
 import { AccountSettings } from "./AccountSettings";
@@ -61,6 +72,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUser.value = { ...verifiedUser };
   mockLogout.mockResolvedValue(undefined);
+  mockFetchEligibility.mockResolvedValue({ eligible: true, eligibleAt: null, phoneVerified: false });
 });
 
 describe("AccountSettings", () => {
@@ -239,5 +251,34 @@ describe("AccountSettings", () => {
     expect(screen.queryByLabelText(/type your email address/i)).toBeNull();
     expect(mockRequestDeletion).not.toHaveBeenCalled();
     expect(mockLogout).not.toHaveBeenCalled();
+  });
+
+  // W5-IDENTITY appended cases: six-month replacement availability (spec 25).
+  it("keeps the default mobile copy while the gate is eligible", async () => {
+    mockFetchEligibility.mockResolvedValue({ eligible: true, eligibleAt: null, phoneVerified: true });
+    renderAccount();
+    const row = await screen.findByRole("link", { name: /mobile number/i });
+    expect(row.textContent).toContain("Bangladesh mobile number.");
+    expect(row.textContent).not.toMatch(/change available/i);
+  });
+
+  it("names the eligible date on the mobile row while the gate holds", async () => {
+    mockFetchEligibility.mockResolvedValue({
+      eligible: false,
+      eligibleAt: "2027-04-12T00:00:00.000Z",
+      phoneVerified: true,
+    });
+    renderAccount();
+    const row = await screen.findByRole("link", { name: /mobile number/i });
+    expect(row.textContent).toMatch(/number change available on .*2027/i);
+    expect(row.getAttribute("href")).toBe("/profile/edit");
+  });
+
+  it("keeps the default mobile copy when the availability read fails", async () => {
+    mockFetchEligibility.mockRejectedValue(new Error("offline"));
+    renderAccount();
+    const row = await screen.findByRole("link", { name: /mobile number/i });
+    expect(row.textContent).toContain("Bangladesh mobile number.");
+    expect(row.textContent).not.toMatch(/change available/i);
   });
 });
