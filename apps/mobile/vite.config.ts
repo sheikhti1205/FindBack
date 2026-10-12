@@ -22,6 +22,36 @@ export function resolveSupabaseBuildEnv(
   };
 }
 
+// FBX-027 maps-config region (keyless MAP pivot): the single build-time source
+// for map provider config is the repo-root env, owned by
+// scripts/check-map-config.mjs. This resolver mirrors the owner's names and
+// defaults so the web bundle receives the SAME effective values the native
+// side compiles into BuildConfig (MAP_STYLE_URL / MAP_SEARCH_CONTACT) —
+// absent custom values resolve to the owner-decided defaults on both sides,
+// never a silent divergence. The Nominatim search-endpoint override is passed
+// through from the same root env; it is consumed today by
+// src/services/location/nominatimSearch.ts, while the style/contact defines
+// are the build-time contract the map lane adopts at runtime.
+export const DEFAULT_MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
+export const DEFAULT_MAP_CONTACT = "https://findbackapp.social";
+
+export function resolveMapBuildEnv(
+  mode: string,
+  // Same FINDBACK_ENV_DIR hermeticity rule as resolveSupabaseBuildEnv above.
+  envDir = process.env.FINDBACK_ENV_DIR || resolve(import.meta.dirname, "../.."),
+) {
+  const env = loadEnv(mode, envDir, "");
+  const style = env.FINDBACK_MAP_STYLE_URL?.trim() || "";
+  const contact = env.FINDBACK_MAP_CONTACT?.trim() || "";
+  return {
+    styleUrl: style || DEFAULT_MAP_STYLE_URL,
+    contact: contact || DEFAULT_MAP_CONTACT,
+    styleSource: (style ? "custom" : "default") as "custom" | "default",
+    contactSource: (contact ? "custom" : "default") as "custom" | "default",
+    nominatimSearchUrl: env.VITE_NOMINATIM_SEARCH_URL?.trim() || "",
+  };
+}
+
 /**
  * S3 — sourcemap mode (sourcemap settings ONLY; S1/S2 own the rest of this file's contract).
  *
@@ -48,6 +78,18 @@ export default defineConfig(({ command, mode }) => {
   }
   const { publishableKey, url } = resolveSupabaseBuildEnv(mode);
   const shareOrigin = loadEnv(mode, process.env.FINDBACK_ENV_DIR || resolve(import.meta.dirname, "../.."), "").VITE_PUBLIC_SHARE_ORIGIN?.trim() || "";
+  const mapEnv = resolveMapBuildEnv(mode);
+  if (command === "build") {
+    // FBX-027 maps truth: the node owner validates the effective map config
+    // (malformed custom values fail closed). Running it here means a direct
+    // `vite build` can never bake a web map truth that disagrees with the
+    // native BuildConfig truth — the same check the signeddev Gradle path
+    // runs through verifySigneddevConfig. Logs carry presence only.
+    const mapCheck = spawnSync(process.execPath,
+      [resolve(import.meta.dirname, "../../scripts/check-map-config.mjs")],
+      { stdio: "inherit", env: process.env });
+    if (mapCheck.status !== 0) throw new Error("Map build configuration check failed");
+  }
   if (command === "build") {
     // Derive the VITE_* names in the build environment from the canonical
     // local SUPABASE_* values; import.meta.env and define then agree.
@@ -93,6 +135,9 @@ export default defineConfig(({ command, mode }) => {
     },
     define: {
       "import.meta.env.VITE_PUBLIC_SHARE_ORIGIN": JSON.stringify(shareOrigin),
+      "import.meta.env.VITE_MAP_STYLE_URL": JSON.stringify(mapEnv.styleUrl),
+      "import.meta.env.VITE_MAP_SEARCH_CONTACT": JSON.stringify(mapEnv.contact),
+      "import.meta.env.VITE_NOMINATIM_SEARCH_URL": JSON.stringify(mapEnv.nominatimSearchUrl),
       __SUPABASE_URL__: JSON.stringify(url),
       __SUPABASE_PUBLISHABLE_KEY__: JSON.stringify(publishableKey),
     },

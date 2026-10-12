@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { checkAppLinksManifest, checkSigneddevConfig, MANIFEST_PATH } from "./check-signeddev-config.mjs";
+import { checkAppLinksManifest, checkSigneddevConfig, buildProvenanceReport, PROVENANCE_FIELDS, MANIFEST_PATH } from "./check-signeddev-config.mjs";
 
 const script = resolve("scripts/check-signeddev-config.mjs");
 const url = "https://sampleproject.supabase.co";
@@ -235,4 +235,153 @@ test("checkSigneddevConfig reports every failing check, not just the first", () 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- FBX-025 (M-a): assembleSigneddev MUST fail — never debug-sign — when the
+// canonical release signing env is incomplete. No Android SDK or keystore
+// exists in this environment, so assembleSigneddev itself cannot execute here
+// (deferred — see the handoff); these tests PROVE the fail-closed semantics in
+// the packaging contract instead: the readiness predicate, the null-signer
+// else branch, and the task-graph guard that refuses packaging outright.
+const buildGradleText = () => readFileSync(resolve("apps/mobile/android/app/build.gradle"), "utf8");
+
+test("M-a: signeddev readiness requires all four canonical signing vars", () => {
+  const text = buildGradleText();
+  for (const name of ["ANDROID_KEYSTORE_PATH", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"]) {
+    assert.ok(text.includes(`"${name}"`), `signeddev contract lost ${name}`);
+  }
+  assert.match(text, /def signeddevSigningReady\(\)/);
+});
+
+test("M-a: signeddev never falls back to the debug signer", () => {
+  const text = buildGradleText();
+  assert.doesNotMatch(text, /signingConfigs\.debug/);
+  // The else branch drops the debug-inherited signer entirely, so even a path
+  // that bypassed the guard below would emit UNSIGNED — never debug-signed.
+  assert.match(text, /signingConfig = null/);
+  assert.match(text, /signingConfigs\.findbackRelease/);
+});
+
+test("M-a: task-graph guard refuses every signeddev packaging entry point", () => {
+  const text = buildGradleText();
+  assert.match(text, /gradle\.taskGraph\.whenReady/);
+  assert.match(text, /signeddevSigningReady\(\)/);
+  assert.match(text, /throw new GradleException/);
+  assert.match(text, /instead of falling back to the[\s\S]*debug signer/);
+  for (const prefix of ["assemble", "bundle", "package", "install"]) {
+    assert.ok(text.includes(`"${prefix}"`), `guard lost the ${prefix} entry point`);
+  }
+});
+
+// --- FBX-026 (M-b): bundled-client + web-provenance verification is attached
+// to Signeddev packaging on the DIRECT Gradle path (not just the npm
+// wrapper). Proven two ways: the Gradle wiring itself, and the exact script
+// invocations Gradle performs against tampered/stale staged assets.
+test("M-b: direct Gradle packaging of signeddev runs both verify tasks", () => {
+  const text = buildGradleText();
+  assert.match(text, /tasks\.register\("verifyBundledClientConfig", Exec\)/);
+  assert.match(text, /tasks\.register\("verifySigneddevConfig", Exec\)/);
+  assert.match(text, /check-mobile-build-config\.mjs/);
+  assert.match(text, /check-signeddev-config\.mjs/);
+  // packageSigneddev must be covered by BOTH verify hooks; the bundle hook
+  // covers the AAB path too.
+  const bundled = text.match(/verifyBundledClientConfig"[\s\S]{0,400}?packageSigneddev/);
+  assert.ok(bundled, "packageSigneddev bypasses verifyBundledClientConfig");
+  const signeddev = text.match(/verifySigneddevConfig"[\s\S]{0,400}?packageSigneddev/);
+  assert.ok(signeddev, "packageSigneddev bypasses verifySigneddevConfig");
+  assert.ok(text.includes("packageSigneddevBundle"), "bundle path bypasses signeddev verification");
+});
+
+test("M-b: the Gradle-invoked signeddev gate fails an empty staged surface", () => {
+  const dir = mkdtempSync(join(tmpdir(), "findback-signeddev-empty-"));
+  try {
+    // Exactly how verifySigneddevConfig invokes it: --assets <staged-public>.
+    // No .well-known association at all must fail, not pass vacuously.
+    const result = run(["--assets", dir]);
+    assert.notEqual(result.status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- FBX-027 wiring: the signeddev gate includes the map build truth, so a
+// direct `./gradlew assembleSigneddev` fails on malformed custom map config.
+test("signeddev gate fails closed on malformed custom map config", () => {
+  const dir = mkdtempSync(join(tmpdir(), "findback-signeddev-map-"));
+  const previous = process.env.FINDBACK_MAP_STYLE_URL;
+  process.env.FINDBACK_MAP_STYLE_URL = "http://plaintext-tiles-fail-the-gate.example.net/style";
+  try {
+    writeStagedAssets(dir);
+    const result = run(["--assets", dir]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /FINDBACK_MAP_STYLE_URL/);
+    assert.doesNotMatch(result.stdout + result.stderr, /plaintext-tiles-fail-the-gate/);
+  } finally {
+    if (previous === undefined) delete process.env.FINDBACK_MAP_STYLE_URL;
+    else process.env.FINDBACK_MAP_STYLE_URL = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- M-c: provenance report is limited to the mandated field set.
+test("provenance report carries exactly the mandated fields, never values", () => {
+  const report = buildProvenanceReport({
+    apkPath: resolve("apps/mobile/android/app/build.gradle"),
+    deps: {
+      gitSha: () => "abc123def456",
+      versionCode: () => 100042,
+      appVersion: () => "1.0.0",
+      appPackage: () => "com.findback.app",
+      sha256File: () => "0".repeat(64),
+      signerFingerprint: () => "AB".repeat(32),
+      supabase: () => ({ host: "sampleproject.supabase.co", key: "PRESENT" }),
+      google: () => "PRESENT",
+      maps: () => "ABSENT",
+      sentry: () => "PRESENT",
+    },
+  });
+  assert.deepEqual(Object.keys(report).sort(), [...PROVENANCE_FIELDS].sort());
+  assert.deepEqual(report, {
+    gitSha: "abc123def456",
+    package: "com.findback.app",
+    version: "1.0.0",
+    versionCode: 100042,
+    apkSha256: "0".repeat(64),
+    signerFingerprint: "AB".repeat(32),
+    supabaseHost: "sampleproject.supabase.co",
+    supabaseKey: "PRESENT",
+    googleWebClient: "PRESENT",
+    maps: "ABSENT",
+    sentry: "PRESENT",
+  });
+});
+
+test("provenance CLI reports a synthetic APK with the mandated fields only", () => {
+  const dir = mkdtempSync(join(tmpdir(), "findback-provenance-"));
+  try {
+    writeFileSync(join(dir, "payload.txt"), "not a real apk");
+    const apk = join(dir, "app-signeddev.apk");
+    assert.equal(spawnSync("zip", ["-q", "-j", apk, join(dir, "payload.txt")]).status, 0);
+    const result = spawnSync(process.execPath,
+      [resolve("scripts/check-signeddev-config.mjs"), "--provenance", "--apk", apk],
+      { encoding: "utf8", env: { ...process.env, ...baseEnv } });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(Object.keys(report).sort(), [...PROVENANCE_FIELDS].sort());
+    assert.equal(report.package, "com.findback.app");
+    assert.match(report.apkSha256, /^[0-9a-f]{64}$/);
+    // No SDK here: fingerprint degrades honestly instead of inventing one.
+    assert.ok(report.signerFingerprint === "UNAVAILABLE" || /^[0-9A-F]{64}$/.test(report.signerFingerprint));
+    assert.doesNotMatch(result.stdout + result.stderr, /sb_publishable_|123456789012/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("provenance refuses a missing APK instead of inventing a report", () => {
+  const result = spawnSync(process.execPath,
+    [resolve("scripts/check-signeddev-config.mjs"), "--provenance", "--apk", join(tmpdir(), "no-such.apk")],
+    { encoding: "utf8", env: { ...process.env, ...baseEnv } });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /APK not found/);
 });
