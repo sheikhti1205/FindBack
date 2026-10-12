@@ -62,6 +62,23 @@ if (google.ok) {
   process.exit(1);
 }
 
+// signeddev must carry the canonical findbackRelease signer (FBX-025). The
+// four ANDROID_KEYSTORE_* names are the existing release contract: presence
+// and non-blankness only, values are never printed. Gradle refuses to package
+// signeddev without them too, so a direct `assembleSigneddev` cannot bypass
+// this either — see the task-graph guard in apps/mobile/android/app/build.gradle.
+if (variant === "signeddev") {
+  const missing = ["ANDROID_KEYSTORE_PATH", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"]
+    .filter((name) => !process.env[name] || process.env[name].trim() === "");
+  if (missing.length > 0) {
+    console.error(
+      `build-apk: refusing signeddev build — incomplete canonical signing environment (${missing.join(", ")}). ` +
+        "Export all four ANDROID_KEYSTORE_* values, or use --variant=debug.",
+    );
+    process.exit(1);
+  }
+}
+
 // Sentry is mandatory for installable builds. Resolved with Vite's own
 // loadEnv against apps/mobile (the SAME source vite build embeds into
 // import.meta.env); shell exports win over apps/mobile/.env* files.

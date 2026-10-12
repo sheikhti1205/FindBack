@@ -68,6 +68,17 @@ def shareLinkHostname() {
     return out.toString().trim()
 }
 
+// FBX-025: signeddev may ONLY carry the canonical findbackRelease signer.
+// Presence-only check over the four existing ANDROID_KEYSTORE_* names — the
+// values themselves are never read into a log, a message, or a handoff.
+def signeddevSigningReady() {
+    return ["ANDROID_KEYSTORE_PATH", "ANDROID_KEYSTORE_PASSWORD",
+            "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"].every { name ->
+        def value = System.getenv(name)
+        return value != null && !value.trim().isEmpty()
+    }
+}
+
 // Keyless map style (MAP pivot): the MapLibre-compatible style URL the native
 // picker/viewer/snapshotter render. Canonical local env name
 // FINDBACK_MAP_STYLE_URL; default is the owner-decided OpenFreeMap Liberty
@@ -184,18 +195,22 @@ android {
             // carries no "release" (see splits above), so a single unsplit
             // APK. Signed with the CANONICAL findbackRelease keystore ONLY
             // when ALL of the existing ANDROID_KEYSTORE_* env creds are
-            // present; otherwise unsigned — the build NEVER fails on missing
-            // secrets. No new secret paths, no committed keystore/passwords.
+            // present. When they are incomplete this variant stays UNSIGNED
+            // and the task-graph guard at the bottom of this file refuses to
+            // package it at all — it NEVER falls back to the debug signer
+            // (FBX-025). No new secret paths, no committed keystore/passwords.
             initWith debug
             // Library modules (:capacitor-android,
             // :capacitor-cordova-android-plugins) ship only debug/release
             // variants: resolve their debug variant for this build type.
             matchingFallbacks = ['debug']
-            if (System.getenv("ANDROID_KEYSTORE_PATH")
-                && System.getenv("ANDROID_KEYSTORE_PASSWORD")
-                && System.getenv("ANDROID_KEY_ALIAS")
-                && System.getenv("ANDROID_KEY_PASSWORD")) {
+            if (signeddevSigningReady()) {
                 signingConfig signingConfigs.findbackRelease
+            } else {
+                // Drop the signingConfig inherited from `initWith debug` so a
+                // packaging path that ever bypassed the guard below would emit
+                // an UNSIGNED apk, never a debug-signed one (FBX-025).
+                signingConfig = null
             }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
@@ -256,8 +271,41 @@ tasks.register("verifyBundledClientConfig", Exec) {
     commandLine "node", new File(repoRoot, "scripts/check-mobile-build-config.mjs").absolutePath,
         "--assets", new File(projectDir, "src/main/assets/public/assets").absolutePath
 }
-tasks.matching { it.name in ["packageDebug", "packageRelease", "packageDebugBundle", "packageReleaseBundle"] }
+tasks.matching { it.name in ["packageDebug", "packageRelease", "packageSigneddev", "packageDebugBundle", "packageReleaseBundle", "packageSigneddevBundle"] }
     .configureEach { dependsOn("verifyBundledClientConfig") }
+
+// FBX-026: the signeddev path proves config + App-Links/web provenance, so a
+// direct `./gradlew assembleSigneddev` can never bypass the wrapper checks.
+// Same presence/shape rules as scripts/build-apk.mjs's signeddev branch; no
+// network, no values in the log.
+tasks.register("verifySigneddevConfig", Exec) {
+    commandLine "node", new File(repoRoot, "scripts/check-signeddev-config.mjs").absolutePath,
+        "--assets", new File(projectDir, "src/main/assets/public").absolutePath
+}
+tasks.matching { it.name in ["packageSigneddev", "packageSigneddevBundle"] }
+    .configureEach { dependsOn("verifySigneddevConfig") }
+
+// FBX-025: fail-closed packaging gate. signeddev silently fell back to the
+// debug signer when ANDROID_KEYSTORE_* was incomplete; it now refuses to run
+// at all before any APK is written. Guard fires for any packaging/install
+// task whose name carries "signeddev" (assembleSigneddev, installSigneddev,
+// packageSigneddev, ...). Configuration-only and diagnostic tasks (help,
+// signingReport) stay usable so the project still resolves and can be
+// inspected without signing credentials.
+def signeddevTaskNames = { String name ->
+    name.toLowerCase().contains("signeddev") &&
+        ["assemble", "bundle", "package", "install"]
+            .any { prefix -> name.toLowerCase().startsWith(prefix) }
+}
+gradle.taskGraph.whenReady { graph ->
+    if (!signeddevSigningReady() && graph.allTasks.any { signeddevTaskNames(it.name) }) {
+        throw new GradleException(
+            "signeddev packaging requires the canonical signing environment " +
+            "(ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, " +
+            "ANDROID_KEY_PASSWORD). Failing closed instead of falling back to the " +
+            "debug signer — export them, or build the debug variant.")
+    }
+}
 
 // CI assertion aid: logs the versionName/versionCode the APK will carry.
 tasks.register("printVersionInfo") {

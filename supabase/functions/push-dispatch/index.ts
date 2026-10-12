@@ -33,6 +33,8 @@ export interface DispatchNotification {
   post_id: string | null;
   comment_id: string | null;
   created_at: string;
+  /** Canonical reaction kind on REACTION rows; null on every other type. */
+  reaction_kind?: string | null;
 }
 
 export interface PreferenceRow {
@@ -56,6 +58,21 @@ export interface Delivery {
   type: string;
   postId: string;
   commentId: string | null;
+  /** Validated canonical kind; only set (and only sent) for REACTION rows. */
+  reactionKind?: string | null;
+}
+
+/**
+ * Canonical reaction kinds, mirroring `packages/shared` CANONICAL_REACTION_KINDS.
+ * `notifications.reaction_kind` is unconstrained text, so anything outside this
+ * set is dropped before it can reach an FCM data payload.
+ */
+export const CANONICAL_REACTION_KINDS = ["LOVE", "HELPFUL", "SUPPORT", "WOW"] as const;
+
+/** Allowlisted kind or null — arbitrary strings never enter the payload. */
+export function sanitizeReactionKind(type: string, kind: string | null | undefined): string | null {
+  if (type !== "REACTION" || !kind) return null;
+  return (CANONICAL_REACTION_KINDS as readonly string[]).includes(kind) ? kind : null;
 }
 
 /** Maps a notification type to its preference column; null means never push. */
@@ -124,6 +141,7 @@ export function planDeliveries(
         type: notification.type,
         postId,
         commentId: notification.comment_id ?? null,
+        reactionKind: sanitizeReactionKind(notification.type, notification.reaction_kind),
       });
     }
   }
@@ -192,6 +210,9 @@ export function buildFcmMessage(
     url: `${origin}/r/${encodeURIComponent(delivery.postId)}`,
   };
   if (delivery.commentId) data.commentId = delivery.commentId;
+  // Canonical reaction kind (LOVE/HELPFUL/SUPPORT/WOW) so the Android
+  // payload can render the matching icon; sanitized upstream, only REACTION.
+  if (delivery.reactionKind) data.reactionKind = delivery.reactionKind;
   if (replyToken) data.replyToken = replyToken;
   return {
     token: delivery.token,
@@ -234,6 +255,19 @@ export function buildReplyTokenRow(
     created_at: createdAt,
     expires_at: expiresAt,
   };
+}
+
+/**
+ * Notifications worth minting a reply token for: only those that will actually
+ * be pushed. Tokens minted for a user with no eligible device (push disabled,
+ * no registered token) would sit unused in `push_reply_tokens` until TTL.
+ */
+export function notifiableReplyTargets(
+  notifications: ReadonlyArray<DispatchNotification>,
+  deliveries: ReadonlyArray<Pick<Delivery, "notificationId">>,
+): DispatchNotification[] {
+  const delivered = new Set(deliveries.map((delivery) => delivery.notificationId));
+  return notifications.filter((notification) => delivered.has(notification.id));
 }
 
 export function isAuthorized(header: string | null, secret: string | undefined): boolean {
@@ -358,7 +392,7 @@ export default {
     const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
     const { data: pending, error: readError } = await admin
       .from("notifications")
-      .select("id, user_id, type, post_id, comment_id, created_at")
+      .select("id, user_id, type, post_id, comment_id, created_at, reaction_kind")
       .is("pushed_at", null)
       .is("deleted_at", null)
       .order("created_at", { ascending: true })
@@ -388,11 +422,13 @@ export default {
     }
 
     // One single-use reply token per COMMENT notification, shared by that user's
-    // devices so a reply sent from any device consumes it once.
+    // devices so a reply sent from any device consumes it once. Only minted for
+    // notifications that will actually be pushed (at least one planned
+    // delivery): a user with no eligible device must not leave orphan tokens.
     const replyTokens = new Map<string, string>();
     const tokenCreatedAt = new Date().toISOString();
     const tokenExpiresAt = new Date(Date.now() + REPLY_TOKEN_TTL_MS).toISOString();
-    for (const notification of notifications) {
+    for (const notification of notifiableReplyTargets(notifications, deliveries)) {
       if (notification.type !== "COMMENT" || !notification.comment_id || !notification.post_id) continue;
       const raw = generateReplyToken();
       const row = buildReplyTokenRow(

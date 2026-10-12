@@ -1,24 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { clientMock, channels } = vi.hoisted(() => {
+type AuthListener = (event: string, session: { access_token: string } | null) => void;
+
+const { clientMock, channels, subscribeState } = vi.hoisted(() => {
   const channels: Array<{
     topic: string;
     opts: { config?: { private?: boolean } };
     handlers: Array<{ event: string; cb: (message: unknown) => void }>;
     on: (type: string, filter: { event: string }, cb: (message: unknown) => void) => unknown;
     subscribe: (cb?: (status: string) => void) => unknown;
+    statusCb?: (status: string) => void;
   }> = [];
+  const subscribeState = { status: "SUBSCRIBED" as string };
   function makeChannel(topic: string, opts: { config?: { private?: boolean } }) {
     const channel = {
       topic,
       opts,
       handlers: [] as Array<{ event: string; cb: (message: unknown) => void }>,
+      statusCb: undefined as ((status: string) => void) | undefined,
       on(_type: string, filter: { event: string }, cb: (message: unknown) => void) {
         channel.handlers.push({ event: filter.event, cb });
         return channel;
       },
       subscribe(cb?: (status: string) => void) {
-        cb?.("SUBSCRIBED");
+        channel.statusCb = cb;
+        cb?.(subscribeState.status);
         return channel;
       },
     };
@@ -26,12 +32,18 @@ const { clientMock, channels } = vi.hoisted(() => {
     return channel;
   }
   const clientMock = {
-    auth: { getSession: vi.fn() },
+    auth: {
+      getSession: vi.fn(),
+      onAuthStateChange: vi.fn((cb: AuthListener) => {
+        void cb;
+        return { data: { subscription: { unsubscribe: vi.fn() } } };
+      }),
+    },
     realtime: { setAuth: vi.fn() },
     channel: vi.fn((topic: string, opts: { config?: { private?: boolean } }) => makeChannel(topic, opts)),
-    removeChannel: vi.fn(() => Promise.resolve("ok")),
+    removeChannel: vi.fn((_channel?: unknown) => Promise.resolve("ok")),
   };
-  return { clientMock, channels };
+  return { clientMock, channels, subscribeState };
 });
 
 vi.mock("./supabaseClient", () => ({ getSupabase: () => clientMock }));
@@ -53,13 +65,41 @@ function find(topic: string) {
   return channels.find((c) => c.topic === topic)!;
 }
 
+function lastOf(topic: string) {
+  return channels.filter((c) => c.topic === topic).at(-1)!;
+}
+
+function feedCount(topic = "feed") {
+  return channels.filter((c) => c.topic === topic).length;
+}
+
+/** Mock channels the module has not handed to removeChannel yet. */
+function liveFeedCount() {
+  const removed = new Set(clientMock.removeChannel.mock.calls.map((call) => call[0]));
+  return channels.filter((c) => c.topic === "feed" && !removed.has(c)).length;
+}
+
+function captureAuthListener() {
+  let listener: AuthListener | undefined;
+  clientMock.auth.onAuthStateChange.mockImplementation((cb: AuthListener) => {
+    listener = cb;
+    return { data: { subscription: { unsubscribe: vi.fn() } } };
+  });
+  return () => listener;
+}
+
 beforeEach(() => {
   channels.length = 0;
+  subscribeState.status = "SUBSCRIBED";
   clientMock.channel.mockClear();
   clientMock.removeChannel.mockClear();
   clientMock.realtime.setAuth.mockClear();
   clientMock.auth.getSession.mockReset();
   clientMock.auth.getSession.mockResolvedValue({ data: { session: { access_token: "tok-123" } } });
+  clientMock.auth.onAuthStateChange.mockReset();
+  clientMock.auth.onAuthStateChange.mockImplementation(() => ({
+    data: { subscription: { unsubscribe: vi.fn() } },
+  }));
   vi.clearAllMocks();
 });
 
@@ -241,5 +281,119 @@ describe("teardown", () => {
 
     mod.disconnectRealtime();
     expect(clientMock.removeChannel).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("connection resilience", () => {
+  it("re-applies the access token on every auth change (token refresh)", async () => {
+    const getListener = captureAuthListener();
+    const mod = await load();
+    mod.connectRealtime();
+    await flush();
+    clientMock.realtime.setAuth.mockClear();
+
+    getListener()?.("TOKEN_REFRESHED", { access_token: "tok-refreshed" });
+
+    expect(clientMock.realtime.setAuth).toHaveBeenCalledWith("tok-refreshed");
+  });
+
+  it("tears down user-scoped channels when the session is signed out", async () => {
+    const getListener = captureAuthListener();
+    const mod = await load();
+    mod.connectRealtime();
+    mod.joinInboxRoom("user-1");
+    await flush();
+
+    getListener()?.("SIGNED_OUT", null);
+
+    expect(clientMock.removeChannel).toHaveBeenCalledTimes(2);
+    // The listener registry survives sign-out so consumers keep their handlers.
+    const subscription = clientMock.auth.onAuthStateChange.mock.results.at(-1)?.value
+      ?.data?.subscription;
+    expect(subscription?.unsubscribe).toHaveBeenCalled();
+  });
+
+  it("reconnects a dropped feed channel with backoff and resets after a good subscribe", async () => {
+    vi.useFakeTimers();
+    try {
+      const mod = await load();
+      mod.connectRealtime();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(liveFeedCount()).toBe(1);
+
+      lastOf("feed").statusCb?.("CHANNEL_ERROR");
+      expect(clientMock.removeChannel).toHaveBeenCalledTimes(1);
+      expect(liveFeedCount()).toBe(0);
+
+      // First retry lands after 1s.
+      await vi.advanceTimersByTimeAsync(999);
+      expect(liveFeedCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(liveFeedCount()).toBe(1);
+      expect(clientMock.channel).toHaveBeenCalledTimes(2);
+
+      // A retried subscribe that fails on arrival is torn down and retried
+      // again; two failures in a row double the wait to 2s.
+      subscribeState.status = "CHANNEL_ERROR";
+      lastOf("feed").statusCb?.("TIMED_OUT");
+      await vi.advanceTimersByTimeAsync(999);
+      expect(liveFeedCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(clientMock.channel).toHaveBeenCalledTimes(3);
+      expect(liveFeedCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(liveFeedCount()).toBe(0);
+
+      subscribeState.status = "SUBSCRIBED";
+      await vi.advanceTimersByTimeAsync(1);
+      expect(liveFeedCount()).toBe(1);
+
+      // A successful subscribe resets the counter: the next retry is 1s again.
+      lastOf("feed").statusCb?.("CHANNEL_ERROR");
+      await vi.advanceTimersByTimeAsync(999);
+      expect(liveFeedCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(liveFeedCount()).toBe(1);
+      expect(clientMock.channel).toHaveBeenCalledTimes(5);
+    } finally {
+      subscribeState.status = "SUBSCRIBED";
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending reconnect when realtime is disconnected", async () => {
+    vi.useFakeTimers();
+    try {
+      const mod = await load();
+      mod.connectRealtime();
+      await vi.advanceTimersByTimeAsync(0);
+
+      lastOf("feed").statusCb?.("CHANNEL_ERROR");
+      mod.disconnectRealtime();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(liveFeedCount()).toBe(0);
+      expect(clientMock.channel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops the previous user's inbox channel on an account switch", async () => {
+    const mod = await load();
+    const seen: unknown[] = [];
+    mod.onRealtime("notification:added", (p) => seen.push(p));
+    mod.connectRealtime();
+    mod.joinInboxRoom("user-1");
+    await flush();
+    expect(feedCount("notification:user-1")).toBe(1);
+
+    mod.joinInboxRoom("user-2");
+    await flush();
+
+    expect(clientMock.removeChannel).toHaveBeenCalledTimes(1);
+    expect(feedCount("notification:user-2")).toBe(1);
+    emit(find("notification:user-2"), "notification:added", { op: "insert" });
+    expect(seen).toEqual([{ op: "insert" }]);
   });
 });

@@ -8,8 +8,10 @@ import {
   buildReplyTokenRow,
   categoryFor,
   isAuthorized,
+  notifiableReplyTargets,
   planDeliveries,
   planDispatchOutcomes,
+  sanitizeReactionKind,
   shouldPruneToken,
   type Delivery,
   type DispatchNotification,
@@ -207,4 +209,67 @@ Deno.test("planDispatchOutcomes treats a partial send as handled", () => {
   );
   assertEquals(plan.handled, ["n1"]);
   assertEquals(plan.retry, []);
+});
+
+Deno.test("sanitizeReactionKind forwards only canonical REACTION kinds", () => {
+  assertEquals(sanitizeReactionKind("REACTION", "LOVE"), "LOVE");
+  assertEquals(sanitizeReactionKind("REACTION", "HELPFUL"), "HELPFUL");
+  assertEquals(sanitizeReactionKind("REACTION", "SUPPORT"), "SUPPORT");
+  assertEquals(sanitizeReactionKind("REACTION", "WOW"), "WOW");
+  // Legacy kinds and anything unexpected are dropped before the payload.
+  assertEquals(sanitizeReactionKind("REACTION", "LIKE"), null);
+  assertEquals(sanitizeReactionKind("REACTION", "unknown; drop table"), null);
+  assertEquals(sanitizeReactionKind("REACTION", null), null);
+  assertEquals(sanitizeReactionKind("REACTION", undefined), null);
+  // Non-REACTION types never carry a kind, even if the column is set.
+  assertEquals(sanitizeReactionKind("LIKE", "LOVE"), null);
+});
+
+Deno.test("planDeliveries carries a validated reaction kind onto each delivery", () => {
+  const rows = planDeliveries(
+    [notification({ type: "REACTION", reaction_kind: "HELPFUL" })],
+    [prefs()],
+    [{ user_id: "u1", token: "tok-1" }],
+  );
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0]?.reactionKind, "HELPFUL");
+});
+
+Deno.test("planDeliveries drops an unknown reaction kind", () => {
+  const rows = planDeliveries(
+    [notification({ type: "REACTION", reaction_kind: "EVIL" })],
+    [prefs()],
+    [{ user_id: "u1", token: "tok-1" }],
+  );
+  assertEquals(rows[0]?.reactionKind, null);
+});
+
+Deno.test("buildFcmMessage carries the reaction kind on REACTION pushes only", () => {
+  const withKind = buildFcmMessage(
+    delivery({ type: "REACTION", commentId: null, reactionKind: "SUPPORT" }),
+    "https://findback.example",
+  );
+  assertEquals((withKind.data as Record<string, string>).reactionKind, "SUPPORT");
+
+  const withoutKind = buildFcmMessage(
+    delivery({ type: "REACTION", commentId: null }),
+    "https://findback.example",
+  );
+  assertEquals("reactionKind" in (withoutKind.data as Record<string, string>), false);
+
+  const comment = buildFcmMessage(delivery(), "https://findback.example");
+  assertEquals("reactionKind" in (comment.data as Record<string, string>), false);
+});
+
+Deno.test("notifiableReplyTargets only keeps notifications with a planned delivery", () => {
+  const rows = [
+    notification({ id: "n1", type: "COMMENT", comment_id: "c1" }),
+    notification({ id: "n2", type: "COMMENT", comment_id: "c2" }),
+  ];
+  assertEquals(
+    notifiableReplyTargets(rows, [{ notificationId: "n1" }]).map((row) => row.id),
+    ["n1"],
+  );
+  assertEquals(notifiableReplyTargets(rows, []).length, 0);
+  assertEquals(notifiableReplyTargets([], [{ notificationId: "n1" }]).length, 0);
 });
