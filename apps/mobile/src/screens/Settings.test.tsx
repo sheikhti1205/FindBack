@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockLogout, mockFetchPrefs, mockPermission } = vi.hoisted(() => ({
@@ -280,5 +281,33 @@ describe("cloud connections summary (F03)", () => {
     expect(cloudConnectionsSummary(["openai"])).not.toContain(secret);
     expect(cloudConnectionsSummary(["openai", "anthropic"])).not.toContain(secret);
     expect(cloudConnectionsSummary([])).not.toContain(secret);
+  });
+});
+
+/**
+ * Regression guard for the 60px-vs-48px settings-row defect: the shared
+ * foundation rule must keep the house 60px row target, and the Settings-root
+ * override must never shrink below it. Reading both files proves the rule
+ * that actually wins the cascade (`.fb-settings-root` is more specific).
+ */
+describe("settings row touch-target contract", () => {
+  const sharedCss = readFileSync("src/components/settings/settings.css", "utf8");
+  const rootCss = readFileSync("src/screens/Settings.css", "utf8");
+
+  function ruleBlock(css: string, selector: string): string {
+    const start = css.indexOf(`${selector} {`);
+    expect(start, selector).toBeGreaterThanOrEqual(0);
+    return css.slice(start).split("}")[0]!;
+  }
+
+  it("keeps the shared row minimum at the house 60px target", () => {
+    expect(ruleBlock(sharedCss, ".fb-settings-row")).toMatch(/min-height:\s*3\.75rem/);
+  });
+
+  it("never lets the Settings-root override shrink rows below the shared minimum", () => {
+    const override = ruleBlock(rootCss, ".fb-settings-root .fb-settings-row");
+    const declared = override.match(/min-height:\s*([\d.]+)rem/);
+    expect(declared).toBeTruthy();
+    expect(Number(declared![1])).toBeGreaterThanOrEqual(3.75);
   });
 });

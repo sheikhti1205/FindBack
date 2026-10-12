@@ -96,9 +96,11 @@ a.fb-account-card:hover {
 
 /* W4 compact density — scoped to the Settings root ONLY
    (.fb-settings-page.fb-settings-root). Visual sizes shrink per
-   design/density.ts; effective touch targets stay >= 44/48 because the
-   row/header/summary visuals themselves remain >= 48px tall. No color
-   tokens are defined here (W5 owns color). */
+   design/density.ts; effective touch targets stay >= 44/48. Settings rows
+   keep the house 60px row target (3.75rem) — shrinking them below it was a
+   regression, so the root override must never go under the shared
+   `.fb-settings-row` minimum. No color tokens are defined here (W5 owns
+   color). */
 
 .fb-settings-root .fb-settings-page-content {
   gap: 1rem;
@@ -114,7 +116,7 @@ a.fb-account-card:hover {
 
 .fb-settings-root .fb-settings-row {
   gap: 0.625rem;
-  min-height: 3rem;
+  min-height: 3.75rem;
   padding: 0.625rem 0.25rem;
 }
 

@@ -28,10 +28,14 @@ describe("consumer appearance migration", () => {
     expect(appearance.loadAppearance()).toEqual(appearance.DEFAULT_APPEARANCE);
   });
 
-  it("offers exactly the seven approved accents", () => {
-    expect(appearance.ACCENT_OPTIONS.map((a) => a.id)).toEqual([
+  it("offers exactly the twelve approved accents, default included and unique", () => {
+    const ids = appearance.ACCENT_OPTIONS.map((a) => a.id);
+    expect(ids).toEqual([
       "emerald", "blue", "violet", "rose", "amber", "teal", "mono",
+      "indigo", "cyan", "lime", "orange", "pink",
     ]);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain(appearance.DEFAULT_APPEARANCE.accent);
   });
 
   it("emits light and dark pairs for each accent so a theme switch cannot leave stale colors", () => {

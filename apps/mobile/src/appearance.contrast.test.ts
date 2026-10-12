@@ -283,11 +283,14 @@ describe("neutral structural palette (v0.9.0-beta.1)", () => {
     }
   });
 
-  it("defaults the accent to mono while keeping all seven options", () => {
+  it("defaults the accent to mono while keeping all twelve options", () => {
     expect(DEFAULT_APPEARANCE.accent).toBe("mono");
-    expect(ACCENT_OPTIONS.map((a) => a.id)).toEqual([
+    const ids = ACCENT_OPTIONS.map((a) => a.id);
+    expect(ids).toEqual([
       "emerald", "blue", "violet", "rose", "amber", "teal", "mono",
+      "indigo", "cyan", "lime", "orange", "pink",
     ]);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("binds the Found badge to the W5 functional green with an icon + text affordance elsewhere", () => {

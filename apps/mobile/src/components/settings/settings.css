@@ -73,7 +73,7 @@
   align-items: center;
   gap: 0.625rem;
   width: 100%;
-  min-height: 3rem;
+  min-height: 3.75rem;
   padding: 0.625rem 0.25rem;
   color: var(--fb-on-surface);
   text-align: start;
@@ -91,7 +91,7 @@ a.fb-settings-row:hover, button.fb-settings-row:hover:not(:disabled) { backgroun
 .fb-settings-chevron { flex: none; color: var(--fb-on-surface-variant); }
 .fb-settings-row[data-destructive] .fb-settings-row-title { color: var(--fb-error); }
 .fb-settings-row:disabled, .fb-settings-row[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
-/* C6: compact 28px visual tile; the 48px row keeps the ≥44/48dp target
+/* C6: compact 28px visual tile; the 60px row keeps the ≥44/48dp target
    independent of the visual size. */
 .fb-setting-icon {
   display: inline-flex;

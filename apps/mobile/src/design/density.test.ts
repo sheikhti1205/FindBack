@@ -24,9 +24,9 @@ describe("density tokens (W4.1 compactness targets)", () => {
     expect(density.primaryButtonHeight).toBeGreaterThanOrEqual(density.minTouchTarget);
   });
 
-  it("keeps the settings row visual height in 52–56", () => {
-    expect(density.settingsRowHeight).toBeGreaterThanOrEqual(52);
-    expect(density.settingsRowHeight).toBeLessThanOrEqual(56);
+  it("keeps the settings row at the house 60px row target", () => {
+    expect(density.settingsRowHeight).toBeGreaterThanOrEqual(60);
+    expect(density.settingsRowHeight).toBeLessThanOrEqual(64);
   });
 
   it("keeps the small chip visual height in 28–32", () => {

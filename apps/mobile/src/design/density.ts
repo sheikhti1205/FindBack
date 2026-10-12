@@ -13,8 +13,9 @@ export const density = {
   compactButtonHeight: 38,
   /** Category glyph visual size (target 20–22). */
   iconSize: 20,
-  /** Settings row visual height (target 52–56; stays above the 48 comfort target). */
-  settingsRowHeight: 54,
+  /** Settings row height: the house 60px row target (matches the shared
+   *  `.fb-settings-row` min-height). Rows must never shrink below it. */
+  settingsRowHeight: 60,
   /** Small chip visual height (target 28–32; chips are display-only). */
   chipHeight: 30,
   /** Common card padding (target 10–12). */
