@@ -291,8 +291,20 @@ describe("cloud connections summary (F03)", () => {
  * that actually wins the cascade (`.fb-settings-root` is more specific).
  */
 describe("settings row touch-target contract", () => {
-  const sharedCss = readFileSync("src/components/settings/settings.css", "utf8");
-  const rootCss = readFileSync("src/screens/Settings.css", "utf8");
+  // Vitest may run from the repo root or apps/mobile — resolve by trial so
+  // the guard holds in both. A total miss throws, failing loudly.
+  function readMobileFile(relativePath: string): string {
+    for (const candidate of [`apps/mobile/src/${relativePath}`, `src/${relativePath}`]) {
+      try {
+        return readFileSync(candidate, "utf8");
+      } catch {
+        // Not under this cwd — try the next candidate.
+      }
+    }
+    throw new Error(`cannot locate ${relativePath} from cwd ${process.cwd()}`);
+  }
+  const sharedCss = readMobileFile("components/settings/settings.css");
+  const rootCss = readMobileFile("screens/Settings.css");
 
   function ruleBlock(css: string, selector: string): string {
     const start = css.indexOf(`${selector} {`);
