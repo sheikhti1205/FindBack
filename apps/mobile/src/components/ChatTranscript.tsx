@@ -284,11 +284,13 @@ export function ChatTranscript({
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`max-w-[85%] rounded-m3-md px-3.5 py-2.5 text-sm leading-relaxed ${
+              className={
                 m.role === "user"
-                  ? "bg-on-surface text-surface"
-                  : "border border-outline-variant bg-surface-container-low"
-              }`}
+                  ? "max-w-[85%] rounded-m3-md bg-on-surface px-3.5 py-2.5 text-sm leading-relaxed text-surface"
+                  : // Assistant turns are clean text on the surface, not a
+                    // bordered card (doc 28): full width, no fill, no border.
+                    "w-full text-sm leading-relaxed text-on-surface"
+              }
             >
               {m.role === "assistant" && m.source !== undefined && (
                 <p className="mb-1 text-xs text-on-surface-variant">
@@ -437,7 +439,7 @@ export function ChatTranscript({
             transition={{ duration: motionDurations.fast }}
             className="flex justify-start"
           >
-            <div className="max-w-[85%] rounded-m3-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5 text-sm leading-relaxed">
+            <div className="w-full text-sm leading-relaxed text-on-surface">
               <p className="mb-1 text-xs text-on-surface-variant">
                 {partialLabel !== null && partialLabel !== "" ? partialLabel : "AI answer"}
               </p>

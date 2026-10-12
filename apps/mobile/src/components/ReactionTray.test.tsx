@@ -89,6 +89,35 @@ describe("ReactionTray", () => {
     expect(screen.getByTestId("reaction-option-LOVE").getAttribute("aria-checked")).toBe("true");
   });
 
+  it("portals the tray out of clipping ancestors so it is never clipped", () => {
+    render(
+      <div data-testid="clipper" style={{ overflow: "hidden" }}>
+        <button type="button" id="tray-trigger">
+          open
+        </button>
+        <ReactionTray
+          open
+          myReaction={null}
+          counts={{}}
+          total={0}
+          onSelect={() => {}}
+          onClose={() => {}}
+          triggerId="tray-trigger"
+        />
+      </div>,
+    );
+    const tray = screen.getByTestId("reaction-tray");
+    // Rendered through FloatingPortal into document.body, not inside the
+    // overflow-hidden ancestor that would clip it.
+    expect(screen.getByTestId("clipper").contains(tray)).toBe(false);
+    expect(document.body.contains(tray)).toBe(true);
+  });
+
+  it("anchors with fixed positioning so it can flip/shift within the viewport", () => {
+    render(<OpenTray />);
+    expect(screen.getByTestId("reaction-tray").style.position).toBe("fixed");
+  });
+
   it("lifts the hovered choice (slide-to-select visual)", () => {
     render(<OpenTray />);
     const love = screen.getByTestId("reaction-option-LOVE");

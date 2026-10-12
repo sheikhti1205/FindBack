@@ -8,12 +8,24 @@ import { CANONICAL_REACTION_KINDS } from "@findback/shared";
 import { REACTION_KINDS, normalizeReactionKind } from "../services/reactions";
 import { REACTION_KIND_FUNCTIONAL } from "../design/functionalColors";
 import { ReactionArt } from "./ReactionArt";
+import {
+  useFloating,
+  autoUpdate,
+  offset,
+  flip,
+  shift,
+  size,
+  FloatingPortal,
+} from "@floating-ui/react";
 
 /**
  * C2 floating reaction pill: the shared picker for posts and comments.
  *
- * - Floating pill anchored above the trigger (the caller positions it
- *   `absolute bottom-full`); icon-only, no labels or counts inside.
+ * - Floating pill anchored above the trigger via a Floating UI portal
+ *   (`FloatingPortal` + `useFloating`), so it escapes the caller's clipping
+ *   ancestors (`overflow-y-auto` scrollers, `overflow-hidden` image frames)
+ *   and flips/shifts to stay fully inside the viewport; icon-only, no labels
+ *   or counts inside.
  * - Large expressive filled SVG artwork (see `ReactionArt` — never an
  *   emoji-font glyph), one 44px hit target per kind, 30px visual art.
  * - Hold (~400 ms, owned by the caller's `useLongPress`) opens; haptic
@@ -129,7 +141,49 @@ export function ReactionTray({
       viewport?.removeEventListener("scroll", onScroll);
       viewport?.removeEventListener("resize", onScroll);
     };
-  }, [open ]);
+  }, [open]);
+
+  // Portal + Floating UI: the tray escapes the caller's clipping ancestors
+  // (the feed's `overflow-y-auto` scroller and the image frame's
+  // `overflow-hidden`) and is anchored to the trigger element, flipping and
+  // shifting to stay fully inside the viewport at 320dp and in landscape.
+  const { refs, floatingStyles } = useFloating({
+    open,
+    onOpenChange: (next) => {
+      if (!next) closeRef.current();
+    },
+    placement: "top",
+    strategy: "fixed",
+    middleware: [
+      offset(6),
+      flip({ padding: 8, fallbackAxisSideDirection: "start" }),
+      shift({ padding: 8, crossAxis: true }),
+      size({
+        apply({ availableWidth, elements }: { availableWidth: number; elements: { floating: HTMLElement } }) {
+          elements.floating.style.maxWidth = `${Math.max(0, availableWidth - 8)}px`;
+        },
+      }),
+    ],
+    whileElementsMounted: autoUpdate,
+  });
+
+  // Anchor to the trigger by id: callers pass the id of whichever control
+  // opened the tray (the main button or the "Choose reaction" chevron).
+  useEffect(() => {
+    if (open) refs.setReference(document.getElementById(triggerId));
+  }, [open, refs, triggerId]);
+
+  // FloatingPortal mounts its children after the parent's passive effects, so
+  // the focus effect above can run before the option refs attach. Focus the
+  // active/first option synchronously from the floating ref callback instead
+  // (child refs attach before the parent's on mount).
+  const setFloatingRef = (el: HTMLDivElement | null) => {
+    refs.setFloating(el);
+    if (el && open) {
+      const index = activeKind ? CANONICAL_REACTION_KINDS.indexOf(activeKind) : 0;
+      itemRefs.current[index]?.focus();
+    }
+  };
 
   if (!open) return null;
 
@@ -196,65 +250,69 @@ export function ReactionTray({
   }
 
   return (
-    <div
-      role="menu"
-      data-testid="reaction-tray"
-      aria-label="Choose a reaction"
-      onKeyDown={onMenuKeyDown}
-      onPointerUp={handleTrayPointerUp}
-      onPointerLeave={() => setHover(null)}
-      className="flex items-center gap-0.5 rounded-full border border-outline-variant bg-surface-container px-1.5 py-1 shadow-lg"
-    >
-      {CANONICAL_REACTION_KINDS.map((kind, index) => {
-        const checked = activeKind === kind;
-        const lifted = hovered === kind;
-        return (
-          <button
-            key={kind}
-            ref={(el) => {
-              itemRefs.current[index] = el;
-            }}
-            type="button"
-            role="menuitemradio"
-            aria-checked={checked}
-            aria-label={checked ? `${reactionKindLabel(kind)}, active` : reactionKindLabel(kind)}
-            data-testid={`reaction-option-${kind}`}
-            data-kind={kind}
-            data-hovered={lifted ? "true" : "false"}
-            data-functional-color={REACTION_KIND_FUNCTIONAL[kind]}
-            disabled={pending}
-            onPointerEnter={() => setHover(kind)}
-            onPointerMove={() => {
-              if (hovered !== kind) setHover(kind);
-            }}
-            onPointerDown={() => {
-              downInsideRef.current = true;
-            }}
-            onClick={() => {
-              // Swallow the stray click after a drag-release select so one
-              // gesture never writes twice.
-              if (dragSelectedRef.current) return;
-              selectRef.current(kind);
-            }}
-            className="relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full p-1 transition-transform duration-150 motion-reduce:transition-none"
-            style={{
-              transform: lifted ? "scale(1.3) translateY(-4px)" : checked ? "scale(1.12)" : "scale(1)",
-              backgroundColor: checked ? "var(--fb-surface-container-high)" : "transparent",
-              zIndex: lifted ? 1 : 0,
-            }}
-          >
-            <ReactionArt kind={kind} size={30} />
-            {checked && (
-              <span
-                aria-hidden="true"
-                data-testid={`reaction-active-${kind}`}
-                className="absolute bottom-1 h-1 w-1 rounded-full"
-                style={{ backgroundColor: `var(--fb-reaction-${kind.toLowerCase()})` }}
-              />
-            )}
-          </button>
-        );
-      })}
-    </div>
+    <FloatingPortal>
+      <div
+        ref={setFloatingRef}
+        style={floatingStyles}
+        role="menu"
+        data-testid="reaction-tray"
+        aria-label="Choose a reaction"
+        onKeyDown={onMenuKeyDown}
+        onPointerUp={handleTrayPointerUp}
+        onPointerLeave={() => setHover(null)}
+        className="flex items-center gap-0.5 rounded-full border border-outline-variant bg-surface-container px-1.5 py-1 shadow-lg"
+      >
+        {CANONICAL_REACTION_KINDS.map((kind, index) => {
+          const checked = activeKind === kind;
+          const lifted = hovered === kind;
+          return (
+            <button
+              key={kind}
+              ref={(el) => {
+                itemRefs.current[index] = el;
+              }}
+              type="button"
+              role="menuitemradio"
+              aria-checked={checked}
+              aria-label={checked ? `${reactionKindLabel(kind)}, active` : reactionKindLabel(kind)}
+              data-testid={`reaction-option-${kind}`}
+              data-kind={kind}
+              data-hovered={lifted ? "true" : "false"}
+              data-functional-color={REACTION_KIND_FUNCTIONAL[kind]}
+              disabled={pending}
+              onPointerEnter={() => setHover(kind)}
+              onPointerMove={() => {
+                if (hovered !== kind) setHover(kind);
+              }}
+              onPointerDown={() => {
+                downInsideRef.current = true;
+              }}
+              onClick={() => {
+                // Swallow the stray click after a drag-release select so one
+                // gesture never writes twice.
+                if (dragSelectedRef.current) return;
+                selectRef.current(kind);
+              }}
+              className="relative flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full p-1 transition-transform duration-150 motion-reduce:transition-none"
+              style={{
+                transform: lifted ? "scale(1.3) translateY(-4px)" : checked ? "scale(1.12)" : "scale(1)",
+                backgroundColor: checked ? "var(--fb-surface-container-high)" : "transparent",
+                zIndex: lifted ? 1 : 0,
+              }}
+            >
+              <ReactionArt kind={kind} size={30} />
+              {checked && (
+                <span
+                  aria-hidden="true"
+                  data-testid={`reaction-active-${kind}`}
+                  className="absolute bottom-1 h-1 w-1 rounded-full"
+                  style={{ backgroundColor: `var(--fb-reaction-${kind.toLowerCase()})` }}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </FloatingPortal>
   );
 }
