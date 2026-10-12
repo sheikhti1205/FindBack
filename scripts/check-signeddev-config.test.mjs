@@ -171,12 +171,67 @@ test("checkSigneddevConfig reports every failing check, not just the first", () 
   const dir = mkdtempSync(join(tmpdir(), "findback-signeddev-multi-"));
   try {
     writeStagedAssets(dir);
-    const { ok, errors } = checkSigneddevConfig({ assetsRoot: dir });
-    // Repo-local env is healthy on this machine (root .env + .env.local), so
-    // this only pins the shape: either all-clear or one line per failure.
-    assert.equal(typeof ok, "boolean");
-    assert.ok(Array.isArray(errors));
-    for (const error of errors) assert.equal(typeof error, "string");
+    const base = checkSigneddevConfig({ assetsRoot: dir });
+    assert.equal(typeof base.ok, "boolean");
+    assert.ok(Array.isArray(base.errors));
+    for (const error of base.errors) assert.equal(typeof error, "string");
+
+    // Force three independent failures in three different checks, measuring
+    // the message each one produces on its own.
+    const withBadGoogleId = (fn) => {
+      const previous = process.env.GOOGLE_WEB_CLIENT_ID;
+      process.env.GOOGLE_WEB_CLIENT_ID = "not-a-client-id";
+      try {
+        return fn();
+      } finally {
+        if (previous === undefined) delete process.env.GOOGLE_WEB_CLIENT_ID;
+        else process.env.GOOGLE_WEB_CLIENT_ID = previous;
+      }
+    };
+    const missingManifest = join(dir, "missing-manifest.xml");
+    const mismatchedPin = "ab".repeat(32);
+    const variants = [
+      { name: "google", run: (opts) => withBadGoogleId(() => checkSigneddevConfig(opts)) },
+      {
+        name: "manifest",
+        run: (opts) => checkSigneddevConfig({ ...opts, manifestPath: missingManifest }),
+      },
+      {
+        name: "association",
+        run: (opts) =>
+          checkSigneddevConfig({ ...opts, env: { ANDROID_SIGNING_CERT_SHA256: mismatchedPin } }),
+      },
+    ];
+
+    const soloFailures = [];
+    for (const variant of variants) {
+      const result = variant.run({ assetsRoot: dir });
+      assert.equal(result.ok, false, `${variant.name}: forced failure did not fail the gate`);
+      const added = result.errors.filter((error) => !base.errors.includes(error));
+      assert.ok(
+        added.length >= 1,
+        `${variant.name}: no distinct failure line (got ${JSON.stringify(result.errors)})`,
+      );
+      soloFailures.push(...added);
+    }
+
+    // All three at once: the aggregate must still name every single failure —
+    // not just the first — on top of whatever the ambient env already reports.
+    const all = withBadGoogleId(() =>
+      checkSigneddevConfig({
+        assetsRoot: dir,
+        manifestPath: missingManifest,
+        env: { ANDROID_SIGNING_CERT_SHA256: mismatchedPin },
+      }),
+    );
+    assert.equal(all.ok, false);
+    for (const message of soloFailures) {
+      assert.ok(
+        all.errors.includes(message),
+        `aggregation dropped a failing check: ${message}`,
+      );
+    }
+    assert.ok(all.errors.length >= base.errors.length + variants.length);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

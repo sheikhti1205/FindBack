@@ -102,11 +102,18 @@ function dispatch(event: RealtimeEvent, payload: Record<string, unknown>): void 
  * and tears down user-scoped sockets when the session goes away.
  */
 function ensureClient(): SupabaseClient | null {
-  if (client) return client;
-  try {
-    client = getSupabase();
-  } catch {
-    return null;
+  // The cached client is only reusable while its auth mirror is still
+  // attached. Sign-out tears the mirror down, and a first attach can fail
+  // after the client is cached; either way an early-return here would leave
+  // a long-lived socket on the access token it was opened with — a stale
+  // token for the rest of the process (SIGNED_OUT → sign-in never rebinds).
+  if (client && authUnsubscribe) return client;
+  if (!client) {
+    try {
+      client = getSupabase();
+    } catch {
+      return null;
+    }
   }
   const c = client;
   // Mirror every auth change (TOKEN_REFRESHED included) into Realtime so a

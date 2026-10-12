@@ -313,6 +313,42 @@ describe("connection resilience", () => {
     expect(subscription?.unsubscribe).toHaveBeenCalled();
   });
 
+  // Would-be-red without the ensureClient fix: a cached client whose auth
+  // mirror is missing used to early-return, so the mirror was never
+  // re-attached and the socket kept the token it was opened with.
+  it("re-attaches the auth mirror on re-login instead of trusting a cached client", async () => {
+    const mod = await load();
+    // First attach fails after the client is already cached (e.g. auth
+    // storage unavailable mid-boot). Tolerate the throw: the state under
+    // test is the cached client left WITHOUT a mirror.
+    clientMock.auth.onAuthStateChange.mockImplementationOnce(() => {
+      throw new Error("mirror unavailable");
+    });
+    try {
+      mod.connectRealtime();
+    } catch {
+      /* attach failed; client stays cached with no mirror */
+    }
+    expect(clientMock.auth.onAuthStateChange).toHaveBeenCalledTimes(1);
+
+    const getListener = captureAuthListener();
+    mod.connectRealtime(); // next sign-in on the same client
+    await flush();
+    expect(clientMock.auth.onAuthStateChange).toHaveBeenCalledTimes(2);
+    clientMock.realtime.setAuth.mockClear();
+    getListener()?.("TOKEN_REFRESHED", { access_token: "tok-after-retry" });
+    expect(clientMock.realtime.setAuth).toHaveBeenCalledWith("tok-after-retry");
+
+    // Full cycle: sign-out tears the mirror down, sign-in re-attaches it.
+    getListener()?.("SIGNED_OUT", null);
+    mod.connectRealtime();
+    await flush();
+    expect(clientMock.auth.onAuthStateChange).toHaveBeenCalledTimes(3);
+    clientMock.realtime.setAuth.mockClear();
+    getListener()?.("SIGNED_IN", { access_token: "tok-relogin" });
+    expect(clientMock.realtime.setAuth).toHaveBeenCalledWith("tok-relogin");
+  });
+
   it("reconnects a dropped feed channel with backoff and resets after a good subscribe", async () => {
     vi.useFakeTimers();
     try {

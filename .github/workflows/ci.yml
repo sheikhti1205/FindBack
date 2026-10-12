@@ -88,7 +88,7 @@ jobs:
         # because these lists are explicit globs never match new files.
         run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-commit-messages.test.mjs scripts/ai-release-gate.test.mjs scripts/completion-gate.test.mjs scripts/check-security-baseline.test.mjs scripts/check-map-provider.test.mjs
       - name: Sharing and server credential config tests
-        run: node --test scripts/check-share-config.test.mjs scripts/check-mobile-build-config.test.mjs scripts/sync-fcm-secrets.test.mjs scripts/check-google-config.test.mjs
+        run: node --test scripts/check-share-config.test.mjs scripts/check-mobile-build-config.test.mjs scripts/sync-fcm-secrets.test.mjs scripts/check-google-config.test.mjs scripts/check-signeddev-config.test.mjs scripts/check-web-association.test.mjs
       - name: Build mobile web shell
         run: npm run build -w @findback/mobile
         env:
