@@ -35,7 +35,7 @@ import {
   getStashedPhoto,
   getStashedPhotoMeta,
   persistStashedPhotos,
-  restashPhotoFile,
+  reviveNativePhotos,
   restoreStashedPhotos,
   stashPhotoFile,
 } from "../services/photoStore";
@@ -576,7 +576,8 @@ function ReportForm() {
   });
 
   // Durable mount restore: rehydrate persisted photo bytes,
-  // then revive native-ref slots (all 5) via the canonical native processor,
+  // then reopen native-ref slots through photoStore's canonical revive
+  // (reviveNativePhotos → FindbackMedia importNativeImageUri),
   // then merge everything into state in draft order. Never touches the editor.
   // Unrecoverable slots are NAMED (failedPhotoIds) instead of a bare boolean:
   // publish stays blocked until the user retries or explicitly removes the
@@ -601,51 +602,40 @@ function ReportForm() {
       }
       if (isCancelled() || generation !== draftGeneration(accountId)) return;
       const pendings = findPendingNativeRestores(initialDraft);
-      const converted = new Map<string, { file: File; picked: PickedPhoto }>();
-      for (const pending of pendings) {
-        // FBX-030: revive through the canonical native processor only. A durable
-        // ref must be a granted content URI; anything else (a blob:, a deleted
-        // capture with no stashed File) is a named unavailable slot below. The
-        // old HTML/File revive (photoToFile) is gone: it could not read a
-        // content URI and silently produced a dead attachment.
-        const uri = pending.picked.nativeUri;
-        if (!uri.startsWith("content://")) {
-          missing.add(pending.id);
-          continue;
-        }
-        try {
-          const imported = await importNativeImageUri(uri);
-          if (isCancelled() || generation !== draftGeneration(accountId)) return;
-          converted.set(pending.id, {
-            file: importedImageToFile(imported),
-            picked: { ...pending.picked, motionPhoto: imported.motionStillUsed },
-          });
-        } catch {
-          // Native revive failed: named below; the draft text is unaffected.
-          missing.add(pending.id);
-        }
-      }
+      // FBX-030: revive through photoStore's canonical registry path only
+      // (reviveNativePhotos → importNativeImageUri). A durable ref must be a
+      // granted content URI; anything else (a blob:, a deleted capture with no
+      // stashed File) and any unreachable/failed processor run is classified
+      // into `failed` and named below. The old HTML/File revive (photoToFile)
+      // is gone: it could not read a content URI and silently produced a dead
+      // attachment — this screen never falls back to it.
+      const revive = await reviveNativePhotos(pendings, {
+        accountId,
+        isCancelled: () => isCancelled() || generation !== draftGeneration(accountId),
+      });
       if (isCancelled() || generation !== draftGeneration(accountId)) return;
+      for (const id of revive.failed) missing.add(id);
+      const revived = new Set(revive.restored);
       for (const id of draftIds) {
         if (photosRef.current.some((p) => p.id === id)) continue;
-        if (converted.has(id)) continue;
+        if (revived.has(id)) continue;
         if (getStashedPhoto(id)) continue;
         missing.add(id);
       }
       // Mixed-success contract: every recovered slot is merged into state
-      // FIRST (converted Files are restashed under their ORIGINAL ids so
+      // FIRST (revived Files are restashed under their ORIGINAL ids so
       // draft references, ordering and persistence stay coherent), and only
       // then are the failed slots reported. Removing an unavailable photo can
       // therefore never drop a successfully converted sibling.
       const next = [...photosRef.current];
       for (const id of draftIds) {
         if (next.some((p) => p.id === id)) continue;
-        const conv = converted.get(id);
-        const file = conv?.file ?? getStashedPhoto(id);
+        const file = getStashedPhoto(id);
         if (!file) continue;
-        if (conv) restashPhotoFile(id, conv.file, { picked: conv.picked, accountId });
         const ref = draftPhotoRef(initialDraft, id);
-        const picked = conv?.picked ?? refToPicked(ref) ?? getStashedPhotoMeta(id)?.picked ?? null;
+        const picked = revived.has(id)
+          ? getStashedPhotoMeta(id)?.picked ?? refToPicked(ref) ?? null
+          : refToPicked(ref) ?? getStashedPhotoMeta(id)?.picked ?? null;
         next.push({
           id,
           file,

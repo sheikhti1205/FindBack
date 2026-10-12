@@ -13,7 +13,11 @@ import { clearAllPhotoBytes, clearPhotoBytes, readPhotoBytes, writePhotoBytes } 
  *
  * Durability across process death (G15): IndexedDB holds full-size Files;
  * small Files fall back to data URLs where IndexedDB is unavailable. Native
- * URI references can also be revived via photoToFile on a later session.
+ * URI references are reopened on a later session ONLY through the canonical
+ * native processor (FindbackMedia `importNativeImageUri`, see
+ * reviveNativePhotos) — never through the legacy photoToFile conversion
+ * (fetch over webPath: it cannot read a granted content URI and produced a
+ * dead attachment with wrong format/memory bounds — FBX-030).
  *
  * Persist is warning-only: when bytes cannot be stored durably (no IndexedDB
  * and a File too large for the data-URL fallback, with no native ref), the
@@ -341,7 +345,7 @@ export async function restoreStashedPhotos(accountId?: string | null): Promise<s
   return restored;
 }
 
-/** Registry ids with a native ref but no usable File (photoToFile can revive). */
+/** Registry ids with a native ref but no usable File (reviveNativePhotos reopens them via the canonical native processor). */
 export function pendingNativePhotoIds(accountId?: string | null): string[] {
   return readRegistry(accountId)
     .filter((e) => !files.has(e.id) && !!e.nativeUri && !e.nativeUri.startsWith("blob:"))
@@ -355,6 +359,81 @@ export function getPhotoDescriptor(
 ): StoredPhotoDescriptor | null {
   if (!id) return null;
   return readRegistry(accountId).find((e) => e.id === id) ?? null;
+}
+
+/** One persisted native-ref slot awaiting canonical revival (draft-ordered). */
+export interface NativeReviveRequest {
+  /** Draft slot id — the revived File is stashed under this exact id. */
+  id: string;
+  /** Draft-derived ref fallback when the registry has no descriptor yet. */
+  picked?: PickedPhoto | null;
+}
+
+/** Outcome of {@link reviveNativePhotos}; both lists keep request order. */
+export interface NativeReviveReport {
+  /** Slots holding a canonical File now (restashed under their original ids). */
+  restored: string[];
+  /** Slots needing a Failed/Retry row — never revived through another path. */
+  failed: string[];
+}
+
+/**
+ * FBX-030: reopen persisted native refs through the canonical native
+ * processor (FindbackMedia `importNativeImageUri`), one slot at a time in
+ * request order. Each success restashes the bounded derivative File under its
+ * ORIGINAL id (meta picked updated with the motion-still result), so draft
+ * references, ordering and persistence stay coherent — kill/reboot restore:
+ * registry ref → canonical processor → app-private File.
+ *
+ * Failure contract: a non-granted URI (anything outside `content://`), an
+ * unreachable/absent processor, and any import/bridge error all classify the
+ * slot into `failed`; the caller surfaces a Failed/Retry row. There is NO
+ * legacy fallback here — this module never converts a ref through photoToFile.
+ * A slot that already holds a File counts as restored without re-importing
+ * (idempotent retry). Cooperative cancellation stops BETWEEN slots: revived
+ * slots stay restashed; unstarted slots are reported neither way.
+ */
+export async function reviveNativePhotos(
+  requests: readonly NativeReviveRequest[],
+  opts?: { accountId?: string | null; isCancelled?: () => boolean },
+): Promise<NativeReviveReport> {
+  const restored: string[] = [];
+  const failed: string[] = [];
+  for (const request of requests) {
+    if (opts?.isCancelled?.()) break;
+    const id = request.id;
+    if (files.has(id)) {
+      restored.push(id);
+      continue;
+    }
+    const entry = getPhotoDescriptor(id, opts?.accountId);
+    const base = pickedFor(id, entry ?? undefined) ?? request.picked ?? null;
+    const uri = base?.nativeUri ?? null;
+    if (!base || !uri || !uri.startsWith("content://")) {
+      // Not a granted content URI (blob:, raw path, missing ref): named as
+      // failed instead of being fed to any conversion bridge.
+      failed.push(id);
+      continue;
+    }
+    try {
+      // Loaded on first revive: photoStore itself is pulled in at app boot
+      // (auth chain), while the FindbackMedia bridge only matters when a
+      // persisted ref is actually reopened. Load failure classifies the slot
+      // as failed below — there is no other conversion path to fall back to.
+      const { importNativeImageUri, importedImageToFile } = await import("./media/nativeMedia");
+      const imported = await importNativeImageUri(uri);
+      const file = importedImageToFile(imported);
+      restashPhotoFile(id, file, {
+        picked: { ...base, motionPhoto: imported.motionStillUsed },
+        accountId: opts?.accountId,
+      });
+      restored.push(id);
+    } catch {
+      // Processor unreachable or import failed: Failed/Retry row, no fallback.
+      failed.push(id);
+    }
+  }
+  return { restored, failed };
 }
 
 /** Drop every stashed File (e.g. on sign-out): memory + all stored registries. */
