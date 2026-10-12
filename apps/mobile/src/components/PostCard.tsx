@@ -52,7 +52,7 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
   // variant; home-feed ignores it because PostCardContent links itself.
   const body =
     variant === "home-feed" ? (
-      <div className="flex flex-col overflow-hidden rounded-[18px] border border-outline-variant bg-surface-container-low shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container">
+      <div className="flex flex-col overflow-hidden rounded-[18px] border border-outline-variant bg-surface-container-low transition-colors hover:border-on-surface-variant active:bg-surface-container">
         {children}
       </div>
     ) : (

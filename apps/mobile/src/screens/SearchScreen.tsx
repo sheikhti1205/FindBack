@@ -238,7 +238,7 @@ export function SearchScreen(props: {
                 animate="visible"
                 exit="exit"
                 transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
-                className="shrink-0 rounded-full px-2 text-sm font-medium text-on-surface"
+                className="shrink-0 rounded-full min-h-[48px] px-2 text-sm font-medium text-on-surface"
               >
                 Cancel
               </motion.button>
