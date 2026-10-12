@@ -5,7 +5,7 @@ import type {
   ReactionKind,
 } from "@findback/shared";
 import { CANONICAL_REACTION_KINDS } from "@findback/shared";
-import { REACTION_KINDS, normalizeReactionKind } from "../services/reactions";
+import { REACTION_KINDS, normalizeReactionKind, topKinds } from "../services/reactions";
 import { REACTION_KIND_FUNCTIONAL } from "../design/functionalColors";
 import { ReactionArt } from "./ReactionArt";
 import {
@@ -47,17 +47,70 @@ export function reactionKindLabel(kind: CanonicalReactionKind): string {
 
 /** Highest-count kind; ties resolve in canonical tray order; empty → null. */
 export function topReactionKind(counts: ReactionCounts): CanonicalReactionKind | null {
-  let best: CanonicalReactionKind | null = null;
-  let bestCount = 0;
-  for (const kind of CANONICAL_REACTION_KINDS) {
-    const n = counts[kind] ?? 0;
-    if (n > bestCount) {
-      best = kind;
-      bestCount = n;
-    }
-  }
-  return best;
+  return topKinds(counts, 1)[0] ?? null;
 }
+
+export interface ReactionTrayChooseTriggerProps {
+  /** Element id for the trigger (callers pass it as the tray's `triggerId`). */
+  id: string;
+  expanded: boolean;
+  disabled?: boolean;
+  onToggle: () => void;
+}
+
+/**
+ * FBX-018 compact accessible alternate to a permanent bulky chevron.
+ *
+ * Long-press on the main action stays the primary opener; this small trigger
+ * (plus-in-ring glyph, no chevron) preserves the keyboard/screen-reader path
+ * — a native button with `aria-haspopup="menu"` + `aria-expanded` and the
+ * "Choose reaction" name — so the tray opens with Enter/Space and never
+ * needs a long-press. Full 44px hit target; 14px visual glyph.
+ */
+export function ReactionTrayChooseTrigger({
+  id,
+  expanded,
+  disabled = false,
+  onToggle,
+}: ReactionTrayChooseTriggerProps) {
+  return (
+    <button
+      type="button"
+      id={id}
+      data-testid="reaction-choose-compact"
+      aria-haspopup="menu"
+      aria-expanded={expanded}
+      aria-label="Choose reaction"
+      disabled={disabled}
+      onClick={onToggle}
+      className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant transition-colors motion-reduce:transition-none"
+    >
+      <svg
+        viewBox="0 0 16 16"
+        width={14}
+        height={14}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        aria-hidden="true"
+        data-testid="reaction-choose-compact-glyph"
+      >
+        <circle cx="8" cy="8" r="6.4" />
+        <path d="M8 5.4v5.2M5.4 8h5.2" />
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * Reduced-motion fallback for the tray's lift/scale. The options already
+ * carry `motion-reduce:transition-none`; this rule (rendered as a `<style>`
+ * inside the portal so it ships with the tray) additionally kills the
+ * transform under `prefers-reduced-motion` for hover/selected lift.
+ */
+export const REACTION_TRAY_REDUCED_MOTION_CSS =
+  "@media (prefers-reduced-motion: reduce){[data-testid^='reaction-option-']{transform:none!important;transition:none!important}}";
 
 export interface ReactionTrayProps {
   open: boolean;
@@ -262,6 +315,7 @@ export function ReactionTray({
         onPointerLeave={() => setHover(null)}
         className="flex items-center gap-0.5 rounded-full border border-outline-variant bg-surface-container px-1.5 py-1 shadow-lg"
       >
+        <style data-testid="reaction-tray-motion">{REACTION_TRAY_REDUCED_MOTION_CSS}</style>
         {CANONICAL_REACTION_KINDS.map((kind, index) => {
           const checked = activeKind === kind;
           const lifted = hovered === kind;
