@@ -225,6 +225,54 @@ describe("CommentComposer pasted data URLs", () => {
   });
 });
 
+describe("CommentComposer attachment tiling (display_order + provenance)", () => {
+  const STORAGE_URL =
+    "https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg";
+
+  it("tiles uploads in pick order with position badges and a Storage chip once uploaded", async () => {
+    attachMock.upload.mockResolvedValue({ remoteUrl: STORAGE_URL, objectKey: "u-9/x.jpg" });
+    render(<CommentComposer {...baseProps()} />);
+    const picker = screen.getByTestId("comment-file-input") as HTMLInputElement;
+    fireEvent.change(picker, { target: { files: [file("p.jpg", "image/jpeg")] } });
+    expect(await screen.findByTestId("comment-attachments")).toBeTruthy();
+    const strip = screen.getByTestId("comment-attachments");
+    expect(strip.className).toMatch(/grid/);
+    await waitFor(() => expect(screen.getByText("Storage")).toBeTruthy());
+    const order = screen.getByText("1");
+    expect(order.getAttribute("data-testid")).toMatch(/^comment-attachment-order-/);
+    const source = screen.getByText("Storage");
+    expect(source.getAttribute("data-provenance")).toBe("storage");
+  });
+
+  it("tiles a Klipy pick second with order 2 and a KLIPY chip (no redesign)", async () => {
+    vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
+    attachMock.upload.mockResolvedValue({ remoteUrl: STORAGE_URL, objectKey: "u-9/x.jpg" });
+    klipyMock.searchGifs.mockResolvedValue([
+      {
+        kind: "gifs",
+        slug: "happy-1",
+        title: "Happy",
+        mediaUrl: "https://media.klipy.com/happy.gif",
+        previewUrl: "https://media.klipy.com/happy-preview.gif",
+        raw: {},
+      },
+    ]);
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.change(screen.getByTestId("comment-file-input") as HTMLInputElement, {
+      target: { files: [file("p.jpg", "image/jpeg")] },
+    });
+    await waitFor(() => expect(screen.getByText("Storage")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("comment-gif"));
+    fireEvent.change(screen.getByTestId("comment-gif-search"), { target: { value: "happy" } });
+    fireEvent.click(await screen.findByTestId("comment-gif-result-happy-1"));
+    await waitFor(() => expect(screen.getByText("KLIPY")).toBeTruthy());
+    // Display order follows pick order: photo first, gif second.
+    const orders = ["1", "2"].map((n) => screen.getByText(n));
+    expect(orders[0]!.compareDocumentPosition(orders[1]!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.getByText("KLIPY").getAttribute("data-provenance")).toBe("klipy");
+  });
+});
+
 describe("CommentComposer Klipy", () => {  it("hides the GIF control when the key is absent (graceful)", () => {
     render(<CommentComposer {...baseProps()} />);
     expect(screen.queryByTestId("comment-gif")).toBeNull();

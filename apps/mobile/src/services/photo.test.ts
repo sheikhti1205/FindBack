@@ -322,11 +322,22 @@ describe("bounded web intake (FBX-002)", () => {
  * allocation, so this fails the suite before the runtime meter can.
  */
 describe("intake production-path guard (FBX-002)", () => {
-  // cwd-relative (vitest runs from apps/mobile), matching the repo's other
-  // static source guards — `import.meta.url` is an http URL under jsdom.
-  const photoSource = readFileSync("src/services/photo.ts", "utf8");
-  const importSource = readFileSync("src/services/media/importImage.ts", "utf8");
-  const imageSource = readFileSync("src/services/image.ts", "utf8");
+  // Vitest may run from the repo root or from apps/mobile, and
+  // `import.meta.url` is an http URL under jsdom — resolve by trial so the
+  // guard holds in both. A total miss throws, failing loudly, never silently.
+  function readMobileSource(relativePath: string): string {
+    for (const candidate of [`apps/mobile/src/${relativePath}`, `src/${relativePath}`]) {
+      try {
+        return readFileSync(candidate, "utf8");
+      } catch {
+        // Not under this cwd — try the next candidate.
+      }
+    }
+    throw new Error(`cannot locate ${relativePath} from cwd ${process.cwd()}`);
+  }
+  const photoSource = readMobileSource("services/photo.ts");
+  const importSource = readMobileSource("services/media/importImage.ts");
+  const imageSource = readMobileSource("services/image.ts");
 
   it("photo.ts has no whole-source byte materialization", () => {
     expect(photoSource).not.toMatch(/blobBytes\s*\(/);

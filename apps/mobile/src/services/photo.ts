@@ -1,7 +1,7 @@
 import { Camera, MediaType, MediaTypeSelection, CameraErrorCode } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
-import { ACCEPTED_STILL_FORMATS_LABEL, PROBE_BYTES, SOURCE_LIMIT_MESSAGE, SOURCE_MAX_BYTES, UPLOAD_MAX_BYTES } from "./media/mediaPolicy";
-import { probeDimensions, sniffImage } from "./media/importImage";
+import { ACCEPTED_STILL_FORMATS_LABEL, PROBE_BYTES, SOURCE_LIMIT_MESSAGE, SOURCE_MAX_BYTES, UPLOAD_MAX_BYTES, isWithinSourceCap } from "./media/mediaPolicy";
+import { MediaError, emptyInputMessage, oversizedInputMessage, probeDimensions, sniffImage, unrecognizedInputMessage } from "./media/importImage";
 import { detectMotionPhotoBounded, strippedVideoBytes } from "./media/motionPhoto";
 import { normalizeImage } from "./image";
 import { BootTimeoutError, throwIfAborted, withTimeout } from "./timeout";
@@ -443,11 +443,28 @@ function windowBytes(window: Blob): Promise<ArrayBuffer> {
   });
 }
 
+/**
+ * FBX-021 / W2-C-FIX: the ONE bounded way a caller materializes source bytes
+ * it must hand to the pure import pipeline (Help's assistant tray). Order is
+ * the whole point: the shared `SOURCE_MAX_BYTES` semantic cap is checked from
+ * `size` before a single byte is allocated, the format gate reads one bounded
+ * header window, and only a recognized source inside the cap is read — through
+ * a window bounded by that same cap. An over-cap or non-photo source never
+ * becomes a source-sized JS allocation, and every refusal raises the exact
+ * message `importImage` itself would have raised for that gate.
+ */
+export async function readSourceForImport(source: Blob, fileName: string): Promise<Uint8Array> {
+  if (source.size === 0) throw new MediaError("EMPTY_INPUT", emptyInputMessage(fileName));
+  if (!isWithinSourceCap(source.size)) throw new MediaError("OVERSIZED_INPUT", oversizedInputMessage(fileName, source.size));
+  const header = await readWindow(source, 0, PROBE_BYTES, PHOTO_BYTES_TIMEOUT_MS);
+  if (sniffImage(header) === null) throw new MediaError("UNRECOGNIZED_FORMAT", unrecognizedInputMessage(fileName));
+  return readWindow(source, 0, SOURCE_MAX_BYTES, PHOTO_BYTES_TIMEOUT_MS);
+}
+
 /** True for object URLs that native code cannot resolve. */
 export function isBlobUri(uri: string | null | undefined): boolean {
   return !!uri && uri.startsWith("blob:");
 }
-
 /** Native URI safe to pass to LocalVlm, or null when unavailable. Never returns blob:. */
 export function toNativeImageUri(photo: PickedPhoto | null): string | null {
   if (!photo) return null;

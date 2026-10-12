@@ -11,7 +11,12 @@ import {
   validateAttachableFile,
   type CommentAttachment,
 } from "../services/commentAttachments";
-import { appendBodyMedia, bodyHasInlineData, MAX_COMMENT_BODY } from "../services/commentBodyMedia";
+import {
+  appendBodyMedia,
+  bodyHasInlineData,
+  commentMediaProvenance,
+  MAX_COMMENT_BODY,
+} from "../services/commentBodyMedia";
 import {
   KLIPY_ATTRIBUTION,
   KLIPY_ATTRIBUTION_URL,
@@ -433,19 +438,25 @@ export function CommentComposer({
           </p>
         )}
 
+        {/* Attachment tiling: grid in display_order (tile position =
+            display_order 1..4), each tile carrying its kind/provenance chip.
+            Same previews, progress, retry, and remove controls as before. */}
         {attachments.length > 0 && (
           <div
             data-testid="comment-attachments"
             role="group"
             aria-label={`Attachments, ${attachments.length} of ${COMMENT_ATTACH_MAX}`}
-            className="mt-1 flex gap-2 overflow-x-auto pb-1"
+            className="mt-1 grid grid-cols-4 gap-1.5"
           >
-            {attachments.map((a) => (
+            {attachments.map((a, index) => {
+              const source =
+                a.kind === "gif" ? ("klipy" as const) : a.remoteUrl ? commentMediaProvenance(a.remoteUrl) : null;
+              return (
               <figure
                 key={a.id}
                 data-testid={`comment-attachment-${a.id}`}
                 data-status={a.status}
-                className="relative w-16 shrink-0"
+                className="relative w-full"
               >
                 {a.kind === "video" && a.previewUrl !== "" ? (
                   <video
@@ -454,22 +465,38 @@ export function CommentComposer({
                     playsInline
                     preload="metadata"
                     aria-label={a.fileName}
-                    className="h-16 w-16 rounded-m3-xs border border-outline-variant object-cover"
+                    className="h-16 w-full rounded-m3-xs border border-outline-variant object-cover"
                   />
                 ) : a.previewUrl !== "" ? (
                   <img
                     src={a.previewUrl}
                     alt={a.fileName}
                     loading="lazy"
-                    className="h-16 w-16 rounded-m3-xs border border-outline-variant object-cover"
+                    className="h-16 w-full rounded-m3-xs border border-outline-variant object-cover"
                   />
                 ) : (
                   <span
                     role="img"
                     aria-label={a.fileName}
-                    className="flex h-16 w-16 items-center justify-center rounded-m3-xs border border-outline-variant bg-surface-container-low text-[10px] text-on-surface-variant"
+                    className="flex h-16 w-full items-center justify-center rounded-m3-xs border border-outline-variant bg-surface-container-low text-[10px] text-on-surface-variant"
                   >
                     {a.fileName}
+                  </span>
+                )}
+                <span
+                  data-testid={`comment-attachment-order-${a.id}`}
+                  aria-hidden
+                  className="pointer-events-none absolute left-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                >
+                  {index + 1}
+                </span>
+                {source && (
+                  <span
+                    data-testid={`comment-attachment-source-${a.id}`}
+                    data-provenance={source}
+                    className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                  >
+                    {source === "klipy" ? "KLIPY" : "Storage"}
                   </span>
                 )}
                 {a.status === "uploading" && (
@@ -509,7 +536,8 @@ export function CommentComposer({
                   <X size={16} aria-hidden />
                 </button>
               </figure>
-            ))}
+              );
+            })}
           </div>
         )}
 

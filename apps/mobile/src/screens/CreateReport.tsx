@@ -20,6 +20,7 @@ import type { ReportDraft, ReportPhotoRef } from "../services/reportDraft";
 import { friendlyError } from "../utils/friendlyErrors";
 import { isNativeCameraAvailable, normalizeForUpload, type PickedPhoto } from "../services/photo";
 import { chooseNativeImage, chooseNativeImages, importNativeImageUri, importedImageToFile } from "../services/media/nativeMedia";
+import { ACCEPTED_STILL_FORMATS_LABEL } from "../services/media/mediaPolicy";
 import { ReportDatePicker } from "../components/ReportDatePicker";
 import { AnimatePresence, motion } from "framer-motion";
 import { ReportMediaPicker } from "../components/ReportMediaPicker";
@@ -1068,7 +1069,7 @@ function ReportForm() {
               unreadable += 1;
               policyFailures.push(`Photo ${position}: ${file.size > MAX_IMAGE_BYTES
                 ? "that photo is still too large after preparing. Try a smaller image or re-save it as JPEG."
-                : "that file isn't a supported photo. Choose a JPEG, PNG, WebP, GIF, HEIC, HEIF, or AVIF photo."}`);
+                : `that file isn't a supported photo. Choose a ${ACCEPTED_STILL_FORMATS_LABEL} photo.`}`);
               return;
             }
             acceptPickedPhoto(file, photo, hash);

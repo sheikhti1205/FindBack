@@ -21,7 +21,7 @@ import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
 import { PhotoLightbox } from "../components/PhotoLightbox";
 import { MarkdownView } from "../components/MarkdownView";
 import { CommentComposer } from "../components/CommentComposer";
-import { parseCommentBody } from "../services/commentBodyMedia";
+import { commentMediaProvenance, parseCommentBody } from "../services/commentBodyMedia";
 import { RatingStars } from "../components/RatingStars";
 import { ReportShareButton } from "../components/ReportShareButton";
 import { PossibleMatches } from "../components/PossibleMatches";
@@ -1031,27 +1031,43 @@ export function PostDetail() {
             className="mt-2 flex flex-wrap gap-1.5"
             aria-label={`Attachments on comment by ${c.author.username}`}
           >
-            {bodyParts.media.map((m, i) =>
-              m.kind === "video" ? (
-                <video
-                  key={`${m.url}-${i}`}
-                  src={m.url}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  aria-label={`Attached video ${i + 1}`}
-                  className="h-24 max-w-full rounded-m3-sm border border-outline-variant object-cover"
-                />
-              ) : (
-                <img
-                  key={`${m.url}-${i}`}
-                  src={m.url}
-                  alt={`Attached photo ${i + 1}`}
-                  loading="lazy"
-                  className="h-24 w-auto rounded-m3-sm border border-outline-variant object-cover"
-                />
-              ),
-            )}
+            {bodyParts.media.map((m, i) => {
+              // Display order = appearance order: appendBodyMedia emits one
+              // media line per attachment in display_order (1..4), and
+              // parseCommentBody lifts them back in that same order.
+              const provenance = commentMediaProvenance(m.url);
+              const sourceLabel = provenance === "klipy" ? "KLIPY" : "Storage";
+              return (
+                <figure key={`${m.url}-${i}`} className="relative m-0">
+                  {m.kind === "video" ? (
+                    <video
+                      src={m.url}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      aria-label={`Attached video ${i + 1} via ${sourceLabel}`}
+                      className="h-24 max-w-full rounded-m3-sm border border-outline-variant object-cover"
+                    />
+                  ) : (
+                    <img
+                      src={m.url}
+                      alt={`Attached photo ${i + 1} via ${sourceLabel}`}
+                      loading="lazy"
+                      className="h-24 w-auto rounded-m3-sm border border-outline-variant object-cover"
+                    />
+                  )}
+                  {provenance && (
+                    <figcaption
+                      data-testid={`comment-media-source-${c.id}-${i}`}
+                      data-provenance={provenance}
+                      className="pointer-events-none absolute left-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                    >
+                      {sourceLabel}
+                    </figcaption>
+                  )}
+                </figure>
+              );
+            })}
           </div>
         )}
         <div className="mt-2 flex items-center gap-1">

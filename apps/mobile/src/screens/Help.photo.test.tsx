@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -6,6 +7,7 @@ import { Help } from "./Help";
 import { resetBackInterceptors } from "../components/backNavigation";
 import { aiCredentials } from "../services/aiCredentials";
 import { buildPng } from "../services/media/__fixtures__/synthetic";
+import { PROBE_BYTES, SOURCE_MAX_BYTES } from "../services/media/mediaPolicy";
 
 vi.mock("../auth", () => ({
   useAuth: () => ({ user: { id: "u-photo", username: "tester" } }),
@@ -207,5 +209,65 @@ describe("Help photo per-send binding (G12 photo gap)", () => {
     };
     const resolve = createResolver!([gifItem]);
     await expect(resolve("gif-1")).resolves.toBe("data:image/gif;base64,R0lG");
+  });
+});
+
+/**
+ * FBX-021: the assistant tray must never turn a source into a source-sized JS
+ * allocation. The shared cap and the format gate run BEFORE any read, and the
+ * only read a recognized in-cap source gets is a window bounded by that cap.
+ */
+describe("Help assistant tray bounded intake (FBX-021)", () => {
+  it("refuses an over-cap source and a non-photo before any full-source read", async () => {
+    renderHelp({
+      importDeps: { transcode: async () => new Uint8Array([1, 2, 3]), webpEncodeSupported: false },
+    });
+    const input = () => screen.getByTestId("chat-file-input");
+
+    // Over the shared source cap: refused from `size` alone, zero reads.
+    const overCap = new File([new Uint8Array(0)], "huge.jpg", { type: "image/jpeg" });
+    Object.defineProperty(overCap, "size", { value: SOURCE_MAX_BYTES + 1 });
+    const overCapRead = vi.fn();
+    const overCapSlice = vi.fn();
+    Object.defineProperty(overCap, "arrayBuffer", { value: overCapRead, configurable: true });
+    Object.defineProperty(overCap, "slice", { value: overCapSlice, configurable: true });
+    fireEvent.change(input(), { target: { files: [overCap] } });
+    await screen.findByText(/over the 100 MB intake cap/);
+    expect(overCapRead).not.toHaveBeenCalled();
+    expect(overCapSlice).not.toHaveBeenCalled();
+
+    // In cap but not a photo: one bounded header window, never the whole file.
+    const notAPhoto = new File(["definitely not a photo"], "notes.txt", { type: "text/plain" });
+    const fullRead = vi.fn(async () => new ArrayBuffer(0));
+    Object.defineProperty(notAPhoto, "arrayBuffer", { value: fullRead, configurable: true });
+    const sliceEnds: number[] = [];
+    const realSlice = Blob.prototype.slice.bind(notAPhoto);
+    Object.defineProperty(notAPhoto, "slice", {
+      configurable: true,
+      value: (start?: number, end?: number) => {
+        sliceEnds.push(end ?? Number.NaN);
+        return realSlice(start, end);
+      },
+    });
+    fireEvent.change(input(), { target: { files: [notAPhoto] } });
+    await screen.findByText(/is not a recognized photo/);
+    expect(fullRead).not.toHaveBeenCalled();
+    expect(sliceEnds.length).toBeGreaterThan(0);
+    expect(Math.max(...sliceEnds)).toBeLessThanOrEqual(PROBE_BYTES);
+
+    // Static: Help.tsx itself can never grow a whole-source read again.
+    // Vitest may run from the repo root or apps/mobile — resolve by trial.
+    let helpSource = "";
+    for (const candidate of ["apps/mobile/src/screens/Help.tsx", "src/screens/Help.tsx"]) {
+      try {
+        helpSource = readFileSync(candidate, "utf8");
+        break;
+      } catch {
+        // Not under this cwd — try the next candidate.
+      }
+    }
+    if (!helpSource) throw new Error(`cannot locate Help.tsx from cwd ${process.cwd()}`);
+    expect(helpSource).not.toMatch(/(?:file|source|blob)\s*\.\s*arrayBuffer\s*\(/);
+    expect(helpSource).toContain("readSourceForImport");
   });
 });

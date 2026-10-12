@@ -42,6 +42,7 @@ import {
   type ChatTray,
 } from "../services/media/prepareImages";
 import { importImage, MediaError, type ImportDeps, type ImportedImage } from "../services/media/importImage";
+import { readSourceForImport } from "../services/photo";
 import { chooseNativeImage, isNativeMediaIntakeAvailable } from "../services/media/nativeMedia";
 import { transcodeImageForWeb } from "../services/media/webTranscode";
 import {
@@ -726,7 +727,10 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     };
     for (const file of files) {
       try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
+        // FBX-021: bounded source read — cap and format gates run before any
+        // source-sized allocation; a whole-source materialization is forbidden
+        // here (see the static guard in Help.photo.test.tsx).
+        const bytes = await readSourceForImport(file, file.name);
         const item = await importImage(
           {
             bytes,

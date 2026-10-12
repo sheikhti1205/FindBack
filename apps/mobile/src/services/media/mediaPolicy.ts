@@ -44,6 +44,30 @@ export const PROBE_BYTES = 65_536;
  */
 export const ACCEPTED_STILL_FORMATS_LABEL = "JPEG, PNG, WebP, GIF, BMP, HEIC, HEIF, or AVIF";
 
+/**
+ * FBX-003: the MIME types the sentence above advertises, in sentence order.
+ * Any surface whose picker/gate rejects a listed container must accept exactly
+ * this set — otherwise the user is told a format is supported and refused it.
+ * `mediaPolicy.test.ts` asserts a two-way tie against the label and against
+ * every production accept map, so neither list can drift alone.
+ */
+export const ACCEPTED_STILL_MIME_TYPES: readonly string[] = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/bmp",
+  "image/heic",
+  "image/heif",
+  "image/avif",
+];
+
+/** True when a MIME type is one the accepted-still sentence advertises. */
+export function isAcceptedStillMime(mimeType: string): boolean {
+  return ACCEPTED_STILL_MIME_TYPES.includes(mimeType);
+}
+
 /** True when a source length is inside the single source cap. */
 export function isWithinSourceCap(byteLength: number): boolean {
   return Number.isFinite(byteLength) && byteLength >= 0 && byteLength <= SOURCE_MAX_BYTES;

@@ -3,6 +3,7 @@ import { Button } from "./Button";
 import { groundReportPhoto, type LiveGroundedOptions } from "../services/livePhotoGrounding";
 import { selectGroundedOption, toCssPercentRect } from "../services/photoGrounding";
 import type { PhotoEnginePreference } from "../services/ai/aiPreferences";
+import { ACCEPTED_STILL_FORMATS_LABEL, isAcceptedStillMime } from "../services/media/mediaPolicy";
 import "./PhotoGrounding.css";
 
 interface PhotoGroundingProps {
@@ -98,7 +99,7 @@ export function PhotoGrounding({ file, previewUrl, photoEngine, accountId, curre
     setSelectedId(null); setStatus(message);
   }
   const selected = selectedId && result ? selectGroundedOption(result.options, selectedId) : undefined;
-  const supported = ["image/jpeg", "image/png", "image/webp"].includes(file.type);
+  const supported = isAcceptedStillMime(file.type);
 
   return <section aria-label="Find an item in this photo" className="photo-grounding flex flex-col gap-3 rounded-m3-md border border-outline-variant bg-surface-container-low p-4">
     <h2 className="text-base font-semibold">Find an item in this photo</h2>
@@ -147,6 +148,6 @@ export function PhotoGrounding({ file, previewUrl, photoEngine, accountId, curre
           <Button type="button" variant="outline" onClick={() => resolveReview("Your title was kept.")}>Keep my title</Button>
         </div>
       </section>}
-    </> : <p role="status">Choose a JPEG, PNG or WebP photo to find an item. You can still describe this photo manually.</p>}
+    </> : <p role="status">Choose a {ACCEPTED_STILL_FORMATS_LABEL} photo to find an item. You can still describe this photo manually.</p>}
   </section>;
 }

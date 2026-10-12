@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { ground } = vi.hoisted(() => ({ ground: vi.fn() }));
 vi.mock("../services/livePhotoGrounding", () => ({ groundReportPhoto: ground }));
 import { PhotoGrounding } from "./PhotoGrounding";
+import { ACCEPTED_STILL_FORMATS_LABEL, ACCEPTED_STILL_MIME_TYPES } from "../services/media/mediaPolicy";
 
 const file = new File(["photo"], "items.jpg", { type: "image/jpeg" });
 const value = { engine: "on-device", imageUrl: "data:image/jpeg;base64,cGhvdG8=", question: "Which item are you reporting?",
@@ -27,6 +28,20 @@ describe("PhotoGrounding reviewed selector", () => {
     expect(URL.createObjectURL).not.toHaveBeenCalled();
     view.unmount();
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+  it("gates and advertises the same accepted-still set", () => {
+    // Every container the shared sentence advertises is no longer refused.
+    for (const type of ACCEPTED_STILL_MIME_TYPES) {
+      render(<PhotoGrounding {...props} file={new File(["photo"], `item.${type.split("/")[1]}`, { type })} />);
+      expect(screen.getByRole("button", { name: "Find matching items" })).toBeTruthy();
+      cleanup();
+    }
+    // A container outside the advertised set is refused with that same sentence.
+    render(<PhotoGrounding {...props} file={new File(["tiff"], "item.tiff", { type: "image/tiff" })} />);
+    const notice = screen.getByRole("status").textContent ?? "";
+    expect(notice).toContain(ACCEPTED_STILL_FORMATS_LABEL);
+    expect(notice).not.toContain("JPEG, PNG or WebP");
+    expect(screen.queryByRole("button", { name: "Find matching items" })).toBeNull();
   });
   it("requires expression and consent, renders percentage overlays, and separates selection from Apply and Keep", async () => {
     render(<PhotoGrounding {...props} />);

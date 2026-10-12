@@ -565,6 +565,33 @@ function unsupportedMessage(sniffed: SniffedKind, fileName: string): string {
   );
 }
 
+/**
+ * W2-C-FIX: the three pre-decode intake gates are shared with photo.ts's
+ * bounded Help intake (`readSourceForImport`), so a refusal raised BEFORE any
+ * bytes are read and the same refusal raised after reading carry identical
+ * copy — one message per gate, never two hand-written variants.
+ */
+export function emptyInputMessage(fileName: string): string {
+  return `"${fileName}" is empty. Please pick a photo file and try again.`;
+}
+
+export function oversizedInputMessage(fileName: string, byteLength: number): string {
+  const mb = (byteLength / 1_000_000).toFixed(1);
+  // The cap is 100 MiB; advertise the rounded megabyte figure the user sees.
+  const cap = (IMPORT_MAX_INPUT_BYTES / (1024 * 1024)).toFixed(0);
+  return (
+    `"${fileName}" is about ${mb} MB, over the ${cap} MB intake cap. ` +
+    "Please pick a smaller file or trim it first — nothing was imported."
+  );
+}
+
+export function unrecognizedInputMessage(fileName: string): string {
+  return (
+    `"${fileName}" is not a recognized photo — choose a ${ACCEPTED_STILL_FORMATS_LABEL} file. ` +
+    "The file may be corrupt or a renamed non-photo — nothing was imported."
+  );
+}
+
 /** Scan a leading slice for an ISO-BMFF `ispe` box (HEIC/HEIF/AVIF extents). Metadata only, never a decode. */
 function readIspeExtents(bytes: Uint8Array): { width: number; height: number } | null {
   for (let i = 0; i + 16 <= bytes.length; i += 1) {
@@ -670,18 +697,14 @@ async function importUnprobeableIsoBmff(
 export async function importImage(input: ImportInput, deps: ImportDeps): Promise<ImportedImage> {
   const { bytes, fileName } = input;
   if (bytes.length === 0) {
-    throw new MediaError("EMPTY_INPUT", `"${fileName}" is empty. Please pick a photo file and try again.`);
+    throw new MediaError("EMPTY_INPUT", emptyInputMessage(fileName));
   }
   const containerSniffed = sniffImage(bytes);
   if (hasUnsupportedMotionContainer(bytes)) {
     throw new MediaError("UNSUPPORTED_FORMAT", "Couldn't read the still frame of this HEIC/AVIF motion photo. Export a still JPEG and choose it again.");
   }
   if (containerSniffed === null) {
-    throw new MediaError(
-      "UNRECOGNIZED_FORMAT",
-      `"${fileName}" is not a recognized photo — choose a ${ACCEPTED_STILL_FORMATS_LABEL} file. ` +
-        "The file may be corrupt or a renamed non-photo — nothing was imported.",
-    );
+    throw new MediaError("UNRECOGNIZED_FORMAT", unrecognizedInputMessage(fileName));
   }
   // Motion Photo: extract the still frame FIRST. The container's total size
   // (still + video tail) must never disqualify the useful still frame, and
@@ -694,14 +717,7 @@ export async function importImage(input: ImportInput, deps: ImportDeps): Promise
   const videoBytesStripped = strippedVideoBytes(bytes.length, motion?.stillEnd ?? null);
   const still = motionStillUsed ? bytes.subarray(0, motion.stillEnd) : bytes;
   if (still.length > IMPORT_MAX_INPUT_BYTES) {
-    const mb = (still.length / 1_000_000).toFixed(1);
-    // The cap is 100 MiB; advertise the rounded megabyte figure the user sees.
-    const cap = (IMPORT_MAX_INPUT_BYTES / (1024 * 1024)).toFixed(0);
-    throw new MediaError(
-      "OVERSIZED_INPUT",
-      `"${fileName}" is about ${mb} MB, over the ${cap} MB intake cap. ` +
-        "Please pick a smaller file or trim it first — nothing was imported.",
-    );
+    throw new MediaError("OVERSIZED_INPUT", oversizedInputMessage(fileName, still.length));
   }
   const sniffed = sniffImage(still);
   if (sniffed === null) {
