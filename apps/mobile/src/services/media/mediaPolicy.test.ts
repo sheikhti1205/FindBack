@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { IMPORT_MAX_INPUT_BYTES } from "./importImage";
+import { IMPORT_MAX_INPUT_BYTES, oversizedInputMessage } from "./importImage";
 import { MAX_ORIGINAL_BYTES, PhotoImportError, SOURCE_LIMIT_MESSAGE, normalizeForUpload } from "../photo";
 import { ACCEPTED_STILL_FORMATS_LABEL, ACCEPTED_STILL_MIME_TYPES, MAX_EDGE, MAX_DERIVATIVE_BYTES, PROBE_BYTES, SOURCE_MAX_BYTES, UPLOAD_MAX_BYTES, isAcceptedStillMime, isWithinSourceCap } from "./mediaPolicy";
 
@@ -41,7 +41,7 @@ describe("media policy source cap", () => {
     const oversized = new File([new Uint8Array(0)], "big.jpg", { type: "image/jpeg" });
     Object.defineProperty(oversized, "size", { value: SOURCE_MAX_BYTES + 1 });
     await expect(normalizeForUpload(oversized)).rejects.toBeInstanceOf(PhotoImportError);
-    await expect(normalizeForUpload(oversized)).rejects.toThrow(SOURCE_LIMIT_MESSAGE);
+    await expect(normalizeForUpload(oversized)).rejects.toThrow(oversizedInputMessage("big.jpg", SOURCE_MAX_BYTES + 1));
     await expect(normalizeForUpload(oversized)).rejects.toThrow("100 MB");
   });
 
@@ -52,7 +52,10 @@ describe("media policy source cap", () => {
     const justUnder = new File([new Uint8Array(0)], "big.jpg", { type: "image/jpeg" });
     Object.defineProperty(justUnder, "size", { value: 99 * 1024 * 1024 });
     const err = await normalizeForUpload(justUnder).then(() => null, (e: unknown) => e);
-    expect(err === null || !(err instanceof Error && err.message === SOURCE_LIMIT_MESSAGE)).toBe(true);
+    // Either preparation succeeded or it failed at a LATER stage (decode/read):
+    // the refusal must never be either shape of the source-cap message.
+    const msg = err instanceof Error ? err.message : "";
+    expect(err === null || (msg !== SOURCE_LIMIT_MESSAGE && !/intake cap/.test(msg))).toBe(true);
   });
 });
 

@@ -101,6 +101,9 @@ export const MAX_ORIGINAL_BYTES = SOURCE_MAX_BYTES;
 /** Shared copy; also owned by mediaPolicy so the two languages cannot drift. */
 export { SOURCE_LIMIT_MESSAGE } from "./media/mediaPolicy";
 
+// Static cap copy kept ONLY for nameless-blob refusals (:330/:343/:401) that
+// cannot be parametrized. Wherever a filename is known, the refusal uses
+// oversizedInputMessage(name, size) — one parametrized message per gate.
 export const TOO_LARGE_TO_PROCESS = SOURCE_LIMIT_MESSAGE;
 export const TOO_LARGE_FOR_UPLOAD = "That photo is still too large after preparing. Try a smaller image or re-save it as JPEG.";
 export const DECODE_FAILED =
@@ -198,7 +201,7 @@ export async function normalizeForUpload(source: File, opts?: PhotoPipelineOpts)
   throwIfAborted(opts?.signal);
   const budget = stageMs(opts);
   const signal = opts?.signal;
-  if (source.size > MAX_ORIGINAL_BYTES) throw new PhotoImportError(TOO_LARGE_TO_PROCESS);
+  if (source.size > MAX_ORIGINAL_BYTES) throw new PhotoImportError(oversizedInputMessage(source.name, source.size));
   try {
     const normalized = await withTimeout(
       () => normalizeImage(source, undefined, { signal, timeoutMs: budget }),
@@ -219,7 +222,7 @@ export async function normalizeForUpload(source: File, opts?: PhotoPipelineOpts)
     if (isAbort(err, signal)) throw err;
     if (err instanceof PhotoStageTimeoutError) throw err;
     if (err instanceof BootTimeoutError) throw new PhotoStageTimeoutError("normalize", err.message);
-    if (err instanceof Error && (err.message === TOO_LARGE_FOR_UPLOAD || err.message === TOO_LARGE_TO_PROCESS)) throw err;
+    if (err instanceof Error && (err.message === TOO_LARGE_FOR_UPLOAD || err.message === TOO_LARGE_TO_PROCESS || err.message === oversizedInputMessage(source.name, source.size))) throw err;
     if (isDecoderRejection(err)) {
       // The available decoder ATTEMPTED this file and refused it: header
       // dimensions say nothing about pixel-data integrity, so falling back
