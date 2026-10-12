@@ -344,11 +344,12 @@ export async function photoToFile(photo: PickedPhoto, name?: string, opts?: Phot
   // containers, HEIC) by their reported size before reading any window or
   // invoking any decoder. Applies to every kind, including HEIC.
   if (blob.size > MAX_ORIGINAL_BYTES) throw new PhotoImportError(TOO_LARGE_TO_PROCESS);
-  // FBX-002: the source is NEVER materialized in JS. Sniffing reads one
-  // bounded leading window; Motion Photo layout reads two more tiny targeted
-  // windows; the platform Blob then goes to the decoder, which downsamples AT
-  // DECODE TIME (createImageBitmap resize) — so a 100 MB original never
-  // becomes a 100 MB Uint8Array on the intake path.
+  // FBX-002: the source is never decoded into source-sized JS bytes. Sniffing
+  // reads one bounded leading window; Motion Photo layout reads two more tiny
+  // targeted windows; the platform Blob (capped above — network body only,
+  // never a same-sized Uint8Array) goes to the decoder, which downsamples AT
+  // DECODE TIME — so a large original never becomes a same-sized byte array
+  // on the intake path.
   let header: Uint8Array;
   try {
     header = await readWindow(blob, 0, PROBE_BYTES, budget, signal);
