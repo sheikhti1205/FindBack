@@ -8,6 +8,7 @@ import {
   supportsVision,
 } from "../services/ai/modelCatalog";
 import { displayNameForCatalogRecord, rolesForCatalogRecord, type UiModelRole } from "../services/ai/uiModelRoles";
+import { getApplicationAi } from "../services/ai/applicationAi";
 import { listItemVariants, motionDurations, motionEasings, pressFeedback } from "./uiMotion";
 
 export type CatalogFilter =
@@ -311,6 +312,46 @@ function localityFor(model: ModelRecord): string {
 }
 
 /**
+ * Consumer provider label for the assistant picker (FBX-020): the provider is
+ * secondary metadata under the model title — never a flat row of its own.
+ * Engine ids and connection kinds never stand in for a model name here.
+ */
+export function assistantProviderLabel(provider: ProviderId): string {
+  switch (provider) {
+    case "offline": return "On-device";
+    case "openrouter": return "OpenRouter";
+    case "openai": return "OpenAI";
+    case "anthropic": return "Anthropic";
+    case "google": return "Google";
+    case "deepseek": return "DeepSeek";
+    case "mistral": return "Mistral";
+    case "groq": return "Groq";
+    case "xai": return "xAI";
+    case "cohere": return "Cohere";
+    case "generic": return "Custom endpoint";
+  }
+}
+
+/**
+ * Assistant picker row title (FBX-020, UI text only): cloud rows keep the
+ * curated consumer name; on-device rows show the registry consumer title
+ * (e.g. "Photo analysis") — a raw engine id is never a row title.
+ */
+export function assistantRowTitle(model: ModelRecord): string {
+  if (model.provider === "offline") {
+    try {
+      const descriptor = getApplicationAi().registry.descriptorFor(model.id);
+      const title = descriptor?.consumerTitle.trim() ?? "";
+      if (title !== "") return title;
+    } catch {
+      // Registry unavailable: fall through to the honest generic title.
+    }
+    return "On-device model";
+  }
+  return displayNameForCatalogRecord(model);
+}
+
+/**
  * Assistant send-time picker (U3): Automatic first, then Chat and Vision
  * sections with conversational rows only. A cross-listed row (Chat + Vision)
  * appears in both sections with a combined badge. Tool/embedding/speech rows
@@ -336,13 +377,18 @@ function AssistantPickerSections({
   const chatRows = recommendedFirst(conversational.filter((model) => rolesForCatalogRecord(model).includes("chat")));
   const visionRows = recommendedFirst(conversational.filter((model) => rolesForCatalogRecord(model).includes("vision")));
   const automaticSelected = selectedId === null || selectedId === undefined;
-  function rowBadge(model: ModelRecord): string {
+  function rowBadge(model: ModelRecord): { locality: string; provider: string } {
     const roles = rolesForCatalogRecord(model);
     const both = roles.includes("chat") && roles.includes("vision");
-    return `${localityFor(model)}${both ? " · Chat + Vision" : ""}`;
+    // Models lead; the provider is secondary metadata ("via X").
+    return {
+      locality: `${localityFor(model)}${both ? " · Chat + Vision" : ""}`,
+      provider: `via ${assistantProviderLabel(model.provider)}`,
+    };
   }
   function renderRow(model: ModelRecord) {
     const selected = selectedId === model.id;
+    const badge = rowBadge(model);
     return (
       <motion.li
         key={`${model.provider}/${model.id}`}
@@ -355,14 +401,18 @@ function AssistantPickerSections({
         className="flex flex-col gap-1 border-t border-outline-variant py-2"
       >
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium">{displayNameForCatalogRecord(model)}</span>
+          <span className="truncate text-sm font-medium">{assistantRowTitle(model)}</span>
           <span className="shrink-0 text-xs text-on-surface-variant">
             {isRecommendedFree(model) ? (
               <span data-testid="model-recommended" className="mr-1 rounded-full bg-surface-container-high px-2 py-0.5 font-medium">
                 Recommended
               </span>
             ) : null}
-            <span>{rowBadge(model)}</span>
+            <span data-testid={`model-provider-${model.provider}`}>
+              <span>{badge.locality}</span>
+              {" · "}
+              <span>{badge.provider}</span>
+            </span>
           </span>
         </div>
         <ModelTechnicalDetails model={model} />

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronDown, History, MoreVertical } from "lucide-react";
+import { History, MoreVertical } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { AssistantLanding, type LandingQuickAction } from "../components/assistant/AssistantLanding";
@@ -9,7 +9,8 @@ import { BottomSheet } from "../components/BottomSheet";
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatTranscript, type TranscriptMessage, type TranscriptSource } from "../components/ChatTranscript";
 import { HistorySheet, type HistoryChatSummary } from "../components/HistorySheet";
-import { ModelCatalogSheet } from "../components/ModelCatalogSheet";
+import { ModelCatalogSheet, assistantRowTitle } from "../components/ModelCatalogSheet";
+import { AssistantConfigureSheet } from "../components/assistant/AssistantConfigureSheet";
 import { announce } from "../components/LiveRegion";
 import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
 import { ChatController, ControllerError, sanitizeControllerError, type ControllerState } from "../services/ai/chatController";
@@ -29,6 +30,11 @@ import { generateCloudForAccount, generateLocalFirst } from "../services/liveNar
 import { getApplicationAi } from "../services/ai/applicationAi";
 import { honestOfflineDetail, OFFLINE_NOT_AVAILABLE, type AssistantMode } from "./AiModels";
 import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
+import {
+  loadSeededAiPreferences,
+  updateAiPreferences,
+  type AssistantModePreference,
+} from "../services/ai/aiPreferences";
 import { createOpenRouterAdapter } from "../services/ai/providers/openrouter";
 import { builtInHelp } from "../services/helpFaq";
 import {
@@ -98,7 +104,6 @@ const SUGGESTIONS = [
   "How do I report a lost item?",
   "How do I mark an item recovered?",
   "What details should I include?",
-  "How do I search and filter?",
 ];
 
 /**
@@ -541,6 +546,32 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuConfirmClear, setMenuConfirmClear] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
+  // FBX-020: Chat | Guide mode tabs. Chat is the free conversation; Guide is
+  // the structured wizard entry (report/search flows with compact chips).
+  const [assistantTab, setAssistantTab] = useState<"chat" | "guide">("chat");
+  // FBX-020: separate Configure sheet (policy + conversational choice +
+  // management links). Mirrors the persisted store AiSettings writes.
+  const [configureOpen, setConfigureOpen] = useState(false);
+  const [prefsMode, setPrefsMode] = useState<AssistantModePreference>(() => {
+    try {
+      return loadSeededAiPreferences(accountId).assistantMode;
+    } catch {
+      return "automatic";
+    }
+  });
+  // FBX-020: keyboard collapse — the on-screen keyboard owns the viewport,
+  // so the landing compacts (subtitle + suggestions hide) instead of
+  // pushing the composer out of reach.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const onResize = () => {
+      setKeyboardOpen(viewport.height < window.innerHeight * 0.75);
+    };
+    viewport.addEventListener("resize", onResize);
+    return () => viewport.removeEventListener("resize", onResize);
+  }, []);
 
   const generation = useRef(0);
   const sendGenRef = useRef<number | null>(null);
@@ -1591,9 +1622,25 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     return notice ?? trayNotice ?? (savedDefaultUnavailable ? "Saved model unavailable — choose a model or use Automatic. Your draft is kept." : null);
   })();
   const selectedRecord = catalog.find((row) => row.id === selectedModelId);
-  const selectedTitle = selectedModelId === null ? "Automatic" : displayNameForCatalogRecord(
-    selectedRecord ?? { id: selectedModelId, provider: getApplicationAi().registry.descriptorFor(selectedModelId) ? "offline" : selection.provider },
-  );
+  // FBX-020 chip title (UI text only): the consumer model name. Catalog rows
+  // map through the assistant picker titles (on-device rows read their
+  // consumer title, never a raw engine id); an unknown persisted pin falls
+  // back the same way instead of leaking an engine id.
+  const selectedTitle = (() => {
+    if (selectedModelId === null) return "Automatic";
+    if (selectedRecord !== undefined) return assistantRowTitle(selectedRecord);
+    try {
+      const descriptor = getApplicationAi().registry.descriptorFor(selectedModelId);
+      const title = descriptor?.consumerTitle.trim() ?? "";
+      if (title !== "") return title;
+      if (descriptor !== undefined) return "On-device model";
+    } catch {
+      // Registry unavailable: fall through to the cloud-name mapping.
+    }
+    return displayNameForCatalogRecord(
+      { id: selectedModelId, provider: selection.provider },
+    );
+  })();
 
   function handleSelectModel(modelId: string) {
     // The choice rebuilds the controller binding above, so new sends carry
@@ -1608,6 +1655,53 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setSelectedModelId(null);
     setModelOpen(false);
     announce("Automatic model selection for new sends.");
+  }
+
+  // FBX-020 per-response Retry: regenerates an assistant answer by re-sending
+  // that turn's question through the existing send path (draft/tray rules
+  // unchanged). A failed send keeps its own Retry; this never fires while
+  // a send is in flight.
+  function retryResponse(messageId: string) {
+    if (busy || guidedBusy) return;
+    const index = freeMessages.findIndex((m) => m.id === messageId && m.role === "assistant");
+    if (index < 0) return;
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const prior = freeMessages[i];
+      if (prior !== undefined && prior.role === "user" && prior.text.trim() !== "") {
+        announce("Trying that answer again.");
+        void sendFreeChat(prior.text);
+        return;
+      }
+    }
+  }
+
+  // FBX-020 Configure sheet: writes through the canonical preferences store
+  // (the same values AiSettings owns) — a conversational policy choice with
+  // a real effect, never a display-only control.
+  function openConfigure() {
+    try {
+      setPrefsMode(loadSeededAiPreferences(accountId).assistantMode);
+    } catch {
+      // Stale in-memory choice stands; the sheet still opens.
+    }
+    setMenuOpen(false);
+    setConfigureOpen(true);
+  }
+
+  function selectAssistantMode(next: AssistantModePreference) {
+    try {
+      updateAiPreferences(accountId, { assistantMode: next });
+    } catch {
+      // Persistence is best effort; the in-memory choice still applies.
+    }
+    setPrefsMode(next);
+    announce(
+      next === "automatic"
+        ? "Automatic answering."
+        : next === "on-device-only"
+          ? "On-device only. Nothing is sent to a cloud AI provider."
+          : "Cloud only. Local generation is skipped.",
+    );
   }
 
   function stopComposer() {
@@ -1662,12 +1756,83 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       </header>
 
       <main aria-label="Help conversation" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {showLanding ? (
+        {/* FBX-020 mode tabs: at most Chat and Guide. Guide owns structured
+            FindBack assistance; the attach menu never duplicates it. */}
+        <div
+          data-testid="assistant-mode"
+          role="tablist"
+          aria-label="Assistant mode"
+          className="flex shrink-0 gap-1 border-b border-outline-variant bg-surface px-3"
+        >
+          {(
+            [
+              { value: "chat", label: "Chat" },
+              { value: "guide", label: "Guide" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={assistantTab === tab.value}
+              data-testid={`assistant-tab-${tab.value}`}
+              onClick={() => setAssistantTab(tab.value)}
+              className={`min-h-[48px] border-b-2 px-3 text-sm font-medium ${
+                assistantTab === tab.value
+                  ? "border-on-surface text-on-surface"
+                  : "border-transparent text-on-surface-variant"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {assistantTab === "guide" ? (
+          <section
+            data-testid="assistant-guide"
+            aria-label="Guide"
+            className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-surface px-4 py-4"
+          >
+            <h2 className="text-base font-semibold text-on-surface">Guide</h2>
+            <p className="text-sm leading-relaxed text-on-surface-variant">
+              Answer a few short questions. Nothing is published automatically.
+            </p>
+            <div className="flex flex-col gap-2">
+              {(
+                [
+                  { flow: "lost", label: SHORTCUT_LABELS.lost, hint: "Walk through a lost-item report." },
+                  { flow: "found", label: SHORTCUT_LABELS.found, hint: "Walk through a found-item report." },
+                  { flow: "search", label: SHORTCUT_LABELS.search, hint: "Build search filters step by step." },
+                  { flow: "ask", label: "Ask a question", hint: "Back to free chat for anything else." },
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.flow}
+                  type="button"
+                  data-testid={`guide-option-${option.flow}`}
+                  onClick={() => {
+                    if (option.flow === "ask") {
+                      setAssistantTab("chat");
+                      document.getElementById("help-composer-input")?.focus();
+                      return;
+                    }
+                    beginGuided(option.flow);
+                  }}
+                  className="flex min-h-[48px] flex-col justify-center gap-0.5 rounded-m3-sm border border-outline-variant bg-surface-container-low px-3 py-2 text-left hover:bg-surface-container"
+                >
+                  <span className="text-sm font-medium text-on-surface">{option.label}</span>
+                  <span className="text-xs text-on-surface-variant">{option.hint}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : showLanding ? (
           <AssistantLanding
             suggestions={SUGGESTIONS}
             quickActions={LANDING_QUICK_ACTIONS}
             onSuggestion={(text) => void sendFreeChat(text)}
             onQuickAction={(flow) => beginGuided(flow)}
+            compact={keyboardOpen}
           />
         ) : (
           <ChatTranscript
@@ -1678,6 +1843,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
               const target = ACTION_ROUTES[id];
               if (target !== undefined) navigate(target);
             }}
+            onRetryMessage={retryResponse}
           />
         )}
 
@@ -1844,24 +2010,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           </div>
         )}
 
-        {/* U2: model selection lives with the composer (compact chip row),
-            not in the header. ChatComposer internals stay untouched. */}
-        <div className="flex shrink-0 items-center gap-2 bg-surface px-4 pb-1">
-          <button
-            type="button"
-            onClick={() => setModelOpen(true)}
-            data-testid="composer-model-chip"
-            disabled={composerBusy}
-            aria-label={`Choose model, currently ${selectedTitle}`}
-            title={selectedTitle}
-            className="flex min-h-[48px] max-w-[70%] items-center gap-1 truncate rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container"
-          >
-            <ChevronDown size={14} aria-hidden className="shrink-0" />
-            <span className="truncate">{selectedTitle}</span>
-          </button>
-        </div>
-        {/* ChatComposer is owned by the composer worker — wrapped shrink-0 so
-          the bounded column never squeezes it; its internals are untouched. */}
+        {/* ChatComposer owns the model chip row (FBX-020: selection lives
+            with the composer, not in the header) — wrapped shrink-0 so the
+            bounded column never squeezes it. */}
         <div className="shrink-0">
         <ChatComposer
           value={input}
@@ -1870,6 +2021,9 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           busy={composerBusy}
           onStop={stopComposer}
           inputId="help-composer-input"
+          modelTitle={selectedTitle}
+          onOpenModels={() => setModelOpen(true)}
+          modelDisabled={composerBusy}
           selections={[
             ...tray.items.map((item) => ({
               id: item.id,
@@ -1970,6 +2124,13 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             className="flex min-h-[48px] items-center text-sm text-on-surface hover:bg-surface-container"
           >
             Assistant settings
+          </button>
+          <button
+            type="button"
+            onClick={openConfigure}
+            className="flex min-h-[48px] items-center text-sm text-on-surface hover:bg-surface-container"
+          >
+            Configure assistant
           </button>
           {menuConfirmClear ? (
             <div className="flex items-center gap-2">
@@ -2080,6 +2241,24 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             are never used silently.
           </p>
         </div>
+      </BottomSheet>
+      {/* FBX-020 Configure sheet: answer policy, conversational model choice,
+          and management links — separate from Privacy & AI and the picker. */}
+      <BottomSheet
+        open={configureOpen}
+        onClose={() => setConfigureOpen(false)}
+        title="Configure assistant"
+        description="Answer policy, conversation model, and where to manage AI."
+      >
+        <AssistantConfigureSheet
+          mode={prefsMode}
+          onSelectMode={selectAssistantMode}
+          modelTitle={selectedTitle}
+          onChooseModel={() => {
+            setConfigureOpen(false);
+            setModelOpen(true);
+          }}
+        />
       </BottomSheet>
     </div>
   );

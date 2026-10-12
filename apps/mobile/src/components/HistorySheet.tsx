@@ -86,6 +86,7 @@ export function HistorySheet({
               onChange={(e) => onSearchQueryChange(e.target.value)}
               placeholder="Search chats"
               aria-label="Search chats"
+              data-testid="history-search"
               maxLength={120}
               className="w-full rounded-full border border-outline-variant bg-surface py-2.5 pl-9 pr-4 text-sm text-on-surface placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
             />
@@ -93,6 +94,7 @@ export function HistorySheet({
           <button
             type="button"
             onClick={onNew}
+            data-testid="history-new-chat"
             className="flex min-h-[48px] items-center gap-1.5 rounded-full bg-on-surface px-4 text-sm font-semibold text-surface"
           >
             <Plus size={16} aria-hidden /> New chat
@@ -237,6 +239,7 @@ export function HistorySheet({
             <button
               type="button"
               onClick={() => setConfirmClear(true)}
+              data-testid="history-clear"
               className="min-h-[48px] rounded-m3-xs px-3 text-xs font-semibold text-on-surface-variant underline"
             >
               Clear all chats

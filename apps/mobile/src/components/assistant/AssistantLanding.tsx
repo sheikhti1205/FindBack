@@ -17,6 +17,12 @@ export interface AssistantLandingProps {
   quickActions: readonly LandingQuickAction[];
   onSuggestion: (text: string) => void;
   onQuickAction: (flow: LandingFlow) => void;
+  /**
+   * Keyboard-collapsed mode (FBX-020): the on-screen keyboard owns the
+   * viewport, so the greeting shrinks and the suggestion list hides — quick
+   * actions and the composer stay reachable without scrolling.
+   */
+  compact?: boolean;
 }
 
 /**
@@ -32,20 +38,24 @@ export function AssistantLanding({
   quickActions,
   onSuggestion,
   onQuickAction,
+  compact = false,
 }: AssistantLandingProps) {
   return (
     <div
       data-testid="assistant-landing"
-      className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto bg-surface px-4 py-6"
+      data-compact={compact ? "true" : undefined}
+      className={`flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto bg-surface px-4 ${compact ? "py-2" : "py-6"}`}
     >
-      <section aria-label="Assistant greeting" className="flex flex-col items-center gap-1 pt-4 text-center">
-        <Sparkles size={28} aria-hidden className="text-on-surface-variant" />
+      <section aria-label="Assistant greeting" className={`flex flex-col items-center gap-1 text-center ${compact ? "" : "pt-4"}`}>
+        <Sparkles size={compact ? 20 : 28} aria-hidden className="text-on-surface-variant" />
         <h2 className="mt-1 text-xl font-semibold leading-tight text-on-surface">
           What can I help with?
         </h2>
-        <p className="text-sm leading-relaxed text-on-surface-variant">
-          Report, search, or understand something you found.
-        </p>
+        {!compact && (
+          <p className="text-sm leading-relaxed text-on-surface-variant">
+            Report, search, or understand something you found.
+          </p>
+        )}
       </section>
 
       <section aria-label="Quick actions" className="flex flex-col items-center gap-2">
@@ -73,26 +83,28 @@ export function AssistantLanding({
         </div>
       </section>
 
-      <section aria-labelledby="landing-try" className="flex flex-col gap-2">
-        <h3 id="landing-try" className="text-center text-xs font-medium text-on-surface-variant">
-          Try asking
-        </h3>
-        <div className="flex flex-col gap-2">
-          {suggestions.slice(0, 4).map((suggestion) => (
-            <motion.button
-              key={suggestion}
-              type="button"
-              onClick={() => onSuggestion(suggestion)}
-              whileTap={pressFeedback.button}
-              transition={{ duration: motionDurations.instant }}
-              className="flex min-h-[48px] items-center gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low px-3 text-left text-sm text-on-surface hover:bg-surface-container"
-            >
-              <MessageCircleQuestion size={16} aria-hidden className="shrink-0 text-on-surface-variant" />
-              <span>{suggestion}</span>
-            </motion.button>
-          ))}
-        </div>
-      </section>
+      {!compact && (
+        <section aria-labelledby="landing-try" className="flex flex-col gap-2">
+          <h3 id="landing-try" className="text-center text-xs font-medium text-on-surface-variant">
+            Try asking
+          </h3>
+          <div className="flex flex-col gap-2">
+            {suggestions.slice(0, 4).map((suggestion) => (
+              <motion.button
+                key={suggestion}
+                type="button"
+                onClick={() => onSuggestion(suggestion)}
+                whileTap={pressFeedback.button}
+                transition={{ duration: motionDurations.instant }}
+                className="flex min-h-[48px] items-center gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low px-3 text-left text-sm text-on-surface hover:bg-surface-container"
+              >
+                <MessageCircleQuestion size={16} aria-hidden className="shrink-0 text-on-surface-variant" />
+                <span>{suggestion}</span>
+              </motion.button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div aria-hidden className="min-h-2 flex-1" />
     </div>

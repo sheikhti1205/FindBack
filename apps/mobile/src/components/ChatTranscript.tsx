@@ -57,6 +57,13 @@ export interface ChatTranscriptProps {
   error?: string | null;
   onRetry?: () => void;
   onAction?: (id: string) => void;
+  /**
+   * Per-response retry (FBX-020 response actions: Copy/Retry/Details).
+   * Called with the assistant message id; the caller owns regeneration
+   * (e.g. re-sending that turn's question). Absence hides the per-response
+   * Retry control — the failed-turn and banner retries are unaffected.
+   */
+  onRetryMessage?: (id: string) => void;
   /** In-flight streamed text (throttled upstream); null/empty hides the bubble. */
   partialText?: string | null;
   /** Provenance for the partial bubble; defaults to the generic AI label. */
@@ -93,6 +100,7 @@ export function ChatTranscript({
   error = null,
   onRetry,
   onAction,
+  onRetryMessage,
   partialText = null,
   partialLabel = null,
 }: ChatTranscriptProps) {
@@ -372,6 +380,19 @@ export function ChatTranscript({
                     <span role="status" className="text-xs text-on-surface-variant">
                       Copied
                     </span>
+                  )}
+                  {onRetryMessage !== undefined && (
+                    <motion.button
+                      type="button"
+                      data-testid={`chat-retry-${m.id}`}
+                      onClick={() => onRetryMessage(m.id)}
+                      whileTap={pressFeedback.iconButton}
+                      transition={{ duration: motionDurations.instant }}
+                      aria-label="Retry response"
+                      className="flex min-h-[48px] items-center justify-center rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface-variant hover:bg-surface-container"
+                    >
+                      Retry
+                    </motion.button>
                   )}
                   {(m.sourceDetail !== undefined && m.sourceDetail !== null && m.sourceDetail.trim() !== "") ||
                   (m.attachments !== undefined && m.attachments > 0) ? (

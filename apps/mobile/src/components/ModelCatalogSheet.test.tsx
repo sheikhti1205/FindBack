@@ -185,7 +185,11 @@ describe("ModelCatalogSheet assistant picker (U3)", () => {
 
   it("shows SmolVLM2 only under Vision despite a stale cached Chat claim", () => {
     renderAssistant([freeRecord("offline", SMOL_VISION_MODEL_ID)]);
-    expect(screen.getByText("SmolVLM2")).toBeTruthy();
+    // FBX-020: the row title is the consumer vision name, never the raw
+    // engine id — placement (Vision-only) and identity (model id in
+    // technical details) assertions below are unchanged.
+    expect(screen.getByText("Photo analysis")).toBeTruthy();
+    expect(screen.queryByText("SmolVLM2")).toBeNull();
     expect(screen.getByRole("heading", { name: "Vision" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Chat" })).toBeNull();
     expect(screen.getByText(SMOL_VISION_MODEL_ID).closest("details")).toBeTruthy();

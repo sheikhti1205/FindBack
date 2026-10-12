@@ -8,7 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Camera, ImagePlus, Maximize2, Mic, Minimize2, SendHorizonal, X } from "lucide-react";
+import { Camera, ChevronDown, FileUp, ImagePlus, MapPin, Maximize2, Mic, Minimize2, SendHorizonal, X } from "lucide-react";
 import { speechInput } from "../services/speechInput";
 import {
   fadeUpVariants,
@@ -71,6 +71,22 @@ export interface ChatComposerProps {
   inputId?: string;
   /** Dictation facade (permission/listening/result/cancel). Defaults to the real facade. */
   speech?: ComposerSpeech;
+  /**
+   * Compact model chip rendered as the composer's top row (FBX-020: model
+   * selection lives with the composer, never in the screen header). Rendered
+   * only when `onOpenModels` is provided; `modelTitle` is the consumer model
+   * name (never a provider or engine id — callers map it).
+   */
+  modelTitle?: string | null;
+  /** Open the model picker. Presence renders the `composer-model-chip` row. */
+  onOpenModels?: () => void;
+  /** Disable the model chip while a send is in flight. */
+  modelDisabled?: boolean;
+  /**
+   * Optional location seam. The Location row renders only when provided —
+   * the caller owns the location send path, so no location UI is invented.
+   */
+  onPickLocation?: () => void;
 }
 
 /**
@@ -125,12 +141,18 @@ export function ChatComposer({
   capacityNotice = null,
   inputId,
   speech,
+  modelTitle = null,
+  onOpenModels,
+  modelDisabled = false,
+  onPickLocation,
 }: ChatComposerProps) {
   const fileInputId = useId();
   const cameraInputId = useId();
+  const filesInputId = useId();
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const filesInputRef = useRef<HTMLInputElement | null>(null);
   const addTriggerRef = useRef<HTMLButtonElement | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -210,8 +232,18 @@ export function ChatComposer({
     addTriggerRef.current?.focus();
   }
 
-  function chooseSource(source: "camera" | "gallery") {
+  function chooseSource(source: "camera" | "gallery" | "files" | "location") {
     setAddMenuOpen(false);
+    if (source === "location") {
+      onPickLocation?.();
+      addTriggerRef.current?.focus();
+      return;
+    }
+    if (source === "files") {
+      filesInputRef.current?.click();
+      addTriggerRef.current?.focus();
+      return;
+    }
     if (source === "camera") {
       if (!cameraExplained.current) {
         // Own explanatory UI first; the native camera surface owns everything
@@ -506,6 +538,25 @@ export function ChatComposer({
           {capacityNotice}
         </p>
       )}
+      {/* Row 0 — model chip: the send-time model choice lives with the
+          composer (FBX-020), never in the screen header. The title is a
+          consumer model name; the provider stays picker metadata. */}
+      {onOpenModels !== undefined && (
+        <div data-testid="composer-model-row" className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenModels}
+            data-testid="composer-model-chip"
+            disabled={disabled || busy || modelDisabled}
+            aria-label={`Choose model, currently ${modelTitle ?? "Automatic"}`}
+            title={modelTitle ?? "Automatic"}
+            className="flex min-h-[48px] max-w-full items-center gap-1 truncate rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container disabled:opacity-60"
+          >
+            <ChevronDown size={14} aria-hidden className="shrink-0" />
+            <span className="truncate">{modelTitle ?? "Automatic"}</span>
+          </button>
+        </div>
+      )}
       {/* Row 1 — the text field owns the full usable width (screenshot 11 fix):
           no 48dp icon siblings compete for intrinsic width at 360dp. */}
       <div data-testid="chat-field-row" className="flex min-w-0 w-full">
@@ -567,6 +618,17 @@ export function ChatComposer({
               onChange={onFiles}
               className="sr-only"
             />
+            <input
+              id={filesInputId}
+              ref={filesInputRef}
+              data-testid="chat-files-input"
+              type="file"
+              accept="*/*"
+              multiple
+              disabled={disabled || busy}
+              onChange={onFiles}
+              className="sr-only"
+            />
             <AnimatePresence initial={false}>
               {addMenuOpen && (
                 <motion.div
@@ -601,6 +663,28 @@ export function ChatComposer({
                     <ImagePlus size={20} aria-hidden />
                     Gallery
                   </button>
+                  {onAddFiles !== undefined && (
+                    <button
+                      type="button"
+                      data-testid="chat-files"
+                      onClick={() => chooseSource("files")}
+                      className="flex min-h-[48px] w-full items-center gap-3 rounded-m3-sm px-3 text-left text-sm text-on-surface hover:bg-surface-container-high"
+                    >
+                      <FileUp size={20} aria-hidden />
+                      Files
+                    </button>
+                  )}
+                  {onPickLocation !== undefined && (
+                    <button
+                      type="button"
+                      data-testid="chat-location"
+                      onClick={() => chooseSource("location")}
+                      className="flex min-h-[48px] w-full items-center gap-3 rounded-m3-sm px-3 text-left text-sm text-on-surface hover:bg-surface-container-high"
+                    >
+                      <MapPin size={20} aria-hidden />
+                      Location
+                    </button>
+                  )}
                   <button
                     type="button"
                     data-testid="chat-add-cancel"
