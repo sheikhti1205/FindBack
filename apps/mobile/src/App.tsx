@@ -45,6 +45,9 @@ import { Capacitor } from "@capacitor/core";
 import { ReportLinkHandler } from "./components/ReportLinkHandler";
 import { PublicLanding } from "./screens/PublicLanding";
 import { SharedReport } from "./screens/SharedReport";
+// L-FIXTURE additive-only: deterministic visual preflight route (static,
+// network-free). No guards changed; the route mounts no data-bound screens.
+import { FixtureRoute } from "./fixture/FixtureRoute";
 import { useAuth } from "./auth";
 
 function StartScreen() {
@@ -109,6 +112,8 @@ export function App() {
               }
             />
             <Route path="/verify" element={<Verify />} />
+            {/* L-FIXTURE additive-only: static visual preflight (no auth). */}
+            <Route path="/__fixture" element={<FixtureRoute />} />
             {/* W0-C (S3) additive-only: social profile completion. Unchanged
                 guards everywhere else; the wrapper redirects to /auth when no
                 seed is present. */}
