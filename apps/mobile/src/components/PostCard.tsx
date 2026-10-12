@@ -8,11 +8,14 @@ interface PostCardProps {
   to: string;
   index?: number;
   /**
-   * Home-feed redesign: `home-feed` renders a tight horizontal row shell
-   * (rounded 18px, compact padding) for the image-left layout. Unlike the
-   * default card it is NOT a wrapping Link — the content block owns the
-   * detail link and the action controls as siblings. Default keeps the
-   * pre-existing column card verbatim.
+   * Home-feed redesign (W7B-HOME media-led): `home-feed` renders a chromeless
+   * report block — no border, no surface fill, no rounding, no shadow. The
+   * media spans the near-full block width while text/actions inset
+   * separately inside the content; reports separate by whitespace + a thin
+   * hairline, never nested container chrome. Unlike the default card it is
+   * NOT a wrapping Link — the content block owns the detail link and the
+   * action controls as siblings. Default keeps the pre-existing column card
+   * verbatim.
    */
   variant?: "default" | "home-feed";
 }
@@ -52,7 +55,7 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
   // variant; home-feed ignores it because PostCardContent links itself.
   const body =
     variant === "home-feed" ? (
-      <div className="flex flex-col overflow-hidden rounded-[18px] border border-outline-variant bg-surface-container-low transition-colors hover:border-on-surface-variant active:bg-surface-container">
+      <div className="flex flex-col border-b border-outline-variant bg-transparent pb-5">
         {children}
       </div>
     ) : (

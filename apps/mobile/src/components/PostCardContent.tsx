@@ -436,8 +436,10 @@ function useTruncatedDescription(text: string) {
 }
 
 /**
- * Home-feed layout (W2 content-first redesign): full-width 4:3 media carousel
- * on top, then a text block, then a flat action row.
+ * Home-feed layout (W2 content-first redesign, W7B-HOME media-led): near-
+ * full-width 4:3 media carousel on top, then an inset text block, then an
+ * inset flat action row. The report block itself carries no container chrome
+ * (see PostCard `home-feed`); separation is whitespace + hairline.
  *
  * Navigation contract: the media region is a SIBLING of the detail link, never
  * inside it — tapping a photo opens the canonical PhotoLightbox at that index,
@@ -458,20 +460,22 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
   return (
     <div data-testid="home-feed-content" className="flex min-w-0 flex-col">
       {images.length > 0 && (
-        <FeedMediaCarousel
-          images={images.map((a, i) => ({
-            id: a.id,
-            fileUrl: a.fileUrl,
-            alt:
-              images.length === 1
-                ? `Photo for ${post.title}`
-                : `Photo ${i + 1} of ${images.length} for ${post.title}`,
-          }))}
-          sharedMediaId={enableSharedMedia ? sharedMediaLayoutId(post.id) : undefined}
-          onOpenImage={(index) => setLightboxIndex(index)}
-        />
+        <div data-testid="home-feed-media" className="fb-home-feed-media">
+          <FeedMediaCarousel
+            images={images.map((a, i) => ({
+              id: a.id,
+              fileUrl: a.fileUrl,
+              alt:
+                images.length === 1
+                  ? `Photo for ${post.title}`
+                  : `Photo ${i + 1} of ${images.length} for ${post.title}`,
+            }))}
+            sharedMediaId={enableSharedMedia ? sharedMediaLayoutId(post.id) : undefined}
+            onOpenImage={(index) => setLightboxIndex(index)}
+          />
+        </div>
       )}
-      <div className="flex min-w-0 flex-col gap-2 p-3">
+      <div className="flex min-w-0 flex-col gap-2 px-4 pb-2 pt-3">
         <div className="flex items-start justify-between gap-2">
           <StatusChip post={post} />
           <span data-testid="post-time" className="shrink-0 whitespace-nowrap text-xs text-on-surface-variant">

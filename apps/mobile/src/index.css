@@ -743,6 +743,23 @@ html.fb-reduce-motion .fb-feed-img[data-state="loading"]::after {
   white-space: nowrap;
 }
 
+/* W7B-HOME (FBX-019) media-led home feed: the report block carries no
+ * container chrome (no card border/surface/shadow — see PostCard `home-feed`);
+ * reports separate by whitespace + the Tailwind hairline on the shell. The
+ * media spans the near-full block width with token-radius clipping while the
+ * text/actions inset separately inside the content. New `fb-home-*` classes
+ * only — every existing rule above is untouched. */
+.fb-home-feed {
+  min-width: 0;
+}
+.fb-home-feed-media {
+  display: block;
+  width: 100%;
+}
+.fb-home-media-viewport {
+  border-radius: var(--radius-m3-md, 12px);
+}
+
 /* UXN-4 My Reports owner card (`owner-feed`): compact image-left layout
  * aligned with the home feed. Loaded photos are edge-to-edge cover crops
  * with no visible border and no letterbox; only placeholders and failures

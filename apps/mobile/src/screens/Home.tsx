@@ -539,7 +539,7 @@ export function Home() {
 
       <NewPostsPill count={newPostCount} hasUpdates={hasUpdates} onTap={onNewPostsTap} />
 
-      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="flex-1">
+      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="fb-home-feed flex-1">
         {/* UXN-2: batch-hydrated Love state + optimistic feed-cache patching.
             PostList itself is untouched — the provider flows state to each
             home-feed card's Love toggle via context. */}

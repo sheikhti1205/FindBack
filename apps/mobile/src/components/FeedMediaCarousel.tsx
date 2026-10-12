@@ -53,7 +53,7 @@ export function FeedMediaCarousel({ images, sharedMediaId, onOpenImage }: FeedMe
   return (
     <div
       data-testid="feed-media-viewport"
-      className="relative w-full overflow-hidden"
+      className="fb-home-media-viewport relative w-full overflow-hidden"
       style={{ aspectRatio: "4 / 3" }}
     >
       <div
