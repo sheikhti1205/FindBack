@@ -12,6 +12,7 @@ import {
   deleteAuthUser,
   extractBearer,
   handleDelete,
+  OWNED_STORAGE_NAMESPACES,
   purgeUserData,
   type AuthAdmin,
   type DeletionClients,
@@ -282,4 +283,49 @@ Deno.test("deleteAuthUser throws with the provider message", async () => {
     message = err instanceof Error ? err.message : "";
   }
   assertEquals(message, "auth delete failed: nope");
+});
+
+Deno.test("registry covers every known user-bytes namespace with uid-scoped trailing-slash prefixes", () => {
+  // Coverage rule part 1: the known-writer inventory. If a new writer lands
+  // without a registry entry, this is the test that must grow with it.
+  const entries = OWNED_STORAGE_NAMESPACES.map((n) => `${n.bucket} :: ${n.prefixFor("probe-uid")}`);
+  assertEquals(entries, [
+    "findback-images :: probe-uid/",
+    "findback-images :: avatars/probe-uid/",
+    "findback-comment-media :: probe-uid/",
+  ]);
+  // Coverage rule part 2: no entry may sweep (or miss) another account.
+  for (const namespace of OWNED_STORAGE_NAMESPACES) {
+    for (const uid of ["a", "some-uuid-4-like-value", "attacker"]) {
+      const prefix = namespace.prefixFor(uid);
+      assert(prefix.includes(uid), `prefix for ${uid} does not embed the uid: ${prefix}`);
+      assert(prefix.endsWith("/"), `prefix must end with "/": ${prefix}`);
+      assert(prefix !== "" && prefix !== "/", `prefix must never be bucket-root: ${prefix}`);
+    }
+    assert(!namespace.prefixFor("victim").includes("attacker"), "prefix leaked another uid");
+  }
+});
+
+Deno.test(">2000 objects across pages and namespaces are all swept at offset 0", async () => {
+  // 2500 report objects force three 1000-object pages through the same
+  // namespace; the avatar and comment namespaces add multi-namespace
+  // progress on top. An offset-walking sweeper would orphan objects here
+  // (remove shrinks the set under it); offset-0-until-empty must not.
+  const many = Array.from({ length: 2500 }, (_, i) => `u7/p${i}.jpg`);
+  const { clients, calls, objects } = fakeClients({
+    getUser: { id: "u7" },
+    objects: {
+      "findback-images": [...many, "avatars/u7/av.png"],
+      "findback-comment-media": ["u7/c1.jpg", "u7/c2.jpg"],
+    },
+  });
+  const res = await handleDelete(clients, "Bearer jwt-7");
+  assertEquals(res.status, 200);
+  assertEquals(res.body, { uid: "u7", storageRemoved: 2503, profileDeleted: true, authDeleted: true });
+  assertEquals(objects["findback-images"], []);
+  assertEquals(objects["findback-comment-media"], []);
+  const listCalls = calls.filter((c) => c.startsWith("list:"));
+  assert(listCalls.length > 4, `expected several re-lists, got: ${listCalls.join(",")}`);
+  assert(listCalls.every((c) => c.endsWith(":0")), `non-zero list offset: ${listCalls.join(",")}`);
+  assert(!calls.some((c) => /^list:.*:(?!0$)\d+$/.test(c)), "offset-walk detected");
 });

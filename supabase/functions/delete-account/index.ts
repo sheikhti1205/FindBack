@@ -51,6 +51,21 @@ export interface StorageAdmin {
  * Every storage namespace a user's bytes can live in (FBX-023). Registered
  * here so account deletion sweeps ALL of them; a namespace added elsewhere
  * MUST be registered here in the same change, or deletion orphans it.
+ *
+ * COVERAGE RULE (new bucket/prefix gate, enforced by index.test.ts):
+ *   1. Any change that writes user-owned bytes to Storage under a NEW
+ *      (bucket, first-prefix-segment) combination MUST append an entry here
+ *      in the SAME change — reviewer must reject the change otherwise.
+ *      Known-writer inventory: report photos -> ("findback-images", `<uid>/`),
+ *      avatars -> ("findback-images", `avatars/<uid>/`), comment media ->
+ *      ("findback-comment-media", `<uid>/`).
+ *   2. Every prefixFor(uid) MUST embed the uid and MUST end with "/"; a
+ *      prefix that is empty, "/", or uid-free would sweep (or miss) another
+ *      account's objects and is rejected by test.
+ *   3. The sweep lists each namespace at offset 0 until empty (remove
+ *      shrinks the set, so re-listing 0 always advances); offset-walking
+ *      past page 0 is forbidden — see sweepNamespace and the >2000-object
+ *      regression test.
  */
 export const OWNED_STORAGE_NAMESPACES: readonly {
   bucket: string;
