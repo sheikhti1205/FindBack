@@ -22,6 +22,7 @@ import {
 } from "./postsUpload";
 import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
 import { diag } from "./diag";
+import { withTimeout } from "./timeout";
 import { PublishOutcomeUncertainError } from "./publishOutcome";
 
 export { createPost, createPostMulti } from "./postsCreate";
@@ -362,6 +363,13 @@ function socialErrorStatus(code: string | undefined): number {
   return 400;
 }
 
+/**
+ * Bound for the comment-post RPC (small-RPC family: session restore 12s,
+ * profile load 15s). A timeout surfaces as a TIMEOUT error upstream; the
+ * composer keeps the text so the user verifies the thread before resending.
+ */
+export const COMMENT_POST_TIMEOUT_MS = 15_000;
+
 /** Comments for a post, read directly from Supabase. */
 export async function fetchComments(postId: string): Promise<CommentItem[]> {
   const { data, error } = await getSupabase().rpc("findback_list_comments_client", {
@@ -376,11 +384,20 @@ export async function addComment(
   body: string,
   parentId?: string | null,
 ): Promise<CommentItem> {
-  const { data, error } = await getSupabase().rpc("findback_add_comment_client", {
-    p_post_id: postId,
-    p_body: body,
-    p_parent_id: parentId ?? null,
-  });
+  // A hang must fail visibly (the composer keeps the text for manual retry)
+  // instead of sticking `sending` forever with the send button disabled.
+  const { data, error } = await withTimeout(
+    () =>
+      Promise.resolve(
+        getSupabase().rpc("findback_add_comment_client", {
+          p_post_id: postId,
+          p_body: body,
+          p_parent_id: parentId ?? null,
+        }),
+      ),
+    COMMENT_POST_TIMEOUT_MS,
+    "Comment post timed out",
+  );
   if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
   const row = ((data ?? []) as ClientCommentRow[])[0];
   if (!row) throw new ApiError("Comment was not created", 400);

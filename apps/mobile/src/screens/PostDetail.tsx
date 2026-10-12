@@ -334,6 +334,14 @@ export function PostDetail() {
   const reactionSeq = useRef(0);
   const ratingSeq = useRef(0);
   const statusSeq = useRef(0);
+  // Mutation identity: this instance is reused across in-place post
+  // navigation (the route carries no key) and across account switches, so a
+  // late mutation callback must confirm it still owns the viewed post and
+  // account before writing state — otherwise it patches the wrong screen.
+  const viewedPostIdRef = useRef(id);
+  viewedPostIdRef.current = id;
+  const viewerIdRef = useRef<string | undefined>(user?.id);
+  viewerIdRef.current = user?.id;
   // Sequence guards only protect response application. Synchronous locks
   // also prevent competing server writes before React flushes disabled UI.
   const reactionPendingRef = useRef(false);
@@ -628,6 +636,15 @@ export function PostDetail() {
   const current = post;
   const isOwner = user?.id === current.author.id;
 
+  /**
+   * True when a mutation started for `snap` may no longer write: the viewer
+   * has navigated to another post or switched accounts since. Pending flags
+   * still clear in `finally` — only state writes and error display are gated.
+   */
+  function isStaleMutation(snap: { postId: string; viewer: string | undefined }): boolean {
+    return viewedPostIdRef.current !== snap.postId || viewerIdRef.current !== snap.viewer;
+  }
+
   // W3.3 post summary: server-truth counts/total once a write or realtime
   // event delivers them, else seeded from the legacy buckets (+1 for an own
   // canonical kind, which the legacy buckets never contain). The caller's
@@ -648,14 +665,15 @@ export function PostDetail() {
     reactionPendingRef.current = true;
     setReactionPending(true);
     const prev = myReaction;
+    const snap = { postId: current.id, viewer: user?.id };
     // Optimistic update
     setMyReaction(next);
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++reactionSeq.current;
     try {
       const res = await reactToPost(current.id, next);
-      // Only apply if this is still the latest request
-      if (reactionSeq.current === seq) {
+      // Only apply if this is still the latest request for the same post/account
+      if (reactionSeq.current === seq && !isStaleMutation(snap)) {
         setPost((prevPost) =>
           prevPost ? { ...prevPost, likeCount: res.likeCount, dislikeCount: res.dislikeCount } : prevPost,
         );
@@ -672,7 +690,7 @@ export function PostDetail() {
     } catch (e) {
       // Only rollback if this is still the latest request; failures stay
       // inline and never blow away the page.
-      if (reactionSeq.current === seq) {
+      if (reactionSeq.current === seq && !isStaleMutation(snap)) {
         setMyReaction(prev);
         const message = friendlyError(e).message;
         setActionError(message);
@@ -713,21 +731,22 @@ export function PostDetail() {
     ratingPendingRef.current = true;
     setRatingPending(true);
     const prev = myRating;
+    const snap = { postId: current.id, viewer: user?.id };
     // Optimistic update
     setMyRating(score);
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++ratingSeq.current;
     try {
       const res = await ratePost(current.id, score);
-      // Only apply if this is still the latest request
-      if (ratingSeq.current === seq) {
+      // Only apply if this is still the latest request for the same post/account
+      if (ratingSeq.current === seq && !isStaleMutation(snap)) {
         setPost((prevPost) =>
           prevPost ? { ...prevPost, ratingAvg: res.ratingAvg, ratingCount: res.ratingCount } : prevPost,
         );
       }
     } catch (e) {
       // Only rollback if this is still the latest request
-      if (ratingSeq.current === seq) {
+      if (ratingSeq.current === seq && !isStaleMutation(snap)) {
         setMyRating(prev);
         const message = friendlyError(e).message;
         setActionError(message);
@@ -748,7 +767,9 @@ export function PostDetail() {
    */
   async function postCommentBody(body: string) {
     if (!body.trim() || body.length > 1000) return;
+    const snap = { postId: current.id, viewer: user?.id };
     const comment = await addComment(current.id, body, replyTo?.id ?? null);
+    if (isStaleMutation(snap)) return;
     setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
   }
 
@@ -758,8 +779,10 @@ export function PostDetail() {
   }
 
   async function onDeleteComment(commentId: string) {
+    const snap = { postId: current.id, viewer: user?.id };
     try {
       await deleteComment(current.id, commentId);
+      if (isStaleMutation(snap)) return;
       // Deleting a parent cascades server-side; mirror that locally by removing
       // the whole subtree so no orphaned reply is left on screen.
       const doomed = new Set<string>([commentId]);
@@ -776,6 +799,7 @@ export function PostDetail() {
       setComments((prev) => prev.filter((c) => !doomed.has(c.id)));
       if (replyTo && doomed.has(replyTo.id)) setReplyTo(null);
     } catch (err) {
+      if (isStaleMutation(snap)) return;
       const message = friendlyError(err).message;
       setActionError(message);
       announce(message);
@@ -802,6 +826,7 @@ export function PostDetail() {
   async function writeCommentReaction(c: CommentItem, next: ReactionKind | null) {
     if (commentPending[c.id]) return;
     const prev = commentSummaryFor(c);
+    const snap = { postId: current.id, viewer: user?.id };
     const counts = applyReactionDeltas(prev.counts, prev.myReaction, next);
     const optimistic: ReactionSummary = {
       counts,
@@ -812,11 +837,13 @@ export function PostDetail() {
     setCommentSummaries((p) => ({ ...p, [c.id]: optimistic }));
     try {
       const res = await setCommentReaction(c.id, next);
+      if (isStaleMutation(snap)) return;
       setCommentSummaries((p) => ({
         ...p,
         [c.id]: { counts: res.counts, myReaction: res.myReaction, total: res.total },
       }));
     } catch (err) {
+      if (isStaleMutation(snap)) return;
       setCommentSummaries((p) => ({ ...p, [c.id]: prev }));
       const message = friendlyError(err).message;
       setActionError(message);
@@ -855,17 +882,18 @@ export function PostDetail() {
     }
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++statusSeq.current;
+    const snap = { postId: current.id, viewer: user?.id };
     setStatusPending(true);
     try {
       const updated = await updatePostStatus(current.id, status);
-      // Only apply if this is still the latest request
-      if (statusSeq.current === seq) {
+      // Only apply if this is still the latest request for the same post/account
+      if (statusSeq.current === seq && !isStaleMutation(snap)) {
         setPost(updated);
         announce(`Status updated to ${statusLabel(updated.status)}.`);
       }
     } catch (err) {
       // Only show error if this is still the latest request
-      if (statusSeq.current === seq) {
+      if (statusSeq.current === seq && !isStaleMutation(snap)) {
         const message = friendlyError(err).message;
         setActionError(message);
         announce(message);

@@ -2,13 +2,25 @@ import type { Category, PostType } from "@findback/shared";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 import { diag } from "./diag";
+import { withTimeout } from "./timeout";
 import { PublishOutcomeUncertainError } from "./publishOutcome";
+
+/**
+ * Bound for the create-post RPC. A hang must surface as uncertain (the
+ * server may still have committed — staged uploads are kept and republish
+ * stays blocked), never spin the report screen forever.
+ */
+export const CREATE_POST_RPC_TIMEOUT_MS = 30_000;
 
 async function createRpc(name: string, args: Record<string, unknown>, traceId?: string): Promise<string> {
   const start = Date.now();
   let result: Awaited<ReturnType<ReturnType<typeof getSupabase>["rpc"]>>;
   try {
-    result = await getSupabase().rpc(name, args);
+    result = await withTimeout(
+      () => Promise.resolve(getSupabase().rpc(name, args)),
+      CREATE_POST_RPC_TIMEOUT_MS,
+      "Report publish timed out",
+    );
   } catch {
     throw new PublishOutcomeUncertainError();
   }
