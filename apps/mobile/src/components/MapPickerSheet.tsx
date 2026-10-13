@@ -46,6 +46,7 @@ import {
   attributionForSource,
   searchPlacesUnified,
 } from "../services/location/placesSearch";
+import { recordOperation } from "../services/monitoring/operations";
 import {
   PIN_ZOOM,
   commitCenterAsLocation,
@@ -474,13 +475,32 @@ export function MapPickerSheet({
         now,
       });
       setResults(places);
+      // Seam: result-class + source only — never the query or coordinates.
+      recordOperation({
+        name: "map.search",
+        fields: {
+          resultClass: places.length === 0 ? "zero" : places.length <= 3 ? "few" : "many",
+          rateLimited: false,
+          source: "unified",
+        },
+      });
       if (places.length === 0) {
         setSearchError("No places found — pan the map and confirm the pin instead.");
       }
     } catch (err) {
       if (err instanceof NominatimRateLimitError) {
+        // Seam: rate-limit flag only — never the query or coordinates.
+        recordOperation({
+          name: "map.search",
+          fields: { resultClass: "zero", rateLimited: true, source: "unified" },
+        });
         setSearchError("Please wait a moment and try the search again.");
       } else {
+        // Seam: failure class only — never the query, coordinates, or message.
+        recordOperation({
+          name: "map.search",
+          fields: { resultClass: "zero", rateLimited: false, source: "unified" },
+        });
         setSearchError(
           err instanceof Error
             ? err.message

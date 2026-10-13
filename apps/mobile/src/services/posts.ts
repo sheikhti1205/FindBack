@@ -21,6 +21,7 @@ import {
   type UploadProgress,
 } from "./postsUpload";
 import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
+import { recordOperation } from "./monitoring/operations";
 import { diag } from "./diag";
 import { withTimeout } from "./timeout";
 import { PublishOutcomeUncertainError } from "./publishOutcome";
@@ -412,6 +413,16 @@ export async function addComment(
   parentId?: string | null,
   attachments?: readonly CommentAttachmentDescriptor[] | null,
 ): Promise<CommentItem> {
+  // Seam inputs only: operation + status code + attachment count/type.
+  // The comment body never crosses the monitoring seam.
+  const attachmentCount = attachments?.length ?? 0;
+  const kinds = new Set((attachments ?? []).map((attachment) => attachment.kind));
+  const attachmentKind =
+    kinds.size === 0
+      ? "none"
+      : kinds.size === 1
+        ? ([...kinds][0] ?? "none")
+        : "mixed";
   // Atomic path (FB-AUD-02): comment + staged descriptors persist in one
   // transaction. A body-only call sends `[]`, which the RPC treats exactly
   // like the legacy single-row create — so the legacy
@@ -431,9 +442,30 @@ export async function addComment(
     COMMENT_POST_TIMEOUT_MS,
     "Comment post timed out",
   );
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  if (error) {
+    recordOperation({
+      name: "social.comment",
+      fields: {
+        ok: false,
+        code: String(socialErrorStatus(error.code)),
+        attachmentCount,
+        attachmentKind,
+      },
+    });
+    throw new ApiError(error.message, socialErrorStatus(error.code));
+  }
   const row = ((data ?? []) as ClientCommentRow[])[0];
-  if (!row) throw new ApiError("Comment was not created", 400);
+  if (!row) {
+    recordOperation({
+      name: "social.comment",
+      fields: { ok: false, code: "400", attachmentCount, attachmentKind },
+    });
+    throw new ApiError("Comment was not created", 400);
+  }
+  recordOperation({
+    name: "social.comment",
+    fields: { ok: true, attachmentCount, attachmentKind },
+  });
   return mapClientComment(row);
 }
 
@@ -466,17 +498,33 @@ export async function reactToPost(
   postId: string,
   type: ReactionKind | null,
 ): Promise<ReactionResult> {
+  // Seam inputs only: operation + status code + requested kind token.
+  // `type` is the typed request kind (null = removal); no counts or text.
+  const kind = type ?? "removed";
   const { data, error } = await getSupabase().rpc("findback_react_client", {
     p_post_id: postId,
     p_type: type,
   });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  if (error) {
+    recordOperation({
+      name: "social.reaction",
+      fields: { ok: false, code: String(socialErrorStatus(error.code)), kind },
+    });
+    throw new ApiError(error.message, socialErrorStatus(error.code));
+  }
   const row = ((data ?? []) as ClientReactionRow[])[0];
-  if (!row) throw new ApiError("Reaction was not saved", 400);
+  if (!row) {
+    recordOperation({
+      name: "social.reaction",
+      fields: { ok: false, code: "400", kind },
+    });
+    throw new ApiError("Reaction was not saved", 400);
+  }
   const reactionCounts =
     row.reaction_counts === undefined
       ? undefined
       : reactionSummaryFromRow({ reaction_counts: row.reaction_counts, my_reaction: row.my_reaction });
+  recordOperation({ name: "social.reaction", fields: { ok: true, kind } });
   return {
     postId: row.post_id,
     likeCount: Number(row.like_count ?? 0),

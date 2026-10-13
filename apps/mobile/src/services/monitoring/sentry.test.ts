@@ -7,6 +7,7 @@ import {
   monitoringSelfTestEnabled,
   redactText,
   reportLogToMonitoring,
+  resolveSentryDist,
   resolveSentryDsn,
   resolveSentryEnvironment,
   resolveTracePropagationTargets,
@@ -25,6 +26,26 @@ import {
 const SUPA_SECRET_PREFIX = ["sb", "secret"].join("_") + "_";
 const OR_KEY_PREFIX = ["sk", "or"].join("-") + "-v1-";
 const JWT_LIKE = ["eyJhbGciOiJIUzI1NiJ9", "cGF5bG9hZA", "c2lnbmF0dXJl"].join(".");
+
+describe("resolveSentryDist", () => {
+  it("maps the closed dist set used by CI/release/web uploads", () => {
+    expect(resolveSentryDist("android-debug")).toBe("android-debug");
+    expect(resolveSentryDist("android-signeddev")).toBe("android-signeddev");
+    expect(resolveSentryDist("android-release")).toBe("android-release");
+    expect(resolveSentryDist("web-production")).toBe("web-production");
+    expect(resolveSentryDist("docker-reference")).toBe("docker-reference");
+  });
+
+  it("returns undefined for unknown/empty/absent input (never a placeholder)", () => {
+    expect(resolveSentryDist(undefined)).toBeUndefined();
+    expect(resolveSentryDist(null)).toBeUndefined();
+    expect(resolveSentryDist("")).toBeUndefined();
+    expect(resolveSentryDist("   ")).toBeUndefined();
+    expect(resolveSentryDist("android-latest")).toBeUndefined();
+    expect(resolveSentryDist("production")).toBeUndefined();
+    expect(resolveSentryDist("placeholder")).toBeUndefined();
+  });
+});
 
 describe("resolveSentryDsn", () => {
   it("accepts an https DSN and rejects blanks/non-https", () => {

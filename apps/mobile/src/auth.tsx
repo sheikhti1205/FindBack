@@ -37,6 +37,7 @@ import {
   GoogleAuthError,
   startGoogleSignIn as startNativeGoogleSignIn,
 } from "./native/googleAuth";
+import { recordOperation } from "./services/monitoring/operations";
 import { startPushNotifications, stopPushNotifications } from "./services/pushRuntime";
 import { clearUserScopedLocalState } from "./services/userScopedState";
 import { aiCredentials } from "./services/aiCredentials";
@@ -296,15 +297,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // S1 GoogleAuthError messages are already human (contract) — rethrow
       // verbatim so the taxonomy survives to the UI.
       if (err instanceof GoogleAuthError && err.kind === "cancelled") {
+        // Seam: result code only (mode), never tokens/profiles.
+        recordOperation({ name: "auth.google.cancelled", fields: { mode } });
         throw new Error("Google sign-in was cancelled.");
       }
+      // Seam: stable kind token only.
+      recordOperation({
+        name: "auth.google.error",
+        fields: {
+          mode,
+          code: err instanceof GoogleAuthError ? err.kind : "unknown",
+        },
+      });
       if (err instanceof Error) throw err;
       throw new Error("Google sign-in failed. Please try again.");
     }
-    if (!idToken) throw new Error("Google sign-in did not return a token. Please try again.");
+    if (!idToken) {
+      // Seam: result code only.
+      recordOperation({ name: "auth.google.error", fields: { mode, code: "no_token" } });
+      throw new Error("Google sign-in did not return a token. Please try again.");
+    }
     // W0-D: forward the S1 raw nonce for the Supabase server-side nonce
     // check (skip-nonce-check stays OFF). Missing nonce fails closed in S2.
-    const outcome = await signInWithGoogleIdToken(idToken, nonce);
+    let outcome: Awaited<ReturnType<typeof signInWithGoogleIdToken>>;
+    try {
+      outcome = await signInWithGoogleIdToken(idToken, nonce);
+    } catch (err) {
+      // Seam: result code only.
+      recordOperation({ name: "auth.google.error", fields: { mode, code: "exchange_failed" } });
+      throw err;
+    }
+    // Seam: result code only (mode), never tokens/profiles.
+    recordOperation({ name: "auth.google.success", fields: { mode } });
     if (outcome.status === "authenticated") {
       setNeedsProfileState(null);
       setUserState(outcome.user);

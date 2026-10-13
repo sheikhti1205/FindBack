@@ -98,6 +98,37 @@ export function resolveSentryEnvironment(
   return "production";
 }
 
+/**
+ * Closed Sentry `dist` map (SYNC-9).
+ *
+ * INVARIANT: the SDK `dist` below must match the `--dist` values the
+ * CI/release/web sourcemap uploads use (`android-debug`,
+ * `android-release`, `web-production`); the closed map additionally covers
+ * `android-signeddev` (signed-dev APK lane) and `docker-reference`
+ * (reference web image). Unknown/empty input resolves to `undefined` (SDK
+ * default) — never a placeholder — so a misconfigured env cannot mint a
+ * dist that can never match an upload.
+ */
+const SENTRY_DIST_VALUES = [
+  "android-debug",
+  "android-signeddev",
+  "android-release",
+  "web-production",
+  "docker-reference",
+] as const;
+
+export type SentryDist = (typeof SENTRY_DIST_VALUES)[number];
+
+export function resolveSentryDist(
+  raw: string | undefined | null,
+): SentryDist | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  return (SENTRY_DIST_VALUES as readonly string[]).includes(trimmed)
+    ? (trimmed as SentryDist)
+    : undefined;
+}
+
 export function resolveTracesSampleRate(raw: string | number | undefined): number {
   const fallback = SENTRY_DEFAULT_TRACES_SAMPLE_RATE;
   if (raw === undefined || raw === null || raw === "") return fallback;
@@ -577,6 +608,10 @@ export function initMonitoring(): void {
           // release workflow passes to the sourcemap upload, so Sentry can
           // symbolicate. Undefined when not baked (dev/test) — SDK default.
           release: resolveSentryRelease({ VITE_SENTRY_RELEASE: readEnv("VITE_SENTRY_RELEASE") }) ?? undefined,
+          // Dist identity (SYNC-9): matches the --dist value the sourcemap
+          // upload for this lane passes, so SDK events join the uploaded
+          // debug-info. Undefined when absent/unknown — never a placeholder.
+          dist: resolveSentryDist(readEnv("VITE_SENTRY_DIST")) ?? undefined,
           tracesSampleRate,
           tracePropagationTargets,
           // Maximum logging: Sentry Logs on. Every log passes through
