@@ -51,11 +51,12 @@ describe("Help product naming", () => {
     expect(screen.queryByText(/local-first/)).toBeNull();
     fireEvent.click(fullDetails);
     // F02: the full disclosure is truth-complete across transports.
+    // Contract choice: AiPrivacy.tsx is the owner-shipped authoritative disclosure, so the test pins its exact copy.
     await waitFor(() => expect(screen.getByText(/Photos are never attached on their own/)).toBeTruthy());
-    expect(screen.getByText(/built-in FindBack guidance/)).toBeTruthy();
-    expect(screen.getByText(/local generation/)).toBeTruthy();
-    expect(screen.getByText(/On-device only/)).toBeTruthy();
-    expect(screen.getByText(/Cloud-only skips local generation/)).toBeTruthy();
+    expect(screen.getByText(/Built-in help needs no connection/)).toBeTruthy();
+    expect(screen.getByText(/On-device processing keeps your photo/)).toBeTruthy();
+    expect(screen.getByText(/Cloud processing is sent only after you allow it/)).toBeTruthy();
+    expect(screen.getByText(/Automatic starts on this phone when ready/)).toBeTruthy();
     expect(screen.queryByText(/answered by (our|FindBack's) server/)).toBeNull();
   });
 });

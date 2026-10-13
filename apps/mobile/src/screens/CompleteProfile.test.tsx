@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { servicesMock, pendingMock, authMock } = vi.hoisted(() => ({
+const { servicesMock, pendingMock, authMock, supabaseMock } = vi.hoisted(() => ({
   servicesMock: { checkUsername: vi.fn() },
   pendingMock: { getPendingReportRoute: vi.fn((): string | null => null) },
   authMock: {
@@ -17,13 +17,19 @@ const { servicesMock, pendingMock, authMock } = vi.hoisted(() => ({
       suggestedUsername: string;
     } | null,
   },
+  supabaseMock: { getSupabase: vi.fn() },
 }));
 
 vi.mock("../services/auth", () => servicesMock);
+vi.mock("../services/supabaseClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/supabaseClient")>();
+  return { ...actual, getSupabase: supabaseMock.getSupabase };
+});
 vi.mock("../utils/pendingReportLink", () => pendingMock);
 vi.mock("../auth", () => ({ useAuth: () => authMock }));
 
 import { checkUsername } from "../services/auth";
+import { SupabaseConfigError } from "../services/supabaseClient";
 import type { PublicUser } from "@findback/shared";
 import {
   __resetCompleteSocialProfile,
@@ -89,6 +95,14 @@ beforeEach(() => {
   authMock.needsProfile = null;
   __resetCompleteSocialProfile();
   vi.restoreAllMocks();
+  // Hermetic client boundary (FB-AUD-06): the wired default calls the REAL
+  // completeSocialProfile, whose getSupabase() succeeds whenever ambient
+  // SUPABASE_* env is present and then performs a live network RPC — so this
+  // suite must never reach the real client. Fail closed like scrubbed env.
+  supabaseMock.getSupabase.mockReset();
+  supabaseMock.getSupabase.mockImplementation(() => {
+    throw new SupabaseConfigError("Supabase URL is not configured");
+  });
 });
 
 afterEach(cleanup);
@@ -273,7 +287,11 @@ describe("CompleteProfile seeds (W0.5)", () => {
     });
     await waitFor(() => expect(screen.getByText(/username available/i)).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    const alert = await screen.findByRole("alert");
+    expect(alert).toBeTruthy();
+    // Pinned to the unconfigured-backend copy: proves the stubbed client
+    // boundary (not a coincidental network failure) produced this error.
+    expect(alert.textContent).toMatch(/couldn't save your profile right now/i);
   });
 
   it("keyboard path: labelled fields in focus order and form submit completes", async () => {
