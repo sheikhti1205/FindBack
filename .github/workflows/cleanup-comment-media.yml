@@ -1,0 +1,85 @@
+# FindBack — comment-media cleanup scheduler (X11).
+#
+# Every 15 minutes, call the `cleanup-comment-media` Edge Function to drain the
+# orphaned bytes of deleted comment attachments: it claims a bounded batch from
+# `comment_media_cleanup_queue` (lease/ack, see
+# supabase/migrations/20261013020000_comment_media_cleanup_lease.sql), removes
+# each Storage object, and acks only the successes — failures stay queued for
+# the next stale-lease reclaim, so nothing is ever lost.
+#
+# The function is internal-only: it accepts EITHER a service-role bearer OR the
+# `x-cleanup-secret` header matching the function env `CLEANUP_CRON_SECRET`.
+# This lane uses the shared secret, stored BOTH here (GitHub secret
+# `CLEANUP_CRON_SECRET`) and in the function environment. Names only — the
+# value is never echoed, and the workflow is a no-op until it is provisioned.
+#
+# Trigger: schedule + manual dispatch ONLY. Never on push/tag — a code push
+# must not sweep production Storage.
+#
+# NOTE (billing): while GitHub Actions billing is blocked the scheduler stays
+# runtime-disabled — scheduled workflows do not fire and the runner never
+# starts. The file is committed so the supported path is in-repo and ready the
+# moment billing is restored; until then the sweep simply does not run.
+#
+# Required repo configuration (owner actions):
+#   Secrets:   CLEANUP_CRON_SECRET (shared with the function env of the same name)
+#   Variables: SUPABASE_PROJECT_REF
+#
+# Validated by scripts/check-cleanup-scheduler.mjs (structural rules).
+
+name: Cleanup comment media
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      max_batches:
+        description: "Bounded batch ceiling (1-10) per invocation."
+        required: false
+        default: "10"
+
+permissions:
+  contents: read
+
+# One sweep at a time; never cancel a run mid-lease (an interrupted sweep
+# would just be reclaimed stale, but serializing keeps queue churn minimal).
+concurrency:
+  group: findback-cleanup-comment-media
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      # Hard ceiling mirroring the function's MAX_BATCHES_PER_INVOCATION (10).
+      MAX_BATCHES: "10"
+    steps:
+      - name: Sweep orphaned comment media
+        env:
+          CLEANUP_CRON_SECRET: ${{ secrets.CLEANUP_CRON_SECRET }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          INPUT_MAX_BATCHES: ${{ github.event.inputs.max_batches }}
+        run: |
+          # No-op until the owner provisions the secret + project ref.
+          if [ -z "$CLEANUP_CRON_SECRET" ]; then
+            echo "CLEANUP_CRON_SECRET is not provisioned; skipping sweep."
+            exit 0
+          fi
+          if [ -z "$PROJECT_REF" ]; then
+            echo "SUPABASE_PROJECT_REF is not set; skipping sweep."
+            exit 0
+          fi
+          # Bound the batch: numeric only, clamped to 1..MAX_BATCHES so a manual
+          # dispatch can never request an unbounded (or zero) run.
+          BATCH="${INPUT_MAX_BATCHES:-$MAX_BATCHES}"
+          case "$BATCH" in ''|*[!0-9]*) BATCH="$MAX_BATCHES" ;; esac
+          [ "$BATCH" -lt 1 ] && BATCH=1
+          [ "$BATCH" -gt "$MAX_BATCHES" ] && BATCH="$MAX_BATCHES"
+          echo "sweeping up to ${BATCH} batch(es) (bounded)"
+          curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/cleanup-comment-media" \
+            -H "x-cleanup-secret: ${CLEANUP_CRON_SECRET}" \
+            -H "content-type: application/json" \
+            -d "{\"max_batches\": ${BATCH}}" \
+            --retry 2 --retry-all-errors --max-time 60

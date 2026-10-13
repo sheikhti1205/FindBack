@@ -19,6 +19,11 @@ jobs:
       VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
       VITE_SENTRY_ENVIRONMENT: production-web
       VITE_SENTRY_DIST: web-production
+      # KLIPY GIF/sticker adapter (X7 cross-env parity). Absent/blank -> the
+      # composer hides the GIF control (graceful, no error surface), exactly as
+      # in apps/mobile/src/services/klipy.ts. Secret-only; never a literal here.
+      # Never log this value — names/shapes only (see scripts/check-klipy-config.mjs).
+      VITE_KLIPY_API_KEY: ${{ secrets.VITE_KLIPY_API_KEY }}
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
     steps:

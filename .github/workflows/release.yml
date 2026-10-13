@@ -99,6 +99,10 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+      # KLIPY (X7): the gate job bakes the same mobile web dist (Capacitor webDir)
+      # as the signed build, so it carries the same adapter flag. Blank ->
+      # disabled and the GIF control is hidden. Secret-only; never a literal.
+      VITE_KLIPY_API_KEY: ${{ secrets.VITE_KLIPY_API_KEY }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -206,6 +210,10 @@ jobs:
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      # KLIPY (X7): releases build the mobile web dist (Capacitor webDir) that is
+      # packed into the APK, so bake the adapter flag here too. Blank -> disabled
+      # and the GIF control is hidden. Secret-only; never a literal in repo files.
+      VITE_KLIPY_API_KEY: ${{ secrets.VITE_KLIPY_API_KEY }}
       # Sentry is MANDATORY in signed installable builds (S1). VITE_SENTRY_DSN and the
       # org/project identifiers come from repo Actions VARIABLES (never hardcoded);
       # SENTRY_AUTH_TOKEN stays a CI secret for the future sourcemap upload (S3) and
