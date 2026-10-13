@@ -176,6 +176,8 @@ export function CommentComposer({
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const filesRef = useRef(new Map<string, File>());
+  const attachmentsRef = useRef<CommentAttachment[]>([]);
+  const submittedRef = useRef(false);
   const klipyCtl = useRef<KlipySearchController | null>(null);
   const gifEnabled = isKlipyEnabled();
 
@@ -195,6 +197,36 @@ export function CommentComposer({
 
   // The controller outlives the panel: cancel in-flight work on unmount.
   useEffect(() => () => klipyCtl.current?.dispose(), []);
+
+  // Mirror staged entries for the abandon sweep below (an unmount cleanup
+  // closure cannot read state at unmount time).
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  // FB-AUD-04: pick → upload completes → leave page without submit must not
+  // orphan the Storage object (no typed row exists yet, so no server
+  // cleanup can find it). Best-effort fire-and-forget sweep on unmount,
+  // reusing the same helper explicit Remove uses (`removeCommentAttachment`
+  // only deletes local-upload keys and never throws). Row-referenced keys
+  // after a successful submit are never swept: success sets the submitted
+  // flag and clears the strip, so the sweep sees nothing to delete. No new
+  // endpoint surface; submit/success-path semantics unchanged.
+  useEffect(
+    () => () => {
+      if (submittedRef.current) return;
+      const staged = attachmentsRef.current.filter(
+        (a) => a.status === "uploaded" && a.objectKey && a.remoteUrl,
+      );
+      for (const entry of staged) {
+        // Fire-and-forget: never blocks unmount, never logs at error level
+        // (nothing is logged at all); the rejection sink keeps even a
+        // future thrower of the helper silent.
+        void removeCommentAttachment(entry).then(undefined, () => undefined);
+      }
+    },
+    [],
+  );
 
   // Auto-grow 1→5 lines from scrollHeight (never animated per keystroke).
   useEffect(() => {
@@ -458,6 +490,9 @@ export function CommentComposer({
       for (const s of shares) {
         void trackKlipyShare(s.kind, s.slug, customerId);
       }
+      // Mark committed BEFORE clearing: the abandon sweep must never touch
+      // keys that are now row-referenced server-side.
+      submittedRef.current = true;
       for (const a of attachments) {
         if (a.previewUrl.startsWith("blob:")) {
           try {

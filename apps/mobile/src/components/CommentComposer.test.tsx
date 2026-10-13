@@ -638,3 +638,72 @@ describe("CommentComposer native photo intake (FBX-038)", () => {
     expect(attachMock.upload).not.toHaveBeenCalled();
   });
 });
+
+describe("CommentComposer abandon sweep (FB-AUD-04)", () => {
+  const STORAGE_URL =
+    "https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg";
+
+  function stageUploadedPhoto() {
+    attachMock.upload.mockResolvedValue({ remoteUrl: STORAGE_URL, objectKey: "u-9/x.jpg" });
+    fireEvent.change(screen.getByTestId("comment-file-input") as HTMLInputElement, {
+      target: { files: [file("p.jpg", "image/jpeg")] },
+    });
+    return waitFor(() => expect(screen.getByTestId("comment-send")).toHaveProperty("disabled", false));
+  }
+
+  it("best-effort-deletes staged uploaded keys on unmount without submit (never console.error)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Even a storage-remove failure must stay silent at error level.
+    attachMock.remove.mockRejectedValueOnce(new Error("sweep failed"));
+    try {
+      const { unmount } = render(<CommentComposer {...baseProps()} />);
+      await stageUploadedPhoto();
+      expect(attachMock.remove).not.toHaveBeenCalled();
+      unmount();
+      await waitFor(() => expect(attachMock.remove).toHaveBeenCalledTimes(1));
+      expect(attachMock.remove.mock.calls[0]![0]).toMatchObject({
+        objectKey: "u-9/x.jpg",
+        remoteUrl: STORAGE_URL,
+      });
+      expect(errSpy).not.toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("does NOT delete row-referenced keys after a successful submit (unmount-safe)", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const { unmount } = render(<CommentComposer {...baseProps({ onSubmit })} />);
+    await stageUploadedPhoto();
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "look" } });
+    fireEvent.click(screen.getByTestId("comment-send"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    unmount();
+    expect(attachMock.remove).not.toHaveBeenCalled();
+  });
+
+  it("explicit remove still deletes the staged object (no double-sweep on unmount)", async () => {
+    const { unmount } = render(<CommentComposer {...baseProps()} />);
+    await stageUploadedPhoto();
+    fireEvent.click(screen.getByRole("button", { name: /remove p\.jpg/i }));
+    await waitFor(() => expect(attachMock.remove).toHaveBeenCalledTimes(1));
+    expect(attachMock.remove.mock.calls[0]![0]).toMatchObject({ objectKey: "u-9/x.jpg" });
+    unmount();
+    expect(attachMock.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it("failed submit keeps staged entries for retry (no sweep, still sendable)", async () => {
+    const onSubmit = vi.fn().mockRejectedValueOnce(new Error("offline down")).mockResolvedValue(undefined);
+    const onError = vi.fn();
+    render(<CommentComposer {...baseProps({ onSubmit, onError })} />);
+    await stageUploadedPhoto();
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "look" } });
+    fireEvent.click(screen.getByTestId("comment-send"));
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    // Staged upload survives for retry: strip still present, nothing deleted.
+    expect(screen.getByTestId("comment-attachments")).toBeTruthy();
+    expect(attachMock.remove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("comment-send"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+  });
+});
