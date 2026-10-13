@@ -299,6 +299,21 @@ tasks.register("verifySigneddevConfig", Exec) {
 tasks.matching { it.name in ["packageSigneddev", "packageSigneddevBundle"] }
     .configureEach { dependsOn("verifySigneddevConfig") }
 
+// FBX-028: the RELEASE path gets the SAME public-config + App-Links provenance
+// gate as signeddev. A direct `./gradlew assembleRelease` previously packaged
+// a release APK with only the Supabase/share/Sentry bundle check
+// (verifyBundledClientConfig) — it never asserted GOOGLE_WEB_CLIENT_ID, so a
+// signed release APK could ship with Google sign-in silently disabled. This
+// reuses the signeddev checker (Google web client id + map config + App-Links
+// manifest + staged association) so the direct Gradle route cannot bypass the
+// wrapper's release checks either. Debug/other tasks stay ungated.
+tasks.register("verifyReleaseConfig", Exec) {
+    commandLine "node", new File(repoRoot, "scripts/check-signeddev-config.mjs").absolutePath,
+        "--assets", new File(projectDir, "src/main/assets/public").absolutePath
+}
+tasks.matching { it.name in ["packageRelease", "packageReleaseBundle"] }
+    .configureEach { dependsOn("verifyReleaseConfig") }
+
 // FBX-025: fail-closed packaging gate. signeddev silently fell back to the
 // debug signer when ANDROID_KEYSTORE_* was incomplete; it now refuses to run
 // at all before any APK is written. Guard fires for any packaging/install

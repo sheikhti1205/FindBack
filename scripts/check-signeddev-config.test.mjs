@@ -304,6 +304,21 @@ test("M-b: the Gradle-invoked signeddev gate fails an empty staged surface", () 
   }
 });
 
+// --- FBX-028: the RELEASE path must carry the same public-config + App-Links
+// provenance gate as signeddev, so a direct `./gradlew assembleRelease` cannot
+// ship a signed APK with GOOGLE_WEB_CLIENT_ID (or other config) missing.
+test("FBX-028: direct Gradle packaging of release runs verifyReleaseConfig", () => {
+  const text = buildGradleText();
+  assert.match(text, /tasks\.register\("verifyReleaseConfig", Exec\)/);
+  const release = text.match(/verifyReleaseConfig"[\s\S]{0,600}?packageRelease/);
+  assert.ok(release, "packageRelease bypasses verifyReleaseConfig");
+  assert.ok(text.includes("packageReleaseBundle"), "release bundle path bypasses verifyReleaseConfig");
+  // The new release gate must reuse the signeddev config checker (Google id,
+  // map config, App-Links, association) — not a weaker check.
+  const gate = text.match(/verifyReleaseConfig", Exec\)[\s\S]{0,300}?check-signeddev-config\.mjs/);
+  assert.ok(gate, "verifyReleaseConfig must invoke check-signeddev-config.mjs");
+});
+
 // --- FBX-027 wiring: the signeddev gate includes the map build truth, so a
 // direct `./gradlew assembleSigneddev` fails on malformed custom map config.
 test("signeddev gate fails closed on malformed custom map config", () => {
