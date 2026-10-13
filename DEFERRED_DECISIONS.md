@@ -1,14 +1,23 @@
 # Decisions and remaining prerequisites — FindBack
 
-Reconciled 2026-10-06 against the shipped tree and `completion-ledger.json`
-(which names the exact reconciliation commit). The 2026-10-05 audit baseline is
-historical provenance below, not the active baseline.
+Reconciled 2026-10-13 (corrective wave after owner audit FB-AUD-01..08,
+as-of audited main `fb66238`; ledger `completion-ledger.json` names the exact
+reconciliation commit). The 2026-10-06 v8-beta reconciliation below is
+historical provenance, not the active baseline.
 Latest owner directives override historical pivot/deferment text. A working demo
 adapter does **not** remove a completion or release blocker.
 
-**Release: READY (v8 beta line, owner decision 2026-10-06).** See [completion audit](docs/COMPLETION_AUDIT.md) for all 36
-findings (state cells agree with the ledger) and
-[current verification report](docs/FINAL_ACCEPTANCE_REPORT.md).
+**Release: HOLD — no release authorized.** The annotated `v1.0.0` tag exists
+(`bb62dde`, unmoved) and main is considerably beyond it with post-v1
+functionality (comment attachments, keyless MapLibre pivot, canonical
+reactions, assistant restructure). The 2026-10-06 "READY (v8 beta line)" below
+is superseded. Runtime acceptance is deferred per
+`Communication/DEFERRED_RUNTIME_ACCEPTANCE.md` (D01–D14); live migration truth
+per owner audit: `20261012010000` + `20261012020000` applied on the hosted
+project, `20261012030000` (avatar host-bind) + `20261013010000` (attachment
+UPDATE bind) pending canonical apply. The ledger holds 38 items (36 + 2 split
+entries); all are in closed statuses with the device/live-bound ones WAIVED or
+BLOCKED_EXTERNAL, not proven.
 Photo grounding, account-bound sends, assistant modes, phone verification and
 password recovery are shipped, reviewed and CI-executed; device, live-provider
 and licensed-tooling acceptance remain external. Nothing here is intentionally

@@ -4,9 +4,11 @@ import { Capacitor } from "@capacitor/core";
  * FBX-016 comment-composer emoji bridge (comments composer).
  *
  * - On Android the composer calls the native `FindbackEmoji` bottom-sheet
- *   picker (`pickNativeEmoji`) — the device-rendered sheet is the source of
- *   truth there, so the web set below is never treated as final and the two
- *   sets are deliberately never synced.
+ *   (`pickNativeEmoji`) — a curated 32-emoji device-rendered sheet (system
+ *   font), NOT the full system emoji catalogue: no category navigation,
+ *   skin tones, search, or current-Unicode coverage (FB-AUD-08). The sheet
+ *   is the source of truth there, so the web set below is never treated as
+ *   final and the two sets are deliberately never synced.
  * - Everywhere else (web fallback, or native unavailable/cancelled) the
  *   composer renders `EMOJI_WEB_FALLBACK` — a compact fallback-only grid
  *   clearly marked as such. The composer must not hardcode its own set.

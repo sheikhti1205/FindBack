@@ -29,9 +29,11 @@ import java.util.function.Consumer;
 public final class EmojiPickerSheet extends DialogFragment {
 
     /**
-     * Device-rendered grid (system emoji font). Curated for comments —
-     * faces, gestures, hearts, objects — and intentionally independent of
-     * the web fallback list.
+     * Device-rendered grid (system emoji font): 32 curated glyphs for
+     * comments — faces, gestures, hearts, objects — intentionally
+     * independent of the web fallback list. This is a compact custom sheet,
+     * not the full system emoji catalogue (no categories, skin tones,
+     * search, or full Unicode coverage); see FB-AUD-08.
      */
     static final String[] DEVICE_EMOJI = {
         "\uD83D\uDE00", "\uD83D\uDE01", "\uD83D\uDE02", "\uD83E\uDD23",
