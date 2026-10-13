@@ -379,20 +379,53 @@ export async function fetchComments(postId: string): Promise<CommentItem[]> {
   return ((data ?? []) as ClientCommentRow[]).map(mapClientComment);
 }
 
+/**
+ * Ordered attachment descriptor for the atomic comment-create RPC
+ * `findback_add_comment_with_attachments(p_post_id, p_body, p_parent_id,
+ * p_attachments)` (migration 20261012020000_comment_attachments_parity).
+ * Field names mirror the RPC's descriptor shape exactly: STORAGE picks carry
+ * `storage_key` (a caller-owned `<uid>/…` key, never a URL); Klipy picks
+ * carry `klipy_slug` (provider identity, never a URL) plus `klipy_kind`;
+ * every descriptor carries an `https://` `remote_url`. `display_order` is
+ * 1-based in tile order. Optional provenance (preview/mime/name/…) is sent
+ * only when known — the RPC treats every field but kind/order/remote as
+ * nullable.
+ */
+export interface CommentAttachmentDescriptor {
+  kind: "photo" | "video" | "gif" | "sticker";
+  display_order: number;
+  storage_key?: string | null;
+  klipy_slug?: string | null;
+  klipy_kind?: "gifs" | "stickers" | null;
+  remote_url: string;
+  preview_url?: string | null;
+  mime_type?: string | null;
+  file_name?: string | null;
+  file_size?: number | null;
+  width?: number | null;
+  height?: number | null;
+}
+
 export async function addComment(
   postId: string,
   body: string,
   parentId?: string | null,
+  attachments?: readonly CommentAttachmentDescriptor[] | null,
 ): Promise<CommentItem> {
-  // A hang must fail visibly (the composer keeps the text for manual retry)
-  // instead of sticking `sending` forever with the send button disabled.
+  // Atomic path (FB-AUD-02): comment + staged descriptors persist in one
+  // transaction. A body-only call sends `[]`, which the RPC treats exactly
+  // like the legacy single-row create — so the legacy
+  // `findback_add_comment_client` stays server-side for older clients but
+  // this client no longer calls it. Timeout semantics unchanged: a hang
+  // fails visibly and the composer keeps the text for manual retry.
   const { data, error } = await withTimeout(
     () =>
       Promise.resolve(
-        getSupabase().rpc("findback_add_comment_client", {
+        getSupabase().rpc("findback_add_comment_with_attachments", {
           p_post_id: postId,
           p_body: body,
           p_parent_id: parentId ?? null,
+          p_attachments: attachments ?? [],
         }),
       ),
     COMMENT_POST_TIMEOUT_MS,

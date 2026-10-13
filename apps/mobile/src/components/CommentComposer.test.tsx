@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CommentComposer } from "./CommentComposer";
+import { CommentComposer, toCommentAttachmentDescriptors } from "./CommentComposer";
 
 const { attachMock, profileMock } = vi.hoisted(() => ({
   attachMock: {
@@ -217,6 +217,161 @@ describe("CommentComposer attachments", () => {
     expect(body).toContain("![photo](https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg)");
     expect(body).not.toContain("data:");
     expect(body).not.toContain("blob:");
+  });
+
+  it("exposes staged attachments as ordered descriptors at submit (FB-AUD-02)", async () => {
+    const STORAGE_URL =
+      "https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg";
+    attachMock.upload.mockResolvedValue({ remoteUrl: STORAGE_URL, objectKey: "u-9/x.jpg" });
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<CommentComposer {...baseProps({ onSubmit })} />);
+    fireEvent.change(screen.getByTestId("comment-file-input") as HTMLInputElement, {
+      target: { files: [file("p.jpg", "image/jpeg")] },
+    });
+    await waitFor(() => expect(screen.getByTestId("comment-send")).toHaveProperty("disabled", false));
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "look" } });
+    fireEvent.click(screen.getByTestId("comment-send"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    // Body still carries the https media line for legacy readers.
+    expect(onSubmit.mock.calls[0]![0] as string).toContain(`![photo](${STORAGE_URL})`);
+    // Ordered descriptors travel alongside for the atomic RPC.
+    expect(onSubmit.mock.calls[0]![1]).toEqual([
+      {
+        kind: "photo",
+        display_order: 1,
+        storage_key: "u-9/x.jpg",
+        remote_url: STORAGE_URL,
+        mime_type: "image/jpeg",
+        file_name: "p.jpg",
+      },
+    ]);
+  });
+
+  it("submits body-only with no descriptors (backward compat)", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<CommentComposer {...baseProps({ onSubmit })} />);
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "plain hello" } });
+    fireEvent.click(screen.getByTestId("comment-send"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]![0]).toBe("plain hello");
+    expect(onSubmit.mock.calls[0]).toHaveLength(1);
+  });
+
+  describe("toCommentAttachmentDescriptors (FB-AUD-02)", () => {
+    it("maps uploaded entries to ordered descriptors, storage first then klipy", () => {
+      expect(
+        toCommentAttachmentDescriptors([
+          {
+            id: "a1",
+            fileName: "a.jpg",
+            mimeType: "image/jpeg",
+            kind: "photo",
+            status: "uploaded",
+            progress: 1,
+            previewUrl: "blob:local",
+            remoteUrl: "https://cdn.test/a.jpg",
+            objectKey: "u-9/a.jpg",
+          },
+          {
+            id: "a2",
+            fileName: "Happy",
+            mimeType: "image/gif",
+            kind: "gif",
+            status: "uploaded",
+            progress: 1,
+            previewUrl: "https://media.klipy.com/happy-preview.gif",
+            remoteUrl: "https://media.klipy.com/happy.gif",
+            klipySlug: "happy-1",
+            klipyKind: "gifs",
+          },
+        ]),
+      ).toEqual([
+        {
+          kind: "photo",
+          display_order: 1,
+          storage_key: "u-9/a.jpg",
+          remote_url: "https://cdn.test/a.jpg",
+          mime_type: "image/jpeg",
+          file_name: "a.jpg",
+        },
+        {
+          kind: "gif",
+          display_order: 2,
+          klipy_slug: "happy-1",
+          klipy_kind: "gifs",
+          remote_url: "https://media.klipy.com/happy.gif",
+          preview_url: "https://media.klipy.com/happy-preview.gif",
+          mime_type: "image/gif",
+          file_name: "Happy",
+        },
+      ]);
+    });
+
+    it("drops non-uploaded entries and never leaks blob: previews", () => {
+      expect(
+        toCommentAttachmentDescriptors([
+          {
+            id: "a1",
+            fileName: "pending.jpg",
+            mimeType: "image/jpeg",
+            kind: "photo",
+            status: "uploading",
+            progress: 0.5,
+            previewUrl: "blob:local",
+          },
+          {
+            id: "a2",
+            fileName: "ok.jpg",
+            mimeType: "image/jpeg",
+            kind: "photo",
+            status: "uploaded",
+            progress: 1,
+            previewUrl: "blob:local",
+            remoteUrl: "https://cdn.test/ok.jpg",
+            objectKey: "u-9/ok.jpg",
+          },
+        ]),
+      ).toEqual([
+        {
+          kind: "photo",
+          display_order: 1,
+          storage_key: "u-9/ok.jpg",
+          remote_url: "https://cdn.test/ok.jpg",
+          mime_type: "image/jpeg",
+          file_name: "ok.jpg",
+        },
+      ]);
+    });
+
+    it("maps a klipy sticker pick to the sticker kind", () => {
+      expect(
+        toCommentAttachmentDescriptors([
+          {
+            id: "a1",
+            fileName: "Star",
+            mimeType: "image/gif",
+            kind: "gif",
+            status: "uploaded",
+            progress: 1,
+            previewUrl: "https://media.klipy.com/star-preview.gif",
+            remoteUrl: "https://media.klipy.com/star.gif",
+            klipySlug: "star-1",
+            klipyKind: "stickers",
+          },
+        ]),
+      ).toEqual([
+        {
+          kind: "sticker",
+          display_order: 1,
+          klipy_slug: "star-1",
+          klipy_kind: "stickers",
+          remote_url: "https://media.klipy.com/star.gif",
+          preview_url: "https://media.klipy.com/star-preview.gif",
+          mime_type: "image/gif",
+          file_name: "Star",
+        },
+      ]);
+    });
   });
 
   it("retries a failed upload and removes entries", async () => {

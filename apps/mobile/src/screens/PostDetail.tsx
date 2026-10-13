@@ -46,6 +46,7 @@ import {
   ratePost,
   reactToPost,
   updatePostStatus,
+  type CommentAttachmentDescriptor,
 } from "../services/posts";
 import {
   applyReactionDeltas,
@@ -763,14 +764,21 @@ export function PostDetail() {
   /**
    * C3 comment write path: the composer owns text, mentions, emoji, and
    * attachments and hands over a complete body (text + `https://` media
-   * lines, never base64). The 1000-character backend limit is enforced here
-   * too — the composer already blocks over-limit sends, this stays as the
-   * defensive second gate. Failures surface inline + announce (never silent).
+   * lines, never base64) plus the ordered attachment descriptors for the
+   * atomic `findback_add_comment_with_attachments` RPC (FB-AUD-02). The
+   * 1000-character backend limit is enforced here too — the composer
+   * already blocks over-limit sends, this stays as the defensive second
+   * gate. Failures surface inline + announce (never silent). A body-only
+   * submit keeps the exact legacy 3-arg addComment call so existing suites
+   * observe no change; descriptors travel only when staged.
    */
-  async function postCommentBody(body: string) {
+  async function postCommentBody(body: string, attachments?: readonly CommentAttachmentDescriptor[]) {
     if (!body.trim() || body.length > 1000) return;
     const snap = { postId: current.id, viewer: user?.id };
-    const comment = await addComment(current.id, body, replyTo?.id ?? null);
+    const comment =
+      attachments && attachments.length > 0
+        ? await addComment(current.id, body, replyTo?.id ?? null, attachments)
+        : await addComment(current.id, body, replyTo?.id ?? null);
     if (isStaleMutation(snap)) return;
     setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
   }
@@ -1484,7 +1492,7 @@ export function PostDetail() {
               displayName: current.author.displayName ?? null,
               avatarUrl: current.author.avatarUrl ?? null,
             }}
-            onSubmit={(body) => postCommentBody(body)}
+            onSubmit={(body, attachments) => postCommentBody(body, attachments)}
             onError={commentFailed}
             onSent={() => setReplyTo(null)}
           />

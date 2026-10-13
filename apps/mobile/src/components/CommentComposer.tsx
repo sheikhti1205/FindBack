@@ -40,6 +40,7 @@ import {
   commentMediaProvenance,
   MAX_COMMENT_BODY,
 } from "../services/commentBodyMedia";
+import type { CommentAttachmentDescriptor } from "../services/posts";
 import { friendlyError } from "../utils/friendlyErrors";
 
 /**
@@ -76,8 +77,14 @@ export interface CommentComposerProps {
   participants: MentionCandidate[];
   owner?: MentionCandidate | null;
   disabled?: boolean;
-  /** Parent writes the comment (addComment + list append). May throw. */
-  onSubmit: (body: string) => Promise<void>;
+  /**
+   * Parent writes the comment (addComment + list append). May throw.
+   * Body carries text + `https://` media lines (legacy readers); the
+   * optional ordered descriptors feed the atomic
+   * `findback_add_comment_with_attachments` RPC (FB-AUD-02). Body-only
+   * callers stay valid — the second arg is optional.
+   */
+  onSubmit: (body: string, attachments?: CommentAttachmentDescriptor[]) => Promise<void>;
   /** Parent surfaces failures inline (actionError + announce pattern). */
   onError: (message: string) => void;
   /** Parent clears reply affordances after a successful post. */
@@ -95,6 +102,44 @@ export function insertAtCaret(
   const e = end ?? s;
   const next = `${value.slice(0, s)}${insert}${value.slice(e)}`;
   return { next, caret: s + insert.length };
+}
+
+/**
+ * Map staged composer entries to ordered RPC descriptors in tile order
+ * (FB-AUD-02). Only `uploaded` entries with an `https://` remote URL travel
+ * — pending/failed entries never reach the RPC (send stays disabled until
+ * they resolve). `blob:` previews stay local and are never sent (the RPC
+ * requires https). A Klipy sticker pick (local kind `gif` with `klipyKind:
+ * "stickers"`) maps to the RPC `sticker` kind.
+ *
+ * Lives beside the composer (not in services/posts) so screens that mock
+ * the posts service keep a working composer: the service only forwards
+ * descriptors opaquely, while PostDetail imports just the descriptor type.
+ */
+export function toCommentAttachmentDescriptors(
+  attachments: readonly CommentAttachment[],
+): CommentAttachmentDescriptor[] {
+  return attachments
+    .filter(
+      (a) =>
+        a.status === "uploaded" &&
+        typeof a.remoteUrl === "string" &&
+        a.remoteUrl.startsWith("https://"),
+    )
+    .map((a, index) => {
+      const descriptor: CommentAttachmentDescriptor = {
+        kind: a.kind === "gif" && a.klipyKind === "stickers" ? "sticker" : a.kind,
+        display_order: index + 1,
+        remote_url: a.remoteUrl as string,
+      };
+      if (a.objectKey) descriptor.storage_key = a.objectKey;
+      if (a.klipySlug) descriptor.klipy_slug = a.klipySlug;
+      if (a.klipyKind) descriptor.klipy_kind = a.klipyKind;
+      if (a.previewUrl.startsWith("https://")) descriptor.preview_url = a.previewUrl;
+      if (a.mimeType) descriptor.mime_type = a.mimeType;
+      if (a.fileName) descriptor.file_name = a.fileName;
+      return descriptor;
+    });
 }
 
 type GifTab = KlipyKind;
@@ -398,7 +443,16 @@ export function CommentComposer({
       .map((a) => ({ kind: a.klipyKind ?? ("gifs" as const), slug: a.klipySlug as string }));
     setSending(true);
     try {
-      await onSubmit(body);
+      // Ordered descriptors for the atomic RPC travel alongside the body
+      // (the body keeps its https media lines for legacy readers). A
+      // body-only send stays a single-arg call so existing callers observe
+      // no change.
+      const descriptors = toCommentAttachmentDescriptors(readyToPost);
+      if (descriptors.length > 0) {
+        await onSubmit(body, descriptors);
+      } else {
+        await onSubmit(body);
+      }
       // Share-tracking only on post: the comment exists server-side now.
       const customerId = klipyCustomerId(currentUser?.id);
       for (const s of shares) {

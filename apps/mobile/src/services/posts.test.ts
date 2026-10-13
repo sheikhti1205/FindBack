@@ -335,16 +335,84 @@ describe("fetchComments", () => {
   });
 });
 
+describe("addComment atomic RPC (FB-AUD-02)", () => {
+  it("posts descriptors through findback_add_comment_with_attachments in order", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [commentRow({ id: "c9" })], error: null });
+
+    const comment = await addComment("p1", "look", null, [
+      {
+        kind: "photo",
+        display_order: 1,
+        storage_key: "u-9/a.jpg",
+        remote_url: "https://cdn.test/a.jpg",
+        mime_type: "image/jpeg",
+        file_name: "a.jpg",
+      },
+      {
+        kind: "gif",
+        display_order: 2,
+        klipy_slug: "happy-1",
+        klipy_kind: "gifs",
+        remote_url: "https://media.klipy.com/happy.gif",
+        preview_url: "https://media.klipy.com/happy-preview.gif",
+        mime_type: "image/gif",
+        file_name: "Happy",
+      },
+    ]);
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_with_attachments", {
+      p_post_id: "p1",
+      p_body: "look",
+      p_parent_id: null,
+      p_attachments: [
+        {
+          kind: "photo",
+          display_order: 1,
+          storage_key: "u-9/a.jpg",
+          remote_url: "https://cdn.test/a.jpg",
+          mime_type: "image/jpeg",
+          file_name: "a.jpg",
+        },
+        {
+          kind: "gif",
+          display_order: 2,
+          klipy_slug: "happy-1",
+          klipy_kind: "gifs",
+          remote_url: "https://media.klipy.com/happy.gif",
+          preview_url: "https://media.klipy.com/happy-preview.gif",
+          mime_type: "image/gif",
+          file_name: "Happy",
+        },
+      ],
+    });
+    expect(comment.id).toBe("c9");
+  });
+
+  it("sends an empty descriptor array for body-only comments (legacy equivalent)", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [commentRow({ id: "c9" })], error: null });
+
+    await addComment("p1", "thanks!");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_with_attachments", {
+      p_post_id: "p1",
+      p_body: "thanks!",
+      p_parent_id: null,
+      p_attachments: [],
+    });
+  });
+});
+
 describe("addComment", () => {
   it("creates a comment and maps the returned row", async () => {
     clientMock.rpc.mockResolvedValue({ data: [commentRow({ id: "c9" })], error: null });
 
     const comment = await addComment("p1", "thanks!");
 
-    expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_client", {
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_with_attachments", {
       p_post_id: "p1",
       p_body: "thanks!",
       p_parent_id: null,
+      p_attachments: [],
     });
     expect(comment.id).toBe("c9");
   });
@@ -357,10 +425,11 @@ describe("addComment", () => {
 
     const reply = await addComment("p1", "me too", "c1");
 
-    expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_client", {
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_add_comment_with_attachments", {
       p_post_id: "p1",
       p_body: "me too",
       p_parent_id: "c1",
+      p_attachments: [],
     });
     expect(reply.parentId).toBe("c1");
     expect(reply.depth).toBe(1);
