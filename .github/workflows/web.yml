@@ -18,8 +18,13 @@ jobs:
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
       VITE_SENTRY_ENVIRONMENT: production-web
+      VITE_SENTRY_DIST: web-production
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -27,14 +32,74 @@ jobs:
       - run: npm ci
       - name: Fail-closed public client configuration
         run: node scripts/check-mobile-build-config.mjs --preflight && node scripts/check-sentry-config.mjs
+      # SYNC-4/5: deterministic Sentry release, same shape as ci.yml/release.yml.
+      # Canonical owner of the SHAPE is
+      # apps/mobile/src/services/monitoring/release.ts
+      # (`findback-mobile@<version>+<short12>`); the 3-line shell below is
+      # deliberately duplicated (not imported) so YAML stays dependency-free.
+      - name: Compute Sentry release identity (same shape as ci/release)
+        run: |
+          VERSION=$(node -p "require('./apps/mobile/package.json').version")
+          SHA=$(git rev-parse --short=12 HEAD)
+          SENTRY_RELEASE="findback-mobile@${VERSION}+${SHA}"
+          export SENTRY_RELEASE
+          echo "SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
+      # SYNC-6: trace rate from repo variable VITE_SENTRY_TRACES_SAMPLE_RATE,
+      # default 0.1, fail closed on garbage (non-numeric or outside 0..1).
+      - name: Resolve Sentry traces sample rate (variable, default 0.1, fail closed)
+        env:
+          SENTRY_TRACES_RAW: ${{ vars.VITE_SENTRY_TRACES_SAMPLE_RATE }}
+        run: |
+          RATE="${SENTRY_TRACES_RAW:-0.1}"
+          export SENTRY_RATE="$RATE"
+          node -e 'const r=Number(process.env.SENTRY_RATE); if(!Number.isFinite(r)||r<0||r>1){console.error(`bad traces sample rate: ${process.env.SENTRY_RATE} (want number in 0..1)`);process.exit(1)} console.log(`traces sample rate OK: ${r}`)'
+          echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${RATE}" >> "$GITHUB_ENV"
       - name: Typecheck and test link routing
         run: npm run typecheck && npm test -w @findback/mobile -- src/utils/reportLinks.test.ts src/components/ReportLinkHandler.test.tsx src/screens/SharedReport.test.tsx
       - name: Build static web surface
         run: npm run build -w @findback/mobile
+        env:
+          SENTRY_UPLOAD_SOURCEMAPS: "true"
+      - name: Assert Sentry DSN host + release in built JS
+        run: |
+          set -euo pipefail
+          JS=$(ls apps/mobile/dist/assets/index-*.js | head -1)
+          [ -n "${SENTRY_RELEASE:-}" ] || { echo "SENTRY_RELEASE was not computed — the Compute step above must run first"; exit 1; }
+          DSN_HOST=$(node -e "import('./scripts/check-sentry-config.mjs').then(m=>{const r=m.checkEffectiveSentryDsn({mode:'production'});if(!r.ok){console.error('DSN '+r.reason);process.exit(1)}process.stdout.write(r.host)})")
+          grep -q "$DSN_HOST" "$JS" || { echo "Sentry DSN host missing from built bundle"; exit 1; }
+          grep -q "$SENTRY_RELEASE" "$JS" || { echo "Sentry release identity missing from built bundle"; exit 1; }
+          echo "web bundle carries DSN host $DSN_HOST, release $SENTRY_RELEASE, dist web-production"
+      - name: Upload sourcemaps to Sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "${SENTRY_AUTH_TOKEN:-}" ] || { echo "SENTRY_AUTH_TOKEN secret is empty — add it in repo Settings → Secrets and variables → Actions → Secrets (owner action)"; exit 1; }
+          [ -n "${SENTRY_ORG:-}" ] || { echo "SENTRY_ORG variable is empty — add it in repo Settings → Variables"; exit 1; }
+          [ -n "${SENTRY_PROJECT:-}" ] || { echo "SENTRY_PROJECT variable is empty — add it in repo Settings → Variables"; exit 1; }
+          [ -n "${SENTRY_RELEASE:-}" ] || { echo "SENTRY_RELEASE was not computed — the Compute step above must run first"; exit 1; }
+          MAPS=$(find apps/mobile/dist -name '*.map' | wc -l)
+          [ "$MAPS" -gt 0 ] || { echo "no .map files in apps/mobile/dist — the build must run with SENTRY_UPLOAD_SOURCEMAPS=true"; exit 1; }
+          echo "uploading $MAPS sourcemap(s) for release ${SENTRY_RELEASE} dist web-production (org/project from job env)"
+          npx -y @sentry/cli@3.8.0 sourcemaps upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" --release "$SENTRY_RELEASE" --dist web-production apps/mobile/dist
+      - name: Strip sourcemaps from distributed assets
+        run: |
+          find apps/mobile/dist -name '*.map' -delete
+          REMAINING=$(find apps/mobile/dist -name '*.map' | wc -l)
+          [ "$REMAINING" -eq 0 ] || { echo "$REMAINING .map file(s) remain after strip — refusing to deploy"; exit 1; }
+          if grep -rIl 'sourceMappingURL' apps/mobile/dist/assets/ 2>/dev/null | grep -q .; then
+            echo "sourceMappingURL reference remains in shipped bundle — refusing to deploy"; exit 1;
+          fi
+          echo "sourcemap strip verified: no .map files, no sourceMappingURL references in dist"
       - name: Verify baked configuration and App Links association
         run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-web-association.mjs apps/mobile/dist
         env:
           ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+      # The deploy step runs ONLY after the sourcemap upload + strip steps above
+      # succeed: any upload failure stops this job before Azure, so production-web
+      # is never deployed without matching symbols in Sentry.
       - name: Deploy prebuilt static output (Free SWA; no API backend)
         uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
         with:

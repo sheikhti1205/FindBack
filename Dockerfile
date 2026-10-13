@@ -20,16 +20,44 @@ COPY scripts scripts
 # Fail-closed preflight still requires a real Supabase URL + publishable key.
 # CI must pass them as --build-arg; unset/placeholder values keep failing the
 # build on purpose. No defaults are baked in here.
+#
+# MONITOR-IT policy (SYNC reference lane): every Docker image built for
+# reference/verification (CI `docker` job, release gate) is a MONITORED build —
+# it must carry the same Sentry DSN/release/dist identity as the lane that
+# built it, never a silent Sentry-blind shell. Local empty-safe builds (compose
+# without Sentry vars) stay buildable but log an explicit UNMONITORED warning
+# at verification time; any production/reference use without a DSN is a
+# lane-level configuration failure, never a quiet default here.
 ARG VITE_SUPABASE_URL=""
 ARG VITE_SUPABASE_PUBLISHABLE_KEY=""
 ARG VITE_PUBLIC_SHARE_ORIGIN=""
+ARG VITE_SENTRY_DSN=""
+ARG VITE_SENTRY_ENVIRONMENT="production"
+ARG VITE_SENTRY_TRACES_SAMPLE_RATE="0.1"
+ARG VITE_SENTRY_RELEASE=""
+ARG VITE_SENTRY_DIST="docker-reference"
 ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
 ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
 ENV VITE_PUBLIC_SHARE_ORIGIN=${VITE_PUBLIC_SHARE_ORIGIN}
+ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
+ENV VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT}
+ENV VITE_SENTRY_TRACES_SAMPLE_RATE=${VITE_SENTRY_TRACES_SAMPLE_RATE}
+ENV VITE_SENTRY_RELEASE=${VITE_SENTRY_RELEASE}
+ENV VITE_SENTRY_DIST=${VITE_SENTRY_DIST}
 COPY docs/specs/model-library/catalogue.v1.json docs/specs/model-library/catalogue.v1.json
 RUN npm run build -w @findback/shared \
  && npm run build -w @findback/api \
  && npm run build -w @findback/mobile
+# Baked-config verification (runs inside the build stage, on the exact bytes
+# copied to runtime below): Supabase preflight always; Sentry bundle asserts
+# whenever a DSN was provided. Empty DSN = local empty-safe path with an
+# explicit UNMONITORED warning (never a silent pass). Shapes only in logs.
+RUN node scripts/check-mobile-build-config.mjs --preflight && \
+  node -e 'const r=(process.env.VITE_SENTRY_TRACES_SAMPLE_RATE||"0.1").trim(); const n=Number(r); if(!Number.isFinite(n)||n<0||n>1){console.error(`docker baked-config: bad VITE_SENTRY_TRACES_SAMPLE_RATE ${r} (want number in 0..1)`);process.exit(1)} console.log(`docker baked-config: traces sample rate OK (${n})`)' && \
+  if [ -n "$VITE_SENTRY_DSN" ]; then \
+    node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && \
+    if [ -n "$VITE_SENTRY_RELEASE" ]; then JS=$(ls apps/mobile/dist/assets/index-*.js | head -1); grep -q "$VITE_SENTRY_RELEASE" "$JS" || { echo "docker baked-config: Sentry release identity missing from built bundle"; exit 1; }; echo "docker baked-config: Sentry release $VITE_SENTRY_RELEASE dist $VITE_SENTRY_DIST env $VITE_SENTRY_ENVIRONMENT verified"; else echo "docker baked-config: WARNING — no VITE_SENTRY_RELEASE baked (maps cannot be matched to this image)"; fi; \
+  else echo "findback(docker): WARNING — VITE_SENTRY_DSN empty, image is UNMONITORED (local development only)"; fi
 
 FROM node:22-alpine AS runtime
 WORKDIR /app

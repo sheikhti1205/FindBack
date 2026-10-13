@@ -1,6 +1,19 @@
 services:
   api:
-    build: .
+    build:
+      context: .
+      # Empty-safe forwarding: unset vars build a local UNMONITORED shell (the
+      # Dockerfile verification logs an explicit warning); reference/monitored
+      # builds export the Sentry vars before `docker compose build`.
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+        VITE_PUBLIC_SHARE_ORIGIN: ${VITE_PUBLIC_SHARE_ORIGIN:-}
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_SENTRY_ENVIRONMENT: ${VITE_SENTRY_ENVIRONMENT:-production}
+        VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-0.1}
+        VITE_SENTRY_RELEASE: ${VITE_SENTRY_RELEASE:-}
+        VITE_SENTRY_DIST: ${VITE_SENTRY_DIST:-docker-reference}
     image: findback:local
     container_name: findback-api
     ports:

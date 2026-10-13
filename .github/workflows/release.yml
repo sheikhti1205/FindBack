@@ -169,7 +169,7 @@ jobs:
           # path. Without these build args the container build dies on the
           # preflight (unlike CI's docker job, which passes them). Values come
           # from the job env below; never hardcoded here.
-          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN -t findback:release-gate .
+          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN --build-arg VITE_SENTRY_DSN --build-arg VITE_SENTRY_ENVIRONMENT=production --build-arg VITE_SENTRY_DIST=docker-reference -t findback:release-gate .
           docker run -d --name findback-gate -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:release-gate
           for _ in $(seq 1 30); do
             if curl -fsS http://localhost:4000/health >/dev/null; then
@@ -201,14 +201,17 @@ jobs:
       # (scripts/check-release-config.mjs) fails closed without a real DSN.
       VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
       VITE_SENTRY_ENVIRONMENT: production
-      VITE_SENTRY_TRACES_SAMPLE_RATE: "0.1"
+      # Variable-driven (default resolved + validated in the Resolve step below;
+      # empty var falls back to 0.1, garbage fails closed). Never hardcode here.
+      VITE_SENTRY_TRACES_SAMPLE_RATE: ${{ vars.VITE_SENTRY_TRACES_SAMPLE_RATE }}
+      VITE_SENTRY_DIST: android-release
       VITE_MONITORING_SELFTEST: ${{ vars.VITE_MONITORING_SELFTEST }}
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
       # Web/server Google OAuth client ID -> BuildConfig.GOOGLE_WEB_CLIENT_ID.
-      # Public identifier (NOT the client secret). Empty keeps Google sign-in
-      # fail-closed; the release preflight warns rather than shipping a build
-      # that silently lacks the provider.
+      # Public identifier (NOT the client secret). Empty fails the hard
+      # preflight above before signing; the packaged BuildConfig assert below
+      # proves the non-empty value reached the APK.
       GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v5
@@ -223,6 +226,21 @@ jobs:
           distribution: temurin
           java-version: "21"
       - run: npm ci
+      # SYNC-8: Google Web OAuth client ID is a HARD preflight failure (not a
+      # warn). An empty or placeholder value stops the signed build before any
+      # signing: shipping without the provider would silently drop Google
+      # sign-in for every user. Public identifier only — shapes in logs.
+      - name: Hard preflight — Google Web OAuth client ID (fail closed)
+        run: |
+          ID="${GOOGLE_WEB_CLIENT_ID:-}"
+          case "$ID" in
+            ""|-|x*|*placeholder*|*changeme*|*example*|test|dummy|null|undefined)
+              echo "GOOGLE_WEB_CLIENT_ID is missing or a placeholder — refusing to sign (owner action: set the repo Actions variable)"; exit 1 ;;
+          esac
+          case "$ID" in
+            *.apps.googleusercontent.com) echo "Google Web OAuth client ID present (suffix .apps.googleusercontent.com)" ;;
+            *) echo "GOOGLE_WEB_CLIENT_ID does not look like a Google OAuth client ID (want *.apps.googleusercontent.com) — refusing to sign"; exit 1 ;;
+          esac
       - name: Strict release config preflight
         run: node scripts/check-release-config.mjs
       - name: Restore Firebase Android client configuration
@@ -248,6 +266,15 @@ jobs:
           # exact same string passed to the sourcemap upload.
           echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
           node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
+      # SYNC-6: canonicalize the variable-driven trace rate (empty -> 0.1) and
+      # fail closed on garbage (non-numeric or outside 0..1). Re-export covers
+      # an empty repo variable (job env would otherwise bake an empty string).
+      - name: Resolve Sentry traces sample rate (variable, default 0.1, fail closed)
+        run: |
+          RATE="${VITE_SENTRY_TRACES_SAMPLE_RATE:-0.1}"
+          export SENTRY_RATE="$RATE"
+          node -e 'const r=Number(process.env.SENTRY_RATE); if(!Number.isFinite(r)||r<0||r>1){console.error(`bad traces sample rate: ${process.env.SENTRY_RATE} (want number in 0..1)`);process.exit(1)} console.log(`traces sample rate OK: ${r}`)'
+          echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${RATE}" >> "$GITHUB_ENV"
       - name: Build mobile web dist (Capacitor webDir)
         run: npm run build -w @findback/mobile
         env:
@@ -293,7 +320,9 @@ jobs:
           # step's environment, so the code npx fetches must not be able to change
           # between two runs of the same commit. Verified to exist via
           # `npm view @sentry/cli@3.8.0 version` (2026-09-26). Bump deliberately.
-          npx -y @sentry/cli@3.8.0 sourcemaps upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" --release "$SENTRY_RELEASE" apps/mobile/dist
+          # dist android-release pins release crashes apart from CI (android-debug)
+          # and web (web-production) symbols for the same release string.
+          npx -y @sentry/cli@3.8.0 sourcemaps upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" --release "$SENTRY_RELEASE" --dist android-release apps/mobile/dist
       - name: Strip sourcemaps from distributed assets (S3)
         run: |
           find apps/mobile/dist -name '*.map' -delete
@@ -341,6 +370,27 @@ jobs:
         env:
           ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
           EXPECTED_APP_ID: com.findback.app
+      # SYNC-8 companion: prove the hard-preflighted GOOGLE_WEB_CLIENT_ID reached
+      # the packaged APK (BuildConfig.GOOGLE_WEB_CLIENT_ID non-empty). Fails
+      # closed when the staged APKs do not embed the exact configured value.
+      # Public identifier only — the value itself is never echoed.
+      - name: Assert packaged Google Web OAuth client ID non-empty
+        run: |
+          set -euo pipefail
+          [ -n "${GOOGLE_WEB_CLIENT_ID:-}" ] || { echo "GOOGLE_WEB_CLIENT_ID empty at assert time — hard preflight above must run first"; exit 1; }
+          MATCHED=0
+          for APK in release-stage/*.apk; do
+            TMPDIR_APK=$(mktemp -d)
+            unzip -q "$APK" 'classes*.dex' -d "$TMPDIR_APK"
+            if strings "$TMPDIR_APK"/classes*.dex | grep -qF "$GOOGLE_WEB_CLIENT_ID"; then
+              echo "BuildConfig client ID present in $(basename "$APK")"
+              MATCHED=$((MATCHED+1))
+            else
+              echo "BuildConfig GOOGLE_WEB_CLIENT_ID missing from $(basename "$APK") — refusing to publish"; exit 1
+            fi
+            rm -rf "$TMPDIR_APK"
+          done
+          [ "$MATCHED" -gt 0 ] || { echo "no APKs checked for BuildConfig client ID"; exit 1; }
       - name: Record artifact sizes (R8 still OFF)
         # Size-measurement hook only: minifyEnabled/shrinkResources stay false
         # (enabling R8 is a separate future change with its own before/after

@@ -200,18 +200,33 @@ jobs:
           # exact same string passed to the sourcemap upload.
           echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
           node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
+      # SYNC-6/7: trace rate from repo variable VITE_SENTRY_TRACES_SAMPLE_RATE
+      # (default 0.1, fail closed on garbage: non-numeric or outside 0..1).
+      # Exports VITE_SENTRY_TRACES_SAMPLE_RATE + VITE_SENTRY_DIST for the build
+      # below (dist android-debug pins CI crashes apart from releases).
+      - name: Resolve Sentry traces sample rate (variable, default 0.1, fail closed)
+        env:
+          SENTRY_TRACES_RAW: ${{ vars.VITE_SENTRY_TRACES_SAMPLE_RATE }}
+        run: |
+          RATE="${SENTRY_TRACES_RAW:-0.1}"
+          export SENTRY_RATE="$RATE"
+          node -e 'const r=Number(process.env.SENTRY_RATE); if(!Number.isFinite(r)||r<0||r>1){console.error(`bad traces sample rate: ${process.env.SENTRY_RATE} (want number in 0..1)`);process.exit(1)} console.log(`traces sample rate OK: ${r}`)'
+          echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${RATE}" >> "$GITHUB_ENV"
+          echo "VITE_SENTRY_DIST=android-debug" >> "$GITHUB_ENV"
       - name: Build mobile web dist (Capacitor webDir)
         run: npm run build -w @findback/mobile
         env:
           # Sentry is MANDATORY in installable APKs (S1). Required GitHub Actions
           # VARIABLES (repo Settings → Secrets and variables → Actions → Variables):
           # VITE_SENTRY_DSN (real https DSN), SENTRY_ORG, SENTRY_PROJECT.
-          # SENTRY_AUTH_TOKEN stays a CI secret for the future sourcemap upload (S3) —
+          # SENTRY_AUTH_TOKEN stays a CI secret for the sourcemap upload below —
           # never a VITE_* var, never in repo files. Unit tests / vite dev stay DSN-free.
+          # VITE_SENTRY_TRACES_SAMPLE_RATE + VITE_SENTRY_DIST arrive via GITHUB_ENV
+          # from the Resolve step above (variable-driven, not hardcoded).
           VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
           VITE_SENTRY_ENVIRONMENT: ci
-          VITE_SENTRY_TRACES_SAMPLE_RATE: "0.1"
           VITE_MONITORING_SELFTEST: "true"
+          SENTRY_UPLOAD_SOURCEMAPS: "true"
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
       - name: Assert Supabase and Sentry embedded in bundle
@@ -224,6 +239,37 @@ jobs:
           [ -n "${SENTRY_RELEASE:-}" ] || { echo "SENTRY_RELEASE was not computed — the Compute step above must run first"; exit 1; }
           grep -q "$SENTRY_RELEASE" "$JS" || { echo "Sentry release identity missing from built bundle"; exit 1; }
           echo "bundle carries required client config and Sentry release identity"
+      # SYNC-7 device-proof dispatch path: a downloadable monitored APK MUST have
+      # matching symbols in Sentry. This step runs ONLY on workflow_dispatch and
+      # uploads this exact build's maps for dist android-debug BEFORE the APK
+      # artifact below. It fails closed with an explicit message when the token,
+      # org/project, release, or maps are missing — a dispatch run must NEVER
+      # claim symbolicatable by release-exists alone.
+      - name: Upload CI sourcemaps (device-proof path, dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          set -euo pipefail
+          [ -n "${SENTRY_AUTH_TOKEN:-}" ] || { echo "dispatch APK would be UN-SYMBOLICATABLE: SENTRY_AUTH_TOKEN secret is empty — add it in repo Settings → Secrets and variables → Actions → Secrets (owner action)"; exit 1; }
+          [ -n "${SENTRY_ORG:-}" ] || { echo "dispatch APK would be UN-SYMBOLICATABLE: SENTRY_ORG variable is empty — add it in repo Settings → Variables"; exit 1; }
+          [ -n "${SENTRY_PROJECT:-}" ] || { echo "dispatch APK would be UN-SYMBOLICATABLE: SENTRY_PROJECT variable is empty — add it in repo Settings → Variables"; exit 1; }
+          [ -n "${SENTRY_RELEASE:-}" ] || { echo "dispatch APK would be UN-SYMBOLICATABLE: SENTRY_RELEASE was not computed — the Compute step above must run first"; exit 1; }
+          MAPS=$(find apps/mobile/dist -name '*.map' | wc -l)
+          [ "$MAPS" -gt 0 ] || { echo "dispatch APK would be UN-SYMBOLICATABLE: no .map files in apps/mobile/dist — the build must run with SENTRY_UPLOAD_SOURCEMAPS=true"; exit 1; }
+          echo "uploading $MAPS sourcemap(s) for release ${SENTRY_RELEASE} dist android-debug (org/project from env)"
+          npx -y @sentry/cli@3.8.0 sourcemaps upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" --release "$SENTRY_RELEASE" --dist android-debug apps/mobile/dist
+      - name: Strip sourcemaps from packaged assets
+        run: |
+          find apps/mobile/dist -name '*.map' -delete
+          REMAINING=$(find apps/mobile/dist -name '*.map' | wc -l)
+          [ "$REMAINING" -eq 0 ] || { echo "$REMAINING .map file(s) remain after strip — refusing to package"; exit 1; }
+          if grep -rIl 'sourceMappingURL' apps/mobile/dist/assets/ 2>/dev/null | grep -q .; then
+            echo "sourceMappingURL reference remains in shipped bundle — refusing to package"; exit 1;
+          fi
+          echo "sourcemap strip verified: no .map files, no sourceMappingURL references in dist"
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Negative test — verifyBundledClientConfig fails on stale assets
@@ -284,15 +330,36 @@ jobs:
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+      SENTRY_TRACES_RAW: ${{ vars.VITE_SENTRY_TRACES_SAMPLE_RATE }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # Same deterministic release shape as the android/release/web lanes;
+      # canonical owner apps/mobile/src/services/monitoring/release.ts.
+      - name: Compute Sentry release identity (docker)
+        run: |
+          VERSION=$(node -p "require('./apps/mobile/package.json').version")
+          SHA=$(git rev-parse --short=12 HEAD)
+          SENTRY_RELEASE="findback-mobile@${VERSION}+${SHA}"
+          export SENTRY_RELEASE
+          echo "SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
+      - name: Resolve Sentry traces sample rate (docker, default 0.1, fail closed)
+        run: |
+          RATE="${SENTRY_TRACES_RAW:-0.1}"
+          export SENTRY_RATE="$RATE"
+          node -e 'const r=Number(process.env.SENTRY_RATE); if(!Number.isFinite(r)||r<0||r>1){console.error(`bad traces sample rate: ${process.env.SENTRY_RATE} (want number in 0..1)`);process.exit(1)} console.log(`traces sample rate OK: ${r}`)'
+          echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${RATE}" >> "$GITHUB_ENV"
       - name: Build image
         run: |
           test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
-          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN -t findback:ci .
+          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN --build-arg VITE_SENTRY_DSN --build-arg VITE_SENTRY_ENVIRONMENT=production --build-arg VITE_SENTRY_TRACES_SAMPLE_RATE --build-arg VITE_SENTRY_RELEASE --build-arg VITE_SENTRY_DIST=docker-reference -t findback:ci .
       - name: Verify Supabase URL in packaged web shell
         run: |
-          docker run --rm --env VITE_SUPABASE_URL --entrypoint node findback:ci -e '
+          docker run --rm --env VITE_SUPABASE_URL --env VITE_SENTRY_DSN --entrypoint node findback:ci -e '
             const fs = require("node:fs");
             const dir = "/app/apps/mobile/dist/assets";
             const js = fs.readdirSync(dir).filter((name) => name.endsWith(".js"));
@@ -300,6 +367,16 @@ jobs:
               throw new Error("Supabase URL missing from Docker web shell");
             }
             console.log("Docker web shell carries Supabase URL");
+            const dsn = (process.env.VITE_SENTRY_DSN || "").trim();
+            if (dsn) {
+              const host = new URL(dsn).hostname;
+              if (!js.some((name) => fs.readFileSync(`${dir}/${name}`, "utf8").includes(host))) {
+                throw new Error("Sentry DSN host missing from Docker web shell");
+              }
+              console.log("Docker web shell carries Sentry DSN host");
+            } else {
+              console.log("VITE_SENTRY_DSN empty — Sentry assert skipped (local empty-safe path)");
+            }
           '
       - name: Run container
         run: docker run -d --name findback-ci -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:ci
