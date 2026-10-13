@@ -2,15 +2,13 @@
  * C3 KLIPY GIF/Sticker service adapter (comments composer).
  *
  * Contract (spec 24, FBX-015/016):
- * - Live KLIPY docs were unreachable from the implementation sandbox on
- *   2026-10-12 (network-blocked fetch of klipy.com/api), so the wire
- *   contract below is implemented to spec 24 against OFFICIAL-SHAPED,
- *   SANITIZED fixtures (see klipy.test.ts `OFFICIAL_SHAPED_*`): key-scoped
- *   path segments, `page`/`per_page`/`customer_id`/`content_filter` query
- *   params, `search` vs `trending` endpoints, a `data.content_items` nesting
- *   with bounded backwards tolerance, and POST share-tracking. Revalidate
- *   against the live docs before enabling with a production key; the
- *   fixtures are clearly marked so a contract drift is caught by tests.
+ * - Live KLIPY contract VALIDATED 2026-10-13 against `api.klipy.com/api/v1`
+ *   with a real key (HTTP 200): results nest at `data.data` (a list) and media
+ *   lives at `file.<hd|md|sm|xs>.<gif|webp|jpg|mp4|webm>.url` (host
+ *   `static.klipy.com`). The extractor tolerates both this live shape and the
+ *   earlier documented `data.content_items` + `media.gif.url` variant;
+ *   `blur_preview` (a base64 data URI) is never used. The `klipy.test.ts`
+ *   `LIVE_SHAPED_*` fixtures mirror the captured live payload to catch drift.
  * - Behind a config flag: `VITE_KLIPY_API_KEY` (testing key via config/env
  *   only — never hardcoded, never committed, never logged). Absent/blank →
  *   disabled and the composer hides the GIF control entirely (graceful, no
@@ -121,6 +119,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * Live KLIPY media leaf: `file.<hd|md|sm|xs>.<gif|webp|jpg|mp4|webm>` carrying
+ * `{ url, width, height, size }`. Returns the leaf record or null. Pure and
+ * total (never throws).
+ */
+function liveFileLeaf(
+  file: Record<string, unknown> | null,
+  size: string,
+  fmt: string,
+): Record<string, unknown> | null {
+  if (!file) return null;
+  return asRecord(asRecord(file[size])?.[fmt]);
+}
+
 function firstString(...values: unknown[]): string {
   for (const v of values) {
     if (typeof v === "string" && v.trim() !== "") return v;
@@ -169,14 +181,34 @@ export function normalizeKlipyItem(kind: KlipyKind, raw: unknown): KlipyItem | n
   const title = firstString(r.title, r.alt, slug);
   const media = asRecord(r.media) ?? asRecord(r.files) ?? null;
   const gif = (media ? (asRecord(media.gif) ?? asRecord(media.mp4) ?? asRecord(media.original)) : null) ?? media;
+  // Live KLIPY shape (validated 2026-10-13): `file.<size>.<fmt>.url`.
+  const file = asRecord(r.file);
+  const liveGif =
+    liveFileLeaf(file, "hd", "gif") ??
+    liveFileLeaf(file, "md", "gif") ??
+    liveFileLeaf(file, "sm", "gif") ??
+    liveFileLeaf(file, "xs", "gif");
+  const liveMp4 =
+    liveFileLeaf(file, "hd", "mp4") ??
+    liveFileLeaf(file, "md", "mp4") ??
+    liveFileLeaf(file, "sm", "mp4");
+  const livePreview =
+    liveFileLeaf(file, "sm", "jpg") ??
+    liveFileLeaf(file, "sm", "webp") ??
+    liveFileLeaf(file, "sm", "gif") ??
+    liveFileLeaf(file, "md", "jpg") ??
+    liveFileLeaf(file, "md", "webp") ??
+    liveFileLeaf(file, "xs", "jpg");
   const mediaUrl = firstString(
     r.url, r.gif_url, r.gifUrl,
     asRecord(gif)?.url, asRecord(r.images)?.original, asRecord(r.images)?.gif,
+    liveGif?.url, liveMp4?.url,
   );
   if (mediaUrl === "" || !isKlipyMediaUrl(mediaUrl)) return null;
   const previewCandidate = firstString(
     r.preview_url, r.previewUrl, r.still_url,
     asRecord(gif)?.preview, asRecord(gif)?.still, asRecord(r.images)?.preview,
+    livePreview?.url,
   );
   const preview = previewCandidate !== "" && isKlipyMediaUrl(previewCandidate) ? previewCandidate : mediaUrl;
   return {
@@ -185,8 +217,8 @@ export function normalizeKlipyItem(kind: KlipyKind, raw: unknown): KlipyItem | n
     title,
     mediaUrl,
     previewUrl: preview,
-    width: firstNumber(asRecord(gif)?.width, r.width),
-    height: firstNumber(asRecord(gif)?.height, r.height),
+    width: firstNumber(asRecord(gif)?.width, r.width, liveGif?.width),
+    height: firstNumber(asRecord(gif)?.height, r.height, liveGif?.height),
     raw,
   };
 }
@@ -196,8 +228,10 @@ function contentItemsOf(payload: unknown): unknown[] {
   const candidates: unknown[] = [
     root?.data,
     asRecord(root?.data)?.content_items,
+    asRecord(root?.data)?.data,
     asRecord(root?.data)?.items,
     asRecord(root?.result)?.content_items,
+    asRecord(root?.result)?.data,
     root?.content_items,
     root?.items,
     root?.results,

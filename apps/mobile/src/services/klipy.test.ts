@@ -224,6 +224,89 @@ describe("klipy provider URL allowlist (spec 24 URL safety)", () => {
   });
 });
 
+/**
+ * LIVE-VALIDATED fixture (2026-10-13): captured from the real KLIPY API with a
+ * validated key (HTTP 200, `findback:selftest`). The live contract nests
+ * results at `data.data` (a list) and carries media at
+ * `file.<hd|md|sm|xs>.<gif|webp|jpg|mp4|webm>.url` — NOT `data.content_items`
+ * with `media.gif.url`. `blur_preview` is a base64 data URI and must never be
+ * used as a media/preview URL. Slugs/URLs here are invented; the host
+ * (`static.klipy.com`) is the real allowlisted provider CDN. These tests guard
+ * against provider contract drift.
+ */
+const LIVE_SHAPED_TRENDING_FIXTURE = {
+  result: true,
+  data: {
+    data: [
+      {
+        id: 539075238,
+        slug: "live-happy-dance-1",
+        title: "Live happy dance",
+        type: "gif",
+        tags: [],
+        blur_preview: "data:image/jpeg;base64,/9j//gA",
+        file: {
+          hd: {
+            gif: { url: "https://static.klipy.com/fixture/happy.gif", width: 300, height: 300, size: 10 },
+            mp4: { url: "https://static.klipy.com/fixture/happy.mp4", width: 300, height: 300, size: 9 },
+            webp: { url: "https://static.klipy.com/fixture/happy.webp", width: 300, height: 300, size: 8 },
+            jpg: { url: "https://static.klipy.com/fixture/happy.jpg", width: 300, height: 300, size: 7 },
+          },
+          md: {
+            gif: { url: "https://static.klipy.com/fixture/happy-md.gif", width: 200, height: 200, size: 6 },
+            jpg: { url: "https://static.klipy.com/fixture/happy-md.jpg", width: 200, height: 200, size: 5 },
+          },
+          sm: {
+            gif: { url: "https://static.klipy.com/fixture/happy-sm.gif", width: 100, height: 100, size: 4 },
+            jpg: { url: "https://static.klipy.com/fixture/happy-preview.jpg", width: 100, height: 100, size: 3 },
+          },
+        },
+      },
+    ],
+    current_page: 1,
+    per_page: 24,
+    has_next: true,
+    meta: {},
+  },
+};
+
+describe("klipy live contract (2026-10-13 captured shape)", () => {
+  it("finds items nested at data.data (live container)", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      seen.push(String(input));
+      return { ok: true, json: async () => LIVE_SHAPED_TRENDING_FIXTURE } as Response;
+    }) as typeof fetch;
+    const items = await searchKlipyGifs("", {
+      env: { VITE_KLIPY_API_KEY: "test-key" },
+      customerId: "c1",
+      fetchImpl,
+    });
+    expect(items).toHaveLength(1);
+    expect(seen[0]).toContain("/test-key/gifs/trending");
+  });
+
+  it("normalizes the live item's file.<size>.<fmt>.url media and preview", () => {
+    const raw = LIVE_SHAPED_TRENDING_FIXTURE.data.data[0];
+    const item = normalizeKlipyItem("gifs", raw);
+    expect(item).toMatchObject({
+      slug: "live-happy-dance-1",
+      title: "Live happy dance",
+      mediaUrl: "https://static.klipy.com/fixture/happy.gif",
+      previewUrl: "https://static.klipy.com/fixture/happy-preview.jpg",
+      width: 300,
+      height: 300,
+    });
+  });
+
+  it("never surfaces the base64 blur_preview as a media or preview URL", () => {
+    const raw = LIVE_SHAPED_TRENDING_FIXTURE.data.data[0];
+    const item = normalizeKlipyItem("gifs", raw);
+    expect(item?.mediaUrl.startsWith("data:")).toBe(false);
+    expect(item?.previewUrl.startsWith("data:")).toBe(false);
+  });
+});
+
 describe("buildKlipyShareRequest", () => {
   it("builds the POST share request with an encoded customer id", () => {
     const request = buildKlipyShareRequest("stickers", "happy-1", "findback:u-1", {
