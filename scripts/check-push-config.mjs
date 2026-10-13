@@ -7,6 +7,12 @@
  *   FIREBASE_SERVICE_ACCOUNT_JSON, FCM_PROJECT_ID, PUBLIC_SHARE_ORIGIN,
  *   PUSH_DISPATCH_SECRET
  *
+ * Additionally cross-checks that the server `FCM_PROJECT_ID` equals the
+ * canonical Firebase *client* project (`FINDBACK_FIREBASE_PROJECT_ID`, the id
+ * the Android google-services.json is materialized for). A client/server
+ * project mismatch fails preflight (exit 1) because it makes every push
+ * silently undeliverable.
+ *
  * Secrecy contract (hard rule, covered by tests):
  *   - Output contains variable NAMES and the words PRESENT/ABSENT only.
  *   - Never prints values, substrings of values, value lengths, char counts,
@@ -27,6 +33,7 @@
 
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { FINDBACK_FIREBASE_PROJECT_ID } from "./firebase-project-id.mjs";
 
 export const PUSH_ENV_KEYS = [
   "FIREBASE_SERVICE_ACCOUNT_JSON",
@@ -56,6 +63,39 @@ export function missingNames(results) {
 /** 0 when all PRESENT, else 1. */
 export function pushConfigExitCode(results) {
   return missingNames(results).length === 0 ? 0 : 1;
+}
+
+/**
+ * Cross-check the server `FCM_PROJECT_ID` against the canonical Firebase
+ * *client* project (`FINDBACK_FIREBASE_PROJECT_ID`). The Android client built
+ * from `materialize-google-services.mjs` mints FCM tokens for that project; if
+ * the server service account targets a different project, every push silently
+ * fails. Names/status only — the project id is compared, never echoed beyond
+ * the canonical constant.
+ *
+ * Returns { status: "ALIGNED" | "MISMATCH" | "ABSENT" }.
+ */
+export function checkProjectAlignment(env = process.env, expected = FINDBACK_FIREBASE_PROJECT_ID) {
+  const raw = env?.["FCM_PROJECT_ID"];
+  const present = typeof raw === "string" && raw.trim().length > 0;
+  if (!present) return { status: "ABSENT" };
+  return { status: raw.trim() === expected ? "ALIGNED" : "MISMATCH" };
+}
+
+/** 0 when the server project is present and matches the client project, else 1. */
+export function alignmentExitCode(alignment) {
+  return alignment?.status === "ALIGNED" ? 0 : 1;
+}
+
+/** Names/status-only alignment line (no secret values). */
+export function formatAlignment(alignment) {
+  if (alignment.status === "ALIGNED") {
+    return `check-push-config: FCM_PROJECT_ID ALIGNED with client project`;
+  }
+  if (alignment.status === "ABSENT") {
+    return `check-push-config: FCM_PROJECT_ID ABSENT (cannot verify client/server project match)`;
+  }
+  return `check-push-config: FCM_PROJECT_ID MISMATCH — server project != client Firebase project`;
 }
 
 /**
@@ -97,8 +137,11 @@ exit codes: 0 all PRESENT, 1 any ABSENT, 2 usage error`);
     process.exit(2);
   }
   const results = checkPushConfig(process.env);
+  const alignment = checkProjectAlignment(process.env);
   console.log(formatPushReport(results));
-  process.exit(pushConfigExitCode(results));
+  console.log(formatAlignment(alignment));
+  const exit = Math.max(pushConfigExitCode(results), alignmentExitCode(alignment));
+  process.exit(exit);
 }
 
 if (isMainModule()) {

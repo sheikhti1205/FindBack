@@ -472,6 +472,9 @@ intentionally not used — it would also block the owner.
   grants the least-privilege roles. The app reads only safe public columns plus
   its own Auth record (`services/auth.ts` `fetchMe`). Behavioral coverage:
   `supabase/tests/auth_phone_verification_sync.test.sql`, executed against real
-  Postgres in CI (`phone-verification-sql` job). Expected backend schema marker:
-  `BACKEND_SCHEMA_VERSION = "20261006120000"` (`services/appCapabilities.ts`,
-  parity-enforced by `appCapabilities.test.ts`).
+  Postgres in CI (`phone-verification-sql` job). At the time this migration
+  was the repo head, the marker was `BACKEND_SCHEMA_VERSION = "20261006120000"`
+  (historical). The constant has since advanced with the newest migration and
+  now reads `"20261013020000"` (`apps/mobile/src/services/appCapabilities.ts`);
+  `appCapabilities.test.ts` parity-enforces it against the newest migration,
+  so treat any literal here as era-specific and the code constant as authoritative.

@@ -15,11 +15,15 @@ import {
   missingNames,
   formatPushReport,
   pushConfigExitCode,
+  checkProjectAlignment,
+  alignmentExitCode,
+  formatAlignment,
 } from "./check-push-config.mjs";
+import { FINDBACK_FIREBASE_PROJECT_ID } from "./firebase-project-id.mjs";
 
 const FULL_ENV = {
   FIREBASE_SERVICE_ACCOUNT_JSON: '{"type":"service_account"}',
-  FCM_PROJECT_ID: "findback-push",
+  FCM_PROJECT_ID: FINDBACK_FIREBASE_PROJECT_ID,
   PUBLIC_SHARE_ORIGIN: "https://findbackapp.social",
   PUSH_DISPATCH_SECRET: "s3cr3t-value",
 };
@@ -80,5 +84,35 @@ describe("check-push-config probe (hermetic, names only)", () => {
     const report = formatPushReport(results);
     for (const name of PUSH_ENV_KEYS) assert.ok(report.includes(name));
     assert.equal(missingNames(results).length, 4);
+  });
+});
+
+describe("check-push-config client/server project alignment", () => {
+  it("ALIGNED when the server project equals the canonical client project", () => {
+    const alignment = checkProjectAlignment({ FCM_PROJECT_ID: FINDBACK_FIREBASE_PROJECT_ID });
+    assert.equal(alignment.status, "ALIGNED");
+    assert.equal(alignmentExitCode(alignment), 0);
+    assert.match(formatAlignment(alignment), /ALIGNED/);
+  });
+
+  it("MISMATCH (fail) when the server project differs from the client project", () => {
+    const alignment = checkProjectAlignment({ FCM_PROJECT_ID: "some-other-project" });
+    assert.equal(alignment.status, "MISMATCH");
+    assert.equal(alignmentExitCode(alignment), 1);
+    assert.match(formatAlignment(alignment), /MISMATCH/);
+  });
+
+  it("ABSENT (fail) when the server project is unset", () => {
+    for (const bad of [undefined, "", "   ", null, 7]) {
+      const alignment = checkProjectAlignment({ FCM_PROJECT_ID: bad });
+      assert.equal(alignment.status, "ABSENT", `expected ABSENT for ${String(bad)}`);
+      assert.equal(alignmentExitCode(alignment), 1);
+    }
+  });
+
+  it("never leaks the project value into the alignment line", () => {
+    const alignment = checkProjectAlignment({ FCM_PROJECT_ID: "some-other-project" });
+    const line = formatAlignment(alignment);
+    assert.ok(!line.includes("some-other-project"), "alignment line leaks the project id");
   });
 });

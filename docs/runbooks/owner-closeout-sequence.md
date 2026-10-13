@@ -3,12 +3,12 @@
 One ordered sequence. Secrets are NAMES only — never paste values into
 source; export them in the shell (or set repo Actions vars/secrets).
 Destructive/live sections are marked and separated from local build steps.
-Source revision this was written against: `9ac0714` (`origin/main`).
+Source revision this was written against: `c0b5f2b` (`origin/main`); live DB head at write time: `20261012020000`.
 
 ## A. Preflight (read-only, any machine)
 
 ```sh
-git rev-parse HEAD && git status --short   # expect 9ac0714 (or newer), clean
+git rev-parse HEAD && git status --short   # expect c0b5f2b (or newer), clean
 node scripts/completion-gate.mjs --final
 node scripts/check-sentry-release-parity.mjs
 node scripts/check-map-provider.mjs
@@ -19,17 +19,38 @@ node scripts/check-edge-parity.mjs --manifest <live-manifest.json>
 
 ## B. Live database (needs Supabase access; never replay applied migrations)
 
-Apply IN ORDER (each additive/fix-forward, audited CLOSEOUT-2):
+Apply-then-verify EACH migration in order (each additive/fix-forward, audited
+CLOSEOUT-2). Do not proceed to the next APPLY until the matching VERIFY passes.
 
-1. `supabase/migrations/20261012030000_avatar_url_host_bind.sql`
-2. `supabase/migrations/20261013010000_comment_attachments_update_bind.sql`
-3. `supabase/migrations/20261013020000_comment_media_cleanup_lease.sql`
+```sh
+# 1. APPLY 120300  →  VERIFY 120300
+supabase db push   # applies 20261012030000_avatar_url_host_bind.sql
+psql "$DATABASE_URL" -f supabase/tests/verify_20261012030000_avatar_host_bind.sql
 
-Then run the matching verify files IN ORDER:
+# 2. APPLY 130100  →  VERIFY 130100
+supabase db push   # applies 20261013010000_comment_attachments_update_bind.sql
+psql "$DATABASE_URL" -f supabase/tests/verify_20261013010000_attachment_update_bind.sql
 
-1. `supabase/tests/verify_20261012030000_avatar_host_bind.sql`
-2. `supabase/tests/verify_20261013010000_attachment_update_bind.sql`
-3. `supabase/tests/verify_20261013020000_cleanup_lease.sql`
+# 3. APPLY 130200  →  VERIFY 130200
+supabase db push   # applies 20261013020000_comment_media_cleanup_lease.sql
+psql "$DATABASE_URL" -f supabase/tests/verify_20261013020000_cleanup_lease.sql
+```
+
+`supabase db push` is idempotent and skips already-applied migrations; never
+hand-replay an older migration file. After each apply, confirm the row exists
+in `supabase_migrations.schema_migrations` and inspect the changed
+function/constraint/policy via the matching verify file.
+
+Final schema-parity check (repo head must equal live head):
+
+```sh
+node --test supabase/tests/migration_parity.test.mjs   # repo constant parity
+# live head must read: 20261013020000  (== BACKEND_SCHEMA_VERSION)
+```
+
+`BACKEND_SCHEMA_VERSION` (`apps/mobile/src/services/appCapabilities.ts`) is
+`20261013020000`; if the live backend is behind that, the app degrades via the
+capabilities gate rather than assuming the newer schema.
 
 Then (disposable test backend only — confirm disposable-vs-production
 first): `supabase/tests/run-live.sh` with `TEST_SUPABASE_URL`,
@@ -40,8 +61,21 @@ in the three verify files above.
 
 ## C. Edge functions (after B; `delete-account` NEVER in this set)
 
+Preferred: the canonical safe orchestrator (dry-run first, then execute):
+
 ```sh
-node scripts/check-push-config.mjs   # must read all PRESENT first
+node scripts/deploy-required-edge-functions.mjs                  # dry-run plan
+node scripts/deploy-required-edge-functions.mjs --migrations-live # + cleanup step
+SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
+  --execute --migrations-live --manifest <fresh-manifest.json>
+```
+
+It stops on missing config (push-config must read PRESENT + ALIGNED), never
+deploys `delete-account`, and runs edge parity afterwards when `--manifest`
+is supplied. Equivalent manual commands:
+
+```sh
+node scripts/check-push-config.mjs   # must read all PRESENT + ALIGNED first
 supabase functions deploy ai-help            # JWT verify ON (no flag)
 supabase functions deploy reply-comment --no-verify-jwt
 supabase functions deploy push-dispatch --no-verify-jwt   # only after push-config PASS

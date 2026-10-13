@@ -27,7 +27,7 @@ This phase starts after the Phase 8 checkpoint. The codebase already has all 24 
 2. **Email/phone verification provider** — requires external accounts, credentials, quotas, and possibly billing.
 3. **Cloud object storage** — ✅ Supabase Storage (`findback-images`, owner-scoped `<uid>/` uploads).
 4. **LLM provider** — optional because the deterministic fallback already demonstrates the UI flow; a real provider requires an API key and cost/privacy decision.
-5. **Google Maps production setup** — if a production Maps API key or billing-backed API is required, the owner must configure it. The current embedded-map path remains usable for the minimum course requirement.
+5. **Google Maps production setup** — HISTORICAL / SUPERSEDED (2026-10-13). The owner selected **MapLibre Native** as the final, keyless map architecture (see `docs/runbooks/maplibre-native.md`); no Google Maps API key is required or wanted. Do not reintroduce Google Maps/Places. Retained only as a record of the earlier plan.
 6. **Crystal Reports `.rpt` file** — must be created/tested in SAP Crystal Reports on a compatible Windows machine with the required tooling.
 7. **Final Android application ID and signing key** — ✅ `com.findback.app`, release keystore `CN=FindBack` created and wired to `release.yml` secrets.
 8. **Physical-device acceptance test** — install the exact signed APK on the MT6895 phone and run the beta matrix before publish.
