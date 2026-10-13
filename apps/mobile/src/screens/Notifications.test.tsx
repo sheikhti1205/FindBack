@@ -19,7 +19,7 @@ vi.mock("../services/notifications", () => ({
   restoreNotifications: restoreMock,
 }));
 
-import { Notifications } from "./Notifications";
+import { Notifications, typeLabel } from "./Notifications";
 
 function item(overrides: Record<string, unknown> = {}) {
   return {
@@ -183,6 +183,13 @@ describe("Notifications inbox", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     window.dispatchEvent(new Event("focus"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("typeLabel fail-safe", () => {
+  it("labels UNKNOWN generically and never blanks a future kind", () => {
+    expect(typeLabel("UNKNOWN")).toBe("sent you an update");
+    expect(typeLabel("FUTURE_KIND" as unknown as never)).toBe("sent you an update");
   });
 });
 

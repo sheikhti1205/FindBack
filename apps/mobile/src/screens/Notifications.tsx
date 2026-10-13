@@ -55,7 +55,7 @@ export function notificationRoute(item: {
   return `/posts/${item.postId}`;
 }
 
-function typeLabel(type: NotificationType): string {
+export function typeLabel(type: NotificationType): string {
   switch (type) {
     case "LIKE":
       return "liked your report";
@@ -70,6 +70,8 @@ function typeLabel(type: NotificationType): string {
     case "STATUS":
       return "status update";
     case "UNKNOWN":
+      return "sent you an update";
+    default:
       return "sent you an update";
   }
 }
