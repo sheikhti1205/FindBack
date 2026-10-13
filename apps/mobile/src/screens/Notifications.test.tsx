@@ -195,4 +195,20 @@ describe("Notifications REACTION kind (W1-A FBX-009)", () => {
     const link = screen.getByRole("link", { name: /bob.*reacted to your report/i });
     expect(link.getAttribute("href")).toBe("/posts/p1#detail-activity");
   });
+
+  it("renders the canonical kind on a REACTION row carrying reactionKind", async () => {
+    fetchMock.mockResolvedValue([item({ id: "n8", type: "REACTION", reactionKind: "LOVE" })]);
+    renderNotifications();
+
+    expect(await screen.findByText(/reacted to your report with Love/i)).toBeTruthy();
+  });
+
+  it("renders an UNKNOWN row with generic copy and a generic route (fail-safe)", async () => {
+    fetchMock.mockResolvedValue([item({ id: "n9", type: "UNKNOWN" })]);
+    renderNotifications();
+
+    expect(await screen.findByText(/sent you an update/i)).toBeTruthy();
+    const link = screen.getByRole("link", { name: /bob.*sent you an update/i });
+    expect(link.getAttribute("href")).toBe("/posts/p1");
+  });
 });

@@ -40,10 +40,23 @@ interface NotificationRow {
   reaction_kind?: unknown;
 }
 
+function isNotificationType(value: unknown): value is NotificationType {
+  return (
+    value === "LIKE" ||
+    value === "DISLIKE" ||
+    value === "COMMENT" ||
+    value === "MENTION" ||
+    value === "STATUS" ||
+    value === "REACTION"
+  );
+}
+
 function mapNotification(row: NotificationRow): NotificationItem {
   return {
     id: row.id,
-    type: row.type as NotificationType,
+    // Fail-safe: unknown future DB kinds become client-only UNKNOWN and
+    // render generic copy (never an unvalidated cast into the UI).
+    type: isNotificationType(row.type) ? row.type : "UNKNOWN",
     preview: row.preview ?? null,
     read: Boolean(row.read),
     createdAt: row.created_at,

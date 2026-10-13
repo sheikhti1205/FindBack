@@ -226,4 +226,14 @@ describe("fetchNotifications REACTION kind (W1-A FBX-009)", () => {
 
     expect(items[0]).toEqual(expect.objectContaining({ type: "LIKE", reactionKind: null }));
   });
+
+  it("maps an unknown future DB type to client-only UNKNOWN (fail-safe)", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({ type: "SUPER_LIKE" })], error: null });
+
+    const items = await fetchNotifications();
+
+    expect(items).toEqual([
+      expect.objectContaining({ id: "n1", type: "UNKNOWN", reactionKind: null }),
+    ]);
+  });
 });

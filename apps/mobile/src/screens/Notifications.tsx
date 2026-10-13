@@ -14,6 +14,7 @@ import {
   type NotificationType,
 } from "../services/notifications";
 import { signalInboxChanged } from "../services/notificationSignals";
+import { REACTION_KINDS } from "../services/reactions";
 import { onRealtime } from "../services/realtime";
 import { friendlyError } from "../utils/friendlyErrors";
 import { formatTimestamp, timeAgo } from "../utils/dates";
@@ -68,7 +69,14 @@ function typeLabel(type: NotificationType): string {
       return "mentioned you";
     case "STATUS":
       return "status update";
+    case "UNKNOWN":
+      return "sent you an update";
   }
+}
+
+function reactionKindLabel(kind: NotificationItem["reactionKind"]): string | null {
+  if (!kind) return null;
+  return REACTION_KINDS.find((meta) => meta.kind === kind)?.label ?? null;
 }
 
 type InboxView = "inbox" | "deleted";
@@ -411,7 +419,11 @@ function NotificationBody({ item }: { item: NotificationItem }) {
         <UserAvatar username={item.actorUsername} size={32} />
         <p className="text-sm">
           <span className="font-semibold">{item.actorUsername ?? "FindBack"}</span>{" "}
-          <span className="text-on-surface-variant">{typeLabel(item.type)}</span>
+          <span className="text-on-surface-variant">
+            {item.type === "REACTION" && reactionKindLabel(item.reactionKind)
+              ? `reacted to your report with ${reactionKindLabel(item.reactionKind)}`
+              : typeLabel(item.type)}
+          </span>
         </p>
       </div>
       {item.postTitle ? (

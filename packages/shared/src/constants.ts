@@ -45,9 +45,13 @@ export type ReactionType = (typeof REACTION_TYPES)[number];
 /**
  * Notification inbox kinds (W1-A). LIKE/DISLIKE are legacy compat rows;
  * every canonical reaction kind (LOVE/HELPFUL/SUPPORT/WOW) notifies as a
- * single REACTION row carrying the kind in `reaction_kind`.
+ * single REACTION row carrying the kind in `reaction_kind`. UNKNOWN is a
+ * client-only fail-safe: rows whose DB type is outside this list (future
+ * kinds) map to UNKNOWN and render generic copy — never a crash, never a
+ * wrong kind. The DB CHECK stays at the six server kinds; UNKNOWN is never
+ * written.
  */
-export const NOTIFICATION_TYPES = ["LIKE", "DISLIKE", "COMMENT", "MENTION", "STATUS", "REACTION"] as const;
+export const NOTIFICATION_TYPES = ["LIKE", "DISLIKE", "COMMENT", "MENTION", "STATUS", "REACTION", "UNKNOWN"] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
 export const VERIFICATION_CHANNELS = ["EMAIL", "PHONE"] as const;
