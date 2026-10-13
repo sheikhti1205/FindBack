@@ -219,6 +219,76 @@ describe("FBX-022 server mirror: avatar URL host bind (20261012030000)", () => {
   });
 });
 
+describe("comment-media cleanup lease/ack redesign (20261013020000)", () => {
+  const NEW_LEASE = "20261013020000_comment_media_cleanup_lease.sql";
+  const sql = () => mig(NEW_LEASE);
+  const consumer = () => read(join(ROOT, "functions", "cleanup-comment-media", "index.ts"));
+
+  it("new migration present, additive, live-pending with verification pointer", () => {
+    assert.ok(ls().includes(NEW_LEASE), "lease migration present");
+    assert.ok(ls().indexOf(NEW_LEASE) > ls().indexOf(NEW_ATTACH), "lease lands after the queue migration");
+    assert.ok(sql().includes("LIVE-PENDING"), "live-pending note");
+    assert.ok(sql().includes("supabase/tests/verify_20261013020000_cleanup_lease.sql"), "verification pointer");
+    assert.ok(sql().includes("ADDITIVE ONLY"), "additive header");
+    const lower = sql().toLowerCase();
+    assert.ok(!lower.includes("drop table"), "no DROP TABLE");
+    assert.ok(!lower.includes("drop column"), "no DROP COLUMN");
+    assert.ok(!lower.includes("truncate"), "no TRUNCATE");
+  });
+
+  it("claim uses lease columns (marks-not-deletes, stale reclaim, skip locked)", () => {
+    assert.ok(sql().includes("add column if not exists leased_at"), "leased_at column");
+    assert.ok(sql().includes("add column if not exists attempts"), "attempts column");
+    assert.ok(sql().includes("leased_at = now()"), "claim stamps the lease");
+    assert.ok(sql().includes("attempts = q.attempts + 1"), "claim counts the attempt");
+    assert.ok(sql().includes("interval '15 minutes'"), "15-minute stale window");
+    assert.ok(sql().toLowerCase().includes("skip locked"), "concurrent sweepers skip locked rows");
+    const claimDef = sql().slice(
+      sql().indexOf("create or replace function public.claim_comment_media_cleanup"),
+      sql().indexOf("comment on function public.claim_comment_media_cleanup"),
+    );
+    assert.ok(!/delete\s+from/i.test(claimDef), "claim body holds no DELETE (old hole closed)");
+  });
+
+  it("ack companion exists (deletes only listed keys, capped, no-op on empty)", () => {
+    assert.ok(sql().includes("create or replace function public.ack_comment_media_cleanup(p_keys text[])"), "ack function");
+    assert.ok(sql().toLowerCase().includes("storage_key = any"), "ack deletes only listed keys");
+    assert.ok(sql().includes("max 1000 keys"), "ack batch cap");
+  });
+
+  it("no grants to anon/authenticated on new objects; definer functions lock search_path", () => {
+    const code = sql().replace(/--[^\n]*/g, "");
+    assert.ok(!/grant[^\n;]*to\s+(anon|authenticated)/i.test(code), "no client grants in code");
+    assert.ok(sql().includes("grant execute on function public.claim_comment_media_cleanup(integer) to service_role"), "claim service-role-only");
+    assert.ok(sql().includes("grant execute on function public.ack_comment_media_cleanup(text[]) to service_role"), "ack service-role-only");
+    assert.ok(sql().includes("revoke all on public.comment_media_cleanup_queue from anon, authenticated"), "queue stays client-denied");
+    const definers = (sql().match(/security definer/gi) ?? []).length;
+    const paths = (sql().match(/set search_path = public, pg_temp/gi) ?? []).length;
+    assert.equal(paths, definers, "every definer locks search_path");
+  });
+
+  it("enqueue trigger path untouched (same trigger, same conflict-tolerant insert)", () => {
+    assert.ok(!/drop\s+trigger/i.test(sql().replace(/--[^\n]*/g, "")), "no trigger drop");
+    assert.ok(!sql().toLowerCase().includes("create trigger"), "no trigger recreate");
+    assert.ok(!sql().includes("enqueue_comment_media_cleanup()"), "no enqueue helper re-replace");
+  });
+
+  it("consumer exists: lease drain with per-key isolation, ack-only-success, internal-only gate", () => {
+    assert.ok(consumer().includes("claim_comment_media_cleanup"), "consumer claims");
+    assert.ok(consumer().includes("ack_comment_media_cleanup"), "consumer acks");
+    assert.ok(consumer().includes("CLEANUP_BUCKET"), "bucket constant");
+    assert.ok(consumer().includes("findback-comment-media"), "sweeps the comment-media bucket");
+    assert.ok(consumer().includes("remove([key])"), "per-key remove (bad-key isolation)");
+    assert.ok(consumer().includes("x-cleanup-secret"), "cron-secret header gate");
+    assert.ok(!consumer().includes("getUser"), "never resolves a user session (internal only)");
+  });
+
+  it("stale window agrees between SQL and consumer (15 minutes)", () => {
+    assert.ok(sql().includes("interval '15 minutes'"), "SQL stale window");
+    assert.ok(consumer().includes("STALE_LEASE_MINUTES = 15"), "consumer documents the same window");
+  });
+});
+
 describe("FB-AUD-03 attachment UPDATE bind (20261013010000)", () => {
   const NEW_BIND = "20261013010000_comment_attachments_update_bind.sql";
   const sql = () => mig(NEW_BIND);

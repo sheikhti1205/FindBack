@@ -19,7 +19,7 @@ function nominatimFetch(): typeof fetch {
 describe("placesSearch (unified, Nominatim-only)", () => {
   it("searches Nominatim directly with no native bridge involved", async () => {
     const fetcher = nominatimFetch();
-    const result = await searchPlacesUnified("mirpur", { fetcher });
+    const result = await searchPlacesUnified("mirpur", { fetcher, throttler: new NominatimThrottler() });
     expect(result).toEqual({
       places: [{ displayName: "Mirpur, Dhaka", latitude: 23.8103, longitude: 90.4125 }],
       source: "nominatim",
@@ -31,7 +31,7 @@ describe("placesSearch (unified, Nominatim-only)", () => {
 
   it("caps results at maxResults", async () => {
     const fetcher = nominatimFetch();
-    const result = await searchPlacesUnified("mirpur", { fetcher, maxResults: 1 });
+    const result = await searchPlacesUnified("mirpur", { fetcher, maxResults: 1, throttler: new NominatimThrottler() });
     expect(result.places).toHaveLength(1);
   });
 

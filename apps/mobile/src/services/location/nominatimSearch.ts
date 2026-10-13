@@ -101,6 +101,13 @@ export class NominatimThrottler {
   }
 }
 
+/**
+ * Process-wide ≤1 req/s throttle shared at provider level (MAP-3): every
+ * picker search acquires from this gate, so reopening the sheet cannot mint
+ * a fresh limiter. Callers may still inject their own throttler (tests).
+ */
+export const sharedNominatimThrottler = new NominatimThrottler();
+
 interface RawSearchItem {
   display_name?: unknown;
   lat?: unknown;
@@ -148,7 +155,7 @@ export async function searchPlaces(
   const trimmed = query.trim();
   if (!trimmed) return [];
   const config = options.config ?? DEFAULT_NOMINATIM_CONFIG;
-  const acquired = (options.throttler ?? new NominatimThrottler()).tryAcquire(
+  const acquired = (options.throttler ?? sharedNominatimThrottler).tryAcquire(
     options.now ?? Date.now(),
   );
   if (!acquired.ok) {

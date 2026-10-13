@@ -51,9 +51,12 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Root env names — the single source. Gradle reads these same names. */
 export const MAP_STYLE_ENV = "FINDBACK_MAP_STYLE_URL";
 export const MAP_CONTACT_ENV = "FINDBACK_MAP_CONTACT";
+/** Shared native/web geocoder seam (MAP-2): both layers read this one name. */
+export const MAP_SEARCH_ENV = "VITE_NOMINATIM_SEARCH_URL";
 /** Owner-decided defaults — must equal the Gradle defaults (enforced below). */
 export const DEFAULT_MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 export const DEFAULT_MAP_CONTACT = "https://findbackapp.social";
+export const DEFAULT_MAP_SEARCH_URL = "https://nominatim.openstreetmap.org/search";
 export const BUILD_GRADLE_PATH = resolve(root, "apps/mobile/android/app/build.gradle");
 
 const PLACEHOLDER_RE = /(placeholder|changeme|your-|your_|example\.com|example\.org|example\.net)/i;
@@ -89,6 +92,24 @@ export function validateMapContact(raw) {
 }
 
 /**
+ * Validate the shared geocoder `/search` endpoint with the same rules the
+ * native side enforces (MapValidation.validateSearchEndpoint): https,
+ * non-empty host, non-placeholder. The endpoint is public config, not a
+ * secret — but a malformed custom value must fail the build, never ship
+ * half-applied. Returns { ok, url } or { ok: false, reason }.
+ */
+export function validateMapSearchUrl(raw) {
+  const url = (raw ?? "").trim();
+  if (!url) return { ok: false, reason: "missing" };
+  if (/[\s<>]/.test(url)) return { ok: false, reason: "malformed" };
+  if (!url.toLowerCase().startsWith("https://")) return { ok: false, reason: "not-https" };
+  const host = url.slice("https://".length).split("/", 1)[0].split(":", 1)[0].toLowerCase();
+  if (!host) return { ok: false, reason: "malformed" };
+  if (PLACEHOLDER_RE.test(url)) return { ok: false, reason: "placeholder" };
+  return { ok: true, url };
+}
+
+/**
  * Resolve the effective map config both layers must agree on. Shell exports
  * win; otherwise the root env files are consulted. Injectable `env`/`envDir`
  * keep the resolution unit-testable; `loadEnv` still merges ambient
@@ -99,17 +120,20 @@ export function effectiveMapConfig({ env = process.env, envDir = root } = {}) {
   const fileEnv = loadEnv("production", envDir, "");
   const rawStyle = ((env[MAP_STYLE_ENV] ?? "").trim() || (fileEnv[MAP_STYLE_ENV] ?? "").trim()).trim();
   const rawContact = ((env[MAP_CONTACT_ENV] ?? "").trim() || (fileEnv[MAP_CONTACT_ENV] ?? "").trim()).trim();
+  const rawSearch = ((env[MAP_SEARCH_ENV] ?? "").trim() || (fileEnv[MAP_SEARCH_ENV] ?? "").trim()).trim();
   return {
     styleUrl: rawStyle || DEFAULT_MAP_STYLE_URL,
     contact: rawContact || DEFAULT_MAP_CONTACT,
+    searchUrl: rawSearch || DEFAULT_MAP_SEARCH_URL,
     styleSource: rawStyle ? "custom" : "default",
     contactSource: rawContact ? "custom" : "default",
+    searchSource: rawSearch ? "custom" : "default",
   };
 }
 
 /** CUSTOM when the owner supplied an override, else ABSENT — never a value. */
 export function mapPresence(config) {
-  return config.styleSource === "custom" || config.contactSource === "custom" ? "PRESENT" : "ABSENT";
+  return config.styleSource === "custom" || config.contactSource === "custom" || config.searchSource === "custom" ? "PRESENT" : "ABSENT";
 }
 
 /**
@@ -128,12 +152,12 @@ export function checkGradleMapSource(read = readFileSync) {
   } catch {
     return ["map build config unreadable (app/build.gradle)"];
   }
-  for (const name of [MAP_STYLE_ENV, MAP_CONTACT_ENV]) {
+  for (const name of [MAP_STYLE_ENV, MAP_CONTACT_ENV, MAP_SEARCH_ENV]) {
     if (!text.includes(`System.getenv("${name}")`)) {
       errors.push(`app/build.gradle no longer reads ${name} (map config source diverged)`);
     }
   }
-  for (const literal of [DEFAULT_MAP_STYLE_URL, DEFAULT_MAP_CONTACT]) {
+  for (const literal of [DEFAULT_MAP_STYLE_URL, DEFAULT_MAP_CONTACT, DEFAULT_MAP_SEARCH_URL]) {
     if (!text.includes(literal)) {
       errors.push(`app/build.gradle default diverged from the map config owner (${literal.length} chars, value withheld)`);
     }
@@ -157,6 +181,10 @@ export function checkMapConfig({ env = process.env, envDir = root, read = readFi
     const contact = validateMapContact(config.contact);
     if (!contact.ok) errors.push(`${MAP_CONTACT_ENV} ${contact.reason} — refusing a malformed public search contact`);
   }
+  if (config.searchSource === "custom") {
+    const search = validateMapSearchUrl(config.searchUrl);
+    if (!search.ok) errors.push(`${MAP_SEARCH_ENV} ${search.reason} — refusing a custom geocoder endpoint the native side would silently drop`);
+  }
   for (const error of checkGradleMapSource(read)) errors.push(error);
   return { ok: errors.length === 0, errors, config };
 }
@@ -168,5 +196,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error("check-map-config: FAIL");
     process.exit(1);
   }
-  console.log(`check-map-config: PASS (style=${config.styleSource.toUpperCase()} contact=${config.contactSource.toUpperCase()})`);
+  console.log(`check-map-config: PASS (style=${config.styleSource.toUpperCase()} contact=${config.contactSource.toUpperCase()} search=${config.searchSource.toUpperCase()})`);
 }

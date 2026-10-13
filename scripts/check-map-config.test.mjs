@@ -9,19 +9,22 @@ import {
   checkGradleMapSource,
   checkMapConfig,
   DEFAULT_MAP_CONTACT,
+  DEFAULT_MAP_SEARCH_URL,
   DEFAULT_MAP_STYLE_URL,
   effectiveMapConfig,
   MAP_CONTACT_ENV,
+  MAP_SEARCH_ENV,
   MAP_STYLE_ENV,
   mapPresence,
   validateMapContact,
+  validateMapSearchUrl,
   validateMapStyleUrl,
 } from "./check-map-config.mjs";
 
 const script = resolve("scripts/check-map-config.mjs");
 
 // loadEnv merges ambient process.env, so hermetic tests scrub the owner keys.
-const ENV_KEYS = [MAP_STYLE_ENV, MAP_CONTACT_ENV];
+const ENV_KEYS = [MAP_STYLE_ENV, MAP_CONTACT_ENV, MAP_SEARCH_ENV];
 const savedEnv = {};
 beforeEach(() => {
   for (const key of ENV_KEYS) {
@@ -45,7 +48,7 @@ function emptyEnvDir() {
 function run(args, env = {}) {
   return spawnSync(process.execPath, [script, ...args], {
     encoding: "utf8",
-    env: { ...process.env, [MAP_STYLE_ENV]: "", [MAP_CONTACT_ENV]: "", ...env },
+    env: { ...process.env, [MAP_STYLE_ENV]: "", [MAP_CONTACT_ENV]: "", [MAP_SEARCH_ENV]: "", ...env },
   });
 }
 
@@ -144,5 +147,35 @@ test("CLI fails closed on a malformed custom style without printing it", () => {
 test("owner constants match the documented single source", () => {
   assert.equal(MAP_STYLE_ENV, "FINDBACK_MAP_STYLE_URL");
   assert.equal(MAP_CONTACT_ENV, "FINDBACK_MAP_CONTACT");
+  assert.equal(MAP_SEARCH_ENV, "VITE_NOMINATIM_SEARCH_URL");
+  assert.equal(DEFAULT_MAP_SEARCH_URL, "https://nominatim.openstreetmap.org/search");
   assert.ok(BUILD_GRADLE_PATH.endsWith("apps/mobile/android/app/build.gradle"));
+});
+
+test("search endpoint seam: absent resolves to default, custom validated, Gradle reads it", () => {
+  const dir = emptyEnvDir();
+  try {
+    const absent = effectiveMapConfig({ env: {}, envDir: dir });
+    assert.equal(absent.searchUrl, DEFAULT_MAP_SEARCH_URL);
+    assert.equal(absent.searchSource, "default");
+    const custom = "https://geocode.example-provider.net/search";
+    const present = effectiveMapConfig({ env: { [MAP_SEARCH_ENV]: custom }, envDir: dir });
+    assert.equal(present.searchUrl, custom);
+    assert.equal(present.searchSource, "custom");
+    assert.equal(mapPresence(present), "PRESENT");
+    assert.equal(validateMapSearchUrl(DEFAULT_MAP_SEARCH_URL).ok, true);
+    assert.equal(validateMapSearchUrl(custom).ok, true);
+    for (const bad of ["http://insecure-geocode.example.net/search", "not a url", "https://placeholder-geocode.example.net/search"]) {
+      assert.equal(validateMapSearchUrl(bad).ok, false, bad);
+      const result = checkMapConfig({ env: { [MAP_SEARCH_ENV]: bad }, envDir: dir });
+      assert.equal(result.ok, false, bad);
+      assert.match(result.errors.join("\n"), new RegExp(MAP_SEARCH_ENV));
+    }
+    assert.equal(validateMapSearchUrl("").ok, false, "(empty validator)");
+    const blank = checkMapConfig({ env: { [MAP_SEARCH_ENV]: " " }, envDir: dir });
+    assert.equal(blank.ok, true, "blank resolves to default, never fails");
+    assert.equal(blank.config.searchSource, "default");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

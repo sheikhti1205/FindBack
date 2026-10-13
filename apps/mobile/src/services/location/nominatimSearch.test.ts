@@ -6,6 +6,7 @@ import {
   NominatimThrottler,
   resolveNominatimConfig,
   searchPlaces,
+  sharedNominatimThrottler,
 } from "./nominatimSearch";
 
 function jsonResponse(body: unknown, ok = true): Response {
@@ -83,5 +84,20 @@ describe("nominatimSearch endpoint seam", () => {
     await expect(
       searchPlaces("mirpur", { fetcher, throttler: new NominatimThrottler(), now: 0 }),
     ).rejects.toThrow(/pan the map/i);
+  });
+
+  it("shares one process-wide throttle by default (MAP-3, no fresh limiter per call)", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse([]));
+    // Deterministic clock far from any other test's injected `now`.
+    const t = 9_000_000;
+    await searchPlaces("mirpur", { fetcher, now: t });
+    const failed = await searchPlaces("mirpur", { fetcher, now: t }).catch(
+      (err: unknown) => err,
+    );
+    expect(failed).toBeInstanceOf(NominatimRateLimitError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await searchPlaces("mirpur", { fetcher, now: t + NOMINATIM_MIN_INTERVAL_MS });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(sharedNominatimThrottler).toBeInstanceOf(NominatimThrottler);
   });
 });
