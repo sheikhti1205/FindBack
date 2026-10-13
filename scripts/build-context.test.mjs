@@ -17,7 +17,6 @@ import assert from "node:assert/strict";
 import {
   SENTRY_DEFAULT_TRACES_SAMPLE_RATE,
   SENTRY_RELEASE_MOBILE_NAMESPACE,
-  SENTRY_RELEASE_WEB_NAMESPACE,
   SENTRY_DIST_VALUES,
   deriveGitIdentity,
   deriveAppVersion,
@@ -107,16 +106,17 @@ describe("sentryRelease (pinned namespace@version+short12 shape)", () => {
     assert.equal(sentryRelease({ version: "1.0.0", short12: SHORT12 }), `findback-mobile@1.0.0+${SHORT12}`);
   });
 
-  it("mints the optional web namespace findback-web@<version>+<short12>", () => {
-    assert.equal(
-      sentryRelease({ version: "1.0.0", short12: SHORT12, namespace: SENTRY_RELEASE_WEB_NAMESPACE }),
-      `findback-web@1.0.0+${SHORT12}`,
-    );
+  it("mints ONE scheme only — no second namespace exists", () => {
     assert.equal(SENTRY_RELEASE_MOBILE_NAMESPACE, "findback-mobile");
-    assert.equal(SENTRY_RELEASE_WEB_NAMESPACE, "findback-web");
+    // A caller-supplied namespace is rejected: lanes differ by dist, never
+    // by namespace (web uses dist web-production under findback-mobile@).
+    assert.throws(
+      () => sentryRelease({ version: "1.0.0", short12: SHORT12, namespace: "findback-web" }),
+      /build-context: /,
+    );
   });
 
-  it("refuses bad versions, SHAs, and namespaces without echoing values", () => {
+  it("refuses bad versions and SHAs without echoing values", () => {
     const evil = EVIL_KEY;
     for (const input of [
       { version: "", short12: SHORT12 },

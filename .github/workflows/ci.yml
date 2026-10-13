@@ -199,7 +199,7 @@ jobs:
           # apps/mobile/src/services/monitoring/release.ts) is derived from the
           # exact same string passed to the sourcemap upload.
           echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
-          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
+          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{12}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
       # SYNC-6/7: trace rate from repo variable VITE_SENTRY_TRACES_SAMPLE_RATE
       # (default 0.1, fail closed on garbage: non-numeric or outside 0..1).
       # Exports VITE_SENTRY_TRACES_SAMPLE_RATE + VITE_SENTRY_DIST for the build
@@ -346,7 +346,7 @@ jobs:
           export SENTRY_RELEASE
           echo "SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
           echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
-          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
+          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{12}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
       - name: Resolve Sentry traces sample rate (docker, default 0.1, fail closed)
         run: |
           RATE="${SENTRY_TRACES_RAW:-0.1}"

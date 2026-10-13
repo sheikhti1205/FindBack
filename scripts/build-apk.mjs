@@ -93,7 +93,7 @@ export const DIST_FOR_VARIANT = {
 
 /** Same release-identity shape CI mints (release.yml "Compute Sentry release identity"). */
 export const SENTRY_RELEASE_RE =
-  /^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i;
+  /^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{12}$/i;
 
 /** Exact sentry-cli pin used for symbol upload (matches release.yml M5). */
 export const SENTRY_CLI_PIN = "@sentry/cli@3.8.0";
@@ -137,8 +137,8 @@ export function buildSentryRelease(version, sha) {
   if (!/^\d+\.\d+\.\d+[-+0-9A-Za-z.]*$/.test(v)) {
     throw new Error("build-apk: refusing to build — apps/mobile version is not semver-shaped");
   }
-  if (!/^[0-9a-f]{7,40}$/i.test(s)) {
-    throw new Error("build-apk: refusing to build — git SHA is not hex-shaped");
+  if (!/^[0-9a-f]{12}$/i.test(s)) {
+    throw new Error("build-apk: refusing to build — git SHA is not a 12-char short SHA");
   }
   const release = `findback-mobile@${v}+${s}`;
   if (!SENTRY_RELEASE_RE.test(release)) {

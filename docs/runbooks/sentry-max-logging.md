@@ -64,10 +64,12 @@ Actions (Variables for DSNs/slugs, Secrets for tokens) — never hardcoded.
    Preflight proof: `scripts/check-sentry-config.mjs` fails closed without a
    real DSN, and the release job's "Assert baked client config" step greps the
    DSN host and the release identity back out of the built bundle.
-2. **Maximum tracing.** Set `VITE_SENTRY_TRACES_SAMPLE_RATE` to `"1.0"` in
-   `.github/workflows/release.yml` (~line 204, currently `"0.1"`) and,
-   if CI builds should also trace fully, `.github/workflows/ci.yml` (~line
-   213). Code default when empty stays conservative (`0.1`, see
+2. **Maximum tracing.** Set the repo Actions VARIABLE
+   `VITE_SENTRY_TRACES_SAMPLE_RATE` to `"1.0"` — the workflows are
+   variable-driven (release.yml Resolve step, ci.yml, web.yml all fall back
+   to the code default when the var is empty; garbage fails closed). Do NOT
+   edit a hardcoded `"0.1"` in the workflow files: there is none. Code
+   default when empty stays conservative (`0.1`, see
    `SENTRY_DEFAULT_TRACES_SAMPLE_RATE`).
 3. **Environment.** Already set per workflow (`production` in release.yml,
    `ci` in ci.yml, `production-web` in web.yml via `VITE_SENTRY_ENVIRONMENT`).

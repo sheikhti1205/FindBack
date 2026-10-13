@@ -32,8 +32,13 @@ import { fileURLToPath } from "node:url";
 
 /** Code-conservative default. The 1.0 maximum comes from env, never code. */
 export const SENTRY_DEFAULT_TRACES_SAMPLE_RATE = 0.1;
+/**
+ * THE single Sentry release namespace. Every lane (local variants, CI,
+ * release, web, docker-reference) mints `findback-mobile@<version>+<short12>`;
+ * lanes differ by dist, never by namespace. A second namespace MUST NOT be
+ * introduced — web uses dist `web-production` under this same namespace.
+ */
 export const SENTRY_RELEASE_MOBILE_NAMESPACE = "findback-mobile";
-export const SENTRY_RELEASE_WEB_NAMESPACE = "findback-web";
 /** Closed lane mapping: build variant -> Sentry dist. */
 export const SENTRY_DIST_VALUES = Object.freeze([
   "android-debug",
@@ -111,10 +116,11 @@ export function deriveAppVersion({ read = defaultRead, rootDir = REPO_ROOT } = {
  * Mint the canonical Sentry release string. Throws on empty, placeholder,
  * or malformed inputs (fail closed — never mint a release that cannot match
  * the sourcemap upload). Failure messages carry lengths, never values.
+ * The namespace is pinned, not parameterized: one scheme everywhere.
  */
-export function sentryRelease({ version, short12, namespace = SENTRY_RELEASE_MOBILE_NAMESPACE } = {}) {
-  if (namespace !== SENTRY_RELEASE_MOBILE_NAMESPACE && namespace !== SENTRY_RELEASE_WEB_NAMESPACE) {
-    fail(`unknown release namespace (${String(namespace ?? "").length} chars, value withheld)`);
+export function sentryRelease({ version, short12, namespace } = {}) {
+  if (namespace !== undefined) {
+    fail("release namespace is pinned to findback-mobile (lanes differ by dist, never by namespace)");
   }
   const cleanVersion = String(version ?? "").trim();
   const cleanSha = String(short12 ?? "").trim();
@@ -124,7 +130,7 @@ export function sentryRelease({ version, short12, namespace = SENTRY_RELEASE_MOB
   if (!SHORT12_RE.test(cleanSha)) {
     fail(`refusing bad release sha (${cleanSha.length} chars, value withheld)`);
   }
-  return `${namespace}@${cleanVersion}+${cleanSha}`;
+  return `${SENTRY_RELEASE_MOBILE_NAMESPACE}@${cleanVersion}+${cleanSha}`;
 }
 
 /**
@@ -167,11 +173,9 @@ function isMainModule() {
 if (isMainModule()) {
   try {
     const distFlag = process.argv.find((arg) => arg.startsWith("--dist="));
-    const nsFlag = process.argv.find((arg) => arg.startsWith("--namespace="));
-    const namespace = nsFlag ? nsFlag.slice("--namespace=".length) : SENTRY_RELEASE_MOBILE_NAMESPACE;
     const { short12 } = deriveGitIdentity();
     const { version } = deriveAppVersion();
-    const release = sentryRelease({ version, short12, namespace });
+    const release = sentryRelease({ version, short12 });
     const distRaw = distFlag ? distFlag.slice("--dist=".length) : (process.env.SENTRY_DIST ?? "");
     let distLabel = "ABSENT";
     if (distRaw.trim()) {

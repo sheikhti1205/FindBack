@@ -29,7 +29,7 @@
 export const SENTRY_RELEASE_PREFIX = "findback-mobile";
 
 const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
-const SHA_RE = /^[0-9a-f]{7,40}$/i;
+const SHA_RE = /^[0-9a-f]{12}$/i;
 const PLACEHOLDER_RE =
   /^(placeholder|example|test|dummy|unknown|null|undefined|your[-_].*|changeme)$/i;
 

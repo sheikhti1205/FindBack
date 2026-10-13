@@ -162,6 +162,18 @@ jobs:
         run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
       - name: Assert client config in gate APK
         run: node scripts/check-mobile-build-config.mjs --apk apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+      # Same deterministic release shape as the signed-build lane (mirrors
+      # ci.yml's docker job): the reference image must bake the SAME release
+      # identity so its config assert path matches instead of WARNING.
+      - name: Compute Sentry release identity (gate docker)
+        run: |
+          VERSION=$(node -p "require('./apps/mobile/package.json').version")
+          SHA=$(git rev-parse --short=12 HEAD)
+          SENTRY_RELEASE="findback-mobile@${VERSION}+${SHA}"
+          export SENTRY_RELEASE
+          echo "SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
+          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{12}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
       - name: Docker build & health check
         run: |
           # The Dockerfile's build stage runs `vite build` for apps/mobile, which
@@ -169,7 +181,7 @@ jobs:
           # path. Without these build args the container build dies on the
           # preflight (unlike CI's docker job, which passes them). Values come
           # from the job env below; never hardcoded here.
-          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN --build-arg VITE_SENTRY_DSN --build-arg VITE_SENTRY_ENVIRONMENT=production --build-arg VITE_SENTRY_DIST=docker-reference -t findback:release-gate .
+          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN --build-arg VITE_SENTRY_DSN --build-arg VITE_SENTRY_ENVIRONMENT=production --build-arg VITE_SENTRY_RELEASE --build-arg VITE_SENTRY_DIST=docker-reference -t findback:release-gate .
           docker run -d --name findback-gate -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:release-gate
           for _ in $(seq 1 30); do
             if curl -fsS http://localhost:4000/health >/dev/null; then
@@ -265,7 +277,7 @@ jobs:
           # apps/mobile/src/services/monitoring/release.ts) is derived from the
           # exact same string passed to the sourcemap upload.
           echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
-          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
+          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{12}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
       # SYNC-6: canonicalize the variable-driven trace rate (empty -> 0.1) and
       # fail closed on garbage (non-numeric or outside 0..1). Re-export covers
       # an empty repo variable (job env would otherwise bake an empty string).
