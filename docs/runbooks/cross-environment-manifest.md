@@ -1,6 +1,6 @@
 # Cross-environment manifest (CLOSEOUT)
 
-Source revision: `c0b5f2b` (`origin/main`, tree clean at write time).
+Source revision: `ed565df` (`origin/main`, tree clean at write time).
 Mobile version: `1.0.0` (versionCode derived from git history at build;
 shallow clones refuse — see `apps/mobile/android/app/build.gradle`).
 Repo migration head: `20261013020000`. Live migration head (owner):
@@ -19,7 +19,7 @@ Cell vocabulary (only): `WIRED` | `RUNTIME_VERIFIED` | `OWNER_SECRET_REQUIRED`
 | Sentry release/dist | WIRED | WIRED | WIRED | WIRED | WIRED | NOT_APPLICABLE | ONE scheme `findback-mobile@<version>+<short12>` (exactly-12 everywhere); per-lane closed dist; proven by `check-sentry-release-parity.mjs`. CI *execution* EXTERNAL_BLOCKED (billing) |
 | Sentry sourcemaps | OWNER_SECRET_REQUIRED | EXTERNAL_BLOCKED | OWNER_SECRET_REQUIRED | OWNER_SECRET_REQUIRED | NOT_APPLICABLE | NOT_APPLICABLE | Upload needs `FINDBACK_SENTRY_UPLOAD=true` + token/org/project; docker reference explicitly `NOT_UPLOADED` |
 | Sentry trace rate | WIRED | WIRED | WIRED | WIRED | WIRED | NOT_APPLICABLE | Single source `build-context.mjs` default `0.1`; `1.0` only via repo var |
-| Google Web ID (build) | WIRED | WIRED | WIRED | NOT_APPLICABLE | NOT_APPLICABLE | NOT_APPLICABLE | Absent hides sign-in locally; hard fail signeddev/release (`check-google-config.mjs`, packaged assert) |
+| Google Web ID (build) | WIRED | WIRED | WIRED | NOT_APPLICABLE | NOT_APPLICABLE | NOT_APPLICABLE | Absent hides sign-in locally; hard fail signeddev AND release on the direct Gradle path (`verifySigneddevConfig` + `verifyReleaseConfig` → `check-google-config.mjs`, packaged assert FBX-028) |
 | Google Android OAuth (runtime) | WIRED | WIRED | WIRED | NOT_APPLICABLE | NOT_APPLICABLE | NOT_APPLICABLE | Debug-signer success is NOT production proof; release-signer ID-token exchange pending device |
 | FCM client | WIRED | WIRED | WIRED | NOT_APPLICABLE | NOT_APPLICABLE | NOT_APPLICABLE | Materialize-or-validate (`materialize-google-services.mjs`); package/project match enforced |
 | FCM server | NOT_APPLICABLE | NOT_APPLICABLE | NOT_APPLICABLE | NOT_APPLICABLE | NOT_APPLICABLE | OWNER_SECRET_REQUIRED | Needs `FIREBASE_SERVICE_ACCOUNT_JSON` (+ `FCM_PROJECT_ID`, `PUSH_DISPATCH_SECRET`); `check-push-config.mjs` now also cross-checks `FCM_PROJECT_ID` == canonical client project `findback-mobile-app` (`scripts/firebase-project-id.mjs`); then deploy `push-dispatch` |

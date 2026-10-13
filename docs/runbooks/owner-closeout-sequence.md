@@ -3,7 +3,7 @@
 One ordered sequence. Secrets are NAMES only — never paste values into
 source; export them in the shell (or set repo Actions vars/secrets).
 Destructive/live sections are marked and separated from local build steps.
-Source revision this was written against: `c0b5f2b` (`origin/main`); live DB head at write time: `20261012020000`.
+Source revision this was written against: `ed565df` (`origin/main`); live DB head at write time: `20261012020000`.
 
 ## A. Preflight (read-only, any machine)
 
