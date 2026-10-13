@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  DIST_FOR_VARIANT,
   ENVIRONMENT_FOR_VARIANT,
   GOOGLE_CLIENT_PACKAGE,
   GOOGLE_FIREBASE_PROJECT,
@@ -23,6 +24,7 @@ import {
   SENTRY_RELEASE_RE,
   SENTRY_UPLOAD_ENV_NAMES,
   buildSentryRelease,
+  distForVariant,
   ensureFirebaseConfig,
   environmentForVariant,
   listSourcemaps,
@@ -100,12 +102,24 @@ test("readAppVersion and resolveGitSha are injectable and fail closed", () => {
   assert.throws(() => resolveGitSha({ exec: () => "not-a-sha\n", cwd: dir }), /SHA/);
 });
 
-test("resolveSentryIdentity carries release with dist null by design", () => {
-  const identity = resolveSentryIdentity({ version: VERSION, sha: SHA });
+test("resolveSentryIdentity carries release with per-variant closed dist", () => {
+  const identity = resolveSentryIdentity({ version: VERSION, sha: SHA, variant: "signeddev" });
   assert.equal(identity.release, RELEASE);
-  assert.equal(identity.dist, null);
+  assert.equal(identity.dist, "android-signeddev");
   assert.equal(identity.version, VERSION);
   assert.equal(identity.sha, SHA);
+  assert.equal(resolveSentryIdentity({ version: VERSION, sha: SHA, variant: "debug" }).dist, "android-debug");
+  assert.equal(resolveSentryIdentity({ version: VERSION, sha: SHA, variant: "release" }).dist, "android-release");
+  assert.equal(resolveSentryIdentity({ version: VERSION, sha: SHA }).dist, "android-debug");
+  assert.equal(distForVariant("signeddev"), "android-signeddev");
+  assert.deepEqual(DIST_FOR_VARIANT, {
+    debug: "android-debug",
+    signeddev: "android-signeddev",
+    release: "android-release",
+  });
+  assert.throws(() => distForVariant("bogus"), /unknown variant/);
+  // Explicit override still travels (tests).
+  assert.equal(resolveSentryIdentity({ version: VERSION, sha: SHA, dist: null }).dist, null);
 });
 
 test("environmentForVariant is deliberate per variant", () => {
@@ -133,19 +147,19 @@ test("sentryUploadPlan is disabled by default and names (never values) when open
   assert.deepEqual(SENTRY_UPLOAD_ENV_NAMES, [TOKEN_NAME, ORG_NAME, PROJECT_NAME]);
 });
 
-test("upload argv carries the EXACT embedded release and no --dist while dist is null", () => {
-  const identity = resolveSentryIdentity({ version: VERSION, sha: SHA });
+test("upload argv carries the EXACT embedded release and identical --dist", () => {
+  const identity = resolveSentryIdentity({ version: VERSION, sha: SHA, variant: "signeddev" });
   const argv = sentryUploadArgs({ org: "o", project: "p", identity });
   assert.ok(argv.includes("--release"));
   assert.equal(argv[argv.indexOf("--release") + 1], identity.release);
-  assert.ok(!argv.includes("--dist"), "dist-less SDK events require dist-less artifacts");
+  assert.equal(argv[argv.indexOf("--dist") + 1], "android-signeddev");
   assert.match(argv[argv.length - 1].replace(/\\/g, "/"), /apps\/mobile\/dist$/);
-  // Forward-compat branch: a non-null dist travels on both sides identically.
-  const withDist = sentryUploadArgs({ org: "o", project: "p", identity: { ...identity, dist: SHA } });
-  assert.equal(withDist[withDist.indexOf("--dist") + 1], SHA);
+  // Explicit null dist (tests only) travels identically on both sides.
+  const noDist = sentryUploadArgs({ org: "o", project: "p", identity: { ...identity, dist: null } });
+  assert.ok(!noDist.includes("--dist"), "dist-less SDK events require dist-less artifacts");
   const verify = sentryVerifyArgs({ org: "o", project: "p", identity });
   assert.deepEqual(verify.slice(0, 3), ["releases", "files", identity.release]);
-  assert.ok(!verify.includes("--dist"));
+  assert.equal(verify[verify.indexOf("--dist") + 1], "android-signeddev");
   assert.equal(SENTRY_CLI_PIN, "@sentry/cli@3.8.0");
 });
 

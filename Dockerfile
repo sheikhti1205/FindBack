@@ -57,6 +57,7 @@ RUN node scripts/check-mobile-build-config.mjs --preflight && \
   if [ -n "$VITE_SENTRY_DSN" ]; then \
     node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && \
     if [ -n "$VITE_SENTRY_RELEASE" ]; then JS=$(ls apps/mobile/dist/assets/index-*.js | head -1); grep -q "$VITE_SENTRY_RELEASE" "$JS" || { echo "docker baked-config: Sentry release identity missing from built bundle"; exit 1; }; echo "docker baked-config: Sentry release $VITE_SENTRY_RELEASE dist $VITE_SENTRY_DIST env $VITE_SENTRY_ENVIRONMENT verified"; else echo "docker baked-config: WARNING — no VITE_SENTRY_RELEASE baked (maps cannot be matched to this image)"; fi; \
+    echo "docker baked-config: SENTRY_SYMBOLICATION=NOT_UPLOADED (reference image ships no symbol upload; events carry dist $VITE_SENTRY_DIST with no matching artifact set — file issues against the image only)"; \
   else echo "findback(docker): WARNING — VITE_SENTRY_DSN empty, image is UNMONITORED (local development only)"; fi
 
 FROM node:22-alpine AS runtime

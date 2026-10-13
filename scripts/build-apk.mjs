@@ -77,6 +77,20 @@ export const ENVIRONMENT_FOR_VARIANT = {
   release: "local-release",
 };
 
+/**
+ * Sentry dist per local variant (closed map — mirrors resolveSentryDist in
+ * the monitoring service). The SDK embeds this dist AND the upload passes
+ * the identical --dist, so events and artifacts always match. A stray
+ * VITE_SENTRY_DIST in the ambient env is overridden (pinned) before the
+ * Vite build — a dist the artifacts lack (or vice versa) would silently
+ * break symbolication.
+ */
+export const DIST_FOR_VARIANT = {
+  debug: "android-debug",
+  signeddev: "android-signeddev",
+  release: "android-release",
+};
+
 /** Same release-identity shape CI mints (release.yml "Compute Sentry release identity"). */
 export const SENTRY_RELEASE_RE =
   /^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{7,40}$/i;
@@ -154,18 +168,24 @@ export function resolveGitSha({ exec = execFileSync, cwd = REPO_ROOT } = {}) {
 /**
  * Single source of truth for the Sentry identity a build embeds AND uploads.
  *
- * dist is null BY DESIGN, not by omission: the SDK init passes release only
- * (no dist — see the monitoring service), and per Sentry's matching rule an
- * event with dist null requires artifacts uploaded with NO dist. Passing
- * --dist would scope the artifacts away from our dist-less events and break
- * symbolication, so the upload builder below emits no --dist flag while dist
- * is null. If the SDK ever sends a dist, set it here and both sides move
- * together (the upload test pins exact sameness).
+ * dist travels on BOTH sides identically: the SDK init reads VITE_SENTRY_DIST
+ * (pinned below before the Vite build) and the upload builder emits the same
+ * --dist. Per Sentry's matching rule, events and artifacts must agree — the
+ * upload test pins exact sameness. A variant always maps to its closed dist;
+ * pass an explicit dist only to override (tests).
  */
 export function resolveSentryIdentity(deps = {}) {
   const version = deps.version ?? readAppVersion(deps);
   const sha = deps.sha ?? resolveGitSha(deps);
-  return { release: buildSentryRelease(version, sha), dist: null, version, sha };
+  const dist = deps.dist !== undefined ? deps.dist : distForVariant(deps.variant ?? "debug");
+  return { release: buildSentryRelease(version, sha), dist, version, sha };
+}
+
+/** Closed dist map for local variants. Throws on unknown variants. */
+export function distForVariant(variant) {
+  const dist = DIST_FOR_VARIANT[variant];
+  if (!dist) throw new Error(`build-apk: unknown variant ${variant}`);
+  return dist;
 }
 
 /** Deliberate environment for a variant. Throws on unknown variants. */
@@ -188,9 +208,9 @@ export function sentryUploadPlan(env = process.env) {
 
 /**
  * Exact sentry-cli upload argv for an identity. Built FROM the identity object
- * so the upload can never drift from what the bundle embeds. No --dist flag
- * while identity.dist is null (see resolveSentryIdentity); a non-null dist is
- * passed through as --dist so both sides stay exactly the same.
+ * so the upload can never drift from what the bundle embeds. The --dist flag
+ * always equals the embedded SDK dist (pinned per variant before the Vite
+ * build); an explicit null dist (tests only) emits no --dist on either side.
  */
 export function sentryUploadArgs({ org, project, identity, distDir = MOBILE_DIST_DIR }) {
   if (!org || !project || !identity?.release) {
@@ -457,7 +477,7 @@ function main() {
   // verbatim for the symbol upload below, so the two can never drift.
   let identity;
   try {
-    identity = resolveSentryIdentity();
+    identity = resolveSentryIdentity({ variant });
   } catch (error) {
     fail(String(error.message ?? error));
   }
@@ -465,6 +485,12 @@ function main() {
   process.env.VITE_SENTRY_RELEASE = identity.release;
   process.env.SENTRY_RELEASE = identity.release;
   process.env.VITE_SENTRY_ENVIRONMENT = sentryEnv;
+  // Pin dist so the SDK can never embed a stray ambient VITE_SENTRY_DIST
+  // that the artifacts lack (or vice versa) — both sides move together.
+  if ((process.env.VITE_SENTRY_DIST ?? "") !== identity.dist) {
+    console.log(`build-apk: pinning VITE_SENTRY_DIST=${identity.dist} (ambient value overridden, never printed)`);
+  }
+  process.env.VITE_SENTRY_DIST = identity.dist;
 
   // Symbol-upload mode. Enabled builds emit hidden sourcemaps for upload;
   // disabled builds emit no maps at all (a stray opt-in without upload intent
