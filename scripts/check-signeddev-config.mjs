@@ -42,10 +42,14 @@ export const STAGED_PUBLIC_DIR = resolve(
  * The App-Links contract the APK is built with: one `autoVerify` VIEW filter
  * whose host is the Gradle placeholder fed by the share config (so it can
  * never drift from VITE_PUBLIC_SHARE_ORIGIN), HTTPS only, scoped to the
- * allowlisted `/r/` report route.
+ * allowlisted paths: report links (`/r/`), password recovery (`/recovery`)
+ * and the browser OAuth callback (`/auth/callback`). Any other path prefix is
+ * rejected.
  *
  * @returns {string | null} error message, or null when the contract holds
  */
+export const APPLINK_PATH_PREFIXES = ["/r/", "/recovery", "/auth/callback"];
+
 export function checkAppLinksManifest(xml) {
   if (typeof xml !== "string" || xml.length === 0) return "AndroidManifest is empty";
   const filters = xml.match(/<intent-filter[^>]*android:autoVerify="true"[^>]*>[\s\S]*?<\/intent-filter>/g);
@@ -53,15 +57,22 @@ export function checkAppLinksManifest(xml) {
   if (filters.length > 1) return "expected exactly one autoVerify App-Links intent-filter";
   const [filter] = filters;
   const dataTags = filter.match(/<data\b[^>]*\/?>/g);
-  if (!dataTags || dataTags.length !== 1) return "App-Links intent-filter must declare exactly one data element";
-  const dataTag = dataTags[0];
-  const scheme = /android:scheme="([^"]*)"/.exec(dataTag)?.[1];
-  if (scheme !== "https") return "App-Links data element must be https-only";
-  const host = /android:host="([^"]*)"/.exec(dataTag)?.[1];
-  if (host !== "${findbackShareHost}") {
-    return "App-Links host must be the ${findbackShareHost} placeholder (share config is the single source)";
+  if (!dataTags || dataTags.length === 0) return "App-Links intent-filter must declare at least one data element";
+  const prefixes = new Set();
+  for (const dataTag of dataTags) {
+    const scheme = /android:scheme="([^"]*)"/.exec(dataTag)?.[1];
+    if (scheme !== "https") return "App-Links data element must be https-only";
+    const host = /android:host="([^"]*)"/.exec(dataTag)?.[1];
+    if (host !== "${findbackShareHost}") {
+      return "App-Links host must be the ${findbackShareHost} placeholder (share config is the single source)";
+    }
+    const pathPrefix = /android:pathPrefix="([^"]*)"/.exec(dataTag)?.[1];
+    if (!pathPrefix || !APPLINK_PATH_PREFIXES.includes(pathPrefix)) {
+      return "App-Links data element must use an allowlisted pathPrefix (/r/, /recovery, /auth/callback)";
+    }
+    prefixes.add(pathPrefix);
   }
-  if (!/android:pathPrefix="\/r\/"/.test(dataTag)) return "App-Links pathPrefix must be /r/ (report links only)";
+  if (!prefixes.has("/r/")) return "App-Links intent-filter must cover the /r/ report-link path";
   if (!/android\.intent\.action\.VIEW/.test(filter)) return "App-Links filter must accept VIEW";
   if (!/android\.intent\.category\.BROWSABLE/.test(filter)) return "App-Links filter must be BROWSABLE";
   return null;

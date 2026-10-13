@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import { RECOVERY_INVALID_LINK, RECOVERY_SUCCESS } from "../components/auth/authCopy";
@@ -10,11 +10,23 @@ import { exchangeRecoveryCode, updatePassword } from "../services/auth";
  * Public route: the link itself carries the credential, so no session is
  * required to open it. Flow: exchange code → set new password → signed in.
  * Invalid/expired/used links show the same invalid message (no enumeration).
+ *
+ * X4: when the external callback bridge already exchanged the code (the
+ * browser `/recovery?code=…` path), it routes here with `state.recovered` and
+ * the code never reaches the hash — phase starts at "ready".
  */
 export function Recovery() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const [phase, setPhase] = useState<"exchanging" | "ready" | "invalid" | "done">("exchanging");
+  const location = useLocation();
+  const bridgeState = (location.state ?? null) as
+    | { recovered?: boolean; linkError?: boolean }
+    | null;
+  const preExchanged = bridgeState?.recovered === true;
+  const preFailed = bridgeState?.linkError === true;
+  const [phase, setPhase] = useState<"exchanging" | "ready" | "invalid" | "done">(
+    preExchanged ? "ready" : preFailed ? "invalid" : "exchanging",
+  );
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -24,12 +36,14 @@ export function Recovery() {
   useEffect(() => {
     if (exchanged.current) return;
     exchanged.current = true;
+    // The bridge already resolved the code (or declared the link invalid).
+    if (preExchanged || preFailed) return;
     const code = params.get("code") ?? "";
     exchangeRecoveryCode(code).then(
       () => setPhase("ready"),
       () => setPhase("invalid"),
     );
-  }, [params]);
+  }, [params, preExchanged, preFailed]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

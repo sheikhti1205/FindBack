@@ -38,7 +38,7 @@ function configureAvailable(seams?: {
   signIn?: (idToken: string, nonce: string) => Promise<GoogleSignInOutcome>;
 }) {
   __setGoogleSignInSeams({
-    isGoogleAuthAvailable: () => true,
+    strategy: () => "android-native",
     startGoogleSignIn:
       seams?.start ??
       (async () => {
@@ -54,7 +54,7 @@ function configureAvailable(seams?: {
 
 describe("GoogleSignInButton (S3)", () => {
   it("renders NOTHING when Google auth is unavailable (fail closed)", () => {
-    __resetGoogleSignInSeams();
+    __setGoogleSignInSeams({ strategy: () => "unavailable" });
     const { container } = render(<GoogleSignInButton mode="signin" onDone={() => {}} />);
     expect(container.innerHTML).toBe("");
     expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
@@ -148,7 +148,7 @@ describe("GoogleSignInButton (S3)", () => {
   });
 
   it.each([
-    { kind: "unavailable", pattern: /isn't available on this device/i },
+    { kind: "unavailable", pattern: /isn't available/i },
     { kind: "misconfigured", pattern: /isn't set up yet/i },
     { kind: "network", pattern: /connection/i },
     { kind: "unknown", pattern: /failed.*try again/i },
@@ -166,6 +166,8 @@ describe("GoogleSignInButton (S3)", () => {
     expect(alert.textContent).toMatch(pattern);
     // Raw internals must never surface.
     expect(alert.textContent).not.toContain(`raw-${kind}-detail`);
+    // Device state is never blamed for any outcome.
+    expect(alert.textContent).not.toMatch(/device/i);
     expect(onDone).not.toHaveBeenCalled();
   });
 

@@ -17,9 +17,13 @@
  * they point at Google hosts, else null. The idToken is never logged.
  */
 import type { PublicUser } from "@findback/shared";
+import { Capacitor } from "@capacitor/core";
 import { getSupabase } from "../supabaseClient";
 import { ApiError, setToken } from "../session";
 import { fetchMe } from "../auth";
+import { isGoogleAuthAvailable } from "../../native/googleAuth";
+import { AUTH_CALLBACK_PATH, isAllowedAuthOrigin } from "../../utils/authRedirect";
+import { isSafeInternalRoute, rememberAuthReturnTo } from "../../utils/authReturnTo";
 
 /** Same username syntax the registration trigger enforces. */
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
@@ -182,15 +186,119 @@ export async function signInWithGoogleIdToken(idToken: string, nonce: string): P
   if (error) throw mapGoogleSignInError(error);
   if (!data.session) throw new ApiError("Google sign-in failed. Please try again.", 400);
   setToken(data.session.access_token);
+  return resolveOutcomeForCurrentSession();
+}
+
+/**
+ * ONE resolver shared by both entry points (native ID-token exchange and web
+ * OAuth callback): a valid Supabase Google session is either an existing
+ * FindBack profile (authenticated) or a session with no `public.users` row
+ * (needsProfile, session KEPT). A password-created profile is never overwritten
+ * — this only reads.
+ */
+async function resolveOutcomeForCurrentSession(): Promise<GoogleSignInOutcome> {
   try {
     return { status: "authenticated", user: await fetchMe() };
   } catch (err) {
-    // Missing public.users row → completion state, session KEPT. Any other
-    // failure rethrows the original error untouched.
     const seed = await getNeedsProfileSeed().catch(() => null);
     if (seed) return { status: "needsProfile", seed };
     throw err;
   }
+}
+
+/**
+ * Resolve the CURRENT stored session into an outcome (used right after the web
+ * OAuth callback has been exchanged). Throws when there is no session.
+ */
+export async function resolveCurrentGoogleSessionOutcome(): Promise<GoogleSignInOutcome> {
+  const { data } = await getSupabase().auth.getSession();
+  const session = data?.session ?? null;
+  if (!session) throw new ApiError("Google sign-in didn't complete. Please try again.", 400);
+  setToken(session.access_token);
+  return resolveOutcomeForCurrentSession();
+}
+
+/** Which Google strategy this runtime should use. */
+export type GoogleAuthStrategy = "android-native" | "web-oauth" | "unavailable";
+
+export interface GoogleStrategyDeps {
+  nativeAvailable: () => boolean;
+  isBrowser: () => boolean;
+  supabaseConfigured: () => boolean;
+}
+
+const DEFAULT_STRATEGY_DEPS: GoogleStrategyDeps = {
+  nativeAvailable: () => isGoogleAuthAvailable(),
+  isBrowser: () => !Capacitor.isNativePlatform(),
+  supabaseConfigured: () => {
+    try {
+      getSupabase();
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
+
+/**
+ * The Android Credential Manager native flow wins on Android; otherwise a
+ * browser with a configured Supabase client uses the web OAuth flow; anything
+ * else is unavailable (button hidden). Never throws.
+ */
+export function googleAuthStrategy(deps: GoogleStrategyDeps = DEFAULT_STRATEGY_DEPS): GoogleAuthStrategy {
+  try {
+    if (deps.nativeAvailable()) return "android-native";
+  } catch {
+    /* fall through */
+  }
+  try {
+    if (deps.isBrowser() && deps.supabaseConfigured()) return "web-oauth";
+  } catch {
+    /* fall through */
+  }
+  return "unavailable";
+}
+
+/** Absolute OAuth callback URL for the current browser origin. */
+export function googleOAuthRedirectTo(origin: string): string {
+  return `${origin.replace(/\/+$/, "")}${AUTH_CALLBACK_PATH}`;
+}
+
+/**
+ * Browser Google sign-in: hands off to Supabase `signInWithOAuth` (the Google
+ * client id/secret live in the Supabase provider config — never in the web
+ * bundle). The browser navigates away; the outcome is resolved by the
+ * `/auth/callback` bridge. `returnTo` must be a safe internal route.
+ */
+export async function signInWithGoogleWebOAuth(opts: { returnTo?: string | null } = {}): Promise<void> {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  if (!origin || !isAllowedAuthOrigin(origin)) {
+    throw new ApiError("Google sign-in isn't available on this site.", 400);
+  }
+  if (opts.returnTo && isSafeInternalRoute(opts.returnTo)) rememberAuthReturnTo(opts.returnTo);
+  const { error } = await getSupabase().auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: googleOAuthRedirectTo(origin),
+      skipBrowserRedirect: false,
+      queryParams: { prompt: "select_account" },
+    },
+  });
+  if (error) throw mapGoogleSignInError(error);
+}
+
+/**
+ * Finish the browser OAuth callback: exchange the PKCE code for a session, then
+ * resolve the shared outcome. The code is single-use and never logged.
+ */
+export async function completeGoogleWebCallback(code: string): Promise<GoogleSignInOutcome> {
+  const clean = (code ?? "").trim();
+  if (!clean) throw new ApiError("Google sign-in didn't complete. Please try again.", 400);
+  const { data, error } = await getSupabase().auth.exchangeCodeForSession(clean);
+  if (error) throw mapGoogleSignInError(error);
+  if (!data.session) throw new ApiError("Google sign-in didn't complete. Please try again.", 400);
+  setToken(data.session.access_token);
+  return resolveOutcomeForCurrentSession();
 }
 
 function mapCompletionError(error: { message?: string; code?: string; status?: number }): ApiError {

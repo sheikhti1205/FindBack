@@ -1,29 +1,32 @@
 import { useState } from "react";
 import { Button } from "../Button";
-// S1 (W0-A) + S2 (W0-B): READ-ONLY imports of the now-landed real modules.
-// Availability still fails closed via S1's own guard (false off Android).
+// S1 (W0-A) + S2 (W0-B): READ-ONLY imports of the real modules. Availability
+// now resolves a strategy: Android Credential Manager (native), browser OAuth
+// (web), or unavailable (hidden). Tests inject fakes at the seam.
 import {
-  isGoogleAuthAvailable,
   startGoogleSignIn,
   type GoogleIdTokenResult,
 } from "../../native/googleAuth";
 import {
+  googleAuthStrategy,
   signInWithGoogleIdToken,
+  signInWithGoogleWebOAuth,
+  type GoogleAuthStrategy,
   type GoogleProfileSeed,
   type GoogleSignInOutcome,
 } from "../../services/auth/googleSignIn";
 
-export type { GoogleIdTokenResult, GoogleProfileSeed, GoogleSignInOutcome };
+export type { GoogleIdTokenResult, GoogleProfileSeed, GoogleSignInOutcome, GoogleAuthStrategy };
 
 /**
- * W0-C (S3) — "Continue with Google" affordance.
+ * W0-C (S3) — "Continue with Google" affordance, platform-strategy aware.
  *
- * S1 (`src/native/googleAuth.ts`, W0-A) and S2
- * (`src/services/auth/googleSignIn.ts`, W0-B) are consumed via READ-ONLY
- * imports as the seam defaults — availability still fails closed through
- * S1's own guard (false off Android / unconfigured). Tests inject fakes
- * through `__setGoogleSignInSeams` (fake at the seam, never a successful
- * login in production paths).
+ * Android: native Credential Manager → ID token + nonce → Supabase
+ * `signInWithIdToken` (unchanged).
+ * Web: Supabase `signInWithOAuth` redirect; the `/auth/callback` bridge
+ * resolves the outcome after the provider returns.
+ * Unavailable (no native bridge AND not a configured browser): the button is
+ * not rendered at all (fail closed).
  */
 
 export type GoogleAuthMode = "signin" | "signup";
@@ -36,25 +39,27 @@ export type GoogleAuthFailureKind =
   | "unknown";
 
 export interface GoogleSignInSeams {
-  isGoogleAuthAvailable: () => boolean;
+  strategy: () => GoogleAuthStrategy;
   startGoogleSignIn: (opts: { mode: GoogleAuthMode }) => Promise<GoogleIdTokenResult>;
   signInWithGoogleIdToken: (idToken: string, nonce: string) => Promise<GoogleSignInOutcome>;
+  startWebOAuth: (opts?: { returnTo?: string | null }) => Promise<void>;
 }
 
 const WIRED_SEAMS: GoogleSignInSeams = {
-  isGoogleAuthAvailable,
+  strategy: googleAuthStrategy,
   startGoogleSignIn,
   signInWithGoogleIdToken,
+  startWebOAuth: signInWithGoogleWebOAuth,
 };
 
 let activeSeams: GoogleSignInSeams = WIRED_SEAMS;
 
-/** Test hook: pass a partial to override the wired S1/S2 defaults. */
+/** Test hook: pass a partial to override the wired S1/S2/web defaults. */
 export function __setGoogleSignInSeams(partial: Partial<GoogleSignInSeams>): void {
   activeSeams = { ...activeSeams, ...partial };
 }
 
-/** Restore the wired S1/S2 defaults (tests + safe teardown). */
+/** Restore the wired defaults (tests + safe teardown). */
 export function __resetGoogleSignInSeams(): void {
   activeSeams = WIRED_SEAMS;
 }
@@ -62,7 +67,7 @@ export function __resetGoogleSignInSeams(): void {
 /** Availability probe for conditional rendering (button + divider stay paired). */
 export function isGoogleSignInAvailable(): boolean {
   try {
-    return activeSeams.isGoogleAuthAvailable();
+    return activeSeams.strategy() !== "unavailable";
   } catch {
     return false;
   }
@@ -96,7 +101,7 @@ function humanMessageFor(err: unknown): string | null {
     return "Google sign-in isn't set up yet. Please try another sign-in method.";
   }
   if (kind === "unavailable") {
-    return "Google sign-in isn't available on this device right now.";
+    return "Google sign-in isn't available right now.";
   }
   if (kind === "network") {
     return "Couldn't reach Google. Check your connection and try again.";
@@ -107,20 +112,45 @@ function humanMessageFor(err: unknown): string | null {
 export function GoogleSignInButton({
   mode,
   onDone,
+  returnTo,
 }: {
   mode: GoogleAuthMode;
   onDone: (outcome: GoogleSignInOutcome) => void | Promise<void>;
+  /** Web only: internal route to return to after the OAuth callback. */
+  returnTo?: string | null;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fail closed: no bridge, no button. (Hooks above stay unconditional.)
-  if (!isGoogleSignInAvailable()) return null;
+  let strategy: GoogleAuthStrategy = "unavailable";
+  try {
+    strategy = activeSeams.strategy();
+  } catch {
+    strategy = "unavailable";
+  }
+
+  // Fail closed: no strategy, no button. (Hooks above stay unconditional.)
+  if (strategy === "unavailable") return null;
 
   async function onPress() {
     if (pending) return;
     setError(null);
     setPending(true);
+
+    // Web: hand off to the browser OAuth redirect. The page navigates away and
+    // the /auth/callback bridge finishes the flow; there is no in-page outcome.
+    if (strategy === "web-oauth") {
+      try {
+        await activeSeams.startWebOAuth({ returnTo: returnTo ?? null });
+        // Keep pending=true: the browser is leaving the page.
+      } catch (err) {
+        setError(humanMessageFor(err));
+        setPending(false);
+      }
+      return;
+    }
+
+    // Android native: Credential Manager token → Supabase ID-token exchange.
     let outcome: GoogleSignInOutcome;
     try {
       // The id token AND raw nonce go straight to the service seam and are

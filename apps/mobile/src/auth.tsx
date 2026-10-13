@@ -47,6 +47,7 @@ import {
   getNeedsProfileSeed,
   signInWithGoogleIdToken,
   type GoogleProfileSeed,
+  type GoogleSignInOutcome,
 } from "./services/auth/googleSignIn";
 
 export type RegisterOutcome =
@@ -86,6 +87,8 @@ interface AuthContextValue {
   needsProfile: GoogleProfileSeed | null;
   /** W0-B (S2, additive): dismiss the completion state (after completeSocialProfile). */
   clearNeedsProfile: () => void;
+  /** X1 (web OAuth): adopt the outcome resolved by the external callback bridge. */
+  adoptExternalAuthOutcome: (outcome: GoogleSignInOutcome) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -286,6 +289,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // cancel is detected via `kind`, never message matching.
   const clearNeedsProfile = useCallback(() => setNeedsProfileState(null), []);
 
+  /**
+   * X1: adopt an outcome already resolved by the external callback bridge (web
+   * Google OAuth). Mirrors the native path: authenticated → user; needsProfile
+   * → keep the session and surface the completion seed.
+   */
+  const adoptExternalAuthOutcome = useCallback((outcome: GoogleSignInOutcome) => {
+    if (outcome.status === "authenticated") {
+      setNeedsProfileState(null);
+      setUserState(outcome.user);
+      return;
+    }
+    setNeedsProfileState(outcome.seed);
+  }, []);
+
   const signInWithGoogle = useCallback(async (mode: "signin" | "signup") => {
     let idToken = "";
     let nonce = "";
@@ -355,6 +372,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signInWithGoogle,
       needsProfile,
       clearNeedsProfile,
+      adoptExternalAuthOutcome,
     }),
     [
       user,
@@ -372,6 +390,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signInWithGoogle,
       needsProfile,
       clearNeedsProfile,
+      adoptExternalAuthOutcome,
     ],
   );
 

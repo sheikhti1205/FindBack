@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router";
+import { Navigate, useLocation, useNavigate } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAuth } from "../auth";
 import { registerBackInterceptor } from "../components/backNavigation";
@@ -45,6 +45,9 @@ type Stage = "email" | "signin" | "signup";
 export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGatewayProps) {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // X1: the external OAuth callback bridge routes here with a failure marker.
+  const googleError = (location.state as { googleError?: string } | null)?.googleError ?? null;
   const [stage, setStage] = useState<Stage>(initialMode);
   const [email, setEmail] = useState(initialEmail);
   // True once the address arrived via the email stage (chip mode). Compat
@@ -126,6 +129,14 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
         >
           {stage === "email" && (
             <div className="flex flex-col gap-4">
+              {googleError && (
+                <p
+                  className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error"
+                  role="alert"
+                >
+                  Google sign-in didn&apos;t complete. Please try again.
+                </p>
+              )}
               {/* W0-C (S3) insertion ONLY: Google affordance + divider ABOVE the
                   email form. Mode "signup" is the superset entry point (full
                   account chooser + verified-phone request for new users);

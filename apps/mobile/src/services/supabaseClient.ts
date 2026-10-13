@@ -57,7 +57,15 @@ export function getSupabase(): SupabaseClient {
   if (client) return client;
   const { url, key } = validateSupabaseConfig(__SUPABASE_URL__, __SUPABASE_PUBLISHABLE_KEY__);
   client = createClient(url, key, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+      // X4: one explicit auth-code strategy — PKCE. Browser Google OAuth and
+      // password recovery both exchange a `code` explicitly via the callback
+      // bridge; `signInWithIdToken` (native) is unaffected by flow type.
+      flowType: "pkce",
+    },
   });
   return client;
 }

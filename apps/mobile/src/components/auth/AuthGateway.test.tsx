@@ -285,7 +285,7 @@ const GOOGLE_SEED: GoogleProfileSeed = {
 
 function configureGoogleSeams(outcome: GoogleSignInOutcome) {
   __setGoogleSignInSeams({
-    isGoogleAuthAvailable: () => true,
+    strategy: () => "android-native",
     startGoogleSignIn: async () => ({
       idToken: "fake-google-id-token",
       nonce: "fake-google-nonce",
@@ -349,12 +349,16 @@ describe("AuthGateway Google entry (W0-C S3, appended)", () => {
   });
 
   it("fail-closed when unavailable: no button, no divider, email flow intact", async () => {
-    __resetGoogleSignInSeams();
-    renderGateway();
-    expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
-    expect(screen.queryByRole("separator", { name: "or" })).toBeNull();
-    await continueWithEmail("user@example.com");
-    expect(screen.getByLabelText("Password")).toBeTruthy();
+    __setGoogleSignInSeams({ strategy: () => "unavailable" });
+    try {
+      renderGateway();
+      expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+      expect(screen.queryByRole("separator", { name: "or" })).toBeNull();
+      await continueWithEmail("user@example.com");
+      expect(screen.getByLabelText("Password")).toBeTruthy();
+    } finally {
+      __resetGoogleSignInSeams();
+    }
   });
 
   it("routes a new Google account to /complete-profile carrying the seed", async () => {

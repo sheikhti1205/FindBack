@@ -5,7 +5,12 @@ import { App } from "./App";
 import { initMonitoring } from "./services/monitoring/sentry";
 import { recordOperation } from "./services/monitoring/operations";
 import { initializeApplicationAi } from "./services/ai/applicationAi";
+import { captureExternalAuthEntryFromWindow } from "./utils/externalAuthEntry";
 
+// X3: the OAuth/recovery callback lands on a real path outside the hash. Capture
+// it BEFORE the router mounts and strip the credential-bearing query from the
+// address bar immediately (no-op on any other route).
+captureExternalAuthEntryFromWindow();
 // Crash reporting first: no-op unless VITE_SENTRY_DSN is configured.
 initMonitoring();
 // Boot signal via the allowlisted seam (counts/codes/booleans only).

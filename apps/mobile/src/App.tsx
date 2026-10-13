@@ -43,6 +43,7 @@ import { HelpGuide } from "./screens/HelpGuide";
 import { Diagnostics } from "./screens/Diagnostics";
 import { Capacitor } from "@capacitor/core";
 import { ReportLinkHandler } from "./components/ReportLinkHandler";
+import { AuthLinkBootstrap } from "./components/AuthLinkBootstrap";
 import { PublicLanding } from "./screens/PublicLanding";
 import { SharedReport } from "./screens/SharedReport";
 // L-FIXTURE additive-only: deterministic visual preflight route (static,
@@ -77,6 +78,7 @@ export function App() {
       <AuthProvider>
         <AppMotionConfig>
         <HashRouter>
+          <AuthLinkBootstrap />
           <ReportLinkHandler />
           <BackButtonHandler />
           <ErrorBoundary>
