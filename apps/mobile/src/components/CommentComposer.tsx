@@ -819,7 +819,7 @@ export function CommentComposer({
                   aria-selected={gifTab === tab}
                   data-testid={`comment-gif-tab-${tab}`}
                   onClick={() => setGifTab(tab)}
-                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  className={`flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors ${
                     gifTab === tab
                       ? "bg-on-surface text-surface"
                       : "text-on-surface-variant hover:bg-surface-container"
@@ -840,7 +840,7 @@ export function CommentComposer({
                     type="button"
                     data-testid="comment-gif-retry"
                     onClick={retryGifSearch}
-                    className="mt-1 rounded-full bg-surface-container-high px-4 py-2 text-xs font-semibold text-on-surface"
+                    className="mt-1 min-h-[44px] rounded-full bg-surface-container-high px-4 text-xs font-semibold text-on-surface"
                   >
                     Try again
                   </button>

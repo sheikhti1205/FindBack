@@ -30,6 +30,7 @@ export const MATRIX = [
   {
     id: "google-auth-web-oauth",
     label: "Google login — web OAuth (runtime)",
+    webCapability: true,
     cells: { LOCAL: C, CI: C, RELEASE: C, WEB: C, DOCKER: N, LIVE: N },
     notes:
       "Google login IS a web product feature (capability rule). The web OAuth path is IMPLEMENTED in source this wave (signInWithOAuth → /auth/callback bridge → shared resolver); it stays CONFIG_REQUIRED until the Supabase Google provider carries the web client + the redirect URL allowlist.",
@@ -39,6 +40,7 @@ export const MATRIX = [
   {
     id: "klipy",
     label: "KLIPY GIF/sticker picker",
+    webCapability: true,
     cells: { LOCAL: C, CI: C, RELEASE: C, WEB: C, DOCKER: C, LIVE: N },
     notes:
       "KLIPY IS a web product feature because web has comments. Adapter live-VALIDATED with a real key; VITE_KLIPY_API_KEY now flows to web.yml/release.yml from a repo secret — the secret must be set or the picker hides.",
@@ -48,6 +50,7 @@ export const MATRIX = [
   {
     id: "sentry-release-dist",
     label: "Sentry release/dist identity",
+    webCapability: true,
     cells: { LOCAL: I, CI: I, RELEASE: I, WEB: I, DOCKER: I, LIVE: N },
     notes: "ONE scheme findback-mobile@<version>+<short12> (exactly-12); per-lane closed dist; parity gate.",
     justification: "LIVE N/A because release identity is a build-time string, not a live service.",
@@ -63,6 +66,7 @@ export const MATRIX = [
   {
     id: "map-web-renderer",
     label: "WEB_MAP_RENDERER",
+    webCapability: true,
     cells: { LOCAL: I, CI: I, RELEASE: N, WEB: I, DOCKER: I, LIVE: N },
     notes: "The web picker DOES render a map: keyless 3×3 OSM raster tile grid with zoom.",
     justification:
@@ -70,15 +74,17 @@ export const MATRIX = [
   },
 ];
 
-/** The capability-rule pins: capability exists on the lane ⇒ never N/A. */
-const CAPABILITY_PINS = [
-  { row: "google-auth-web-oauth", lane: "WEB" },
-  { row: "klipy", lane: "WEB" },
-  { row: "map-web-renderer", lane: "WEB" },
-];
-
-function rowById(matrix, id) {
-  return matrix.find((r) => r.id === id);
+/** The capability rule: a row declared a web product capability ⇒ never N/A on WEB. */
+function webCapabilityViolations(matrix) {
+  const problems = [];
+  for (const row of matrix) {
+    if (row.webCapability === true && row.cells?.WEB === N) {
+      problems.push(
+        `capability rule violated: ${row.id} is NOT_APPLICABLE on WEB although the product feature exists there`,
+      );
+    }
+  }
+  return problems;
 }
 
 export function checkMatrixInvariants(matrix = MATRIX) {
@@ -107,18 +113,7 @@ export function checkMatrixInvariants(matrix = MATRIX) {
       problems.push(`row ${row.id} carries a justification but has no NOT_APPLICABLE cell`);
     }
   }
-  for (const pin of CAPABILITY_PINS) {
-    const row = rowById(matrix, pin.row);
-    if (!row) {
-      problems.push(`capability pin references unknown row: ${pin.row}`);
-      continue;
-    }
-    if (row.cells[pin.lane] === N) {
-      problems.push(
-        `capability rule violated: ${pin.row} is NOT_APPLICABLE on ${pin.lane} although the product feature exists there`,
-      );
-    }
-  }
+  problems.push(...webCapabilityViolations(matrix));
   return problems;
 }
 

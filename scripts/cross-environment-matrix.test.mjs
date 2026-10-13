@@ -48,6 +48,16 @@ test("marking a web product capability N/A is rejected by the capability pin", (
   assert.ok(checkMatrixInvariants(bad).some((p) => /capability rule violated/.test(p)));
 });
 
+test("a row declared a web capability cannot be NOT_APPLICABLE on WEB", () => {
+  const bad = withRow({ webCapability: true, cells: { ...MATRIX.find((r) => r.id === "klipy").cells, WEB: "NOT_APPLICABLE" } });
+  assert.ok(checkMatrixInvariants(bad).some((p) => /capability rule violated/.test(p)));
+});
+
+test("a non-web row may legitimately be NOT_APPLICABLE on WEB", () => {
+  const ok = withRow({ webCapability: false, cells: { ...MATRIX.find((r) => r.id === "klipy").cells, WEB: "NOT_APPLICABLE" } });
+  assert.ok(!checkMatrixInvariants(ok).some((p) => /capability rule violated/.test(p)));
+});
+
 test("every row declares all lanes and renders a markdown row", () => {
   for (const row of MATRIX) {
     for (const lane of LANES) assert.ok(row.cells[lane], `${row.id}.${lane}`);

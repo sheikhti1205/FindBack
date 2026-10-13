@@ -30,6 +30,11 @@ export function AuthLinkBootstrap() {
   const authRef = useRef(auth);
   authRef.current = auth;
   const [processing, setProcessing] = useState(false);
+  // Persist the one-shot web entry and the "already started" latch across the
+  // dev-only StrictMode double-effect so the entry is never consumed twice nor
+  // left with a stuck overlay.
+  const pendingEntryRef = useRef<ExternalAuthEntry | null | undefined>(undefined);
+  const startedRef = useRef(false);
 
   useEffect(() => {
     let stopped = false;
@@ -48,17 +53,27 @@ export function AuthLinkBootstrap() {
     const process = async (entry: ExternalAuthEntry): Promise<void> => {
       if (stopped) return;
       setProcessing(true);
-      try {
-        if (entry.kind === "recovery") {
+
+      // Recovery is its own flow: a failed/used exchange must land on the
+      // recovery invalid-link screen, never the Google error path.
+      if (entry.kind === "recovery") {
+        try {
           if (!entry.code) {
             navigateRef.current("/recovery", { replace: true, state: { linkError: true } });
             return;
           }
           await exchangeRecoveryCode(entry.code);
           navigateRef.current("/recovery", { replace: true, state: { recovered: true } });
-          return;
+        } catch {
+          navigateRef.current("/recovery", { replace: true, state: { linkError: true } });
+        } finally {
+          setProcessing(false);
         }
-        // auth-callback (web Google OAuth)
+        return;
+      }
+
+      // auth-callback (web Google OAuth)
+      try {
         if (entry.error) {
           navigateRef.current("/auth", { replace: true, state: { googleError: entry.error } });
           return;
@@ -73,7 +88,7 @@ export function AuthLinkBootstrap() {
       } catch {
         navigateRef.current("/auth", { replace: true, state: { googleError: "failed" } });
       } finally {
-        if (!stopped) setProcessing(false);
+        setProcessing(false);
       }
     };
 
@@ -91,8 +106,14 @@ export function AuthLinkBootstrap() {
     };
 
     if (!Capacitor.isNativePlatform()) {
-      const entry = takePendingExternalAuthEntry();
-      if (entry) void process(entry);
+      if (pendingEntryRef.current === undefined) {
+        pendingEntryRef.current = takePendingExternalAuthEntry();
+      }
+      const entry = pendingEntryRef.current;
+      if (entry && !startedRef.current) {
+        startedRef.current = true;
+        void process(entry);
+      }
       return () => {
         stopped = true;
       };

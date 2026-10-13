@@ -132,6 +132,19 @@ describe("AuthLinkBootstrap", () => {
     expect(hoisted.exchangeRecoveryCode).not.toHaveBeenCalled();
   });
 
+  it("shows the recovery invalid-link screen (never the Google error) when the exchange fails", async () => {
+    hoisted.exchangeRecoveryCode.mockRejectedValue(new Error("expired or already used"));
+    renderWith({ kind: "recovery", code: "used-code", error: "", path: "/recovery?code=used-code" });
+    await waitFor(() => expect(hoisted.exchangeRecoveryCode).toHaveBeenCalledWith("used-code"));
+    const probe = () => document.querySelector('[data-testid="probe"]')?.textContent ?? "";
+    await waitFor(() => expect(probe()).toContain("/recovery"));
+    expect(probe()).toContain("linkError");
+    // Must NOT be misrouted to the Google error path.
+    expect(probe()).not.toContain("/auth");
+    expect(probe()).not.toContain("googleError");
+    expect(document.body.textContent).not.toContain("used-code");
+  });
+
   it("routes home when the provider exchange fails (never leaks the code)", async () => {
     hoisted.completeGoogleWebCallback.mockRejectedValue(new Error("boom code-leak-guard"));
     renderWith({ kind: "auth-callback", code: "code-fail", error: "", path: "/auth/callback?code=code-fail" });

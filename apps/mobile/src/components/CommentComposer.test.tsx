@@ -636,6 +636,18 @@ describe("CommentComposer Klipy picker feel", () => {
     expect(tall.getAttribute("style")).toContain("aspect-ratio: 0.5 / 1");
   });
 
+  it("keeps the tab and retry controls at the repo 44px touch-target minimum", async () => {
+    vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
+    klipyMock.searchGifs.mockRejectedValueOnce(new Error("offline"));
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-gif"));
+    for (const tab of ["comment-gif-tab-gifs", "comment-gif-tab-stickers"]) {
+      expect(screen.getByTestId(tab).className).toContain("min-h-[44px]");
+    }
+    const retry = await screen.findByTestId("comment-gif-retry");
+    expect(retry.className).toContain("min-h-[44px]");
+  });
+
   it("clears the query with a dedicated control (returns to trending)", async () => {
     vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
     klipyMock.searchGifs.mockResolvedValue([sized("happy-1", 400, 200)]);
