@@ -153,7 +153,7 @@ jobs:
         env:
           CI: true
       - name: Assert client config in gate bundle
-        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
+        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-klipy-config.mjs --assets apps/mobile/dist/assets
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Install pinned NDK + CMake (findback_probe native lib)
@@ -165,7 +165,7 @@ jobs:
       - name: Android JVM tests + debug APK
         run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
       - name: Assert client config in gate APK
-        run: node scripts/check-mobile-build-config.mjs --apk apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+        run: node scripts/check-mobile-build-config.mjs --apk apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk && node scripts/check-klipy-config.mjs --apk apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
       # Same deterministic release shape as the signed-build lane (mirrors
       # ci.yml's docker job): the reference image must bake the SAME release
       # identity so its config assert path matches instead of WARNING.
@@ -304,7 +304,7 @@ jobs:
           # of this step's env; coordinator confirmation noted in S3.log.md.)
           SENTRY_UPLOAD_SOURCEMAPS: "true"
       - name: Assert Supabase and Sentry in release bundle
-        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
+        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-klipy-config.mjs --assets apps/mobile/dist/assets
       - name: Assert baked client config (no placeholders, no secrets)
         run: |
           JS=$(ls apps/mobile/dist/assets/index-*.js | head -1)

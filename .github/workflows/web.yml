@@ -99,7 +99,7 @@ jobs:
           fi
           echo "sourcemap strip verified: no .map files, no sourceMappingURL references in dist"
       - name: Verify baked configuration and App Links association
-        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-web-association.mjs apps/mobile/dist
+        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-klipy-config.mjs --assets apps/mobile/dist/assets && node scripts/check-web-association.mjs apps/mobile/dist
         env:
           ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
       # The deploy step runs ONLY after the sourcemap upload + strip steps above

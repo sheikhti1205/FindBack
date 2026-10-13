@@ -16,10 +16,6 @@ import { effectiveSupabaseConfig } from "./check-mobile-build-config.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function fail(message) {
-  throw new Error(`check-auth-config: ${message}`);
-}
-
 /**
  * Verify the source-level auth contract. Returns the list of violations
  * (empty = pass). Values in messages are file paths and symbols only.
@@ -99,8 +95,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log("check-auth-config: PASS (source contracts)");
     }
   } catch (error) {
+    const message = String(error?.message ?? "");
     console.error(
-      /^check-auth-config:/.test(error.message) ? error.message : "check-auth-config: cannot read auth sources",
+      /^(check-auth-config:|check-mobile-build-config:)/.test(message)
+        ? message
+        : "check-auth-config: cannot read auth sources",
     );
     process.exitCode = 1;
   }

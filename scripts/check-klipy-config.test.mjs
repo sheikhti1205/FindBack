@@ -9,11 +9,18 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { KLIPY_ENV_KEY, klipyStatus, klipyExitCode, formatKlipyReport } from "./check-klipy-config.mjs";
+import {
+  KLIPY_ENV_KEY,
+  klipyStatus,
+  klipyExitCode,
+  formatKlipyReport,
+  klipyBundleCarriesKey,
+} from "./check-klipy-config.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -138,5 +145,71 @@ describe("CLI (node scripts/check-klipy-config.mjs)", () => {
   it("rejects unknown flags with exit 2", () => {
     const result = run(["--bogus"], { [KLIPY_ENV_KEY]: SECRET });
     assert.equal(result.code, 2);
+  });
+});
+
+describe("klipyBundleCarriesKey (X7 bundle presence)", () => {
+  it("is true only when a chunk contains the exact key", () => {
+    assert.equal(klipyBundleCarriesKey(["const k='abc'", "other"], "abc"), true);
+    assert.equal(klipyBundleCarriesKey(["const k='ab'"], "abc"), false);
+    assert.equal(klipyBundleCarriesKey([], "abc"), false);
+  });
+
+  it("never matches on an empty key", () => {
+    assert.equal(klipyBundleCarriesKey(["anything"], ""), false);
+    assert.equal(klipyBundleCarriesKey(["anything"], "   "), false);
+  });
+});
+
+describe("CLI bundle mode", () => {
+  function run(args, env) {
+    try {
+      const stdout = execFileSync("node", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+      return { code: 0, stdout, stderr: "" };
+    } catch (error) {
+      return {
+        code: typeof error.status === "number" ? error.status : -1,
+        stdout: String(error.stdout ?? ""),
+        stderr: String(error.stderr ?? ""),
+      };
+    }
+  }
+
+  it("passes when the emitted JS carries the key, without leaking it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "findback-klipy-bundle-"));
+    try {
+      writeFileSync(join(dir, "index-abc.js"), `var KLIPY="${SECRET}";`);
+      const result = run(["--assets", dir], { [KLIPY_ENV_KEY]: SECRET });
+      assert.equal(result.code, 0, result.stderr);
+      assert.match(result.stdout, /PASS/);
+      assert.ok(!result.stdout.includes(SECRET));
+      assert.ok(!result.stderr.includes(SECRET));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when the key is configured but absent from the bundle", () => {
+    const dir = mkdtempSync(join(tmpdir(), "findback-klipy-bundle-miss-"));
+    try {
+      writeFileSync(join(dir, "index-abc.js"), "var x=1;");
+      const result = run(["--assets", dir], { [KLIPY_ENV_KEY]: SECRET });
+      assert.equal(result.code, 1);
+      assert.match(result.stdout + result.stderr, /FAIL/);
+      assert.ok(!(result.stdout + result.stderr).includes(SECRET));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips the bundle assert when the key is intentionally DISABLED", () => {
+    const result = run(["--assets", "/nonexistent-dir"], { [KLIPY_ENV_KEY]: "" });
+    assert.equal(result.code, 0);
+    assert.ok(!(result.stdout + result.stderr).includes(SECRET));
+  });
+
+  it("rejects a missing path and conflicting modes", () => {
+    assert.equal(run(["--assets"], { [KLIPY_ENV_KEY]: SECRET }).code, 2);
+    assert.equal(run(["--assets", "/x", "--apk", "/y"], { [KLIPY_ENV_KEY]: SECRET }).code, 2);
   });
 });
