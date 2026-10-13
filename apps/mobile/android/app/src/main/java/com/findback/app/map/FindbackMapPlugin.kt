@@ -44,11 +44,18 @@ class FindbackMapPlugin : Plugin() {
 
     @PluginMethod
     fun getCapabilities(call: PluginCall) {
+        // Renderer-neutral provider tag: "openfreemap" only for the default
+        // style, "custom" otherwise — never a URL or secret in diagnostics.
+        val effectiveStyle = try {
+            MapValidation.validateStyleUrl(BuildConfig.MAP_STYLE_URL)
+        } catch (e: Exception) {
+            MapValidation.DEFAULT_STYLE_URL
+        }
         val result = JSObject()
         result.put("native", true)
         result.put("renderer", "maplibre-native")
         result.put("rendererVersion", RENDERER_VERSION)
-        result.put("styleProvider", "openfreemap")
+        result.put("styleProvider", MapValidation.styleProvider(effectiveStyle))
         result.put("snapshot", true)
         result.put("picker", true)
         call.resolve(result)

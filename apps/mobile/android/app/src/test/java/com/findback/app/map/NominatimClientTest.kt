@@ -66,6 +66,35 @@ class NominatimClientTest {
         assertEquals(0L, gate.retryAfterMs(11_100L))
     }
 
+    @Test fun sharedGateIsProcessWide() {
+        // Provider-level throttle: every caller shares one gate instance so
+        // the ≤1 req/s floor holds process-wide, not per-Activity.
+        assertTrue(NominatimClient.sharedGate === NominatimClient.sharedGate)
+        val gate = NominatimGate(minIntervalMs = 1100L)
+        assertEquals(0L, gate.retryAfterMs(20_000L))
+        gate.reportRateLimited(nowMs = 20_000L, retryAfterMs = 5_000L)
+        assertEquals(5_000L, gate.retryAfterMs(20_000L))
+        assertEquals(0L, gate.retryAfterMs(25_000L))
+    }
+
+    @Test fun httpStatusMapping() {
+        assertEquals(NominatimException.Kind.RATE_LIMITED, NominatimClient.kindForStatusCode(429))
+        assertEquals(NominatimException.Kind.SERVER, NominatimClient.kindForStatusCode(500))
+        assertEquals(NominatimException.Kind.SERVER, NominatimClient.kindForStatusCode(503))
+        // Non-429 client errors keep the previous fail-closed mapping.
+        assertEquals(NominatimException.Kind.SERVER, NominatimClient.kindForStatusCode(400))
+    }
+
+    @Test fun retryAfterHeaderParsing() {
+        assertEquals(5_000L, NominatimClient.parseRetryAfterMs("5"))
+        assertEquals(5_000L, NominatimClient.parseRetryAfterMs("  5  "))
+        assertEquals(0L, NominatimClient.parseRetryAfterMs("0"))
+        assertEquals(null, NominatimClient.parseRetryAfterMs(null))
+        assertEquals(null, NominatimClient.parseRetryAfterMs(""))
+        assertEquals(null, NominatimClient.parseRetryAfterMs("soon"))
+        assertEquals(null, NominatimClient.parseRetryAfterMs("-3"))
+    }
+
     @Test fun userAgentCarriesContact() {
         assertEquals(
             "FindBack/1.0.0 (Android; contact: https://findbackapp.social)",

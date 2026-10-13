@@ -15,7 +15,7 @@ data class NominatimResult(
 )
 
 /** Failure taxonomy for explicit-submit search — mapped to consumer copy by callers. */
-class NominatimException(val kind: Kind, message: String) : Exception(message) {
+class NominatimException(val kind: Kind, message: String, val retryAfterMs: Long? = null) : Exception(message) {
     enum class Kind { RATE_LIMITED, NETWORK, SERVER, INVALID }
 }
 
@@ -27,15 +27,30 @@ class NominatimException(val kind: Kind, message: String) : Exception(message) {
  */
 class NominatimGate(private val minIntervalMs: Long = 1100L) {
     private var lastRequestAt: Long? = null
+    private var blockedUntilMs: Long? = null
 
     @Synchronized
     fun retryAfterMs(nowMs: Long): Long {
+        blockedUntilMs?.let { until ->
+            if (nowMs < until) return until - nowMs
+        }
         val last = lastRequestAt
         if (last != null && nowMs - last < minIntervalMs) {
             return minIntervalMs - (nowMs - last)
         }
         lastRequestAt = nowMs
         return 0L
+    }
+
+    /**
+     * Honor a server 429 Retry-After: block further acquires until
+     * nowMs + retryAfterMs (at least the 1 req/s floor). Thread-safe.
+     */
+    @Synchronized
+    fun reportRateLimited(nowMs: Long, retryAfterMs: Long) {
+        val until = nowMs + maxOf(retryAfterMs, minIntervalMs)
+        val current = blockedUntilMs ?: 0L
+        if (until > current) blockedUntilMs = until
     }
 }
 
@@ -51,6 +66,30 @@ object NominatimClient {
     const val MAX_RESULTS = 5
     const val TIMEOUT_MS = 12_000
     const val MAX_BODY_BYTES = 256 * 1024
+
+    /**
+     * Process-wide ≤1 req/s throttle shared at provider level (not per
+     * Activity instance). Every picker search acquires from this gate.
+     */
+    val sharedGate = NominatimGate()
+
+    /** Map an HTTP status to the failure taxonomy (429 → RATE_LIMITED). */
+    fun kindForStatusCode(code: Int): NominatimException.Kind =
+        if (code == 429) NominatimException.Kind.RATE_LIMITED else NominatimException.Kind.SERVER
+
+    /**
+     * Parse a Retry-After response value (delta-seconds) into milliseconds.
+     * Returns null when absent or unparseable — the caller keeps the 1 req/s
+     * floor instead.
+     */
+    fun parseRetryAfterMs(header: String?): Long? {
+        val trimmed = header?.trim().orEmpty()
+        if (trimmed.isEmpty()) return null
+        // Delta-seconds only (HTTP-date form is ignored — floor applies).
+        val seconds = trimmed.toLongOrNull() ?: return null
+        if (seconds < 0) return null
+        return seconds * 1000L
+    }
 
     /**
      * Policy-compliant User-Agent: app identity + platform + public contact.
@@ -145,7 +184,25 @@ object NominatimClient {
                 throw NominatimException(NominatimException.Kind.NETWORK, "Place search could not connect.")
             }
             if (code != HttpURLConnection.HTTP_OK) {
-                throw NominatimException(NominatimException.Kind.SERVER, "Place search failed — pan the map and confirm the pin instead.")
+                val kind = kindForStatusCode(code)
+                if (kind == NominatimException.Kind.RATE_LIMITED) {
+                    // Respect Retry-After when present: hold the process-wide
+                    // gate so the next explicit submit waits it out.
+                    val retryMs = try {
+                        parseRetryAfterMs(connection.getHeaderField("Retry-After"))
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (retryMs != null && retryMs > 0) {
+                        try {
+                            sharedGate.reportRateLimited(System.currentTimeMillis(), retryMs)
+                        } catch (e: Exception) {
+                            // Gate update is best-effort — the throw below still applies.
+                        }
+                    }
+                    throw NominatimException(kind, "Please wait a moment and try the search again.", retryMs)
+                }
+                throw NominatimException(kind, "Place search failed — pan the map and confirm the pin instead.")
             }
             val body = try {
                 connection.inputStream.use { stream ->

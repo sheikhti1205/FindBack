@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_MAP_CONTACT, DEFAULT_MAP_STYLE_URL, resolveMapBuildEnv } from "../vite.config";
+import { DEFAULT_MAP_CONTACT, DEFAULT_MAP_STYLE_URL, DEFAULT_NOMINATIM_SEARCH_URL, resolveMapBuildEnv } from "../vite.config";
 
 let envDir = "";
 
@@ -39,7 +39,8 @@ describe("resolveMapBuildEnv", () => {
       contact: DEFAULT_MAP_CONTACT,
       styleSource: "default",
       contactSource: "default",
-      nominatimSearchUrl: "",
+      nominatimSearchUrl: DEFAULT_NOMINATIM_SEARCH_URL,
+      searchSource: "default",
     });
   });
 
@@ -57,6 +58,7 @@ describe("resolveMapBuildEnv", () => {
       styleSource: "custom",
       contactSource: "custom",
       nominatimSearchUrl: "https://proxy.provider.net/search",
+      searchSource: "custom",
     });
   });
 
@@ -71,10 +73,13 @@ describe("resolveMapBuildEnv", () => {
     expect(resolved.contact).toBe(DEFAULT_MAP_CONTACT);
     expect(resolved.styleSource).toBe("default");
     expect(resolved.contactSource).toBe("default");
+    expect(resolved.nominatimSearchUrl).toBe(DEFAULT_NOMINATIM_SEARCH_URL);
+    expect(resolved.searchSource).toBe("default");
   });
 
   it("keeps the owner defaults in sync with the documented single source", () => {
     expect(DEFAULT_MAP_STYLE_URL).toBe("https://tiles.openfreemap.org/styles/liberty");
     expect(DEFAULT_MAP_CONTACT).toBe("https://findbackapp.social");
+    expect(DEFAULT_NOMINATIM_SEARCH_URL).toBe("https://nominatim.openstreetmap.org/search");
   });
 });

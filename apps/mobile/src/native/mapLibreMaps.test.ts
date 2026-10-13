@@ -58,6 +58,14 @@ function nativeBridge() {
 afterEach(() => {
   bridgeState.isNative = false;
   bridgeState.registerImpl = null;
+  bridgeState.capabilities = {
+    native: true,
+    renderer: "maplibre-native",
+    rendererVersion: "13.6.1",
+    styleProvider: "openfreemap",
+    snapshot: true,
+    picker: true,
+  };
   bridgeState.pickerResult = { cancelled: true };
   bridgeState.pickerError = null;
   bridgeState.viewerError = null;
@@ -81,7 +89,18 @@ describe("mapLibreMaps bridge facade", () => {
       renderer: "maplibre-native",
       picker: true,
       snapshot: true,
+      styleProvider: "openfreemap",
     });
+  });
+
+  it("passes the renderer-neutral style provider through (openfreemap for the default style, custom otherwise)", async () => {
+    bridgeState.isNative = true;
+    bridgeState.registerImpl = nativeBridge;
+    // Default style reports the OpenFreeMap provider; anything else is custom
+    // (never a URL or secret in diagnostics).
+    await expect(getMapCapabilities()).resolves.toMatchObject({ styleProvider: "openfreemap" });
+    bridgeState.capabilities = { ...bridgeState.capabilities, styleProvider: "custom" };
+    await expect(getMapCapabilities()).resolves.toMatchObject({ styleProvider: "custom" });
   });
 
   it("passes picker confirm coordinates through", async () => {

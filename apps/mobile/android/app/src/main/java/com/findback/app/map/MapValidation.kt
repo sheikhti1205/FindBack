@@ -75,6 +75,44 @@ object MapValidation {
     fun clampSnapshotEdge(px: Int): Int = px.coerceIn(MIN_SNAPSHOT_EDGE_PX, MAX_SNAPSHOT_EDGE_PX)
 
     /**
+     * Renderer-neutral style provider for diagnostics: "openfreemap" only
+     * when the effective style URL is the owner-decided default, "custom"
+     * otherwise. Never carries a URL or secret.
+     */
+    fun styleProvider(effectiveStyleUrl: String): String =
+        if (effectiveStyleUrl.trim() == DEFAULT_STYLE_URL) "openfreemap" else "custom"
+
+    /**
+     * Validate an effective Nominatim `/search` endpoint. Returns the trimmed
+     * URL when it is a usable HTTPS endpoint, else [fallback] (never blank).
+     * Mirrors [validateStyleUrl] so a misconfigured build degrades to the
+     * default instead of a dead search.
+     */
+    fun validateSearchEndpoint(raw: String?, fallback: String = DEFAULT_NOMINATIM_ENDPOINT): String {
+        val url = raw?.trim().orEmpty()
+        if (url.isEmpty() || url.contains(' ') || url.contains('<') || url.contains('>')) return fallback
+        val lower = url.lowercase()
+        if (!lower.startsWith("https://")) return fallback
+        if (lower.contains("placeholder") || lower.contains("changeme") || lower.contains("your-") || lower.contains("your_")) return fallback
+        val host = lower.removePrefix("https://").substringBefore('/').substringBefore(':')
+        if (host.isEmpty()) return fallback
+        return url
+    }
+
+    /**
+     * Lifecycle guard for async search delivery (JVM-testable): a response
+     * may touch UI only when its generation still matches the current one
+     * and the Activity is neither destroyed nor finishing. Anything else
+     * dies silently.
+     */
+    fun isSearchDeliveryAlive(
+        requestGeneration: Int,
+        currentGeneration: Int,
+        destroyed: Boolean,
+        finishing: Boolean,
+    ): Boolean = requestGeneration == currentGeneration && !destroyed && !finishing
+
+    /**
      * Stable cache key for a snapshot request. Coordinates are rounded to 5
      * decimals for KEY precision only — the stored report value is never
      * rounded here. Any scope input (style, geometry, size, theme) changes

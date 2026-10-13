@@ -34,6 +34,8 @@ export function resolveSupabaseBuildEnv(
 // are the build-time contract the map lane adopts at runtime.
 export const DEFAULT_MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 export const DEFAULT_MAP_CONTACT = "https://findbackapp.social";
+/** Public Nominatim `/search` endpoint (explicit-submit only, no secret). */
+export const DEFAULT_NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search";
 
 export function resolveMapBuildEnv(
   mode: string,
@@ -43,12 +45,14 @@ export function resolveMapBuildEnv(
   const env = loadEnv(mode, envDir, "");
   const style = env.FINDBACK_MAP_STYLE_URL?.trim() || "";
   const contact = env.FINDBACK_MAP_CONTACT?.trim() || "";
+  const search = env.VITE_NOMINATIM_SEARCH_URL?.trim() || "";
   return {
     styleUrl: style || DEFAULT_MAP_STYLE_URL,
     contact: contact || DEFAULT_MAP_CONTACT,
     styleSource: (style ? "custom" : "default") as "custom" | "default",
     contactSource: (contact ? "custom" : "default") as "custom" | "default",
-    nominatimSearchUrl: env.VITE_NOMINATIM_SEARCH_URL?.trim() || "",
+    nominatimSearchUrl: search || DEFAULT_NOMINATIM_SEARCH_URL,
+    searchSource: (search ? "custom" : "default") as "custom" | "default",
   };
 }
 

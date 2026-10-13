@@ -38,7 +38,7 @@ import {
 } from "../services/location/rasterTiles";
 import {
   NominatimRateLimitError,
-  NominatimThrottler,
+  sharedNominatimThrottler,
   type NominatimSearchOverride,
   type PlaceResult,
 } from "../services/location/nominatimSearch";
@@ -231,10 +231,9 @@ export function MapPickerSheet({
   const adapter = locationAdapter ?? defaultAdapter;
   const fixGeneration = useRef(0);
   useEffect(() => () => { fixGeneration.current += 1; }, []);
-  const searchThrottlerRef = useRef<NominatimThrottler | null>(null);
-  if (searchThrottlerRef.current == null) {
-    searchThrottlerRef.current = new NominatimThrottler();
-  }
+  // Process-wide throttle (MAP-3): the shared provider-level gate, so
+  // reopening the sheet cannot mint a fresh limiter. Explicit-submit only.
+  const searchThrottlerRef = useRef(sharedNominatimThrottler);
   const lastSubmitRef = useRef(0);
 
   // `undefined` auto-detects the on-device bridge; an explicit `null` (or a
@@ -243,7 +242,11 @@ export function MapPickerSheet({
   const [resolvedPicker] = useState(
     () => nativePicker !== undefined ? nativePicker : (isNativeMapPickerAvailable() ? openMapPickerNative : null),
   );
-  const nativeActive = open && resolvedPicker != null;
+  // A rejected native picker falls back in place (stays open): the raster
+  // map + search + current-location + manual confirm remain usable below a
+  // truthful notice. The draft/value survives the transition.
+  const [nativeUnavailable, setNativeUnavailable] = useState(false);
+  const nativeActive = open && resolvedPicker != null && !nativeUnavailable;
 
   const [fallbackCenter, setFallbackCenter] = useState<MapCenter>({ lat: 0, lng: 0 });
   const [fallbackZoom, setFallbackZoom] = useState(PIN_ZOOM);
@@ -274,7 +277,10 @@ export function MapPickerSheet({
   const launchStateRef = useRef({ value, initialSearchResult, onConfirm, onClose });
   launchStateRef.current = { value, initialSearchResult, onConfirm, onClose };
   useEffect(() => {
-    if (!open) launchedRef.current = false;
+    if (!open) {
+      launchedRef.current = false;
+      setNativeUnavailable(false);
+    }
   }, [open]);
   useEffect(() => {
     if (!open || resolvedPicker == null || launchedRef.current) return;
@@ -328,7 +334,26 @@ export function MapPickerSheet({
         close();
       },
       () => {
-        if (!stale) close();
+        if (stale) return;
+        // Native rejection (MAP_UNAVAILABLE / launch failure) stays open:
+        // seed the in-place raster/manual fallback from the open-time
+        // value so the draft survives, then show the truthful notice.
+        // Cancel still closes with no mutation via the fallback sheet.
+        setViewSource(initial.source);
+        setDraft(initial.source === "neutral-world" ? null : initial.center);
+        setFallbackCenter(initial.center);
+        setFallbackZoom(initial.zoom);
+        setDraftLabel(label);
+        setExact(false);
+        setSearchInput("");
+        setSearchError(null);
+        setResults([]);
+        setLocating(false);
+        setGeoError(null);
+        setPendingFix(null);
+        setPendingAccuracy(null);
+        setGpsPreview(null);
+        setNativeUnavailable(true);
       },
     );
     return () => {
@@ -509,6 +534,11 @@ export function MapPickerSheet({
       height="large"
     >
       <div className="flex flex-col gap-3">
+        {nativeUnavailable ? (
+          <p role="alert" className="text-sm text-on-surface">
+            Map view isn&apos;t available right now. You can still choose the location below.
+          </p>
+        ) : null}
         <div className="relative h-64 w-full overflow-hidden rounded-m3-md border border-outline-variant bg-surface-container">
           <PickerRasterMap
             center={fallbackCenter}

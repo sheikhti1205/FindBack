@@ -50,6 +50,37 @@ class MapValidationTest {
         assertEquals(custom, MapValidation.validateStyleUrl(custom))
     }
 
+    @Test fun styleProviderIsRendererNeutral() {
+        // The default OpenFreeMap style reports "openfreemap"; anything else
+        // is "custom" (never a URL or secret in diagnostics).
+        assertEquals("openfreemap", MapValidation.styleProvider(MapValidation.DEFAULT_STYLE_URL))
+        assertEquals("openfreemap", MapValidation.styleProvider("  ${MapValidation.DEFAULT_STYLE_URL}  "))
+        assertEquals("custom", MapValidation.styleProvider("https://tiles.maps.internal/styles/basic"))
+        assertEquals("custom", MapValidation.styleProvider(""))
+    }
+
+    @Test fun searchEndpointValidation() {
+        val default = MapValidation.DEFAULT_NOMINATIM_ENDPOINT
+        assertEquals(default, MapValidation.validateSearchEndpoint(default))
+        assertEquals(default, MapValidation.validateSearchEndpoint("  $default  "))
+        assertEquals(default, MapValidation.validateSearchEndpoint(null))
+        assertEquals(default, MapValidation.validateSearchEndpoint(""))
+        assertEquals(default, MapValidation.validateSearchEndpoint("http://nominatim.openstreetmap.org/search"))
+        assertEquals(default, MapValidation.validateSearchEndpoint("not a url"))
+        val custom = "https://proxy.internal/nominatim/search"
+        assertEquals(custom, MapValidation.validateSearchEndpoint(custom))
+    }
+
+    @Test fun searchDeliveryDiesOnStaleOrDestroyed() {
+        assertTrue(MapValidation.isSearchDeliveryAlive(3, 3, destroyed = false, finishing = false))
+        // A newer search started: the stale response must die silently.
+        assertFalse(MapValidation.isSearchDeliveryAlive(2, 3, destroyed = false, finishing = false))
+        // A destroyed/finishing Activity must never touch UI.
+        assertFalse(MapValidation.isSearchDeliveryAlive(3, 3, destroyed = true, finishing = false))
+        assertFalse(MapValidation.isSearchDeliveryAlive(3, 3, destroyed = false, finishing = true))
+        assertFalse(MapValidation.isSearchDeliveryAlive(3, 3, destroyed = true, finishing = true))
+    }
+
     @Test fun snapshotDimensionCaps() {
         assertEquals(512, MapValidation.clampSnapshotEdge(512))
         assertEquals(MapValidation.MAX_SNAPSHOT_EDGE_PX, MapValidation.clampSnapshotEdge(4096))

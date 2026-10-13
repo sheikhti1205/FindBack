@@ -93,7 +93,10 @@ class FindbackMapActivity : AppCompatActivity() {
     private var locating = false
     private var locationCancel: CancellationTokenSource? = null
     private val locationTimeout = Handler(Looper.getMainLooper())
-    private val searchGate = NominatimGate()
+    // Process-wide ≤1 req/s throttle shared at provider level — never a
+    // per-Activity instance (explicit-submit only, no autocomplete).
+    private val searchGate: NominatimGate = NominatimClient.sharedGate
+    private var searchGeneration = 0
     private var searchResults: List<NominatimResult> = emptyList()
 
     private lateinit var titleView: TextView
@@ -215,6 +218,7 @@ class FindbackMapActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         destroyed = true
+        searchGeneration += 1
         locationTimeout.removeCallbacksAndMessages(null)
         locationCancel?.cancel()
         idleListener?.let { map?.removeOnCameraIdleListener(it) }
@@ -389,11 +393,20 @@ class FindbackMapActivity : AppCompatActivity() {
         searchButton.isEnabled = false
         showStatus(getString(R.string.findback_map_searching), showRetry = false)
         val userAgent = userAgent()
+        // Canonical search endpoint seam: BuildConfig value with the
+        // MapValidation default as the fallback source (no secret).
+        val endpoint = try {
+            MapValidation.validateSearchEndpoint(BuildConfig.MAP_SEARCH_URL)
+        } catch (e: Exception) {
+            MapValidation.DEFAULT_NOMINATIM_ENDPOINT
+        }
+        searchGeneration += 1
+        val requestGeneration = searchGeneration
         Thread {
             val outcome: Result<List<NominatimResult>> = try {
                 Result.success(
                     NominatimClient.fetchResults(
-                        MapValidation.DEFAULT_NOMINATIM_ENDPOINT,
+                        endpoint,
                         query,
                         userAgent,
                     ),
@@ -403,11 +416,14 @@ class FindbackMapActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Result.failure(NominatimException(NominatimException.Kind.NETWORK, "Place search could not connect."))
             }
-            runOnUiThread { onSearchFinished(query, outcome) }
+            runOnUiThread { onSearchFinished(query, outcome, requestGeneration) }
         }.start()
     }
 
-    private fun onSearchFinished(query: String, outcome: Result<List<NominatimResult>>) {
+    private fun onSearchFinished(query: String, outcome: Result<List<NominatimResult>>, requestGeneration: Int = searchGeneration) {
+        // A destroyed/finishing Activity or a stale generation must die
+        // silently — never touch UI after the lifecycle ended.
+        if (!MapValidation.isSearchDeliveryAlive(requestGeneration, searchGeneration, destroyed, isFinishing || isDestroyed)) return
         searching = false
         searchButton.isEnabled = true
         // A stale response (newer search started) never overwrites the list:

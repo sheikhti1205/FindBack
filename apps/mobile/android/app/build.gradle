@@ -98,6 +98,16 @@ def findbackMapContact() {
     return contact.trim()
 }
 
+// Canonical Nominatim `/search` endpoint seam (explicit-submit only, no
+// autocomplete, no secret). Same env name the web layer resolves
+// (VITE_NOMINATIM_SEARCH_URL); absent resolves to the public default which
+// mirrors MapValidation.DEFAULT_NOMINATIM_ENDPOINT (the default value
+// source). Validated natively before use with that default as fallback.
+def findbackMapSearchUrl() {
+    def url = System.getenv("VITE_NOMINATIM_SEARCH_URL") ?: "https://nominatim.openstreetmap.org/search"
+    return url.trim()
+}
+
 android {
     namespace = "com.findback.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -143,6 +153,10 @@ android {
         buildConfigField "String", "MAP_STYLE_URL", "\"${findbackMapStyleUrl()}\""
         // Public Nominatim contact (see findbackMapContact above). Non-secret.
         buildConfigField "String", "MAP_SEARCH_CONTACT", "\"${findbackMapContact()}\""
+        // Canonical search endpoint (see findbackMapSearchUrl above).
+        // Public non-secret config; validated natively before use (HTTPS,
+        // non-empty) with MapValidation.DEFAULT_NOMINATIM_ENDPOINT as fallback.
+        buildConfigField "String", "MAP_SEARCH_URL", "\"${findbackMapSearchUrl()}\""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

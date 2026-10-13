@@ -226,7 +226,7 @@ describe("MapPickerSheet (native picker path)", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("a rejected bridge closes with no mutation", async () => {
+  it("a rejected bridge stays open with an in-place fallback and no mutation", async () => {
     const nativePicker = vi.fn(async (): Promise<MapPickerResult> => {
       throw new Error("MAP_UNAVAILABLE");
     });
@@ -235,8 +235,53 @@ describe("MapPickerSheet (native picker path)", () => {
     render(
       <MapPickerSheet open onClose={onClose} value={PINNED_VALUE} onConfirm={onConfirm} nativePicker={nativePicker} />,
     );
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    // The sheet stays open: no close, no commit, fallback notice shown.
+    await screen.findByText("Map view isn't available right now. You can still choose the location below.");
+    expect(onClose).not.toHaveBeenCalled();
     expect(onConfirm).not.toHaveBeenCalled();
+    // Draft/value survives: the pinned draft is confirmable in fallback.
+    expect(screen.getByTestId("map-picker-map")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Confirm location" })).toHaveProperty("disabled", false);
+  });
+
+  it("fallback after rejection keeps raster map, search, location, and manual confirm usable", async () => {
+    const nativePicker = vi.fn(async (): Promise<MapPickerResult> => {
+      throw new Error("MAP_UNAVAILABLE");
+    });
+    const adapter: LocationAdapter = {
+      getCurrentPosition: async () => ({ latitude: 22.3569, longitude: 91.7832, accuracyMeters: 25 }),
+      getPermission: async () => "granted",
+    };
+    const onConfirm = vi.fn();
+    const onClose = vi.fn();
+    searchState.places = [{ displayName: "Mirpur, Dhaka", latitude: 23.8103, longitude: 90.4125 }];
+    render(
+      <MapPickerSheet
+        open
+        onClose={onClose}
+        value={EMPTY_VALUE}
+        onConfirm={onConfirm}
+        nativePicker={nativePicker}
+        locationAdapter={adapter}
+      />,
+    );
+    await screen.findByText("Map view isn't available right now. You can still choose the location below.");
+    // Raster map present; neutral start has no draft until the user acts.
+    expect(screen.getByTestId("map-picker-map")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Confirm location" })).toHaveProperty("disabled", true);
+    // Search works in fallback.
+    fireEvent.change(screen.getByLabelText("Search for a place"), { target: { value: "mirpur" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(searchState.calls).toEqual(["mirpur"]));
+    fireEvent.click(await screen.findByText("Mirpur, Dhaka"));
+    expect(screen.getByRole("button", { name: "Confirm location" })).toHaveProperty("disabled", false);
+    // Current-location preview works in fallback.
+    fireEvent.click(screen.getByRole("button", { name: "Use my location once" }));
+    await screen.findByText(/Preview centered on your location/);
+    // Manual confirm commits without closing early.
+    fireEvent.click(screen.getByRole("button", { name: "Confirm location" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("ignores a stale native response after unmount", async () => {
