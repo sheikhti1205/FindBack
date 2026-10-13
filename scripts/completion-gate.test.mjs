@@ -286,15 +286,32 @@ describe("completion-gate on the real repository", () => {
     ok(errors.some((e) => /final blocked|releaseStatus/.test(e)), errors.join("\n"));
   });
   it("goes GREEN in release mode once waivers are written and status is READY (v8 beta disposition)", () => {
-    const { passed, errors } = checkCompletionGate({ release: true, files: collectShippedSources(REPO_ROOT) });
+    // Disposition-aware: the committed repo is HOLD (release not authorized),
+    // so the release-green property is proven against the REAL reconciled
+    // manifest with only releaseStatus flipped to READY — not an emptied one.
+    // Everything else (evidence refs, docs agreement, head binding) is the
+    // real tree, so this fails if the manifest was ever gutted.
+    const real = loadLedger(REPO_ROOT);
+    const ready = { ...real, releaseStatus: "READY" };
+    const { passed, errors } = checkCompletionGate({
+      release: true,
+      ledger: ready,
+      files: collectShippedSources(REPO_ROOT),
+      testFiles: collectTestSources(REPO_ROOT),
+    });
     ok(passed, errors.join("\n"));
     // The green must rest on written owner waivers, never on an emptied manifest.
-    const waived = loadLedger(REPO_ROOT).items.filter((item) => item.status === "WAIVED");
+    const waived = real.items.filter((item) => item.status === "WAIVED");
     ok(waived.length > 0, "release-green with zero waivers means the manifest was emptied");
     ok(
       waived.every((item) => typeof item.waiver === "string" && item.waiver.trim() !== ""),
       "every WAIVED item needs written waiver text",
     );
+  });
+  it("stays RED in release mode on the real repo while releaseStatus is HOLD (honest current state)", () => {
+    const { passed, errors } = checkCompletionGate({ release: true, files: collectShippedSources(REPO_ROOT) });
+    equal(passed, false);
+    ok(errors.some((e) => /releaseStatus is "HOLD"/.test(e)), errors.join("\n"));
   });
   it("scans production Android source but no third-party or test-only trees", () => {
     const files = collectShippedSources(REPO_ROOT);
