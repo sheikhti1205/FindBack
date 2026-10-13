@@ -586,6 +586,71 @@ describe("CommentComposer Klipy search states", () => {
   });
 });
 
+describe("CommentComposer Klipy picker feel", () => {
+  function sized(slug: string, width: number, height: number) {
+    return {
+      kind: "gifs" as const,
+      slug,
+      title: slug,
+      mediaUrl: `https://media.klipy.com/${slug}.gif`,
+      previewUrl: `https://media.klipy.com/${slug}.gif`,
+      width,
+      height,
+      raw: {},
+    };
+  }
+
+  it("shows a skeleton (not a bare text label) while a search is in flight", async () => {
+    vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
+    let resolve!: (items: unknown[]) => void;
+    klipyMock.searchGifs.mockImplementation(() => new Promise<unknown[]>((r) => { resolve = r; }));
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-gif"));
+    await waitFor(() => expect(klipyMock.searchGifs).toHaveBeenCalled());
+    // Progress is announced for assistive tech but not shown as visible text.
+    expect(screen.getByText("Searching GIFs")).toBeTruthy();
+    expect(screen.getByTestId("comment-gif-panel").querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
+    resolve([sized("resolved-1", 400, 300)]);
+    expect(await screen.findByTestId("comment-gif-result-resolved-1")).toBeTruthy();
+    expect(screen.queryByText("Searching GIFs")).toBeNull();
+  });
+
+  it("lays results out as a natural-aspect waterfall tile", async () => {
+    vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
+    klipyMock.searchGifs.mockResolvedValue([sized("wide", 400, 200), sized("unknown", 0, 0)]);
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-gif"));
+    const wide = await screen.findByTestId("comment-gif-result-wide");
+    expect(wide.getAttribute("style")).toContain("aspect-ratio: 2 / 1");
+    // Missing dimensions fall back to a square tile, never a broken layout.
+    const unknown = screen.getByTestId("comment-gif-result-unknown");
+    expect(unknown.getAttribute("style")).toContain("aspect-ratio: 1 / 1");
+  });
+
+  it("clamps an absurd provider aspect ratio to a sane tile", async () => {
+    vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
+    klipyMock.searchGifs.mockResolvedValue([sized("tall", 10, 5000)]);
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-gif"));
+    const tall = await screen.findByTestId("comment-gif-result-tall");
+    expect(tall.getAttribute("style")).toContain("aspect-ratio: 0.5 / 1");
+  });
+
+  it("clears the query with a dedicated control (returns to trending)", async () => {
+    vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
+    klipyMock.searchGifs.mockResolvedValue([sized("happy-1", 400, 200)]);
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-gif"));
+    const search = screen.getByTestId("comment-gif-search") as HTMLInputElement;
+    expect(screen.queryByTestId("comment-gif-search-clear")).toBeNull();
+    fireEvent.change(search, { target: { value: "happy" } });
+    expect(await screen.findByTestId("comment-gif-search-clear")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("comment-gif-search-clear"));
+    expect(search.value).toBe("");
+    expect(screen.queryByTestId("comment-gif-search-clear")).toBeNull();
+  });
+});
+
 describe("CommentComposer native photo intake (FBX-038)", () => {
   it("picks photos through the canonical intake on Android and uploads them", async () => {
     nativeMediaMock.available = true;

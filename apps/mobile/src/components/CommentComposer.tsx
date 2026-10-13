@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ImagePlus, SendHorizonal, Smile, Sticker, X } from "lucide-react";
+import { Film, ImageOff, ImagePlus, Search, SendHorizonal, Smile, Sticker, X } from "lucide-react";
 import { UserAvatar } from "./UserAvatar";
 import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
 import {
@@ -143,6 +143,23 @@ export function toCommentAttachmentDescriptors(
 }
 
 type GifTab = KlipyKind;
+
+// Waterfall tile heights for the loading skeleton (varied, like real results).
+const GIF_SKELETON_HEIGHTS = [112, 84, 96, 72, 104, 88];
+
+/**
+ * CSS aspect-ratio for a picker tile, derived from the provider's media
+ * dimensions so the collage waterfalls naturally. Clamped so a malformed
+ * payload can never create an absurdly tall or wide tile; stickers (often
+ * square transparent PNG/WebP) fall back to 1:1.
+ */
+function klipyTileAspect(item: KlipyItem): string {
+  const w = item.width ?? 0;
+  const h = item.height ?? 0;
+  if (w <= 0 || h <= 0) return "1 / 1";
+  const ratio = Math.min(2, Math.max(0.5, w / h));
+  return `${ratio} / 1`;
+}
 
 export function CommentComposer({
   postId: _postId,
@@ -759,9 +776,41 @@ export function CommentComposer({
             data-testid="comment-gif-panel"
             role="dialog"
             aria-label="GIF and sticker picker"
-            className="mt-1 rounded-m3-md border border-outline-variant bg-surface-container p-2 shadow-lg"
+            className="mt-1 overflow-hidden rounded-m3-lg border border-outline-variant bg-surface shadow-lg"
           >
-            <div role="tablist" aria-label="GIF or stickers" className="mb-1 flex gap-1">
+            {/* Search first, the way messaging GIF pickers open. */}
+            <div className="px-2 pt-2">
+              <div className="relative">
+                <Search
+                  size={16}
+                  aria-hidden
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant"
+                />
+                <input
+                  data-testid="comment-gif-search"
+                  value={gifQuery}
+                  onChange={(e) => setGifQuery(e.target.value)}
+                  placeholder={KLIPY_SEARCH_PLACEHOLDER}
+                  aria-label="Search GIFs and stickers"
+                  enterKeyHint="search"
+                  className="w-full rounded-full border border-outline-variant bg-surface-container-low py-2 pl-9 pr-11 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+                />
+                {gifQuery !== "" && (
+                  <button
+                    type="button"
+                    data-testid="comment-gif-search-clear"
+                    onClick={() => setGifQuery("")}
+                    aria-label="Clear search"
+                    className="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high"
+                  >
+                    <X size={14} aria-hidden />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Compact segmented tabs. */}
+            <div role="tablist" aria-label="GIF or stickers" className="flex gap-1 px-2 pt-2">
               {(["gifs", "stickers"] as const).map((tab) => (
                 <button
                   key={tab}
@@ -770,66 +819,89 @@ export function CommentComposer({
                   aria-selected={gifTab === tab}
                   data-testid={`comment-gif-tab-${tab}`}
                   onClick={() => setGifTab(tab)}
-                  className={`min-h-[44px] rounded-full px-3 text-xs font-semibold ${
-                    gifTab === tab ? "bg-on-surface text-surface" : "text-on-surface-variant"
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    gifTab === tab
+                      ? "bg-on-surface text-surface"
+                      : "text-on-surface-variant hover:bg-surface-container"
                   }`}
                 >
+                  {tab === "gifs" ? <Film size={14} aria-hidden /> : <Sticker size={14} aria-hidden />}
                   {tab === "gifs" ? "GIFs" : "Stickers"}
                 </button>
               ))}
             </div>
-            <input
-              data-testid="comment-gif-search"
-              value={gifQuery}
-              onChange={(e) => setGifQuery(e.target.value)}
-              placeholder={KLIPY_SEARCH_PLACEHOLDER}
-              aria-label="Search GIFs and stickers"
-              className="mb-1 w-full rounded-m3-sm border border-outline-variant bg-surface px-3 py-2 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
-            />
-            {gifState.status === "error" ? (
-              <div role="alert" className="px-1 py-3">
-                <p className="text-xs text-error">{gifState.error ?? "Couldn't load GIFs."}</p>
-                <button
-                  type="button"
-                  data-testid="comment-gif-retry"
-                  onClick={retryGifSearch}
-                  className="mt-1 min-h-[44px] rounded-full px-3 text-xs font-semibold text-on-surface underline"
-                >
-                  Try again
-                </button>
-              </div>
-            ) : gifLoading ? (
-              <p role="status" className="px-1 py-3 text-xs text-on-surface-variant">
-                Searching…
-              </p>
-            ) : gifResults.length === 0 ? (
-              <p role="status" className="px-1 py-3 text-xs text-on-surface-variant">
-                No results. Try another search.
-              </p>
-            ) : (
-              <div>
-                {gifQuery.trim() === "" && (
-                  <p data-testid="comment-gif-trending" className="px-1 pb-1 text-[10px] text-on-surface-variant">
-                    Trending now
-                  </p>
-                )}
-                <div className="grid max-h-56 grid-cols-3 gap-1 overflow-y-auto">
-                  {gifResults.map((item) => (
-                    <button
-                      key={`${item.kind}:${item.slug}`}
-                      type="button"
-                      data-testid={`comment-gif-result-${item.slug}`}
-                      onClick={() => pickGif(item)}
-                      aria-label={`Add ${item.title}`}
-                      className="min-h-[44px] overflow-hidden rounded-m3-sm border border-outline-variant"
-                    >
-                      <img src={item.previewUrl} alt="" loading="lazy" className="h-20 w-full object-cover" />
-                    </button>
-                  ))}
+
+            <div className="mt-2 max-h-72 overflow-y-auto px-2 pb-2">
+              {gifState.status === "error" ? (
+                <div role="alert" className="flex flex-col items-center gap-2 px-2 py-6 text-center">
+                  <ImageOff size={20} aria-hidden className="text-on-surface-variant" />
+                  <p className="text-xs text-error">{gifState.error ?? "Couldn't load GIFs."}</p>
+                  <button
+                    type="button"
+                    data-testid="comment-gif-retry"
+                    onClick={retryGifSearch}
+                    className="mt-1 rounded-full bg-surface-container-high px-4 py-2 text-xs font-semibold text-on-surface"
+                  >
+                    Try again
+                  </button>
                 </div>
-              </div>
-            )}
-            <p className="mt-1 px-1 text-[10px] text-on-surface-variant">
+              ) : gifLoading ? (
+                <div>
+                  <p role="status" className="sr-only">
+                    Searching GIFs
+                  </p>
+                  <div className="columns-2 gap-1.5" aria-hidden>
+                    {GIF_SKELETON_HEIGHTS.map((height, i) => (
+                      <span
+                        key={i}
+                        className="mb-1.5 block w-full animate-pulse break-inside-avoid rounded-m3-sm bg-surface-container-high"
+                        style={{ height }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : gifResults.length === 0 ? (
+                <div role="status" className="flex flex-col items-center gap-2 px-2 py-8 text-center">
+                  <ImageOff size={20} aria-hidden className="text-on-surface-variant" />
+                  <p className="text-xs text-on-surface-variant">No results. Try another search.</p>
+                </div>
+              ) : (
+                <div>
+                  {gifQuery.trim() === "" && (
+                    <p
+                      data-testid="comment-gif-trending"
+                      className="px-1 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant"
+                    >
+                      Trending now
+                    </p>
+                  )}
+                  {/* Two-column waterfall: natural aspect ratios, seamless
+                      tiles, tap inserts immediately (no confirm step). */}
+                  <div className="columns-2 gap-1.5">
+                    {gifResults.map((item) => (
+                      <button
+                        key={`${item.kind}:${item.slug}`}
+                        type="button"
+                        data-testid={`comment-gif-result-${item.slug}`}
+                        onClick={() => pickGif(item)}
+                        aria-label={`Add ${item.title}`}
+                        className="group relative mb-1.5 block w-full break-inside-avoid overflow-hidden rounded-m3-sm bg-surface-container-low focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
+                        style={{ aspectRatio: klipyTileAspect(item) }}
+                      >
+                        <img
+                          src={item.previewUrl}
+                          alt=""
+                          loading="lazy"
+                          className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03] group-active:scale-[0.98] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <p className="border-t border-outline-variant px-3 py-1.5 text-[10px] text-on-surface-variant">
               <a href={KLIPY_ATTRIBUTION_URL} target="_blank" rel="noreferrer" className="underline">
                 {KLIPY_ATTRIBUTION}
               </a>
