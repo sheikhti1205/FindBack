@@ -1,6 +1,6 @@
 # Web parity audit (product-capability audit)
 
-Source revision: `ec4ce24` (`origin/main`, tree clean at write time).
+Source revision: `c9a2463` (`origin/main`, tree clean at write time).
 Method: audited the compiled web surface, which is the SAME Capacitor SPA
 (`apps/mobile`) deployed to production web (`https://findbackapp.social`,
 built by `.github/workflows/web.yml` → Azure Static Web Apps). Web parity is

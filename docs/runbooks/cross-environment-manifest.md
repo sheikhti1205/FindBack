@@ -1,6 +1,6 @@
 # Cross-environment manifest (CLOSEOUT)
 
-Source revision: `ec4ce24` (or newer) (`origin/main`, tree clean at write time).
+Source revision: `c9a2463` (`origin/main`, tree clean at write time).
 Mobile version: `1.0.0` (versionCode derived from git history at build;
 shallow clones refuse — see `apps/mobile/android/app/build.gradle`).
 Repo migration head: `20261013020000`. Live migration head (owner):
