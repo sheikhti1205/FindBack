@@ -1,0 +1,7 @@
+{
+  "row": "GOOGLE_BUILD_CONFIG",
+  "baselineSha": "0154a9b9dcc68319c3219d9bcce824c0e4fbfd61",
+  "recordedAt": "2026-10-14",
+  "command": "node scripts/check-google-config.mjs && node scripts/check-auth-config.mjs && node scripts/check-signeddev-config.mjs",
+  "summary": "Static Google login config parity at 0154a9b: check-google-config PROVIDED (72-char Web client id, public, non-secret); check-auth-config PASS (source contracts: single resolver, strategy-aware button, /auth/callback + /recovery bridge, PKCE pinned); Android manifest autoVerify covers /r/, /recovery, /auth/callback; package com.findback.app; the live-registered release signing SHA-1 remains an owner/host fact proven only by the canonical-signed device run (GOOGLE_RUNTIME). No Firebase Auth anywhere."
+}

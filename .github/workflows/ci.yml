@@ -93,7 +93,7 @@ jobs:
         # New X-wave gates: browser-auth config contracts, the KLIPY key
         # wiring, the comment-media cleanup scheduler, the cross-lane Sentry
         # release proof, and the capability matrix invariants (X8/X18).
-        run: node --test scripts/check-auth-config.test.mjs scripts/cross-environment-matrix.test.mjs scripts/check-klipy-config.test.mjs scripts/check-cleanup-scheduler.test.mjs scripts/sentry-cross-lane-proof.test.mjs
+        run: node --test scripts/check-auth-config.test.mjs scripts/cross-environment-matrix.test.mjs scripts/cross-environment-closure.test.mjs scripts/check-klipy-config.test.mjs scripts/check-cleanup-scheduler.test.mjs scripts/sentry-cross-lane-proof.test.mjs
       - name: Build mobile web shell
         run: npm run build -w @findback/mobile
         env:

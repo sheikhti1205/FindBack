@@ -3,12 +3,12 @@
 One ordered sequence. Secrets are NAMES only — never paste values into
 source; export them in the shell (or set repo Actions vars/secrets).
 Destructive/live sections are marked and separated from local build steps.
-Source revision this was written against: `ed565df` (`origin/main`); live DB head at write time: `20261012020000`.
+Source revision this was written against: `0154a9b` (`origin/main`, re-baselined off `790f456`); live DB head at write time: `20261012020000`.
 
 ## A. Preflight (read-only, any machine)
 
 ```sh
-git rev-parse HEAD && git status --short   # expect c0b5f2b (or newer), clean
+git rev-parse HEAD && git status --short   # expect 0154a9b (or newer), clean
 node scripts/completion-gate.mjs --final
 node scripts/check-sentry-release-parity.mjs
 node scripts/check-map-provider.mjs

@@ -1,11 +1,16 @@
 # Cross-environment manifest (CLOSEOUT)
 
-Source revision: `c9a2463` (`origin/main`, tree clean at write time).
+Source revision: `0154a9b` (`origin/main`, re-baselined off `790f456`, tree clean at write time).
 Mobile version: `1.0.0` (versionCode derived from git history at build;
 shallow clones refuse — see `apps/mobile/android/app/build.gradle`).
 Repo migration head: `20261013020000`. Live migration head (owner):
 `20261012020000`. `BACKEND_SCHEMA_VERSION=20261013020000`.
 No release/tag authorized. No Kotlin compiled on this machine (no toolchain).
+
+This document answers "does the product capability exist on this lane". The
+separate "is this lane closed yet" readiness matrix (18 owner rows, verdict
+vocabulary `PASS` / `READY_FOR_RUNTIME_PROOF` / `DEFERRED_*` / `FAIL*`) lives in
+`docs/runbooks/cross-environment-closure.md`.
 
 ## Capability vs technology (the rule this matrix obeys)
 
