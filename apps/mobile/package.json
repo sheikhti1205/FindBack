@@ -1,7 +1,7 @@
 {
   "name": "@findback/mobile",
   "private": true,
-  "version": "0.10.0-beta.1",
+  "version": "0.11.0-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,9 @@
     "test": "vitest run",
     "cap:add:android": "cap add android",
     "cap:sync": "cap sync android",
-    "apk": "node ../../scripts/check-mobile-build-config.mjs --assets dist/assets && cap sync android && cd android && ./gradlew assembleDebug"
+    "apk": "node ../../scripts/check-mobile-build-config.mjs --assets dist/assets && cap sync android && cd android && ./gradlew assembleDebug",
+    "apk:signeddev": "node ../../scripts/check-mobile-build-config.mjs --assets dist/assets && cap sync android && cd android && ./gradlew assembleSigneddev",
+    "apk:release": "node ../../scripts/check-mobile-build-config.mjs --assets dist/assets && cap sync android && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.1",
@@ -33,7 +35,6 @@
     "@tiptap/starter-kit": "^3.31.3",
     "framer-motion": "^13.2.0",
     "lucide-react": "^1.43.0",
-    "maplibre-gl": "^6.10.0",
     "react": "^19.2.8",
     "react-aria-components": "^1.21.1",
     "react-dom": "^19.2.8",
