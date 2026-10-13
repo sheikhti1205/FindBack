@@ -20,6 +20,10 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { loadEnv } from "vite";
+import {
+  SENTRY_DEFAULT_TRACES_SAMPLE_RATE,
+  validateTraceRate,
+} from "./build-context.mjs";
 
 export const SENTRY_DSN_PATTERN_HINT = "https://<key>@<host>/<project-id>";
 
@@ -75,6 +79,28 @@ export function checkEffectiveSentryDsn({ mode = "production", mobileDir = MOBIL
   return validateSentryDsn(loadSentryFileEnv(mode, mobileDir));
 }
 
+/**
+ * Canonical trace-rate surface (SYNC-1): VITE_SENTRY_TRACES_SAMPLE_RATE is
+ * validated by the build-context owner (range 0..1, NaN/out-of-range
+ * rejected fail-closed). Empty means the code-conservative default 0.1 —
+ * the 1.0 maximum arrives only via env/repo-variable (maximum tracing),
+ * never hardcoded here.
+ */
+export function validateSentryTraceRate(raw) {
+  return validateTraceRate(raw);
+}
+
+/** Load the effective trace rate exactly as Vite will embed it. */
+export function loadTraceRateFileEnv(mode = "production", mobileDir = MOBILE_DIR) {
+  const env = loadEnv(mode, mobileDir, "VITE_");
+  return env.VITE_SENTRY_TRACES_SAMPLE_RATE;
+}
+
+/** Resolve + validate in one step for preflight callers. */
+export function checkEffectiveTraceRate({ mode = "production", mobileDir = MOBILE_DIR } = {}) {
+  return validateSentryTraceRate(loadTraceRateFileEnv(mode, mobileDir));
+}
+
 function isMainModule() {
   const invoked = process.argv[1] ? resolve(process.argv[1]) : "";
   return invoked === fileURLToPath(import.meta.url);
@@ -91,7 +117,15 @@ if (isMainModule()) {
     );
     process.exit(1);
   }
+  const rate = checkEffectiveTraceRate({ mode });
+  if (!rate.ok) {
+    console.error(
+      `check-sentry-config: FAIL: VITE_SENTRY_TRACES_SAMPLE_RATE ${rate.reason} ` +
+        `(expected 0..1; empty defaults to ${SENTRY_DEFAULT_TRACES_SAMPLE_RATE})`,
+    );
+    process.exit(1);
+  }
   console.log(
-    `check-sentry-config: PASS (host=${result.host} project=${result.projectId} key_len=${result.keyLen})`,
+    `check-sentry-config: PASS (host=${result.host} project=${result.projectId} key_len=${result.keyLen} traces=${rate.rate} (${rate.source}))`,
   );
 }

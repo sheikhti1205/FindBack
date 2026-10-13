@@ -16,6 +16,9 @@ import { fileURLToPath } from "node:url";
 import {
   validateSentryDsn,
   loadSentryFileEnv,
+  validateSentryTraceRate,
+  loadTraceRateFileEnv,
+  checkEffectiveTraceRate,
   SENTRY_DSN_PATTERN_HINT,
 } from "./check-sentry-config.mjs";
 
@@ -127,6 +130,70 @@ describe("loadSentryFileEnv (same source Vite embeds)", () => {
   });
 });
 
+describe("trace-rate validation (canonical build-context owner)", () => {
+  it("defaults to the code-conservative 0.1 when empty (never 1.0 in code)", () => {
+    for (const raw of [undefined, null, "", "   "]) {
+      const result = validateSentryTraceRate(raw);
+      assert.equal(result.ok, true);
+      assert.equal(result.rate, 0.1);
+      assert.notEqual(result.rate, 1.0, "maximum comes from env, never code");
+    }
+  });
+
+  it("accepts explicit 0..1 values, including the runbook maximum 1.0", () => {
+    assert.deepEqual(validateSentryTraceRate("1.0"), { ok: true, rate: 1, source: "explicit" });
+    assert.deepEqual(validateSentryTraceRate("0"), { ok: true, rate: 0, source: "explicit" });
+  });
+
+  it("rejects NaN and out-of-range values fail-closed", () => {
+    for (const raw of ["abc", "NaN"]) {
+      const result = validateSentryTraceRate(raw);
+      assert.equal(result.ok, false, `expected reject: ${raw}`);
+      assert.equal(result.reason, "nan");
+    }
+    for (const raw of ["-0.1", "1.5"]) {
+      const result = validateSentryTraceRate(raw);
+      assert.equal(result.ok, false, `expected reject: ${raw}`);
+      assert.equal(result.reason, "out-of-range");
+    }
+  });
+
+  it("loads VITE_SENTRY_TRACES_SAMPLE_RATE from the mobile env dir like Vite embeds", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "findback-sentry-rate-"));
+    const prev = process.env.VITE_SENTRY_TRACES_SAMPLE_RATE;
+    delete process.env.VITE_SENTRY_TRACES_SAMPLE_RATE;
+    try {
+      await writeFile(join(dir, ".env.production"), "VITE_SENTRY_TRACES_SAMPLE_RATE=0.5\n");
+      assert.equal(loadTraceRateFileEnv("production", dir), "0.5");
+      assert.deepEqual(checkEffectiveTraceRate({ mode: "production", mobileDir: dir }), {
+        ok: true,
+        rate: 0.5,
+        source: "explicit",
+      });
+    } finally {
+      if (prev === undefined) delete process.env.VITE_SENTRY_TRACES_SAMPLE_RATE;
+      else process.env.VITE_SENTRY_TRACES_SAMPLE_RATE = prev;
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("falls back to the 0.1 default when no env file provides a rate", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "findback-sentry-rate-"));
+    const prev = process.env.VITE_SENTRY_TRACES_SAMPLE_RATE;
+    delete process.env.VITE_SENTRY_TRACES_SAMPLE_RATE;
+    try {
+      assert.equal(loadTraceRateFileEnv("production", dir), undefined);
+      const result = checkEffectiveTraceRate({ mode: "production", mobileDir: dir });
+      assert.equal(result.ok, true);
+      assert.equal(result.rate, 0.1);
+    } finally {
+      if (prev === undefined) delete process.env.VITE_SENTRY_TRACES_SAMPLE_RATE;
+      else process.env.VITE_SENTRY_TRACES_SAMPLE_RATE = prev;
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+});
+
 describe("SENTRY_AUTH_TOKEN never appears as a value in repo files", () => {
   it("no tracked file assigns SENTRY_AUTH_TOKEN (comments/docs allowed)", () => {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -145,10 +212,14 @@ describe("SENTRY_AUTH_TOKEN never appears as a value in repo files", () => {
       } catch {
         continue;
       }
-      if (/VITE_SENTRY_AUTH_TOKEN/.test(text)) hits.push(`${file}: VITE_-prefixed token (would leak to client)`);
+      // Built at runtime so this very file carries no scannable literal (self-match).
+      const viteTokenPattern = new RegExp(["VITE", "SENTRY_AUTH_TOKEN"].join("_"));
+      if (viteTokenPattern.test(text)) hits.push(`${file}: VITE_-prefixed token (would leak to client)`);
       // An actual assignment with a value (not a bare comment mention).
+      // GitHub `${{ secrets.* }}` / `${{ vars.* }}` references are safe —
+      // they resolve at runtime from the secret store, never a literal.
       const assign = text.match(/SENTRY_AUTH_TOKEN\s*[:=]\s*(["']?)([^\s"'#]+)\1/);
-      if (assign && assign[2] && !/^(<.*>|\[.*\]|""|'')$/.test(assign[2])) {
+      if (assign && assign[2] && !/^(<.*>|\[.*\]|""|'')$/.test(assign[2]) && !assign[2].startsWith("${{")) {
         hits.push(`${file}: assigns SENTRY_AUTH_TOKEN`);
       }
     }
