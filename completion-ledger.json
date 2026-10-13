@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generatedFor": "c9ba924e9f9ba7f8f639ac6a37f73bd238a926e1",
-  "releaseStatus": "READY",
+  "generatedFor": "ea146a3d02be765aa0c4586269542534a31fff4e",
+  "releaseStatus": "HOLD",
   "statusVocabulary": [
     "DONE",
     "VERIFIED",
@@ -48,7 +48,7 @@
       "severity": "P1",
       "area": "ai/byok-providers",
       "status": "DONE",
-      "evidence": "Only openrouter live-tested; other adapters behind default-OFF account-scoped experimental toggle (apps/mobile/src/services/ai/providerStatus.ts; apps/mobile/src/services/aiCredentials.test.ts fa\u00e7ades). Tests: apps/mobile/src/services/ai/providerStatus.test.ts. Limitation: live end-to-end sends per provider still unproven (needs owner credentials + consent; external).",
+      "evidence": "Only openrouter live-tested; other adapters behind default-OFF account-scoped experimental toggle (apps/mobile/src/services/ai/providerStatus.ts; apps/mobile/src/services/aiCredentials.test.ts façades). Tests: apps/mobile/src/services/ai/providerStatus.test.ts. Limitation: live end-to-end sends per provider still unproven (needs owner credentials + consent; external).",
       "blocker": ""
     },
     {
@@ -158,7 +158,7 @@
       "severity": "P2",
       "area": "push/dispatcher",
       "status": "WAIVED",
-      "evidence": "Scheduled dispatcher wired and callable (supabase/functions/push-dispatch; dispatch run 37317074620 scanned=0/sent=0 \u2014 wiring only). Limitation: zero sends are not delivery proof (see FBA-017).",
+      "evidence": "Scheduled dispatcher wired and callable (supabase/functions/push-dispatch; dispatch run 37317074620 scanned=0/sent=0 — wiring only). Limitation: zero sends are not delivery proof (see FBA-017).",
       "waiver": "Owner waiver for the v8 beta (0.8.0-beta.2, main-only; beta.1 side-branch deleted by owner 2026-10-06, no beta.1 artifact ships), signed 2026-10-06: ships without a positive-work delivery result; limitation documented in DEFERRED_DECISIONS and user-facing copy. Full closure needs FBA-017 delivery proof."
     },
     {
@@ -228,7 +228,7 @@
       "severity": "OK",
       "area": "ai/privacy-truth",
       "status": "OK",
-      "evidence": "About/Help truth + gate coverage (commit 41e0a21; scripts/ai-release-gate.mjs photo-analysis-truth).",
+      "evidence": "About/Help truth + gate coverage (commit 41e0a21; scripts/ai-release-gate.mjs photo-analysis-truth; authoritative disclosure copy apps/mobile/src/screens/AiPrivacy.tsx pinned by F02 contract test apps/mobile/src/screens/Help.test.tsx).",
       "blocker": ""
     },
     {
@@ -292,7 +292,7 @@
       "severity": "P1",
       "area": "auth/password-recovery",
       "status": "DONE",
-      "evidence": "Forgot-password \u2192 reset email \u2192 verified /recovery deep link \u2192 new password, anti-enumeration throughout (apps/mobile/src/services/auth.ts requestPasswordReset/exchangeRecoveryCode/updatePassword; apps/mobile/src/screens/ForgotPassword.tsx; apps/mobile/src/screens/Recovery.tsx; /forgot + /recovery routes in apps/mobile/src/App.tsx; link in apps/mobile/src/components/auth/SignInForm.tsx). Tests: apps/mobile/src/services/auth.test.ts, apps/mobile/src/screens/PasswordRecovery.test.tsx, apps/mobile/src/App.routes.test.tsx. Limitation: live email delivery needs hosted redirect-URL allowlisting + real inbox (external).",
+      "evidence": "Forgot-password → reset email → verified /recovery deep link → new password, anti-enumeration throughout (apps/mobile/src/services/auth.ts requestPasswordReset/exchangeRecoveryCode/updatePassword; apps/mobile/src/screens/ForgotPassword.tsx; apps/mobile/src/screens/Recovery.tsx; /forgot + /recovery routes in apps/mobile/src/App.tsx; link in apps/mobile/src/components/auth/SignInForm.tsx). Tests: apps/mobile/src/services/auth.test.ts, apps/mobile/src/screens/PasswordRecovery.test.tsx, apps/mobile/src/App.routes.test.tsx. Limitation: live email delivery needs hosted redirect-URL allowlisting + real inbox (external).",
       "blocker": ""
     },
     {
@@ -300,7 +300,7 @@
       "severity": "P2",
       "area": "auth/account-deletion",
       "status": "DONE",
-      "evidence": "Implemented: supabase/functions/delete-account (JWT-resolved uid only: storage prefix purge, users-row cascade wipe, admin auth delete, honest partial-progress bodies; 10 Deno tests green), requestAccountDeletion() client (5 tests), typed-email confirm UI in AccountSettings with success + logout-wipe flow (5 UI tests), capability manifest + knowledge base declare deletion supported (kb-2026-10-06.1). Hosted live-deletion proof is external \u2014 owner-waived for the v8 beta line 2026-10-06, tracked for a hosted run."
+      "evidence": "Implemented: supabase/functions/delete-account (JWT-resolved uid only: storage prefix purge, users-row cascade wipe, admin auth delete, honest partial-progress bodies; 10 Deno tests green), requestAccountDeletion() client (5 tests), typed-email confirm UI in AccountSettings with success + logout-wipe flow (5 UI tests), capability manifest + knowledge base declare deletion supported (kb-2026-10-06.1). Hosted live-deletion proof is external — owner-waived for the v8 beta line 2026-10-06, tracked for a hosted run."
     },
     {
       "id": "FBA-037",
