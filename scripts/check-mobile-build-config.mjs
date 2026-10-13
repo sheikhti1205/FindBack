@@ -52,21 +52,29 @@ export function effectiveSupabaseConfig(mode = "production", envDir = root) {
   return { url, key, host: parsed.hostname };
 }
 
-function checkJs(chunks, config, sentryHost, source) {
+function checkJs(chunks, config, sentryHost, source, sentryIdentity) {
   if (chunks.length === 0) fail(`no JavaScript assets in ${source}`);
   const has = (text) => chunks.some((chunk) => chunk.includes(text));
   if (!has(config.url)) fail(`Supabase URL missing from ${source}`);
   if (!has(config.key)) fail(`Supabase publishable key missing from ${source}`);
   if (!has(sentryHost)) fail(`Sentry DSN host missing from ${source}`);
+  // Optional release/dist pin: when the caller knows the expected identity
+  // (Dockerfile build args, lane env), the bundle must carry it — otherwise
+  // an upload --dist could scope artifacts away from dist-less events.
+  // Shapes only in messages, never values.
+  const release = sentryIdentity?.release?.trim() || "";
+  const dist = sentryIdentity?.dist?.trim() || "";
+  if (release && !has(release)) fail(`Sentry release identity missing from ${source}`);
+  if (dist && !has(dist)) fail(`Sentry dist missing from ${source}`);
   checkShareChunks(chunks, effectiveShareOrigin());
 }
 
-export function checkAssetDirectory(path, config, sentryHost) {
+export function checkAssetDirectory(path, config, sentryHost, sentryIdentity) {
   const files = readdirSync(path).filter((name) => name.endsWith(".js"));
-  checkJs(files.map((name) => readFileSync(resolve(path, name), "utf8")), config, sentryHost, "assets");
+  checkJs(files.map((name) => readFileSync(resolve(path, name), "utf8")), config, sentryHost, "assets", sentryIdentity);
 }
 
-export function checkApk(path, config, sentryHost) {
+export function checkApk(path, config, sentryHost, sentryIdentity) {
   // CI/Android Gradle runs on hosts with unzip; read the APK itself, not a
   // possibly different dist directory. No extraction or credential logging.
   const listing = spawnSync("unzip", ["-Z", "-1", path], { encoding: "utf8" });
@@ -80,7 +88,7 @@ export function checkApk(path, config, sentryHost) {
     if (file.status !== 0) fail("cannot inspect packaged JavaScript");
     return file.stdout;
   });
-  checkJs(chunks, config, sentryHost, "APK");
+  checkJs(chunks, config, sentryHost, "APK", sentryIdentity);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -97,8 +105,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (action !== "--preflight") {
       const sentry = checkEffectiveSentryDsn({ mode: "production" });
       if (!sentry.ok) fail(`VITE_SENTRY_DSN ${sentry.reason}`);
-      if (action === "--assets") checkAssetDirectory(path, config, sentry.host);
-      else checkApk(path, config, sentry.host);
+      // Optional identity pin from the build environment (Dockerfile passes
+      // both; lanes that already grep the bundle pass nothing and keep the
+      // host-only assert). Values never appear in output.
+      const sentryIdentity = {
+        release: process.env.VITE_SENTRY_RELEASE ?? "",
+        dist: process.env.VITE_SENTRY_DIST ?? "",
+      };
+      if (action === "--assets") checkAssetDirectory(path, config, sentry.host, sentryIdentity);
+      else checkApk(path, config, sentry.host, sentryIdentity);
     }
     console.log(`check-mobile-build-config: PASS (${action}; host=${config.host}; key_len=${config.key.length})`);
   } catch (error) {

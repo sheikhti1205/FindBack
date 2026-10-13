@@ -33,6 +33,7 @@ import {
   checkEffectiveSentryDsn,
   validateSentryDsn,
 } from "./check-sentry-config.mjs";
+import { effectiveShareOrigin } from "./check-share-config.mjs";
 
 const URL = "https://sampleproject.supabase.co";
 const KEY = "sb_publishable_abcdefghijklmnopqrstuvwxyz";
@@ -168,7 +169,12 @@ test("checkAssetDirectory fails closed: empty dir, missing URL/key/host", () => 
 test("checkAssetDirectory passes when bundle carries URL + key + Sentry host", () => {
   const config = { url: URL, key: KEY, host: "sampleproject.supabase.co" };
   withDir("sen01-assets-ok-", (dir) => {
-    writeFileSync(join(dir, "index-abc.js"), `var u="${URL}";var k="${KEY}";var s="o123.ingest.sentry.io";`);
+    // checkJs also asserts the share origin resolved from the REAL repo env
+    // (vite loadEnv on the repo root), so the fixture embeds the effective
+    // origin — otherwise this battery depends on repo-root .env contents,
+    // contrary to this file's contract. Empty origin is a no-op assert.
+    const origin = effectiveShareOrigin();
+    writeFileSync(join(dir, "index-abc.js"), `var u="${URL}";var k="${KEY}";var s="o123.ingest.sentry.io";var o="${origin}";`);
     checkAssetDirectory(dir, config, "o123.ingest.sentry.io");
   });
 });
