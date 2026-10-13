@@ -321,6 +321,6 @@ describe("FB-AUD-03 attachment UPDATE bind (20261013010000)", () => {
   it("BACKEND_SCHEMA_VERSION bumped by coordinator to the new migration (appCapabilities parity)", () => {
     assert.ok(!sql().includes("BACKEND_SCHEMA_VERSION"), "migration carries no version constant");
     const caps = read(join(ROOT, "..", "apps", "mobile", "src", "services", "appCapabilities.ts"));
-    assert.ok(caps.includes('BACKEND_SCHEMA_VERSION = "20261013010000"'), "coordinator bumped the advertised version to 20261013010000");
+    assert.ok(caps.includes('BACKEND_SCHEMA_VERSION = "20261013020000"'), "coordinator bumped the advertised version to 20261013020000");
   });
 });
