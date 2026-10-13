@@ -112,8 +112,13 @@ export function App() {
               }
             />
             <Route path="/verify" element={<Verify />} />
-            {/* L-FIXTURE additive-only: static visual preflight (no auth). */}
-            <Route path="/__fixture" element={<FixtureRoute />} />
+            {/* L-FIXTURE additive-only: static visual preflight (no auth).
+                FB-AUD-07: dev/audit-only — import.meta.env.DEV is
+                statically false in production builds, so the route is
+                compiled out of prod while dev + test keep working. */}
+            {import.meta.env.DEV ? (
+              <Route path="/__fixture" element={<FixtureRoute />} />
+            ) : null}
             {/* W0-C (S3) additive-only: social profile completion. Unchanged
                 guards everywhere else; the wrapper redirects to /auth when no
                 seed is present. */}
