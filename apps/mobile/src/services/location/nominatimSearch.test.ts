@@ -4,6 +4,7 @@ import {
   NOMINATIM_MIN_INTERVAL_MS,
   NominatimRateLimitError,
   NominatimThrottler,
+  parseRetryAfterMs,
   resolveNominatimConfig,
   searchPlaces,
   sharedNominatimThrottler,
@@ -99,5 +100,40 @@ describe("nominatimSearch endpoint seam", () => {
     await searchPlaces("mirpur", { fetcher, now: t + NOMINATIM_MIN_INTERVAL_MS });
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(sharedNominatimThrottler).toBeInstanceOf(NominatimThrottler);
+  });
+
+  it("maps HTTP 429 to the rate-limit error and honors Retry-After (web parity)", async () => {
+    const headers = { get: (name: string) => (name.toLowerCase() === "retry-after" ? "2" : null) };
+    const fetcher = vi.fn().mockResolvedValue({ ok: false, status: 429, headers, json: () => Promise.resolve([]) });
+    const throttler = new NominatimThrottler();
+    const failed = await searchPlaces("chattogram", { fetcher, throttler, now: 50_000 }).catch(
+      (err: unknown) => err,
+    );
+    expect(failed).toBeInstanceOf(NominatimRateLimitError);
+    expect((failed as NominatimRateLimitError).retryAfterMs).toBe(2_000);
+    // Server backpressure disciplines the same gate: an immediate retry fails fast.
+    const again = await searchPlaces("chattogram", { fetcher, throttler, now: 50_500 }).catch(
+      (err: unknown) => err,
+    );
+    expect(again).toBeInstanceOf(NominatimRateLimitError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats 429 without Retry-After as rate-limited at the 1 req/s floor", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: false, status: 429, headers: { get: () => null }, json: () => Promise.resolve([]) });
+    const failed = await searchPlaces("chattogram", { fetcher, throttler: new NominatimThrottler(), now: 60_000 }).catch(
+      (err: unknown) => err,
+    );
+    expect(failed).toBeInstanceOf(NominatimRateLimitError);
+    expect((failed as NominatimRateLimitError).retryAfterMs).toBe(NOMINATIM_MIN_INTERVAL_MS);
+  });
+
+  it("parses Retry-After delta-seconds and rejects anything else", () => {
+    expect(parseRetryAfterMs("2")).toBe(2_000);
+    expect(parseRetryAfterMs("  30 ")).toBe(30_000);
+    expect(parseRetryAfterMs(null)).toBeNull();
+    expect(parseRetryAfterMs("")).toBeNull();
+    expect(parseRetryAfterMs("tomorrow")).toBeNull();
+    expect(parseRetryAfterMs("-5")).toBeNull();
   });
 });

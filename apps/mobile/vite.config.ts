@@ -28,8 +28,9 @@ export function resolveSupabaseBuildEnv(
 // defaults so the web bundle receives the SAME effective values the native
 // side compiles into BuildConfig (MAP_STYLE_URL / MAP_SEARCH_CONTACT) —
 // absent custom values resolve to the owner-decided defaults on both sides,
-// never a silent divergence. The Nominatim search-endpoint override is passed
-// through from the same root env; it is consumed today by
+// never a silent divergence. The Nominatim search-endpoint override
+// (VITE_NOMINATIM_SEARCH_URL → BuildConfig.MAP_SEARCH_URL) is the third owned
+// knob alongside style/contact; it is consumed today by
 // src/services/location/nominatimSearch.ts, while the style/contact defines
 // are the build-time contract the map lane adopts at runtime.
 export const DEFAULT_MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";

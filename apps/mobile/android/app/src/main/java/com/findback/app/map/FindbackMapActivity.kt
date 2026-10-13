@@ -393,13 +393,10 @@ class FindbackMapActivity : AppCompatActivity() {
         searchButton.isEnabled = false
         showStatus(getString(R.string.findback_map_searching), showRetry = false)
         val userAgent = userAgent()
-        // Canonical search endpoint seam: BuildConfig value with the
-        // MapValidation default as the fallback source (no secret).
-        val endpoint = try {
-            MapValidation.validateSearchEndpoint(BuildConfig.MAP_SEARCH_URL)
-        } catch (e: Exception) {
-            MapValidation.DEFAULT_NOMINATIM_ENDPOINT
-        }
+        // Canonical search endpoint seam: BuildConfig value validated with the
+        // MapValidation default as the fallback (no secret). validateSearchEndpoint
+        // never throws (it returns the fallback) — no try/catch by design.
+        val endpoint = MapValidation.validateSearchEndpoint(BuildConfig.MAP_SEARCH_URL)
         searchGeneration += 1
         val requestGeneration = searchGeneration
         Thread {

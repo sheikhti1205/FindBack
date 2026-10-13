@@ -85,8 +85,13 @@ export function resolveNominatimConfig(
 /** Enforces the ≤1 req/s floor with an injectable clock (testable). */
 export class NominatimThrottler {
   private lastRequestAt: number | null = null;
+  private blockedUntilMs: number | null = null;
 
   tryAcquire(now: number): { ok: true } | { ok: false; retryAfterMs: number } {
+    const blocked = this.blockedUntilMs;
+    if (blocked != null && now < blocked) {
+      return { ok: false, retryAfterMs: blocked - now };
+    }
     if (
       this.lastRequestAt != null &&
       now - this.lastRequestAt < NOMINATIM_MIN_INTERVAL_MS
@@ -99,6 +104,32 @@ export class NominatimThrottler {
     this.lastRequestAt = now;
     return { ok: true };
   }
+
+  /**
+   * Honor a server 429 Retry-After: hold further acquires until
+   * nowMs + retryAfterMs (at least the 1 req/s floor). Mirrors the native
+   * NominatimGate.reportRateLimited.
+   */
+  reportRateLimited(nowMs: number, retryAfterMs: number): void {
+    const until = nowMs + Math.max(retryAfterMs, NOMINATIM_MIN_INTERVAL_MS);
+    if (this.blockedUntilMs == null || until > this.blockedUntilMs) {
+      this.blockedUntilMs = until;
+    }
+  }
+}
+
+/**
+ * Parse a Retry-After response value (delta-seconds) into milliseconds.
+ * Returns null when absent or unparseable — the caller keeps the 1 req/s
+ * floor instead. Mirrors the native parseRetryAfterMs (HTTP-date form is
+ * ignored by design).
+ */
+export function parseRetryAfterMs(header: string | null | undefined): number | null {
+  const trimmed = (header ?? "").trim();
+  if (!trimmed) return null;
+  const seconds = Number(trimmed);
+  if (!Number.isInteger(seconds) || seconds < 0) return null;
+  return seconds * 1000;
 }
 
 /**
@@ -172,6 +203,18 @@ export async function searchPlaces(
     headers: { Accept: "application/json" },
     signal: options.signal,
   });
+  if (res.status === 429) {
+    // Server backpressure disciplines the same gate (web parity with the
+    // native 429 path): the next explicit submit waits it out instead of
+    // hammering the public endpoint.
+    const nowMs = options.now ?? Date.now();
+    const retryMs = parseRetryAfterMs(res.headers?.get?.("Retry-After") ?? null);
+    const gate = options.throttler ?? sharedNominatimThrottler;
+    if (retryMs != null && retryMs > 0) gate.reportRateLimited(nowMs, retryMs);
+    throw new NominatimRateLimitError(
+      retryMs != null && retryMs > 0 ? retryMs : NOMINATIM_MIN_INTERVAL_MS,
+    );
+  }
   if (!res.ok) {
     throw new Error("Place search failed — pan the map and confirm the pin instead.");
   }
