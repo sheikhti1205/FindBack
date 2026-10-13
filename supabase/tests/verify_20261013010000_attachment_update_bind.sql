@@ -33,6 +33,12 @@ where exists (
 );
 -- EXPECT: 1 row.
 
+-- NOTE ON MATCHING: pg_policies.qual / with_check are DEPARSED by the engine
+-- (keywords upper-cased, `auth.uid()` rendered as `( SELECT auth.uid() AS uid)`,
+-- joins schema-unqualified). Raw lowercase substring matches never hit. Every
+-- expression probe below therefore compares against the whitespace-stripped,
+-- lower-cased form: regexp_replace(lower(<expr>), '\s', '', 'g').
+
 -- P2. USING binds the row to a caller-owned comment (INSERT-pattern EXISTS).
 select 'P2 using binds comment ownership' as probe
 where exists (
@@ -40,8 +46,8 @@ where exists (
   where schemaname = 'public'
     and tablename = 'comment_attachments'
     and policyname = 'comment_attachments_update_own'
-    and qual like '%user_id = (select auth.uid())::text%'
-    and qual like '%exists (select 1 from public.comments c where c.id = comment_attachments.comment_id and c.user_id = (select auth.uid())::text)%'
+    and regexp_replace(lower(qual), '\s', '', 'g') like '%user_id=((selectauth.uid()asuid))::text)%'
+    and regexp_replace(lower(qual), '\s', '', 'g') like '%exists(select1fromcommentscwhere((c.id=comment_attachments.comment_id)and(c.user_id=((selectauth.uid()asuid))::text)))%'
 );
 -- EXPECT: 1 row. A user_id-only USING is the FB-AUD-03 hole — it must NOT
 -- match; the EXISTS anti-join on public.comments must be present.
@@ -53,8 +59,8 @@ where exists (
   where schemaname = 'public'
     and tablename = 'comment_attachments'
     and policyname = 'comment_attachments_update_own'
-    and with_check like '%user_id = (select auth.uid())::text%'
-    and with_check like '%exists (select 1 from public.comments c where c.id = comment_attachments.comment_id and c.user_id = (select auth.uid())::text)%'
+    and regexp_replace(lower(with_check), '\s', '', 'g') like '%user_id=((selectauth.uid()asuid))::text)%'
+    and regexp_replace(lower(with_check), '\s', '', 'g') like '%exists(select1fromcommentscwhere((c.id=comment_attachments.comment_id)and(c.user_id=((selectauth.uid()asuid))::text)))%'
 );
 -- EXPECT: 1 row. Reassigning comment_id to a foreign comment must fail the
 -- WITH CHECK even when user_id is unchanged.
@@ -71,7 +77,7 @@ and exists (
   select 1 from pg_policies
   where schemaname = 'public' and tablename = 'comment_attachments'
     and policyname = 'comment_attachments_insert_own' and cmd = 'INSERT'
-    and with_check like '%exists (select 1 from public.comments c where c.id = comment_attachments.comment_id and c.user_id = (select auth.uid())::text)%'
+    and regexp_replace(lower(with_check), '\s', '', 'g') like '%exists(select1fromcommentscwhere((c.id=comment_attachments.comment_id)and(c.user_id=((selectauth.uid()asuid))::text)))%'
 )
 and exists (
   select 1 from pg_policies

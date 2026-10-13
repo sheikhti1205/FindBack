@@ -4,13 +4,16 @@
 -- user and clean up; every probe prints PASS/FAIL via raise notice on failure.
 
 -- P1. Helper predicate exists with the exact signature.
+-- NOTE: pg_get_function_identity_arguments() returns names AND types
+-- (`p_url text, p_uid text`), so the probe must match that form — a
+-- type-only `'text, text'` never matches on this engine.
 select 'P1 predicate present' as probe
 where exists (
   select 1 from pg_proc p
   join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public'
     and p.proname = 'is_own_avatar_public_url'
-    and pg_get_function_identity_arguments(p.oid) = 'text, text'
+    and pg_get_function_identity_arguments(p.oid) = 'p_url text, p_uid text'
 );
 
 -- P2. Lookalike host rejected (pure SQL, no auth needed for the predicate).

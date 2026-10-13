@@ -120,7 +120,7 @@ grant execute on function public.update_my_avatar(text) to authenticated;
 -- ---------------------------------------------------------------------------
 create or replace function public.update_my_avatar_by_key(
   p_object_key text,
-  p_public_url text
+  p_avatar_url text
 )
 returns void
 language plpgsql
@@ -130,7 +130,7 @@ as $$
 declare
   v_uid   text := public.findback_uid();
   v_key   text := nullif(btrim(coalesce(p_object_key, '')), '');
-  v_url   text := nullif(btrim(coalesce(p_public_url, '')), '');
+  v_url   text := nullif(btrim(coalesce(p_avatar_url, '')), '');
   v_parts text[];
   v_file  text;
   v_exists boolean;

@@ -324,3 +324,126 @@ describe("FB-AUD-03 attachment UPDATE bind (20261013010000)", () => {
     assert.ok(caps.includes('BACKEND_SCHEMA_VERSION = "20261013020000"'), "coordinator bumped the advertised version to 20261013020000");
   });
 });
+
+// ---------------------------------------------------------------------------
+// CREATE OR REPLACE FUNCTION signature-drift guard.
+//
+// A live `supabase db push` failed on 20261012030000 with
+//   ERROR: cannot change name of input parameter "p_avatar_url" (SQLSTATE 42P13)
+// because the file re-declared `update_my_avatar_by_key` with `p_public_url`
+// while 20261012000000 (and the client named-arg call) used `p_avatar_url`.
+// Such a chain is unbootable on ANY database. This guard walks the ordered
+// migration chain and fails when a later CREATE OR REPLACE renames the input
+// parameters of an already-declared function with the same argument types.
+// ---------------------------------------------------------------------------
+function splitTopLevel(s) {
+  const parts = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      parts.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+function parseParams(args) {
+  return splitTopLevel(args).map((p) => {
+    const cleaned = p.replace(/\s+/g, " ").trim();
+    const tokens = cleaned.split(" ");
+    const name = tokens[0].toLowerCase();
+    let type = tokens.slice(1).join(" ");
+    type = type.replace(/\s+default\s+.*$/i, "").trim().toLowerCase();
+    return { name, type };
+  });
+}
+
+function extractFunctionDecls(text) {
+  const decls = [];
+  const re = /create\s+(?:or\s+replace\s+)?function\s+([a-z0-9_."]+)\s*\(/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    const start = re.lastIndex;
+    let depth = 1;
+    let i = start;
+    for (; i < text.length && depth > 0; i++) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")") depth--;
+    }
+    decls.push({ name: m[1].toLowerCase(), args: text.slice(start, i - 1) });
+  }
+  const drops = [];
+  const dre = /drop\s+function\s+(?:if\s+exists\s+)?([a-z0-9_."]+)/gi;
+  let d;
+  while ((d = dre.exec(text))) drops.push(d[1].toLowerCase());
+  return { decls, drops };
+}
+
+/** Returns drift failures for an ordered list of {file, sql} migrations. */
+function findSignatureDrift(migrations) {
+  const seen = new Map(); // key -> {name, params, file}
+  const failures = [];
+  for (const { file, sql } of migrations) {
+    const { decls, drops } = extractFunctionDecls(sql.replace(/--[^\n]*/g, ""));
+    for (const dropName of drops) {
+      for (const key of [...seen.keys()]) {
+        if (key.startsWith(`${dropName}(`)) seen.delete(key);
+      }
+    }
+    for (const { name, args } of decls) {
+      const params = parseParams(args);
+      const key = `${name}(${params.map((p) => p.type).join(",")})`;
+      const prev = seen.get(key);
+      const names = params.map((p) => p.name).join(",");
+      if (prev && prev.names !== names) {
+        failures.push(
+          `${file}: ${name}(${params.map((p) => p.type).join(",")}) renames params ` +
+            `[${prev.names}] -> [${names}] (first seen in ${prev.file}) — SQLSTATE 42P13`,
+        );
+      }
+      seen.set(key, { names, file });
+    }
+  }
+  return failures;
+}
+
+describe("CREATE OR REPLACE signature-drift guard", () => {
+  it("the real migration chain never renames a same-type function's parameters", () => {
+    const migrations = ls().map((f) => ({ file: f, sql: mig(f) }));
+    assert.deepEqual(findSignatureDrift(migrations), []);
+  });
+
+  it("detects the exact 20261012030000 p_public_url/p_avatar_url defect", () => {
+    const buggy = [
+      { file: "a.sql", sql: "create or replace function public.f(p_object_key text, p_avatar_url text) returns void as $$ $$ language sql;" },
+      { file: "b.sql", sql: "create or replace function public.f(p_object_key text, p_public_url text) returns void as $$ $$ language sql;" },
+    ];
+    const found = findSignatureDrift(buggy);
+    assert.equal(found.length, 1);
+    assert.match(found[0], /p_avatar_url/);
+    assert.match(found[0], /p_public_url/);
+  });
+
+  it("allows a drop-then-recreate with new parameter names", () => {
+    const ok = [
+      { file: "a.sql", sql: "create or replace function public.f(p_old text) returns void as $$ $$ language sql;" },
+      { file: "b.sql", sql: "drop function if exists public.f(text); create or replace function public.f(p_new text) returns void as $$ $$ language sql;" },
+    ];
+    assert.deepEqual(findSignatureDrift(ok), []);
+  });
+
+  it("tolerates type-only overloads and default-value differences", () => {
+    const ok = [
+      { file: "a.sql", sql: "create or replace function public.g(p_limit integer default 100) returns void as $$ $$ language sql;" },
+      { file: "b.sql", sql: "create or replace function public.g(p_limit integer default 50) returns void as $$ $$ language sql;" },
+    ];
+    assert.deepEqual(findSignatureDrift(ok), []);
+  });
+});
