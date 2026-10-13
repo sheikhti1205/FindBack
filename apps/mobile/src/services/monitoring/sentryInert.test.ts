@@ -5,12 +5,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@sentry/capacitor", () => ({
   captureException: vi.fn(),
   captureMessage: vi.fn(),
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
 import * as SentryCapacitor from "@sentry/capacitor";
 import {
   initMonitoring,
   reportErrorToMonitoring,
+  reportLogToMonitoring,
   sendMonitoringTestSignal,
 } from "./sentry";
 
@@ -25,10 +31,16 @@ describe("monitoring without VITE_SENTRY_DSN (S1 build contract)", () => {
     expect(() => initMonitoring()).not.toThrow();
     expect(sendMonitoringTestSignal()).toBe(false);
     expect(() => reportErrorToMonitoring(new Error("boom"), { note: "x" })).not.toThrow();
+    expect(() => reportLogToMonitoring("info", "hello", { note: "x" })).not.toThrow();
+    expect(() => reportLogToMonitoring("warn", "hello")).not.toThrow();
+    expect(() => reportLogToMonitoring("error", "hello")).not.toThrow();
     // Flush any queued microtasks; nothing may reach the SDK.
     await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(SentryCapacitor.captureException).not.toHaveBeenCalled();
     expect(SentryCapacitor.captureMessage).not.toHaveBeenCalled();
+    expect(SentryCapacitor.logger.info).not.toHaveBeenCalled();
+    expect(SentryCapacitor.logger.warn).not.toHaveBeenCalled();
+    expect(SentryCapacitor.logger.error).not.toHaveBeenCalled();
   });
 });

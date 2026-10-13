@@ -5,6 +5,10 @@
  * - The Sentry DSN is a public client value read from `VITE_SENTRY_DSN`.
  *   Without it, every function below is a no-op: the app runs unchanged.
  * - Session replay stays disabled and request bodies are never attached.
+ * - Sentry Logs are enabled (`enableLogs: true`); every log passes through
+ *   the same fail-closed sanitize path (`beforeSendLog` ->
+ *   `sanitizeSentryLog`) as events and breadcrumbs, so the privacy posture
+ *   below is unchanged by maximum logging.
  * - BYOK key material, chat text, photo bytes, precise location and auth
  *   tokens are redacted/withheld before anything leaves the device.
  * - The Sentry SDK is loaded with a dynamic import inside `initMonitoring`
@@ -56,6 +60,20 @@ const WITHHELD_KEY =
 export const MONITORING_TEST_SIGNAL_MESSAGE =
   "FindBack monitoring test signal (synthetic self-test)";
 export const MONITORING_TEST_SIGNAL_TAG_VALUE = "findback-monitoring-self-test";
+
+/**
+ * Sentry Logs switch (maximum logging). Spread as `enableLogs` into
+ * `Sentry.init` next to `getSentryPrivacyDefaults()` so enabling logs can
+ * never silently weaken the privacy posture asserted by tests.
+ */
+export const SENTRY_LOGS_ENABLED = true as const;
+
+/**
+ * Levels allowed for `reportLogToMonitoring`. Deliberately limited to
+ * info/warn/error — no verbose/trace/debug levels that invite PII-prone
+ * free-text dumping.
+ */
+export type MonitoringLogLevel = "info" | "warn" | "error";
 
 export function resolveSentryDsn(raw: string | undefined | null): string | null {
   if (!raw) return null;
@@ -440,6 +458,45 @@ export function sanitizeSentryBreadcrumb(
 }
 
 /**
+ * Fail-closed log sanitizer used by `beforeSendLog`. Returns a scrubbed
+ * clone, or `null` when the input is not an object, sanitization throws, or
+ * a protected shape survives scrubbing. `null` DISCARDS the log — the
+ * original is never forwarded. Mirrors `sanitizeSentryBreadcrumb`: message
+ * and body are redacted, `attributes` go through the same
+ * WITHHELD-key/redactText scrubbing plus query/fragment stripping.
+ */
+export function sanitizeSentryLog(
+  log: unknown,
+): Record<string, unknown> | null {
+  try {
+    if (!isRecord(log)) return null;
+    const clean = deepCloneJson(log);
+    if (typeof clean["message"] === "string") {
+      clean["message"] = redactText(clean["message"]);
+    }
+    if (typeof clean["body"] === "string") {
+      clean["body"] = redactText(clean["body"]);
+    }
+    if (typeof clean["level"] === "string") {
+      clean["level"] = redactText(clean["level"] as string);
+    }
+    if (isRecord(clean["attributes"])) {
+      const attributes = scrubBreadcrumbData(clean["attributes"]);
+      for (const [key, value] of Object.entries(attributes)) {
+        if (typeof value === "string") {
+          attributes[key] = stripQueryAndFragment(redactText(value));
+        }
+      }
+      clean["attributes"] = attributes;
+    }
+    if (containsUnsafeValue(JSON.stringify(clean))) return null;
+    return clean;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Build the synthetic self-test payload: fixed message + fixed tag, no user
  * data. Used by `sendMonitoringTestSignal` for the one-event device proof.
  */
@@ -522,6 +579,10 @@ export function initMonitoring(): void {
           release: resolveSentryRelease({ VITE_SENTRY_RELEASE: readEnv("VITE_SENTRY_RELEASE") }) ?? undefined,
           tracesSampleRate,
           tracePropagationTargets,
+          // Maximum logging: Sentry Logs on. Every log passes through
+          // beforeSendLog -> sanitizeSentryLog (same fail-closed scrubbing
+          // as events/breadcrumbs), so this does not weaken the posture.
+          enableLogs: SENTRY_LOGS_ENABLED,
           // Privacy posture: no identity, no replay, no bodies.
           ...getSentryPrivacyDefaults(),
           beforeSend(event) {
@@ -532,6 +593,10 @@ export function initMonitoring(): void {
             // M3: Transactions bypass beforeSend entirely; sanitize them too.
             // Spans carry url.full, http.query, http.fragment — same leak class as B1.
             return sanitizeSentryEvent(event) as unknown as typeof event | null;
+          },
+          beforeSendLog(log) {
+            // Fail closed: unsafe input DISCARDS the log (null), never raw.
+            return sanitizeSentryLog(log) as unknown as typeof log | null;
           },
           beforeBreadcrumb(crumb) {
             // Fail closed: unsafe input DROPS the breadcrumb (null).
@@ -564,6 +629,45 @@ export function reportErrorToMonitoring(
     try {
       const Sentry = await import("@sentry/capacitor");
       Sentry.captureException(error, { extra: safeContext });
+    } catch {
+      // Monitoring must never break the app.
+    }
+  })();
+}
+
+/**
+ * Forward an info/debug-level log via Sentry Logs. No-op unless monitoring
+ * initialized with a DSN. Mirrors `reportErrorToMonitoring`: the message is
+ * redacted and context keys matching private media/location/chat/credential
+ * shapes are withheld before anything leaves the device.
+ */
+export function reportLogToMonitoring(
+  level: MonitoringLogLevel,
+  message: string,
+  context?: Record<string, string>,
+): void {
+  if (!cachedDsn) return;
+  const safeMessage = redactText(message);
+  const safeContext: Record<string, string> = {};
+  if (context) {
+    for (const [key, value] of Object.entries(context)) {
+      safeContext[key] = WITHHELD_KEY.test(key) ? WITHHELD : redactText(value);
+    }
+  }
+  void (async () => {
+    try {
+      const Sentry = await import("@sentry/capacitor");
+      switch (level) {
+        case "info":
+          Sentry.logger.info(safeMessage, safeContext);
+          break;
+        case "warn":
+          Sentry.logger.warn(safeMessage, safeContext);
+          break;
+        case "error":
+          Sentry.logger.error(safeMessage, safeContext);
+          break;
+      }
     } catch {
       // Monitoring must never break the app.
     }

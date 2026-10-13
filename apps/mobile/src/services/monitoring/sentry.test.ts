@@ -6,15 +6,18 @@ import {
   MONITORING_TEST_SIGNAL_TAG_VALUE,
   monitoringSelfTestEnabled,
   redactText,
+  reportLogToMonitoring,
   resolveSentryDsn,
   resolveSentryEnvironment,
   resolveTracePropagationTargets,
   resolveTracesSampleRate,
   sanitizeSentryBreadcrumb,
   sanitizeSentryEvent,
+  sanitizeSentryLog,
   scrubBreadcrumbData,
   scrubRequestUrl,
   sendMonitoringTestSignalAsync,
+  SENTRY_LOGS_ENABLED,
 } from "./sentry";
 
 // Assembled at runtime so this file never contains a secret-shaped literal
@@ -617,5 +620,86 @@ describe("M4: sanitizeSentryEvent scrubs exception[].module.code_file", () => {
     const text = JSON.stringify(result);
     expect(text).not.toContain("token=zzz");
     expect(text).not.toContain("#frag");
+  });
+});
+
+// --- Max-logging cutover: Sentry Logs (enableLogs) + reportLogToMonitoring ---
+// Privacy posture unchanged: logs pass through the same fail-closed sanitize
+// path (sanitizeSentryLog, wired to beforeSendLog) with cachedDsn gating and
+// WITHHELD-key/redactText context scrubbing, mirroring reportErrorToMonitoring.
+// Levels are limited to info/warn/error — no verbose PII-prone levels.
+
+describe("sentry logs config", () => {
+  it("enables Sentry Logs without weakening the privacy posture", () => {
+    expect(SENTRY_LOGS_ENABLED).toBe(true);
+    const initOptions = {
+      ...getSentryPrivacyDefaults(),
+      enableLogs: SENTRY_LOGS_ENABLED,
+    };
+    expect(initOptions).toEqual({
+      sendDefaultPii: false,
+      replaysSessionSampleRate: 0,
+      replaysOnErrorSampleRate: 0,
+      enableLogs: true,
+    });
+  });
+});
+
+describe("sanitizeSentryLog (fail-closed)", () => {
+  it("redacts secrets in message/body and withholds private attribute keys", () => {
+    const clean = sanitizeSentryLog({
+      level: "info",
+      message: `sync ok for ${EMAIL} key ${FIX_OR_KEY}`,
+      attributes: {
+        provider: "openrouter",
+        attempt: 2,
+        chatTranscript: "private chat line",
+        latitude: FIX_LAT,
+        note: `token ${FIX_SUPA_SECRET}`,
+        page: `https://example.com/x?token=${FIX_JWT}`,
+      },
+    }) as Record<string, unknown>;
+    expect(clean).not.toBeNull();
+    const text = serialized(clean);
+    expect(text).not.toContain(EMAIL);
+    expect(text).not.toContain(OR_KEY_PREFIX);
+    expect(text).not.toContain(SUPA_SECRET_PREFIX);
+    expect(text).not.toContain("private chat line");
+    expect(text).not.toContain(String(FIX_LAT));
+    expect(text).not.toContain("?");
+    expect(text).toContain("openrouter");
+    const attrs = clean["attributes"] as Record<string, unknown>;
+    expect(attrs["chatTranscript"]).toBe("[withheld-privacy]");
+    expect(attrs["latitude"]).toBe("[withheld-privacy]");
+    expect(attrs["attempt"]).toBe(2);
+  });
+
+  it("scrubs the serialized body shape and drops unsafe leftovers", () => {
+    const clean = sanitizeSentryLog({
+      level: "warn",
+      body: `retry ${FIX_BEARER}`,
+    });
+    expect(clean).not.toBeNull();
+    expect(serialized(clean)).not.toContain("zzz9yyy8xxx7www6vvv5");
+  });
+
+  it("returns null (DISCARD) for non-object, circular, or unsafe input", () => {
+    expect(sanitizeSentryLog(null)).toBeNull();
+    expect(sanitizeSentryLog("not-a-log")).toBeNull();
+    const evil: Record<string, unknown> = {};
+    evil["self"] = evil;
+    expect(sanitizeSentryLog({ attributes: evil })).toBeNull();
+  });
+});
+
+describe("reportLogToMonitoring", () => {
+  it("is a safe no-op for every level when monitoring is off (no DSN)", () => {
+    const levels = ["info", "warn", "error"] as const;
+    for (const level of levels) {
+      expect(() =>
+        reportLogToMonitoring(level, "hello", { note: "x" }),
+      ).not.toThrow();
+      expect(() => reportLogToMonitoring(level, "hello")).not.toThrow();
+    }
   });
 });
