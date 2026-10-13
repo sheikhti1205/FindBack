@@ -218,3 +218,39 @@ describe("FBX-022 server mirror: avatar URL host bind (20261012030000)", () => {
     assert.ok(!sql().includes("position(v_marker in v_avatar)"), "old marker check gone (legacy)");
   });
 });
+
+describe("FB-AUD-03 attachment UPDATE bind (20261013010000)", () => {
+  const NEW_BIND = "20261013010000_comment_attachments_update_bind.sql";
+  const sql = () => mig(NEW_BIND);
+  const OWN_EXISTS =
+    "exists (select 1 from public.comments c where c.id = comment_attachments.comment_id and c.user_id = (select auth.uid())::text)";
+
+  it("update policy requires comment ownership in both USING and WITH CHECK (no reassignment hole)", () => {
+    const text = sql();
+    assert.ok(text.includes("comment_attachments_update_own"), "recreates the UPDATE policy");
+    const usingIdx = text.indexOf("for update");
+    assert.ok(usingIdx >= 0, "UPDATE policy clause present");
+    const usingClause = text.slice(usingIdx, text.indexOf("with check", usingIdx));
+    const checkClause = text.slice(text.indexOf("with check", usingIdx));
+    for (const [name, clause] of [["USING", usingClause], ["WITH CHECK", checkClause]]) {
+      assert.ok(clause.includes("user_id = (select auth.uid())::text"), `${name} keeps the owner check`);
+      assert.ok(clause.includes(OWN_EXISTS), `${name} carries the comment-ownership EXISTS (INSERT pattern)`);
+    }
+  });
+
+  it("supersede header documents FB-AUD-03; sibling policies and grants untouched", () => {
+    const text = sql();
+    assert.ok(text.includes("FB-AUD-03"), "audit id recorded");
+    assert.ok(text.includes("20261011020000"), "superseded migration named");
+    assert.ok(!text.toLowerCase().includes("comment_attachments_select_own"), "select policy untouched");
+    assert.ok(!text.toLowerCase().includes("comment_attachments_insert_own"), "insert policy untouched");
+    assert.ok(!text.toLowerCase().includes("comment_attachments_delete_own"), "delete policy untouched");
+    assert.ok(!/grant\s+/i.test(text.replace(/--[^\n]*/g, "")), "no grants touched");
+  });
+
+  it("BACKEND_SCHEMA_VERSION handling untouched (coordinator owns the bump)", () => {
+    assert.ok(!sql().includes("BACKEND_SCHEMA_VERSION"), "migration carries no version constant");
+    const caps = read(join(ROOT, "..", "apps", "mobile", "src", "services", "appCapabilities.ts"));
+    assert.ok(caps.includes('BACKEND_SCHEMA_VERSION = "20261012030000"'), "version constant unbumped by this lane");
+  });
+});
