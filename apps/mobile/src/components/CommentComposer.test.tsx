@@ -644,6 +644,7 @@ describe("CommentComposer Klipy picker feel", () => {
     for (const tab of ["comment-gif-tab-gifs", "comment-gif-tab-stickers"]) {
       expect(screen.getByTestId(tab).className).toContain("min-h-[44px]");
     }
+    expect(screen.getByTestId("comment-gif-search").className).toContain("min-h-[44px]");
     const retry = await screen.findByTestId("comment-gif-retry");
     expect(retry.className).toContain("min-h-[44px]");
   });

@@ -793,7 +793,7 @@ export function CommentComposer({
                   placeholder={KLIPY_SEARCH_PLACEHOLDER}
                   aria-label="Search GIFs and stickers"
                   enterKeyHint="search"
-                  className="w-full rounded-full border border-outline-variant bg-surface-container-low py-2 pl-9 pr-11 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+                  className="min-h-[44px] w-full rounded-full border border-outline-variant bg-surface-container-low py-2 pl-9 pr-11 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
                 />
                 {gifQuery !== "" && (
                   <button
