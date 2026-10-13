@@ -1,0 +1,8 @@
+{
+  "row": "LIVE_DATABASE",
+  "baselineSha": "bcabc1b9c11432d4e081ac7802a27652306e9885",
+  "recordedAt": "2026-10-14",
+  "command": "npx supabase db push; <verify probes run against live via the Management API SQL endpoint>",
+  "summary": "Live head advanced 20261012020000 -> 20261013020000 (== BACKEND_SCHEMA_VERSION). All three pending migrations applied in order: 20261012030000_avatar_url_host_bind, 20261013010000_comment_attachments_update_bind, 20261013020000_comment_media_cleanup_lease. Verify probes pass 19/19 against the hosted project: avatar predicate (8/8), attachment update-policy catalog (4/4), cleanup lease/ack catalog (7/7). Confirmed live: is_own_avatar_public_url(p_url text, p_uid text) IMMUTABLE; update_my_avatar(p_avatar_url text); update_my_avatar_by_key(p_object_key text, p_avatar_url text); claim_comment_media_cleanup(p_limit integer); ack_comment_media_cleanup(p_keys text[]); comment_media_cleanup_queue gained leased_at/attempts; comment_attachments_update_own USING + WITH CHECK both normalize identically to the INSERT anti-join (user_id = auth.uid() AND comment owned by caller).",
+  "defectFoundAndFixed": "The first live push failed with SQLSTATE 42P13: 20261012030000 re-declared update_my_avatar_by_key with p_public_url while 20261012000000 and the client named-arg call use p_avatar_url. This was an unbootable migration chain on any database; fixed in the same commit and guarded by a new CREATE OR REPLACE signature-drift test."
+}

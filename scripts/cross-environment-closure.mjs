@@ -83,18 +83,16 @@ export const CLOSURE = {
         "Source, scripts and tests for the X-wave are complete; local gates green (see evidence).",
     },
     LIVE_DATABASE: {
-      verdict: "DEFERRED_OWNER",
-      ownerAction:
-        "Apply the 3 pending migrations in order then run the matching verify SQL (docs/runbooks/owner-closeout-sequence.md §B).",
-      blocker:
-        "Hosted head is 20261012020000; 20261012030000 / 20261013010000 / 20261013020000 are not live.",
+      verdict: "PASS",
+      evidence: "docs/evidence/live-database.json",
+      detail:
+        "Applied the 3 pending migrations in order; live head 20261013020000 == BACKEND_SCHEMA_VERSION; 19/19 verify probes pass (see evidence).",
     },
     EDGE_FUNCTIONS: {
-      verdict: "FAIL",
-      blocker:
-        "Live push-dispatch is stale (LIKE/DISLIKE/COMMENT/MENTION/STATUS only; no REACTION/reactionKind) and cleanup-comment-media is not deployed. Repo >= live.",
-      ownerAction:
-        "Deploy ai-help/reply-comment/push-dispatch + cleanup-comment-media via scripts/deploy-required-edge-functions.mjs after §B, then prove parity with a live manifest.",
+      verdict: "PASS",
+      evidence: "docs/evidence/edge-functions.json",
+      detail:
+        "Deployed ai-help v9 / push-dispatch v6 (REACTION) / cleanup-comment-media v1; reply-comment v3 already CURRENT; byte-identical parity + live auth guards proven (see evidence).",
     },
     SENTRY_LOCAL: {
       verdict: "READY_FOR_RUNTIME_PROOF",
@@ -140,11 +138,11 @@ export const CLOSURE = {
       detail: "Android client push wiring present; needs materialized google-services + a device.",
     },
     FCM_SERVER: {
-      verdict: "DEFERRED_OWNER_CONFIG",
-      ownerAction:
-        "Provision FIREBASE_SERVICE_ACCOUNT_JSON, FCM_PROJECT_ID, PUSH_DISPATCH_SECRET, PUBLIC_SHARE_ORIGIN then deploy push-dispatch.",
-      blocker:
-        "All four server secret NAMES read ABSENT (check-push-config.mjs), so FCM project match cannot be verified.",
+      verdict: "READY_FOR_RUNTIME_PROOF",
+      proofCommand:
+        "curl -X POST <fn-url>/push-dispatch -H 'x-findback-dispatch-secret: $PUSH_DISPATCH_SECRET' -d '{\"type\":\"REACTION\",\"reaction_kind\":\"LOVE\",...}'",
+      detail:
+        "Live secrets present (SERVICE_ACCOUNT_JSON/PROJECT_ID/PUSH_DISPATCH_SECRET/PUBLIC_SHARE_ORIGIN) and push-dispatch v6 deployed + 401-guarded. Needs a real device token for end-to-end delivery across REACTION kinds/COMMENT/MENTION/STATUS/reply.",
     },
     KLIPY: {
       verdict: "READY_FOR_RUNTIME_PROOF",

@@ -93,13 +93,13 @@ test("PASS evidence whose baselineSha is not reachable from HEAD fails (anti-sta
 
 test("FAIL requires a blocker", () => {
   const c = clone();
-  delete c.rows.EDGE_FUNCTIONS.blocker;
+  c.rows.RELEASE = { verdict: "FAIL" };
   assert.ok(checkClosure(c, OPEN).problems.some((p) => /is FAIL without a blocker/.test(p)));
 });
 
 test("DEFERRED_* requires an ownerAction", () => {
   const c = clone();
-  delete c.rows.LIVE_DATABASE.ownerAction;
+  delete c.rows.EMULATOR.ownerAction;
   assert.ok(checkClosure(c, OPEN).problems.some((p) => /is DEFERRED_OWNER without an ownerAction/.test(p)));
 });
 
@@ -118,9 +118,13 @@ test("a non-reachable closure baselineSha is reported", () => {
   assert.ok(checkClosure(c, seams).problems.some((p) => /closure baselineSha .* not reachable/.test(p)));
 });
 
-test("nothing is PASS by default except evidence-backed rows", () => {
+test("every PASS row is evidence-backed with no PASS lacking evidence", () => {
   const { passRows } = checkClosure(CLOSURE, OPEN);
-  assert.deepEqual(passRows.sort(), ["GOOGLE_BUILD_CONFIG", "REPO_IMPLEMENTATION"].sort());
+  const expected = Object.entries(CLOSURE.rows)
+    .filter(([, e]) => e.verdict === "PASS")
+    .map(([id]) => id);
+  assert.deepEqual([...passRows].sort(), [...expected].sort());
+  for (const id of passRows) assert.ok(CLOSURE.rows[id].evidence, `${id} carries evidence`);
 });
 
 test("markdown renders one row per lane", () => {
@@ -137,9 +141,10 @@ test("json emits all 18 rows", () => {
 
 test("scaffold produces an evidence template per PASS row", () => {
   const tmpl = scaffoldEvidence();
-  assert.deepEqual(Object.keys(tmpl).sort(), [
-    "docs/evidence/google-build-config.json",
-    "docs/evidence/repo-implementation.json",
-  ]);
+  const expected = Object.values(CLOSURE.rows)
+    .filter((e) => e.verdict === "PASS")
+    .map((e) => e.evidence)
+    .sort();
+  assert.deepEqual(Object.keys(tmpl).sort(), expected);
   for (const v of Object.values(tmpl)) assert.equal(v.baselineSha, "<40-hex product HEAD>");
 });

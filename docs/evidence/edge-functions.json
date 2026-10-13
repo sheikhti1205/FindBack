@@ -1,0 +1,8 @@
+{
+  "row": "EDGE_FUNCTIONS",
+  "baselineSha": "bcabc1b9c11432d4e081ac7802a27652306e9885",
+  "recordedAt": "2026-10-14",
+  "command": "npx supabase functions deploy <fn> --use-api; npx supabase functions download <fn> (hash compare)",
+  "summary": "Deployed the current repo source for the stale set and proved byte-identical parity by re-downloading every function and comparing sha256 against the working tree (no drift). Versions now: ai-help v8->v9, push-dispatch v5->v6, cleanup-comment-media undeployed->v1, reply-comment v3 UNCHANGED (already CURRENT — proven identical, so not redeployed). push-dispatch now carries REACTION + reactionKind (LOVE/HELPFUL/SUPPORT/WOW) and maps REACTION into the reactions preference; ai-help copy reflects reactions not likes. Auth guards verified live: cleanup-comment-media returns 401 {\"error\":\"missing credentials\"} without the cron secret, push-dispatch returns 401 {\"error\":\"unauthorized\"} without x-findback-dispatch-secret. delete-account intentionally NOT deployed (owner-side).",
+  "note": "Live project had all four FCM secrets already present (FIREBASE_SERVICE_ACCOUNT_JSON, FCM_PROJECT_ID, PUBLIC_SHARE_ORIGIN, PUSH_DISPATCH_SECRET) — check-push-config.mjs only reported ABSENT because the local agent shell lacks them."
+}
