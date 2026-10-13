@@ -92,5 +92,5 @@ account, logout/switch. Capture error CLASS only (never token/nonce).
 ## G. Restore + release decision (owner only)
 
 1. Resolve Actions billing → rerun exact-final-SHA CI.
-2. KLIPY live matrix, SMS provider test, model-lab selection — all deferred.
+2. KLIPY: key is wired into gitignored root `.env` and the adapter contract is live-validated (2026-10-13). Remaining: set `VITE_KLIPY_API_KEY` as a CI + release secret so production builds bake it; then in-app visual check of the picker on device. SMS provider test, model-lab selection — deferred.
 3. Only then: version/release decision. No tag/release in this wave.
