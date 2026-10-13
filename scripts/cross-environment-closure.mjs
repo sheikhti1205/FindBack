@@ -177,8 +177,9 @@ export const CLOSURE = {
     RELEASE: {
       verdict: "DEFERRED_OWNER",
       ownerAction:
-        "No release this wave. Gate on every row above closing; then version + tag + publish.",
-      blocker: "Release is forbidden until runtime/deployment lanes close.",
+        "(1) Restore GitHub Actions billing so release.yml can run; (2) complete signed-device acceptance; then bump version (2.0.0-beta.1 per owner) and push the v* tag.",
+      blocker:
+        "Two hard external walls: Actions billing blocks every release.yml job (dispatch run 38453573774 failed in 5s, 0 steps), AND the canonical keystore password is CI-side only so a signed APK/AAB cannot be produced locally. The publish job also runs ONLY on a v* tag.",
     },
   },
 };
