@@ -283,6 +283,20 @@ test("verifyBundleRelease requires DSN host and release identity, printing neith
     assert.ok(argv.includes(identity.release));
     assert.ok(read(js, "utf8").includes(identity.release));
 
+    // Dist is asserted too: a bundle missing the embedded dist fails even
+    // when host + release are present (upload --dist would mismatch).
+    writeFileSync(js, `const dsn="${DSN_HOST}",rel="${RELEASE}";`);
+    assert.throws(
+      () => verifyBundleRelease({ assetsDir: dir, sentryHost: DSN_HOST, release: RELEASE, dist: "android-debug", list, read }),
+      /dist missing/,
+    );
+    writeFileSync(js, `const dsn="${DSN_HOST}",rel="${RELEASE}",dist="android-debug";`);
+    assert.deepEqual(
+      verifyBundleRelease({ assetsDir: dir, sentryHost: DSN_HOST, release: RELEASE, dist: "android-debug", list, read }),
+      { checked: 1 },
+    );
+    // Explicit null dist (tests only) skips the assert — same as no --dist.
+
     writeFileSync(js, `const dsn="${DSN_HOST}";`);
     assert.throws(
       () => verifyBundleRelease({ assetsDir: dir, sentryHost: DSN_HOST, release: RELEASE, list, read }),

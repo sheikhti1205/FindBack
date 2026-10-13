@@ -325,13 +325,17 @@ export function ensureFirebaseConfig({
 }
 
 /**
- * Verify the built web bundle carries the Sentry DSN host AND the release
- * identity. Presence only — messages never include either value.
+ * Verify the built web bundle carries the Sentry DSN host, the release
+ * identity, AND the dist. Presence only — messages never include values.
+ * The dist assert closes the last mismatch path: a bundle with a failed
+ * dist inline would otherwise pass packaging while the upload --dist
+ * scopes artifacts away from its events.
  */
 export function verifyBundleRelease({
   assetsDir = MOBILE_ASSETS_DIR,
   sentryHost,
   release,
+  dist,
   list = readdirSync,
   read = readFileSync,
 } = {}) {
@@ -346,6 +350,9 @@ export function verifyBundleRelease({
   }
   if (!chunks.some((c) => c.includes(release))) {
     throw new Error("build-apk: Sentry release identity missing from built bundle — refusing to package");
+  }
+  if (dist !== null && dist !== undefined && !chunks.some((c) => c.includes(dist))) {
+    throw new Error("build-apk: Sentry dist missing from built bundle — refusing to package (upload --dist would mismatch)");
   }
   return { checked: files.length };
 }
@@ -532,8 +539,8 @@ function main() {
   // The bundle must carry the DSN host AND the release identity before any
   // upload or packaging step runs.
   try {
-    const checked = verifyBundleRelease({ sentryHost: sentry.host, release: identity.release });
-    console.log(`build-apk: bundle carries DSN host + release identity (${checked.checked} chunk(s))`);
+    const checked = verifyBundleRelease({ sentryHost: sentry.host, release: identity.release, dist: identity.dist });
+    console.log(`build-apk: bundle carries DSN host + release identity + dist (${checked.checked} chunk(s))`);
   } catch (error) {
     fail(String(error.message ?? error));
   }
