@@ -31,6 +31,10 @@ on:
         description: "Deploy the reply-comment Edge Function"
         type: boolean
         default: true
+      deploy_cleanup_comment_media:
+        description: "Deploy the cleanup-comment-media Edge Function"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -76,3 +80,14 @@ jobs:
           # Server-to-server only: the device presents a single-use reply token,
           # not a Supabase session.
           supabase functions deploy reply-comment --no-verify-jwt
+      - name: Deploy cleanup-comment-media
+        if: inputs.deploy_cleanup_comment_media
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # Internal sweeper only: the function enforces its own service-role /
+          # x-cleanup-secret check, so the gateway JWT check is redundant.
+          # Deploy only after migration 20261013020000 (cleanup lease) is live.
+          supabase functions deploy cleanup-comment-media --no-verify-jwt
+      # NOTE: delete-account is intentionally NOT deployed by this workflow.
+      # No delete-account pattern exists here or elsewhere in CI; it deploys
+      # separately, owner-side, after explicit auth review.
