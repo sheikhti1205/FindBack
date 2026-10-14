@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import {
   CommentSkeleton,
   DetailSkeleton,
@@ -13,6 +14,8 @@ import {
 } from "./uiPrimitives";
 
 describe("uiPrimitives", () => {
+  afterEach(() => cleanup());
+
   it("Skeleton renders a stable fixed-size block with an accessible label", () => {
     const { container } = render(<Skeleton label="Loading post" width={120} height={16} />);
     expect(screen.getByRole("status", { name: "Loading post" })).toBeTruthy();
@@ -54,7 +57,7 @@ describe("uiPrimitives", () => {
     expect(document.querySelectorAll("[data-testid='comment-skeleton-row']").length).toBe(2);
   });
 
-  it("StateSwap swaps keyed states without stacking", () => {
+  it("StateSwap swaps keyed states without stacking", async () => {
     const { rerender } = render(
       <StateSwap stateKey="a">
         <p>first</p>
@@ -66,7 +69,9 @@ describe("uiPrimitives", () => {
         <p>second</p>
       </StateSwap>,
     );
-    expect(screen.getByText("second")).toBeTruthy();
+    // mode="wait" lets the exiting state leave first; the entering state
+    // arrives within the fast token budget.
+    await waitFor(() => expect(screen.getByText("second")).toBeTruthy());
   });
 
   it("EnterReveal renders content with first-reveal stagger", () => {

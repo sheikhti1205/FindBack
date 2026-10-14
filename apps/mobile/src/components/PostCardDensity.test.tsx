@@ -208,9 +208,11 @@ describe("PostList state transitions (Wave A)", () => {
     );
   }
 
-  it("loading → results: spinner crossfades instead of unmounting instantly", () => {
+  it("loading → results: skeleton crossfades instead of unmounting instantly", () => {
     const { rerender } = renderList({ loading: true });
-    expect(screen.getByText(/loading posts/i)).toBeTruthy();
+    // Stable skeleton holds fixed-size card shapes (no spinner text, no reflow).
+    expect(screen.getByRole("status", { name: "Loading posts" })).toBeTruthy();
+    expect(screen.queryAllByTestId("feed-skeleton-card").length).toBeGreaterThan(0);
     rerender(
       <MemoryRouter>
         <PostList
@@ -226,9 +228,9 @@ describe("PostList state transitions (Wave A)", () => {
     );
     // Navigation-equivalent immediacy: content is present right after the swap.
     expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
-    // The state machine owns the swap: the exiting spinner is still mounted
+    // The state machine owns the swap: the exiting skeleton is still mounted
     // for its exit animation instead of vanishing in the same commit.
-    expect(screen.queryByText(/loading posts/i)).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Loading posts" })).toBeTruthy();
   });
 
   it("error → content: retry state crossfades into the feed", () => {

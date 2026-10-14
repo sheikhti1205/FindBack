@@ -231,8 +231,11 @@ export function StateSwap({
   stateKey: string;
   children: ReactNode;
 }) {
+  // Overlapping crossfade (same contract as PostList): the entering state
+  // is present in the same commit — never a blank frame waiting for an
+  // exit to finish.
   return (
-    <AnimatePresence initial={false} mode="wait">
+    <AnimatePresence initial={false}>
       <motion.div
         key={stateKey}
         data-testid="state-swap"

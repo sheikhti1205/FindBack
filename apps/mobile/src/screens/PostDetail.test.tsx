@@ -556,8 +556,9 @@ describe("PostDetail progressive loading", () => {
     // Fast post must not wait behind ~2s secondaries.
     const heading = await screen.findByRole("heading", { level: 1 }, { timeout: 3000 });
     expect(heading.textContent).toBe(LONG);
-    // Secondary pending state is announced; delayed comment is absent.
-    expect(await screen.findByText(/loading comments/i)).toBeTruthy();
+    // Secondary pending state is announced (stable skeleton rows hold the
+    // shape); delayed comment is absent.
+    expect(await screen.findByRole("status", { name: "Loading comments" })).toBeTruthy();
     expect(screen.queryByText(/plain comment/)).toBeNull();
 
     await act(async () => {
