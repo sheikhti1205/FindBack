@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { ApplicationAiService } from "./applicationAi";
-import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR } from "./modelDescriptors";
+import { NEEDLE_DESCRIPTOR, QWEN_TEXT_DESCRIPTOR, SMOL_VISION_DESCRIPTOR } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import type { ModelDownloadDriver } from "./download/driver";
 import { interpreterFor } from "./orchestrator/taskInterpreters";
@@ -179,7 +179,7 @@ describe("advertised Needle roles have real production generators", () => {
   });
 
   it("every advertised role has an explicit task interpreter (no implicit success)", () => {
-    for (const descriptor of [NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR]) {
+    for (const descriptor of [NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, QWEN_TEXT_DESCRIPTOR]) {
       for (const taskId of descriptor.taskRoles) {
         expect(interpreterFor(taskId), `${descriptor.modelId} advertises ${taskId}`).toBeDefined();
       }

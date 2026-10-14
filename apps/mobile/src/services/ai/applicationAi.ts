@@ -4,19 +4,31 @@ import { ITEM_CATEGORIES } from "./ops/classifyCategory";
 import { CapacitorNeedleBridge, createNativeNeedleEmbedder } from "./needle/native";
 import { NEEDLE_MODEL_ID, type NativeNeedleEmbedder } from "./needle/embedder";
 import { CapacitorSmolVlmBridge } from "./vision/native";
+import {
+  CapacitorQwenTextBridge,
+  QWEN_SESSION_MIN_TOKENS,
+  QWEN_TEXT_BRIDGE_NAME,
+  createEnvelopeStreamingFilter,
+  stripThoughtEnvelope,
+  type QwenTextNativeBridge,
+} from "./text/litertLmText";
+import { profileFor } from "./modelProfiles";
 import { CapacitorModelDownloadDriver, runManagedDownload, removeManagedModel, type ModelDownloadDriver } from "./download/driver";
 import { createOfflineAdapter, describeOfflineReadiness, type OfflineNativeBridge, type OfflineVisionNativeBridge } from "./providers/offline";
 import type { AiTaskId } from "./types";
 import type { RouteContext } from "./orchestrator/AiOrchestrator";
-import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, modelSupportsAbi, type ModelDescriptor, type ModelRegistry, type ModelRegistryOptions } from "./modelDescriptors";
+import type { ProductionTextCompletion } from "./orchestrator/productionRuntimes";
+import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, QWEN_TEXT_MODEL_ID, QWEN_TEXT_RUNTIME_ID, LLAMA_CPP_RUNTIME_ID, distributionPolicyOf, modelSupportsAbi, type ModelDescriptor, type ModelRegistry, type ModelRegistryOptions } from "./modelDescriptors";
 import { ResidencyCoordinator, ResidencyBusyError } from "./residencyCoordinator";
 import { selectBackend } from "./automaticMode";
 import { PROBE_VERSION, validateProbeRecord, type ProbeRecord } from "./deviceProbe";
 
 /** Map a descriptor runtimeId to the coordinator's residency owner. */
-function ownerForRuntime(runtimeId: string): "needle" | "smol-vision" | "none" {
+function ownerForRuntime(runtimeId: string): "needle" | "smol-vision" | "qwen-text" | "llama" | "none" {
   if (runtimeId === NEEDLE_RUNTIME_ID) return "needle";
   if (runtimeId === SMOL_VLM_RUNTIME_ID) return "smol-vision";
+  if (runtimeId === QWEN_TEXT_RUNTIME_ID) return "qwen-text";
+  if (runtimeId === LLAMA_CPP_RUNTIME_ID) return "llama";
   return "none";
 }
 /**
@@ -130,24 +142,52 @@ export interface DeviceCompatibility {
  * intersects the descriptor's verified ABIs, the required native
  * runtime/plugin exists in this build, and the artifact/runtime format
  * pair is supported. Unknown ABIs and unknown formats never count.
- * UI disabling is presentation only — `download()` enforces this
- * independently, and it is also re-checked at run time.
+ * Runtime resolution is descriptor-first (Qwen text needs the LiteRT-LM
+ * text bridge, Smol vision needs the vision bridge) with a format
+ * fallback for test/custom descriptors. UI disabling is presentation
+ * only — `download()` enforces this independently, and it is also
+ * re-checked at run time.
  */
 export function compatibilityOf(
   descriptor: ModelDescriptor,
   deviceAbis: readonly string[],
-  bridges: { readonly needle: boolean; readonly smol: boolean },
+  bridges: { readonly needle: boolean; readonly smol: boolean; readonly qwenText?: boolean; readonly llama?: boolean },
 ): DeviceCompatibility {
   const abiOk = deviceAbis.some((abi) => modelSupportsAbi(descriptor, abi));
   if (!abiOk) return { compatible: false, reason: DEVICE_INCOMPATIBLE_REASON };
-  const runtimeOk =
-    (descriptor.format === "cact" && bridges.needle) ||
-    (descriptor.format === "litertlm" && bridges.smol);
+  let runtimeOk: boolean;
+  switch (descriptor.runtimeId) {
+    case NEEDLE_RUNTIME_ID:
+      runtimeOk = bridges.needle;
+      break;
+    case SMOL_VLM_RUNTIME_ID:
+      runtimeOk = bridges.smol;
+      break;
+    case QWEN_TEXT_RUNTIME_ID:
+      runtimeOk = bridges.qwenText === true;
+      break;
+    case LLAMA_CPP_RUNTIME_ID:
+      runtimeOk = bridges.llama === true;
+      break;
+    default:
+      runtimeOk =
+        (descriptor.format === "cact" && bridges.needle) ||
+        (descriptor.format === "litertlm" && (bridges.smol || bridges.qwenText === true)) ||
+        (descriptor.format === "gguf" && bridges.llama === true);
+      break;
+  }
   if (!runtimeOk) return { compatible: false, reason: DEVICE_INCOMPATIBLE_REASON };
   return { compatible: true };
 }
 type NeedleBridge = Pick<CapacitorNeedleBridge, "bridgeName" | "isNeedleAvailable" | "embeddingDimension" | "loadModel" | "embedNeedleTexts" | "initTools" | "completeJson" | "unload">;
 type SmolBridge = OfflineVisionNativeBridge & Partial<Pick<CapacitorSmolVlmBridge, "measureBackend" | "collectDeviceFacts">>;
+/**
+ * W-A LiteRT-LM text seam (Qwen). The structural shape mirrors the Smol
+ * vision bridge; the native `FindbackQwenText` plugin behind it is the W-B
+ * lane. Absent on builds without the plugin — every Qwen path fails
+ * closed then, never half-wired.
+ */
+export type QwenTextBridge = QwenTextNativeBridge;
 
 export class ApplicationAiService {
   readonly boot: ProductionBoot;
@@ -160,6 +200,16 @@ export class ApplicationAiService {
   private root = "";
   private embedder: NativeNeedleEmbedder | undefined;
   private loadingNeedle: Promise<void> | undefined;
+  private loadingQwenText: Promise<void> | undefined;
+  /** True while the Qwen resident is loaded (mirrors `embedder` for Needle). */
+  private qwenResident = false;
+  /**
+   * Generation epoch guard: incremented on every Qwen resident switch and
+   * unload. Streaming/collection loops capture the epoch and drop late
+   * chunks once it moves, so a switched-away generation can never mutate
+   * the new session.
+   */
+  private textEpoch = 0;
   private active = new Map<string, { abort: AbortController; work: Promise<void> }>();
   private listeners = new Set<() => void>();
   private version = 0;
@@ -174,6 +224,7 @@ export class ApplicationAiService {
   private driver?: ModelDownloadDriver;
   private needle?: NeedleBridge;
   private smol?: SmolBridge;
+  private qwenText?: QwenTextBridge;
   private matching: "use" | "needle" = "use";
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   readonly snapshot = () => this.version;
@@ -185,7 +236,7 @@ export class ApplicationAiService {
   notice(modelId: string) { return this.notices.get(modelId) ?? null; }
   busy(modelId: string) { return this.operating.has(modelId); }
 
-  constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge; descriptors?: readonly ModelDescriptor[]; defaultVisionModelId?: string }) {
+  constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge; qwenText?: QwenTextBridge; descriptors?: readonly ModelDescriptor[]; defaultVisionModelId?: string }) {
     this.android = options.android;
     this.registry = options.descriptors
       ? createModelRegistry(options.descriptors, { defaultVisionModelId: options.defaultVisionModelId } satisfies ModelRegistryOptions)
@@ -196,30 +247,39 @@ export class ApplicationAiService {
       this.driver = options.driver ?? new CapacitorModelDownloadDriver();
       this.needle = options.needle ?? new CapacitorNeedleBridge();
       this.smol = options.smol ?? new CapacitorSmolVlmBridge();
+      this.qwenText = options.qwenText ?? new CapacitorQwenTextBridge();
+    } else {
+      this.qwenText = options.qwenText;
     }
     const dimension = () => this.embedder?.dimension ?? 0;
     // Seam roles come from the same descriptor registry that owns pins and
     // ABIs: a model serves a task only when its descriptor permits the role.
     const needleRoles = this.registry.descriptorFor(NEEDLE_MODEL_ID)?.taskRoles ?? [];
+    const qwenRoles = this.registry.descriptorFor(QWEN_TEXT_MODEL_ID)?.taskRoles ?? [];
+    const textRoles = [...new Set([...needleRoles, ...qwenRoles])];
+    const hasTextEngine = this.needle !== undefined || this.qwenText !== undefined;
     this.boot = bootProductionAi({
       pins: this.registry.descriptors.map((model) => ({ modelId: model.modelId, sha256: model.sha256, downloadBytes: model.bytes, minFreeRamMb: model.minRamMb })),
       managerOptions: this.driver ? { storageProbe: this.driver, storageHeadroomBytes: 64 * 1024 * 1024 } : undefined,
-      ...(this.needle ? {
+      ...(hasTextEngine ? {
         text: {
-          modelId: NEEDLE_MODEL_ID,
-          runtimeId: NEEDLE_RUNTIME_ID,
-          taskRoles: needleRoles,
-          isReady: () => this.ensureNeedle(),
-          // Raw free completion (prose tasks). No tools: prose must be
-          // capable of validated free text, never tool-forced JSON.
-          completeText: (input: string) => this.needle!.completeJson(input),
+          modelId: QWEN_TEXT_MODEL_ID,
+          modelIds: [QWEN_TEXT_MODEL_ID, NEEDLE_MODEL_ID],
+          runtimeId: QWEN_TEXT_RUNTIME_ID,
+          taskRoles: textRoles,
+          isReady: () => this.ensureAnyText(),
+          // Prose tasks (answer-help, summaries): Qwen-first on the
+          // LiteRT-LM text resident; Needle remains the fallback so builds
+          // without the text plugin keep today's behavior.
+          completeText: (input: string, signal?: AbortSignal) => this.completeProseText(input, signal),
           // Tool-constrained completion returning the slot envelope string
-          // (tasks with JSON contracts). Each advertised structured task
-          // installs its OWN tool schema (see STRUCTURED_STRATEGIES) —
-          // never one generic schema borrowed across tasks.
-          completeStructured: (taskId: string, input: string) => this.extractTaskFields(taskId, input),
+          // (tasks with JSON contracts). Needle is the proven tool model:
+          // each advertised structured task installs its OWN tool schema
+          // (see STRUCTURED_STRATEGIES) — never one generic schema borrowed
+          // across tasks.
+          completeStructured: (taskId: string, input: string, signal?: AbortSignal) => this.completeNeedleStructured(taskId, input, signal),
         },
-        embedding: { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, taskRoles: needleRoles, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) },
+        embedding: this.needle ? { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, taskRoles: needleRoles, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) } : undefined,
       } : {}),
       ...(this.smol && vision ? { vision: { modelId: vision.modelId, runtimeId: vision.runtimeId, taskRoles: vision.taskRoles, isAvailable: () => this.ensureVision(), describe: async (prompt: string, imageBase64: string, signal: AbortSignal) => {
         let text = "";
@@ -266,7 +326,7 @@ export class ApplicationAiService {
     }
   }
   private requireAndroid() { if (!this.android || !this.driver) throw new Error("On-device AI requires the Android app."); }
-  private bridges() { return { needle: this.needle !== undefined, smol: this.smol !== undefined }; }
+  private bridges() { return { needle: this.needle !== undefined, smol: this.smol !== undefined, qwenText: this.qwenText !== undefined, llama: false }; }
   /**
    * Device ABI set from the native facts bridge. Unreadable or absent
    * facts yield an empty set, which no descriptor verifies — fail-closed.
@@ -292,12 +352,12 @@ export class ApplicationAiService {
     if (!this.android) return { compatible: false, reason: "On-device downloads need the Android app." };
     return { compatible: true };
   }
-  /** Refresh every catalogue compatibility snapshot from live device facts. */
+  /** Refresh every descriptor compatibility snapshot from live device facts. */
   async ensureCompatibility(): Promise<void> {
     if (!this.android) return;
     const abis = await this.deviceAbis();
     let changed = false;
-    for (const descriptor of this.registry.catalogue()) {
+    for (const descriptor of this.registry.descriptors) {
       const next = compatibilityOf(descriptor, abis, this.bridges());
       const prev = this.compatCache.get(descriptor.modelId);
       if (prev?.compatible !== next.compatible || prev?.reason !== next.reason) {
@@ -333,6 +393,17 @@ export class ApplicationAiService {
     if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
     if (this.active.has(modelId) || this.operating.has(modelId)) return;
     const model = this.model(modelId);
+    // Distribution gate: Advanced rows are visible but never downloadable —
+    // pending pins have nothing verifiable to fetch and LFM arms forbid
+    // redistribution. The consumer reason is the notice, never jargon.
+    if (model.downloadable !== true || distributionPolicyOf(model) !== "downloadable") {
+      const reason = (model.distributionNote ?? "").trim() !== ""
+        ? (model.distributionNote as string)
+        : "This model is not offered as a download.";
+      this.notices.set(modelId, reason);
+      this.changed();
+      throw new Error(reason);
+    }
     await this.requireCompatible(model);
     const abort = new AbortController();
     const work = (async () => {
@@ -351,6 +422,48 @@ export class ApplicationAiService {
     active.abort.abort();
     await this.driver!.cancelDownload(this.paths(modelId).stagingPath);
     await active.work;
+  }
+  /**
+   * Re-verify an installed model against its catalogue pin. A match keeps
+   * the install with a quiet notice; a missing or mismatched file drops
+   * the false-installed claim (DELETE) so readiness fails closed, and the
+   * resident is released when it was the Qwen/Needle/vision engine.
+   */
+  async verify(modelId: string): Promise<void> {
+    this.requireAndroid();
+    await this.ready;
+    if (this.coordinator.inferenceBlocked || this.operating.size > 0) throw new Error("On-device runtime is busy; try again when idle");
+    if (this.operating.has(modelId)) return;
+    const descriptor = this.model(modelId);
+    this.operating.add(modelId); this.changed();
+    try {
+      if (this.manager.statusOf(modelId)?.download !== "installed") {
+        this.notices.set(modelId, "Not installed yet.");
+        return;
+      }
+      const actual = await this.driver!.hashFile(this.paths(modelId).installedPath).catch(() => "");
+      if (actual !== "" && this.manager.checksumsMatch(descriptor.sha256, actual)) {
+        this.notices.set(modelId, "Installed and checksum verified.");
+      } else {
+        try {
+          await this.unloadDescriptor(descriptor);
+        } catch {
+          // Unload is best effort here; the install claim is dropped anyway.
+        }
+        try {
+          this.manager.dispatch(modelId, { type: "DELETE" });
+        } catch {
+          // Already absent: the notice below still explains the state.
+        }
+        this.coordinator.released(ownerForRuntime(descriptor.runtimeId));
+        this.notices.set(
+          modelId,
+          actual === ""
+            ? "The installed file is missing. Download it again."
+            : "The installed file didn't pass verification and was removed. Download it again.",
+        );
+      }
+    } finally { this.operating.delete(modelId); this.changed(); }
   }
   async remove(modelId: string) {
     this.requireAndroid(); await this.ready;
@@ -386,9 +499,160 @@ export class ApplicationAiService {
         await this.needle!.unload(); this.embedder = undefined; this.matching = "use"; return;
       case SMOL_VLM_RUNTIME_ID:
         await this.smol!.unloadVisionModel(); return;
+      case QWEN_TEXT_RUNTIME_ID:
+        await this.unloadQwenText(); return;
       default:
         throw new Error(`No production runtime adapter for ${descriptor.runtimeId}`);
     }
+  }
+  /** Release the Qwen text resident and invalidate its generation epoch. */
+  private async unloadQwenText(): Promise<void> {
+    this.textEpoch++;
+    this.qwenResident = false;
+    await this.qwenText?.unloadTextModel();
+  }
+  /** The Qwen profile's thought envelope, if it defines one. */
+  private qwenEnvelope() {
+    return profileFor(QWEN_TEXT_MODEL_ID)?.thoughtEnvelope;
+  }
+  /**
+   * Text readiness across engines: Qwen prose OR Needle structured. The
+   * per-mode entry points (completeProseText / completeNeedleStructured)
+   * enforce their own engine, so a task never runs on an engine that is
+   * merely "the other one is ready".
+   */
+  private async ensureAnyText(): Promise<boolean> {
+    await this.ready;
+    const qwen = await this.ensureQwenText().catch(() => false);
+    if (qwen) return true;
+    if (this.needle === undefined) return false;
+    return this.ensureNeedle().catch(() => false);
+  }
+  /**
+   * Prose generation (answer-help, summaries): Qwen-first on the LiteRT-LM
+   * text resident with thought-stripping and the epoch guard; Needle stays
+   * the fallback so builds without the text plugin keep today's behavior.
+   * Provenance always names the real producer.
+   */
+  private async completeProseText(input: string, signal?: AbortSignal): Promise<ProductionTextCompletion> {
+    if (this.qwenText !== undefined) {
+      try {
+        const text = await this.collectQwenText(input, signal, 256);
+        return { text, modelId: QWEN_TEXT_MODEL_ID, runtimeId: QWEN_TEXT_RUNTIME_ID };
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        // Fall back to Needle ONLY when Qwen was never set up (not
+        // installed/verified). A real Qwen failure (load, compat,
+        // generation) stays fail-closed — never silently swapped.
+        const neverSetUp = /not installed and verified/i.test(error instanceof Error ? error.message : "");
+        if (!neverSetUp || this.needle === undefined) throw error;
+      }
+    }
+    if (this.needle === undefined) throw new Error("No qualified on-device text runtime is installed");
+    await this.ensureNeedle();
+    return { text: await this.needle.completeJson(input), modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID };
+  }
+  /** Tool-constrained structured generation stays on Needle (the proven tool model). */
+  private async completeNeedleStructured(taskId: string, input: string, _signal?: AbortSignal): Promise<ProductionTextCompletion> {
+    if (this.needle === undefined) throw new Error("No qualified on-device structured runtime is installed");
+    await this.ensureNeedle();
+    return { text: await this.extractTaskFields(taskId, input), modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID };
+  }
+  /**
+   * One-shot Qwen collection for the route path: epoch-guarded, natively
+   * cancellable via the route signal, thought-stripped before return.
+   */
+  private async collectQwenText(prompt: string, signal: AbortSignal | undefined, maxOutputTokens: number): Promise<string> {
+    await this.ensureQwenText();
+    const bridge = this.qwenText;
+    if (bridge === undefined) throw new Error("Qwen text runtime is not available on this build");
+    const generationId = crypto.randomUUID();
+    const epoch = this.textEpoch;
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      let text = "";
+      for await (const chunk of bridge.generateText({ generationId, prompt, maxOutputTokens }, controller.signal)) {
+        if (controller.signal.aborted) break;
+        if (epoch !== this.textEpoch) {
+          await bridge.cancelGeneration(generationId).catch(() => undefined);
+          throw new Error("On-device text resident switched; generation discarded");
+        }
+        text += chunk.textDelta;
+      }
+      return stripThoughtEnvelope(text, this.qwenEnvelope()).trim();
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
+  }
+  /**
+   * Streaming Qwen generation for the offline chat adapter: honest deltas
+   * through the envelope filter (no reasoning leakage, no fake streaming),
+   * epoch-guarded against late callbacks after a switch/unload.
+   */
+  private async *streamQwenText(
+    prompt: import("./providers/offline").OfflinePrompt,
+    signal: AbortSignal,
+  ): AsyncGenerator<import("./providers/offline").OfflineGenerationChunk> {
+    await this.ensureQwenText();
+    const bridge = this.qwenText;
+    if (bridge === undefined) throw new Error("Qwen text runtime is not available on this build");
+    const generationId = crypto.randomUUID();
+    const epoch = this.textEpoch;
+    const filter = createEnvelopeStreamingFilter(this.qwenEnvelope());
+    const textPrompt = [prompt.systemText, prompt.summaryText, ...prompt.recentTurns.map((turn) => `${turn.role}: ${turn.text}`), prompt.currentText]
+      .filter((part) => part !== undefined && part.trim() !== "")
+      .join("\n\n");
+    try {
+      for await (const chunk of bridge.generateText(
+        { generationId, prompt: textPrompt, maxOutputTokens: prompt.maxOutputTokens },
+        signal,
+      )) {
+        if (signal.aborted) return;
+        if (epoch !== this.textEpoch) {
+          await bridge.cancelGeneration(generationId).catch(() => undefined);
+          throw new Error("On-device text resident switched; generation discarded");
+        }
+        const delta = filter.push(chunk.textDelta);
+        if (delta !== "") yield { textDelta: delta };
+      }
+      const tail = filter.flush();
+      if (tail !== "" && !signal.aborted && epoch === this.textEpoch) yield { textDelta: tail };
+    } finally {
+      if (signal.aborted) await bridge.cancelGeneration(generationId).catch(() => undefined);
+    }
+  }
+  private async ensureQwenText(): Promise<boolean> {
+    await this.ready; this.requireInstalled(QWEN_TEXT_MODEL_ID);
+    const bridge = this.qwenText;
+    if (bridge === undefined) return false;
+    // Run-time re-check, same as ensureNeedle: incompatible devices fail
+    // closed here even if a model file is somehow present.
+    const descriptor = this.registry.descriptorFor(QWEN_TEXT_MODEL_ID);
+    if (descriptor === undefined) return false;
+    if (!compatibilityOf(descriptor, await this.deviceAbis(), this.bridges()).compatible) return false;
+    if (!this.loadingQwenText) this.loadingQwenText = (async () => {
+      if (!this.qwenResident || !(await bridge.isTextAvailable())) {
+        // Single-resident rule via the coordinator: evict Needle AND vision,
+        // then load. The epoch moves before load so any orphaned stream from
+        // a previous resident is discarded on its next chunk.
+        this.textEpoch++;
+        await this.coordinator.switchTo("qwen-text", {
+          evict: async () => {
+            await this.needle?.unload().catch(() => undefined); this.embedder = undefined;
+            await this.smol?.unloadVisionModel().catch(() => undefined);
+          },
+          load: () => bridge.loadTextModel({
+            modelId: QWEN_TEXT_MODEL_ID,
+            installedPath: this.paths(QWEN_TEXT_MODEL_ID).installedPath,
+            maxTokens: QWEN_SESSION_MIN_TOKENS,
+          }),
+        });
+        this.qwenResident = true;
+      }
+    })().finally(() => { this.loadingQwenText = undefined; });
+    await this.loadingQwenText; return true;
   }
   private async ensureNeedle(): Promise<boolean> {
     await this.ready; this.requireInstalled(NEEDLE_MODEL_ID);
@@ -400,9 +664,14 @@ export class ApplicationAiService {
     if (!compatibilityOf(needleDescriptor, await this.deviceAbis(), this.bridges()).compatible) return false;
     if (!this.loadingNeedle) this.loadingNeedle = (async () => {
       if (!this.embedder || !(await this.needle!.isNeedleAvailable())) {
-        // Single-resident rule via the coordinator: evict vision, then load.
+        // Single-resident rule via the coordinator: evict vision AND Qwen
+        // text, then load. Every switch evicts all other residents, so two
+        // large engines are never alive together.
         await this.coordinator.switchTo("needle", {
-          evict: () => this.smol!.unloadVisionModel(),
+          evict: async () => {
+            await this.smol?.unloadVisionModel().catch(() => undefined);
+            await this.unloadQwenText().catch(() => undefined);
+          },
           load: async () => {
             this.embedder = await createNativeNeedleEmbedder(this.needle!, { installedPath: this.paths(NEEDLE_MODEL_ID).installedPath });
           },
@@ -426,11 +695,15 @@ export class ApplicationAiService {
     // Run-time re-check, same as ensureNeedle: incompatible devices fail
     // closed here even if a model file is somehow present.
     if (!compatibilityOf(vision, await this.deviceAbis(), this.bridges()).compatible) return false;
-    // Single-resident rule via the coordinator: evict Needle, then load.
+    // Single-resident rule via the coordinator: evict Needle AND Qwen
+    // text, then load.
     // A failed load leaves ownership at "none" (coordinator rule), so a
     // half-loaded engine is never claimed as resident.
     await this.coordinator.switchTo("smol-vision", {
-      evict: async () => { await this.needle!.unload(); this.embedder = undefined; },
+      evict: async () => {
+        await this.needle?.unload().catch(() => undefined); this.embedder = undefined;
+        await this.unloadQwenText().catch(() => undefined);
+      },
       load: () => this.loadVisionModel(smol, vision.modelId),
     });
     return smol.isVisionAvailable();
@@ -509,11 +782,19 @@ export class ApplicationAiService {
   }
   offlineAdapter(resolveApprovedImage?: (id: string) => Promise<string>) {
     this.requireAndroid();
+    // On-device chat runs on the Qwen LiteRT-LM text resident: explicit
+    // model id, load/unload, chunked generation with the epoch guard, and
+    // native cancellation (providers/offline.ts seam). Without an installed
+    // Qwen or the text plugin the adapter fails closed — never cloud.
     const bridge: OfflineNativeBridge = {
-      bridgeName: "on-device-chat", isAvailable: () => false,
-      load: async () => { throw new Error("No qualified on-device chat runtime is installed"); },
-      unload: async () => {},
-      generate: async function* () { yield await Promise.reject(new Error("No qualified on-device chat runtime is installed")); },
+      bridgeName: QWEN_TEXT_BRIDGE_NAME,
+      isAvailable: () => this.qwenText !== undefined,
+      load: async (modelId: string) => {
+        if (modelId !== QWEN_TEXT_MODEL_ID) throw new Error(`unknown model ${modelId}`);
+        if (!(await this.ensureQwenText())) throw new Error("No qualified on-device chat runtime is installed");
+      },
+      unload: () => this.unloadQwenText(),
+      generate: (prompt, signal) => this.streamQwenText(prompt, signal),
     };
     const visionBridge: OfflineVisionNativeBridge = {
       bridgeName: this.smol!.bridgeName,
@@ -586,8 +867,10 @@ export class ApplicationAiService {
     try {
       await this.needle!.unload(); this.embedder = undefined;
       await this.smol!.unloadVisionModel();
+      await this.unloadQwenText();
       this.coordinator.released("needle");
       this.coordinator.released("smol-vision");
+      this.coordinator.released("qwen-text");
       let record: ProbeRecord | null | undefined;
       try {
         record = await this.smol!.measureBackend?.({ modelId: vision.modelId, modelRev: this.probeContext.modelRev, installedPath: this.paths(vision.modelId).installedPath, backend, corpusVersion: DEVICE_CORPUS_VERSION });
@@ -640,6 +923,7 @@ export class ApplicationAiService {
     this.matching = "use";
     await this.needle?.unload().catch(() => {});
     await this.smol?.unloadVisionModel().catch(() => {});
+    await this.unloadQwenText().catch(() => {});
     this.coordinator.completeReset();
     this.changed();
   }

@@ -21,7 +21,7 @@
  * keep their own operation gates (SmolVLM2 `RuntimeOperationGate`, Needle
  * locks) as defense in depth; they never grant residency by themselves.
  */
-export type ResidencyOwner = "needle" | "smol-vision" | "none";
+export type ResidencyOwner = "needle" | "smol-vision" | "qwen-text" | "llama" | "none";
 
 export class ResidencyBusyError extends Error {
   constructor(label: string) {

@@ -69,9 +69,35 @@ export interface ProductionTextBackend {
    * not documentation.
    */
   readonly taskRoles: readonly string[];
+  /**
+   * W-A multi-engine text: every installed model id behind this seam (e.g.
+   * Qwen prose + Needle structured). Availability holds when ANY listed
+   * model is installed and verified; omitted means exactly `modelId`.
+   * Provenance still names the real per-call producer (see
+   * ProductionTextCompletion).
+   */
+  readonly modelIds?: readonly string[];
   isReady(): Promise<boolean>;
-  completeText(input: string): Promise<string>;
-  completeStructured(taskId: string, input: string): Promise<string>;
+  /**
+   * W-A: the route signal arrives so engines with native cancellation
+   * (Qwen text) stop promptly; await-only engines (Needle) ignore it and
+   * rely on the route's cooperative race instead.
+   */
+  completeText(input: string, signal?: AbortSignal): Promise<string | ProductionTextCompletion>;
+  completeStructured(taskId: string, input: string, signal?: AbortSignal): Promise<string | ProductionTextCompletion>;
+}
+
+/**
+ * W-A multi-engine text completion: the producer behind one generation.
+ * Composite backends (Qwen prose + Needle structured behind `local-text`)
+ * return this so provenance names the real engine; single-engine backends
+ * and test fakes keep returning bare strings (resolved to the backend's
+ * own modelId/runtimeId).
+ */
+export interface ProductionTextCompletion {
+  readonly text: string;
+  readonly modelId: string;
+  readonly runtimeId: string;
 }
 
 /** Embedding backend seam: native Needle embedder in production. */
@@ -181,11 +207,11 @@ function servesRoles(taskRoles: readonly string[]): (taskId: string) => boolean 
 }
 
 function textRuntime(manager: OfflineModelManager, backend: ProductionTextBackend): AiRuntime {
-  const modelRevision = revisionFor(backend.modelId);
+  const ids = backend.modelIds ?? [backend.modelId];
   return {
     id: LOCAL_TEXT_RUNTIME_ID,
     kind: "model",
-    available: () => managerReady(manager, backend.modelId),
+    available: () => ids.some((modelId) => managerReady(manager, modelId)),
     servesTask: servesRoles(backend.taskRoles),
     invoke: async (input) => {
       if (!(await backend.isReady().catch(() => false))) return notReady(backend.modelId);
@@ -200,26 +226,33 @@ function textRuntime(manager: OfflineModelManager, backend: ProductionTextBacken
       if (prompt === undefined) {
         return { ok: false, error: "Text input needs a string or a text/prompt field.", denialReason: "INVALID_INPUT" };
       }
-      let raw: string;
+      let completion: ProductionTextCompletion;
       try {
         const native =
           interpreter.generation === "structured"
-            ? backend.completeStructured(input.taskId, prompt)
-            : backend.completeText(prompt);
+            ? backend.completeStructured(input.taskId, prompt, input.signal)
+            : backend.completeText(prompt, input.signal);
         // Busy-until-settle: the lease observes the raw native promise so
         // the runtime stays owned until native work settles, even when the
         // visible request already timed out.
         input.trackSettlement?.(native);
-        raw = await raceWithSignal(native, input.signal);
+        const produced = await raceWithSignal(native, input.signal);
+        // Single-engine backends return bare strings (resolved to their own
+        // provenance); composite backends name the real per-call producer.
+        completion =
+          typeof produced === "string"
+            ? { text: produced, modelId: backend.modelId, runtimeId: backend.runtimeId }
+            : produced;
       } catch (error) {
         if (error instanceof RouteCancelledError) return { ok: false, error: "Text generation cancelled.", denialReason: "CANCELLED" };
         return runtimeError(error);
       }
-      const interpreted = interpreter.interpret(raw, { taskId: input.taskId, input: input.input });
+      const interpreted = interpreter.interpret(completion.text, { taskId: input.taskId, input: input.input });
       if (!interpreted.ok) {
         return { ok: false, error: interpreted.error, denialReason: LOCAL_TASK_INVALID };
       }
-      return { ok: true, value: interpreted.value, modelId: backend.modelId, backend: LOCAL_TEXT_RUNTIME_ID, runtimeId: backend.runtimeId, ...(modelRevision === undefined ? {} : { modelRevision }) };
+      const modelRevision = revisionFor(completion.modelId);
+      return { ok: true, value: interpreted.value, modelId: completion.modelId, backend: LOCAL_TEXT_RUNTIME_ID, runtimeId: completion.runtimeId, ...(modelRevision === undefined ? {} : { modelRevision }) };
     },
   };
 }

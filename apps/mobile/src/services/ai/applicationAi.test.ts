@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApplicationAiService, compatibilityOf, DEVICE_CORPUS_VERSION, DEVICE_INCOMPATIBLE_REASON } from "./applicationAi";
+import { ApplicationAiService, compatibilityOf, DEVICE_CORPUS_VERSION, DEVICE_INCOMPATIBLE_REASON, type QwenTextBridge } from "./applicationAi";
 import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, type ModelDescriptor } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import { PROBE_VERSION } from "./deviceProbe";
@@ -50,7 +50,18 @@ function platform() {
     ...smol,
     collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["arm64-v8a"] }),
   };
-  return { disk, calls, driver, needle, smol: smolWithFacts };
+  // W-A: the LiteRT-LM text seam is a first-class injected bridge, faked
+  // here like Needle and Smol (production android builds the Capacitor
+  // FindbackQwenText bridge instead).
+  const qwenText: QwenTextBridge = {
+    bridgeName: "qwen3-litertlm-text",
+    isTextAvailable: async () => false,
+    loadTextModel: async () => { calls.push("qwen-load"); },
+    unloadTextModel: async () => { calls.push("qwen-unload"); },
+    generateText: async function* () { yield { textDelta: "qwen answer" }; },
+    cancelGeneration: async () => { calls.push("qwen-cancel"); },
+  };
+  return { disk, calls, driver, needle, smol: smolWithFacts, qwenText };
 }
 
 describe("application-owned AI", () => {
@@ -249,7 +260,7 @@ describe("application-owned AI", () => {
       minRamMb: 512,
       recommendedRamMb: 512,
       abis: ["arm64-v8a"],
-      downloadable: false,
+      downloadable: true,
     };
     const service = new ApplicationAiService({
       android: true,
@@ -374,7 +385,7 @@ describe("application-owned AI", () => {
       ...p.smol,
       collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["x86_64"] }),
     };
-    const service = new ApplicationAiService({ android: true, driver: p.driver, needle: p.needle, smol: x86smol });
+    const service = new ApplicationAiService({ android: true, driver: p.driver, needle: p.needle, smol: x86smol, qwenText: p.qwenText });
     await service.ready;
     await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(DEVICE_INCOMPATIBLE_REASON);
     expect(service.notice(NEEDLE_MODEL_ID)).toBe(DEVICE_INCOMPATIBLE_REASON);
@@ -392,18 +403,19 @@ describe("application-owned AI", () => {
       ...p.smol,
       collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["x86_64"] }),
     };
-    const second = new ApplicationAiService({ android: true, driver: p.driver, needle: p.needle, smol: x86smol });
+    const second = new ApplicationAiService({ android: true, driver: p.driver, needle: p.needle, smol: x86smol, qwenText: p.qwenText });
     await second.ready;
     expect(second.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
     await expect(second.embedNeedle(["umbrella"])).rejects.toThrow(/not installed and verified|not resident/);
   });
 
-  it.each([NEEDLE_MODEL_ID, SMOL_VISION_DESCRIPTOR.modelId])("refuses direct offline prose for %s without calling either native engine", async (modelId) => {
+  it.each([NEEDLE_MODEL_ID, SMOL_VISION_DESCRIPTOR.modelId])("refuses direct offline prose for non-chat engine %s without calling native engines", async (modelId) => {
     const p = platform();
     const extract = vi.spyOn(p.needle, "completeJson");
     const needleLoad = vi.spyOn(p.needle, "loadModel");
     const vision = vi.spyOn(p.smol, "describeImage");
     const visionLoad = vi.spyOn(p.smol, "loadVisionModel");
+    const qwenGenerate = vi.spyOn(p.qwenText, "generateText");
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
@@ -418,17 +430,20 @@ describe("application-owned AI", () => {
     } as Parameters<typeof adapter.complete>[0];
     const events = [];
     for await (const event of adapter.complete(request)) events.push(event);
+    // The offline chat seam is Qwen-only (explicit model id): a structured
+    // tool id or a vision id fails closed as a load failure, never as chat.
     expect(events).toEqual([
       { kind: "phase", phase: "queued", attempt: 1 },
-      { kind: "phase", phase: "failed", attempt: 1, message: "runtime_unavailable" },
-      { kind: "error", attempt: 1, code: "runtime_unavailable", retryable: false,
-        message: "the on-device-chat native runtime is not available on this device" },
+      { kind: "phase", phase: "failed", attempt: 1, message: "runtime_load_failed" },
+      { kind: "error", attempt: 1, code: "runtime_load_failed", retryable: false,
+        message: `unknown model ${modelId}` },
       { kind: "done", attempt: 1, stopReason: "error" },
     ]);
     expect(extract).not.toHaveBeenCalled();
     expect(needleLoad).not.toHaveBeenCalled();
     expect(vision).not.toHaveBeenCalled();
     expect(visionLoad).not.toHaveBeenCalled();
+    expect(qwenGenerate).not.toHaveBeenCalled();
     expect(resolveImage).not.toHaveBeenCalled();
     expect(service.residency).toMatchObject({ owner: "none", claimed: false, inflight: 0 });
     expect(service.manager.statusOf(modelId)?.checksumVerified).toBe(true);
