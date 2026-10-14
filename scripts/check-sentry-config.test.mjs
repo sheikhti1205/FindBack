@@ -3,11 +3,13 @@
  * TDD RED-first tests for scripts/check-sentry-config.mjs (S1).
  *
  * Run: `node --test scripts/check-sentry-config.test.mjs` from the repo root.
- * No dependencies beyond Node builtins. Never prints key material.
+ * Uses the root TypeScript parser for source hygiene. Never prints key material.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -23,6 +25,124 @@ import {
 } from "./check-sentry-config.mjs";
 
 const VALID = "https://abc123def456@o123456.ingest.sentry.io/7890123";
+const UPLOAD_TOKEN_NAME = ["SENTRY", "AUTH", "TOKEN"].join("_");
+const CLIENT_TOKEN_NAME = ["VITE", UPLOAD_TOKEN_NAME].join("_");
+const isHygieneFile = (file) => /\.(ts|tsx|js|mjs|cjs|json|jsonc|md|gradle|java|kt|xml|yml|yaml|env|properties|toml)$|(?:^|\/)\.env(?:\.[^/]+)?$/.test(file);
+
+function tokenHygieneViolations(text, file) {
+  const hits = new Set();
+  const forbiddenValue = (value) => value.trim() !== "" && !/^(<.*>|\[.*\])$/.test(value.trim());
+  if (/\.(?:[cm]?js|mjs|tsx?|jsonc?)$/.test(file)) {
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true,
+      /\.jsonc?$/.test(file) ? ts.ScriptKind.JSON : /\.tsx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const literal = (node) => {
+      if (!node) return undefined;
+      if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node)) return literal(node.expression);
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+      if (ts.isNumericLiteral(node) || ts.isBigIntLiteral(node)) return node.text;
+      if (node.kind === ts.SyntaxKind.TrueKeyword) return "true";
+      if (node.kind === ts.SyntaxKind.FalseKeyword) return "false";
+      return undefined;
+    };
+    const nameOf = (node) => {
+      if (!node) return undefined;
+      if (ts.isComputedPropertyName(node)) return literal(node.expression);
+      if (ts.isPropertyAccessExpression(node)) return node.name.text;
+      if (ts.isElementAccessExpression(node)) return literal(node.argumentExpression);
+      return ts.isIdentifier(node) ? node.text : literal(node);
+    };
+    const assignment = (name, value) => {
+      if (name === CLIENT_TOKEN_NAME) hits.add("client-token");
+      const raw = literal(value);
+      if (name === UPLOAD_TOKEN_NAME && raw !== undefined && forbiddenValue(raw)) hits.add("literal-token");
+    };
+    const forbiddenIndex = (node) => {
+      if (ts.isLiteralTypeNode(node) && literal(node.literal) === CLIENT_TOKEN_NAME) return true;
+      return ts.forEachChild(node, forbiddenIndex) === true;
+    };
+    const visit = (node) => {
+      // Inert diagnostic strings and negative fixture source are not env
+      // accesses. Inspect syntax, never execute expressions or read values.
+      if (ts.isIdentifier(node) && node.text === CLIENT_TOKEN_NAME) hits.add("client-token");
+      if (ts.isElementAccessExpression(node) && nameOf(node) === CLIENT_TOKEN_NAME) hits.add("client-token");
+      if (node.name && nameOf(node.name) === CLIENT_TOKEN_NAME) hits.add("client-token");
+      if (node.propertyName && nameOf(node.propertyName) === CLIENT_TOKEN_NAME) hits.add("client-token");
+      if (ts.isIndexedAccessTypeNode(node) && forbiddenIndex(node.indexType)) hits.add("client-token");
+      if (ts.isBindingElement(node)) assignment(nameOf(node.propertyName ?? node.name), node.initializer);
+      if (node.name && "initializer" in node) assignment(nameOf(node.name), node.initializer);
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) assignment(nameOf(node.left), node.right);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  } else {
+    // Configuration surfaces have actual key/value assignments. Secret-store
+    // references and documented placeholders are not embedded credentials.
+    const pattern = new RegExp(`(?<!\\$\\{)(["']?)\\b(${CLIENT_TOKEN_NAME}|${UPLOAD_TOKEN_NAME})\\1\\s*[:=](?!=)\\s*(?:"([^"]*)"|'([^']*)'|([^\\s#;,]+))`, "g");
+    const clientKey = new RegExp(`(["']?)\\b${CLIENT_TOKEN_NAME}\\1\\s*[:=](?!=)`);
+    const config = text.split(/\r?\n/).filter((line) => !/^\s*(?:#|\/\/|\*)/.test(line)).join("\n");
+    if (clientKey.test(config)) hits.add("client-token");
+    for (const match of config.matchAll(pattern)) {
+        const value = match[3] ?? match[4] ?? match[5] ?? "";
+        if (match[2] === CLIENT_TOKEN_NAME) hits.add("client-token");
+        else if (!value.startsWith("${{") && forbiddenValue(value)) hits.add("literal-token");
+    }
+  }
+  return [...hits];
+}
+
+describe("upload-token hygiene classifications", () => {
+  it("does not confuse diagnostics, comments, equality, or dynamic fixture keys with exposed secrets", () => {
+    for (const text of [
+      `// no ${CLIENT_TOKEN_NAME} in bundles`,
+      `if (text.includes("${CLIENT_TOKEN_NAME}")) throw new Error("forbidden");`,
+      `const negativeFixture = "# ${CLIENT_TOKEN_NAME} must never exist";`,
+      `const present = typeof source.${UPLOAD_TOKEN_NAME} === "string";`,
+      `const env = { ${UPLOAD_TOKEN_NAME}: tokenFromSecretStore };`,
+    ]) assert.deepEqual(tokenHygieneViolations(text, "probe.mjs"), []);
+    for (const text of [
+      `${UPLOAD_TOKEN_NAME}: \u0024{{ secrets.UPLOAD }}`,
+      `[ -n "\u0024{${UPLOAD_TOKEN_NAME}:-}" ] || exit 1`,
+    ]) assert.deepEqual(tokenHygieneViolations(text, "workflow.yml"), []);
+  });
+
+  it("still rejects literal upload credentials and actual client-prefixed accesses or configuration", () => {
+    for (const [file, text] of [
+      ["probe.mjs", `process.env.${UPLOAD_TOKEN_NAME} = "synthetic-fixture";`],
+      ["probe.mjs", `const env = { ${UPLOAD_TOKEN_NAME}: "synthetic-fixture" };`],
+      ["probe.json", `{ "${UPLOAD_TOKEN_NAME}": "synthetic-fixture" }`],
+      [".env.production", `${UPLOAD_TOKEN_NAME}=synthetic-fixture`],
+      ["workflow.yml", `${UPLOAD_TOKEN_NAME}: synthetic-fixture`],
+      ["probe.ts", `const token = import.meta.env.${CLIENT_TOKEN_NAME};`],
+      ["probe.ts", `const token = import.meta.env["${CLIENT_TOKEN_NAME}"];`],
+      [".env.production", `${CLIENT_TOKEN_NAME}=synthetic-fixture`],
+      ["workflow.yml", `${CLIENT_TOKEN_NAME}: \u0024{{ secrets.UPLOAD }}`],
+      ["workflow.yml", `"${CLIENT_TOKEN_NAME}": \u0024{{ secrets.UPLOAD }}`],
+      ["config.toml", `'${CLIENT_TOKEN_NAME}' = "synthetic-fixture"`],
+      ["probe.ts", `const { "${CLIENT_TOKEN_NAME}": token } = import.meta.env;`],
+      ["probe.ts", `class Config { "${CLIENT_TOKEN_NAME}" = tokenFromSecretStore; }`],
+      ["probe.ts", `class Config { ${UPLOAD_TOKEN_NAME} = "synthetic-fixture"; }`],
+      ["probe.ts", `function upload(${UPLOAD_TOKEN_NAME} = "synthetic-fixture") {}`],
+      ["probe.ts", `const ${UPLOAD_TOKEN_NAME} = "$synthetic-fixture";`],
+      ["workflow.yml", `${CLIENT_TOKEN_NAME}:\n  \u0024{{ secrets.UPLOAD }}`],
+      ["workflow.yml", `${UPLOAD_TOKEN_NAME}:\n  "synthetic-fixture"`],
+      ["probe.ts", `const { uploadToken: ${UPLOAD_TOKEN_NAME} = "synthetic-fixture" } = config;`],
+      ["probe.ts", `enum Config { ${UPLOAD_TOKEN_NAME} = "synthetic-fixture" }`],
+      ["probe.ts", `type UploadToken = ImportMetaEnv["${CLIENT_TOKEN_NAME}"];`],
+      ["probe.ts", `import { "${CLIENT_TOKEN_NAME}" as token } from "./env";`],
+      ["probe.ts", `const ${UPLOAD_TOKEN_NAME} = "synthetic-fixture" as const;`],
+      ["probe.ts", `const ${UPLOAD_TOKEN_NAME} = "synthetic-fixture" satisfies string;`],
+      ["probe.ts", `const ${UPLOAD_TOKEN_NAME} = ("synthetic-fixture")!;`],
+      ["probe.ts", `const ${UPLOAD_TOKEN_NAME} = 123;`],
+      ["probe.ts", `type Token = ImportMetaEnv[("${CLIENT_TOKEN_NAME}")];`],
+      ["probe.ts", `type Token = ImportMetaEnv["${CLIENT_TOKEN_NAME}" | "MODE"];`],
+    ]) assert.ok(tokenHygieneViolations(text, file).length > 0, `must reject ${file}`);
+  });
+
+  it("scans legacy env extensions as well as Vite mode-specific env files", () => {
+    for (const file of ["config.env", ".env", "apps/mobile/.env.production", "config.jsonc"])
+      assert.equal(isHygieneFile(file), true);
+  });
+});
 
 describe("validateSentryDsn", () => {
   it("accepts a well-formed https DSN and reports shapes only", () => {
@@ -204,24 +324,15 @@ describe("SENTRY_AUTH_TOKEN never appears as a value in repo files", () => {
     const hits = [];
     for (const file of files) {
       if (/(^|\/)(node_modules|\.git|dist|build|\.gradle)\//.test(file)) continue;
-      if (!/\.(ts|tsx|js|mjs|cjs|json|md|gradle|java|kt|xml|yml|yaml|env|properties|toml)$/.test(file))
+      if (!isHygieneFile(file))
         continue;
       let text;
       try {
-        text = execFileSync("git", ["show", `HEAD:${file}`], { cwd: root, encoding: "utf8" });
+        text = readFileSync(resolve(root, file), "utf8");
       } catch {
         continue;
       }
-      // Built at runtime so this very file carries no scannable literal (self-match).
-      const viteTokenPattern = new RegExp(["VITE", "SENTRY_AUTH_TOKEN"].join("_"));
-      if (viteTokenPattern.test(text)) hits.push(`${file}: VITE_-prefixed token (would leak to client)`);
-      // An actual assignment with a value (not a bare comment mention).
-      // GitHub `${{ secrets.* }}` / `${{ vars.* }}` references are safe —
-      // they resolve at runtime from the secret store, never a literal.
-      const assign = text.match(/SENTRY_AUTH_TOKEN\s*[:=]\s*(["']?)([^\s"'#]+)\1/);
-      if (assign && assign[2] && !/^(<.*>|\[.*\]|""|'')$/.test(assign[2]) && !assign[2].startsWith("${{")) {
-        hits.push(`${file}: assigns SENTRY_AUTH_TOKEN`);
-      }
+      for (const violation of tokenHygieneViolations(text, file)) hits.push(`${file}: ${violation}`);
     }
     assert.deepEqual(hits, []);
   });
