@@ -264,7 +264,9 @@ describe("AiModelsRoute consumer cards", () => {
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
     // Recommended Qwen row: consumer title, role summary, tier badge, download.
     expect(await screen.findByRole("heading", { name: /on-device assistant/i })).toBeTruthy();
-    expect(screen.getByText("Answers questions · Fills in reports")).toBeTruthy();
+    // Qwen-only install is a chat model: report filling belongs to Needle.
+    expect(screen.getByText("Answers questions")).toBeTruthy();
+    expect(screen.queryByText("Answers questions · Fills in reports")).toBeNull();
     expect(screen.getByRole("button", { name: "Download On-device assistant" })).toBeTruthy();
     // Tier badges separate Recommended from Advanced on the normal tier.
     expect(screen.getAllByText("Recommended").length).toBeGreaterThanOrEqual(3);
@@ -274,6 +276,14 @@ describe("AiModelsRoute consumer cards", () => {
     expect(screen.getAllByText(/needs verification before it can be offered/i).length).toBeGreaterThanOrEqual(1);
     // Never promise an action this build cannot perform.
     expect(screen.queryByText(/available for import/i)).toBeNull();
+    // Narrow screens: every Advanced pill is the SHORT state; the long legal
+    // reason wraps as body copy instead of widening the row.
+    expect(screen.getAllByText("Not offered").length).toBeGreaterThanOrEqual(8);
+    const reasons = view.container.querySelectorAll("[data-testid^='ai-reason-']");
+    expect(reasons.length).toBeGreaterThanOrEqual(8);
+    for (const reason of reasons) {
+      expect(reason.textContent ?? "").not.toBe("Not offered");
+    }
     expect(screen.queryByRole("button", { name: "Download Compact assistant" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Download Detailed photo helper (evaluation)" })).toBeNull();
     expectNormalTierCopy(view.container);

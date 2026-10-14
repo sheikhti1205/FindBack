@@ -268,9 +268,8 @@ export class ApplicationAiService {
           runtimeId: QWEN_TEXT_RUNTIME_ID,
           taskRoles: textRoles,
           isReady: () => this.ensureAnyText(),
-          // Prose tasks (answer-help, summaries): Qwen-first on the
-          // LiteRT-LM text resident; Needle remains the fallback so builds
-          // without the text plugin keep today's behavior.
+          // Prose tasks use the qualified LiteRT-LM text resident. A tool
+          // model is never a substitute for an uninstalled prose model.
           completeText: (input: string, signal?: AbortSignal) => this.completeProseText(input, signal),
           // Tool-constrained completion returning the slot envelope string
           // (tasks with JSON contracts). Needle is the proven tool model:
@@ -278,6 +277,11 @@ export class ApplicationAiService {
           // (see STRUCTURED_STRATEGIES) — never one generic schema borrowed
           // across tasks.
           completeStructured: (taskId: string, input: string, signal?: AbortSignal) => this.completeNeedleStructured(taskId, input, signal),
+          // Structured (tool-constrained) roles are served ONLY by Needle:
+          // gating their availability on Needle keeps a Qwen-only install
+          // from advertising report/search/classification it cannot serve.
+          structuredModelId: NEEDLE_MODEL_ID,
+          proseModelId: QWEN_TEXT_MODEL_ID,
         },
         embedding: this.needle ? { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, taskRoles: needleRoles, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) } : undefined,
       } : {}),
@@ -529,28 +533,13 @@ export class ApplicationAiService {
     return this.ensureNeedle().catch(() => false);
   }
   /**
-   * Prose generation (answer-help, summaries): Qwen-first on the LiteRT-LM
-   * text resident with thought-stripping and the epoch guard; Needle stays
-   * the fallback so builds without the text plugin keep today's behavior.
+    * Prose generation uses the qualified LiteRT-LM text resident with
+    * thought-stripping and the epoch guard. Needle is tool-only.
    * Provenance always names the real producer.
    */
   private async completeProseText(input: string, signal?: AbortSignal): Promise<ProductionTextCompletion> {
-    if (this.qwenText !== undefined) {
-      try {
-        const text = await this.collectQwenText(input, signal, 256);
-        return { text, modelId: QWEN_TEXT_MODEL_ID, runtimeId: QWEN_TEXT_RUNTIME_ID };
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        // Fall back to Needle ONLY when Qwen was never set up (not
-        // installed/verified). A real Qwen failure (load, compat,
-        // generation) stays fail-closed — never silently swapped.
-        const neverSetUp = /not installed and verified/i.test(error instanceof Error ? error.message : "");
-        if (!neverSetUp || this.needle === undefined) throw error;
-      }
-    }
-    if (this.needle === undefined) throw new Error("No qualified on-device text runtime is installed");
-    await this.ensureNeedle();
-    return { text: await this.needle.completeJson(input), modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID };
+    const text = await this.collectQwenText(input, signal, 256);
+    return { text, modelId: QWEN_TEXT_MODEL_ID, runtimeId: QWEN_TEXT_RUNTIME_ID };
   }
   /** Tool-constrained structured generation stays on Needle (the proven tool model). */
   private async completeNeedleStructured(taskId: string, input: string, _signal?: AbortSignal): Promise<ProductionTextCompletion> {
@@ -907,14 +896,26 @@ export class ApplicationAiService {
    * underneath live native code. Downloads, pins, and probe records
    * survive — logout never wipes models.
    */
+  private accountResetCleanup: Promise<void> | undefined;
+
   async resetForAccount(timeoutMs = RESET_SIGNOUT_WAIT_MS): Promise<void> {
     this.coordinator.reset();
+    // Rapid SDK replacements share one engine cleanup. Independent unloads
+    // would let the first reset lower the barrier while another is still
+    // tearing down engines beneath the next account's inference.
+    const cleanup = this.accountResetCleanup ??= this.deferredResetCleanup().then(() => {
+      // Retire the shared operation before releasing the gate or notifying
+      // subscribers, so a reset queued by completion starts fresh cleanup.
+      this.accountResetCleanup = undefined;
+      this.coordinator.completeReset();
+      this.changed();
+    }, (error: unknown) => {
+      this.accountResetCleanup = undefined;
+      throw error; // Unexpected cleanup failure leaves the gate closed.
+    });
+    void cleanup.catch(() => {});
     if (await this.coordinator.whenNativeIdle(timeoutMs)) {
-      await this.finishResetCleanup();
-    } else {
-      // Escape hatch fired: engines may still be alive. Do NOT unload;
-      // arrange cleanup when settlement eventually occurs.
-      void this.deferredResetCleanup().catch(() => {});
+      await cleanup;
     }
   }
 
@@ -924,8 +925,6 @@ export class ApplicationAiService {
     await this.needle?.unload().catch(() => {});
     await this.smol?.unloadVisionModel().catch(() => {});
     await this.unloadQwenText().catch(() => {});
-    this.coordinator.completeReset();
-    this.changed();
   }
 
   private async deferredResetCleanup(): Promise<void> {

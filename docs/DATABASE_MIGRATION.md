@@ -475,6 +475,8 @@ intentionally not used — it would also block the owner.
   Postgres in CI (`phone-verification-sql` job). At the time this migration
   was the repo head, the marker was `BACKEND_SCHEMA_VERSION = "20261006120000"`
   (historical). The constant has since advanced with the newest migration and
-  now reads `"20261013020000"` (`apps/mobile/src/services/appCapabilities.ts`);
+  now reads `"20261014010000"` (`apps/mobile/src/services/appCapabilities.ts`),
+  the account-deletion storage fence
+  (`20261014010000_account_deletion_storage_fence.sql`);
   `appCapabilities.test.ts` parity-enforces it against the newest migration,
   so treat any literal here as era-specific and the code constant as authoritative.

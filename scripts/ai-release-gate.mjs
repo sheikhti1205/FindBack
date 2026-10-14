@@ -67,6 +67,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { parseModelProfiles, validateProfiles } from "./check-ai-manifest.mjs";
 import { validatePromotion } from "./check-ai-promotion.mjs";
 
@@ -324,9 +325,12 @@ export const REQUIRED_PHOTO_ANALYSIS_TRUTH_RES = [
  * - the default model is chosen by catalogue order instead of explicit
  *   policy.
  */
-const DESCRIPTOR_RUNTIME_ALLOWLIST = ["needle-cact", "smolvlm2-litertlm"];
+// Qwen's native text bridge is wired through the shared residency owner.
+// This allowlist approves wiring, not physical-device qualification.
+const DESCRIPTOR_RUNTIME_ALLOWLIST = ["needle-cact", "smolvlm2-litertlm", "qwen3-litertlm-text"];
 const DESCRIPTOR_FORMAT_ALLOWLIST = ["cact", "litertlm", "gguf", "tflite"];
 const DESCRIPTOR_ABI_ALLOWLIST = ["armeabi-v7a", "arm64-v8a", "x86_64"];
+const DESCRIPTOR_DOWNLOAD_LICENSE_ALLOWLIST = ["redistributable-cactus", "redistributable-apache-2.0"];
 
 export function validateDescriptorRegistry({ descriptorsSource, serviceSource, modelsSource, runtimesSource, orchestratorSource, interpretersSource, routeValidationSource }) {
   const errors = [];
@@ -336,12 +340,24 @@ export function validateDescriptorRegistry({ descriptorsSource, serviceSource, m
     }
   }
   const descriptors = descriptorsSource ?? "";
+  const source = ts.createSourceFile("modelDescriptors.ts", descriptors, ts.ScriptTarget.Latest, true);
   // Descriptors reference `*_RUNTIME_ID` constants: resolve them from the
   // same source before allowlisting, so an unapproved runtime cannot hide
   // behind an identifier.
-  const constStrings = new Map(
-    [...descriptors.matchAll(/(?:export\s+)?const\s+([A-Za-z0-9_]+)\s*=\s*"([^"]+)"/g)].map((match) => [match[1], match[2]]),
-  );
+  const constStrings = new Map();
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    if (!(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      let init = declaration.initializer;
+      if (init && ts.isAsExpression(init)) init = init.expression;
+      if (init && ts.isStringLiteral(init) && ts.isIdentifier(declaration.name)) {
+        constStrings.set(declaration.name.text, init.text);
+      }
+    }
+  }
+  const resolveString = (node) => node && ts.isStringLiteral(node) ? node.text :
+    node && ts.isIdentifier(node) ? constStrings.get(node.text) : undefined;
   const resolveRuntime = (raw) => {
     if (raw.startsWith('"')) return raw.slice(1, -1);
     const resolved = constStrings.get(raw);
@@ -374,14 +390,105 @@ export function validateDescriptorRegistry({ descriptorsSource, serviceSource, m
       errors.push(`descriptor-registry: ABI "${abi}" is not a known Android ABI`);
     }
   }
-  const blocks = (descriptors.match(/_DESCRIPTOR:\s*ModelDescriptor\s*=/g) ?? []).length;
-  if (blocks === 0) {
+  // Parse, do not execute, the source. Global field/trust counts let unrelated
+  // Advanced rows compensate for a missing field or an untrusted download.
+  const blocks = [];
+  const pinBindings = new Map();
+  // A pin reference may only come from the canonical profilePin(modelId)
+  // binding, never an executable expression supplied as descriptor metadata.
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    if (!(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      const init = declaration.initializer;
+      if (init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) &&
+          init.expression.text === "profilePin" && init.arguments.length === 1 &&
+          ts.isIdentifier(init.arguments[0])) {
+        pinBindings.set(declaration.name.getText(source), init.arguments[0].getText(source));
+      }
+    }
+  }
+  const isPinReference = (node, field, modelId) => node && ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) && node.name.text === field &&
+    pinBindings.get(node.expression.text) === modelId;
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      const name = declaration.name.getText(source);
+      if (declaration.type?.getText(source) !== "ModelDescriptor" && !name.endsWith("_DESCRIPTOR")) continue;
+      if (!declaration.initializer || !ts.isObjectLiteralExpression(declaration.initializer)) {
+        errors.push(`descriptor-registry: ${name} is not an inspectable descriptor literal`);
+        continue;
+      }
+      const properties = new Map(declaration.initializer.properties.filter(ts.isPropertyAssignment)
+        .map((property) => [property.name.getText(source).replace(/^['"]|['"]$/g, ""), property.initializer]));
+      if (properties.size !== declaration.initializer.properties.length) {
+        errors.push(`descriptor-registry: ${name} has spread, duplicate, or unresolved descriptor metadata`);
+      }
+      if (declaration.initializer.properties.some((property) => !ts.isPropertyAssignment(property) ||
+          (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name)))) {
+        errors.push(`descriptor-registry: ${name} property names must be literal, not computed`);
+      }
+      blocks.push({ name, properties });
+    }
+  }
+  if (source.parseDiagnostics.length > 0) errors.push("descriptor-registry: descriptor source does not parse");
+  if (blocks.length === 0) {
     errors.push("descriptor-registry: no production descriptors found (registry gutted?)");
   }
-  for (const field of ["revision:", "sha256:", 'url: "http', "fileName:", "bytes:", "capabilities: [", "taskRoles:", "minRamMb:", 'maturity: "', 'license: "', "consumerTitle:", "consumerDetail:"]) {
-    const count = descriptors.split(field).length - 1;
-    if (count < blocks) {
-      errors.push(`descriptor-registry: descriptor field "${field}" missing on at least one descriptor`);
+  let downloadable = 0;
+  for (const { name, properties } of blocks) {
+    for (const field of ["modelId", "runtimeId", "format", "revision", "sha256", "url", "fileName", "bytes", "capabilities", "taskRoles", "minRamMb", "maturity", "license", "consumerTitle", "consumerDetail", "downloadable", "trust", "abis"]) {
+      if (!properties.has(field)) errors.push(`descriptor-registry: ${name} descriptor field "${field}" missing`);
+    }
+    const runtime = resolveString(properties.get("runtimeId"));
+    if (!DESCRIPTOR_RUNTIME_ALLOWLIST.includes(runtime)) {
+      errors.push(`descriptor-registry: ${name} runtimeId is not an approved literal or canonical constant`);
+    }
+    const format = resolveString(properties.get("format"));
+    if (!DESCRIPTOR_FORMAT_ALLOWLIST.includes(format)) {
+      errors.push(`descriptor-registry: ${name} format is not an approved artifact format`);
+    }
+    const flag = properties.get("downloadable");
+    if (flag?.kind !== ts.SyntaxKind.TrueKeyword && flag?.kind !== ts.SyntaxKind.FalseKeyword) {
+      errors.push(`descriptor-registry: ${name} downloadable must be an inspectable boolean literal`);
+    }
+    const license = properties.get("license");
+    if (!license || !ts.isStringLiteral(license) || !license.text.trim()) {
+      errors.push(`descriptor-registry: ${name} license is missing or unresolved`);
+    }
+    if (flag?.kind !== ts.SyntaxKind.TrueKeyword) continue;
+    downloadable++;
+    if (!license || !ts.isStringLiteral(license) || !DESCRIPTOR_DOWNLOAD_LICENSE_ALLOWLIST.includes(license.text)) {
+      errors.push(`descriptor-registry: ${name} download requires an approved redistributable license`);
+    }
+    const modelId = properties.get("modelId")?.getText(source);
+    if (!modelId) errors.push(`descriptor-registry: ${name} modelId is missing`);
+    for (const field of ["sha256", "revision"]) {
+      const pin = properties.get(field);
+      const literal = pin && ts.isStringLiteral(pin) && (field === "sha256" ? /^[a-f0-9]{64}$/i : /^[a-f0-9]{40}$/i).test(pin.text);
+      if (!literal && !isPinReference(pin, field, modelId)) {
+        errors.push(`descriptor-registry: ${name} ${field} is not an immutable artifact pin`);
+      }
+    }
+    const trust = properties.get("trust");
+    if (!trust || !ts.isStringLiteral(trust) || trust.text !== "curated") {
+      errors.push(`descriptor-registry: ${name} downloadable entry is not curated (untrusted models must never ride the catalogue)`);
+    }
+    const url = properties.get("url");
+    // Pinned template URLs and quoted URLs are both valid. No arbitrary
+    // executable expression may masquerade as a download identity.
+    const urlHead = url && (ts.isStringLiteral(url) || ts.isNoSubstitutionTemplateLiteral(url))
+      ? url.text : url && ts.isTemplateExpression(url) ? url.head.text : "";
+    if (!urlHead.startsWith("https://")) errors.push(`descriptor-registry: ${name} url must identify an HTTPS download`);
+    if (url && ts.isTemplateExpression(url) && url.templateSpans.some((span) =>
+      !isPinReference(span.expression, "revision", modelId))) {
+      errors.push(`descriptor-registry: ${name} url template may interpolate only its validated revision pin`);
+    }
+    const abis = properties.get("abis");
+    if (!abis || !ts.isArrayLiteralExpression(abis) || abis.elements.length === 0 ||
+        abis.elements.some((abi) => !ts.isStringLiteral(abi) || !DESCRIPTOR_ABI_ALLOWLIST.includes(abi.text))) {
+      errors.push(`descriptor-registry: ${name} has no verified executable ABI list`);
     }
   }
   // Task roles may be inline or `*_ROLES` constants: every named role must
@@ -399,13 +506,8 @@ export function validateDescriptorRegistry({ descriptorsSource, serviceSource, m
       }
     }
   }
-  const downloadable = (descriptors.match(/downloadable:\s*true/g) ?? []).length;
-  const curated = (descriptors.match(/trust:\s*"curated"/g) ?? []).length;
   if (downloadable === 0) {
     errors.push("descriptor-registry: production catalogue is empty (nothing downloadable)");
-  }
-  if (curated < downloadable) {
-    errors.push("descriptor-registry: a downloadable entry is not curated (untrusted models must never ride the catalogue)");
   }
   const service = serviceSource ?? "";
   if (!/default:\s*\n?\s*throw new Error\(`No production runtime adapter/.test(service)) {

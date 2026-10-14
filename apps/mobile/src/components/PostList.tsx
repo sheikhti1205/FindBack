@@ -100,7 +100,8 @@ export function PostList({
   }, [items]);
 
   return (
-    <AnimatePresence initial={false}>
+    <div className="relative">
+    <AnimatePresence initial={false} mode="popLayout">
       {state === "loading" && (
         <motion.div
           key="loading"
@@ -218,5 +219,6 @@ export function PostList({
         </motion.div>
       )}
     </AnimatePresence>
+    </div>
   );
 }

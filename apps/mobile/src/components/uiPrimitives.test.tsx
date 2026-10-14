@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import {
   CommentSkeleton,
   DetailSkeleton,
@@ -57,7 +57,7 @@ describe("uiPrimitives", () => {
     expect(document.querySelectorAll("[data-testid='comment-skeleton-row']").length).toBe(2);
   });
 
-  it("StateSwap swaps keyed states without stacking", async () => {
+  it("StateSwap makes the entering keyed state available immediately", () => {
     const { rerender } = render(
       <StateSwap stateKey="a">
         <p>first</p>
@@ -69,9 +69,9 @@ describe("uiPrimitives", () => {
         <p>second</p>
       </StateSwap>,
     );
-    // mode="wait" lets the exiting state leave first; the entering state
-    // arrives within the fast token budget.
-    await waitFor(() => expect(screen.getByText("second")).toBeTruthy());
+    // The entering state is available immediately, overlapping the outgoing
+    // one. Browser frame/scroll geometry is covered by scripts/ui-review.
+    expect(screen.getByText("second")).toBeTruthy();
   });
 
   it("EnterReveal renders content with first-reveal stagger", () => {

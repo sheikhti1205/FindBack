@@ -147,6 +147,33 @@ describe("registerProductionRuntimes", () => {
     expect(registry.get(LOCAL_VISION_RUNTIME_ID)?.available()).toBe(true);
   });
 
+  it("advertises structured roles only while the structured engine is installed", () => {
+    const manager = new OfflineModelManager([TEXT_PIN, EMBEDDING_PIN]);
+    install(manager, TEXT_PIN);
+    const registry = new RuntimeRegistry();
+    registerProductionRuntimes(registry, {
+      manager,
+      text: {
+        modelId: TEXT_PIN.modelId,
+        modelIds: [TEXT_PIN.modelId, EMBEDDING_PIN.modelId],
+        runtimeId: "test-text",
+        taskRoles: TEXT_ROLES,
+        structuredModelId: EMBEDDING_PIN.modelId,
+        isReady: async () => true,
+        completeText: async (input: string) => input,
+        completeStructured: async () => "{}",
+      },
+    });
+    const runtime = registry.get(LOCAL_TEXT_RUNTIME_ID);
+    // Prose install alone: chat is served, structured extraction is not.
+    expect(runtime?.available()).toBe(true);
+    expect(runtime?.servesTask?.("answer-help")).toBe(true);
+    expect(runtime?.servesTask?.("extract-report-fields")).toBe(false);
+    // Installing the structured engine opens the structured role.
+    install(manager, EMBEDDING_PIN);
+    expect(runtime?.servesTask?.("extract-report-fields")).toBe(true);
+  });
+
   it("fails closed with MODEL_NOT_READY when the resident dies between availability and invoke", async () => {
     let live = true;
     const manager = new OfflineModelManager([TEXT_PIN]);

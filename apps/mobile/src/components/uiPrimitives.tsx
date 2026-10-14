@@ -231,11 +231,16 @@ export function StateSwap({
   stateKey: string;
   children: ReactNode;
 }) {
-  // Overlapping crossfade (same contract as PostList): the entering state
-  // is present in the same commit — never a blank frame waiting for an
-  // exit to finish.
+  // Overlapping crossfade: the entering state is present in the same commit
+  // — never a blank frame waiting for an exit to finish. `popLayout` takes
+  // the exiting state out of normal flow (measured, absolutely positioned),
+  // so the two are never stacked in flow: without it the container briefly
+  // grows to the SUM of both heights (a visible jump on phone widths).
+  // The positioning boundary also keeps exits inside scrolling ancestors:
+  // without it absolute positioning loses a static scroll parent's offset.
   return (
-    <AnimatePresence initial={false}>
+    <div className="relative">
+    <AnimatePresence initial={false} mode="popLayout">
       <motion.div
         key={stateKey}
         data-testid="state-swap"
@@ -248,6 +253,7 @@ export function StateSwap({
         {children}
       </motion.div>
     </AnimatePresence>
+    </div>
   );
 }
 

@@ -129,10 +129,17 @@ function ConsumerCard({
     : compatibility.compatible
       ? undefined
       : DEVICE_INCOMPATIBLE_REASON;
-  const stateLine = advanced || !descriptor.downloadable
+  // Not-offered rows keep a SHORT pill state and carry the full legal /
+  // verification reason as wrapping body copy. Putting the whole sentence in
+  // the pill forced a wide, unshrinkable row that overflowed phone widths.
+  const notOffered = advanced || !descriptor.downloadable;
+  const reasonNote = notOffered
     ? ((descriptor.distributionNote ?? "").trim() !== ""
       ? (descriptor.distributionNote as string)
       : "Not offered as a download.")
+    : null;
+  const stateLine = notOffered
+    ? "Not offered"
     : !compatibility.compatible && service.android
       ? DEVICE_INCOMPATIBLE_REASON
       : ready
@@ -146,9 +153,10 @@ function ConsumerCard({
               : download === "verifying" || download === "queued"
                 ? "Getting ready…"
                 : "Not installed";
-  // The status pill already carries the state line; never repeat it as a
-  // notice (e.g. a storage shortfall reads "Needs more storage" once).
-  const showNotice = notice !== null && !ready && notice !== stateLine;
+  // The status pill and the reason copy already carry the state; never repeat
+  // either as a notice (e.g. a storage shortfall reads "Needs more storage"
+  // once).
+  const showNotice = notice !== null && !ready && !notOffered && notice !== stateLine;
   const showActions = !advanced && descriptor.downloadable;
 
   return (
@@ -193,6 +201,11 @@ function ConsumerCard({
             style={{ width: `${percent}%` }}
           />
         </div>
+      ) : null}
+      {reasonNote !== null ? (
+        <p data-testid={`ai-reason-${modelId}`} className="text-xs text-on-surface-variant">
+          {reasonNote}
+        </p>
       ) : null}
       {showNotice ? (
         <p role="status" className="text-sm text-on-surface-variant">

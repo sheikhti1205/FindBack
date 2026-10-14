@@ -33,10 +33,11 @@ describe("uiModelRoles (master plan §8)", () => {
     expect(qualifiedUiRolesForOfflineModel(SMOL_VISION_MODEL_ID)).toEqual(["vision"]);
   });
 
-  it("qualifies Qwen3 text as Chat + Tools from its descriptor roles, never Vision", () => {
+  it("qualifies Qwen3 text as Chat only: structured extraction lives on Needle", () => {
     const roles = qualifiedUiRolesForOfflineModel(QWEN_TEXT_MODEL_ID);
     expect(roles).toContain("chat");
-    expect(roles).toContain("tools");
+    // Qwen-only install must NOT claim report filling it cannot serve.
+    expect(roles).not.toContain("tools");
     expect(roles).not.toContain("vision");
     expect(roles).not.toContain("embeddings");
   });

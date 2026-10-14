@@ -85,6 +85,16 @@ export interface ProductionTextBackend {
    */
   completeText(input: string, signal?: AbortSignal): Promise<string | ProductionTextCompletion>;
   completeStructured(taskId: string, input: string, signal?: AbortSignal): Promise<string | ProductionTextCompletion>;
+  /**
+   * Model id that serves STRUCTURED (tool-constrained) tasks behind this
+   * seam. When set, structured roles are advertised only while that model is
+   * installed AND verified — a prose-only install (e.g. Qwen alone) must
+   * never advertise a structured role the seam cannot serve. Omitted keeps
+   * the legacy union behavior for single-engine/test backends.
+   */
+  readonly structuredModelId?: string;
+  /** Qualified prose producer, independently installed from the tool model. */
+  readonly proseModelId?: string;
 }
 
 /**
@@ -212,7 +222,18 @@ function textRuntime(manager: OfflineModelManager, backend: ProductionTextBacken
     id: LOCAL_TEXT_RUNTIME_ID,
     kind: "model",
     available: () => ids.some((modelId) => managerReady(manager, modelId)),
-    servesTask: servesRoles(backend.taskRoles),
+    servesTask: (taskId: string) => {
+      if (!backend.taskRoles.includes(taskId)) return false;
+      // Structured roles belong to the structured engine specifically: a
+      // prose-only install must not advertise a role the seam cannot serve.
+      if (backend.structuredModelId !== undefined && interpreterFor(taskId)?.generation === "structured") {
+        return managerReady(manager, backend.structuredModelId);
+      }
+      if (backend.proseModelId !== undefined && interpreterFor(taskId)?.generation === "raw") {
+        return managerReady(manager, backend.proseModelId);
+      }
+      return true;
+    },
     invoke: async (input) => {
       if (!(await backend.isReady().catch(() => false))) return notReady(backend.modelId);
       // The task interpreter owns generation mode AND interpretation: the

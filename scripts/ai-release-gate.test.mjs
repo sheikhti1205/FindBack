@@ -400,6 +400,67 @@ describe("validateDescriptorRegistry", () => {
     ok(errors.some((e) => e.includes("not curated")), `expected curation complaint, got: ${errors}`);
   });
 
+  it("cannot borrow required fields from unrelated Advanced descriptors", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      descriptorsSource: REAL.descriptorsSource.replace('consumerTitle: "Local text tools",', ""),
+    });
+    ok(errors.some((e) => e.includes("NEEDLE_DESCRIPTOR") && e.includes("consumerTitle")), `expected per-model field complaint, got: ${errors}`);
+  });
+
+  it("accepts the pinned Qwen template URL but refuses a missing or insecure download URL", () => {
+    deepStrictEqual(validateDescriptorRegistry(base()), []);
+    for (const replacement of ['url: "",', 'url: "http://example.invalid/model",']) {
+      const errors = validateDescriptorRegistry({
+        ...base(),
+        descriptorsSource: REAL.descriptorsSource.replace(/url: `https:[^\n]+/, replacement),
+      });
+      ok(errors.some((e) => e.includes("QWEN_TEXT_DESCRIPTOR") && e.includes("url")), `expected Qwen URL complaint, got: ${errors}`);
+    }
+  });
+
+  it("cannot borrow executable ABIs from another model", () => {
+    const errors = validateDescriptorRegistry({
+      ...base(),
+      descriptorsSource: REAL.descriptorsSource.replace('abis: ["arm64-v8a"],', "abis: [],"),
+    });
+    ok(errors.some((e) => e.includes("NEEDLE_DESCRIPTOR") && e.includes("ABI")), `expected per-model ABI complaint, got: ${errors}`);
+  });
+
+  it("fails closed on expressions, spreads, and untyped descriptor metadata", () => {
+    const mutations = [
+      REAL.descriptorsSource.replace("downloadable: true", "downloadable: (true)").replace('trust: "curated"', 'trust: "imported"'),
+      REAL.descriptorsSource.replace('trust: "curated",', 'trust: "curated", ...{ trust: "imported" },'),
+      REAL.descriptorsSource.replace('trust: "curated",', 'trust: "curated", ["tr" + "ust"]: "imported",'),
+      REAL.descriptorsSource.replace('license: "redistributable-cactus",', 'license: "redistributable-cactus", ["li" + "cense"]: "lfm-1.0-eval-only",'),
+      REAL.descriptorsSource.replace('runtimeId: NEEDLE_RUNTIME_ID,', 'runtimeId: (() => "unapproved-runtime")(),'),
+      REAL.descriptorsSource.replace('format: "cact",', 'format: (() => "unapproved-format")(),'),
+      REAL.descriptorsSource.replace('${QWEN_PIN.revision}', '${untrustedFunction()}'),
+      REAL.descriptorsSource.replace('license: "redistributable-cactus"', 'license: ""'),
+      REAL.descriptorsSource.replace('license: "redistributable-cactus"', 'license: "redistributable-lfm-1.0"'),
+      REAL.descriptorsSource.replace("sha256: NEEDLE_PIN.sha256", 'sha256: ""'),
+      REAL.descriptorsSource.replace("NEEDLE_DESCRIPTOR: ModelDescriptor", "NEEDLE_DESCRIPTOR").replace('trust: "curated"', 'trust: "imported"'),
+    ];
+    for (const descriptorsSource of mutations) {
+      const errors = validateDescriptorRegistry({ ...base(), descriptorsSource });
+      ok(errors.length > 0, "hostile mutation must fail closed");
+    }
+  });
+
+  it("never resolves mutable runtime or format aliases as canonical constants", () => {
+    for (const kind of ["let", "var"]) {
+      for (const [field, original, initial] of [
+        ["runtimeId", "NEEDLE_RUNTIME_ID", "needle-cact"],
+        ["format", '"cact"', "cact"],
+      ]) {
+        const descriptorsSource = `${kind} mutableAlias = "${initial}"; mutableAlias = "unapproved";\n` +
+          REAL.descriptorsSource.replace(`${field}: ${original},`, `${field}: mutableAlias,`);
+        const errors = validateDescriptorRegistry({ ...base(), descriptorsSource });
+        ok(errors.some((e) => e.includes("NEEDLE_DESCRIPTOR") && e.includes(field)), `mutable ${kind} ${field} must fail closed`);
+      }
+    }
+  });
+
   it("fails when removal loses its fail-closed unknown-runtime default", () => {
     const errors = validateDescriptorRegistry({
       ...base(),

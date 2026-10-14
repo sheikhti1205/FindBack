@@ -12,7 +12,9 @@
  * Current qualification:
  * - Needle3 (extract-*, classify-category, embed-texts) → Tools + Embeddings.
  * - SmolVLM2 (analyze-image, ground-objects) → Vision only.
- * - Qwen3 0.6B (answer-help + extraction roles) → Chat + Tools.
+ * - Qwen3 0.6B (answer-help) → Chat only. Structured extraction/
+ *   classification runs on Needle's tool schemas, so Qwen does not
+ *   advertise the extraction roles.
  * - A VLM advertising answer-help AND analyze-image → Chat + Vision.
  */
 import { NEEDLE_MODEL_ID } from "./needle/embedder";

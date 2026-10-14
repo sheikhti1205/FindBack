@@ -230,23 +230,29 @@ export const SMOL_VISION_DESCRIPTOR: ModelDescriptor = {
 };
 
 /**
- * Qwen3 0.6B dynamic INT4 — first-class on-device text/chat/extraction.
+ * Qwen3 0.6B dynamic INT4 — first-class on-device assistant text.
  * Pins are REUSED from the lab profile (profilePin), never duplicated:
  * revision a3c5d805 + sha 03e7da1e live in modelProfiles.ts. Bytes
  * (344,671,744) and the upstream repo/file come from the lab lane records
  * (docs/runbooks/native-model-run.md, benchmark/labCatalog.ts). The URL
  * follows the same Hugging Face resolve scheme as the SmolVLM2 descriptor.
- * Task roles mirror the lab catalogue's evidence-backed set, so Chat
- * qualification (answer-help) derives from the same authority as routing.
+ * Chat qualification (answer-help) derives from the same authority as
+ * routing; see QWEN_TASK_ROLES for why the lab profile's extraction roles
+ * are deliberately NOT advertised in production.
  */
 export const QWEN_TEXT_MODEL_ID = "qwen3-0.6b-dynamic-int4";
 const QWEN_PIN = profilePin(QWEN_TEXT_MODEL_ID);
-const QWEN_TASK_ROLES: readonly AiTaskId[] = [
-  "answer-help",
-  "extract-report-fields",
-  "extract-search-filters",
-  "classify-intent",
-];
+/**
+ * Qwen3 0.6B is the prose assistant. It advertises ONLY `answer-help`.
+ *
+ * The extraction/classification roles are STRUCTURED (tool-constrained)
+ * tasks served by Needle's `record_item`/`search_filters`/`item_category`
+ * schemas — the production seam wires `completeStructured` to Needle, and
+ * Qwen runs prose completion. Advertising those roles here made a Qwen-only
+ * install claim "Fills in reports" while the route actually needed Needle,
+ * so the claim was removed. Roles expand with evidence, never with hope.
+ */
+const QWEN_TASK_ROLES: readonly AiTaskId[] = ["answer-help"];
 
 export const QWEN_TEXT_DESCRIPTOR: ModelDescriptor = {
   modelId: QWEN_TEXT_MODEL_ID,

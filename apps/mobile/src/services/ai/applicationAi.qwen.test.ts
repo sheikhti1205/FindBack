@@ -121,7 +121,20 @@ describe("Qwen production runtime", () => {
     }
   });
 
-  it("falls back to Needle prose on builds without the text plugin (today's behavior preserved)", async () => {
+  it("does not serve structured extraction when only Qwen is installed", async () => {
+    const p = platform();
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(QWEN_TEXT_MODEL_ID);
+    const result = await service.route("extract-report-fields", { prompt: "title: red umbrella" }, { traceId: "trace-qwen-only-structured" });
+    // Report filling is a Needle tool path. A Qwen-only install must fail
+    // closed (NO_RUNTIME) instead of advertising a capability it cannot serve.
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.denialReason).toBe("NO_RUNTIME");
+    expect(p.calls).not.toContain("needle-load");
+  });
+
+  it("keeps Needle structured tasks working on builds without the text plugin", async () => {
     const p = platform();
     const { qwenText: _dropped, ...rest } = p;
     void _dropped;
@@ -130,6 +143,17 @@ describe("Qwen production runtime", () => {
     await service.download(NEEDLE_MODEL_ID);
     const result = await service.route("extract-report-fields", { prompt: "title: keys" }, { traceId: "trace-needle-only" });
     expect(result.ok).toBe(true);
+  });
+
+  it("does not turn a Needle-only install into an unqualified prose assistant", async () => {
+    const p = platform();
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    const result = await service.route("answer-help", { prompt: "Where can I ask about my umbrella?" }, { traceId: "trace-needle-only-prose" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.denialReason).toBe("NO_RUNTIME");
+    expect(p.calls).not.toContain("needle-load");
   });
 
   it("arbitrates a single resident: vision load evicts Qwen and Qwen load evicts vision", async () => {
