@@ -4,6 +4,8 @@ import android.os.StatFs
 import android.util.Log
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.result.ActivityResult
 import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.JSObject
@@ -70,7 +72,21 @@ class ModelDownloadPlugin : Plugin() {
         if (imports.putIfAbsent(path, flag) != null) { call.reject("Import busy", "IMPORT_BUSY"); return }
         Thread({
             try {
-                if (cap <= 0 || StatFs(context.filesDir.absolutePath).availableBytes < cap + JOURNAL_EVERY_BYTES) throw DownloadFailed("INSUFFICIENT_STORAGE", "Needs more storage")
+                // Storage preflight uses the ACTUAL document size, never the
+                // 4 GB safety ceiling: query OpenableColumns.SIZE (falling
+                // back to the asset descriptor length) and gate on
+                // size + headroom. Only when the provider reports no usable
+                // size do we start streaming on headroom alone; the per-chunk
+                // checks below and the hard cap still bound that path.
+                if (expectedBytes != null) {
+                    if (expectedBytes <= 0 || StatFs(context.filesDir.absolutePath).availableBytes < expectedBytes + JOURNAL_EVERY_BYTES) throw DownloadFailed("INSUFFICIENT_STORAGE", "Needs more storage")
+                } else {
+                    val declared = queryDocumentSize(uri)
+                    if (declared != null && declared > 0) {
+                        if (declared > cap) throw DownloadFailed("SIZE_MISMATCH", "Document exceeds byte limit")
+                        if (StatFs(context.filesDir.absolutePath).availableBytes < declared + JOURNAL_EVERY_BYTES) throw DownloadFailed("INSUFFICIENT_STORAGE", "Needs more storage")
+                    } else if (StatFs(context.filesDir.absolutePath).availableBytes < JOURNAL_EVERY_BYTES) throw DownloadFailed("INSUFFICIENT_STORAGE", "Needs more storage")
+                }
                 file.parentFile?.mkdirs()
                 val digest = MessageDigest.getInstance("SHA-256")
                 var size = 0L
@@ -100,6 +116,32 @@ class ModelDownloadPlugin : Plugin() {
                 file.delete(); call.reject("Document could not be read", "BAD_URI")
             } finally { imports.remove(path, flag) }
         }, "findback-model-import").start()
+    }
+
+    /**
+     * Declared byte size of a SAF document, or null when the provider does
+     * not report one. Tries `OpenableColumns.SIZE` first, then the asset
+     * file-descriptor length. Never throws; unknown means the streaming
+     * path proceeds on headroom alone with its per-chunk storage checks.
+     */
+    private fun queryDocumentSize(uri: Uri): Long? {
+        try {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (index >= 0 && !cursor.isNull(index)) {
+                        val value = cursor.getLong(index)
+                        if (value > 0) return value
+                    }
+                }
+            }
+        } catch (_: Exception) { }
+        try {
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                if (descriptor.length > 0) return descriptor.length
+            }
+        } catch (_: Exception) { }
+        return null
     }
 
     @PluginMethod

@@ -1,17 +1,23 @@
 # FindBack — current verification and closure report
 
-**Decision: HOLD for `2.0.0-beta.1`.** Updated 2026-10-14. Host AI/UI and
+**Decision: HOLD for `2.0.0-beta.1`.** Updated 2026-10-15. Host AI/UI and
 auth/account-reset waves have independent PASS; full mobile verification passed
-4,841 tests with clean typecheck/lint. The source remains an uncommitted working
-tree with committed source anchor `0d2a293`.
+4,902 tests (0 failed, 1 skipped, 3 todo) with clean typecheck/lint. The
+model-supply wave is committed on `main` as `a6df225` (ledger reconciled
+ledger-only in `6fe364f`); the storage-preflight/acceptance correction pass is
+committed on `main` after it, with the ledger re-reconciled ledger-only at
+HEAD — the ledger's `generatedFor` names the correction-pass source commit,
+`releaseStatus` is HOLD, historical beta waivers are tagged stale for this
+candidate (`waiverVersion`), and FBA-007 / FBA-022 are `BLOCKED_EXTERNAL`.
 No exact-final-SHA release acceptance is established.
 
 Current evidence and outstanding gates are recorded in
 [the 2026-10-14 host verification record](evidence/2026-10-14-host-ai-auth-ui.md).
-Hosted account-deletion deployment, physical acceptance, whole-app rendered
-review, remote exact-SHA CI, and release telemetry/artifacts remain open. The
-ledger's `generatedFor` still names `18280c8f5d74150dc63628cd4cdbd87bbcb44edb` and
-has not been reconciled to these changes. Historical beta waivers are not fresh
+Hosted account-deletion deployment, physical acceptance (including the
+whole-app rendered walkthrough, formally assigned to physical-device
+acceptance — the automated harness covers only the AI catalogue and shared
+state transitions, 52 scenarios), remote exact-SHA CI, and release
+telemetry/artifacts remain open. Historical beta waivers are not fresh
 candidate evidence.
 
 ## Historical v8-beta reconciliation (2026-10-06)
@@ -56,7 +62,7 @@ pending actual-send evidence; adapters/catalogues/probes are not delivery proof.
 | Evidence | Status / proves | Does not prove |
 |---|---|---|
 | Human audit packet `FindBack_completion_audit_b472a24_2026-10-05` (README, 00–18, checklist, readiness, prompts, evidence summaries) | Read in full; 34 findings retained in [COMPLETION_AUDIT](COMPLETION_AUDIT.md), plus FBA-035/036 from the closure review. | Runtime success of newly edited code. |
-| Closure-review wave CI (exact-commit CI + Web green; Docker, phone-verification-sql, SEN-01, stale-assets gate) | CI-EXECUTED on the shipped tree; mobile/API suites, AI gate 12/12, completion integrity green, `--final` RED only on genuine external/waiver items. | Whole-app completeness, flake elimination or physical Android. |
+| Closure-review wave CI (exact-commit CI + Web green; Docker, phone-verification-sql, SEN-01, stale-assets gate) | CI-EXECUTED on the shipped tree; mobile/API suites, AI gate 14/14, completion integrity green, `--final` RED only on genuine external/waiver items. | Whole-app completeness, flake elimination or physical Android. |
 | Push dispatch 37317074620 | AUDIT_REPORTED: scheduler/function callable, `scanned=0/sent=0/pruned=0/failed=0`. | Any delivered FCM message, notification tap or direct reply. |
 | Baseline privacy/navigation/credential fixes (FBA-027–031) | AUDIT_REPORTED: truth copy, boolean connection summaries, corrected routes/comments, fail-closed account credential purge. | Certification after further changes; keep regressions and rerun at final SHA. |
 | Earlier Auth/Storage/Realtime/REST/GraphQL live runs | HISTORICAL_LIVE: references in API demo and archived report. | Fresh hosted RLS/grants review or candidate phone/media/realtime proof. |

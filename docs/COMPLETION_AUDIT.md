@@ -1,10 +1,16 @@
 # FindBack completion audit — closure register
 
-**Release: HOLD (`2.0.0-beta.1`, 2026-10-14).** Current host evidence is in
+**Release: HOLD (`2.0.0-beta.1`, 2026-10-15).** Current host evidence is in
 [the AI/auth/UI verification record](evidence/2026-10-14-host-ai-auth-ui.md).
-Its independent PASS and 4,841 passing mobile tests do not close live/device,
-whole-app rendered, exact-head CI, or release-artifact acceptance. The source is
-uncommitted and the ledger reconciliation is stale.
+Its independent PASS and 4,902 passing mobile tests (0 failed) do not close
+live/device, exact-head CI, or release-artifact acceptance. The model-supply
+wave is committed on `main` as `a6df225` (ledger reconciled in `6fe364f`); the
+storage-preflight/acceptance correction pass is committed on `main` after it,
+with the ledger re-reconciled ledger-only at HEAD (`generatedFor` names the
+correction-pass source commit). The automated
+rendered harness covers the AI catalogue and shared state transitions only
+(52 scenarios); the whole-app rendered walkthrough is formally assigned to
+physical-device acceptance (see `docs/runbooks/gate-e-device-run.md` W2).
 
 The v8-beta READY decision and FBA rows below preserve the 2026-10-06 historical
 register. Its DONE/WAIVED cells are not a fresh certificate for this candidate.

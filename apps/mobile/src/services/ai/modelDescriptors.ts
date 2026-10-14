@@ -148,9 +148,11 @@ export interface ModelRegistry {
   /** All downloadable catalogue entries, in catalogue order. */
   catalogue(): readonly ModelDescriptor[];
   /**
-   * Advanced entries: registered but not downloadable (pending pin,
-   * license-restricted, or unmeasured). Rendered in Advanced with their
-   * truthful reason — never a second shadow list owned by the UI.
+   * Advanced entries: registered lab/evaluation candidates. Verified pins
+   * are downloadable (exact revision/SHA-256/bytes + license facts);
+   * pending, license-restricted, or unmeasured entries stay
+   * non-downloadable. Rendered in Advanced with their truthful reason —
+   * never a second shadow list owned by the UI.
    */
   advancedCatalogue(): readonly ModelDescriptor[];
 }
@@ -342,8 +344,10 @@ let production: ModelRegistry | undefined;
 /**
  * Frozen production singleton: the canonical descriptor authority — every
  * product-visible model. The downloadable catalogue is Needle + SmolVLM2
- * vision + Qwen3 text; Advanced candidates are registered but never
- * downloadable until their pin/license/measurement gates clear.
+ * vision + Qwen3 text; Advanced candidates are registered lab/evaluation
+ * entries whose verified pins are downloadable, while pending,
+ * license-restricted, or unmeasured entries stay non-downloadable until
+ * their pin/license/measurement gates clear.
  */
 export function productionModelRegistry(): ModelRegistry {
    return (production ??= createModelRegistry([...ALL_DESCRIPTORS.filter((d) => d.maturity === "production"), ...SUPPLY_CANDIDATES], { defaultVisionModelId: SMOL_VISION_MODEL_ID }));

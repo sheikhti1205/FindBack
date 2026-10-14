@@ -78,6 +78,7 @@ screenshots/logs and reason; do not fill performance values before measuring.
 | T1 | Fixed repeated CPU/GPU workload; capture initial/final thermal and battery state, durations and charging condition. | Battery delta/thermal throttling evidence, UI responsiveness and sustained-rate range; no broad battery or acceleration claims from one run. |
 | U1 | Keyboard/screen reader, large text, navigation and touch controls; unplug network during download. | Labeled model/matching selectors, progress and notices announced, usable Pause/Resume/Remove, clear recovery paths. Offline-only never sends to cloud; unsupported model/task preserves the draft. |
 | W1 | Open web build → On-device AI (Settings → AI & models → On-device AI) / Help; choose stale offline selection if possible. | No native downloads/inference, honest refusal, cloud and built-in fallback still function within their selected mode. |
+| W2 | Whole-app visual walkthrough on the signed candidate: onboarding, login/register/recovery, Home, Search, Create Report, profiles, comments, notifications, full Settings hierarchy, Help/Assistant, maps, account deletion — at phone width, light/dark, large text. | Each route renders its loading/empty/error/content states without overflow, generic placeholder UI, or developer-facing copy; record a screenshot per route plus failures with steps. This row is the formal whole-app rendered acceptance (host automation covers AI catalogue + shared transitions only). |
 
 ## Evidence and close-out
 
