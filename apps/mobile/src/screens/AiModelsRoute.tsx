@@ -8,16 +8,37 @@ import {
   StatusPill,
 } from "../components/settings";
 import {
-  DOWNLOAD_MODELS,
   DEVICE_INCOMPATIBLE_REASON,
   getApplicationAi,
   type ApplicationAiService,
 } from "../services/ai/applicationAi";
-import type { ModelDescriptor } from "../services/ai/modelDescriptors";
+import { tierOf, type ModelDescriptor } from "../services/ai/modelDescriptors";
+import { qualifiedUiRolesForOfflineModel } from "../services/ai/uiModelRoles";
 import { canShowAuto } from "../services/ai/uiGates";
 
 function formatMegabytes(bytes: number): string {
   return `${Math.round(bytes / 1_000_000)} MB`;
+}
+
+/**
+ * Consumer role summary: what the user can do with this model, in plain
+ * words. Derived from the descriptor's qualified UI roles — never ids,
+ * hashes, or runtime terms. Unmeasured Advanced rows (no qualified roles
+ * yet) name the modality only, never invented capabilities.
+ */
+const ROLE_SUMMARY: Readonly<Record<string, string>> = {
+  chat: "Answers questions",
+  vision: "Describes photos",
+  tools: "Fills in reports",
+  embeddings: "Finds similar items",
+};
+
+function roleSummaryFor(descriptor: ModelDescriptor): string | null {
+  const roles = qualifiedUiRolesForOfflineModel(descriptor.modelId).filter((role) => role in ROLE_SUMMARY);
+  if (roles.length > 0) return roles.map((role) => ROLE_SUMMARY[role] as string).join(" · ");
+  if (descriptor.capabilities.includes("vision")) return "Photo model";
+  if (descriptor.capabilities.includes("text")) return "Text model";
+  return null;
 }
 
 function isStorageShortfall(reason: string | null): boolean {
@@ -65,17 +86,21 @@ function ConsumerCard({
   descriptor,
   service,
   reportError,
+  advanced = false,
 }: {
   descriptor: ModelDescriptor;
   service: ApplicationAiService;
   reportError: (message: string) => void;
+  /** Advanced rows: truthful state, never a download/dead action. */
+  advanced?: boolean;
 }) {
   const modelId = descriptor.modelId;
   const title = descriptor.consumerTitle;
   const detail = descriptor.consumerDetail;
-  const entry = DOWNLOAD_MODELS.find((item) => item.modelId === modelId);
+  const tier = tierOf(descriptor);
+  const roleSummary = roleSummaryFor(descriptor);
+  const totalBytes = descriptor.bytes > 0 ? descriptor.bytes : null;
   const status = service.manager.statusOf(modelId);
-  const totalBytes = entry?.bytes ?? null;
   const download = status?.download ?? "not-installed";
   const downloadedBytes = status?.downloadedBytes ?? 0;
   const lastError = status?.lastError ?? null;
@@ -104,22 +129,27 @@ function ConsumerCard({
     : compatibility.compatible
       ? undefined
       : DEVICE_INCOMPATIBLE_REASON;
-  const stateLine = !compatibility.compatible && service.android
-    ? DEVICE_INCOMPATIBLE_REASON
-    : ready
-    ? `Ready · ${formatMegabytes(entry?.bytes ?? downloadedBytes)}`
-    : download === "downloading" && percent !== null
-      ? `Downloading ${percent}%`
-      : download === "paused" && percent !== null && downloadedBytes > 0
-        ? `Paused at ${percent}%`
-        : download === "failed" && isStorageShortfall(lastError ?? notice)
-          ? "Needs more storage"
-          : download === "verifying" || download === "queued"
-            ? "Getting ready…"
-            : "Not installed";
+  const stateLine = advanced || !descriptor.downloadable
+    ? ((descriptor.distributionNote ?? "").trim() !== ""
+      ? (descriptor.distributionNote as string)
+      : "Not offered as a download.")
+    : !compatibility.compatible && service.android
+      ? DEVICE_INCOMPATIBLE_REASON
+      : ready
+        ? `Ready · ${totalBytes !== null ? formatMegabytes(totalBytes) : formatMegabytes(downloadedBytes)}`
+        : download === "downloading" && percent !== null
+          ? `Downloading ${percent}%`
+          : download === "paused" && percent !== null && downloadedBytes > 0
+            ? `Paused at ${percent}%`
+            : download === "failed" && isStorageShortfall(lastError ?? notice)
+              ? "Needs more storage"
+              : download === "verifying" || download === "queued"
+                ? "Getting ready…"
+                : "Not installed";
   // The status pill already carries the state line; never repeat it as a
   // notice (e.g. a storage shortfall reads "Needs more storage" once).
   const showNotice = notice !== null && !ready && notice !== stateLine;
+  const showActions = !advanced && descriptor.downloadable;
 
   return (
     <article aria-labelledby={`ai-tool-${modelId}`} className="flex flex-col gap-2 p-1">
@@ -129,10 +159,24 @@ function ConsumerCard({
             {title}
           </h3>
           <p className="text-xs text-on-surface-variant">{detail}</p>
+          {roleSummary !== null ? (
+            <p className="text-xs text-on-surface-variant">{roleSummary}</p>
+          ) : null}
+          {totalBytes === null ? (
+            <p className="text-xs text-on-surface-variant">Size unavailable</p>
+          ) : null}
         </div>
-        <StatusPill tone={ready ? "success" : download === "failed" ? "error" : "neutral"}>
-          {stateLine}
-        </StatusPill>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span
+            data-testid={`ai-tier-${modelId}`}
+            className="rounded-m3-xs border border-outline-variant px-1.5 py-0.5 text-xs font-medium uppercase tracking-wide text-on-surface-variant"
+          >
+            {tier === "recommended" ? "Recommended" : "Advanced"}
+          </span>
+          <StatusPill tone={ready ? "success" : download === "failed" ? "error" : "neutral"}>
+            {stateLine}
+          </StatusPill>
+        </div>
       </div>
       {download === "downloading" && percent !== null ? (
         <div
@@ -155,8 +199,19 @@ function ConsumerCard({
           {notice}
         </p>
       ) : null}
+      {showActions ? (
       <div className="flex flex-wrap gap-2">
         {ready ? (
+          <>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => run(service.verify(modelId))}
+            aria-label={`Verify ${title}`}
+          >
+            Verify
+          </Button>
           <Button
             type="button"
             variant="outline"
@@ -166,6 +221,7 @@ function ConsumerCard({
           >
             Remove
           </Button>
+          </>
         ) : download === "downloading" ? (
           <Button
             type="button"
@@ -222,6 +278,7 @@ function ConsumerCard({
           </Button>
         ) : null}
       </div>
+      ) : null}
     </article>
   );
 }
@@ -259,6 +316,22 @@ export function AiModelsRoute({ service = getApplicationAi() }: { service?: Appl
           />
         ))}
       </SettingsGroup>
+      {service.registry.advancedCatalogue().length > 0 ? (
+        <SettingsGroup
+          title="Advanced"
+          description="More tools being evaluated. Availability depends on verification, licensing, and this phone."
+        >
+          {service.registry.advancedCatalogue().map((descriptor) => (
+            <ConsumerCard
+              key={descriptor.modelId}
+              descriptor={descriptor}
+              service={service}
+              reportError={setError}
+              advanced
+            />
+          ))}
+        </SettingsGroup>
+      ) : null}
       {error !== null ? (
         <p role="alert" className="text-sm text-error">
           {error}

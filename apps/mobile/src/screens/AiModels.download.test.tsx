@@ -125,4 +125,27 @@ describe("AiModels offline download section (B3)", () => {
       }
     }
   });
+
+  it("renders one titled block per model when offlineModels is provided", () => {
+    render(
+      <MemoryRouter>
+        <AiModels
+          accountId="u1"
+          listCatalog={async () => []}
+          offlineModels={[
+            controlsFor("not-installed", { modelId: "needle3-cact-l20" }),
+            controlsFor("downloading", {
+              modelId: "qwen3-0.6b-dynamic-int4",
+              downloadedBytes: 50,
+              totalBytes: 100,
+            }),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { name: "Needle3" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Qwen3" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /download on-device model/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /pause download/i })).toBeTruthy();
+  });
 });

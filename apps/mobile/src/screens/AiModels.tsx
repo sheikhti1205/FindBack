@@ -54,7 +54,7 @@ import {
   updateAiPreferences,
   type AiPreferences,
 } from "../services/ai/aiPreferences";
-import { isAssistantSelectableOfflineRecord } from "../services/ai/uiModelRoles";
+import { isAssistantSelectableOfflineRecord, displayNameForCatalogRecord } from "../services/ai/uiModelRoles";
 import { getApplicationAi } from "../services/ai/applicationAi";
 
 /**
@@ -80,7 +80,7 @@ export const OFFLINE_BETA_COPY =
  * appear on the ordinary consumer surface.
  */
 export const OFFLINE_TECHNICAL_COPY =
-  "Needle extracts structured text; SmolVLM2 answers approved image questions.";
+  "Needle extracts structured text; Qwen answers questions; SmolVLM2 answers approved image questions.";
 
 const ASSISTANT_MODE_COPY: Record<EffectiveAssistantMode, { label: string; detail: string }> = {
   auto: {
@@ -284,6 +284,14 @@ export type AiModelsProps = {
    * wired: buttons enable per download state, never for cloud models.
    */
   readonly offlineDownload?: OfflineDownloadControls | null;
+  /**
+   * Per-model download lifecycle (one entry per on-device model). When
+   * present, the On-device AI section renders one block per model instead
+   * of the single legacy `offlineDownload` control — download lifecycle is
+   * per model, never one special model at a time. Absent preserves the
+   * legacy single-control behavior for existing integrators.
+   */
+  readonly offlineModels?: readonly OfflineDownloadControls[] | null;
 };
 
 /**
@@ -394,6 +402,7 @@ export function AiModels({
   offlineStatus = null,
   needleEvidence = null,
   offlineDownload = null,
+  offlineModels,
   offlineTools = null,
 }: AiModelsProps) {
   const { user } = useAuth();
@@ -945,7 +954,16 @@ export function AiModels({
           {offlineDetail ?? "No offline models are ready yet."}
         </p>
          {offlineTools}
-        {offlineDownload === null ? (
+        {offlineModels !== undefined && offlineModels !== null ? (
+          <div className="flex flex-col gap-4">
+            {offlineModels.map((controls) => (
+              <section key={controls.modelId} aria-label={`On-device model ${displayNameForCatalogRecord({ id: controls.modelId, provider: "offline" })}`} className="flex flex-col gap-2">
+                <h3 className="text-sm font-semibold">{displayNameForCatalogRecord({ id: controls.modelId, provider: "offline" })}</h3>
+                <OfflineDownloadSection controls={controls} />
+              </section>
+            ))}
+          </div>
+        ) : offlineDownload === null ? (
           <div className="flex gap-2">
             <Button
               type="button"

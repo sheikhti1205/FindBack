@@ -67,6 +67,10 @@ function androidService() {
     loadVisionModel: async () => {}, unloadVisionModel: async () => {},
     cancelGeneration: async () => {}, describeImage: async function* () {},
     collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }),
+  }, qwenText: {
+    bridgeName: "qwen3-litertlm-text", isTextAvailable: async () => true,
+    loadTextModel: async () => {}, unloadTextModel: async () => {},
+    cancelGeneration: async () => {}, generateText: async function* () { yield { textDelta: "hi" }; },
   } });
   return { service, offsets };
 }
@@ -199,8 +203,8 @@ describe("AiModelsRoute consumer cards", () => {
     });
     await service.ready;
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
-    // Both production cards name the state once facts load.
-    expect(await screen.findAllByText("Unavailable on this device.")).toHaveLength(2);
+    // All three Recommended cards name the state once facts load.
+    expect(await screen.findAllByText("Unavailable on this device.")).toHaveLength(3);
     for (const button of screen.getAllByRole("button", { name: /download/i })) {
       expect((button as HTMLButtonElement).disabled).toBe(true);
       expect((button as HTMLButtonElement).title).toBe("Unavailable on this device.");
@@ -208,7 +212,7 @@ describe("AiModelsRoute consumer cards", () => {
     expectNormalTierCopy(view.container);
   });
 
-  it("renders catalogue descriptors, never lab entries, with no hard-coded cards", async () => {
+  it("renders catalogue descriptors in Tools and non-downloadable entries in Advanced, with no hard-coded cards", async () => {
     const extra = {
       modelId: "test-extra-model", displayName: "Test extra", consumerTitle: "Test extra",
       consumerDetail: "Test", runtimeId: "test-extra-runtime", format: "cact" as const,
@@ -246,7 +250,30 @@ describe("AiModelsRoute consumer cards", () => {
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: "Test extra" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Download Test extra" })).toBeTruthy();
-    expect(view.container.textContent ?? "").not.toContain("Lab hidden");
+    // The non-downloadable entry never offers a download, but stays visible
+    // in Advanced with its truthful state — never a hidden shadow list.
+    expect(screen.queryByRole("button", { name: "Download Lab hidden" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Lab hidden" })).toBeTruthy();
+    expect(await screen.findByText("Not offered as a download.")).toBeTruthy();
+    expectNormalTierCopy(view.container);
+  });
+
+  it("shows the Qwen assistant card plus Advanced candidates with tier badges and role summaries", async () => {
+    const { service } = androidService();
+    await service.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    // Recommended Qwen row: consumer title, role summary, tier badge, download.
+    expect(await screen.findByRole("heading", { name: /on-device assistant/i })).toBeTruthy();
+    expect(screen.getByText("Answers questions · Fills in reports")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download On-device assistant" })).toBeTruthy();
+    // Tier badges separate Recommended from Advanced on the normal tier.
+    expect(screen.getAllByText("Recommended").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText("Advanced").length).toBeGreaterThanOrEqual(8);
+    // Advanced rows carry truthful legal/verification reasons, never downloads.
+    expect(screen.getAllByText(/import and evaluation only under its license/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/needs verification before it can be offered/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole("button", { name: "Download Compact assistant" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Download Detailed photo helper (evaluation)" })).toBeNull();
     expectNormalTierCopy(view.container);
   });
 });

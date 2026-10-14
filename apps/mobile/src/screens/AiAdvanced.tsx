@@ -10,13 +10,12 @@ import { aiCredentials, SUPPORTED_AI_PROVIDERS } from "../services/aiCredentials
 import { createProviderAdapter } from "../services/ai/providerRegistry";
 import { loadGenericEndpoint } from "../services/ai/genericEndpoint";
 import {
-  DOWNLOAD_MODELS,
   getApplicationAi,
   type ApplicationAiService,
 } from "../services/ai/applicationAi";
+import { tierOf, distributionPolicyOf } from "../services/ai/modelDescriptors";
 import type { ProbeContext, ProbeRecord } from "../services/ai/deviceProbe";
 import type { OfflineModelStatus } from "../services/ai/offlineModelManager";
-import { profileFor } from "../services/ai/modelProfiles";
 import {
   canShowAuto,
   canShowGpu,
@@ -66,7 +65,7 @@ const IDLE_PROBE: ProbeState = { phase: "idle", notice: null };
  * status (including tests) still wins.
  */
 function offlineStatusFromService(service: ApplicationAiService): OfflineModelStatus | null {
-  for (const model of DOWNLOAD_MODELS) {
+  for (const model of service.registry.catalogue()) {
     const status = service.manager.statusOf(model.modelId);
     if (status !== undefined && status.download === "installed" && status.checksumVerified === true) {
       return status;
@@ -294,8 +293,7 @@ export function AiAdvanced({
       </SettingsGroup>
 
       <SettingsGroup title="Model details">
-        {DOWNLOAD_MODELS.map((model) => {
-          const profile = profileFor(model.modelId);
+        {service.registry.descriptors.map((model) => {
           const status = service.manager.statusOf(model.modelId);
           return (
             <article key={model.modelId} aria-label={`Technical details for ${model.modelId}`} className="flex flex-col gap-1 py-2">
@@ -307,12 +305,22 @@ export function AiAdvanced({
                 </div>
                 <div className="flex gap-2">
                   <dt className="font-medium text-on-surface">Size:</dt>
-                  <dd>{model.bytes.toLocaleString()} bytes</dd>
+                  <dd>{model.bytes > 0 ? `${model.bytes.toLocaleString()} bytes` : "unavailable"}</dd>
                 </div>
                 <div className="flex gap-2">
                   <dt className="font-medium text-on-surface">Revision:</dt>
-                  <dd className="wrap-break-word">{profile?.revision ?? "unknown"}</dd>
+                  <dd className="wrap-break-word">{model.revision}</dd>
                 </div>
+                <div className="flex gap-2">
+                  <dt className="font-medium text-on-surface">Tier:</dt>
+                  <dd>{tierOf(model)} · {distributionPolicyOf(model)} · {model.license}</dd>
+                </div>
+                {model.upstreamRepo !== undefined && model.upstreamRepo !== "" ? (
+                  <div className="flex gap-2">
+                    <dt className="font-medium text-on-surface">Upstream:</dt>
+                    <dd className="wrap-break-word">{model.upstreamRepo}</dd>
+                  </div>
+                ) : null}
                 <div className="flex gap-2">
                   <dt className="font-medium text-on-surface">State:</dt>
                   <dd>
@@ -323,7 +331,7 @@ export function AiAdvanced({
               </dl>
               <AdvancedDisclosure title="Checksum">
                 <p className="text-xs wrap-break-word">
-                  SHA-256: {profile?.modelSha256 ?? "unknown"}
+                  SHA-256: {model.sha256}
                 </p>
               </AdvancedDisclosure>
             </article>

@@ -339,7 +339,7 @@ export const ADVANCED_DESCRIPTORS: readonly ModelDescriptor[] = [
   advancedText(
     "qwen3-1.7b-dynamic-int4",
     "Qwen3 1.7B · larger assistant candidate (unverified)",
-    "On-device assistant (large)",
+    "Large assistant (evaluation)",
     "Qwen3 1.7B",
     QWEN_TEXT_RUNTIME_ID,
     "litertlm",
@@ -419,7 +419,7 @@ export const ADVANCED_DESCRIPTORS: readonly ModelDescriptor[] = [
   advancedText(
     "lfm2-vl-450m-int4",
     "LFM2-VL 450M · compact photo candidate (license-restricted)",
-    "Compact photo analysis",
+    "Compact photo helper (evaluation)",
     "LFM2-VL 450M",
     SMOL_VLM_RUNTIME_ID,
     "litertlm",
@@ -435,7 +435,7 @@ export const ADVANCED_DESCRIPTORS: readonly ModelDescriptor[] = [
   advancedText(
     "lfm2-vl-1.6b-int4",
     "LFM2-VL 1.6B · photo candidate (license-restricted)",
-    "Detailed photo analysis",
+    "Detailed photo helper (evaluation)",
     "LFM2-VL 1.6B",
     SMOL_VLM_RUNTIME_ID,
     "litertlm",
@@ -451,7 +451,7 @@ export const ADVANCED_DESCRIPTORS: readonly ModelDescriptor[] = [
   advancedText(
     "qwen3-vl-2b-instruct-int4",
     "Qwen3-VL 2B Instruct · photo candidate (unverified)",
-    "Detailed photo analysis",
+    "Advanced photo helper (evaluation)",
     "Qwen3-VL 2B",
     SMOL_VLM_RUNTIME_ID,
     "litertlm",
