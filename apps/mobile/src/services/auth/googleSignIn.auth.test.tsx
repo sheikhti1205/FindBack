@@ -224,6 +224,7 @@ describe("W-E resolver hardening: external outcome adoption + repeat safety", ()
   } satisfies PublicUser;
 
   const NEEDS_PROFILE_SEED = {
+    accountId: "user-new",
     email: "new.person@example.com",
     name: "New Person",
     avatarUrl: null,

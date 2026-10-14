@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   beginAccountSwitch,
   clearAllAuth,
+  cacheSessionToken,
   getPendingEmail,
   getToken,
+  getTokenRevision,
   notifySignedOut,
   onSignedOut,
   setPendingEmail,
@@ -13,6 +15,26 @@ import {
 beforeEach(() => {
   clearAllAuth();
   vi.clearAllMocks();
+});
+
+describe("awaited SDK snapshot ownership", () => {
+  it("accepts a matching startup event's token but refuses an older snapshot after sign-out", () => {
+    const startup = getTokenRevision();
+    setToken("token-for-A");
+    expect(() => cacheSessionToken("token-for-A", startup)).not.toThrow();
+    const refresh = getTokenRevision();
+    beginAccountSwitch();
+    expect(() => cacheSessionToken("token-for-A", refresh)).toThrow(/account changed/i);
+    expect(getToken()).toBeNull();
+  });
+
+  it("detects an intervening B session even when the cache returns to its original null value", () => {
+    const restore = getTokenRevision();
+    setToken("token-for-B");
+    setToken(null);
+    expect(() => cacheSessionToken("token-for-A", restore)).toThrow(/account changed/i);
+    expect(getToken()).toBeNull();
+  });
 });
 
 /**

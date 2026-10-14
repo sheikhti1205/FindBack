@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import { getSupabase } from "./supabaseClient";
-import { ApiError, setToken } from "./session";
+import { ApiError, cacheSessionToken, getTokenRevision } from "./session";
 import { BootTimeoutError, withTimeout } from "./timeout";
 import { recordBootEvent } from "./bootDiagnostics";
 import type { PublicUser } from "@findback/shared";
@@ -151,6 +151,7 @@ export async function register(input: {
   phone: string;
   password: string;
 }): Promise<RegisterResult> {
+  const tokenRevision = getTokenRevision();
   const { data, error } = await getSupabase().auth.signUp({
     email: input.email,
     password: input.password,
@@ -166,8 +167,8 @@ export async function register(input: {
   }
 
   if (data.session) {
-    setToken(data.session.access_token);
-    return { user: await fetchMe(), emailVerificationRequired: false };
+    cacheSessionToken(data.session.access_token, tokenRevision);
+    return { user: await fetchMe(data.session.user?.id), emailVerificationRequired: false };
   }
 
   return {
@@ -181,13 +182,14 @@ export async function login(input: {
   email: string;
   password: string;
 }): Promise<PublicUser> {
+  const tokenRevision = getTokenRevision();
   const { data, error } = await getSupabase().auth.signInWithPassword({
     email: input.email,
     password: input.password,
   });
   if (error) throw mapAuthError(error);
-  if (data.session) setToken(data.session.access_token);
-  return fetchMe();
+  if (data.session) cacheSessionToken(data.session.access_token, tokenRevision);
+  return fetchMe(data.session?.user?.id);
 }
 
 export async function fetchMe(expectedUserId?: string): Promise<PublicUser> {
@@ -227,6 +229,7 @@ export async function fetchMe(expectedUserId?: string): Promise<PublicUser> {
 }
 
 export async function restoreSession(): Promise<PublicUser> {
+  const tokenRevision = getTokenRevision();
   // Bounded boot restore (Termux finding: endpoints can hang and freeze
   // startup). A timeout throws BootTimeoutError and must NOT clear or destroy
   // the stored session — the UI offers Retry instead of signing out.
@@ -237,10 +240,12 @@ export async function restoreSession(): Promise<PublicUser> {
     "Session restore timed out",
   );
   if (!data.session) throw new ApiError("Session expired", 401);
-  setToken(data.session.access_token);
+  // SDK events may have installed a newer slot while getSession was pending.
+  // Its token wins; fetchMe below must still prove the snapshot's identity.
+  cacheSessionToken(data.session.access_token, tokenRevision);
   recordBootEvent("session-restore-ok");
   try {
-    const user = await withTimeout(fetchMe, PROFILE_LOAD_TIMEOUT_MS, "Profile load timed out");
+    const user = await withTimeout(() => fetchMe(data.session!.user?.id), PROFILE_LOAD_TIMEOUT_MS, "Profile load timed out");
     recordBootEvent("profile-load-ok");
     return user;
   } catch (err) {
@@ -267,6 +272,7 @@ export async function sendPendingEmailCode(email: string): Promise<void> {
 }
 
 export async function verifyPendingEmailCode(email: string, code: string): Promise<PublicUser> {
+  const tokenRevision = getTokenRevision();
   if (!/^\d{6,10}$/.test(code)) throw new ApiError(INVALID_CODE_MESSAGE, 400);
   const { data, error } = await getSupabase().auth.verifyOtp({
     email,
@@ -274,8 +280,8 @@ export async function verifyPendingEmailCode(email: string, code: string): Promi
     type: "email",
   });
   if (error) throw mapAuthError(error);
-  if (data.session) setToken(data.session.access_token);
-  return fetchMe();
+  if (data.session) cacheSessionToken(data.session.access_token, tokenRevision);
+  return fetchMe(data.session?.user?.id);
 }
 
 /** Minimum password length, shared with the sign-up form's "at least 8" rule. */
@@ -309,11 +315,12 @@ export async function requestPasswordReset(email: string): Promise<void> {
  * exchange error means the link is invalid, expired, or already used.
  */
 export async function exchangeRecoveryCode(code: string): Promise<void> {
+  const tokenRevision = getTokenRevision();
   if (!code) throw new ApiError("This password-reset link is invalid or expired.", 400);
   const { data, error } = await getSupabase().auth.exchangeCodeForSession(code);
   if (error) throw mapAuthError(error);
   if (!data.session) throw new ApiError("This password-reset link is invalid or expired.", 400);
-  setToken(data.session.access_token);
+  cacheSessionToken(data.session.access_token, tokenRevision);
 }
 
 /** Set a new password for the recovery session. Session stays valid; the user lands signed in. */

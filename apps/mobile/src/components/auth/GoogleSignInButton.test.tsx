@@ -77,6 +77,7 @@ describe("GoogleSignInButton (S3)", () => {
       avatarUrl: null,
       phone: "",
       suggestedUsername: "new_user",
+      accountId: "user-new",
     };
     const start = vi.fn(async (_opts: { mode: "signin" | "signup" }) => ({
       idToken: "tok-abc",

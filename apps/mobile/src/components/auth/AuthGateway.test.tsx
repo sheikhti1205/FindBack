@@ -281,6 +281,7 @@ const GOOGLE_SEED: GoogleProfileSeed = {
   avatarUrl: null,
   phone: "",
   suggestedUsername: "google_new",
+  accountId: "google-new",
 };
 
 function configureGoogleSeams(outcome: GoogleSignInOutcome) {

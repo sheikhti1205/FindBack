@@ -293,6 +293,28 @@ describe("session lifecycle", () => {
     expect(getToken()).toBe("tok");
   });
 
+  it("a delayed boot snapshot never overwrites a newer SDK token or returns another account's profile", async () => {
+    let resolveSnapshot!: (value: unknown) => void;
+    clientMock.auth.getSession.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    mockProfile();
+    const restore = restoreSession();
+    setToken("newer-sdk-token");
+    resolveSnapshot({ data: { session: { user: { id: "old-account" }, access_token: "old-token" } } });
+    await expect(restore).rejects.toThrow(/account changed/i);
+    expect(getToken()).toBe("newer-sdk-token");
+  });
+
+  it("a delayed password login cannot replace the newer SDK account's token", async () => {
+    let resolveLogin!: (value: unknown) => void;
+    clientMock.auth.signInWithPassword.mockImplementation(() => new Promise((resolve) => { resolveLogin = resolve; }));
+    mockProfile();
+    const pending = login({ email: "old@example.invalid", password: "synthetic-password" });
+    setToken("newer-sdk-token");
+    resolveLogin({ data: { session: { user: { id: "old-account" }, access_token: "old-token" } }, error: null });
+    await expect(pending).rejects.toThrow(/account changed/i);
+    expect(getToken()).toBe("newer-sdk-token");
+  });
+
   it("restoreSession raises a timeout instead of hanging when the endpoint stalls", async () => {
     vi.useFakeTimers();
     try {

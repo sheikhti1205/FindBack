@@ -6,6 +6,7 @@
  * an in-memory access-token cache and the pending-signup email.
  */
 import { storage } from "./storage";
+import { AuthAccountChangedError } from "./accountScopedAuthStorage";
 
 export class ApiError extends Error {
   status: number;
@@ -22,6 +23,10 @@ export class ApiError extends Error {
  * awaiting.
  */
 let accessToken: string | null = null;
+let tokenRevision = 0;
+
+/** Detect cache changes while an SDK snapshot is pending, including A -> B -> null. */
+export function getTokenRevision(): number { return tokenRevision; }
 
 export function getToken(): string | null {
   return accessToken;
@@ -29,6 +34,13 @@ export function getToken(): string | null {
 
 export function setToken(token: string | null): void {
   accessToken = token;
+  tokenRevision += 1;
+}
+
+/** An awaited SDK response cannot overwrite an intervening auth event. */
+export function cacheSessionToken(token: string, startedAtRevision: number): void {
+  if (startedAtRevision === tokenRevision) setToken(token);
+  else if (accessToken !== token) throw new AuthAccountChangedError();
 }
 
 /** Email awaiting pending-signup verification (Supabase Confirm-email ON). */

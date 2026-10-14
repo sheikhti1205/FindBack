@@ -58,6 +58,7 @@ const SEED = {
   avatarUrl: "https://lh3.googleusercontent.com/a/avatar",
   phone: "",
   suggestedUsername: "google_user",
+  accountId: "user-new",
 };
 
 function renderProfile(

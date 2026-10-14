@@ -19,7 +19,7 @@
 import type { PublicUser } from "@findback/shared";
 import { Capacitor } from "@capacitor/core";
 import { getSupabase } from "../supabaseClient";
-import { ApiError, setToken } from "../session";
+import { ApiError, cacheSessionToken, getTokenRevision } from "../session";
 import { fetchMe } from "../auth";
 import { isGoogleAuthAvailable } from "../../native/googleAuth";
 import { AUTH_CALLBACK_PATH, isAllowedAuthOrigin } from "../../utils/authRedirect";
@@ -49,6 +49,8 @@ const MAX_AVATAR_URL_LENGTH = 2048;
 const MAX_DISPLAY_NAME_LENGTH = 80;
 
 export interface GoogleProfileSeed {
+  /** Session owner; prevents a late completion seed being adopted by another account. */
+  accountId: string;
   email: string;
   /** Display-name SEED only. Never treated as identity. */
   name: string | null;
@@ -132,7 +134,7 @@ function seedFromAuthUser(authUser: BridgeAuthUser): GoogleProfileSeed {
   const name = metadataString(meta, "name") ?? metadataString(meta, "full_name");
   const avatarUrl = sanitizeAvatarUrl(meta["avatar_url"] ?? meta["picture"] ?? null);
   const phone = metadataString(meta, "phone") ?? "";
-  return { email, name, avatarUrl, phone, suggestedUsername: suggestUsername(name, email) };
+  return { accountId: authUser.id, email, name, avatarUrl, phone, suggestedUsername: suggestUsername(name, email) };
 }
 
 /**
@@ -173,11 +175,12 @@ function mapGoogleSignInError(error: { message?: string; code?: string; status?:
  * session is valid AND its public.users row is missing (new Google account or
  * interrupted completion). Narrow PGRST116 probe — no message matching.
  */
-export async function getNeedsProfileSeed(): Promise<GoogleProfileSeed | null> {
+export async function getNeedsProfileSeed(expectedUserId?: string): Promise<GoogleProfileSeed | null> {
   const {
     data: { user },
   } = await getSupabase().auth.getUser();
   if (!user) return null;
+  if (expectedUserId && user.id !== expectedUserId) return null;
   const probe = await getSupabase().from("users").select("id").eq("id", user.id).single();
   if (probe.error) {
     if (!isProfileMissingError(probe.error)) return null;
@@ -196,9 +199,10 @@ export async function getNeedsProfileSeed(): Promise<GoogleProfileSeed | null> {
  * skip-nonce-check OFF. Never logged.
  */
 export async function signInWithGoogleIdToken(idToken: string, nonce: string): Promise<GoogleSignInOutcome> {
+  const tokenRevision = getTokenRevision();
   if (!idToken) throw new ApiError("Google sign-in failed. Please try again.", 400);
   if (!nonce) throw new ApiError("Google sign-in failed. Please try again.", 400);
-  let data: { session: { access_token: string } | null };
+  let data: { session: { access_token: string; user?: { id: string } } | null };
   try {
     const result = await getSupabase().auth.signInWithIdToken({
       provider: "google",
@@ -214,8 +218,8 @@ export async function signInWithGoogleIdToken(idToken: string, nonce: string): P
     throw mapGoogleSignInError(err as { message?: string; code?: string; status?: number });
   }
   if (!data.session) throw mapGoogleSignInError({ message: "exchange returned no session" });
-  setToken(data.session.access_token);
-  return resolveOutcomeForCurrentSession();
+  cacheSessionToken(data.session.access_token, tokenRevision);
+  return resolveOutcomeForCurrentSession(data.session.user?.id);
 }
 
 /**
@@ -225,11 +229,11 @@ export async function signInWithGoogleIdToken(idToken: string, nonce: string): P
  * (needsProfile, session KEPT). A password-created profile is never overwritten
  * — this only reads.
  */
-async function resolveOutcomeForCurrentSession(): Promise<GoogleSignInOutcome> {
+async function resolveOutcomeForCurrentSession(expectedUserId?: string): Promise<GoogleSignInOutcome> {
   try {
-    return { status: "authenticated", user: await fetchMe() };
+    return { status: "authenticated", user: await fetchMe(expectedUserId) };
   } catch (err) {
-    const seed = await getNeedsProfileSeed().catch(() => null);
+    const seed = await getNeedsProfileSeed(expectedUserId).catch(() => null);
     if (seed) return { status: "needsProfile", seed };
     throw err;
   }
@@ -240,11 +244,12 @@ async function resolveOutcomeForCurrentSession(): Promise<GoogleSignInOutcome> {
  * OAuth callback has been exchanged). Throws when there is no session.
  */
 export async function resolveCurrentGoogleSessionOutcome(): Promise<GoogleSignInOutcome> {
+  const tokenRevision = getTokenRevision();
   const { data } = await getSupabase().auth.getSession();
   const session = data?.session ?? null;
   if (!session) throw new ApiError("Google sign-in didn't complete. Please try again.", 400);
-  setToken(session.access_token);
-  return resolveOutcomeForCurrentSession();
+  cacheSessionToken(session.access_token, tokenRevision);
+  return resolveOutcomeForCurrentSession(session.user?.id);
 }
 
 /** Which Google strategy this runtime should use. */
@@ -351,6 +356,7 @@ export function __resetConsumedWebCodesForTests(): void {
  * `code` query parameter.
  */
 export async function completeGoogleWebCallback(code: string): Promise<GoogleSignInOutcome> {
+  const tokenRevision = getTokenRevision();
   const clean = (code ?? "").trim();
   if (!isPlausibleWebCode(clean)) {
     throw withGoogleFailureKind(
@@ -369,7 +375,7 @@ export async function completeGoogleWebCallback(code: string): Promise<GoogleSig
   }
   if (consumedWebCodes.size >= MAX_CONSUMED_WEB_CODES) consumedWebCodes.clear();
   consumedWebCodes.add(clean);
-  let data: { session: { access_token: string } | null };
+  let data: { session: { access_token: string; user?: { id: string } } | null };
   try {
     const result = await getSupabase().auth.exchangeCodeForSession(clean);
     if (result.error) throw mapGoogleSignInError(result.error);
@@ -381,8 +387,8 @@ export async function completeGoogleWebCallback(code: string): Promise<GoogleSig
     throw mapGoogleSignInError(err as { message?: string; code?: string; status?: number });
   }
   if (!data.session) throw mapGoogleSignInError({ message: "exchange returned no session" });
-  setToken(data.session.access_token);
-  return resolveOutcomeForCurrentSession();
+  cacheSessionToken(data.session.access_token, tokenRevision);
+  return resolveOutcomeForCurrentSession(data.session.user?.id);
 }
 
 function mapCompletionError(error: { message?: string; code?: string; status?: number }): ApiError {

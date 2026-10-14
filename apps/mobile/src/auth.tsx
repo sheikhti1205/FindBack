@@ -105,11 +105,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, publishUser] = useState<PublicUser | null>(null);
   const currentUser = useRef<PublicUser | null>(null);
   const sdkAccount = useRef<string | null>(null);
+  const sdkObserved = useRef(false);
+  const profileAdoptionBlocked = useRef(false);
   const authEpoch = useRef(0);
+  const assertAccount = useCallback((accountId: string) => {
+    if (profileAdoptionBlocked.current || (sdkObserved.current && sdkAccount.current !== accountId)) throw new AuthAccountChangedError();
+  }, []);
   const setUserState = useCallback((next: PublicUser | null) => {
+    if (next !== null) assertAccount(next.id);
     currentUser.current = next;
     publishUser(next);
-  }, []);
+  }, [assertAccount]);
   const [deletionCompletion, setDeletionCompletion] = useState<AuthContextValue["deletionCompletion"]>(() => {
     try {
       const accountId = storage.getItem(DELETION_CLEANUP_KEY);
@@ -133,11 +139,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const restored = await restoreSession();
         if (!cancelled && epoch === authEpoch.current) {
           // W0-B (S2, additive): a loaded profile is complete by definition.
-          setNeedsProfileState(null);
           setUserState(restored);
+          setNeedsProfileState(null);
         }
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || epoch !== authEpoch.current || err instanceof AuthAccountChangedError) return;
+        // The initial snapshot's deferred profile load may have succeeded
+        // while this overlapping boot request was still pending.
+        if (sdkObserved.current && sdkAccount.current !== null && currentUser.current?.id === sdkAccount.current) return;
         if (err instanceof BootTimeoutError) {
           // Backend unreachable: keep the stored session and user data, offer
           // Retry. Never assume signed-out and never destroy the session here.
@@ -147,12 +156,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // (new Google account or interrupted completion) routes to
           // completion — the session is KEPT, clearAllAuth is NOT called.
           const seed = await getNeedsProfileSeed().catch(() => null);
-          if (cancelled) return;
+          if (cancelled || epoch !== authEpoch.current) return;
           if (seed) {
-            setNeedsProfileState(seed);
-          } else {
+            if (!sdkObserved.current || seed.accountId === sdkAccount.current) setNeedsProfileState(seed);
+          } else if (!sdkObserved.current || sdkAccount.current === null) {
             clearAllAuth();
             setPendingEmailState(null);
+          } else {
+            setBootError("unreachable");
           }
         }
       } finally {
@@ -172,25 +183,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let unsubscribe: (() => void) | undefined;
     try {
       const { data } = getSupabase().auth.onAuthStateChange((event, session) => {
-        const epoch = ++authEpoch.current;
-        sdkAccount.current = session?.user.id ?? null;
-        setToken(session?.access_token ?? null);
-        if (event === "SIGNED_OUT") {
+        const previousAccount = sdkAccount.current ?? currentUser.current?.id ?? null;
+        const nextAccount = session?.user.id ?? null;
+        const accountChanged = previousAccount !== null && previousAccount !== nextAccount;
+        // The SDK's startup snapshot is part of the boot restore, not a new
+        // auth attempt. Do not invalidate that restore for the same slot.
+        const epoch = event === "INITIAL_SESSION" && !accountChanged
+          ? authEpoch.current : ++authEpoch.current;
+        sdkAccount.current = nextAccount;
+        sdkObserved.current = true;
+        if (event === "SIGNED_OUT" || nextAccount === null) profileAdoptionBlocked.current = true;
+        // SIGNED_IN can reconfirm the same session on tab refocus. Only a
+        // changed SDK slot may reopen adoption after local sign-out.
+        else if (previousAccount !== nextAccount) profileAdoptionBlocked.current = false;
+        setToken(profileAdoptionBlocked.current ? null : session?.access_token ?? null);
+        if (event === "SIGNED_OUT" || accountChanged) {
+          // SDK replacement need not emit SIGNED_OUT. Invalidate A's private
+          // slices synchronously, before scheduling B's profile fetch. The
+          // shared AI reset aborts A's flight but retains verified downloads.
+          // Do not clearAllAuth here: the SDK slot/token already belongs to B.
           aiCredentials.clearSession();
           disconnectRealtime();
           clearUserScopedLocalState();
           setUserState(null);
+          persistPendingEmail(null);
           setPendingEmailState(null);
-          setNeedsProfileState(null); // W0-B (S2, additive): completion cannot outlive the session.
-          return;
+          setNeedsProfileState(null);
+          if (event === "SIGNED_OUT") return;
         }
-        if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+        if (!profileAdoptionBlocked.current && nextAccount !== null && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED" || event === "INITIAL_SESSION")) {
           // Defer network work: awaiting Supabase inside this callback can deadlock.
           setTimeout(() => {
             void fetchMe(session?.user.id)
-              .then((next) => { if (epoch === authEpoch.current) setUserState(next); })
-              .catch(() => {
-                /* ignore transient profile fetch errors */
+              .then((next) => {
+                if (epoch === authEpoch.current) {
+                  setUserState(next);
+                  ++authEpoch.current; // This owned result supersedes overlapping boot work.
+                  setNeedsProfileState(null);
+                  setBootError(null);
+                  setBooting(false);
+                }
+              })
+              .catch(async () => {
+                if (epoch !== authEpoch.current) return;
+                const seed = await getNeedsProfileSeed(nextAccount).catch(() => null);
+                if (seed && !profileAdoptionBlocked.current && epoch === authEpoch.current && seed.accountId === sdkAccount.current) {
+                  ++authEpoch.current;
+                  setNeedsProfileState(seed);
+                  setBootError(null);
+                  setBooting(false);
+                }
               });
           }, 0);
         }
@@ -206,6 +248,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onSignedOut(() => {
+        ++authEpoch.current;
+        profileAdoptionBlocked.current = true;
         aiCredentials.clearSession();
         disconnectRealtime();
         clearUserScopedLocalState();
@@ -231,11 +275,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const setUser = useCallback((next: PublicUser) => setUserState(next), []);
 
   const refreshUser = useCallback(async () => {
-    setUserState(await fetchMe());
+    const epoch = authEpoch.current;
+    const next = await fetchMe();
+    if (epoch === authEpoch.current) setUserState(next);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const next = await apiLogin({ email, password });
+    assertAccount(next.id);
     setNeedsProfileState(null); // W0-B (S2, additive): password login is a complete profile.
     setUserState(next);
     return next;
@@ -243,13 +290,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (input: { username: string; email: string; phone: string; password: string }) => {
+      const epoch = authEpoch.current;
       const result = await apiRegister(input);
       if (result.emailVerificationRequired) {
+        if (epoch !== authEpoch.current || profileAdoptionBlocked.current) throw new AuthAccountChangedError();
         const email = result.email ?? input.email;
         persistPendingEmail(email);
         setPendingEmailState(email);
         return { status: "pending", email } as const;
       }
+      assertAccount(result.user.id);
       setNeedsProfileState(null); // W0-B (S2, additive): registered profile is complete.
       setUserState(result.user);
       return { status: "authenticated", user: result.user } as const;
@@ -261,6 +311,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (code: string) => {
       if (!pendingEmail) throw new Error("No pending email verification");
       const next = await verifyPendingEmailCode(pendingEmail, code);
+      assertAccount(next.id);
       persistPendingEmail(null);
       setPendingEmailState(null);
       setNeedsProfileState(null); // W0-B (S2, additive): verified profile is complete.
@@ -382,10 +433,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    */
   const adoptExternalAuthOutcome = useCallback((outcome: GoogleSignInOutcome) => {
     if (outcome.status === "authenticated") {
+      assertAccount(outcome.user.id);
       setNeedsProfileState(null);
       setUserState(outcome.user);
       return;
     }
+    assertAccount(outcome.seed.accountId);
     setNeedsProfileState(outcome.seed);
   }, []);
 
@@ -433,10 +486,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Seam: result code only (mode), never tokens/profiles.
     recordOperation({ name: "auth.google.success", fields: { mode } });
     if (outcome.status === "authenticated") {
+      assertAccount(outcome.user.id);
       setNeedsProfileState(null);
       setUserState(outcome.user);
       return outcome.user;
     }
+    assertAccount(outcome.seed.accountId);
     setNeedsProfileState(outcome.seed);
     return null;
   }, []);

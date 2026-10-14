@@ -95,7 +95,7 @@ describe("AuthLinkBootstrap", () => {
   });
 
   it("routes a needsProfile outcome to /complete-profile carrying the seed", async () => {
-    const seed = { email: "n@example.com", name: "N", avatarUrl: null, phone: "", suggestedUsername: "n" };
+    const seed = { accountId: "user-new", email: "n@example.com", name: "N", avatarUrl: null, phone: "", suggestedUsername: "n" };
     hoisted.completeGoogleWebCallback.mockResolvedValue({ status: "needsProfile", seed });
     renderWith({ kind: "auth-callback", code: "code-3", error: "", path: "/auth/callback?code=code-3" });
 

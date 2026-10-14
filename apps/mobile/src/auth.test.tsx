@@ -77,7 +77,6 @@ import { aiCredentials } from "./services/aiCredentials";
 import { AccountDeletionFeedback } from "./components/AccountDeletionFeedback";
 import { RequireAuth } from "./components/Guards";
 import { storage } from "./services/storage";
-import { AuthAccountChangedError } from "./services/accountScopedAuthStorage";
 
 const USER_A: PublicUser = {
   id: "f08-alice",
@@ -245,7 +244,10 @@ describe("F08 AuthProvider logout purges AI provider credentials", () => {
     let finishing!: Promise<void>;
     await act(async () => { finishing = capture.current!.finishAccountDeletion(USER_A.id); });
     await waitFor(() => expect(release).toBeDefined());
-    await act(async () => { capture.current!.setUser({ ...USER_A, id: USER_B_ID }); release(); await finishing; });
+    await act(async () => {
+      hoisted.authCallback?.("SIGNED_IN", { user: { id: USER_B_ID }, access_token: "synthetic-b" });
+      capture.current!.setUser({ ...USER_A, id: USER_B_ID }); release(); await finishing;
+    });
     expect(purge).toHaveBeenCalledWith(USER_A.id);
     expect(hoisted.apiLogout).not.toHaveBeenCalled();
     expect(capture.current?.user?.id).toBe(USER_B_ID);
@@ -267,21 +269,26 @@ describe("F08 AuthProvider logout purges AI provider credentials", () => {
 
   it("does not sign out or clear the account that replaced A mid-cleanup", async () => {
     const capture: { current: AuthState | null } = { current: null };
-    hoisted.apiLogout.mockRejectedValueOnce(new AuthAccountChangedError());
     render(probeHarness(capture)({}));
     await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    let release!: () => void;
+    const purge = vi.spyOn(aiCredentials, "removeAccountCredentials").mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    let finishing!: Promise<void>;
+    await act(async () => { finishing = capture.current!.finishAccountDeletion(USER_A.id); });
+    await waitFor(() => expect(release).toBeDefined());
     // The SDK reports a different session holding the device slot.
     await act(async () => {
       hoisted.authCallback?.("SIGNED_IN", { user: { id: USER_B_ID }, access_token: "synthetic-b" });
+      release();
+      await finishing;
     });
-    await act(async () => {
-      await capture.current!.finishAccountDeletion(USER_A.id);
-    });
-    // The persistence boundary refused because the slot belongs to someone
-    // else: A must never be certified complete, and B must not be disturbed.
+    // The SDK owns B, whose profile is still loading. A must not remain
+    // visible, be certified complete, or sign out B's persisted session.
     expect(capture.current?.deletionCompletion).toBeNull();
-    expect(capture.current?.user?.id).toBe(USER_A.id);
+    expect(capture.current?.user).toBeNull();
+    expect(hoisted.apiLogout).not.toHaveBeenCalled();
     expect(storage.getItem("findback.auth.deletedAccountCleanup")).toBeNull();
+    purge.mockRestore();
   });
 
   it("clearing the completion also clears the persisted retry marker", async () => {
