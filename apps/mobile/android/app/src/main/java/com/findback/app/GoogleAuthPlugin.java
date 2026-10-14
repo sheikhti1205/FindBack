@@ -3,6 +3,7 @@ package com.findback.app;
 import android.app.Activity;
 import android.net.Uri;
 import android.os.CancellationSignal;
+import android.util.Log;
 
 import androidx.credentials.Credential;
 import androidx.credentials.CredentialManager;
@@ -76,6 +77,12 @@ import java.util.concurrent.Executor;
  */
 @CapacitorPlugin(name = "GoogleAuth")
 public final class GoogleAuthPlugin extends Plugin {
+
+    /**
+     * Logcat tag for the fail-closed diagnostic below. Capture with:
+     * {@code adb logcat | grep GoogleAuth}.
+     */
+    private static final String TAG = "GoogleAuth";
 
     /** Guarded by the plugin instance lock: the call awaiting credentials. */
     private PluginCall pendingCall;
@@ -248,7 +255,9 @@ public final class GoogleAuthPlugin extends Plugin {
 
                     @Override
                     public void onError(GetCredentialException error) {
-                        rejectPending(call, kindFor(error), messageFor(error));
+                        String kind = kindFor(error);
+                        logFailureClass(error, kind);
+                        rejectPending(call, kind, messageFor(error));
                     }
                 });
         } catch (Exception dispatchError) {
@@ -315,9 +324,25 @@ public final class GoogleAuthPlugin extends Plugin {
         resolvePending(call, result);
     }
 
-    /** Maps Credential Manager failures onto the S1 kind taxonomy. */
-    private static String kindFor(GetCredentialException error) {
-        if (error instanceof GetCredentialCancellationException
+    /** Maps Credential Manager failures onto the S1 kind taxonomy.
+     *
+     * <p>W-E failure-class table (consumer categories live in
+     * {@code services/auth/googleFailureClasses.ts}; the S1 kinds below are
+     * the frozen bridge contract and are NOT widened here):
+     * <ul>
+     *   <li>{@code GetCredentialProviderConfigurationException} →
+     *       {@code misconfigured} (console/SHA/client setup — never device
+     *       state);
+     *   <li>{@code NoCredentialException} → {@code unavailable} (in practice
+     *       no authorized Google account; the exact class is in logcat);
+     *   <li>{@code GetCredentialUnsupportedException} → {@code unavailable}
+     *       (no Credential Manager / Play Services; exact class in logcat);
+     *   <li>cancellation/interruption → {@code cancelled} (silent on UI);
+     *   <li>{@code IOException} in the cause chain → {@code network};
+     *   <li>token minted but Supabase rejects → S2 {@code provider_rejected}.
+     * </ul>
+     */
+    private static String kindFor(GetCredentialException error) {        if (error instanceof GetCredentialCancellationException
             || error instanceof GetCredentialInterruptedException) {
             return "cancelled";
         }
@@ -342,6 +367,32 @@ public final class GoogleAuthPlugin extends Plugin {
             return "unknown";
         }
         return "unknown";
+    }
+
+    /**
+     * Fail-closed diagnostic for the owner run: logs ONLY the exception class
+     * plus the mapped kind and a configuration-class hint. NEVER the ID
+     * token, the nonce (raw or hashed), the exception message (which can echo
+     * account/package details), or any credential material. One logcat line
+     * per failure: {@code adb logcat | grep GoogleAuth}.
+     */
+    private static void logFailureClass(GetCredentialException error, String kind) {
+        String exceptionClass = error == null ? "null" : error.getClass().getSimpleName();
+        String configHint;
+        if (error instanceof GetCredentialProviderConfigurationException) {
+            configHint = "check-google-cloud-android-client-and-release-sha";
+        } else if (error instanceof NoCredentialException) {
+            configHint = "check-device-google-account";
+        } else if (error instanceof GetCredentialUnsupportedException) {
+            configHint = "check-play-services-and-credential-manager";
+        } else if (error instanceof GetCredentialCancellationException
+            || error instanceof GetCredentialInterruptedException) {
+            configHint = "user-cancelled";
+        } else {
+            configHint = "retry-or-check-network";
+        }
+        Log.w(TAG, "Google sign-in failed: exceptionClass=" + exceptionClass
+            + " kind=" + kind + " configHint=" + configHint);
     }
 
     private static String messageFor(GetCredentialException error) {

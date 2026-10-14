@@ -188,8 +188,7 @@ describe("W0-B additive context members", () => {
     expect(hoisted.clearUserScopedLocalState).toHaveBeenCalled();
   });
 
-  it("signInWithGoogle fails closed with a human message while the S1 bridge is absent", async () => {
-    hoisted.restoreSession.mockResolvedValue({
+  it("signInWithGoogle fails closed with a human message while the S1 bridge is absent", async () => {    hoisted.restoreSession.mockResolvedValue({
       id: "u1",
       username: "tester",
       email: "t@example.com",
@@ -209,5 +208,71 @@ describe("W0-B additive context members", () => {
     // Failed bridge attempt changes nothing.
     expect(capture.current!.user?.id).toBe("u1");
     expect(capture.current!.needsProfile).toBeNull();
+  });
+});
+
+describe("W-E resolver hardening: external outcome adoption + repeat safety", () => {
+  const AUTHENTICATED_USER = {
+    id: "u1",
+    username: "tester",
+    email: "t@example.com",
+    phone: "01812345678",
+    emailVerified: true,
+    phoneVerified: false,
+    avatarUrl: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  } satisfies PublicUser;
+
+  const NEEDS_PROFILE_SEED = {
+    email: "new.person@example.com",
+    name: "New Person",
+    avatarUrl: null,
+    phone: "",
+    suggestedUsername: "new_person",
+  };
+
+  it("adoptExternalAuthOutcome authenticated replaces a stale needsProfile seed (account switch safe)", async () => {
+    hoisted.restoreSession.mockRejectedValue(new ApiError("Could not load profile", 400));
+    hoisted.getUser.mockResolvedValue({ data: { user: GOOGLE_USER }, error: null });
+    hoisted.single.mockResolvedValue({ data: null, error: { code: "PGRST116" } });
+    const capture: { current: Ctx | null } = { current: null };
+    render(harness(capture)({}));
+    await waitFor(() => expect(capture.current?.needsProfile).not.toBeNull());
+
+    await act(async () => {
+      capture.current!.adoptExternalAuthOutcome({ status: "authenticated", user: AUTHENTICATED_USER });
+    });
+    expect(capture.current!.user).toEqual(AUTHENTICATED_USER);
+    expect(capture.current!.needsProfile).toBeNull();
+  });
+
+  it("adoptExternalAuthOutcome needsProfile keeps the session and never signs out", async () => {
+    hoisted.restoreSession.mockResolvedValue({ ...AUTHENTICATED_USER });
+    const capture: { current: Ctx | null } = { current: null };
+    render(harness(capture)({}));
+    await waitFor(() => expect(capture.current?.user?.id).toBe("u1"));
+
+    await act(async () => {
+      capture.current!.adoptExternalAuthOutcome({ status: "needsProfile", seed: NEEDS_PROFILE_SEED });
+    });
+    expect(capture.current!.needsProfile).toEqual(NEEDS_PROFILE_SEED);
+    // Existing session user is untouched until completion; no sign-out issued.
+    expect(capture.current!.user?.id).toBe("u1");
+    expect(hoisted.signOut).not.toHaveBeenCalled();
+  });
+
+  it("sign-out after a needsProfile state clears it and a repeat boot stays signed out", async () => {
+    hoisted.restoreSession.mockRejectedValue(new ApiError("Could not load profile", 400));
+    hoisted.getUser.mockResolvedValue({ data: { user: GOOGLE_USER }, error: null });
+    hoisted.single.mockResolvedValue({ data: null, error: { code: "PGRST116" } });
+    const capture: { current: Ctx | null } = { current: null };
+    render(harness(capture)({}));
+    await waitFor(() => expect(capture.current?.needsProfile).not.toBeNull());
+
+    await act(async () => {
+      await capture.current!.logout();
+    });
+    expect(capture.current!.needsProfile).toBeNull();
+    expect(capture.current!.user).toBeNull();
   });
 });

@@ -50,12 +50,14 @@ vi.mock("../auth", () => ({
 }));
 
 import {
+  __resetConsumedWebCodesForTests,
   completeGoogleWebCallback,
   googleAuthStrategy,
   googleOAuthRedirectTo,
   resolveCurrentGoogleSessionOutcome,
   signInWithGoogleWebOAuth,
 } from "./googleSignIn";
+import { AUTH_CALLBACK_PATH, RECOVERY_PATH } from "../../utils/authRedirect";
 import { ApiError } from "../session";
 
 const USER: PublicUser = {
@@ -78,6 +80,8 @@ function sessionResult(accessToken = "web-session-token") {
 
 beforeEach(() => {
   clearAllAuth();
+  sessionStorage.clear();
+  __resetConsumedWebCodesForTests();
   for (const fn of Object.values(hoisted)) fn.mockReset();
   hoisted.isNativePlatform.mockReturnValue(false);
   hoisted.isGoogleAuthAvailable.mockReturnValue(false);
@@ -233,8 +237,7 @@ describe("completeGoogleWebCallback — the ONE shared resolver", () => {
   });
 });
 
-describe("resolveCurrentGoogleSessionOutcome", () => {
-  it("throws when there is no stored session", async () => {
+describe("resolveCurrentGoogleSessionOutcome", () => {  it("throws when there is no stored session", async () => {
     hoisted.getSession.mockResolvedValue({ data: { session: null } });
     await expect(resolveCurrentGoogleSessionOutcome()).rejects.toMatchObject({ name: "ApiError" });
   });
@@ -245,6 +248,94 @@ describe("resolveCurrentGoogleSessionOutcome", () => {
     const outcome = await resolveCurrentGoogleSessionOutcome();
     expect(getToken()).toBe("stored-token");
     expect(outcome).toEqual({ status: "authenticated", user: USER });
+  });
+});
+
+describe("W-E web parity hardening — one-time exchange, shape, routing", () => {
+  it("auth and recovery callbacks are distinct paths (never confused)", () => {
+    expect(AUTH_CALLBACK_PATH).toBe("/auth/callback");
+    expect(RECOVERY_PATH).toBe("/recovery");
+    expect(AUTH_CALLBACK_PATH).not.toBe(RECOVERY_PATH);
+    expect(googleOAuthRedirectTo("https://findbackapp.social")).toBe(
+      "https://findbackapp.social/auth/callback",
+    );
+    expect(googleOAuthRedirectTo("https://findbackapp.social")).not.toContain("/recovery");
+  });
+
+  it("rejects a URL-shaped code without touching Supabase (caller must pass the extracted code)", async () => {
+    for (const bad of [
+      "https://findbackapp.social/auth/callback?code=abc",
+      "abc?code=def",
+      "abc&state=xyz",
+      "has space",
+      `x${"y".repeat(5000)}`,
+    ]) {
+      await expect(completeGoogleWebCallback(bad)).rejects.toMatchObject({ name: "ApiError" });
+    }
+    expect(hoisted.exchangeCodeForSession).not.toHaveBeenCalled();
+  });
+
+  it("fails a replayed code closed locally: exactly one exchange per code (refresh/back safe)", async () => {
+    hoisted.exchangeCodeForSession.mockResolvedValue(sessionResult());
+    hoisted.fetchMe.mockResolvedValue({ ...USER });
+
+    const first = await completeGoogleWebCallback("one-time-code-1");
+    expect(first.status).toBe("authenticated");
+
+    const replay = await completeGoogleWebCallback("one-time-code-1").catch((e: unknown) => e);
+    expect(replay).toBeInstanceOf(ApiError);
+    expect((replay as { kind?: unknown }).kind).toBe("provider_rejected");
+    expect(hoisted.exchangeCodeForSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("a fresh code still exchanges after a replay rejection (retry path open)", async () => {
+    hoisted.exchangeCodeForSession.mockResolvedValue(sessionResult());
+    hoisted.fetchMe.mockResolvedValue({ ...USER });
+
+    await completeGoogleWebCallback("code-first");
+    await completeGoogleWebCallback("code-first").catch(() => {});
+    const retry = await completeGoogleWebCallback("code-second");
+    expect(retry.status).toBe("authenticated");
+    expect(hoisted.exchangeCodeForSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps an offline exchange abort to the network class", async () => {
+    hoisted.exchangeCodeForSession.mockRejectedValue(new TypeError("Failed to fetch"));
+    const err = await completeGoogleWebCallback("offline-code").catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "ApiError", kind: "network" });
+    expect((err as Error).message).toBe("Couldn't reach Google. Check your connection and try again.");
+  });
+
+  it("remembers a safe returnTo across the OAuth navigation and ignores an open redirect", async () => {
+    hoisted.signInWithOAuth.mockResolvedValue({ data: {}, error: null });
+    await signInWithGoogleWebOAuth({ returnTo: "/reports/123" });
+    expect(sessionStorage.getItem("findback.authReturnTo")).toContain("/reports/123");
+
+    sessionStorage.clear();
+    await signInWithGoogleWebOAuth({ returnTo: "https://evil.example.com/phish" });
+    expect(sessionStorage.getItem("findback.authReturnTo")).toBeNull();
+  });
+
+  it("a provider cancel followed by a fresh attempt works (no latch, no session)", async () => {
+    hoisted.signInWithOAuth.mockResolvedValueOnce({
+      data: {},
+      error: { code: "access_denied", message: "user denied" },
+    });
+    const err = await signInWithGoogleWebOAuth().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(getToken()).toBeNull();
+
+    hoisted.signInWithOAuth.mockResolvedValueOnce({ data: {}, error: null });
+    await signInWithGoogleWebOAuth();
+    expect(hoisted.signInWithOAuth).toHaveBeenCalledTimes(2);
+  });
+
+  it("the Supabase client pins the one-time PKCE flow with no URL session detection", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const source = fs.readFileSync(path.join(__dirname, "..", "supabaseClient.ts"), "utf8");
+    expect(source).toMatch(/flowType:\s*"pkce"/);
+    expect(source).toMatch(/detectSessionInUrl:\s*false/);
   });
 });
 

@@ -204,6 +204,57 @@ describe("GoogleSignInButton (S3)", () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 
+  it("maps S2 exchange classes to stable copy (provider_rejected / network / rate_limited)", async () => {
+    const cases = [
+      { kind: "provider_rejected", pattern: /rejected.*try again/i },
+      { kind: "network", pattern: /connection/i },
+      { kind: "rate_limited", pattern: /wait a moment/i },
+      { kind: "setup_unavailable", pattern: /isn't set up yet/i },
+      { kind: "no_account", pattern: /isn't available/i },
+    ] as const;
+    for (const { kind, pattern } of cases) {
+      cleanup();
+      __resetGoogleSignInSeams();
+      const onDone = vi.fn();
+      configureAvailable({
+        start: async () => ({ idToken: "tok-cls", nonce: "nonce-cls" }),
+        signIn: async () => {
+          const err = new Error(`raw-${kind}-detail`) as Error & { kind: string };
+          err.kind = kind;
+          throw err;
+        },
+      });
+      render(<GoogleSignInButton mode="signin" onDone={onDone} />);
+      fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toMatch(pattern);
+      expect(alert.textContent).not.toContain(`raw-${kind}-detail`);
+      expect(alert.textContent).not.toMatch(/device/i);
+      expect(onDone).not.toHaveBeenCalled();
+    }
+  });
+
+  it("stays silent when the seam reports the S2 cancelled_silent class", async () => {
+    const onDone = vi.fn();
+    configureAvailable({
+      start: async () => ({ idToken: "tok-cancel", nonce: "nonce-cancel" }),
+      signIn: async () => {
+        const err = new Error("raw-cancel-detail") as Error & { kind: string };
+        err.kind = "cancelled_silent";
+        throw err;
+      },
+    });
+    render(<GoogleSignInButton mode="signin" onDone={onDone} />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Continue with Google" }).hasAttribute("disabled"),
+      ).toBe(false),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
   it("never prints the provider token to diagnostics", async () => {
     const logged: unknown[][] = [];
     for (const method of ["log", "warn", "error", "debug", "info"] as const) {

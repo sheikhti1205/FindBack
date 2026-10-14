@@ -8,6 +8,12 @@ import {
   type GoogleIdTokenResult,
 } from "../../native/googleAuth";
 import {
+  GOOGLE_FAILURE_COPY,
+  classifyNativeKind,
+  isGoogleFailureClass,
+  type GoogleFailureClass,
+} from "../../services/auth/googleFailureClasses";
+import {
   googleAuthStrategy,
   signInWithGoogleIdToken,
   signInWithGoogleWebOAuth,
@@ -31,12 +37,20 @@ export type { GoogleIdTokenResult, GoogleProfileSeed, GoogleSignInOutcome, Googl
 
 export type GoogleAuthMode = "signin" | "signup";
 
+/**
+ * W-E failure kinds: the frozen S1 kinds (`cancelled`/`unavailable`/
+ * `misconfigured`/`network`/`unknown`) plus the stable S2 failure classes the
+ * exchange seam attaches as `kind` (`provider_rejected`, `rate_limited`,
+ * `no_account`, …). Both vocabularies collapse onto `GoogleFailureClass`
+ * for rendering — consumer copy comes ONLY from `GOOGLE_FAILURE_COPY`.
+ */
 export type GoogleAuthFailureKind =
   | "cancelled"
   | "unavailable"
   | "misconfigured"
   | "network"
-  | "unknown";
+  | "unknown"
+  | GoogleFailureClass;
 
 export interface GoogleSignInSeams {
   strategy: () => GoogleAuthStrategy;
@@ -73,40 +87,25 @@ export function isGoogleSignInAvailable(): boolean {
   }
 }
 
-function failureKindOf(err: unknown): GoogleAuthFailureKind {
+function failureKindOf(err: unknown): GoogleFailureClass {
   const kind = (err as { kind?: unknown } | null)?.kind;
-  if (
-    kind === "cancelled" ||
-    kind === "unavailable" ||
-    kind === "misconfigured" ||
-    kind === "network" ||
-    kind === "unknown"
-  ) {
-    return kind;
-  }
-  return "unknown";
+  // S2-attached stable classes pass through verbatim.
+  if (isGoogleFailureClass(kind)) return kind;
+  // S1 bridge kinds collapse onto the same classes (see
+  // googleFailureClasses.classifyNativeKind). Unknown shapes → try_again.
+  return classifyNativeKind(kind);
 }
 
 /**
  * Human-mapped errors. Returns null for user cancellation (silent — the user
- * dismissed the prompt, so no error is shown). NEVER surfaces raw provider
- * internals and NEVER includes the id token.
+ * dismissed the prompt, so no error is shown). Copy comes ONLY from the
+ * shared taxonomy: NEVER raw provider internals, NEVER the id token/nonce,
+ * and no device-blaming language on any outcome.
  */
 function humanMessageFor(err: unknown): string | null {
-  const kind = failureKindOf(err);
-  if (kind === "cancelled") return null;
-  if (kind === "misconfigured") {
-    // Owner-side setup (console OAuth clients / provider enablement), never
-    // device state: say so instead of blaming the device.
-    return "Google sign-in isn't set up yet. Please try another sign-in method.";
-  }
-  if (kind === "unavailable") {
-    return "Google sign-in isn't available right now.";
-  }
-  if (kind === "network") {
-    return "Couldn't reach Google. Check your connection and try again.";
-  }
-  return "Google sign-in failed. Please try again.";
+  const cls = failureKindOf(err);
+  if (cls === "cancelled_silent") return null;
+  return GOOGLE_FAILURE_COPY[cls];
 }
 
 export function GoogleSignInButton({

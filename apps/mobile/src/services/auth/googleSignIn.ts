@@ -24,6 +24,14 @@ import { fetchMe } from "../auth";
 import { isGoogleAuthAvailable } from "../../native/googleAuth";
 import { AUTH_CALLBACK_PATH, isAllowedAuthOrigin } from "../../utils/authRedirect";
 import { isSafeInternalRoute, rememberAuthReturnTo } from "../../utils/authReturnTo";
+// W-E: single owner of the failure-class taxonomy + consumer copy. S2 maps
+// every exchange rejection onto a stable class (never raw provider text) and
+// attaches it as `kind` so the button can render the matching copy.
+import {
+  GOOGLE_FAILURE_COPY,
+  classifyExchangeError,
+  type GoogleFailureClass,
+} from "./googleFailureClasses";
 
 /** Same username syntax the registration trigger enforces. */
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
@@ -127,25 +135,37 @@ function seedFromAuthUser(authUser: BridgeAuthUser): GoogleProfileSeed {
   return { email, name, avatarUrl, phone, suggestedUsername: suggestUsername(name, email) };
 }
 
+/**
+ * Failure class attached to S2 exchange errors. The button reads `kind` to
+ * render the matching stable copy; anything without a class is `try_again`.
+ * The name stays `ApiError` and the message stays human — never provider text.
+ */
+export type GoogleExchangeFailureKind = GoogleFailureClass;
+
+export function withGoogleFailureKind(
+  error: ApiError,
+  kind: GoogleFailureClass,
+): ApiError & { kind: GoogleFailureClass } {
+  const withKind = error as ApiError & { kind?: GoogleFailureClass };
+  withKind.kind = kind;
+  return withKind as ApiError & { kind: GoogleFailureClass };
+}
+
 function mapGoogleSignInError(error: { message?: string; code?: string; status?: number }): ApiError {
-  const code = error.code ?? "";
-  const message = (error.message ?? "").toLowerCase();
-  if (
-    code === "over_request_rate_limit" ||
-    message.includes("rate limit") ||
-    message.includes("too many requests")
-  ) {
-    return new ApiError("Too many attempts. Please wait a moment and try again.", 429);
-  }
-  if (
-    code === "provider_disabled" ||
-    code === "validation_failed" ||
-    (message.includes("provider") && message.includes("disabled")) ||
-    message.includes("unsupported provider")
-  ) {
-    return new ApiError("Google sign-in is not available right now. Please try again later.", 503);
-  }
-  return new ApiError("Google sign-in failed. Please try again.", error.status ?? 400);
+  const cls = classifyExchangeError(error);
+  const status =
+    typeof error.status === "number"
+      ? error.status
+      : cls === "rate_limited"
+        ? 429
+        : cls === "setup_unavailable"
+          ? 503
+          : 400;
+  // cancelled_silent can never come out of the classifier; the copy table
+  // covers every other class.
+  const copy =
+    cls === "cancelled_silent" ? GOOGLE_FAILURE_COPY.try_again : GOOGLE_FAILURE_COPY[cls];
+  return withGoogleFailureKind(new ApiError(copy, status), cls);
 }
 
 /**
@@ -178,13 +198,22 @@ export async function getNeedsProfileSeed(): Promise<GoogleProfileSeed | null> {
 export async function signInWithGoogleIdToken(idToken: string, nonce: string): Promise<GoogleSignInOutcome> {
   if (!idToken) throw new ApiError("Google sign-in failed. Please try again.", 400);
   if (!nonce) throw new ApiError("Google sign-in failed. Please try again.", 400);
-  const { data, error } = await getSupabase().auth.signInWithIdToken({
-    provider: "google",
-    token: idToken,
-    nonce,
-  });
-  if (error) throw mapGoogleSignInError(error);
-  if (!data.session) throw new ApiError("Google sign-in failed. Please try again.", 400);
+  let data: { session: { access_token: string } | null };
+  try {
+    const result = await getSupabase().auth.signInWithIdToken({
+      provider: "google",
+      token: idToken,
+      nonce,
+    });
+    if (result.error) throw mapGoogleSignInError(result.error);
+    data = result.data;
+  } catch (err) {
+    // Transport-level throws (offline/abort) map onto the same taxonomy as
+    // returned rejections — the raw error never reaches the UI.
+    if (err instanceof ApiError) throw err;
+    throw mapGoogleSignInError(err as { message?: string; code?: string; status?: number });
+  }
+  if (!data.session) throw mapGoogleSignInError({ message: "exchange returned no session" });
   setToken(data.session.access_token);
   return resolveOutcomeForCurrentSession();
 }
@@ -288,15 +317,70 @@ export async function signInWithGoogleWebOAuth(opts: { returnTo?: string | null 
 }
 
 /**
+ * One-time PKCE codes already exchanged in this page lifetime. The provider
+ * code is single-use server-side; a second arrival (refresh/back/StrictMode
+ * replay, or a stuck retry loop) must fail closed LOCALLY without a second
+ * `exchangeCodeForSession` call. Bounded so the set cannot grow without limit.
+ */
+const consumedWebCodes = new Set<string>();
+const MAX_CONSUMED_WEB_CODES = 50;
+
+function isPlausibleWebCode(clean: string): boolean {
+  if (!clean || clean.length > 4096) return false;
+  // The bridge passes the extracted `code` only — never a full URL. Anything
+  // URL-shaped (or whitespace/control-bearing) is a caller bug: fail closed.
+  if (/[:/?#&\s]/.test(clean)) return false;
+  for (let i = 0; i < clean.length; i += 1) {
+    if (clean.charCodeAt(i) < 0x21) return false;
+  }
+  return true;
+}
+
+/** Test hook: clear the consumed-code latch between cases. */
+export function __resetConsumedWebCodesForTests(): void {
+  consumedWebCodes.clear();
+}
+
+/**
  * Finish the browser OAuth callback: exchange the PKCE code for a session, then
  * resolve the shared outcome. The code is single-use and never logged.
+ *
+ * Recovery codes NEVER reach this function: the callback bridge routes
+ * `/recovery` entries to `exchangeRecoveryCode` and only `/auth/callback`
+ * entries here, so the two flows cannot be confused even though both carry a
+ * `code` query parameter.
  */
 export async function completeGoogleWebCallback(code: string): Promise<GoogleSignInOutcome> {
   const clean = (code ?? "").trim();
-  if (!clean) throw new ApiError("Google sign-in didn't complete. Please try again.", 400);
-  const { data, error } = await getSupabase().auth.exchangeCodeForSession(clean);
-  if (error) throw mapGoogleSignInError(error);
-  if (!data.session) throw new ApiError("Google sign-in didn't complete. Please try again.", 400);
+  if (!isPlausibleWebCode(clean)) {
+    throw withGoogleFailureKind(
+      new ApiError(GOOGLE_FAILURE_COPY.try_again, 400),
+      "try_again",
+    );
+  }
+  if (consumedWebCodes.has(clean)) {
+    // Replay (refresh/back/double-submit): the first exchange already consumed
+    // this code server-side. Fail closed as provider-rejected without touching
+    // Supabase again — the caller routes back to /auth for a fresh attempt.
+    throw withGoogleFailureKind(
+      new ApiError(GOOGLE_FAILURE_COPY.provider_rejected, 400),
+      "provider_rejected",
+    );
+  }
+  if (consumedWebCodes.size >= MAX_CONSUMED_WEB_CODES) consumedWebCodes.clear();
+  consumedWebCodes.add(clean);
+  let data: { session: { access_token: string } | null };
+  try {
+    const result = await getSupabase().auth.exchangeCodeForSession(clean);
+    if (result.error) throw mapGoogleSignInError(result.error);
+    data = result.data;
+  } catch (err) {
+    // Transport-level throws (offline/abort) map onto the same taxonomy as
+    // returned rejections — the raw error and the code never reach the UI.
+    if (err instanceof ApiError) throw err;
+    throw mapGoogleSignInError(err as { message?: string; code?: string; status?: number });
+  }
+  if (!data.session) throw mapGoogleSignInError({ message: "exchange returned no session" });
   setToken(data.session.access_token);
   return resolveOutcomeForCurrentSession();
 }

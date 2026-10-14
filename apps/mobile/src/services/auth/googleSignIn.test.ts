@@ -329,6 +329,62 @@ describe("completeSocialProfile", () => {
   });
 });
 
+describe("signInWithGoogleIdToken — W-E failure-class taxonomy", () => {
+  it("attaches provider_rejected when the token is rejected (aud/nonce), without raw internals", async () => {
+    hoisted.signInWithIdToken.mockResolvedValue({
+      data: { session: null, user: null },
+      error: { code: "invalid_jwt_xyz", message: "JWT aud mismatch internal detail", status: 400 },
+    });
+
+    const err = await signInWithGoogleIdToken(TOKEN, NONCE).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as { kind?: unknown }).kind).toBe("provider_rejected");
+    expect((err as Error).message).toBe(
+      "Google sign-in was rejected. Please try again or use another method.",
+    );
+  });
+
+  it("attaches setup_unavailable when the Supabase provider is disabled (console-side)", async () => {
+    hoisted.signInWithIdToken.mockResolvedValue({
+      data: { session: null, user: null },
+      error: { code: "provider_disabled", message: "raw provider detail", status: 503 },
+    });
+
+    const err = await signInWithGoogleIdToken(TOKEN, NONCE).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "ApiError", status: 503, kind: "setup_unavailable" });
+    expect((err as Error).message).not.toContain("raw provider detail");
+  });
+
+  it("attaches network for transport failures without echoing them", async () => {
+    hoisted.signInWithIdToken.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const err = await signInWithGoogleIdToken(TOKEN, NONCE).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "ApiError", kind: "network" });
+    expect((err as Error).message).toBe("Couldn't reach Google. Check your connection and try again.");
+  });
+
+  it("keeps the rate-limit wait copy with a rate_limited class", async () => {
+    hoisted.signInWithIdToken.mockResolvedValue({
+      data: { session: null, user: null },
+      error: { code: "over_request_rate_limit", message: "slow down", status: 429 },
+    });
+
+    const err = await signInWithGoogleIdToken(TOKEN, NONCE).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "ApiError", status: 429, kind: "rate_limited" });
+    expect((err as Error).message).toMatch(/wait a moment/);
+  });
+
+  it("falls back to try_again for unrecognized rejections", async () => {
+    hoisted.signInWithIdToken.mockResolvedValue({
+      data: { session: null, user: null },
+      error: { code: "something_new", message: "mystery", status: 500 },
+    });
+
+    const err = await signInWithGoogleIdToken(TOKEN, NONCE).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "ApiError", kind: "try_again" });
+    expect((err as Error).message).toBe("Google sign-in failed. Please try again.");
+  });
+});
 describe("privacy guards", () => {
   it("never writes the provider token to any console sink", async () => {
     const seen: unknown[][] = [];
