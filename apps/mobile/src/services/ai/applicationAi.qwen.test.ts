@@ -244,6 +244,8 @@ describe("Qwen production runtime", () => {
     expect(texts.map((event) => event.delta ?? "").join("")).not.toContain("chunk-three");
     expect(events.some((event) => event.kind === "error")).toBe(false);
     expect(p.calls).toContain("qwen-cancel");
+    // Cancel never retries or falls back: exactly one native generation ran.
+    expect(p.calls.filter((call) => call.startsWith("qwen-generate:"))).toHaveLength(1);
   });
 
   it("refuses a second route while a Qwen stream holds the lease, leaving the stream intact", async () => {
@@ -344,6 +346,27 @@ describe("Qwen production runtime", () => {
     expect(compatibilityOf(gguf, abis, full).compatible).toBe(false);
   });
 
+  it("survives rapid resident switching with one owner and no stale results", async () => {
+    const p = platform();
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(QWEN_TEXT_MODEL_ID);
+    await service.download(SMOL_VISION_DESCRIPTOR.modelId);
+    for (let round = 0; round < 3; round += 1) {
+      const text = await service.route("answer-help", { prompt: `round ${round}` }, { traceId: `trace-rapid-text-${round}` });
+      expect(text.ok).toBe(true);
+      expect(service.residency.owner).toBe("qwen-text");
+      const vision = await service.route("analyze-image", { prompt: "describe", imageBase64: "aGVsbG8=" }, { traceId: `trace-rapid-vision-${round}` });
+      expect(vision.ok).toBe(true);
+      expect(service.residency.owner).toBe("smol-vision");
+    }
+    // Every switch evicted the previous resident; no generation leaked
+    // across rounds and the gate is free afterwards.
+    expect(p.calls.filter((call) => call === "qwen-load")).toHaveLength(3);
+    expect(p.calls.filter((call) => call === "vision-load")).toHaveLength(3);
+    expect(service.residency).toMatchObject({ claimed: false, inflight: 0 });
+  });
+
   it("survives process restart for Qwen installs and drops Qwen on account reset without wiping files", async () => {
     const p = platform();
     const first = new ApplicationAiService({ android: true, ...p });
@@ -361,13 +384,25 @@ describe("Qwen production runtime", () => {
   });
 
   it("keeps Qwen downloads offline-isolated: no fetch, no endpoint, no URL contact on the local path", async () => {
-    const p = platform();
-    const service = new ApplicationAiService({ android: true, ...p });
-    await service.ready;
-    await service.download(QWEN_TEXT_MODEL_ID);
-    const result = await service.route("answer-help", { prompt: "offline check" }, { traceId: "trace-offline-isolation" });
-    expect(result.ok).toBe(true);
-    // The driver fake records every transport call; inference adds none.
-    expect(p.calls.filter((call) => call.startsWith("download:"))).toHaveLength(1);
+    const fetchCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: unknown) => {
+      fetchCalls.push(typeof input === "string" ? input : "request");
+      throw new Error("network disabled in local-only mode");
+    }) as typeof fetch;
+    try {
+      const p = platform();
+      const service = new ApplicationAiService({ android: true, ...p });
+      await service.ready;
+      await service.download(QWEN_TEXT_MODEL_ID);
+      const result = await service.route("answer-help", { prompt: "offline check" }, { traceId: "trace-offline-isolation" });
+      expect(result.ok).toBe(true);
+      // The driver fake records every transport call; inference adds none,
+      // and no fetch piles on from any layer of the local path.
+      expect(p.calls.filter((call) => call.startsWith("download:"))).toHaveLength(1);
+      expect(fetchCalls).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
