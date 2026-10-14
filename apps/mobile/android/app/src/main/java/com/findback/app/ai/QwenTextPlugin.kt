@@ -40,15 +40,15 @@ import kotlinx.coroutines.launch
  *   (runtime-only state; process death returns to unloaded, so the TS
  *   side always reloads after a restart — nothing residency-related is
  *   persisted here).
- * - `loadTextModel({modelId, installedPath?, backend?, maxOutputTokens?})`
+ * - `loadTextModel({modelId, installedPath?, backend?, maxTokens?})`
  *   loads the EXACT verified `.litertlm` with evict-then-load semantics,
  *   a greedy sampler (temperature 0.0) with the same conservative
  *   anti-repeat decode as vision (repetition penalty 1.1, no-repeat
  *   3-gram), and a self-test round-trip before resolving READY.
- * - `generateText({generationId, prompt, maxTokens?})` runs HONEST
+ * - `generateText({generationId, prompt, maxOutputTokens?})` runs HONEST
  *   NON-STREAMING inference: the full response is collected natively,
  *   the `[thought]...[/thought]` envelope is stripped BEFORE anything
- *   crosses the bridge, and exactly one `textChunk` event carrying the
+ *   crosses the bridge, and exactly one `qwenTextChunk` event carrying the
  *   user-visible text plus `done` is emitted. Token streaming is never
  *   faked — a single complete answer is one chunk, not a burst of
  *   pseudo-tokens. Cancellation aborts the in-flight generation and
@@ -80,7 +80,7 @@ import kotlinx.coroutines.launch
  * and load additionally requires the file to exist under the app-private
  * tree with a `.litertlm` extension.
  */
-@CapacitorPlugin(name = "FindbackQwen")
+@CapacitorPlugin(name = "FindbackQwenText")
 class QwenTextPlugin : Plugin() {
 
     private val lock = Any()
@@ -110,7 +110,7 @@ class QwenTextPlugin : Plugin() {
             return
         }
         val requestedBackend = call.getString("backend", "cpu") ?: "cpu"
-        val sessionMax = QwenTextPolicy.clampSessionMaxTokens(call.getInt("maxOutputTokens"))
+        val sessionMax = QwenTextPolicy.clampSessionMaxTokens(call.getInt("maxTokens"))
         val modelFile = resolveModelFile(modelId!!, call.getString("installedPath"))
         if (modelFile == null) {
             call.reject(QwenTextPolicy.MODEL_NOT_INSTALLED, "model is not installed")
@@ -208,7 +208,7 @@ class QwenTextPlugin : Plugin() {
             call.reject(QwenTextPolicy.RUNTIME_UNAVAILABLE, "on-device text runtime is not loaded")
             return
         }
-        val callMax = QwenTextPolicy.clampCallMaxTokens(call.getInt("maxTokens"), sessionMax)
+        val callMax = QwenTextPolicy.clampCallMaxTokens(call.getInt("maxOutputTokens"), sessionMax)
         call.setKeepAlive(true)
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val started = android.os.SystemClock.elapsedRealtime()
@@ -428,7 +428,7 @@ class QwenTextPlugin : Plugin() {
         if (done) event.put("done", true)
         if (cancelled) event.put("cancelled", true)
         if (error != null) event.put("error", error)
-        notifyListeners("textChunk", event)
+        notifyListeners("qwenTextChunk", event)
     }
 
     companion object {

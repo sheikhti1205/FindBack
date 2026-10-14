@@ -4,7 +4,7 @@ import { CANONICAL_REACTION_KINDS } from "@findback/shared";
 import { REACTION_ART_MARK, ReactionArt } from "./ReactionArt";
 
 /**
- * FBX-018 visual fixture: all 4 original FindBack reaction arts × every
+ * System-emoji reaction fixture: all 4 canonical reaction emoji × every
  * production size × light / dark / true-black — no device needed.
  *
  * Sizes: 15 (comment tiny), 16 (feed-summary stack), 18 (feed action idle),
@@ -24,17 +24,17 @@ const THEMES: Array<{ id: string; label: string; style: CSSProperties }> = [
 ];
 
 const KIND_BLURB: Record<CanonicalReactionKind, string> = {
-  LOVE: "Warm heart + gold sparkle — affectionate.",
-  HELPFUL: "Badge + bold check — approval, never a lightbulb.",
-  SUPPORT: "Overlapping duo + rose heart — care/solidarity.",
-  WOW: "Gasping face — instant surprise read.",
+  LOVE: "Red heart system emoji — affectionate.",
+  HELPFUL: "Light-bulb system emoji — useful idea.",
+  SUPPORT: "Handshake system emoji — care/solidarity.",
+  WOW: "Surprised-face system emoji — instant surprise read.",
 };
 
 export function ReactionArtFixture() {
   return (
     <div data-testid="reaction-art-fixture" style={{ fontFamily: "system-ui, sans-serif" }}>
       <p data-testid="reaction-fixture-note">
-        FindBack original reaction art (family findback-reactions-v1) — 4 kinds × 5 sizes × 3 themes.
+        FindBack system-emoji reactions (family system-emoji) — 4 kinds × 5 sizes × 3 themes.
         320dp check: the widest row below is capped at 320px; the tray portals out of clipping ancestors
         and flips/shifts inside the viewport, so nothing may clip or scroll sideways at 320dp.
       </p>
