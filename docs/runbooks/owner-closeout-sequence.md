@@ -3,12 +3,12 @@
 One ordered sequence. Secrets are NAMES only — never paste values into
 source; export them in the shell (or set repo Actions vars/secrets).
 Destructive/live sections are marked and separated from local build steps.
-Source revision this was written against: `0154a9b` (`origin/main`, re-baselined off `790f456`); live DB head at write time: `20261012020000`.
+Source revision this was written against: `77c037a` (`origin/main` at edit time, or newer after this wave's commit); live DB head at write time: `20261013020000`.
 
 ## A. Preflight (read-only, any machine)
 
 ```sh
-git rev-parse HEAD && git status --short   # expect 0154a9b (or newer), clean
+git rev-parse HEAD && git status --short   # expect 77c037a (or newer), clean
 node scripts/completion-gate.mjs --final
 node scripts/check-sentry-release-parity.mjs
 node scripts/check-map-provider.mjs
@@ -59,7 +59,7 @@ first): `supabase/tests/run-live.sh` with `TEST_SUPABASE_URL`,
 cover the new lookalike-host/UPDATE-reassign/lease-ack probes — those live
 in the three verify files above.
 
-## C. Edge functions (after B; `delete-account` NEVER in this set)
+## C. Edge functions (after B; `delete-account` included — owner-runner deploys it here)
 
 Preferred: the canonical safe orchestrator (dry-run first, then execute):
 
@@ -70,8 +70,10 @@ SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
   --execute --migrations-live --manifest <fresh-manifest.json>
 ```
 
-It stops on missing config (push-config must read PRESENT + ALIGNED), never
-deploys `delete-account`, and runs edge parity afterwards when `--manifest`
+It stops on missing config (push-config must read PRESENT + ALIGNED), deploys
+`delete-account` JWT-verify ON (source-reviewed 2026-10-14: JWT-uid-only, no
+uid parameter, all three storage namespaces covered, 401 without a session
+JWT), and runs edge parity afterwards when `--manifest`
 is supplied. Equivalent manual commands:
 
 ```sh
@@ -84,8 +86,26 @@ supabase functions deploy cleanup-comment-media --no-verify-jwt
 node scripts/check-edge-parity.mjs --manifest <fresh-manifest.json>  # expect all CURRENT
 ```
 
-`delete-account` deploys separately, owner-side, after explicit auth
-review — never via the shared pipeline.
+`delete-account` deploys via the same orchestrator (JWT-verify ON, gateway +
+function double 401), then proves fail-closed with a credential-less probe
+and source-sha parity. Exact owner-runner sequence (non-destructive until
+the final disposable-account step; never run the last step on a real account):
+
+```sh
+node scripts/deploy-required-edge-functions.mjs --migrations-live  # plan shows delete-account | ON
+SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
+  --execute --migrations-live --manifest <fresh-manifest.json>
+node scripts/check-edge-parity.mjs --manifest <fresh-manifest.json>  # delete-account must read CURRENT
+node scripts/deploy-required-edge-functions.mjs \
+  --prove-401 https://<ref>.functions.supabase.co/delete-account  # expect: 401 guard PROVEN
+# essence of the probe (no token, no apikey, nothing deleted):
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
+  https://<ref>.functions.supabase.co/delete-account  # expect: 401
+```
+
+Only after the 401 proof: destructive proof on a DISPOSABLE test account
+only (sign in as the disposable account, invoke deletion, confirm purge +
+logout wipe). Never the owner/real account.
 
 ## D. Sentry cutover (names only)
 

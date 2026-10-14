@@ -11,7 +11,7 @@ product code only if a real parity/runtime defect is found.
   `FAIL_EXTERNAL`, `FAIL`. Nothing is ever `PASS` without a committed evidence
   artifact (see §K). Secrets are NAMES only — never paste values.
 
-Baseline: `0154a9b` (re-baselined off the stale `790f456`). The capability
+Baseline: `77c037a` (`origin/main` at edit time, or newer after this wave's commit). The capability
 matrix (separate question — "does the feature exist on this lane") lives in
 `docs/runbooks/cross-environment-manifest.md`.
 
@@ -49,7 +49,7 @@ schema, or deployment gap remains.
 ## A. Preflight (read-only, any machine)
 
 ```sh
-git rev-parse HEAD && git status --short        # expect 0154a9b (or newer), clean
+git rev-parse HEAD && git status --short        # expect 77c037a (or newer), clean
 node scripts/cross-environment-closure.mjs
 node scripts/completion-gate.mjs --final
 node scripts/check-map-provider.mjs
@@ -97,7 +97,11 @@ SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
   --execute --migrations-live --manifest <fresh-manifest.json>
 ```
 
-- `delete-account` is NEVER in this set (owner-side, separate auth review).
+- `delete-account` IS in this set (source-reviewed 2026-10-14, JWT-verify
+  ON): deploy via the orchestrator, then prove source-sha parity
+  (`check-edge-parity.mjs` CURRENT) + unauthenticated 401 (`--prove-401`).
+  Deploying the code is non-destructive; live destructive proof stays a
+  disposable-account owner step.
 - `push-dispatch` is refused unless `check-push-config.mjs` reads all PRESENT +
   ALIGNED (§E).
 - `cleanup-comment-media` deploys only after migration `20261013020000` is live.
