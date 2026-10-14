@@ -1,5 +1,11 @@
 # Runbook X3 — Import/export device-day run (gated)
 
+> **Status: not executable in the current build.** The per-model Import/Export
+> buttons this runbook assumes do not exist: Advanced rows offer no install
+> action, and `distributionPolicyOf` reports `license-restricted` / `unavailable`
+> for every non-downloadable model. Retained as the target procedure for a
+> future import/eval lane; do not run it against the current app.
+
 The gate is the order: **small safe fixture first, real Qwen package only
 after the fixture passes.** The real-package step must refuse to run until
 the fixture gate below passes. Evidence lands in

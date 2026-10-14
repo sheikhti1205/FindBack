@@ -25,7 +25,7 @@ export const SMOL_VLM_RUNTIME_ID = "smolvlm2-litertlm" as const;
  * late callbacks must never address the wrong engine.
  */
 export const QWEN_TEXT_RUNTIME_ID = "qwen3-litertlm-text" as const;
-/** llama.cpp/GGUF lab resident. No production GGUF download exists; Advanced rows are import/eval-only. */
+/** llama.cpp/GGUF lab resident. No production GGUF download or import action exists. */
 export const LLAMA_CPP_RUNTIME_ID = "llamacpp-gguf" as const;
 
 export type ModelArtifactFormat = "cact" | "litertlm" | "gguf" | "tflite";
@@ -45,12 +45,13 @@ export type ModelTier = "recommended" | "advanced";
 /**
  * Distribution policy (gates check this, never prose):
  * - `downloadable`: verified pin + redistributable license, offered for download.
- * - `import-only`: license forbids redistribution (LFM arms) — a compliant
- *   local-file import/evaluation path only, never a hosted download.
+ * - `license-restricted`: license forbids redistribution (LFM arms). Shown so
+ *   the restriction stays visible; this build ships no download AND no import
+ *   action, so nothing is offered.
  * - `unavailable`: pending pin verification or measurement — visible with
  *   the consumer reason, no install path of any kind.
  */
-export type DistributionPolicy = "downloadable" | "import-only" | "unavailable";
+export type DistributionPolicy = "downloadable" | "license-restricted" | "unavailable";
 
 export type ModelTrust = "curated" | "imported";
 
@@ -89,8 +90,10 @@ export interface ModelDescriptor {
    */
   readonly tier?: ModelTier;
   /**
-   * True when a compliant local-file import/evaluation path is allowed
-   * (LFM license arms). Never implies a hosted download.
+   * True when the model's license would permit running a user-supplied local
+   * copy (LFM license arms). This is a license fact only: FindBack ships no
+   * download or import action for it, so the UI must show the restriction and
+   * offer nothing.
    */
   readonly importable?: boolean;
   /**
@@ -115,7 +118,7 @@ export function tierOf(descriptor: ModelDescriptor): ModelTier {
 /** Machine-readable distribution policy derived from the descriptor. */
 export function distributionPolicyOf(descriptor: ModelDescriptor): DistributionPolicy {
   if (descriptor.downloadable) return "downloadable";
-  if (descriptor.importable === true) return "import-only";
+  if (descriptor.importable === true) return "license-restricted";
   return "unavailable";
 }
 
@@ -277,8 +280,8 @@ export const QWEN_TEXT_DESCRIPTOR: ModelDescriptor = {
  * - pending-pin arms (Qwen3 1.7B, Granite, Qwen3-VL) carry the literal
  *   `pending-verification` marker, never a fabricated pin; the manager's
  *   MISSING_PIN gate refuses them even if reached.
- * - LFM arms carry the LFM-1.0 eval-only policy: import/eval-only, never
- *   a redistributable download.
+ * - LFM arms carry the LFM-1.0 eval-only license: not redistributable, so
+ *   no download and no import action ships for them.
  * - taskRoles stay EMPTY until device measurement qualifies them: an
  *   unmeasured model routes to no product task. Capabilities name the
  *   modality only. RAM figures are the lab lane's host estimates for
@@ -332,8 +335,11 @@ function advancedText(
 }
 
 const PENDING_PIN_NOTE = "Needs verification before it can be offered. Check back later.";
+// Truthful state, not an offered action: this build has no import/evaluation
+// affordance, so the copy must never imply one is available. It only records
+// the license restriction that blocks hosted redistribution.
 const LFM_IMPORT_NOTE =
-  "Available for import and evaluation only under its license — not offered as a download.";
+  "License restricts redistribution, so FindBack does not host or download it. Listed to keep the restriction visible.";
 
 export const ADVANCED_DESCRIPTORS: readonly ModelDescriptor[] = [
   advancedText(

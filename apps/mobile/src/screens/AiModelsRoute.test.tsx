@@ -270,8 +270,10 @@ describe("AiModelsRoute consumer cards", () => {
     expect(screen.getAllByText("Recommended").length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText("Advanced").length).toBeGreaterThanOrEqual(8);
     // Advanced rows carry truthful legal/verification reasons, never downloads.
-    expect(screen.getAllByText(/import and evaluation only under its license/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/license restricts redistribution/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/needs verification before it can be offered/i).length).toBeGreaterThanOrEqual(1);
+    // Never promise an action this build cannot perform.
+    expect(screen.queryByText(/available for import/i)).toBeNull();
     expect(screen.queryByRole("button", { name: "Download Compact assistant" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Download Detailed photo helper (evaluation)" })).toBeNull();
     expectNormalTierCopy(view.container);

@@ -71,7 +71,7 @@ describe("modelDescriptors", () => {
       expect(descriptor.taskRoles).toEqual([]);
       expect((descriptor.distributionNote ?? "").trim().length).toBeGreaterThan(0);
       if (descriptor.license.includes("lfm-1.0")) {
-        expect(distributionPolicyOf(descriptor)).toBe("import-only");
+        expect(distributionPolicyOf(descriptor)).toBe("license-restricted");
         expect(descriptor.importable).toBe(true);
       } else {
         expect(distributionPolicyOf(descriptor)).toBe("unavailable");
@@ -81,6 +81,22 @@ describe("modelDescriptors", () => {
     const qwen17 = registry.descriptorFor("qwen3-1.7b-dynamic-int4");
     expect(qwen17?.sha256).toBe("pending-verification");
     expect(qwen17?.url).toBe("");
+  });
+
+  it("never advertises an install action this build cannot perform", () => {
+    const registry = productionModelRegistry();
+    // Regression: Advanced rows once said "Available for import and evaluation"
+    // while no import action existed anywhere. No note may mention an import
+    // path this build does not ship.
+    const PROMISES_IMPORT = /\bimport(?:s|ed|ing)?\b/i;
+    for (const descriptor of registry.descriptors) {
+      expect(descriptor.distributionNote ?? "").not.toMatch(PROMISES_IMPORT);
+      if (!descriptor.downloadable) {
+        // No install path of any kind: no URL and no fabricated bytes.
+        expect(descriptor.url).toBe("");
+        expect(distributionPolicyOf(descriptor)).not.toBe("downloadable");
+      }
+    }
   });
 
   it("resolves the vision model from explicit policy, never catalogue order", () => {
