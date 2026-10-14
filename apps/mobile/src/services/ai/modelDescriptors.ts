@@ -19,12 +19,38 @@ import type { AiTaskId } from "./types";
 /** Physical runtime ids. `test-*` ids exist only in test registries. */
 export const NEEDLE_RUNTIME_ID = "needle-cact" as const;
 export const SMOL_VLM_RUNTIME_ID = "smolvlm2-litertlm" as const;
+/**
+ * LiteRT-LM general text resident (Qwen3 0.6B). Model-specific, never a
+ * bare "litertlm" id: text and vision residents arbitrate separately and
+ * late callbacks must never address the wrong engine.
+ */
+export const QWEN_TEXT_RUNTIME_ID = "qwen3-litertlm-text" as const;
+/** llama.cpp/GGUF lab resident. No production GGUF download exists; Advanced rows are import/eval-only. */
+export const LLAMA_CPP_RUNTIME_ID = "llamacpp-gguf" as const;
 
 export type ModelArtifactFormat = "cact" | "litertlm" | "gguf" | "tflite";
 
 export type ModelCapability = "text" | "vision" | "embedding" | "matching";
 
 export type ModelMaturity = "production" | "lab" | "experimental";
+
+/**
+ * Consumer catalogue tier. Recommended rows are verified, distributable,
+ * and device-qualified; Advanced rows are visible but truthfully gated
+ * (pin-verification-required, license-restricted, or unmeasured). The
+ * default derives from maturity so older literals keep their meaning.
+ */
+export type ModelTier = "recommended" | "advanced";
+
+/**
+ * Distribution policy (gates check this, never prose):
+ * - `downloadable`: verified pin + redistributable license, offered for download.
+ * - `import-only`: license forbids redistribution (LFM arms) — a compliant
+ *   local-file import/evaluation path only, never a hosted download.
+ * - `unavailable`: pending pin verification or measurement — visible with
+ *   the consumer reason, no install path of any kind.
+ */
+export type DistributionPolicy = "downloadable" | "import-only" | "unavailable";
 
 export type ModelTrust = "curated" | "imported";
 
@@ -57,6 +83,40 @@ export interface ModelDescriptor {
   readonly abis: readonly string[];
   /** Listed on the consumer download catalogue. */
   readonly downloadable: boolean;
+  /**
+   * Consumer catalogue tier. Omitted means derived from maturity
+   * (production → recommended, anything else → advanced).
+   */
+  readonly tier?: ModelTier;
+  /**
+   * True when a compliant local-file import/evaluation path is allowed
+   * (LFM license arms). Never implies a hosted download.
+   */
+  readonly importable?: boolean;
+  /**
+   * Consumer-facing reason shown when the model cannot be installed
+   * (legal restriction, pending verification). Normal tier copy: no ids,
+   * hashes, or runtime jargon.
+   */
+  readonly distributionNote?: string;
+  /**
+   * Upstream repo (org/name) for Advanced transparency. Pins still live
+   * in revision/sha256; this is provenance display only.
+   */
+  readonly upstreamRepo?: string;
+}
+
+/** Consumer tier of one descriptor (explicit tier wins, else maturity-derived). */
+export function tierOf(descriptor: ModelDescriptor): ModelTier {
+  if (descriptor.tier !== undefined) return descriptor.tier;
+  return descriptor.maturity === "production" ? "recommended" : "advanced";
+}
+
+/** Machine-readable distribution policy derived from the descriptor. */
+export function distributionPolicyOf(descriptor: ModelDescriptor): DistributionPolicy {
+  if (descriptor.downloadable) return "downloadable";
+  if (descriptor.importable === true) return "import-only";
+  return "unavailable";
 }
 
 export interface ModelRegistry {
@@ -73,6 +133,12 @@ export interface ModelRegistry {
   visionDescriptor(): ModelDescriptor | undefined;
   /** All downloadable catalogue entries, in catalogue order. */
   catalogue(): readonly ModelDescriptor[];
+  /**
+   * Advanced entries: registered but not downloadable (pending pin,
+   * license-restricted, or unmeasured). Rendered in Advanced with their
+   * truthful reason — never a second shadow list owned by the UI.
+   */
+  advancedCatalogue(): readonly ModelDescriptor[];
 }
 
 export interface ModelRegistryOptions {
@@ -160,7 +226,252 @@ export const SMOL_VISION_DESCRIPTOR: ModelDescriptor = {
   downloadable: true,
 };
 
-const PRODUCTION_DESCRIPTORS: readonly ModelDescriptor[] = [NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR];
+/**
+ * Qwen3 0.6B dynamic INT4 — first-class on-device text/chat/extraction.
+ * Pins are REUSED from the lab profile (profilePin), never duplicated:
+ * revision a3c5d805 + sha 03e7da1e live in modelProfiles.ts. Bytes
+ * (344,671,744) and the upstream repo/file come from the lab lane records
+ * (docs/runbooks/native-model-run.md, benchmark/labCatalog.ts). The URL
+ * follows the same Hugging Face resolve scheme as the SmolVLM2 descriptor.
+ * Task roles mirror the lab catalogue's evidence-backed set, so Chat
+ * qualification (answer-help) derives from the same authority as routing.
+ */
+export const QWEN_TEXT_MODEL_ID = "qwen3-0.6b-dynamic-int4";
+const QWEN_PIN = profilePin(QWEN_TEXT_MODEL_ID);
+const QWEN_TASK_ROLES: readonly AiTaskId[] = [
+  "answer-help",
+  "extract-report-fields",
+  "extract-search-filters",
+  "classify-intent",
+];
+
+export const QWEN_TEXT_DESCRIPTOR: ModelDescriptor = {
+  modelId: QWEN_TEXT_MODEL_ID,
+  displayName: "Qwen3 · on-device assistant text",
+  consumerTitle: "On-device assistant",
+  consumerDetail: "Qwen3",
+  runtimeId: QWEN_TEXT_RUNTIME_ID,
+  format: "litertlm",
+  revision: QWEN_PIN.revision,
+  sha256: QWEN_PIN.sha256,
+  fileName: "Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm",
+  url: `https://huggingface.co/litert-community/Qwen3-0.6B/resolve/${QWEN_PIN.revision}/Qwen3-0.6B_dynamic_wi4b32_afp32.litertlm`,
+  bytes: 344671744,
+  capabilities: ["text"],
+  taskRoles: QWEN_TASK_ROLES,
+  maturity: "production",
+  tier: "recommended",
+  trust: "curated",
+  license: "redistributable-apache-2.0",
+  minRamMb: 1500,
+  recommendedRamMb: 2048,
+  abis: ["arm64-v8a"],
+  downloadable: true,
+  upstreamRepo: "litert-community/Qwen3-0.6B",
+};
+
+/**
+ * Advanced candidates (spec §A + lab benchmark matrix). Every entry is
+ * registered so Advanced shows the complete intended set with a truthful
+ * state — but none is downloadable:
+ * - pending-pin arms (Qwen3 1.7B, Granite, Qwen3-VL) carry the literal
+ *   `pending-verification` marker, never a fabricated pin; the manager's
+ *   MISSING_PIN gate refuses them even if reached.
+ * - LFM arms carry the LFM-1.0 eval-only policy: import/eval-only, never
+ *   a redistributable download.
+ * - taskRoles stay EMPTY until device measurement qualifies them: an
+ *   unmeasured model routes to no product task. Capabilities name the
+ *   modality only. RAM figures are the lab lane's host estimates for
+ *   planning, never device measurements.
+ * Facts (repos, files, RAM, license) mirror benchmark/labCatalog.ts and
+ * docs/runbooks/model-benchmark-matrix.md; ids match the lab catalogue so
+ * one model never gains two identities.
+ */
+function advancedText(
+  modelId: string,
+  displayName: string,
+  consumerTitle: string,
+  consumerDetail: string,
+  runtimeId: string,
+  format: ModelArtifactFormat,
+  fileName: string,
+  upstreamRepo: string,
+  license: string,
+  minRamMb: number,
+  recommendedRamMb: number,
+  capabilities: readonly ModelCapability[],
+  distributionNote: string,
+  importable: boolean,
+): ModelDescriptor {
+  return {
+    modelId,
+    displayName,
+    consumerTitle,
+    consumerDetail,
+    runtimeId,
+    format,
+    revision: "pending-verification",
+    sha256: "pending-verification",
+    fileName,
+    url: "",
+    bytes: 0,
+    capabilities,
+    taskRoles: [],
+    maturity: "lab",
+    tier: "advanced",
+    trust: "curated",
+    license,
+    minRamMb,
+    recommendedRamMb,
+    abis: [],
+    downloadable: false,
+    importable,
+    distributionNote,
+    upstreamRepo,
+  };
+}
+
+const PENDING_PIN_NOTE = "Needs verification before it can be offered. Check back later.";
+const LFM_IMPORT_NOTE =
+  "Available for import and evaluation only under its license — not offered as a download.";
+
+export const ADVANCED_DESCRIPTORS: readonly ModelDescriptor[] = [
+  advancedText(
+    "qwen3-1.7b-dynamic-int4",
+    "Qwen3 1.7B · larger assistant candidate (unverified)",
+    "On-device assistant (large)",
+    "Qwen3 1.7B",
+    QWEN_TEXT_RUNTIME_ID,
+    "litertlm",
+    "Qwen3-1.7B_dynamic_wi4b32_afp32.litertlm",
+    "litert-community/Qwen3-1.7B",
+    "apache-2.0-pending-pin",
+    2200,
+    3072,
+    ["text"],
+    PENDING_PIN_NOTE,
+    false,
+  ),
+  advancedText(
+    "lfm2-350m-q4_0",
+    "LFM2 350M · compact candidate (license-restricted)",
+    "Compact assistant",
+    "LFM2 350M",
+    LLAMA_CPP_RUNTIME_ID,
+    "gguf",
+    "LFM2-350M-Q4_0.gguf",
+    "LiquidAI/LFM2-350M",
+    "lfm-1.0-eval-only",
+    1200,
+    1800,
+    ["text"],
+    LFM_IMPORT_NOTE,
+    true,
+  ),
+  advancedText(
+    "lfm2-700m-q4_0",
+    "LFM2 700M · balanced candidate (license-restricted)",
+    "Balanced assistant",
+    "LFM2 700M",
+    LLAMA_CPP_RUNTIME_ID,
+    "gguf",
+    "LFM2-700M-Q4_0.gguf",
+    "LiquidAI/LFM2-700M",
+    "lfm-1.0-eval-only",
+    1500,
+    2200,
+    ["text"],
+    LFM_IMPORT_NOTE,
+    true,
+  ),
+  advancedText(
+    "lfm2-1.2b-q4_0",
+    "LFM2 1.2B · capable candidate (license-restricted)",
+    "Capable assistant",
+    "LFM2 1.2B",
+    LLAMA_CPP_RUNTIME_ID,
+    "gguf",
+    "LFM2-1.2B-Q4_0.gguf",
+    "LiquidAI/LFM2-1.2B",
+    "lfm-1.0-eval-only",
+    1800,
+    2600,
+    ["text"],
+    LFM_IMPORT_NOTE,
+    true,
+  ),
+  advancedText(
+    "granite-3.3-2b-instruct-q4_0",
+    "Granite 3.3 2B Instruct · candidate (unverified)",
+    "Instruction assistant",
+    "Granite 3.3 2B",
+    LLAMA_CPP_RUNTIME_ID,
+    "gguf",
+    "granite-3.3-2b-instruct-Q4_0.gguf",
+    "ibm-granite/granite-3.3-2b-instruct",
+    "apache-2.0-pending-pin",
+    2300,
+    3200,
+    ["text"],
+    PENDING_PIN_NOTE,
+    false,
+  ),
+  advancedText(
+    "lfm2-vl-450m-int4",
+    "LFM2-VL 450M · compact photo candidate (license-restricted)",
+    "Compact photo analysis",
+    "LFM2-VL 450M",
+    SMOL_VLM_RUNTIME_ID,
+    "litertlm",
+    "LFM2-VL-450M-int4.litertlm",
+    "LiquidAI/LFM2-VL-450M",
+    "lfm-1.0-eval-only",
+    1600,
+    2300,
+    ["vision"],
+    LFM_IMPORT_NOTE,
+    true,
+  ),
+  advancedText(
+    "lfm2-vl-1.6b-int4",
+    "LFM2-VL 1.6B · photo candidate (license-restricted)",
+    "Detailed photo analysis",
+    "LFM2-VL 1.6B",
+    SMOL_VLM_RUNTIME_ID,
+    "litertlm",
+    "LFM2-VL-1.6B-int4.litertlm",
+    "LiquidAI/LFM2-VL-1.6B",
+    "lfm-1.0-eval-only",
+    2400,
+    3400,
+    ["vision"],
+    LFM_IMPORT_NOTE,
+    true,
+  ),
+  advancedText(
+    "qwen3-vl-2b-instruct-int4",
+    "Qwen3-VL 2B Instruct · photo candidate (unverified)",
+    "Detailed photo analysis",
+    "Qwen3-VL 2B",
+    SMOL_VLM_RUNTIME_ID,
+    "litertlm",
+    "Qwen3-VL-2B-Instruct-int4.litertlm",
+    "Qwen/Qwen3-VL-2B-Instruct",
+    "apache-2.0-pending-pin",
+    2400,
+    3400,
+    ["vision"],
+    PENDING_PIN_NOTE,
+    false,
+  ),
+];
+
+const ALL_DESCRIPTORS: readonly ModelDescriptor[] = [
+  NEEDLE_DESCRIPTOR,
+  SMOL_VISION_DESCRIPTOR,
+  QWEN_TEXT_DESCRIPTOR,
+  ...ADVANCED_DESCRIPTORS,
+];
 
 /** True when the descriptor verifies this ABI. Unknown ABI never counts. */
 export function modelSupportsAbi(descriptor: ModelDescriptor, abi: string): boolean {
@@ -192,12 +503,18 @@ export function createModelRegistry(
     visionDescriptor: () =>
       defaultVisionModelId === undefined ? undefined : frozen.find((item) => item.modelId === defaultVisionModelId),
     catalogue: () => frozen.filter((item) => item.downloadable),
+    advancedCatalogue: () => frozen.filter((item) => !item.downloadable),
   };
 }
 
 let production: ModelRegistry | undefined;
 
-/** Frozen production singleton: Needle + SmolVLM2 vision, nothing else. */
+/**
+ * Frozen production singleton: the canonical descriptor authority — every
+ * product-visible model. The downloadable catalogue is Needle + SmolVLM2
+ * vision + Qwen3 text; Advanced candidates are registered but never
+ * downloadable until their pin/license/measurement gates clear.
+ */
 export function productionModelRegistry(): ModelRegistry {
-  return (production ??= createModelRegistry(PRODUCTION_DESCRIPTORS, { defaultVisionModelId: SMOL_VISION_MODEL_ID }));
+  return (production ??= createModelRegistry(ALL_DESCRIPTORS, { defaultVisionModelId: SMOL_VISION_MODEL_ID }));
 }

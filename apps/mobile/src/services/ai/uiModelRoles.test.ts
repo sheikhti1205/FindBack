@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_CHAT_MODEL_ID,
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_TOOL_MODEL_ID,
   automaticLocalModel,
@@ -11,7 +12,7 @@ import {
   supportsAssistantMessage,
 } from "./uiModelRoles";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
-import { SMOL_VISION_MODEL_ID } from "./modelDescriptors";
+import { QWEN_TEXT_MODEL_ID, SMOL_VISION_MODEL_ID } from "./modelDescriptors";
 import type { ModelRecord } from "./providerContract";
 
 const row = (id: string, provider: ModelRecord["provider"], qualifiedRoles?: ModelRecord["qualifiedRoles"]): ModelRecord => ({
@@ -32,6 +33,21 @@ describe("uiModelRoles (master plan §8)", () => {
     expect(qualifiedUiRolesForOfflineModel(SMOL_VISION_MODEL_ID)).toEqual(["vision"]);
   });
 
+  it("qualifies Qwen3 text as Chat + Tools from its descriptor roles, never Vision", () => {
+    const roles = qualifiedUiRolesForOfflineModel(QWEN_TEXT_MODEL_ID);
+    expect(roles).toContain("chat");
+    expect(roles).toContain("tools");
+    expect(roles).not.toContain("vision");
+    expect(roles).not.toContain("embeddings");
+  });
+
+  it("selects Qwen3 for the Assistant and names it the explicit text default", () => {
+    expect(DEFAULT_CHAT_MODEL_ID).toBe(QWEN_TEXT_MODEL_ID);
+    expect(
+      isAssistantSelectableOfflineRecord({ id: QWEN_TEXT_MODEL_ID, provider: "offline" }),
+    ).toBe(true);
+  });
+
   it("fails closed for unknown model ids instead of inferring from I/O shape", () => {
     expect(qualifiedUiRolesForOfflineModel("some-future-text-model")).toEqual([]);
   });
@@ -45,9 +61,10 @@ describe("uiModelRoles (master plan §8)", () => {
     expect(isConversationalUiRole("tts")).toBe(false);
   });
 
-  it("excludes Needle rows from Assistant selection but keeps SmolVLM2", () => {
+  it("excludes Needle rows from Assistant selection but keeps SmolVLM2 and Qwen3", () => {
     expect(isAssistantSelectableOfflineRecord({ id: NEEDLE_MODEL_ID, provider: "offline" })).toBe(false);
     expect(isAssistantSelectableOfflineRecord({ id: SMOL_VISION_MODEL_ID, provider: "offline" })).toBe(true);
+    expect(isAssistantSelectableOfflineRecord({ id: QWEN_TEXT_MODEL_ID, provider: "offline" })).toBe(true);
   });
 
   it("also requires explicit conversation qualification on cloud selection rows", () => {
@@ -88,21 +105,28 @@ describe("uiModelRoles (master plan §8)", () => {
     expect(rolesForCatalogRecord(row("speech", "groq", "chat" as unknown as ModelRecord["qualifiedRoles"]))).toEqual([]);
   });
 
-  it("keeps send compatibility and Automatic role defaults fail closed", () => {
+  it("keeps send compatibility and Automatic picks qualified installed models, never catalogue order", () => {
     const smol = row(SMOL_VISION_MODEL_ID, "offline");
     const needle = row(NEEDLE_MODEL_ID, "offline");
+    const qwen = row(QWEN_TEXT_MODEL_ID, "offline");
     expect(supportsAssistantMessage(smol, false)).toBe(false);
     expect(supportsAssistantMessage(smol, true)).toBe(true);
     expect(supportsAssistantMessage(needle, false)).toBe(false);
+    expect(supportsAssistantMessage(qwen, false)).toBe(true);
+    expect(supportsAssistantMessage(qwen, true)).toBe(false);
     expect(supportsAssistantMessage(row("speech", "groq", ["stt"]), false)).toBe(false);
     expect(supportsAssistantMessage(row("unknown", "openrouter"), false)).toBe(false);
     expect(automaticLocalModel([needle, smol], true)).toBe(smol);
+    // Text turns resolve to the explicit Qwen default wherever it is listed.
+    expect(automaticLocalModel([needle, smol, qwen], false)).toBe(qwen);
+    expect(automaticLocalModel([qwen, needle], false)).toBe(qwen);
     expect(automaticLocalModel([smol, needle], false)).toBeNull();
   });
 
   it("exports a display-name resolver usable by the composer without I/O metadata", () => {
     expect(displayNameForCatalogRecord({ id: NEEDLE_MODEL_ID, provider: "offline" })).toBe("Needle3");
     expect(displayNameForCatalogRecord({ id: SMOL_VISION_MODEL_ID, provider: "offline" })).toBe("SmolVLM2");
+    expect(displayNameForCatalogRecord({ id: QWEN_TEXT_MODEL_ID, provider: "offline" })).toBe("Qwen3");
     expect(displayNameForCatalogRecord({ id: "gpt-4o-mini", provider: "openai", displayName: "gpt-4o-mini" })).toBe("GPT-4o mini");
     expect(displayNameForCatalogRecord({ id: "technical/opaque", provider: "generic", displayName: "technical/opaque" })).toBe("Cloud model");
     expect(displayNameForCatalogRecord({ id: "unregistered", provider: "offline" })).toBe("On-device model");
