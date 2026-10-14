@@ -191,6 +191,7 @@ export interface OfflineVisionNativeBridge {
    * `vision/backendSelector` — the bridge never re-decides.
    */
   loadVisionModel(args: {
+    readonly evaluation?: boolean;
     readonly modelId: string;
     readonly backend: "cpu" | "gpu";
     readonly installedPath?: string;

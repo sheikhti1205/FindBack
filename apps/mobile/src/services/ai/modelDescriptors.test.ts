@@ -63,24 +63,26 @@ describe("modelDescriptors", () => {
     expect(modelSupportsAbi(QWEN_TEXT_DESCRIPTOR, "x86_64")).toBe(false);
   });
 
-  it("marks every Advanced candidate truthfully: no download without a verified pin, no LFM redistribution", () => {
+  it("offers pinned Advanced acquisition without claiming device qualification or product roles", () => {
     const registry = productionModelRegistry();
     for (const descriptor of registry.advancedCatalogue()) {
       expect(tierOf(descriptor)).toBe("advanced");
-      expect(descriptor.downloadable).toBe(false);
+      expect(descriptor.downloadable).toBe(true);
       expect(descriptor.taskRoles).toEqual([]);
-      expect((descriptor.distributionNote ?? "").trim().length).toBeGreaterThan(0);
-      if (descriptor.license.includes("lfm-1.0")) {
-        expect(distributionPolicyOf(descriptor)).toBe("license-restricted");
-        expect(descriptor.importable).toBe(true);
-      } else {
-        expect(distributionPolicyOf(descriptor)).toBe("unavailable");
-      }
+      expect(descriptor.maturity).toBe("lab");
+      expect(descriptor.deviceQualifiedAbis).toEqual([]);
+      expect(distributionPolicyOf(descriptor)).toBe("downloadable");
+      expect(descriptor.importable).toBe(true);
+      expect(descriptor.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(descriptor.revision).toMatch(/^[a-f0-9]{40}$/);
+      expect(descriptor.bytes).toBeGreaterThan(0);
+      expect(descriptor.url).toContain(`/resolve/${descriptor.revision}/`);
     }
-    // Pin-verification-required arms carry no fabricated pin.
+    // The 1.7B artifact has exact upstream metadata and an independent
+    // minimum-runtime requirement, not the old guessed pending pin.
     const qwen17 = registry.descriptorFor("qwen3-1.7b-dynamic-int4");
-    expect(qwen17?.sha256).toBe("pending-verification");
-    expect(qwen17?.url).toBe("");
+    expect(qwen17?.sha256).toBe("2a72330b504a6596d53a2c00923c57173b10f1b83e6a541213ffec08d1fc5de8");
+    expect(qwen17?.minRuntimeVersion).toBe("0.18.0");
   });
 
   it("never advertises an install action this build cannot perform", () => {

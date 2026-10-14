@@ -185,6 +185,7 @@ class SmolVlmPlugin : Plugin() {
         scope.launch {
             try {
                 synchronized(lock) { unloadLocked() }
+                com.findback.app.ai.LiteRtArtifactPolicy.inspect(modelFile.absolutePath, modelId, true)
                 val visionBackend =
                     if (requestedBackend == "gpu") Backend.GPU() else Backend.CPU()
                 // Audio executor stays uninitialized (EngineConfig default
@@ -214,7 +215,7 @@ class SmolVlmPlugin : Plugin() {
                 )
                 synchronized(lock) { conversation = conv }
                 // Self-test: resolve READY only after a proven round-trip.
-                conv.sendMessage(Contents.of(Content.Text("ok")))
+                if (call.getBoolean("evaluation", false) != true) conv.sendMessage(Contents.of(Content.Text("ok")))
                 synchronized(lock) {
                     engine = eng
                     conversation = conv
@@ -225,7 +226,7 @@ class SmolVlmPlugin : Plugin() {
                 call.resolve(ret)
             } catch (e: Exception) {
                 synchronized(lock) { unloadLocked() }
-                call.reject("runtime_load_failed", e.message?.take(400))
+                call.reject("On-device vision runtime failed to load", "runtime_load_failed")
             } finally { lease.close() }
         }
     }

@@ -6,6 +6,9 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.io.File
+import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import android.util.Base64
 
 /**
  * llama.cpp lab challenger bridge (pinned v0.5.0 source, CPU-only).
@@ -23,9 +26,9 @@ import java.io.File
  * - one process-global session behind [lock]; load quiesces in-flight
  *   inference (cancel + bounded drain) before `nativeLoad`, which itself
  *   evicts the previous session first;
- * - load proves the session with a bounded probe generation before
- *   resolving READY (a file that parses but cannot generate never reads
- *   as ready);
+ * - READY is resolved after `nativeLoad`/projector bind succeed with no
+ *   hidden probe generation, so a file that parses but cannot generate is
+ *   proven only by the first explicit evaluation, not by load;
  * - explicit session/generation bounds: nCtx/nThreads/maxTokens are
  *   clamped, prompts over [MAX_PROMPT_CHARS] fail closed;
  * - unload drains in-flight iterations (bounded) before `nativeUnload`,
@@ -47,6 +50,7 @@ class FindbackLlama : Plugin() {
     private var residentModelId: String? = null
     private var loading = false
     private val activeFlags = mutableMapOf<String, Boolean>()
+    private var running = 0
 
     @PluginMethod
     fun isLlamaAvailable(call: PluginCall) {
@@ -70,6 +74,8 @@ class FindbackLlama : Plugin() {
             call.reject("model_not_installed", "model is not installed")
             return
         }
+        val projector = call.getString("projectorPath")?.let { File(it) }
+        if (projector != null && (!isUnderAppFiles(projector) || !projector.isFile || projector.extension != "gguf")) { call.reject("Invalid projector", "model_not_installed"); return }
         synchronized(lock) {
             if (loading) {
                 call.reject("runtime_busy", "on-device lab runtime is busy")
@@ -96,18 +102,8 @@ class FindbackLlama : Plugin() {
                         }
                         LlamaBridge.nativeInit()
                         LlamaBridge.nativeLoad(modelFile.absolutePath, nCtx, nThreads)
-                        // Probe self-test: a file that parses but cannot
-                        // generate never resolves READY. nativeBegin resets
-                        // the session, so the probe leaves no state behind
-                        // for the first real inference.
-                        LlamaBridge.nativeBegin(PROBE_PROMPT)
-                        try {
-                            LlamaBridge.nativeNext()
-                        } catch (_: NativeLlamaException) {
-                            // A probe decode failure still proves the
-                            // session is alive (begin succeeded); only a
-                            // begin failure below fails the load.
-                        }
+                        if (projector != null) LlamaBridge.nativeLoadProjector(projector.absolutePath)
+                        // Evaluation itself is the explicit self-test. Do not seed hybrid recurrent state with a hidden probe.
                         residentModelId = modelId
                         loading = false
                     }
@@ -167,18 +163,26 @@ class FindbackLlama : Plugin() {
                 call.reject("runtime_unavailable", "on-device lab runtime is unavailable")
                 return
             }
+            if (running != 0) { call.reject("Generation busy", "runtime_busy"); return }
             activeFlags[generationId] = true
+            running++
+            LlamaBridge.nativeResetCancellation()
         }
         call.setKeepAlive(true)
         Thread(
             {
                 try {
-                    val consumed = synchronized(lock) { LlamaBridge.nativeBegin(prompt) }
+                    val image = call.getString("imageBase64")?.let { decodeImage(it) }
+                    val consumed = synchronized(lock) {
+                        if (activeFlags[generationId] != true) throw IllegalStateException("cancelled")
+                        LlamaBridge.nativeBegin(prompt, image?.first, image?.second ?: 0, image?.third ?: 0)
+                    }
                     if (consumed < 0) {
                         call.reject("generation_failed")
                         return@Thread
                     }
                     var emitted = 0
+                    val utf8 = java.io.ByteArrayOutputStream()
                     while (emitted < maxTokens) {
                         val alive = synchronized(lock) { activeFlags[generationId] == true }
                         if (!alive) {
@@ -194,7 +198,12 @@ class FindbackLlama : Plugin() {
                             }
                         } ?: break
                         emitted += 1
-                        notifyChunk(generationId, delta = piece)
+                        utf8.write(piece)
+                        try {
+                            val text = Charsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                                .decode(java.nio.ByteBuffer.wrap(utf8.toByteArray())).toString()
+                            notifyChunk(generationId, delta = text); utf8.reset()
+                        } catch (_: java.nio.charset.CharacterCodingException) { /* incomplete token byte sequence */ }
                     }
                     notifyChunk(generationId, done = true)
                     call.resolve()
@@ -205,7 +214,7 @@ class FindbackLlama : Plugin() {
                     notifyChunk(generationId, error = "generation_failed")
                     call.reject("generation_failed", "on-device lab generation failed")
                 } finally {
-                    synchronized(lock) { activeFlags.remove(generationId) }
+                    synchronized(lock) { activeFlags.remove(generationId); running-- }
                 }
             },
             "findback-llama-infer",
@@ -215,11 +224,11 @@ class FindbackLlama : Plugin() {
     @PluginMethod
     fun cancelGeneration(call: PluginCall) {
         val generationId = call.getString("generationId")
-        synchronized(lock) { activeFlags.remove(generationId) }
         try {
             if (LlamaBridge.ensureLoaded()) LlamaBridge.nativeCancel()
         } catch (_: Exception) {
         }
+        synchronized(lock) { activeFlags.remove(generationId) }
         call.resolve()
     }
 
@@ -236,7 +245,8 @@ class FindbackLlama : Plugin() {
         // live iteration. Stragglers past the timeout are abandoned (their
         // finally still removes their flags); the unload proceeds because
         // a wedged lab call must not wedge cleanup forever.
-        drainActive(UNLOAD_DRAIN_TIMEOUT_MS)
+        try { drainActive(UNLOAD_DRAIN_TIMEOUT_MS) }
+        catch (_: Exception) { call.reject("Native inference has not settled", "runtime_busy"); return }
         synchronized(lock) {
             activeFlags.clear()
             try {
@@ -302,9 +312,9 @@ class FindbackLlama : Plugin() {
     private fun drainActive(timeoutMs: Long) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (true) {
-            val remaining = synchronized(lock) { activeFlags.size }
+            val remaining = synchronized(lock) { running }
             if (remaining == 0) return
-            if (System.currentTimeMillis() >= deadline) return
+            if (System.currentTimeMillis() >= deadline) throw IllegalStateException("native inference has not settled")
             try {
                 Thread.sleep(DRAIN_POLL_MS)
             } catch (_: InterruptedException) {
@@ -326,10 +336,27 @@ class FindbackLlama : Plugin() {
         private const val MAX_N_THREADS = 8
         private const val MAX_GENERATION_TOKENS = 1024
         private const val MAX_PROMPT_CHARS = 16_000
-        private const val PROBE_PROMPT = "ok"
         private const val DRAIN_POLL_MS = 50L
         private const val LOAD_DRAIN_TIMEOUT_MS = 10_000L
         private const val UNLOAD_DRAIN_TIMEOUT_MS = 10_000L
         private val MODEL_ID_PATTERN = Regex("[A-Za-z0-9._-]+")
+    }
+
+    private fun decodeImage(base64: String): Triple<ByteArray, Int, Int> {
+        require(base64.length <= 12 * 1024 * 1024)
+        val data = Base64.decode(base64, Base64.DEFAULT)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+        require(bounds.outWidth > 0 && bounds.outHeight > 0)
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
+        val bmp = BitmapFactory.decodeByteArray(data, 0, data.size, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 }) ?: throw IllegalArgumentException()
+        try {
+            val pixels = IntArray(bmp.width * bmp.height)
+            bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+            val rgb = ByteArray(pixels.size * 3)
+            pixels.forEachIndexed { i, p -> rgb[3*i] = (p shr 16).toByte(); rgb[3*i+1] = (p shr 8).toByte(); rgb[3*i+2] = p.toByte() }
+            return Triple(rgb, bmp.width, bmp.height)
+        } finally { bmp.recycle() }
     }
 }

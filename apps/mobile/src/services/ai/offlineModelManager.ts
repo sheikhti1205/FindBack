@@ -250,11 +250,11 @@ export function transitionOfflineModel(
       return stamp(status, { download: "downloading", lastError: undefined });
     }
     case "CANCEL": {
-      if (status.download !== "downloading" && status.download !== "queued") {
+      if (status.download !== "downloading" && status.download !== "queued" && status.download !== "verifying") {
         fail(`cannot cancel from ${status.download}`);
       }
       // Staged bytes stay for resume; see DELETE for discarding.
-      return stamp(status, { download: "paused" });
+      return stamp(status, { download: "paused", checksumVerified: false });
     }
     case "VERIFY_START": {
       if (status.download !== "downloading" && status.download !== "paused") {
@@ -365,6 +365,14 @@ export class OfflineModelManager {
 
   assetIds(): readonly string[] {
     return [...this.assets.keys()];
+  }
+
+  /** Dynamic imported pins carry no routing roles; the descriptor owner enforces imported/lab. */
+  registerImportedAsset(asset: OfflineAssetPin): void {
+    if (!asset.modelId.startsWith("imported-") || this.assets.has(asset.modelId)) throw new OfflineTransitionError("invalid imported identity");
+    this.assets.set(asset.modelId, asset);
+    this.statuses.set(asset.modelId, createInitialStatus(asset));
+    this.listeners.forEach((listener) => listener());
   }
 
   /** Catalogue pin for one model, or undefined when unknown. */

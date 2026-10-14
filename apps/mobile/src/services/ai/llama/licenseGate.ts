@@ -1,8 +1,9 @@
 /**
  * LFM Open License v1.0 distribution gate (WS4, isolated scope).
  *
- * LFM-licensed weights (LFM2.5 text + VL arms) are benchmark/eval-only:
- * they must never ship as a downloadable or app-bundled artifact. This gate
+ * LFM Open License v1.0 permits compliant redistribution and local use.
+ * No weights are bundled by FindBack; downloads/evaluation are owner-enabled,
+ * subject to §4 notices and §5 commercial eligibility. This gate
  * is the single enforcement point the llama.cpp challenger stub and any
  * future packer entry must consult before a load/package step.
  *
@@ -30,8 +31,8 @@ export function isLfmLicensed(profile: ModelProfile): boolean {
 /**
  * Enforce the distribution gate for one profile + channel.
  *
- * - LFM-1.0 + bundle/download → blocked (benchmark-only, catalogOnly).
- * - LFM-1.0 + benchmark/eval → allowed (lab evaluation download only).
+ * - LFM-1.0 + bundle → blocked by packaging policy (not upstream prohibition).
+ * - LFM-1.0 + download/benchmark/eval → owner-enabled, conditions disclosed.
  * - Permissive/unknown licenses → allowed on every channel.
  *
  * Defaults to the strictest channel ("bundle") so a bare
@@ -44,16 +45,16 @@ export function enforce(
   if (!isLfmLicensed(profile)) {
     return { allowed: true, reason: `license ${profile.license ?? "unspecified"} permits ${channel}` };
   }
-  if (channel === "bundle" || channel === "download") {
+  if (channel === "bundle") {
     return {
       allowed: false,
       reason:
         `LFM Open License v1.0 (${profile.id}): ${channel} blocked — ` +
-        "benchmark/eval-only, catalogOnly; no bundling or redistributable download",
+        "FindBack does not package model weights. This is product packaging policy, not an upstream redistribution prohibition.",
     };
   }
   return {
     allowed: true,
-    reason: `LFM Open License v1.0 (${profile.id}): ${channel} allowed for lab evaluation only`,
+    reason: `LFM Open License v1.0 (${profile.id}): ${channel} owner-enabled subject to §4 license/NOTICE attribution and §5 commercial eligibility. No product task qualification.`,
   };
 }

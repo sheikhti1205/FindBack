@@ -40,10 +40,11 @@ const sevOf = (id) => {
 };
 
 /** A full-manifest ledger whose items can be overridden per test. */
-function fullLedger(overrides = {}, { status = "DONE", releaseStatus = "HOLD" } = {}) {
+function fullLedger(overrides = {}, { status = "DONE", releaseStatus = "HOLD", candidateVersion = "2.0.0-beta.1" } = {}) {
   return {
     version: 1,
     releaseStatus,
+    candidateVersion,
     generatedFor: "a".repeat(40),
     items: FINDINGS_MANIFEST.map((id) => ({
       id,
@@ -127,7 +128,7 @@ describe("validateLedger final", () => {
 
   it("accepts a formally waived limitation with waiver + evidence", () => {
     const waived = fullLedger(
-      { "FBA-006": { status: "WAIVED", waiver: "evaluator accepted CSV substitute", blocker: "genuine .rpt needs licensed tooling" } },
+      { "FBA-006": { status: "WAIVED", waiver: "evaluator accepted CSV substitute", waiverVersion: "2.0.0-beta.1", blocker: "genuine .rpt needs licensed tooling" } },
       { releaseStatus: "READY" },
     );
     const errors = validateLedger(waived, { release: true }, { ...stubPaths, ...stubDocs({ "FBA-006": "WAIVED — evaluator acceptance" }), git: stubGitClean() });
@@ -285,28 +286,75 @@ describe("completion-gate on the real repository", () => {
     equal(passed, false);
     ok(errors.some((e) => /final blocked|releaseStatus/.test(e)), errors.join("\n"));
   });
-  it("goes GREEN in release mode once waivers are written and status is READY (v8 beta disposition)", () => {
-    // Disposition-aware: the committed repo is HOLD (release not authorized),
-    // so the release-green property is proven against the REAL reconciled
-    // manifest with only releaseStatus flipped to READY — not an emptied one.
-    // Everything else (evidence refs, docs agreement, head binding) is the
-    // real tree, so this fails if the manifest was ever gutted.
+  it("goes GREEN in release mode only once the candidate's waivers are signed and every severity is closed", () => {
+    // Hermetic: the green must rest on written owner waivers *signed for the
+    // current candidate*, never on an emptied manifest. A waiver signed for a
+    // prior candidate cannot close this one (see the stale-waiver test below).
+    const head = "a".repeat(40);
+    const signed = {
+      ...fullLedger(
+        { "FBA-006": { status: "WAIVED", waiver: "evaluator accepted the CSV/API substitute", waiverVersion: "2.0.0-beta.1" } },
+        { releaseStatus: "READY" },
+      ),
+      candidateVersion: "2.0.0-beta.1",
+      generatedFor: head,
+    };
+    const errors = validateLedger(
+      signed,
+      { final: true, release: true },
+      { ...stubPaths, ...stubDocs({ "FBA-006": "WAIVED — evaluator acceptance" }), git: stubGitClean(head) },
+    );
+    deepStrictEqual(errors, []);
+  });
+
+  it("refuses a prior-candidate waiver even at READY (a stale waiver cannot close this candidate)", () => {
+    const stale = {
+      ...fullLedger(
+        { "FBA-006": { status: "WAIVED", waiver: "v8 beta acceptance", waiverVersion: "0.8.0-beta.2" } },
+        { releaseStatus: "READY" },
+      ),
+      candidateVersion: "2.0.0-beta.1",
+      generatedFor: "a".repeat(40),
+    };
+    const errors = validateLedger(
+      stale,
+      { final: true, release: true },
+      { ...stubPaths, ...stubDocs({ "FBA-006": "WAIVED — v8 beta" }), git: stubGitClean() },
+    );
+    ok(errors.some((e) => /FBA-006.*stale waiver/.test(e)), errors.join("; "));
+  });
+
+  it("cannot disable the stale-waiver rule by omitting candidateVersion", () => {
+    const bypass = fullLedger(
+      { "FBA-006": { status: "WAIVED", waiver: "old acceptance", waiverVersion: "0.8.0-beta.2" } },
+      { releaseStatus: "READY" },
+    );
+    delete bypass.candidateVersion;
+    const errors = validateLedger(
+      bypass,
+      { final: true, release: true },
+      { ...stubPaths, ...stubDocs({ "FBA-006": "WAIVED — old" }), git: stubGitClean() },
+    );
+    ok(errors.some((e) => /candidateVersion is required/.test(e)), errors.join("; "));
+  });
+
+  it("keeps the real 2.0.0-beta.1 candidate RED at READY: runtime/device items open, legacy waivers stale", () => {
+    // Disposition-aware honesty check: flipping releaseStatus to READY must NOT
+    // release the candidate while runtime/device items stay open and the
+    // committed waivers were signed for an earlier candidate. The manifest must
+    // also never be gutted to force green.
     const real = loadLedger(REPO_ROOT);
-    const ready = { ...real, releaseStatus: "READY" };
-    const { passed, errors } = checkCompletionGate({
-      release: true,
-      ledger: ready,
-      files: collectShippedSources(REPO_ROOT),
-      testFiles: collectTestSources(REPO_ROOT),
-    });
-    ok(passed, errors.join("\n"));
-    // The green must rest on written owner waivers, never on an emptied manifest.
+    ok(typeof real.candidateVersion === "string" && real.candidateVersion !== "", "the ledger must bind to a candidate version");
     const waived = real.items.filter((item) => item.status === "WAIVED");
-    ok(waived.length > 0, "release-green with zero waivers means the manifest was emptied");
+    ok(waived.length > 0, "release-green with zero waivers would mean the manifest was emptied");
     ok(
       waived.every((item) => typeof item.waiver === "string" && item.waiver.trim() !== ""),
       "every WAIVED item needs written waiver text",
     );
+    const ready = { ...real, releaseStatus: "READY" };
+    const { passed, errors } = checkCompletionGate({ release: true, ledger: ready, files: {}, testFiles: {} });
+    equal(passed, false, "a READY flag alone must not release a candidate with stale waivers and open runtime items");
+    ok(errors.some((e) => /stale waiver|final blocked/.test(e)), errors.join("\n"));
   });
   it("stays RED in release mode on the real repo while releaseStatus is HOLD (honest current state)", () => {
     const { passed, errors } = checkCompletionGate({ release: true, files: collectShippedSources(REPO_ROOT) });

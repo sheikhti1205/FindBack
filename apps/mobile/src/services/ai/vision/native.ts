@@ -5,7 +5,7 @@ import { diag } from "../../diag";
 
 export interface SmolPlugin {
   isVisionAvailable(): Promise<{ available: boolean }>;
-  loadVisionModel(args: { modelId: string; backend: "cpu" | "gpu"; installedPath?: string; maxOutputTokens: number }): Promise<{ ready: boolean }>;
+  loadVisionModel(args: { modelId: string; backend: "cpu" | "gpu"; installedPath?: string; maxOutputTokens: number; evaluation?: boolean }): Promise<{ ready: boolean }>;
   unloadVisionModel(): Promise<unknown>;
   describeImage(args: OfflineVisionRequest): Promise<unknown>;
   cancelGeneration(args: { generationId: string }): Promise<unknown>;

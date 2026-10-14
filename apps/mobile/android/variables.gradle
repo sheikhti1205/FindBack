@@ -17,12 +17,9 @@ ext {
     androidxExifInterfaceVersion = '1.4.2'
     // On-device vision (SmolVLM2-500M via LiteRT-LM). Pinned exact — never
     // dynamic — so every build resolves the same AAR. Verified present on
-    // Google Maven (maven-metadata: latest 0.17.1).
-    // On-device vision (SmolVLM2-500M via LiteRT-LM). Pinned exact — never
-    // dynamic — so every build resolves the same AAR. Verified present on
-    // Google Maven (maven-metadata: latest 0.17.1).
-    litertLmVersion = '0.17.1'
-    coroutinesVersion = '1.10.2'
+    // Google Maven stable 0.18.0; current Qwen3 1.7B requires >=0.18.0.
+    litertLmVersion = '0.18.0'
+    coroutinesVersion = '1.11.0'
     // Keyless map renderer (MAP pivot): MapLibre Native Android, OpenGL ES
     // backend only (widest compatibility, smallest ABI weight vs the
     // multi-backend artifact). Pinned exact — never floating or dynamic — so

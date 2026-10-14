@@ -43,10 +43,13 @@ if(ANDROID_ABI STREQUAL "arm64-v8a" AND
    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/CMakeLists.txt")
     set(BUILD_SHARED_LIBS ON)
     set(LLAMA_BUILD_APP OFF)
-    set(LLAMA_BUILD_COMMON OFF)
+    set(LLAMA_BUILD_COMMON ON)
     set(LLAMA_BUILD_TESTS OFF)
     set(LLAMA_BUILD_EXAMPLES OFF)
     set(LLAMA_BUILD_SERVER OFF)
+    set(LLAMA_BUILD_TOOLS OFF)
+    set(LLAMA_BUILD_MTMD ON)
+    set(MTMD_VIDEO OFF CACHE BOOL "No video subprocesses" FORCE)
     set(LLAMA_OPENSSL OFF)
     set(GGML_NATIVE OFF)
     set(GGML_OPENMP OFF)
@@ -55,7 +58,7 @@ if(ANDROID_ABI STREQUAL "arm64-v8a" AND
     set(GGML_CPU_ALL_VARIANTS ON)
     add_subdirectory(third_party/llama.cpp build-llama EXCLUDE_FROM_ALL)
     add_library(findback_llama SHARED llama/llama_bridge.cpp)
-    target_link_libraries(findback_llama llama ${log-lib} dl)
+    target_link_libraries(findback_llama llama llama-common mtmd ${log-lib} dl)
     target_include_directories(findback_llama PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/common")

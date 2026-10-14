@@ -68,11 +68,12 @@ function fakeDriver(opts?: {
         (error as { code?: string }).code = code;
         throw error;
       }
-      attempt.onProgress?.(500, 1_000);
-      attempt.onProgress?.(1_000, 1_000);
+      const remaining = PIN.downloadBytes - attempt.resumeOffset;
+      attempt.onProgress?.(Math.min(500, remaining), PIN.downloadBytes);
+      attempt.onProgress?.(remaining, PIN.downloadBytes);
       return {
-        receivedBytes: 1_000,
-        totalBytes: 1_000,
+        receivedBytes: remaining,
+        totalBytes: PIN.downloadBytes,
         actualHex: opts?.actualHex ?? PIN.sha256,
         finalUrl: attempt.url,
       };

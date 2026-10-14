@@ -131,6 +131,13 @@ export function validateLedger(ledger, { final = false, release = false } = {}, 
   if (!ledger || typeof ledger !== "object") return ["ledger is not an object"];
   if (ledger.version !== 1) errors.push(`unsupported ledger version: ${JSON.stringify(ledger.version)}`);
   if (!Array.isArray(ledger.items) || ledger.items.length === 0) return [...errors, "ledger.items must be a non-empty array"];
+  // A closure ledger MUST name the candidate it closes; otherwise the
+  // candidate-scoped stale-waiver rule below is opt-in and could be disabled
+  // simply by deleting `candidateVersion`.
+  const candidate = typeof ledger.candidateVersion === "string" ? ledger.candidateVersion.trim() : "";
+  if ((final || release) && candidate === "") {
+    errors.push("ledger.candidateVersion is required for final/release closure (a closure ledger must name the candidate it closes)");
+  }
 
   const seen = new Set();
   const byId = new Map();
@@ -152,6 +159,18 @@ export function validateLedger(ledger, { final = false, release = false } = {}, 
     if (OPEN_STATUSES.includes(item?.status) && blocker === "") errors.push(`${tag}: OPEN status ${item.status} requires a named blocker`);
     if (final && CLOSED_STATUSES.includes(item?.status) && blocker !== "") {
       errors.push(`${tag}: closed as ${item.status} but retains a blocker ("${item.blocker}") — move the reference to evidence or reopen the item`);
+    }
+    // Candidate-scoped waivers: a waiver signed for one candidate must never
+    // close a different one. Enforced in final mode (closure validity, not
+    // ledger shape): when the ledger declares `candidateVersion`, every WAIVED
+    // item must carry that exact `waiverVersion`; an older version is a stale
+    // waiver and cannot close the current candidate.
+    if ((final || release) && candidate !== "" && item?.status === WAIVED_STATUS) {
+      if (item?.waiverVersion !== ledger.candidateVersion) {
+        errors.push(
+          `${tag}: stale waiver — waiverVersion ${JSON.stringify(item?.waiverVersion)} does not match candidate ${JSON.stringify(ledger.candidateVersion)}; re-sign for the current candidate or leave the item open`,
+        );
+      }
     }
   }
   const missing = FINDINGS_MANIFEST.filter((id) => !seen.has(id));

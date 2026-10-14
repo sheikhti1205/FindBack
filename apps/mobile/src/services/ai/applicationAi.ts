@@ -22,6 +22,11 @@ import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_V
 import { ResidencyCoordinator, ResidencyBusyError } from "./residencyCoordinator";
 import { selectBackend } from "./automaticMode";
 import { PROBE_VERSION, validateProbeRecord, type ProbeRecord } from "./deviceProbe";
+import { CapacitorLlamaBridge, type LlamaNativeBridge } from "./llama/adapter";
+import { acquisitionArtifacts, acquisitionBytes, sourcesFor, validateArtifactMirrors, type ArtifactMirrors } from "./modelSupply";
+import { runManagedBundle } from "./download/bundle";
+import { importedDescriptor, parseImportedCatalogue, validateImportSpec, type ImportSpec } from "./download/import";
+import { journalPathFor } from "./download/journal";
 
 /** Map a descriptor runtimeId to the coordinator's residency owner. */
 function ownerForRuntime(runtimeId: string): "needle" | "smol-vision" | "qwen-text" | "llama" | "none" {
@@ -194,7 +199,9 @@ export class ApplicationAiService {
   readonly ready: Promise<void>;
   readonly android: boolean;
   /** Phase A (Step 2): the descriptor authority behind every model decision. */
-  readonly registry: ModelRegistry;
+  private readonly baseRegistry: ModelRegistry;
+  private imported: ModelDescriptor[] = [];
+  get registry(): ModelRegistry { return createModelRegistry([...this.baseRegistry.descriptors, ...this.imported], { defaultVisionModelId: this.baseRegistry.visionDescriptor()?.modelId }); }
   readonly probeContext: { modelRev: string; probeVersion: number; corpusVersion: string };
   probeRecords: readonly ProbeRecord[] = [];
   private root = "";
@@ -225,6 +232,7 @@ export class ApplicationAiService {
   private needle?: NeedleBridge;
   private smol?: SmolBridge;
   private qwenText?: QwenTextBridge;
+  private llama?: LlamaNativeBridge;
   private matching: "use" | "needle" = "use";
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   readonly snapshot = () => this.version;
@@ -236,9 +244,9 @@ export class ApplicationAiService {
   notice(modelId: string) { return this.notices.get(modelId) ?? null; }
   busy(modelId: string) { return this.operating.has(modelId); }
 
-  constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge; qwenText?: QwenTextBridge; descriptors?: readonly ModelDescriptor[]; defaultVisionModelId?: string }) {
+  constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge; qwenText?: QwenTextBridge; llama?: LlamaNativeBridge; descriptors?: readonly ModelDescriptor[]; defaultVisionModelId?: string }) {
     this.android = options.android;
-    this.registry = options.descriptors
+    this.baseRegistry = options.descriptors
       ? createModelRegistry(options.descriptors, { defaultVisionModelId: options.defaultVisionModelId } satisfies ModelRegistryOptions)
       : productionModelRegistry();
     const vision = this.registry.visionDescriptor();
@@ -248,6 +256,7 @@ export class ApplicationAiService {
       this.needle = options.needle ?? new CapacitorNeedleBridge();
       this.smol = options.smol ?? new CapacitorSmolVlmBridge();
       this.qwenText = options.qwenText ?? new CapacitorQwenTextBridge();
+      this.llama = options.llama ?? new CapacitorLlamaBridge();
     } else {
       this.qwenText = options.qwenText;
     }
@@ -309,10 +318,20 @@ export class ApplicationAiService {
   private async reconcile() {
     if (!this.driver) return;
     this.root = await this.driver.rootDir();
-    for (const model of this.registry.catalogue()) {
+    for (const d of parseImportedCatalogue(await this.driver.readMetadata?.(`${this.root}/imports.json`) ?? null)) {
+      if (!this.registry.descriptorFor(d.modelId)) {
+        this.imported.push(d);
+        this.manager.registerImportedAsset({ modelId: d.modelId, sha256: d.sha256, downloadBytes: d.bytes, minFreeRamMb: d.minRamMb });
+      }
+    }
+    for (const model of this.registry.descriptors.filter((d) => d.downloadable || d.trust === "imported")) {
       const paths = this.paths(model.modelId);
       const actual = await this.driver.hashFile(paths.installedPath).catch(() => "");
-      const matches = this.manager.checksumsMatch(model.sha256, actual);
+      let matches = this.manager.checksumsMatch(model.sha256, actual);
+      for (const file of model.companions ?? []) {
+        const path = this.manager.stagingPathsFor(this.root, model.modelId, model.revision, file.fileName).installedPath;
+        matches &&= this.manager.checksumsMatch(file.sha256, await this.driver.hashFile(path).catch(() => ""));
+      }
       if (matches) {
         this.manager.dispatch(model.modelId, { type: "QUEUE_DOWNLOAD", userInitiated: true });
         this.manager.dispatch(model.modelId, { type: "START" });
@@ -330,7 +349,7 @@ export class ApplicationAiService {
     }
   }
   private requireAndroid() { if (!this.android || !this.driver) throw new Error("On-device AI requires the Android app."); }
-  private bridges() { return { needle: this.needle !== undefined, smol: this.smol !== undefined, qwenText: this.qwenText !== undefined, llama: false }; }
+  private bridges() { return { needle: this.needle !== undefined, smol: this.smol !== undefined, qwenText: this.qwenText !== undefined, llama: this.llama !== undefined }; }
   /**
    * Device ABI set from the native facts bridge. Unreadable or absent
    * facts yield an empty set, which no descriptor verifies — fail-closed.
@@ -389,17 +408,20 @@ export class ApplicationAiService {
   private requireInstalled(modelId: string) {
     if (!describeOfflineReadiness(this.manager, modelId).ready) throw new Error("Model is not installed and verified");
   }
-  async download(modelId: string): Promise<void> {
+  async download(modelId: string, mirror?: string | ArtifactMirrors, signal?: AbortSignal): Promise<void> {
     this.requireAndroid();
+    const resetVersion = this.coordinator.resetVersion;
     await this.ready;
+    if (signal?.aborted) throw new Error("Download cancelled.");
     // Model files back the resident engines: no download may cross the
     // reset barrier while cleanup is pending.
     if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
     if (this.active.has(modelId) || this.operating.has(modelId)) return;
     const model = this.model(modelId);
-    // Distribution gate: Advanced rows are visible but never downloadable —
-    // pending pins have nothing verifiable to fetch and LFM arms forbid
-    // redistribution. The consumer reason is the notice, never jargon.
+    const mirrors = typeof mirror === "string" ? { [model.fileName]: mirror } : mirror ?? {};
+    validateArtifactMirrors(model, mirrors);
+    // Acquisition eligibility is separate from task qualification. Advanced
+    // models with immutable byte pins may be acquired without product roles.
     if (model.downloadable !== true || distributionPolicyOf(model) !== "downloadable") {
       const reason = (model.distributionNote ?? "").trim() !== ""
         ? (model.distributionNote as string)
@@ -409,11 +431,22 @@ export class ApplicationAiService {
       throw new Error(reason);
     }
     await this.requireCompatible(model);
+    if (signal?.aborted || resetVersion !== this.coordinator.resetVersion) throw new Error("Download cancelled.");
+    // Compatibility awaits native facts. Recheck ownership synchronously
+    // before registering work: a racing duplicate must not replace the first
+    // transfer's cancellation owner (even if its own manager gate refuses it).
+    if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
+    if (this.active.has(modelId) || this.operating.has(modelId)) return;
     const abort = new AbortController();
+    const cancel = () => abort.abort();
+    signal?.addEventListener("abort", cancel, { once: true });
     const work = (async () => {
-      const result = await runManagedDownload(this.manager, this.driver!, { ...model, maxBytes: model.bytes, userInitiated: true, signal: abort.signal });
+      const result = model.companions?.length
+        ? await runManagedBundle(this.manager, this.driver!, model, abort.signal, mirrors)
+        : await runManagedDownload(this.manager, this.driver!, { ...model, sources: sourcesFor(model, mirrors[model.fileName]), maxBytes: model.bytes, userInitiated: true, signal: abort.signal });
       this.notices.set(modelId, result.ok ? "Installed and checksum verified." : result.reason);
     })().catch(() => { this.notices.set(modelId, "Download failed; retry to resume verified staging."); }).finally(() => {
+      signal?.removeEventListener("abort", cancel);
       this.active.delete(modelId); this.changed();
     });
     this.active.set(modelId, { abort, work });
@@ -422,10 +455,182 @@ export class ApplicationAiService {
   }
   async pause(modelId: string) {
     const active = this.active.get(modelId);
-    if (!active || this.manager.statusOf(modelId)?.download !== "downloading") return;
+    if (!active) return;
     active.abort.abort();
     await this.driver!.cancelDownload(this.paths(modelId).stagingPath);
     await active.work;
+  }
+
+  private async saveImported(): Promise<void> {
+    if (!this.driver?.writeMetadata) throw new Error("Private import metadata storage is unavailable.");
+    await this.driver.writeMetadata(`${this.root}/imports.json`, JSON.stringify(this.imported.map((d) => ({ sha256: d.sha256, bytes: d.bytes, format: d.format, modality: d.capabilities.includes("vision") ? "vision" : "text", license: d.license }))));
+  }
+  private registerImported(d: ModelDescriptor): void {
+    const existing = this.registry.descriptorFor(d.modelId);
+    if (existing) {
+      if (existing.format !== d.format || existing.bytes !== d.bytes || existing.runtimeId !== d.runtimeId || existing.license !== d.license) {
+        throw new Error("Import metadata conflicts with an existing artifact identity.");
+      }
+      return;
+    }
+    this.imported.push(d);
+    this.manager.registerImportedAsset({ modelId: d.modelId, sha256: d.sha256, downloadBytes: d.bytes, minFreeRamMb: d.minRamMb });
+  }
+
+  /** URL imports require an explicit immutable byte identity, never infer trust from a filename. */
+  async importUrl(input: ImportSpec, options: { signal?: AbortSignal } = {}): Promise<string> {
+    this.requireAndroid(); await this.ready;
+    if (options.signal?.aborted) throw new Error("Import cancelled.");
+    const spec = validateImportSpec(input);
+    if (!spec.url) throw new Error("An HTTPS URL is required.");
+    if (!this.driver?.writeMetadata) throw new Error("Private import metadata storage is unavailable.");
+    if (this.coordinator.inferenceBlocked || this.operating.size || this.active.size) throw new Error("On-device runtime is busy.");
+    const d = importedDescriptor(spec);
+    const previousImports = [...this.imported];
+    this.registerImported(d);
+    if (this.manager.statusOf(d.modelId)?.download === "installed") return d.modelId;
+    // Use the source only during this transaction. Neither persistence failure
+    // nor acquisition failure may leave ready files or a live source behind.
+    const existing = this.imported.findIndex((v) => v.modelId === d.modelId);
+    this.operating.add("import"); this.changed();
+    let metadataWritten = false;
+    try {
+      this.imported[existing] = d;
+      await this.download(d.modelId, undefined, options.signal);
+      if (options.signal?.aborted) throw new Error("Import cancelled.");
+      if (this.manager.statusOf(d.modelId)?.download !== "installed") throw new Error(this.notice(d.modelId) ?? "Import failed.");
+      this.imported[existing] = importedDescriptor({ ...spec, url: undefined });
+      await this.saveImported(); metadataWritten = true;
+      if (options.signal?.aborted) throw new Error("Import cancelled.");
+      return d.modelId;
+    } catch (error) {
+      this.manager.dispatch(d.modelId, { type: "DELETE" });
+      this.imported = previousImports;
+      const paths = this.manager.stagingPathsFor(this.root, d.modelId, d.revision, d.fileName);
+      await this.driver.removeFile(`${this.root}/models/${d.modelId}`);
+      await this.driver.removeFile(paths.stagingPath);
+      await this.driver.removeFile(journalPathFor(paths.stagingPath));
+      if (metadataWritten) await this.saveImported();
+      throw error;
+    } finally { this.operating.delete("import"); this.changed(); }
+  }
+
+  /** SAF streams directly into native private staging. No model bytes or content URI cross JS. */
+  async importLocal(options: { modelId?: string; format?: "gguf" | "litertlm" | "cact"; modality?: "text" | "vision"; license?: string; maxBytes?: number; signal?: AbortSignal }): Promise<string> {
+    this.requireAndroid(); await this.ready;
+    if (!this.driver?.pickAndStage || !this.driver.writeMetadata) throw new Error("Native document import is unavailable.");
+    if (this.coordinator.inferenceBlocked || this.operating.size || this.active.size) throw new Error("On-device runtime is busy.");
+    const known = options.modelId ? this.model(options.modelId) : undefined;
+    if (known && await this.driver.freeBytes() < acquisitionBytes(known) + 64 * 1024 ** 2) throw new Error("Needs more storage.");
+    const stagingRoot = `${this.root}/import-work/${crypto.randomUUID()}`;
+    const label = known?.modelId ?? "import";
+    this.operating.add(label); this.changed();
+    let promoted: string | undefined;
+    let installedId: string | undefined;
+    let metadataWritten = false;
+    const previousImports = [...this.imported];
+    try {
+      const files = known ? acquisitionArtifacts(known) : [{ fileName: `model.${options.format ?? "gguf"}`, bytes: options.maxBytes ?? 4 * 1024 ** 3, sha256: "", url: "" }];
+      let descriptor = known;
+      for (const file of files) {
+        const stagingPath = `${stagingRoot}/${file.fileName}`;
+        const abort = () => { void this.driver!.cancelDownload(stagingPath); };
+        options.signal?.addEventListener("abort", abort, { once: true });
+        try {
+          if (options.signal?.aborted) throw new Error("Import cancelled.");
+          const result = await this.driver.pickAndStage({ stagingPath, maxBytes: file.bytes, format: known?.format ?? options.format ?? "gguf", ...(known ? { expectedBytes: file.bytes, expectedSha256: file.sha256 } : {}) });
+          if (options.signal?.aborted) throw new Error("Import cancelled.");
+          if (known && (result.bytes !== file.bytes || !this.manager.checksumsMatch(file.sha256, result.actualHex))) throw new Error("Imported document does not match the catalogue pin.");
+          if (!known) descriptor = importedDescriptor({ sha256: result.actualHex, bytes: result.bytes, format: options.format ?? "gguf", modality: options.modality, license: options.license ?? "" });
+        } finally { options.signal?.removeEventListener("abort", abort); }
+      }
+      const d = descriptor!;
+      await this.requireCompatible(d);
+      if (!known) this.registerImported(d);
+      if (this.manager.statusOf(d.modelId)?.download === "installed") throw new Error("Already installed.");
+      const target = `${this.root}/models/${d.modelId}/${d.revision}`;
+      if (options.signal?.aborted) throw new Error("Import cancelled.");
+      await this.driver.promoteFile(stagingRoot, target); promoted = target;
+      if (options.signal?.aborted) throw new Error("Import cancelled.");
+      // Finish fallible staging cleanup inside the transaction, before any
+      // durable import record or ready state is committed.
+      await this.driver.removeFile(stagingRoot);
+      this.manager.dispatch(d.modelId, { type: "DELETE" });
+      installedId = d.modelId;
+      this.manager.dispatch(d.modelId, { type: "QUEUE_DOWNLOAD", userInitiated: true });
+      this.manager.dispatch(d.modelId, { type: "START" });
+      this.manager.dispatch(d.modelId, { type: "VERIFY_START" });
+      this.manager.dispatch(d.modelId, { type: "VERIFY_OK", actualSha256: d.sha256 });
+      if (!known) { await this.saveImported(); metadataWritten = true; }
+      if (options.signal?.aborted) throw new Error("Import cancelled.");
+      this.notices.set(d.modelId, "Installed and checksum verified."); return d.modelId;
+    } catch (error) {
+      if (installedId) this.manager.dispatch(installedId, { type: "DELETE" });
+      this.imported = previousImports;
+      // Try both rollback actions; a file removal failure must not skip
+      // restoring the catalogue, and neither failure may keep readiness true.
+      const rollback = await Promise.allSettled([
+        ...(promoted ? [this.driver.removeFile(promoted)] : []),
+        ...(metadataWritten ? [this.saveImported()] : []),
+      ]);
+      if (rollback.some((result) => result.status === "rejected")) throw new Error("Import failed; private storage cleanup could not finish.");
+      throw error;
+    } finally {
+      try { await this.driver.removeFile(stagingRoot); }
+      finally { this.operating.delete(label); this.changed(); }
+    }
+  }
+
+  /** Explicit Advanced evaluation uses the same residency/cancellation owner as product inference. */
+  async evaluate(modelId: string, options: { optIn: boolean; prompt: string; imageBase64?: string; signal?: AbortSignal }): Promise<string> {
+    if (!options.optIn) throw new Error("Evaluation requires explicit opt-in.");
+    this.requireAndroid(); await this.ready;
+    const d = this.model(modelId); this.requireInstalled(modelId); await this.requireCompatible(d);
+    if (this.operating.size || this.active.has(modelId)) throw new Error("On-device runtime is busy.");
+    if (!options.prompt.trim() || options.prompt.length > 16000) throw new Error("Enter a bounded evaluation prompt.");
+    if (d.capabilities.includes("vision") && !options.imageBase64) throw new Error("Choose an evaluation image.");
+    const lease = this.coordinator.beginInference("model-evaluation");
+    const abort = () => lease.abort(); options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) lease.abort();
+    const owner = ownerForRuntime(d.runtimeId);
+    const generationId = crypto.randomUUID();
+    try {
+      if (owner === "none") throw new Error("Unsupported runtime.");
+      await this.coordinator.switchTo(owner, {
+        evict: async () => {
+          const resident = this.coordinator.current;
+          if (resident === "needle") { await this.needle?.unload(); this.embedder = undefined; }
+          if (resident === "smol-vision") await this.smol?.unloadVisionModel();
+          if (resident === "qwen-text") await this.unloadQwenText();
+          if (resident === "llama") await this.llama?.unloadLlamaModel();
+        },
+        load: async () => {
+          if (lease.signal.aborted) throw new Error("Evaluation cancelled.");
+          if (owner === "llama") await this.llama!.loadLlamaModel({ modelId, ggufPath: this.paths(modelId).installedPath, projectorPath: d.companions?.[0] ? this.manager.stagingPathsFor(this.root, modelId, d.revision, d.companions[0].fileName).installedPath : undefined });
+          else if (owner === "qwen-text") await this.qwenText!.loadTextModel({ modelId, installedPath: this.paths(modelId).installedPath, maxTokens: 1024, evaluation: true });
+          else if (owner === "smol-vision") await this.smol!.loadVisionModel({ modelId, installedPath: this.paths(modelId).installedPath, backend: "cpu", maxOutputTokens: 256, evaluation: true });
+          else await this.needle!.loadModel({ modelId, installedPath: this.paths(modelId).installedPath });
+        },
+      });
+      let text = "";
+      if (owner === "needle") {
+        // Needle is a tool/embedding model, never a general-chat alias.
+        const vectors = await this.needle!.embedNeedleTexts([options.prompt]);
+        text = `Embedding self-test: ${vectors[0]?.length ?? 0} dimensions`;
+      } else {
+        const chunks = owner === "llama" ? this.llama!.inferLlama({ generationId, prompt: options.prompt, maxTokens: 256, imageBase64: options.imageBase64 }, lease.signal)
+          : owner === "qwen-text" ? this.qwenText!.generateText({ generationId, prompt: options.prompt, maxOutputTokens: 256 }, lease.signal)
+            : this.smol!.describeImage({ generationId, prompt: options.prompt, imageBase64: options.imageBase64!, maxOutputTokens: 256 }, lease.signal);
+        for await (const chunk of chunks) { if (!lease.signal.aborted) text += chunk.textDelta; if (text.length > 32000) throw new Error("Evaluation output limit exceeded."); }
+      }
+      if (lease.signal.aborted) throw new Error("Evaluation cancelled.");
+      text = stripThoughtEnvelope(stripThoughtEnvelope(text, profileFor(modelId)?.thoughtEnvelope), { openMarker: "<think>", closeMarker: "</think>" }).trim();
+      if (!text) throw new Error("Evaluation returned no answer text. Reasoning channels are not displayed.");
+      return text;
+    } finally {
+      try { await this.unloadDescriptor(d); this.coordinator.released(owner); }
+      finally { options.signal?.removeEventListener("abort", abort); lease.requestSettled(); }
+    }
   }
   /**
    * Re-verify an installed model against its catalogue pin. A match keeps
@@ -446,7 +651,9 @@ export class ApplicationAiService {
         return;
       }
       const actual = await this.driver!.hashFile(this.paths(modelId).installedPath).catch(() => "");
-      if (actual !== "" && this.manager.checksumsMatch(descriptor.sha256, actual)) {
+      let bundleMatches = true;
+      for (const f of descriptor.companions ?? []) bundleMatches &&= this.manager.checksumsMatch(f.sha256, await this.driver!.hashFile(this.manager.stagingPathsFor(this.root, modelId, descriptor.revision, f.fileName).installedPath).catch(() => ""));
+      if (actual !== "" && this.manager.checksumsMatch(descriptor.sha256, actual) && bundleMatches) {
         this.notices.set(modelId, "Installed and checksum verified.");
       } else {
         try {
@@ -487,6 +694,10 @@ export class ApplicationAiService {
         await removeManagedModel(this.manager, this.driver!, this.root, modelId, descriptor.revision, descriptor.fileName, {
           unload: () => this.unloadDescriptor(descriptor),
         });
+        await this.driver!.removeFile(`${this.root}/models/${modelId}`);
+        await this.driver!.removeFile(`${this.root}/bundle-work/models/${modelId}`);
+        await this.driver!.removeFile(`${this.root}/bundle-work/staging/${modelId}`);
+        if (descriptor.trust === "imported") { this.imported = this.imported.filter((d) => d.modelId !== modelId); await this.saveImported(); }
         this.coordinator.released(ownerForRuntime(descriptor.runtimeId));
         this.probeRecords = []; this.notices.delete(modelId);
       } finally { this.coordinator.endExclusive(label); }
@@ -505,6 +716,8 @@ export class ApplicationAiService {
         await this.smol!.unloadVisionModel(); return;
       case QWEN_TEXT_RUNTIME_ID:
         await this.unloadQwenText(); return;
+      case LLAMA_CPP_RUNTIME_ID:
+        await this.llama?.unloadLlamaModel(); return;
       default:
         throw new Error(`No production runtime adapter for ${descriptor.runtimeId}`);
     }
@@ -760,7 +973,11 @@ export class ApplicationAiService {
     finally { lease.requestSettled(); }
   }
   async embedNeedle(texts: string[]) {
-    this.requireAndroid(); await this.ready; this.requireInstalled(NEEDLE_MODEL_ID);
+    this.requireAndroid(); await this.ready;
+    // Removal revokes readiness before native unload settles. Preserve the
+    // canonical busy contract until that owner releases its operation gate.
+    if (this.coordinator.inferenceBlocked || this.operating.size > 0) throw new Error("On-device runtime is busy");
+    this.requireInstalled(NEEDLE_MODEL_ID);
     const result = await this.route("embed-texts", { texts }, { traceId: crypto.randomUUID() });
     if (!result.ok) throw new Error(result.error);
     return (result.value as { vectors: number[][] }).vectors;

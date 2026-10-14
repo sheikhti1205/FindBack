@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SUPPLY_CANDIDATES } from "../modelSupply";
 import {
   advancedCatalogue,
   getBenchmarkCapableLabModels,
@@ -13,10 +14,14 @@ import {
 } from "./labCatalog";
 
 describe("labCatalog", () => {
-  it("covers all ten candidates: 6 text + 4 vision", () => {
-    expect(LAB_CANDIDATES).toHaveLength(10);
-    expect(LAB_CANDIDATES.filter((c) => c.modality === "text")).toHaveLength(6);
-    expect(LAB_CANDIDATES.filter((c) => c.modality === "vision")).toHaveLength(4);
+  it("uses the exact canonical supply pins, publishers and companions for all Advanced candidates", () => {
+    expect(LAB_CANDIDATES).toHaveLength(SUPPLY_CANDIDATES.length + 2);
+    for (const d of SUPPLY_CANDIDATES) {
+      expect(labCandidateFor(d.modelId)).toMatchObject({ upstreamRepo: d.upstreamRepo, fileName: d.fileName, revision: d.revision, sha256: d.sha256, pinsVerified: true });
+    }
+    expect(labCandidateFor("lfm2-vl-450m-int4")).toBeUndefined();
+    expect(labCandidateFor("lfm2-vl-1.6b-int4")).toBeUndefined();
+    expect(labCandidateFor("qwen3-vl-2b-instruct-int4")).toBeUndefined();
   });
 
   it("keeps baselines pinned and every new model pending-measurement", () => {
@@ -29,7 +34,7 @@ describe("labCatalog", () => {
       expect(baseline.status).toBe("integrated-baseline");
     }
     const pending = LAB_CANDIDATES.filter((c) => !c.baseline);
-    expect(pending).toHaveLength(8);
+    expect(pending).toHaveLength(SUPPLY_CANDIDATES.length);
     for (const candidate of pending) {
       expect(candidate.status).toBe("integrated-pending-measurement");
       expect(candidate.maturity).toBe("lab-unmeasured");
@@ -39,24 +44,24 @@ describe("labCatalog", () => {
 
   it("recommends nothing from the lab: owner picks from measured data only", () => {
     expect(recommendedLabCatalogue()).toEqual([]);
-    expect(advancedCatalogue()).toHaveLength(10);
+    expect(advancedCatalogue()).toHaveLength(SUPPLY_CANDIDATES.length + 2);
   });
 
-  it("blocks LFM arms on bundle/download and allows benchmark/eval", () => {
-    for (const id of ["lfm2-350m-q4_0", "lfm2-700m-q4_0", "lfm2-1.2b-q4_0", "lfm2-vl-450m-int4", "lfm2-vl-1.6b-int4"]) {
+  it("permits conditional LFM acquisition without packaging or product promotion", () => {
+    for (const id of SUPPLY_CANDIDATES.filter((d) => d.license === "LFM-1.0").map((d) => d.modelId)) {
       const candidate = labCandidateFor(id);
       expect(candidate?.distribution.license).toBe("LFM-1.0");
       expect(labLicenseDecision(candidate!, "bundle").allowed).toBe(false);
-      expect(labLicenseDecision(candidate!, "download").allowed).toBe(false);
+      expect(labLicenseDecision(candidate!, "download").allowed).toBe(true);
       expect(labLicenseDecision(candidate!, "benchmark").allowed).toBe(true);
       expect(labLicenseDecision(candidate!, "eval").allowed).toBe(true);
-      expect(isLabDownloadAllowed(candidate!, "download")).toBe(false);
+      expect(isLabDownloadAllowed(candidate!, "download")).toBe(true);
     }
   });
 
   it("blocks pending-pin downloads for permissive candidates until verified", () => {
-    for (const id of ["qwen3-1.7b-dynamic-int4", "granite-3.3-2b-instruct-q4_0", "qwen3-vl-2b-instruct-int4"]) {
-      const candidate = labCandidateFor(id)!;
+    for (const id of ["qwen3-1.7b-dynamic-int4", "granite-3.3-2b-instruct-q4_0", "qwen3-vl-2b-instruct-q4_k_m"]) {
+      const candidate = { ...labCandidateFor(id)!, pinsVerified: false };
       expect(candidate.pinsVerified).toBe(false);
       expect(labLicenseDecision(candidate, "download").allowed).toBe(false);
       expect(labLicenseDecision(candidate, "benchmark").allowed).toBe(true);
@@ -80,12 +85,12 @@ describe("labCatalog", () => {
     );
 
     const vision = getVisionCapableLabModels();
-    expect(vision).toHaveLength(4);
+    expect(vision).toHaveLength(SUPPLY_CANDIDATES.filter((d) => d.capabilities.includes("vision")).length + 1);
     for (const candidate of vision) {
       expect(candidate.capabilities).toContain("vision");
     }
-    expect(getTextCapableLabModels()).toHaveLength(6);
-    expect(getBenchmarkCapableLabModels()).toHaveLength(10);
+    expect(getTextCapableLabModels()).toHaveLength(SUPPLY_CANDIDATES.filter((d) => d.capabilities.includes("text")).length + 1);
+    expect(getBenchmarkCapableLabModels()).toHaveLength(SUPPLY_CANDIDATES.length + 2);
   });
 
   it("records runtime/format and RAM estimates for every candidate", () => {

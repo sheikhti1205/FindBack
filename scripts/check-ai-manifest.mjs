@@ -9,8 +9,7 @@
  *   * lacks a modelSha256 pin (64 hex chars; no placeholder)
  *   * declares an unknown runtime / format / maturity
  *   * carries an LFM license without catalogOnly: true
- *     (LFM Open License v1.0 arms are benchmark/eval-only catalogue
- *     entries — they must never be bundled or offered as downloads)
+ *     (lab qualification marker, not a prohibition on owner-enabled acquisition)
  *   * duplicates another profile id, or the catalogue is empty
  *
  * Usage:
@@ -113,7 +112,7 @@ export function parseModelProfiles(source) {
 
 /**
  * Validate parsed profiles. Returns a list of failure strings (empty = pass).
- * LFM-licensed arms must be catalogOnly (bundle/download forbidden).
+ * LFM-licensed profiles remain lab-qualified; catalogOnly is not an acquisition ban.
  */
 export function validateProfiles(profiles) {
   const errors = [];
@@ -149,7 +148,7 @@ export function validateProfiles(profiles) {
     if (typeof profile.license === "string" && /lfm/i.test(profile.license)) {
       if (profile.catalogOnly !== true) {
         errors.push(
-          `${label}: LFM-licensed arm must set catalogOnly: true (bundle/download forbidden)`,
+          `${label}: LFM-licensed arm must set catalogOnly: true (lab qualification marker)`,
         );
       }
     }

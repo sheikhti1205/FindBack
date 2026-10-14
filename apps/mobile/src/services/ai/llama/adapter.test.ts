@@ -40,15 +40,18 @@ function fakeBridge(chunks: string[] = ["hello", " world"]): LlamaNativeBridge &
 }
 
 describe("llama.cpp challenger adapter", () => {
-  it("blocks LFM arms on production channels before any native call", async () => {
+  it("blocks LFM bundle packaging and non-lab channels before any native call", async () => {
     const bridge = fakeBridge();
     const challenger = new LlamaCppChallenger(bridge);
     const lfm = profileFor("lfm2.5-1.2b-q4_0");
+    // bundle stays blocked by FindBack packaging policy (not an upstream ban).
     await expect(challenger.load(lfm!, { channel: "bundle" })).rejects.toBeInstanceOf(
       LfmLicenseBlockedError,
     );
+    // download is owner-enabled under LFM-1.0, so it clears the license gate
+    // and is stopped by the lab-channel gate instead — still before native.
     await expect(challenger.load(lfm!, { channel: "download" })).rejects.toBeInstanceOf(
-      LfmLicenseBlockedError,
+      LabChannelRequiredError,
     );
     expect(bridge.loads).toEqual([]);
   });
@@ -68,9 +71,8 @@ describe("llama.cpp challenger adapter", () => {
     const bridge = fakeBridge();
     const challenger = new LlamaCppChallenger(bridge);
     const lfm = profileFor("lfm2.5-1.2b-q4_0");
-    // License passes on eval, but bundle/download are not lab channels.
-    // (bundle/download are already license-blocked for LFM; use a
-    // permissive stand-in profile shape for the channel gate.)
+    // License passes with a permissive stand-in, so the channel gate is what
+    // stops bundle/download — neither is a lab channel.
     const permissiveGguf = { ...lfm!, license: undefined, catalogOnly: undefined };
     await expect(
       challenger.load(permissiveGguf, { channel: "bundle" }),

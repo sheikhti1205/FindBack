@@ -72,9 +72,9 @@ export const ROWS = [
  * committed artifact (shape checked below).
  */
 export const CLOSURE = {
-  baselineSha: "0154a9b9dcc68319c3219d9bcce824c0e4fbfd61",
+  baselineSha: "eccd07ac893e09f9a8aa733b104943973e861486",
   baselineNote:
-    "Re-baselined off 790f456 to the owner-observed HEAD 0154a9b (web Google OAuth + callback bridge, capability validators, Sentry cross-lane proof, KLIPY wiring/UI, cleanup scheduler, recovery/touch fixes).",
+    "Rebaselined to the 2.0.0-beta.1 candidate (verified host-verification commit eccd07a, plus the reviewed 2026-10-14 model-supply/governance waves). LIVE_DATABASE and EDGE_FUNCTIONS are READY_FOR_RUNTIME_PROOF, not PASS, until the 20261014010000 deletion fence is applied and delete-account is deployed.",
   rows: {
     REPO_IMPLEMENTATION: {
       verdict: "PASS",
@@ -83,16 +83,18 @@ export const CLOSURE = {
         "Source, scripts and tests for the X-wave are complete; local gates green (see evidence).",
     },
     LIVE_DATABASE: {
-      verdict: "PASS",
-      evidence: "docs/evidence/live-database.json",
+      verdict: "READY_FOR_RUNTIME_PROOF",
+      proofCommand:
+        "supabase migration up --linked && node scripts/verify-migration-parity.mjs",
       detail:
-        "Applied the 3 pending migrations in order; live head 20261013020000 == BACKEND_SCHEMA_VERSION; 19/19 verify probes pass (see evidence).",
+        "Source-ready. Live head is 20261013020000; the 2.0 deletion fence 20261014010000 is NOT applied yet, so this lane cannot be PASS. Apply + verify the pending migration, confirm hosted head == BACKEND_SCHEMA_VERSION, then flip to PASS with committed non-secret evidence.",
     },
     EDGE_FUNCTIONS: {
-      verdict: "PASS",
-      evidence: "docs/evidence/edge-functions.json",
+      verdict: "READY_FOR_RUNTIME_PROOF",
+      proofCommand:
+        "node scripts/deploy-required-edge-functions.mjs --execute && curl -s -o /dev/null -w '%{http_code}' -X POST <fn-url>/delete-account",
       detail:
-        "Deployed ai-help v9 / push-dispatch v6 (REACTION) / cleanup-comment-media v1; reply-comment v3 already CURRENT; byte-identical parity + live auth guards proven (see evidence).",
+        "Source-ready. ai-help/push-dispatch/cleanup-comment-media are CURRENT, but delete-account is NOT deployed. Deploying it is gated on the 20261014010000 fence landing first. Until then this lane is READY, not PASS.",
     },
     SENTRY_LOCAL: {
       verdict: "READY_FOR_RUNTIME_PROOF",
@@ -165,8 +167,9 @@ export const CLOSURE = {
     EMULATOR: {
       verdict: "DEFERRED_OWNER",
       ownerAction:
-        "Run the Norfold_API36 emulator MAP-11 / Google / KLIPY / push harness (no Android SDK/emulator in the agent env).",
-      blocker: "No Android SDK / Gradle / adb / emulator available to the agent.",
+        "Run the Android emulator MAP-11 / Google / KLIPY / push harness on a booted AVD (`adb -s <serial>`).",
+      blocker:
+        "No emulator binary/AVD and no attached device in the agent environment (Android SDK + platform-tools are present; `adb devices` is empty).",
     },
     PHYSICAL_DEVICE: {
       verdict: "DEFERRED_PHYSICAL_DEVICE",
@@ -177,9 +180,9 @@ export const CLOSURE = {
     RELEASE: {
       verdict: "DEFERRED_OWNER",
       ownerAction:
-        "(1) Restore GitHub Actions billing so release.yml can run; (2) complete signed-device acceptance; then bump version (2.0.0-beta.1 per owner) and push the v* tag.",
+        "(1) Close the runtime/device lanes below, (2) restore GitHub Actions billing, then (3) give explicit owner authorization to tag `v2.0.0-beta.1` and publish.",
       blocker:
-        "Two hard external walls: Actions billing blocks every release.yml job (dispatch run 38453573774 failed in 5s, 0 steps), AND the canonical keystore password is CI-side only so a signed APK/AAB cannot be produced locally. The publish job also runs ONLY on a v* tag.",
+        "Release stays HOLD for 2.0.0-beta.1 until live DB/Edge, physical-device, and exact-final-SHA CI acceptance complete. GitHub Actions billing also blocks release.yml jobs, and the publish job runs ONLY on a v* tag, so a tag would be premature now.",
     },
   },
 };

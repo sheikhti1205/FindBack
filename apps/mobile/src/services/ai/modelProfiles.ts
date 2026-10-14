@@ -82,8 +82,8 @@ export interface ModelProfile {
    */
   readonly license?: string;
   /**
-   * True when the profile is a lab catalogue entry that must never be
-   * bundled or offered as a redistributable download (LFM arms only).
+   * Lab qualification marker only. Acquisition/redistribution facts are
+   * separate descriptor licenseFacts; this does not forbid upstream download.
    */
   readonly catalogOnly?: boolean;
 }
@@ -150,7 +150,7 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
     modelSha256: "2ea801949d760cdf1a2cc04a54262c22c3c0c54f0769d57760c9adeb0e59233f",
     runtime: "llama-cpp",
     format: "gguf",
-    revision: "6767265158422fb8a19c62ceb45f16f05363615b",
+    revision: "8ed288026e23958ad9dfa92d53ed773a8eee7125",
     quantization: "Q4_0",
     supportsText: true,
     supportsVision: false,
@@ -160,8 +160,8 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
     roleNotes:
       "EXPERIMENTAL, not for structured slot extraction: 10/31 empty outputs " +
       "(largest empty share), 11/31 invented, 2/31 loops. Prose help only, " +
-      "behind empty/refusal normalization. LFM Open License v1.0: evaluation " +
-      "download only, no bundling.",
+       "behind empty/refusal normalization. LFM Open License v1.0: use " +
+       "subject to commercial eligibility and redistribution conditions.",
     defaultTemperature: 0.0,
     maxOutputTokensText: 256,
     stopSequences: [],
@@ -204,7 +204,7 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
     modelSha256: "45a0224180c89a25299078524e5a8dfcce131686fd0f941cdcf3507095db4797",
     runtime: "litert-lm",
     format: "litertlm",
-    revision: "1abed04b6fe71314d8c446a1371c03d7c332266d",
+    revision: "da7396bf02715c332c21d0117d48a05851db5fb0",
     quantization: "INT4",
     supportsText: false,
     supportsVision: true,
@@ -232,7 +232,7 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
     modelSha256: "6854cd9677a34e680070b60076793e49aeb3224de7cb4101076b261cb9bf6033",
     runtime: "litert-lm",
     format: "litertlm",
-    revision: "1abed04b6fe71314d8c446a1371c03d7c332266d",
+    revision: "da7396bf02715c332c21d0117d48a05851db5fb0",
     quantization: "INT4",
     supportsText: false,
     supportsVision: true,
@@ -274,7 +274,7 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
       "256-token kv window — keep extraction prompts compact and schema " +
       "single-record. Every response carries calibrated confidence: route " +
       "below-threshold extractions to escalate/re-ask via uncertainFields. " +
-      "Apache-2.0 (bundlable, unlike LFM arms). Telemetry off at the " +
+       "Apache-2.0 (redistribution subject to its conditions). Telemetry off at the " +
       "native boundary (NEEDLE_TELEMETRY=0, DO_NOT_TRACK=1).",
     defaultTemperature: 0.0,
     maxOutputTokensText: 256,

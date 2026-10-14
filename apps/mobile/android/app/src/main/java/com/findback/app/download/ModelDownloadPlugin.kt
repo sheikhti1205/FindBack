@@ -2,6 +2,10 @@ package com.findback.app.download
 
 import android.os.StatFs
 import android.util.Log
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.result.ActivityResult
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -36,6 +40,82 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ModelDownloadPlugin : Plugin() {
 
     private val active = ConcurrentHashMap<String, DownloadTask>()
+    private val imports = ConcurrentHashMap<String, AtomicBoolean>()
+
+    @PluginMethod
+    fun pickAndStage(call: PluginCall) {
+        val path = call.getString("stagingPath")
+        if (path == null || !isUnderAppFiles(File(path))) { call.reject("Invalid staging path", "BAD_URI"); return }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivityForResult(call, intent, "documentPicked")
+    }
+
+    @ActivityCallback
+    private fun documentPicked(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        val uri = result.data?.data
+        if (result.resultCode != Activity.RESULT_OK) { call.reject("Import cancelled", "ABORTED"); return }
+        if (uri?.scheme != "content") { call.reject("Choose a document", "BAD_URI"); return }
+        val path = call.getString("stagingPath") ?: run { call.reject("Invalid staging path", "BAD_URI"); return }
+        val file = File(path)
+        if (!isUnderAppFiles(file)) { call.reject("Invalid staging path", "BAD_URI"); return }
+        val cap = (call.getLong("maxBytes", DEFAULT_MAX_BYTES) ?: DEFAULT_MAX_BYTES).coerceAtMost(DEFAULT_MAX_BYTES)
+        val expectedBytes = call.getLong("expectedBytes")
+        val expectedSha = call.getString("expectedSha256")
+        val flag = AtomicBoolean(false)
+        if (imports.putIfAbsent(path, flag) != null) { call.reject("Import busy", "IMPORT_BUSY"); return }
+        Thread({
+            try {
+                if (cap <= 0 || StatFs(context.filesDir.absolutePath).availableBytes < cap + JOURNAL_EVERY_BYTES) throw DownloadFailed("INSUFFICIENT_STORAGE", "Needs more storage")
+                file.parentFile?.mkdirs()
+                val digest = MessageDigest.getInstance("SHA-256")
+                var size = 0L
+                context.contentResolver.openInputStream(uri)!!.use { input ->
+                    java.io.FileOutputStream(file).use { output ->
+                        val buf = ByteArray(BUFFER_SIZE)
+                        while (true) {
+                            if (flag.get()) throw DownloadFailed("ABORTED", "Import cancelled")
+                            val read = input.read(buf)
+                            if (read <= 0) break
+                            size += read
+                            if (size > cap) throw DownloadFailed("SIZE_MISMATCH", "Document exceeds byte limit")
+                            if (StatFs(context.filesDir.absolutePath).availableBytes < read + JOURNAL_EVERY_BYTES) throw DownloadFailed("INSUFFICIENT_STORAGE", "Needs more storage")
+                            output.write(buf, 0, read); digest.update(buf, 0, read)
+                        }
+                        output.fd.sync()
+                    }
+                }
+                if (flag.get()) throw DownloadFailed("ABORTED", "Import cancelled")
+                val sha = digest.digest().joinToString("") { "%02x".format(it) }
+                if (size == 0L || (expectedBytes != null && size != expectedBytes)) throw DownloadFailed("SIZE_MISMATCH", "Document size mismatch")
+                if (expectedSha != null && sha != expectedSha.lowercase()) throw DownloadFailed("CHECKSUM_MISMATCH", "Document checksum mismatch")
+                val ret = JSObject(); ret.put("actualHex", sha); ret.put("bytes", size); call.resolve(ret)
+            } catch (e: DownloadFailed) {
+                file.delete(); call.reject(e.message, e.code)
+            } catch (_: Exception) {
+                file.delete(); call.reject("Document could not be read", "BAD_URI")
+            } finally { imports.remove(path, flag) }
+        }, "findback-model-import").start()
+    }
+
+    @PluginMethod
+    fun writeTextFile(call: PluginCall) {
+        val path = call.getString("path") ?: ""
+        val text = call.getString("text") ?: ""
+        val file = File(path)
+        if (!isUnderAppFiles(file) || text.length > MAX_TEXT_READ) { call.reject("Invalid metadata", "INVALID_REQUEST"); return }
+        try {
+            file.parentFile?.mkdirs()
+            val tmp = File("$path.tmp")
+            java.io.FileOutputStream(tmp).use { out -> out.write(text.toByteArray()); out.fd.sync() }
+            if (!tmp.renameTo(file)) throw java.io.IOException()
+            call.resolve()
+        } catch (_: Exception) { call.reject("Metadata could not be saved", "WRITE_FAILED") }
+    }
 
     @PluginMethod
     fun startDownload(call: PluginCall) {
@@ -46,10 +126,6 @@ class ModelDownloadPlugin : Plugin() {
             return
         }
         val key = downloadKey(stagingPath)
-        if (active.containsKey(key)) {
-            call.reject("download_busy")
-            return
-        }
         val task = DownloadTask(
             downloadId = call.getString("downloadId", key) ?: key,
             url = url,
@@ -62,7 +138,8 @@ class ModelDownloadPlugin : Plugin() {
             revision = call.getString("revision", "") ?: "",
             fileName = call.getString("fileName", "") ?: "",
         )
-        active[key] = task
+        if (!isUnderAppFiles(task.stagingFile) || (task.journalPath != null && !isUnderAppFiles(File(task.journalPath)))) { call.reject("Invalid staging path", "INVALID_REQUEST"); return }
+        if (active.putIfAbsent(key, task) != null) { call.reject("Download busy", "DOWNLOAD_BUSY"); return }
         call.setKeepAlive(true)
         Thread(
             {
@@ -81,12 +158,17 @@ class ModelDownloadPlugin : Plugin() {
                     ret.put("finalUrl", result.finalUrl)
                     call.resolve(ret)
                 } catch (e: DownloadFailed) {
-                    call.reject(e.code, e.message)
+                    call.reject(e.message, e.code)
+                } catch (_: javax.net.ssl.SSLException) {
+                    call.reject("TLS verification failed", "TLS_ERROR")
+                } catch (_: java.net.SocketTimeoutException) {
+                    call.reject("Download timed out", "TIMEOUT")
+                } catch (_: java.io.IOException) {
+                    call.reject("Network transfer failed", if (task.cancelled.get()) "ABORTED" else "NETWORK_ERROR")
                 } catch (e: Exception) {
-                    Log.w(TAG, "download failed", e)
-                    call.reject("download_failed", e.message?.take(400))
+                    call.reject("Download failed", "DOWNLOAD_FAILED")
                 } finally {
-                    active.remove(key)
+                    active.remove(key, task)
                 }
             },
             "findback-download",
@@ -127,6 +209,7 @@ class ModelDownloadPlugin : Plugin() {
             return
         }
         try {
+            if (file.length() > MAX_TEXT_READ) { call.reject("Metadata too large", "FILE_TOO_LARGE"); return }
             val text = file.readText(Charsets.UTF_8)
             if (text.length > MAX_TEXT_READ) {
                 call.reject("file_too_large")
@@ -148,7 +231,8 @@ class ModelDownloadPlugin : Plugin() {
             call.reject("invalid_request")
             return
         }
-        val task = active.remove(downloadKey(stagingPath))
+        imports[stagingPath]?.set(true)
+        val task = active[downloadKey(stagingPath)]
         if (task == null) {
             call.resolve()
             return
@@ -218,7 +302,9 @@ class ModelDownloadPlugin : Plugin() {
         val file = File(path)
         if (isUnderAppFiles(file)) {
             try {
-                file.delete()
+                imports[path]?.set(true)
+                active[downloadKey(path)]?.let { it.cancelled.set(true); it.connection?.disconnect() }
+                if (file.isDirectory) file.deleteRecursively() else file.delete()
             } catch (_: Exception) {
             }
         }
@@ -235,7 +321,7 @@ class ModelDownloadPlugin : Plugin() {
         }
         val src = File(from)
         val dst = File(to)
-        if (!isUnderAppFiles(src) || !isUnderAppFiles(dst) || !src.isFile) {
+        if (!isUnderAppFiles(src) || !isUnderAppFiles(dst) || !src.exists()) {
             call.reject("file_missing")
             return
         }
@@ -309,7 +395,7 @@ class ModelDownloadPlugin : Plugin() {
 
         fun run(onProgress: (received: Long, total: Long?) -> Unit): DownloadResult {
             if (resumeOffset < 0) throw DownloadFailed("OFFSET_MISMATCH", "resume offset must be >= 0")
-            if (!DownloadPolicy.isHttps(url)) throw DownloadFailed("REDIRECT_NON_HTTPS", "download URL must be https")
+            if (!DownloadPolicy.safeSource(url)) throw DownloadFailed("BAD_SOURCE", "Unsafe source URL")
 
             // Resume truth reconciled BEFORE the network: the fetch starts
             // where the staged file actually ends. A torn file ahead of the
@@ -325,11 +411,13 @@ class ModelDownloadPlugin : Plugin() {
             try {
                 while (true) {
                     throwIfCancelled()
+                    if (!DownloadPolicy.publicDestination(current)) throw DownloadFailed("BAD_SOURCE", "Destination is not public")
                     val conn = (URL(current).openConnection() as HttpURLConnection).apply {
                         instanceFollowRedirects = false
                         connectTimeout = CONNECT_TIMEOUT_MS
                         readTimeout = READ_TIMEOUT_MS
                         setRequestProperty("User-Agent", USER_AGENT)
+                        setRequestProperty("Accept-Encoding", "identity")
                         if (offset > 0) setRequestProperty("Range", "bytes=$offset-")
                     }
                     connection = conn
@@ -344,6 +432,7 @@ class ModelDownloadPlugin : Plugin() {
                         }
                         current = DownloadPolicy.resolveRedirect(current, location)
                             ?: throw DownloadFailed("REDIRECT_NON_HTTPS", "refusing non-https redirect")
+                        if (!DownloadPolicy.redirectAllowed(url, current)) throw DownloadFailed("BAD_SOURCE", "Redirect destination not allowed")
                         redirects += 1
                         if (redirects > MAX_REDIRECTS) {
                             throw DownloadFailed("TOO_MANY_REDIRECTS", "too many redirects (max $MAX_REDIRECTS)")
@@ -357,7 +446,7 @@ class ModelDownloadPlugin : Plugin() {
                 val conn = response!!
                 val status = conn.responseCode
                 if (status != 200 && status != 206) {
-                    throw DownloadFailed("HTTP_ERROR", "download failed with HTTP $status")
+                    throw DownloadFailed("HTTP_$status", "download failed with HTTP $status")
                 }
                 val total: Long? = if (offset > 0) {
                     if (status == 200) {
@@ -374,10 +463,10 @@ class ModelDownloadPlugin : Plugin() {
                     conn.getHeaderField("Content-Length")?.toLongOrNull()
                         ?.takeIf { it >= 0 }
                 }
-                if (total != null && offset + total > maxBytes) {
+                if (total != null && total != maxBytes) {
                     throw DownloadFailed(
-                        "BYTE_BOUND_EXCEEDED",
-                        "download size ${offset + total} exceeds byte bound $maxBytes",
+                        "SIZE_MISMATCH",
+                        "download size differs from exact expected bytes",
                     )
                 }
 
@@ -438,7 +527,10 @@ class ModelDownloadPlugin : Plugin() {
                 writeJournal(offset + received, total)
                 val actualHex = digest.digest().joinToString("") { "%02x".format(it) }
                 onProgress(received, total)
-                return DownloadResult(received, total, actualHex, current)
+                throwIfCancelled()
+                if (offset + received != maxBytes) throw DownloadFailed("SIZE_MISMATCH", "Truncated transfer")
+                if (actualHex != expectedSha256.lowercase()) throw DownloadFailed("CHECKSUM_MISMATCH", "Checksum mismatch")
+                return DownloadResult(received, total, actualHex, url)
             } finally {
                 try {
                     response?.disconnect()

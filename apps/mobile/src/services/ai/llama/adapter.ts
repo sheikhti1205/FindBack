@@ -86,11 +86,12 @@ export interface LlamaNativeBridge {
   loadLlamaModel(args: {
     modelId: string;
     ggufPath?: string;
+    projectorPath?: string;
     nCtx?: number;
     nThreads?: number;
   }): Promise<void>;
   inferLlama(
-    args: { generationId: string; prompt: string; maxTokens: number },
+    args: { generationId: string; prompt: string; maxTokens: number; imageBase64?: string },
     signal: AbortSignal,
   ): AsyncGenerator<LlamaGenerationChunk>;
   cancelGeneration(generationId: string): Promise<void>;
@@ -102,6 +103,7 @@ interface FindbackLlamaPlugin {
   loadLlamaModel(args: {
     modelId: string;
     ggufPath?: string;
+    projectorPath?: string;
     nCtx?: number;
     nThreads?: number;
   }): Promise<{ ready: boolean }>;
@@ -109,6 +111,7 @@ interface FindbackLlamaPlugin {
     generationId: string;
     prompt: string;
     maxTokens: number;
+    imageBase64?: string;
   }): Promise<unknown>;
   cancelGeneration(args: { generationId: string }): Promise<unknown>;
   unloadLlamaModel(): Promise<unknown>;
@@ -147,6 +150,7 @@ export class CapacitorLlamaBridge implements LlamaNativeBridge {
   async loadLlamaModel(args: {
     modelId: string;
     ggufPath?: string;
+    projectorPath?: string;
     nCtx?: number;
     nThreads?: number;
   }): Promise<void> {
@@ -155,7 +159,7 @@ export class CapacitorLlamaBridge implements LlamaNativeBridge {
   }
 
   async *inferLlama(
-    args: { generationId: string; prompt: string; maxTokens: number },
+    args: { generationId: string; prompt: string; maxTokens: number; imageBase64?: string },
     signal: AbortSignal,
   ): AsyncGenerator<LlamaGenerationChunk> {
     const plugin = this.plugin();
@@ -163,6 +167,7 @@ export class CapacitorLlamaBridge implements LlamaNativeBridge {
     let done = false;
     let failure: string | null = null;
     const handle = await plugin.addListener("llamaChunk", (event) => {
+      if (done || signal.aborted) return;
       if (event.generationId !== args.generationId) return;
       if (event.error !== undefined) {
         failure = event.error;
@@ -177,11 +182,16 @@ export class CapacitorLlamaBridge implements LlamaNativeBridge {
         queue.push({ textDelta: event.textDelta });
       }
     });
+    let cancelWork: Promise<unknown> | undefined;
+    const cancel = () => { cancelWork ??= plugin.cancelGeneration({ generationId: args.generationId }).catch(() => undefined); };
+    signal.addEventListener("abort", cancel, { once: true });
+    let settled: Promise<unknown> | undefined;
     try {
-      await plugin.inferLlama(args);
+      if (signal.aborted) return;
+      settled = plugin.inferLlama(args).then(() => { done = true; }, () => { failure = "Evaluation generation failed"; done = true; });
       for (;;) {
         if (signal.aborted) {
-          await plugin.cancelGeneration({ generationId: args.generationId }).catch(() => undefined);
+          cancel();
           return;
         }
         if (failure !== null) throw new Error(failure);
@@ -194,6 +204,10 @@ export class CapacitorLlamaBridge implements LlamaNativeBridge {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
     } finally {
+      signal.removeEventListener("abort", cancel);
+      if (!done || signal.aborted) cancel();
+      await cancelWork;
+      await settled;
       await handle.remove().catch(() => undefined);
     }
   }
@@ -207,11 +221,7 @@ export class CapacitorLlamaBridge implements LlamaNativeBridge {
   }
 
   async unloadLlamaModel(): Promise<void> {
-    try {
-      await this.plugin().unloadLlamaModel();
-    } catch {
-      // Unload is best-effort; residency is re-probed on next use.
-    }
+    await this.plugin().unloadLlamaModel();
   }
 }
 

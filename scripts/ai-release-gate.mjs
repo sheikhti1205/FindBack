@@ -10,8 +10,8 @@
  *                        LFM arm is not catalogOnly (delegates to
  *                        check-ai-manifest.mjs validators)
  *   3. license-bundle — an LFM-licensed (lfm1.0) arm could ship on the bundle
- *                        channel (catalogOnly + licenseGate bundle/download
- *                        block both required)
+ *                        channel (FindBack packaging policy, not an upstream
+ *                        prohibition on conditional acquisition)
  *   4. abi-artifacts  — the Android ABI split config is missing a supported
  *                        ABI (armeabi-v7a, arm64-v8a, x86_64)
  *   5. vision-truth   — the production vision seam or its local-vision
@@ -69,7 +69,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { parseModelProfiles, validateProfiles } from "./check-ai-manifest.mjs";
-import { validatePromotion } from "./check-ai-promotion.mjs";
+import { validatePromotion, validateModelBundlePolicy } from "./check-ai-promotion.mjs";
+import { checkModelNoticesFile } from "./check-model-notices.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
@@ -157,17 +158,13 @@ function checkLicenseBundle() {
   }
   for (const profile of parseModelProfiles(profilesSource)) {
     if (typeof profile.license === "string" && /lfm/i.test(profile.license)) {
-      // Simulate licenseGate.enforce(profile, "bundle"): LFM + bundle must block.
+      // catalogOnly preserves lab qualification; packaging is checked below.
       if (profile.catalogOnly !== true) {
-        errors.push(`license-bundle: LFM arm ${profile.id} would ship on the bundle channel`);
+        errors.push(`license-bundle: LFM arm ${profile.id} lost its lab qualification marker`);
       }
     }
   }
-  const bundleBlock =
-    /channel\s*===\s*"bundle"\s*\|\|\s*channel\s*===\s*"download"[\s\S]{0,400}?allowed:\s*false/;
-  if (!bundleBlock.test(licenseSource)) {
-    errors.push("license-bundle: licenseGate does not block the bundle/download channels");
-  }
+  errors.push(...validateModelBundlePolicy(licenseSource).map((error) => `license-bundle: ${error}`));
   return errors;
 }
 
@@ -518,10 +515,23 @@ export function validateDescriptorRegistry({ descriptorsSource, serviceSource, m
   }
   // Audit closure: ABI metadata without enforcement is decoration.
   // download() must consult device ABIs through the compatibility
-  // boundary (definition + at least one enforcement call site), and the
-  // service must actually parse the native ABI facts.
-  const compatCalls = (service.match(/requireCompatible\(/g) ?? []).length;
-  if (compatCalls < 2 || !/supportedAbis/.test(service)) {
+  // boundary in this method; import/evaluation calls elsewhere must not mask
+  // a disconnected download check. Parse syntax so comments cannot satisfy it.
+  const serviceAst = ts.createSourceFile("applicationAi.ts", service, ts.ScriptTarget.Latest, true);
+  let downloadChecksAbi = false;
+  for (const statement of serviceAst.statements) {
+    if (!ts.isClassDeclaration(statement) || statement.name?.text !== "ApplicationAiService") continue;
+    for (const method of statement.members) {
+      if (!ts.isMethodDeclaration(method) || !ts.isIdentifier(method.name) || method.name.text !== "download" || !method.body) continue;
+      const visit = (node) => {
+        if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression) && ts.isPropertyAccessExpression(node.expression.expression) &&
+            node.expression.expression.expression.kind === ts.SyntaxKind.ThisKeyword && node.expression.expression.name.text === "requireCompatible") downloadChecksAbi = true;
+        ts.forEachChild(node, visit);
+      };
+      visit(method.body);
+    }
+  }
+  if (!downloadChecksAbi || !/supportedAbis/.test(service)) {
     errors.push("descriptor-registry: download/run ignores declared descriptor ABIs (metadata without enforcement)");
   }
   // Audit closure: taskRoles must decide eligibility. Adapters advertise
@@ -1024,6 +1034,7 @@ export const GATE_CHECKS = [
   { id: "stale-markers", run: checkStaleMarkers },
   { id: "manifest-pins", run: checkManifestPins },
   { id: "license-bundle", run: checkLicenseBundle },
+  { id: "model-notices", run: checkModelNoticesFile },
   { id: "abi-artifacts", run: checkAbiArtifacts },
   { id: "vision-truth", run: checkVisionTruth },
   { id: "photo-analysis-truth", run: checkPhotoAnalysisTruth },
@@ -1076,6 +1087,7 @@ checks (any failure exits 1):
   stale-markers     TODO/"not wired" markers in shipped AI scope
   manifest-pins     modelProfiles rev+sha pins, LFM catalogOnly
   license-bundle    lfm1.0 arms blocked on the bundle channel
+  model-notices     exact source-linked license/attribution/NOTICE text and artifact digests
   abi-artifacts     ABI split config carries every supported ABI
    vision-truth      production vision seam + registration present, copy honest
    photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim (capabilities + About/Help)

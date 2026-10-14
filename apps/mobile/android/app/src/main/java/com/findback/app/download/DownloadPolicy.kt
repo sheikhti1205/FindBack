@@ -13,11 +13,31 @@ object DownloadPolicy {
 
     fun isHttps(url: String): Boolean {
         return try {
-            URL(url).protocol == "https"
+            val parsed = URL(url)
+            parsed.protocol == "https" && parsed.userInfo == null && parsed.port == -1
         } catch (_: Exception) {
             false
         }
     }
+
+    fun safeSource(url: String): Boolean = try {
+        val parsed = URL(url)
+        isHttps(url) && parsed.ref == null && (parsed.query == null || parsed.query == "download=true") &&
+            parsed.host.contains('.') && !parsed.host.matches(Regex("[0-9.]+")) &&
+            !parsed.host.endsWith(".local") && !parsed.host.endsWith(".internal")
+    } catch (_: Exception) { false }
+
+    fun publicDestination(url: String): Boolean = try {
+        val addresses = java.net.InetAddress.getAllByName(URL(url).host)
+        addresses.isNotEmpty() && addresses.none { it.isAnyLocalAddress || it.isLoopbackAddress || it.isLinkLocalAddress || it.isSiteLocalAddress || it.isMulticastAddress }
+    } catch (_: Exception) { false }
+
+    fun redirectAllowed(source: String, target: String): Boolean = try {
+        val origin = URL(source).host
+        val host = URL(target).host
+        isHttps(target) && (host == origin || (origin in listOf("hf.co", "huggingface.co") &&
+            (host == "huggingface.co" || host.endsWith(".hf.co") || host.endsWith(".huggingface.co"))))
+    } catch (_: Exception) { false }
 
     /**
      * Resolve a redirect `Location` against the current URL. Null when the

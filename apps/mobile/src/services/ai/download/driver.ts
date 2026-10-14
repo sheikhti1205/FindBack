@@ -17,6 +17,7 @@ import {
 } from "../offlineModelManager";
 import { installedFileCandidates } from "./installer";
 import { journalPathFor, readJournal, resolveResumeOffset } from "./journal";
+import { safeSourceUrl, retryableSourceFailure, nativeFailureCode } from "./sourcePolicy";
 
 export class DriverError extends Error {
   readonly code: string;
@@ -52,6 +53,9 @@ export interface DownloadAttemptResult {
 
 /** Platform seam behind every managed download. Faked in tests. */
 export interface ModelDownloadDriver {
+  pickAndStage?(args: { stagingPath: string; maxBytes: number; expectedBytes?: number; expectedSha256?: string; format: string }): Promise<{ actualHex: string; bytes: number }>;
+  readMetadata?(path: string): Promise<string | null>;
+  writeMetadata?(path: string, text: string): Promise<void>;
   rootDir(): Promise<string>;
   freeBytes(): Promise<number>;
   /** Staged bytes, or 0 when nothing is staged. Never negative. */
@@ -70,6 +74,8 @@ export interface ManagedDownloadRequest {
   readonly revision: string;
   readonly fileName: string;
   readonly url: string;
+  /** Same artifact identity; bounded to four credential-free endpoints. */
+  readonly sources?: readonly string[];
   readonly maxBytes: number;
   readonly userInitiated: boolean;
   readonly signal?: AbortSignal;
@@ -110,6 +116,10 @@ export async function runManagedDownload(
 
   const asset = assetOf(manager, request.modelId);
   if (asset === undefined) return fail("UNKNOWN_MODEL", `unknown model ${request.modelId}`);
+  const sources = [...new Set(request.sources ?? [request.url])];
+  if (sources.length === 0 || sources.length > 4 || sources.some((url) => !safeSourceUrl(url))) {
+    return fail("BAD_SOURCE", "Source must be a public credential-free HTTPS URL.");
+  }
 
   let root: string;
   try {
@@ -141,7 +151,14 @@ export async function runManagedDownload(
     journalText !== null
       ? await readJournal(journalFsOverText(journalText), paths.stagingPath)
       : null;
-  const decision = resolveResumeOffset(journal, staged > 0 ? staged : null);
+  const matchesJournal = journal?.modelId === request.modelId && journal.revision === request.revision &&
+    journal.filePath === request.fileName && journal.sha === asset.sha256 && sources.includes(journal.url);
+  let sourceIndex = matchesJournal ? sources.indexOf(journal!.url) : 0;
+  let offset = matchesJournal ? resolveResumeOffset(journal, staged > 0 ? staged : null).offset : 0;
+  if (!matchesJournal && staged > 0) {
+    await driver.removeFile(paths.stagingPath);
+    await driver.removeFile(journalPathFor(paths.stagingPath));
+  }
 
   try {
     if (status.download === "not-installed" || status.download === "failed") {
@@ -157,28 +174,44 @@ export async function runManagedDownload(
 
   let attempt: DownloadAttemptResult;
   try {
-    attempt = await driver.download({
+    for (;;) {
+      if (request.signal?.aborted) throw new DriverError("ABORTED", "cancelled");
+      try {
+        attempt = await driver.download({
       modelId: request.modelId,
       revision: request.revision,
       fileName: request.fileName,
-      url: request.url,
+      url: sources[sourceIndex]!,
       stagingPath: paths.stagingPath,
-      resumeOffset: decision.offset,
+      resumeOffset: offset,
       expectedSha256: asset.sha256,
-      maxBytes: request.maxBytes,
+      maxBytes: asset.downloadBytes,
       signal: request.signal,
       onProgress: (received, total) => {
         try {
           manager.dispatch(request.modelId, {
             type: "PROGRESS",
-            downloadedBytes: decision.offset + received,
+            downloadedBytes: offset + received,
           });
         } catch {
           // Monotonicity guard: ignore regressions, keep streaming.
         }
         request.onProgress?.(received, total);
       },
-    });
+        });
+        break;
+      } catch (error) {
+        const code = nativeFailureCode(error);
+        if (request.signal?.aborted || !retryableSourceFailure(code) || sourceIndex + 1 >= sources.length) throw error;
+        await driver.removeFile(paths.stagingPath);
+        await driver.removeFile(journalPathFor(paths.stagingPath));
+        offset = 0;
+        sourceIndex++;
+        manager.dispatch(request.modelId, { type: "FAIL", reason: "Trying another source." });
+        manager.dispatch(request.modelId, { type: "QUEUE_DOWNLOAD", userInitiated: true });
+        manager.dispatch(request.modelId, { type: "START" });
+      }
+    }
   } catch (error) {
     if (request.signal?.aborted === true) {
       try {
@@ -188,13 +221,30 @@ export async function runManagedDownload(
       }
       return fail("CANCELLED", "download cancelled; staged bytes kept for resume");
     }
-    const reason = error instanceof DriverError ? `${error.code}: ${error.message}` : "download failed";
+    const code = nativeFailureCode(error);
+    if (["CHECKSUM_MISMATCH", "SIZE_MISMATCH", "BYTE_BOUND_EXCEEDED", "LICENSE_MISMATCH", "MANIFEST_MISMATCH", "BAD_MANIFEST"].includes(code)) {
+      await driver.removeFile(paths.stagingPath).catch(() => {});
+      await driver.removeFile(journalPathFor(paths.stagingPath)).catch(() => {});
+    }
+    const reason = `Download stopped (${code}).`;
     try {
       manager.dispatch(request.modelId, { type: "FAIL", reason: reason.slice(0, 400) });
     } catch {
       // Status already moved; keep the recorded state.
     }
-    return fail(error instanceof DriverError ? error.code : "DOWNLOAD_FAILED", reason);
+    return fail(code, reason);
+  }
+
+  const cancelled = () => request.signal?.aborted === true || manager.statusOf(request.modelId)?.download !== "downloading";
+  if (cancelled()) {
+    if (manager.statusOf(request.modelId)?.download === "downloading") manager.dispatch(request.modelId, { type: "CANCEL" });
+    return fail("CANCELLED", "download paused");
+  }
+  if (offset + attempt.receivedBytes !== asset.downloadBytes || (attempt.totalBytes !== null && attempt.totalBytes !== asset.downloadBytes)) {
+    await driver.removeFile(paths.stagingPath);
+    await driver.removeFile(journalPathFor(paths.stagingPath));
+    manager.dispatch(request.modelId, { type: "FAIL", reason: "SIZE_MISMATCH" });
+    return fail("SIZE_MISMATCH", "Download did not match the exact expected size.");
   }
 
   try {
@@ -205,6 +255,7 @@ export async function runManagedDownload(
   if (!manager.checksumsMatch(asset.sha256, attempt.actualHex)) {
     try {
       await driver.removeFile(paths.stagingPath);
+      await driver.removeFile(journalPathFor(paths.stagingPath));
     } catch {
       // Delete is best-effort; the state below is authoritative.
     }
@@ -219,7 +270,16 @@ export async function runManagedDownload(
     return fail("CHECKSUM_MISMATCH", "staged bytes failed pin verification and were deleted");
   }
   try {
+    const cancelVerification = () => {
+      if (manager.statusOf(request.modelId)?.download === "verifying") manager.dispatch(request.modelId, { type: "CANCEL" });
+      return fail("CANCELLED", "download paused");
+    };
+    if (request.signal?.aborted || manager.statusOf(request.modelId)?.download !== "verifying") return cancelVerification();
     await driver.promoteFile(paths.stagingPath, paths.installedPath);
+    if (request.signal?.aborted || manager.statusOf(request.modelId)?.download !== "verifying") {
+      await driver.removeFile(paths.installedPath);
+      return cancelVerification();
+    }
   } catch {
     try {
       manager.dispatch(request.modelId, { type: "FAIL", reason: "atomic promote failed" });
@@ -260,6 +320,8 @@ export async function removeManagedModel(
   fileName: string,
   options: { unload?: () => Promise<void> } = {},
 ): Promise<void> {
+  manager.dispatch(modelId, { type: "DELETE" });
+  await driver.cancelDownload(manager.stagingPathsFor(rootDir, modelId, revision, fileName).stagingPath);
   await options.unload?.();
   const paths = manager.stagingPathsFor(rootDir, modelId, revision, fileName);
   for (const path of installedFileCandidates(paths)) {
@@ -298,6 +360,8 @@ function journalFsOverText(text: string | null): {
 }
 
 interface NativeDownloadPlugin {
+  pickAndStage(args: { stagingPath: string; maxBytes: number; expectedBytes?: number; expectedSha256?: string; format: string }): Promise<{ actualHex: string; bytes: number }>;
+  writeTextFile(args: { path: string; text: string }): Promise<unknown>;
   getRootDir(): Promise<{ rootDir: string }>;
   startDownload(args: {
     downloadId: string;
@@ -346,6 +410,15 @@ export class CapacitorModelDownloadDriver implements ModelDownloadDriver {
     const { rootDir } = await this.bridge().getRootDir();
     return rootDir;
   }
+
+  async pickAndStage(args: { stagingPath: string; maxBytes: number; expectedBytes?: number; expectedSha256?: string; format: string }): Promise<{ actualHex: string; bytes: number }> {
+    try { return await this.bridge().pickAndStage(args); }
+    catch (error) { throw new DriverError(nativeFailureCode(error), "Import could not be completed."); }
+  }
+  async readMetadata(path: string): Promise<string | null> {
+    const r = await this.bridge().readTextFile({ path }); return r.exists ? r.text ?? null : null;
+  }
+  async writeMetadata(path: string, text: string): Promise<void> { await this.bridge().writeTextFile({ path, text }); }
 
   async freeBytes(): Promise<number> {
     const { freeBytes } = await this.bridge().freeBytes();
@@ -400,9 +473,8 @@ export class CapacitorModelDownloadDriver implements ModelDownloadDriver {
         finalUrl: done.finalUrl,
       };
     } catch (error) {
-      const code =
-        error instanceof Error && /cancelled/i.test(error.message) ? "ABORTED" : "DOWNLOAD_FAILED";
-      throw new DriverError(code, error instanceof Error ? error.message : "download failed");
+      const code = nativeFailureCode(error);
+      throw new DriverError(code, `Download stopped (${code}).`);
     } finally {
       attempt.signal?.removeEventListener("abort", cancel);
       await handle.remove().catch(() => undefined);

@@ -15,7 +15,7 @@ describe("cactusChallenger", () => {
     expect(isCactusChallengerRuntime("needle-cact")).toBe(false);
   });
 
-  it("blocks bundle/download channels before any native call", async () => {
+  it("blocks bundle packaging and non-lab channels before any native call", async () => {
     const load = vi.fn();
     const challenger = new CactusChallenger({
       bridgeName: "fake",
@@ -26,11 +26,14 @@ describe("cactusChallenger", () => {
       unloadCactusModel: async () => {},
     });
     const lfm = labCandidateFor("lfm2-350m-q4_0")!;
+    // bundle stays blocked by FindBack packaging policy (not an upstream ban).
     await expect(challenger.load(lfm, { channel: "bundle" })).rejects.toBeInstanceOf(
       CactusLicenseBlockedError,
     );
+    // download is owner-enabled under LFM-1.0, so it clears the license gate
+    // and is stopped by the lab-channel gate instead — still before native.
     await expect(challenger.load(lfm, { channel: "download" })).rejects.toBeInstanceOf(
-      CactusLicenseBlockedError,
+      CactusChannelRequiredError,
     );
     expect(load).not.toHaveBeenCalled();
   });

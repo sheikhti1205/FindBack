@@ -24,9 +24,11 @@ internal object LlamaBridge {
 
     external fun nativeInit()
     external fun nativeLoad(modelPath: String, nCtx: Int, nThreads: Int)
-    external fun nativeBegin(prompt: String): Int
-    external fun nativeNext(): String?
+    external fun nativeLoadProjector(projectorPath: String)
+    external fun nativeBegin(prompt: String, rgb: ByteArray? = null, width: Int = 0, height: Int = 0): Int
+    external fun nativeNext(): ByteArray?
     external fun nativeCancel()
+    external fun nativeResetCancellation()
     external fun nativeSystemInfo(): String
     external fun nativeUnload()
 }

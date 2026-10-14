@@ -124,6 +124,7 @@ class QwenTextPlugin : Plugin() {
         scope.launch {
             try {
                 synchronized(lock) { unloadLocked() }
+                LiteRtArtifactPolicy.inspect(modelFile.absolutePath, modelId, false)
                 val textBackend =
                     if (requestedBackend == "gpu") Backend.GPU() else Backend.CPU()
                 // Text-only model, text-only executors: vision/audio
@@ -146,6 +147,7 @@ class QwenTextPlugin : Plugin() {
                 // on a throwaway conversation. Per-generation
                 // conversations (see generateText) start clean, so the
                 // probe leaves no history behind.
+                if (call.getBoolean("evaluation", false) != true) {
                 val probe = eng.createConversation(
                     ConversationConfig(
                         samplerConfig = SamplerConfig(
@@ -163,6 +165,7 @@ class QwenTextPlugin : Plugin() {
                         probe.close()
                     } catch (_: Exception) {
                     }
+                }
                 }
                 synchronized(lock) {
                     engine = eng
@@ -229,6 +232,7 @@ class QwenTextPlugin : Plugin() {
                 val raw = StringBuilder()
                 conv.sendMessageAsync(
                     Contents.of(Content.Text(prompt!!)),
+                    extraContext = mapOf("enable_thinking" to false),
                     // Anti-repeat decode, same values as vision:
                     // greedy sampling loops whole sentences on small
                     // quantized artifacts; correctness first.

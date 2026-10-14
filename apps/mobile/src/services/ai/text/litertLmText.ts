@@ -68,6 +68,7 @@ export interface QwenTextNativeBridge {
    * be >= QWEN_SESSION_MIN_TOKENS.
    */
   loadTextModel(args: {
+    readonly evaluation?: boolean;
     readonly modelId: string;
     readonly installedPath?: string;
     readonly maxTokens: number;
@@ -190,7 +191,7 @@ export async function isQwenTextAvailable(
 
 interface FindbackQwenTextPlugin {
   isTextAvailable(): Promise<{ available: boolean }>;
-  loadTextModel(args: { modelId: string; installedPath?: string; maxTokens: number }): Promise<{ ready: boolean }>;
+  loadTextModel(args: { modelId: string; installedPath?: string; maxTokens: number; evaluation?: boolean }): Promise<{ ready: boolean }>;
   unloadTextModel(): Promise<unknown>;
   generateText(args: QwenTextRequest): Promise<unknown>;
   cancelGeneration(args: { generationId: string }): Promise<unknown>;

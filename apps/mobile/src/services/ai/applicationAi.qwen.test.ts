@@ -172,16 +172,18 @@ describe("Qwen production runtime", () => {
     expect(p.calls).toContain("vision-unload");
   });
 
-  it("refuses Advanced downloads with the consumer legal reason and no transport", async () => {
+  it("downloads the pinned Advanced Qwen 1.7B without changing its qualification", async () => {
     const p = platform();
     const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
-    const advanced = service.registry.advancedCatalogue()[0]!;
-    expect(advanced.downloadable).toBe(false);
-    await expect(service.download(advanced.modelId)).rejects.toThrow();
-    expect(service.notice(advanced.modelId)).toBe(advanced.distributionNote);
-    expect(p.calls.some((call) => call.startsWith("download:"))).toBe(false);
-    expect(service.manager.statusOf(advanced.modelId)?.download).toBe("not-installed");
+    const advanced = service.registry.requireDescriptor("qwen3-1.7b-dynamic-int4");
+    expect(advanced.downloadable).toBe(true);
+    await service.download(advanced.modelId);
+    expect(p.calls).toContain(`download:${advanced.modelId}`);
+    expect(service.manager.statusOf(advanced.modelId)?.download).toBe("installed");
+    expect(advanced.taskRoles).toEqual([]);
+    expect(advanced.deviceQualifiedAbis).toEqual([]);
+    expect(advanced.maturity).toBe("lab");
   });
 
   it("verifies installs: match keeps the model, mismatch drops the install claim", async () => {

@@ -8,6 +8,7 @@ import { ApplicationAiService } from "../services/ai/applicationAi";
 import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
 import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
 import { AiModelsRoute } from "./AiModelsRoute";
+import { buildJournal } from "../services/ai/download/journal";
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 vi.mock("../services/supabaseClient", () => ({ getSupabase: () => ({ auth: { getSession: async () => ({ data: { session: null } }) } }) }));
 afterEach(cleanup);
@@ -38,14 +39,16 @@ function expectNormalTierCopy(container: HTMLElement) {
 function androidService() {
   const files = new Map<string, string>();
   let staged = 0;
+  let journal: string | null = null;
   const offsets: number[] = [];
   const service = new ApplicationAiService({ android: true, driver: {
     rootDir: async () => "/private/ai-models", freeBytes: async () => 2e9,
-    stagedSize: async () => staged, readJournalText: async () => null,
+    stagedSize: async () => staged, readJournalText: async () => journal,
     download: async (attempt) => {
       offsets.push(attempt.resumeOffset);
       if (offsets.length === 1) {
         staged = 1024;
+        journal = JSON.stringify(buildJournal({ url: attempt.url, filePath: attempt.fileName!, sha: attempt.expectedSha256, offset: staged, total: attempt.maxBytes, modelId: attempt.modelId, revision: attempt.revision }));
         attempt.onProgress?.(staged, attempt.maxBytes);
         await new Promise<void>((_, reject) => {
           attempt.signal!.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
@@ -212,7 +215,7 @@ describe("AiModelsRoute consumer cards", () => {
     expectNormalTierCopy(view.container);
   });
 
-  it("renders catalogue descriptors in Tools and non-downloadable entries in Advanced, with no hard-coded cards", async () => {
+  it("derives Recommended rows and Advanced choices from the same registry", async () => {
     const extra = {
       modelId: "test-extra-model", displayName: "Test extra", consumerTitle: "Test extra",
       consumerDetail: "Test", runtimeId: "test-extra-runtime", format: "cact" as const,
@@ -222,7 +225,7 @@ describe("AiModelsRoute consumer cards", () => {
       trust: "curated" as const, license: "test-only", minRamMb: 512, recommendedRamMb: 512,
       abis: ["arm64-v8a"], downloadable: true,
     };
-    const lab = { ...extra, modelId: "test-lab-model", consumerTitle: "Lab hidden", downloadable: false };
+    const lab = { ...extra, modelId: "test-lab-model", displayName: "Lab hidden", consumerTitle: "Lab hidden", maturity: "lab" as const, downloadable: false };
     const service = new ApplicationAiService({
       android: true,
       driver: {
@@ -250,15 +253,15 @@ describe("AiModelsRoute consumer cards", () => {
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: "Test extra" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Download Test extra" })).toBeTruthy();
-    // The non-downloadable entry never offers a download, but stays visible
-    // in Advanced with its truthful state — never a hidden shadow list.
+    // Lab metadata is not in the ordinary consumer tier.
     expect(screen.queryByRole("button", { name: "Download Lab hidden" })).toBeNull();
-    expect(await screen.findByRole("heading", { name: "Lab hidden" })).toBeTruthy();
-    expect(await screen.findByText("Not offered as a download.")).toBeTruthy();
     expectNormalTierCopy(view.container);
+    fireEvent.click(screen.getByRole("button", { name: "Open Advanced" }));
+    expect(screen.getByRole("option", { name: "Lab hidden" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Import model files" })).toBeTruthy();
   });
 
-  it("shows the Qwen assistant card plus Advanced candidates with tier badges and role summaries", async () => {
+  it("keeps evaluation and import controls behind an explicit Advanced action", async () => {
     const { service } = androidService();
     await service.ready;
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
@@ -268,24 +271,16 @@ describe("AiModelsRoute consumer cards", () => {
     expect(screen.getByText("Answers questions")).toBeTruthy();
     expect(screen.queryByText("Answers questions · Fills in reports")).toBeNull();
     expect(screen.getByRole("button", { name: "Download On-device assistant" })).toBeTruthy();
-    // Tier badges separate Recommended from Advanced on the normal tier.
     expect(screen.getAllByText("Recommended").length).toBeGreaterThanOrEqual(3);
-    expect(screen.getAllByText("Advanced").length).toBeGreaterThanOrEqual(8);
-    // Advanced rows carry truthful legal/verification reasons, never downloads.
-    expect(screen.getAllByText(/license restricts redistribution/i).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText(/needs verification before it can be offered/i).length).toBeGreaterThanOrEqual(1);
-    // Never promise an action this build cannot perform.
-    expect(screen.queryByText(/available for import/i)).toBeNull();
-    // Narrow screens: every Advanced pill is the SHORT state; the long legal
-    // reason wraps as body copy instead of widening the row.
-    expect(screen.getAllByText("Not offered").length).toBeGreaterThanOrEqual(8);
-    const reasons = view.container.querySelectorAll("[data-testid^='ai-reason-']");
-    expect(reasons.length).toBeGreaterThanOrEqual(8);
-    for (const reason of reasons) {
-      expect(reason.textContent ?? "").not.toBe("Not offered");
-    }
-    expect(screen.queryByRole("button", { name: "Download Compact assistant" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Download Detailed photo helper (evaluation)" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Import model files" })).toBeNull();
+    expect(screen.queryByLabelText("Model")).toBeNull();
+    expectNormalTierCopy(view.container);
+    fireEvent.click(screen.getByRole("button", { name: "Open Advanced" }));
+    expect(await screen.findByLabelText("Model")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Download model" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Import model files" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Run evaluation" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close Advanced" }));
     expectNormalTierCopy(view.container);
   });
 });

@@ -73,6 +73,10 @@ export class ResidencyCoordinator {
    * preferable to tearing down an engine underneath live native code.
    */
   private resetBarrier = false;
+  private resetGeneration = 0;
+
+  /** Invalidates work awaiting prerequisites even after cleanup lowers the barrier. */
+  get resetVersion(): number { return this.resetGeneration; }
 
   /** Resolve idle waiters whenever the gate reaches the free state. */
   private notifyIdle(): void {
@@ -303,6 +307,7 @@ export class ResidencyCoordinator {
    * with `completeReset()`.
    */
   reset(): void {
+    this.resetGeneration++;
     this.abortInference();
     this.abortInflight();
     this.generations.clear();

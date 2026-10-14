@@ -11,8 +11,8 @@ product code only if a real parity/runtime defect is found.
   `FAIL_EXTERNAL`, `FAIL`. Nothing is ever `PASS` without a committed evidence
   artifact (see §K). Secrets are NAMES only — never paste values.
 
-Baseline: `77c037a` (`origin/main` at edit time, or newer after this wave's commit). The capability
-matrix (separate question — "does the feature exist on this lane") lives in
+Baseline: rebaselined to the 2.0.0-beta.1 candidate (see §K for the live baseline SHA);
+the capability matrix (separate question — "does the feature exist on this lane") lives in
 `docs/runbooks/cross-environment-manifest.md`.
 
 ## Matrix (current HEAD)
@@ -22,8 +22,8 @@ matrix (separate question — "does the feature exist on this lane") lives in
 | Lane | Verdict | Why / next action |
 |---|---|---|
 | REPO_IMPLEMENTATION | PASS | Source, scripts and tests for the X-wave are complete; local gates green (see evidence). |
-| LIVE_DATABASE | PASS | Applied the 3 pending migrations in order; live head 20261013020000 == BACKEND_SCHEMA_VERSION; 19/19 verify probes pass (see evidence). |
-| EDGE_FUNCTIONS | PASS | Deployed ai-help v9 / push-dispatch v6 (REACTION) / cleanup-comment-media v1; reply-comment v3 already CURRENT; byte-identical parity + live auth guards proven (see evidence). |
+| LIVE_DATABASE | READY_FOR_RUNTIME_PROOF | Source-ready. Live head is 20261013020000; the 2.0 deletion fence 20261014010000 is NOT applied yet, so this lane cannot be PASS. Apply + verify the pending migration, confirm hosted head == BACKEND_SCHEMA_VERSION, then flip to PASS with committed non-secret evidence. |
+| EDGE_FUNCTIONS | READY_FOR_RUNTIME_PROOF | Source-ready. ai-help/push-dispatch/cleanup-comment-media are CURRENT, but delete-account is NOT deployed. Deploying it is gated on the 20261014010000 fence landing first. Until then this lane is READY, not PASS. |
 | SENTRY_LOCAL | READY_FOR_RUNTIME_PROOF | Wiring + parity gates complete; needs a real DSN/token and one symbolicated event. |
 | SENTRY_CI | READY_FOR_RUNTIME_PROOF | Upload step is wired in the workflows; needs SENTRY_AUTH_TOKEN/ORG/PROJECT. |
 | SENTRY_RELEASE | READY_FOR_RUNTIME_PROOF | One release/dist contract proven mechanically; release artifacts not yet produced. |
@@ -32,19 +32,20 @@ matrix (separate question — "does the feature exist on this lane") lives in
 | GOOGLE_BUILD_CONFIG | PASS | Static config parity: package com.findback.app, callback paths, web bridge, provider expectations, audience format (see evidence). |
 | GOOGLE_RUNTIME | READY_FOR_RUNTIME_PROOF | Needs canonical-release-key signed device proof: Credential Manager → ID token → signInWithIdToken → profile state. Never Firebase Auth. |
 | FCM_CLIENT | READY_FOR_RUNTIME_PROOF | Android client push wiring present; needs materialized google-services + a device. |
-| FCM_SERVER | READY_FOR_RUNTIME_PROOF | Live secrets present and push-dispatch v6 deployed + 401-guarded. Needs a real device token for end-to-end delivery across REACTION kinds/COMMENT/MENTION/STATUS/reply. |
+| FCM_SERVER | READY_FOR_RUNTIME_PROOF | Live secrets present (SERVICE_ACCOUNT_JSON/PROJECT_ID/PUSH_DISPATCH_SECRET/PUBLIC_SHARE_ORIGIN) and push-dispatch v6 deployed + 401-guarded. Needs a real device token for end-to-end delivery across REACTION kinds/COMMENT/MENTION/STATUS/reply. |
 | KLIPY | READY_FOR_RUNTIME_PROOF | Implementation + bundle-presence gate complete; needs the key set in the lane and a live trending/search/select/reload run. |
 | MAPLIBRE | READY_FOR_RUNTIME_PROOF | MapLibre Native keyless final (no Google Maps key required); needs emulator/device MAP-11 proof. |
 | REMOTE_CI | FAIL_EXTERNAL | Exact-HEAD workflow runs complete/failure in ~3s (Actions billing signature) — no commit statuses returned. Workflows are NOT weakened. |
-| EMULATOR | DEFERRED_OWNER | No Android SDK / Gradle / adb / emulator available to the agent. |
+| EMULATOR | DEFERRED_OWNER | No emulator binary/AVD and no attached device in the agent environment (Android SDK + platform-tools are present; `adb devices` is empty). |
 | PHYSICAL_DEVICE | DEFERRED_PHYSICAL_DEVICE | Physical-device acceptance is owner-only evidence. |
-| RELEASE | DEFERRED_OWNER | Release is forbidden until runtime/deployment lanes close. |
+| RELEASE | DEFERRED_OWNER | Release stays HOLD for 2.0.0-beta.1 until live DB/Edge, physical-device, and exact-final-SHA CI acceptance complete. GitHub Actions billing also blocks release.yml jobs, and the publish job runs ONLY on a v* tag, so a tag would be premature now. |
 
 Lanes currently `FAIL`/`FAIL_EXTERNAL`: `REMOTE_CI` only (external
-Actions billing). `LIVE_DATABASE` and `EDGE_FUNCTIONS` are now **PASS** (see
-`docs/evidence/live-database.json`, `docs/evidence/edge-functions.json`). Every
-remaining non-`PASS` row is runtime-proof or device/owner evidence — no source,
-schema, or deployment gap remains.
+Actions billing). `LIVE_DATABASE` and `EDGE_FUNCTIONS` are
+**READY_FOR_RUNTIME_PROOF**, not `PASS`: the 2.0 deletion fence
+`20261014010000` is not applied on the host and `delete-account` is not
+deployed, so neither lane may claim closure yet (see §B/§C). Every remaining
+non-`PASS` row is runtime-proof or device/owner evidence — no source gap remains.
 
 ## A. Preflight (read-only, any machine)
 

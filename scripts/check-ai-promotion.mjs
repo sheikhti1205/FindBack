@@ -10,7 +10,7 @@
  *   * the lab branch of promotionDecision() stops pinning
  *     { promotable: false, routable: false }
  *   * isPromotable()/isRoutable() stop delegating to promotionDecision()
- *   * licenseGate no longer blocks LFM arms on the bundle/download channels
+ *   * licenseGate no longer blocks packaged model weights on the bundle channel
  *   * a lab-only runtime id appears as a catalogue profile runtime, or an
  *     LFM-licensed profile reaches maturity "default"
  *
@@ -54,6 +54,12 @@ function sameSet(actual, expected) {
   return expected.every((item) => actual.includes(item));
 }
 
+/** Packaging policy is separate from owner-authorized conditional acquisition. */
+export function validateModelBundlePolicy(licenseSource) {
+  return /if\s*\(\s*channel\s*===\s*"bundle"\s*\)\s*\{\s*return\s*\{\s*allowed:\s*false/.test(licenseSource ?? "")
+    ? [] : ["licenseGate must block packaged model weights on the bundle channel (allowed: false)"];
+}
+
 /**
  * Validate the promotion policy + license gate + catalogue cross-checks.
  * Inputs are source texts. Returns a list of failure strings (empty = pass).
@@ -81,11 +87,7 @@ export function validatePromotion({ policySource, licenseSource, profilesSource 
     errors.push("isRoutable() must delegate to promotionDecision()");
   }
 
-  const bundleBlock =
-    /channel\s*===\s*"bundle"\s*\|\|\s*channel\s*===\s*"download"[\s\S]{0,400}?allowed:\s*false/;
-  if (!bundleBlock.test(licenseSource ?? "")) {
-    errors.push('licenseGate must block LFM arms on the bundle/download channels (allowed: false)');
-  }
+  errors.push(...validateModelBundlePolicy(licenseSource));
   if (!/LFM_LICENSE_ID\s*=\s*"LFM-1\.0"/.test(licenseSource ?? "")) {
     errors.push('licenseGate must define LFM_LICENSE_ID = "LFM-1.0"');
   }
@@ -178,7 +180,7 @@ function main() {
   }
   console.log(
     `check-ai-promotion: PASS (lab-only: ${EXPECTED_LAB_ONLY_RUNTIMES.join(", ")}; ` +
-      `never promotable, never routable; LFM bundle/download blocked)`,
+      `never promotable, never routable; model-weight bundle blocked; acquisition is not qualification)`,
   );
 }
 

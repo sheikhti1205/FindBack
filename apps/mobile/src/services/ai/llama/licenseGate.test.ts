@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { profileFor } from "../modelProfiles";
-import { LlamaCppChallenger, LfmLicenseBlockedError } from "./adapter";
+import { LlamaCppChallenger, LfmLicenseBlockedError, LabChannelRequiredError } from "./adapter";
 import { enforce } from "./licenseGate";
 import { isPromotable, isRoutable, LAB_ONLY_RUNTIMES, promotionDecision } from "./promotionPolicy";
 
 describe("LFM license gate", () => {
-  it("blocks the LFM text arm for bundle and download distribution", () => {
+  it("blocks packaging by product policy but permits conditional LFM acquisition", () => {
     const lfm = profileFor("lfm2.5-1.2b-q4_0");
     expect(lfm?.license).toBe("LFM-1.0");
     expect(lfm?.catalogOnly).toBe(true);
     expect(enforce(lfm!, "bundle").allowed).toBe(false);
-    expect(enforce(lfm!, "download").allowed).toBe(false);
+    expect(enforce(lfm!, "download").allowed).toBe(true);
+    expect(enforce(lfm!, "download").reason).toMatch(/§4.*§5/);
+    expect(enforce(lfm!, "bundle").reason).toContain("not an upstream redistribution prohibition");
     expect(enforce(lfm!).allowed).toBe(false);
   });
 
@@ -20,7 +22,7 @@ describe("LFM license gate", () => {
       expect(arm?.license).toBe("LFM-1.0");
       expect(arm?.catalogOnly).toBe(true);
       expect(enforce(arm!, "bundle").allowed).toBe(false);
-      expect(enforce(arm!, "download").allowed).toBe(false);
+      expect(enforce(arm!, "download").allowed).toBe(true);
     }
   });
 
@@ -46,7 +48,7 @@ describe("LFM license gate", () => {
       LfmLicenseBlockedError,
     );
     await expect(challenger.load(lfm!, { channel: "download" })).rejects.toBeInstanceOf(
-      LfmLicenseBlockedError,
+      LabChannelRequiredError,
     );
   });
 });

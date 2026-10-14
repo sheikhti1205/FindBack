@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import { Gauge } from "lucide-react";
 import { Button } from "../components/Button";
 import {
@@ -15,6 +15,7 @@ import {
 import { tierOf, type ModelDescriptor } from "../services/ai/modelDescriptors";
 import { qualifiedUiRolesForOfflineModel } from "../services/ai/uiModelRoles";
 import { canShowAuto } from "../services/ai/uiGates";
+import { AdvancedModelSupply } from "./AiModelsRouteAdvanced";
 
 function formatMegabytes(bytes: number): string {
   return `${Math.round(bytes / 1_000_000)} MB`;
@@ -300,6 +301,8 @@ function ConsumerCard({
 export function AiModelsRoute({ service = getApplicationAi() }: { service?: ApplicationAiService }) {
   useSyncExternalStore(service.subscribe, service.snapshot);
   const [error, setError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedId = useId();
   const measured = canShowAuto(service.probeRecords, service.probeContext);
   // Refresh per-model device compatibility once per service: the snapshot
   // subscription re-renders when the service publishes the results.
@@ -329,22 +332,13 @@ export function AiModelsRoute({ service = getApplicationAi() }: { service?: Appl
           />
         ))}
       </SettingsGroup>
-      {service.registry.advancedCatalogue().length > 0 ? (
         <SettingsGroup
           title="Advanced"
-          description="More tools being evaluated. Availability depends on verification, licensing, and this phone."
+          description="Import models or try an explicit evaluation. These tests do not change your tools."
         >
-          {service.registry.advancedCatalogue().map((descriptor) => (
-            <ConsumerCard
-              key={descriptor.modelId}
-              descriptor={descriptor}
-              service={service}
-              reportError={setError}
-              advanced
-            />
-          ))}
+          <Button type="button" variant="outline" aria-expanded={advancedOpen} aria-controls={advancedId} onClick={() => setAdvancedOpen((value) => !value)}>{advancedOpen ? "Close Advanced" : "Open Advanced"}</Button>
+          {advancedOpen ? <div id={advancedId} className="mt-4 min-w-0"><AdvancedModelSupply service={service} /></div> : null}
         </SettingsGroup>
-      ) : null}
       {error !== null ? (
         <p role="alert" className="text-sm text-error">
           {error}
