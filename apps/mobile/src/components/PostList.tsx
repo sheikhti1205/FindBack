@@ -6,6 +6,7 @@ import { PostCard } from "./PostCard";
 import { OwnerReportCard } from "./OwnerReportCard";
 import { PostCardContent, type PostCardLayout } from "./PostCardContent";
 import { EmptyState, Spinner } from "./PostCard";
+import { FeedSkeleton } from "./uiPrimitives";
 import { fadeVariants, listItemVariants, motionDurations, motionEasings } from "./uiMotion";
 
 interface PostListProps {
@@ -73,11 +74,13 @@ export function PostList({
           ? "flex flex-col gap-4 px-4"
           : "flex flex-col gap-3 px-4";
 
-  // Wave A: short opacity-only swaps between feed states. The spinner exits
-  // as content enters (and likewise for error/empty), so loading → results
-  // never pops. AnimatePresence initial={false} keeps the first paint
-  // instant; later state changes crossfade within the fast token budget.
-  // Opacity is preserved under reduced motion by the root MotionConfig.
+  // Wave A: short opacity-only swaps between feed states. The skeleton
+  // exits as content enters (and likewise for error/empty), so loading →
+  // results never pops and never reflows: the skeleton holds the same
+  // fixed-size card shapes the content will fill. AnimatePresence
+  // initial={false} keeps the first paint instant; later state changes
+  // crossfade within the fast token budget. Opacity is preserved under
+  // reduced motion by the root MotionConfig.
   const stateTransition = { duration: motionDurations.fast, ease: motionEasings.inOut };
   const state = loading && items.length === 0 ? "loading" : error && items.length === 0 ? "error" : items.length === 0 ? "empty" : "content";
 
@@ -107,7 +110,15 @@ export function PostList({
           exit="exit"
           transition={stateTransition}
         >
-          <Spinner label="Loading posts…" />
+          <FeedSkeleton
+            density={
+              density === "compact" || density === "owner-feed"
+                ? "compact"
+                : density === "editorial"
+                  ? "editorial"
+                  : "home-feed"
+            }
+          />
         </motion.div>
       )}
       {state === "error" && (

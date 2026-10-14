@@ -4,6 +4,7 @@ import { motion, type PanInfo } from "framer-motion";
 import { Bell, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
 import { UserAvatar } from "../components/UserAvatar";
+import { ErrorView, InboxSkeleton, StateSwap } from "../components/uiPrimitives";
 import {
   deleteNotifications,
   fetchNotifications,
@@ -269,20 +270,16 @@ export function Notifications() {
         </div>
       </header>
 
+      {/* Inbox states swap with one short fade — loading holds fixed-size
+          skeleton rows so resolving content never reflows. */}
+      <StateSwap stateKey={error ? "error" : items === null ? "loading" : items.length === 0 ? "empty" : `content-${view}`}>
       {error ? (
-        <section className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-12 text-center">
-          <p role="alert" className="text-sm text-on-surface-variant">{error}</p>
-          <button
-            type="button"
-            onClick={() => void load(view)}
-            className="flex min-h-[48px] items-center rounded-m3-xs bg-primary px-4 text-sm font-medium text-on-primary"
-          >
-            Try again
-          </button>
+        <section className="flex flex-1 flex-col items-center justify-center px-4 py-4 text-center">
+          <ErrorView message={error} onRetry={() => void load(view)} />
         </section>
       ) : items === null ? (
-        <section className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-12 text-center">
-          <p role="status" className="text-sm text-on-surface-variant">Loading notifications…</p>
+        <section className="flex-1" aria-label="Loading notifications">
+          <InboxSkeleton />
         </section>
       ) : items.length === 0 ? (
         <section
@@ -386,6 +383,7 @@ export function Notifications() {
           ))}
         </ul>
       )}
+      </StateSwap>
 
       {lastDeleted && view === "inbox" ? (
         <div

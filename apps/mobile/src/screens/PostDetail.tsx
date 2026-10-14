@@ -11,7 +11,8 @@ import { Button } from "../components/Button";
 import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { InteractiveLocationMap } from "../components/InteractiveLocationMap";
-import { EmptyState, Spinner } from "../components/PostCard";
+import { EmptyState } from "../components/PostCard";
+import { CommentSkeleton, DetailSkeleton } from "../components/uiPrimitives";
 import {
   sharedElementTransition,
   sharedTitleLayoutId,
@@ -627,7 +628,9 @@ export function PostDetail() {
     });
   }, [comments]);
 
-  if (loading) return <Spinner label="Loading post…" />;
+  // Stable skeleton holds the hero/body shape so resolving content never
+  // reflows; the sticky escape bar stays mounted underneath via the shell.
+  if (loading) return <DetailSkeleton />;
   if (error && !post) return <EmptyState title="Post unavailable" subtitle={error} />;
   if (!post) return null;
 
@@ -1498,9 +1501,7 @@ export function PostDetail() {
           />
 
           {commentsLoading ? (
-            <p role="status" className="text-sm text-on-surface-variant">
-              Loading comments…
-            </p>
+            <CommentSkeleton />
           ) : commentsError ? (
             <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
               <span>Could not load comments: {commentsError}</span>

@@ -1,7 +1,10 @@
 import { useEffect, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router";
-import { listItemVariants, motionDurations, motionEasings } from "./uiMotion";
+import { listItemVariants, motionDurations, motionEasings, pressFeedback } from "./uiMotion";
+
+/** Router link with shared press feedback (motion pass: always animated). */
+const MotionLink = motion.create(Link);
 
 interface PostCardProps {
   children: ReactNode;
@@ -59,12 +62,14 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
         {children}
       </div>
     ) : (
-      <Link
+      <MotionLink
         to={to}
+        whileTap={pressFeedback.button}
+        transition={{ duration: motionDurations.instant }}
         className="flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
       >
         {children}
-      </Link>
+      </MotionLink>
     );
   if (!animated) {
     return (
