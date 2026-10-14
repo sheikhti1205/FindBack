@@ -23,6 +23,15 @@ public final class EmojiPickerPolicy {
     public static final String KEY_CANCELLED = "cancelled";
 
     /**
+     * Fitzpatrick skin-tone modifiers (light → dark) offered by the tone
+     * strip. An empty selection means the default (yellow / unmodified)
+     * presentation.
+     */
+    public static final String[] TONE_MODIFIERS = {
+        "\uD83C\uDFFB", "\uD83C\uDFFC", "\uD83C\uDFFD", "\uD83C\uDFFE", "\uD83C\uDFFF",
+    };
+
+    /**
      * Max UTF-16 length of an accepted pick. Emoji outside the BMP cost two
      * units each; 24 covers ZWJ families and flags with room to spare while
      * still refusing pasted sentences.
@@ -30,6 +39,52 @@ public final class EmojiPickerPolicy {
     public static final int MAX_PICK_LENGTH = 24;
 
     private EmojiPickerPolicy() {}
+
+    /**
+     * Base emoji that accept a Fitzpatrick modifier. Only these combine with
+     * the tone strip; every other pick (including precomposed tone variants
+     * already in the catalogue) passes through unchanged.
+     */
+    public static boolean isToneableBase(String base) {
+        if (base == null) return false;
+        switch (base) {
+            case "\uD83D\uDC4D": // 👍
+            case "\uD83D\uDC4E": // 👎
+            case "\uD83D\uDC4F": // 👏
+            case "\uD83D\uDE4F": // 🙏
+            case "\uD83D\uDC4B": // 👋
+            case "\u270A": // ✊
+            case "\uD83D\uDE4C": // 🙌
+            case "\uD83E\uDD32": // 🤲
+            case "\uD83E\uDDB6": // 🫶
+            case "\uD83D\uDCAA": // 💪
+            case "\u270C\uFE0F": // ✌️
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** True when `modifier` is one of {@link #TONE_MODIFIERS}. */
+    public static boolean isToneModifier(String modifier) {
+        if (modifier == null) return false;
+        for (String tone : TONE_MODIFIERS) {
+            if (tone.equals(modifier)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Applies the selected tone to a picked base: toneable bases gain the
+     * modifier, everything else (precomposed variants, ZWJ sequences, flags,
+     * symbols) passes through unchanged. Never throws; null-safe.
+     */
+    public static String applyTone(String base, String modifier) {
+        if (base == null) return null;
+        if (!isToneModifier(modifier)) return base;
+        if (!isToneableBase(base)) return base;
+        return base + modifier;
+    }
 
     /**
      * Returns the trimmed pick, or {@code null} when it is not exactly one

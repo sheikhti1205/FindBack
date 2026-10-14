@@ -45,4 +45,40 @@ public class EmojiPickerPolicyTest {
         for (int i = 0; i < EmojiPickerPolicy.MAX_PICK_LENGTH + 1; i++) longPick.append('x');
         assertNull(EmojiPickerPolicy.sanitizePickedEmoji(longPick.toString()));
     }
+
+    @Test
+    public void exposesFiveFitzpatrickToneModifiers() {
+        assertEquals(5, EmojiPickerPolicy.TONE_MODIFIERS.length);
+        for (String tone : EmojiPickerPolicy.TONE_MODIFIERS) {
+            assertEquals(true, EmojiPickerPolicy.isToneModifier(tone));
+        }
+        assertEquals(false, EmojiPickerPolicy.isToneModifier(""));
+        assertEquals(false, EmojiPickerPolicy.isToneModifier(null));
+        assertEquals(false, EmojiPickerPolicy.isToneModifier("\uD83D\uDE00"));
+    }
+
+    @Test
+    public void appliesToneOnlyToToneableBases() {
+        String medium = "\uD83C\uDFFD";
+        // Toneable gesture bases gain the modifier.
+        assertEquals("\uD83D\uDC4D\uD83C\uDFFD",
+            EmojiPickerPolicy.applyTone("\uD83D\uDC4D", medium));
+        assertEquals("\uD83D\uDE4F\uD83C\uDFFD",
+            EmojiPickerPolicy.applyTone("\uD83D\uDE4F", medium));
+        // Everything else passes through: symbols, ZWJ families, flags,
+        // precomposed variants, and the handshake (no modifier support).
+        assertEquals("\uD83D\uDE00",
+            EmojiPickerPolicy.applyTone("\uD83D\uDE00", medium));
+        assertEquals("\uD83E\uDD1D",
+            EmojiPickerPolicy.applyTone("\uD83E\uDD1D", medium));
+        assertEquals("\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67",
+            EmojiPickerPolicy.applyTone("\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67", medium));
+        assertEquals("\uD83C\uDDFA\uD83C\uDDF8",
+            EmojiPickerPolicy.applyTone("\uD83C\uDDFA\uD83C\uDDF8", medium));
+        // No tone selected (or a bogus one) leaves the base untouched.
+        assertEquals("\uD83D\uDC4D", EmojiPickerPolicy.applyTone("\uD83D\uDC4D", ""));
+        assertEquals("\uD83D\uDC4D", EmojiPickerPolicy.applyTone("\uD83D\uDC4D", null));
+        assertEquals("\uD83D\uDC4D", EmojiPickerPolicy.applyTone("\uD83D\uDC4D", "x"));
+        assertNull(EmojiPickerPolicy.applyTone(null, medium));
+    }
 }

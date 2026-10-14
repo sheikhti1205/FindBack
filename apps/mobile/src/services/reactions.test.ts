@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_REACTION_KIND,
+  REACTION_EMOJI,
   REACTION_KINDS,
   isReactionKind,
   nextReactionForTap,
   normalizeReactionKind,
   reactionCountsFromJson,
+  reactionEmoji,
+  reactionEmojiForWire,
   reactionSummaryFromCounts,
   reactionSummaryFromRow,
   reactionToggleDeltas,
@@ -35,10 +38,30 @@ describe("REACTION_KINDS metadata", () => {
     }
   });
 
-  it("uses no emoji glyphs", () => {
+  it("maps every kind to its canonical system emoji (the one presentation map)", () => {
+    expect(REACTION_EMOJI).toEqual({
+      LOVE: "❤️",
+      HELPFUL: "💡",
+      SUPPORT: "🤝",
+      WOW: "😮",
+    });
     for (const meta of REACTION_KINDS) {
-      expect(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}]/u.test(meta.glyph)).toBe(false);
+      expect(meta.emoji).toBe(REACTION_EMOJI[meta.kind]);
+      expect(reactionEmoji(meta.kind)).toBe(REACTION_EMOJI[meta.kind]);
     }
+    // Accessible names stay human-readable next to the emoji.
+    expect(REACTION_KINDS.map((k) => k.label)).toEqual(["Love", "Helpful", "Support", "Wow"]);
+  });
+
+  it("resolves wire kinds (legacy LIKE included) to the canonical emoji", () => {
+    expect(reactionEmojiForWire("LOVE")).toBe("❤️");
+    expect(reactionEmojiForWire("LIKE")).toBe("❤️");
+    expect(reactionEmojiForWire("HELPFUL")).toBe("💡");
+    expect(reactionEmojiForWire("SUPPORT")).toBe("🤝");
+    expect(reactionEmojiForWire("WOW")).toBe("😮");
+    expect(reactionEmojiForWire("DISLIKE")).toBeNull();
+    expect(reactionEmojiForWire("BOGUS" as never)).toBeNull();
+    expect(reactionEmojiForWire(null)).toBeNull();
   });
 });
 

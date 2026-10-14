@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { REACTION_ART_FAMILY, REACTION_ART_MARK, ReactionArt } from "./ReactionArt";
+import { REACTION_EMOJI } from "../services/reactions";
 import { ReactionArtFixture } from "./ReactionArt.fixture";
 import {
   REACTION_TRAY_REDUCED_MOTION_CSS,
@@ -13,22 +14,44 @@ import { ReactionPreviewStack, topReactionKinds } from "./ReactionPreviewStack";
 afterEach(cleanup);
 
 describe("ReactionArt", () => {
-  it("renders filled SVG artwork for every kind (no emoji-font glyph)", () => {
+  it("renders the canonical system emoji for every kind (no custom art)", () => {
     for (const kind of ["LOVE", "HELPFUL", "SUPPORT", "WOW"] as const) {
       render(<ReactionArt kind={kind} size={30} />);
       const art = screen.getByTestId(`reaction-art-${kind}`);
-      expect(art.tagName.toLowerCase()).toBe("svg");
-      expect(art.getAttribute("fill")).toBe("currentColor");
-      // Artwork only — no text, no emoji characters.
-      expect(art.textContent?.trim()).toBe("");
+      expect(art.textContent).toContain(REACTION_EMOJI[kind]);
+      expect(art.querySelector("svg")).toBeNull();
+      expect(art.querySelector("img")).toBeNull();
+      expect(art.querySelector("path,circle,ellipse,rect")).toBeNull();
       cleanup();
     }
   });
 
-  it("tints with the functional kind var, never the accent", () => {
+  it("is decorative (aria-hidden) with the kind on data attributes", () => {
+    render(<ReactionArt kind="LOVE" size={30} />);
+    const art = screen.getByTestId("reaction-art-LOVE");
+    expect(art.getAttribute("aria-hidden")).toBe("true");
+    expect(art.getAttribute("data-kind")).toBe("LOVE");
+    expect(art.getAttribute("data-family")).toBe(REACTION_ART_FAMILY);
+  });
+
+  it("mutes the emoji (not a color swap) when unfilled", () => {
+    render(<ReactionArt kind="WOW" filled={false} />);
+    const art = screen.getByTestId("reaction-art-WOW") as HTMLElement;
+    expect(art.style.opacity).toBe("0.45");
+    expect(art.textContent).toContain(REACTION_EMOJI.WOW);
+    cleanup();
     render(<ReactionArt kind="WOW" />);
-    const art = screen.getByTestId("reaction-art-WOW");
-    expect((art as unknown as HTMLElement).style.color).toBe("var(--fb-reaction-wow)");
+    expect((screen.getByTestId("reaction-art-WOW") as HTMLElement).style.opacity).toBe("1");
+  });
+
+  it("sizes the glyph box at every production size", () => {
+    for (const size of [15, 16, 18, 20, 30]) {
+      render(<ReactionArt kind="HELPFUL" size={size} />);
+      const art = screen.getByTestId("reaction-art-HELPFUL") as HTMLElement;
+      expect(art.style.width).toBe(`${size}px`);
+      expect(art.style.height).toBe(`${size}px`);
+      cleanup();
+    }
   });
 });
 
@@ -54,72 +77,73 @@ describe("ReactionPreviewStack", () => {
     expect(screen.queryByTestId("reaction-preview-stack")).toBeNull();
   });
 
-  it("stacks the top-3 filled arts with no counts inside", () => {
+  it("stacks the top-3 canonical emoji with no counts inside", () => {
     render(<ReactionPreviewStack counts={{ LOVE: 5, WOW: 3, HELPFUL: 2, SUPPORT: 1 }} />);
     expect(screen.getByTestId("reaction-preview-stack")).toBeTruthy();
-    expect(screen.getByTestId("reaction-preview-LOVE")).toBeTruthy();
-    expect(screen.getByTestId("reaction-preview-WOW")).toBeTruthy();
-    expect(screen.getByTestId("reaction-preview-HELPFUL")).toBeTruthy();
+    expect(screen.getByTestId("reaction-preview-LOVE").textContent).toContain(REACTION_EMOJI.LOVE);
+    expect(screen.getByTestId("reaction-preview-WOW").textContent).toContain(REACTION_EMOJI.WOW);
+    expect(screen.getByTestId("reaction-preview-HELPFUL").textContent).toContain(REACTION_EMOJI.HELPFUL);
     expect(screen.queryByTestId("reaction-preview-SUPPORT")).toBeNull();
-    expect(screen.getByTestId("reaction-preview-stack").textContent?.trim()).toBe("");
   });
 });
 
-describe("ReactionArt FBX-018 original family", () => {
+describe("ReactionArt system-emoji family", () => {
   const KINDS = ["LOVE", "HELPFUL", "SUPPORT", "WOW"] as const;
 
-  it("carries a per-kind art marker in one consistent family (red on generic art)", () => {
+  it("uses one canonical system-emoji map across all surfaces (no dialects)", () => {
+    expect(REACTION_ART_FAMILY).toBe("system-emoji");
     for (const kind of KINDS) {
       render(<ReactionArt kind={kind} size={30} />);
       const art = screen.getByTestId(`reaction-art-${kind}`);
-      expect(art.getAttribute("data-family")).toBe(REACTION_ART_FAMILY);
-      expect(art.getAttribute("data-art")).toBe(REACTION_ART_MARK[kind]);
+      expect(art.getAttribute("data-family")).toBe("system-emoji");
+      expect(art.textContent).toContain(REACTION_EMOJI[kind]);
       cleanup();
     }
+    // Deprecated markers stay distinct so old imports keep resolving.
     expect(new Set(Object.values(REACTION_ART_MARK)).size).toBe(4);
   });
 
-  it("is composed original multi-shape art, not a single generic path", () => {
-    for (const kind of KINDS) {
-      render(<ReactionArt kind={kind} size={30} />);
-      const art = screen.getByTestId(`reaction-art-${kind}`);
-      // Old monochrome art was exactly one <path>; the new family layers
-      // shapes (base + highlight + accent).
-      expect(art.querySelectorAll("path,circle,ellipse,rect").length).toBeGreaterThan(1);
-      cleanup();
-    }
-  });
-
-  it("is colorful (fixed decorative tones over the functional tint), never monochrome", () => {
-    for (const kind of KINDS) {
-      render(<ReactionArt kind={kind} size={30} />);
-      const art = screen.getByTestId(`reaction-art-${kind}`);
-      const tones = Array.from(art.querySelectorAll("[fill],[stroke]")).filter((el) => {
-        const v = el.getAttribute("fill") ?? el.getAttribute("stroke") ?? "";
-        return v !== "" && v !== "currentColor" && v !== "none";
-      });
-      expect(tones.length).toBeGreaterThan(0);
-      cleanup();
-    }
-  });
-
-  it("renders no emoji glyph or text at any production size", () => {
+  it("renders no raster or vector artwork at any production size", () => {
     const sizes = [15, 16, 18, 20, 30];
     for (const kind of KINDS) {
       for (const size of sizes) {
         render(<ReactionArt kind={kind} size={size} />);
         const art = screen.getByTestId(`reaction-art-${kind}`);
-        expect(art.tagName.toLowerCase()).toBe("svg");
-        expect(art.getAttribute("viewBox")).toBe("0 0 24 24");
-        expect(art.getAttribute("width")).toBe(String(size));
-        expect(art.textContent?.trim()).toBe("");
-        expect(art.innerHTML).not.toMatch(
-          /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/u,
-        );
-        expect(art.querySelector("text")).toBeNull();
+        expect(art.tagName.toLowerCase()).not.toBe("svg");
+        expect(art.querySelector("svg,img,canvas,picture,path")).toBeNull();
+        expect(art.textContent).toContain(REACTION_EMOJI[kind]);
         cleanup();
       }
     }
+  });
+
+  it("matches the tray, preview stack, and notification rows (cross-surface consistency)", () => {
+    // The tray renders through this same component, so its options carry
+    // the identical chars — asserted here against the canonical map.
+    render(
+      <div>
+        <button type="button" id="tray-trigger">
+          open
+        </button>
+        <ReactionTray
+          open
+          myReaction={null}
+          counts={{}}
+          total={0}
+          onSelect={() => {}}
+          onClose={() => {}}
+          triggerId="tray-trigger"
+        />
+      </div>,
+    );
+    for (const kind of KINDS) {
+      const option = screen.getByTestId(`reaction-option-${kind}`);
+      expect(option.textContent).toContain(REACTION_EMOJI[kind]);
+    }
+    cleanup();
+    render(<ReactionPreviewStack counts={{ LOVE: 5, WOW: 3 }} />);
+    expect(screen.getByTestId("reaction-preview-LOVE").textContent).toContain(REACTION_EMOJI.LOVE);
+    expect(screen.getByTestId("reaction-preview-WOW").textContent).toContain(REACTION_EMOJI.WOW);
   });
 });
 
@@ -152,11 +176,12 @@ describe("ReactionTray FBX-018 chevron-free + compact alternate", () => {
       </div>,
     );
     const tray = screen.getByTestId("reaction-tray");
-    // Every svg inside the tray is reaction art — no chevron/utility glyph.
-    for (const svg of Array.from(tray.querySelectorAll("svg"))) {
-      expect(svg.getAttribute("data-testid")).toMatch(/^reaction-art-/);
-    }
+    // The icon-only tray carries system emoji, never chevron/utility glyphs.
+    expect(tray.querySelector("svg")).toBeNull();
     expect(tray.innerHTML).not.toMatch(/chevron/i);
+    for (const kind of ["LOVE", "HELPFUL", "SUPPORT", "WOW"] as const) {
+      expect(tray.innerHTML).toContain(REACTION_EMOJI[kind]);
+    }
     const alternate = screen.getByTestId("reaction-choose-compact");
     expect(alternate.innerHTML).not.toMatch(/chevron/i);
     expect(alternate.querySelector("svg")?.getAttribute("data-testid")).toBe(

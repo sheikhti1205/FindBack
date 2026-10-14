@@ -178,15 +178,70 @@ describe("CommentComposer mentions", () => {
   });
 });
 
-describe("CommentComposer emoji", () => {
-  it("opens a web picker panel and inserts at the caret (no vendor keyboard)", () => {
+describe("CommentComposer emoji catalogue", () => {
+  it("opens a searchable panel and inserts at the caret (no vendor keyboard)", () => {
+    globalThis.localStorage?.clear();
     render(<CommentComposer {...baseProps()} />);
     expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
     fireEvent.click(screen.getByTestId("comment-emoji"));
     expect(screen.getByTestId("comment-emoji-panel").getAttribute("role")).toBe("dialog");
+    // Search-first: typing "fire" surfaces the nature-category 🔥.
+    fireEvent.change(screen.getByTestId("comment-emoji-search"), { target: { value: "fire" } });
     fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "Wow " } });
     fireEvent.click(screen.getByTestId("comment-emoji-🔥"));
     expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toContain("Wow 🔥");
+  });
+
+  it("browses categories and surfaces recents after a pick", () => {
+    globalThis.localStorage?.clear();
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-emoji"));
+    // Default category is smileys (😀 visible, 🔥 not yet).
+    expect(screen.getByTestId("comment-emoji-😀")).toBeTruthy();
+    expect(screen.queryByTestId("comment-emoji-🔥")).toBeNull();
+    fireEvent.click(screen.getByTestId("comment-emoji-tab-nature"));
+    fireEvent.click(screen.getByTestId("comment-emoji-🔥"));
+    expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toContain("🔥");
+    // The pick heads Recents immediately (the panel stays open for multi-pick).
+    expect(screen.getByTestId("comment-emoji-recents").textContent).toContain("🔥");
+    // Close and reopen: recents persist across sessions of the panel.
+    fireEvent.click(screen.getByTestId("comment-emoji"));
+    expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
+    fireEvent.click(screen.getByTestId("comment-emoji"));
+    expect(screen.getByTestId("comment-emoji-recents").textContent).toContain("🔥");
+  });
+
+  it("marks the trigger open while the panel shows and closes on Escape", () => {
+    render(<CommentComposer {...baseProps()} />);
+    const trigger = screen.getByTestId("comment-emoji");
+    expect(trigger.getAttribute("data-open")).toBe("false");
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("comment-emoji").getAttribute("data-open")).toBe("true");
+    expect(screen.getByTestId("comment-emoji").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.keyDown(screen.getByTestId("comment-emoji-panel"), { key: "Escape" });
+    expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
+    expect(screen.getByTestId("comment-emoji").getAttribute("data-open")).toBe("false");
+  });
+
+  it("inserts multi-codepoint emoji mid-text with the tail preserved", () => {
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("comment-emoji"));
+    const input = screen.getByTestId("comment-input") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "ab" } });
+    input.setSelectionRange(1, 1);
+    fireEvent.change(screen.getByTestId("comment-emoji-search"), { target: { value: "family" } });
+    fireEvent.click(screen.getByTestId("comment-emoji-👨‍👩‍👧"));
+    expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toBe("a👨‍👩‍👧b");
+  });
+
+  it("never truncates an over-limit draft (validation blocks send, content untouched)", () => {
+    render(<CommentComposer {...baseProps()} />);
+    const draft = `hi 👨‍👩‍👧${"x".repeat(1000)}`;
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: draft } });
+    expect(screen.getByTestId("comment-send")).toHaveProperty("disabled", true);
+    expect(screen.getByTestId("comment-limit-hint")).toBeTruthy();
+    // The draft is preserved verbatim — no sequence is ever split.
+    expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toBe(draft);
   });
 });
 

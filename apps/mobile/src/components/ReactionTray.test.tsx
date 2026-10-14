@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { ReactionTray, topReactionKind } from "./ReactionTray";
+import { REACTION_EMOJI } from "../services/reactions";
 import type { ReactionKind } from "@findback/shared";
 
 function OpenTray({
@@ -75,11 +76,11 @@ describe("ReactionTray", () => {
       expect(option).toBeTruthy();
       // Screen-reader name retained; no visible label or count inside.
       expect(option.getAttribute("aria-label")).toMatch(/love|helpful|support|wow/i);
-      expect(option.textContent?.trim()).toBe("");
-      // Large filled SVG artwork, never an emoji-font glyph.
+      // Canonical system emoji, shared with every other surface.
+      expect(option.textContent).toContain(REACTION_EMOJI[kind]);
       const art = option.querySelector(`[data-testid="reaction-art-${kind}"]`);
       expect(art).toBeTruthy();
-      expect(art?.tagName.toLowerCase()).toBe("svg");
+      expect(art?.querySelector("svg,img,path")).toBeNull();
     }
     expect(screen.getByTestId("reaction-option-HELPFUL").getAttribute("aria-checked")).toBe("true");
     expect(screen.getByTestId("reaction-option-LOVE").getAttribute("aria-checked")).toBe("false");

@@ -33,20 +33,60 @@ export const ALL_REACTION_KINDS: readonly ReactionKind[] = [
 export interface ReactionKindMeta {
   kind: CanonicalReactionKind;
   label: string;
-  /** Icon/glyph name only — the UI maps it to its own renderer. Never an emoji. */
+  /**
+   * Canonical system-emoji presentation for the kind, rendered by the
+   * platform emoji font. THE ONE mapping reused by feed cards, post detail,
+   * comment reactions, the reaction tray, notification/inbox rows, counts
+   * chips, tests, and accessibility labels — never per-screen dialects.
+   */
+  emoji: string;
+  /**
+   * Legacy semantic icon name (pre-emoji custom-art era). Deprecated: kept
+   * so old persisted references resolve; new code must use `emoji`.
+   */
   glyph: string;
 }
 
 /**
+ * THE ONE canonical reaction presentation map (owner directive 2026-10-14):
+ * backend kinds LOVE / HELPFUL / SUPPORT / WOW are unchanged — only
+ * presentation moves from custom SVG art to platform system-emoji glyphs.
+ */
+export const REACTION_EMOJI: Record<CanonicalReactionKind, string> = {
+  LOVE: "❤️",
+  HELPFUL: "💡",
+  SUPPORT: "🤝",
+  WOW: "😮",
+};
+
+/**
  * Ordered metadata for the four canonical kinds (tap tray / picker order).
- * `glyph` is a semantic name, not an image or emoji.
+ * `emoji` is the canonical system-emoji char; `glyph` is the deprecated
+ * semantic name from the custom-art era.
  */
 export const REACTION_KINDS: readonly ReactionKindMeta[] = [
-  { kind: "LOVE", label: "Love", glyph: "heart" },
-  { kind: "HELPFUL", label: "Helpful", glyph: "lightbulb" },
-  { kind: "SUPPORT", label: "Support", glyph: "hand-heart" },
-  { kind: "WOW", label: "Wow", glyph: "sparkles" },
+  { kind: "LOVE", label: "Love", emoji: REACTION_EMOJI.LOVE, glyph: "heart" },
+  { kind: "HELPFUL", label: "Helpful", emoji: REACTION_EMOJI.HELPFUL, glyph: "lightbulb" },
+  { kind: "SUPPORT", label: "Support", emoji: REACTION_EMOJI.SUPPORT, glyph: "hand-heart" },
+  { kind: "WOW", label: "Wow", emoji: REACTION_EMOJI.WOW, glyph: "sparkles" },
 ];
+
+/** Canonical system-emoji char for a canonical kind. */
+export function reactionEmoji(kind: CanonicalReactionKind): string {
+  return REACTION_EMOJI[kind];
+}
+
+/**
+ * Canonical system-emoji char for any wire kind (legacy LIKE reads as LOVE);
+ * null when the kind has no canonical presentation (e.g. DISLIKE/unknown).
+ * Notification/inbox rows use this so legacy rows still render consistently.
+ */
+export function reactionEmojiForWire(kind: ReactionKind | null): string | null {
+  if (kind === null) return null;
+  const canonical = normalizeReactionKind(kind);
+  if (!isReactionKind(canonical)) return null;
+  return (REACTION_EMOJI as Partial<Record<ReactionKind, string>>)[canonical] ?? null;
+}
 
 /** A plain tap (no long-press tray) applies Love. */
 export const DEFAULT_REACTION_KIND: ReactionKind = "LOVE";

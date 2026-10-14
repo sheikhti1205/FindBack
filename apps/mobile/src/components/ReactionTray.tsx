@@ -26,8 +26,9 @@ import {
  *   ancestors (`overflow-y-auto` scrollers, `overflow-hidden` image frames)
  *   and flips/shifts to stay fully inside the viewport; icon-only, no labels
  *   or counts inside.
- * - Large expressive filled SVG artwork (see `ReactionArt` — never an
- *   emoji-font glyph), one 44px hit target per kind, 30px visual art.
+ * - Large canonical system-emoji glyphs (see `ReactionArt`, rendered from
+ *   the ONE map in `services/reactions.ts` — never custom raster/SVG art),
+ *   one 44px hit target per kind, 30px visual emoji.
  * - Hold (~400 ms, owned by the caller's `useLongPress`) opens; haptic
  *   (`navigator.vibrate`) fires once on open. While held, the finger may
  *   slide across choices (`hovered` lifts/scales); release selects; a

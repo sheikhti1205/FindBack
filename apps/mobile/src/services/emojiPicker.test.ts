@@ -91,10 +91,11 @@ describe("pickNativeEmoji", () => {
 });
 
 describe("EMOJI_WEB_FALLBACK", () => {
-  it("is a compact fallback-only set (never the device set, never final)", () => {
-    expect(EMOJI_WEB_FALLBACK.length).toBeGreaterThan(0);
+  it("is a catalogue-derived alias (the full catalogue is the picker)", () => {
+    expect(EMOJI_WEB_FALLBACK.length).toBeGreaterThan(150);
     for (const emoji of EMOJI_WEB_FALLBACK) {
       expect(sanitizePickedEmoji(emoji)).toBe(emoji);
     }
+    expect(EMOJI_WEB_FALLBACK).toContain("🔥");
   });
 });

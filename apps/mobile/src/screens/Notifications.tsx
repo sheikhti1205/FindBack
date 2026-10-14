@@ -15,7 +15,7 @@ import {
   type NotificationType,
 } from "../services/notifications";
 import { signalInboxChanged } from "../services/notificationSignals";
-import { REACTION_KINDS } from "../services/reactions";
+import { REACTION_KINDS, reactionEmojiForWire } from "../services/reactions";
 import { onRealtime } from "../services/realtime";
 import { friendlyError } from "../utils/friendlyErrors";
 import { formatTimestamp, timeAgo } from "../utils/dates";
@@ -421,7 +421,12 @@ function NotificationBody({ item }: { item: NotificationItem }) {
           <span className="font-semibold">{item.actorUsername ?? "FindBack"}</span>{" "}
           <span className="text-on-surface-variant">
             {item.type === "REACTION" && reactionKindLabel(item.reactionKind)
-              ? `reacted to your report with ${reactionKindLabel(item.reactionKind)}`
+              ? (
+                <>
+                  reacted to your report with {reactionKindLabel(item.reactionKind)}{" "}
+                  <span aria-hidden="true">{reactionEmojiForWire(item.reactionKind) ?? ""}</span>
+                </>
+              )
               : typeLabel(item.type)}
           </span>
         </p>

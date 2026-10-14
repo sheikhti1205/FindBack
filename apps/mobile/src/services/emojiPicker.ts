@@ -1,34 +1,26 @@
 import { Capacitor } from "@capacitor/core";
+import { EMOJI_CATALOG } from "./emojiCatalog";
 
 /**
- * FBX-016 comment-composer emoji bridge (comments composer).
+ * FBX-016 comment-composer emoji bridge (comments composer), modernized
+ * 2026-10-14 (owner directive: no more 32-item stub).
  *
  * - On Android the composer calls the native `FindbackEmoji` bottom-sheet
- *   (`pickNativeEmoji`) — a curated 32-emoji device-rendered sheet (system
- *   font), NOT the full system emoji catalogue: no category navigation,
- *   skin tones, search, or current-Unicode coverage (FB-AUD-08). The sheet
- *   is the source of truth there, so the web set below is never treated as
- *   final and the two sets are deliberately never synced.
- * - Everywhere else (web fallback, or native unavailable/cancelled) the
- *   composer renders `EMOJI_WEB_FALLBACK` — a compact fallback-only grid
- *   clearly marked as such. The composer must not hardcode its own set.
+ *   (`pickNativeEmoji`) — a categorized picker (categories, Recents, search,
+ *   skin-tone variants, system-font glyphs); see `EmojiPickerSheet`.
+ * - Everywhere else the composer renders the full `emojiCatalog`
+ *   (categories + Recents + search) — no network to render, caret insertion
+ *   preserved.
  * - Bridge payloads are sanitized (`sanitizePickedEmoji`): a malformed
  *   native response can never inject arbitrary text/URLs into the draft.
  *   Picking never throws — cancel/failure resolves null.
  */
 
 /**
- * Compact web-fallback grid (fallback ONLY — never the device set, never
- * final). The native bottom sheet owns emoji selection on Android; this list
- * exists so the web runtime still offers insertion without a vendor-keyboard
- * hack.
+ * @deprecated Replaced by the full `EMOJI_CATALOG` (categories + search +
+ * Recents). Kept as a catalogue-derived alias so old imports resolve.
  */
-export const EMOJI_WEB_FALLBACK: readonly string[] = [
-  "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "🥳",
-  "😎", "🤔", "😅", "😭", "😡", "👍", "👎", "🙏",
-  "👏", "🎉", "❤️", "🔥", "⭐", "👀", "🎁", "🌈",
-  "⚽", "☕", "🍕", "🎂", "🍀", "🐶", "🐱", "🌸",
-];
+export const EMOJI_WEB_FALLBACK: readonly string[] = EMOJI_CATALOG.map((entry) => entry.char);
 
 interface FindbackEmojiPlugin {
   pickEmoji(): Promise<{ emoji?: string } | { cancelled: true }>;
