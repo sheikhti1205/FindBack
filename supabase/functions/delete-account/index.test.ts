@@ -8,13 +8,16 @@
  * stall guard must catch instead of spinning forever.
  */
 import { assert, assertEquals } from "jsr:@std/assert";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import {
   deleteAuthUser,
   extractBearer,
   handleDelete,
   OWNED_STORAGE_NAMESPACES,
   purgeUserData,
-  type AuthAdmin,
+  type DeletionAuth,
+  createDeletionHandler,
+  deletionClients,
   type DeletionClients,
   type StorageAdmin,
   type TableAdmin,
@@ -23,6 +26,7 @@ import {
 interface FakeStorageOptions {
   /** bucket name whose list() fails */
   failList?: string;
+  failListAfter?: number;
   /** bucket name whose remove() succeeds but deletes nothing (silent no-op) */
   stallRemove?: string;
 }
@@ -32,22 +36,25 @@ function fakeStorageApi(
   objects: Record<string, string[]>,
   options: FakeStorageOptions = {},
 ): { from(bucket: string): StorageAdmin } {
+  let lists = 0;
   return {
     from(bucket: string): StorageAdmin {
       calls.push(`bucket:${bucket}`);
       return {
         async list(prefix: string, listOptions: { limit: number; offset: number }) {
           calls.push(`list:${bucket}:${prefix}:${listOptions.offset}`);
+          if (options.failListAfter !== undefined && ++lists > options.failListAfter) return { data: null, error: { message: "boom" } };
           if (options.failList === bucket) return { data: null, error: { message: "boom" } };
           const matching = (objects[bucket] ?? []).filter((name) => name.startsWith(prefix));
-          const page = matching.slice(listOptions.offset, listOptions.offset + listOptions.limit);
-          return { data: page.map((name) => ({ name: name.slice(prefix.length) })), error: null };
+          const children = [...new Set(matching.map((name) => name.slice(prefix.length).split("/")[0]))].sort();
+          const page = children.slice(listOptions.offset, listOptions.offset + listOptions.limit);
+          return { data: page.map((name) => ({ name, id: matching.includes(`${prefix}${name}`) ? name : null })), error: null };
         },
         async remove(paths: string[]) {
           calls.push(`remove:${bucket}:${paths.join(",")}`);
-          if (options.stallRemove === bucket) return { error: null }; // silent no-op
+          if (options.stallRemove === bucket) return { data: [], error: null }; // silent no-op
           objects[bucket] = (objects[bucket] ?? []).filter((name) => !paths.includes(name));
-          return { error: null };
+          return { data: paths.map((name) => ({ name })), error: null };
         },
       };
     },
@@ -57,6 +64,7 @@ function fakeStorageApi(
 function fakeClients(overrides: {
   objects?: Record<string, string[]>;
   failList?: string;
+  failListAfter?: number;
   stallRemove?: string;
   usersError?: string;
   getUser?: { id: string } | null;
@@ -67,6 +75,7 @@ function fakeClients(overrides: {
   const objects: Record<string, string[]> = structuredClone(overrides.objects ?? {});
   const storage = fakeStorageApi(calls, objects, {
     failList: overrides.failList,
+    failListAfter: overrides.failListAfter,
     stallRemove: overrides.stallRemove,
   });
   const table: TableAdmin = {
@@ -77,13 +86,13 @@ function fakeClients(overrides: {
       },
     }),
   };
-  const auth: { admin: AuthAdmin } = {
-    admin: {
+  const auth: DeletionAuth = {
       getUser: async (jwt: string) => {
         calls.push(`getUser:${jwt}`);
         if (overrides.getUserError) return { data: { user: null }, error: { message: overrides.getUserError } };
         return { data: { user: overrides.getUser ?? { id: "u1" } }, error: null };
       },
+    admin: {
       deleteUser: async (uid: string) => {
         calls.push(`auth.deleteUser:${uid}`);
         return overrides.deleteUserError ? { error: { message: overrides.deleteUserError } } : { error: null };
@@ -91,6 +100,7 @@ function fakeClients(overrides: {
     },
   };
   const clients: DeletionClients = {
+    beginDeletion: async (uid) => { calls.push(`fence:${uid}`); },
     storage,
     from: (tableName: string) => { calls.push(`table:${tableName}`); return table; },
     auth,
@@ -119,6 +129,7 @@ Deno.test("happy path sweeps every owned namespace, then profile row, then auth 
   const order = calls.filter((c) => !c.startsWith("bucket:") && !c.startsWith("table:"));
   assertEquals(order, [
     "getUser:jwt-1",
+    "fence:u1",
     // Each namespace: remove the page, re-list offset 0, break on empty.
     "list:findback-images:u1/:0",
     "remove:findback-images:u1/a.jpg",
@@ -164,7 +175,7 @@ Deno.test("a silent no-op remove stalls instead of spinning forever", async () =
   assertEquals(res.body.authDeleted, false);
   // Bounded: exactly one list + one remove attempt per round, then throw.
   const lists = calls.filter((c) => c.startsWith("list:findback-images"));
-  assertEquals(lists.length, 2, `stall guard did not trip after one re-list: ${calls.join(",")}`);
+  assertEquals(lists.length, 1, `unconfirmed removal was not stopped immediately: ${calls.join(",")}`);
   assert(!calls.some((c) => c.startsWith("users.delete") || c.startsWith("auth.deleteUser")));
 });
 
@@ -328,4 +339,73 @@ Deno.test(">2000 objects across pages and namespaces are all swept at offset 0",
   assert(listCalls.length > 4, `expected several re-lists, got: ${listCalls.join(",")}`);
   assert(listCalls.every((c) => c.endsWith(":0")), `non-zero list offset: ${listCalls.join(",")}`);
   assert(!calls.some((c) => /^list:.*:(?!0$)\d+$/.test(c)), "offset-walk detected");
+});
+
+Deno.test("uses the real Supabase auth API boundary, not an invented admin.getUser", async () => {
+  const uid = "11111111-1111-4111-8111-111111111111";
+  const requests: string[] = [];
+  const sdk = createClient("https://example.supabase.co", "test-key", {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: async (input, init) => {
+      const url = String(input); requests.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/auth/v1/user")) return Response.json({ id: uid, aud: "authenticated", role: "authenticated", email: "u@example.com" });
+      if (url.includes("/storage/v1/object/list/")) return Response.json([]);
+      return Response.json({});
+    } },
+  });
+  const result = await handleDelete(deletionClients(sdk), "Bearer test-jwt");
+  assertEquals(result.status, 200, JSON.stringify(result));
+  assert(requests.some((request) => request.includes(`/rest/v1/users?id=eq.${uid}`)));
+  assert(requests.some((request) => request.includes(`/auth/v1/admin/users/${uid}`)));
+});
+
+Deno.test("recursively purges nested objects without touching a sibling account", async () => {
+  const { clients, objects } = fakeClients({ objects: {
+    "findback-images": ["u1/a.jpg", "u1/sub/deeper/b.jpg", "avatars/u1/nested/avatar.png", "u10/sub/b.jpg"],
+    "findback-comment-media": ["u1/sub/a.gif", "u10/a.gif"],
+  } });
+  const result = await handleDelete(clients, "Bearer jwt");
+  assertEquals(result.body.storageRemoved, 4);
+  assertEquals(result.status, 200);
+  assertEquals(objects["findback-images"], ["u10/sub/b.jpg"]);
+  assertEquals(objects["findback-comment-media"], ["u10/a.gif"]);
+});
+
+Deno.test("a failure within a namespace retains confirmed first-page progress", async () => {
+  const { clients, calls } = fakeClients({ objects: { "findback-images": Array.from({ length: 1001 }, (_, i) => `u1/${i}.jpg`) }, failListAfter: 1 });
+  const result = await handleDelete(clients, "Bearer jwt");
+  assertEquals(result.status, 502);
+  assertEquals(result.body.storageRemoved, 1000);
+  assert(!calls.some((call) => call.startsWith("users.delete")));
+});
+
+Deno.test("HTTP preflight, method errors and auth errors carry CORS without acquiring admin clients", async () => {
+  let acquired = 0;
+  const handler = createDeletionHandler(() => { acquired++; throw new Error("must not acquire"); });
+  for (const [method, status] of [["OPTIONS", 204], ["GET", 405], ["POST", 401]] as const) {
+    const result = await handler(new Request("https://example.test/delete-account", { method }));
+    assertEquals(result.status, status);
+    assertEquals(result.headers.get("access-control-allow-origin"), "*");
+    assert(result.headers.get("access-control-allow-headers")?.includes("authorization"));
+  }
+  assertEquals(acquired, 0);
+});
+
+Deno.test("HTTP authenticated POST confirms all completion flags and invalid session never deletes", async () => {
+  const { clients, calls } = fakeClients();
+  const handler = createDeletionHandler(() => clients);
+  const response = await handler(new Request("https://example.test/delete-account", { method: "POST", headers: { authorization: "Bearer jwt", apikey: "public", origin: "https://findbackapp.social" }, body: '{"uid":"other"}' }));
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), { uid: "u1", storageRemoved: 0, profileDeleted: true, authDeleted: true });
+  assert(!calls.some((call) => call.includes("other")));
+  assertEquals(response.headers.get("access-control-allow-origin"), "*");
+});
+
+Deno.test("paginated nested folders are fully drained without counting folders as objects", async () => {
+  const paths = Array.from({ length: 1001 }, (_, i) => `u1/folder${i}/deeper/a.jpg`);
+  const { clients, objects } = fakeClients({ objects: { "findback-images": paths } });
+  const result = await handleDelete(clients, "Bearer jwt");
+  assertEquals(result.status, 200);
+  assertEquals(result.body.storageRemoved, 1001);
+  assertEquals(objects["findback-images"], []);
 });

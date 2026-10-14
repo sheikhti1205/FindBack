@@ -249,12 +249,14 @@ export async function restoreSession(): Promise<PublicUser> {
   }
 }
 
-export async function logout(): Promise<void> {
-  try {
-    await getSupabase().auth.signOut();
-  } catch {
-    /* best effort: local state is cleared by the caller */
+export async function logout(accountId?: string): Promise<void> {
+  if (accountId) {
+    const { signOutSupabaseAccount } = await import("./supabaseClient");
+    await signOutSupabaseAccount(accountId);
+    return;
   }
+  const { error } = await getSupabase().auth.signOut();
+  if (error) throw new ApiError("Stored sign-in could not be removed. Retry signing out.", 503);
 }
 
 export async function sendPendingEmailCode(email: string): Promise<void> {
@@ -333,34 +335,49 @@ export interface AccountDeletionResult {
  * the caller must run the normal logout wipe next. Throws ApiError with the
  * server's reason when the purge refuses or fails partway.
  */
-export async function requestAccountDeletion(): Promise<AccountDeletionResult> {
+export async function requestAccountDeletion(expectedUserId: string): Promise<AccountDeletionResult> {
+  const client = getSupabase();
+  const { data: { session }, error: sessionError } = await client.auth.getSession();
+  if (sessionError || !session) throw new ApiError("Your session expired. Sign in again, then delete your account.", 401);
+  if (!expectedUserId || session.user.id !== expectedUserId) throw new ApiError("Your account changed. Confirm deletion from the current account.", 409);
   let data: unknown;
   try {
-    const invoked = await getSupabase().functions.invoke("delete-account", { method: "POST" });
+    const invoked = await client.functions.invoke("delete-account", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}` } });
     if (invoked.error) throw invoked.error;
     data = invoked.data;
   } catch (err) {
-    throw mapDeletionError(err);
+    throw await mapDeletionError(err);
   }
-  const removed = (data as { storageRemoved?: unknown } | null)?.storageRemoved;
-  if (typeof removed !== "number") {
+  const result = data as { uid?: unknown; storageRemoved?: unknown; profileDeleted?: unknown; authDeleted?: unknown } | null;
+  const removed = result?.storageRemoved;
+  if (typeof removed !== "number" || !Number.isSafeInteger(removed) || removed < 0 || result?.uid !== expectedUserId || result.profileDeleted !== true || result.authDeleted !== true) {
     throw new ApiError("Account deletion did not confirm. Please try again.", 502);
   }
   return { storageRemoved: removed };
 }
 
-function mapDeletionError(err: unknown): ApiError {
+async function mapDeletionError(err: unknown): Promise<ApiError> {
   const like = (err ?? {}) as { message?: unknown; status?: unknown; context?: unknown };
-  const contextMessage =
+  let body: { error?: unknown; storageRemoved?: unknown; profileDeleted?: unknown } | undefined;
+  let status = like.status;
+  if (like.context instanceof Response) {
+    status = like.context.status;
+    try { body = await like.context.clone().json(); } catch { /* No readable server body. */ }
+  }
+  const contextMessage = body?.error ?? (
     like.context && typeof like.context === "object"
       ? (like.context as { error?: unknown }).error
-      : undefined;
+      : undefined);
   const message =
     (typeof contextMessage === "string" && contextMessage) ||
     (typeof like.message === "string" && like.message) ||
     "";
-  if (/session|credential|auth|jwt|token|expired/i.test(message)) {
+  if (status === 401 || (status === undefined && /session|credential|jwt|token|expired/i.test(message))) {
     return new ApiError("Your session expired. Sign in again, then delete your account.", 401);
+  }
+  const removed = body?.storageRemoved;
+  if ((typeof removed === "number" && Number.isSafeInteger(removed) && removed > 0) || body?.profileDeleted === true) {
+    return new ApiError(`Account deletion is incomplete.${typeof removed === "number" && removed > 0 ? ` ${removed} files were already removed.` : ""}${body?.profileDeleted === true ? " Your profile was also removed." : ""} Try again to finish deleting this account.`, 502);
   }
   if (message) return new ApiError(`Account deletion failed: ${message}`, 502);
   return new ApiError("Account deletion failed. Check your connection and try again.", 502);

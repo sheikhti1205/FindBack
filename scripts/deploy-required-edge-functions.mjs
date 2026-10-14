@@ -12,7 +12,11 @@
  *                                                20261013020000 is live)
  *       delete-account       → JWT verify ON (no flag; gateway-enforced AND
  *                              function-enforced 401 — see source review in
- *                              supabase/functions/delete-account/index.ts)
+ *                              supabase/functions/delete-account/index.ts),
+ *                              ONLY after migration 20261014010000 (the
+ *                              storage write fence) is live — the function's
+ *                              first RPC call is gated on it and would fail
+ *                              closed with 503 otherwise.
  *   - The old `delete-account` exclusion is RETIRED: source review proves the
  *     function is JWT-uid-only (no uid parameter, cross-user deletion
  *     impossible by construction), storage purge covers every registered
@@ -33,15 +37,16 @@
  *
  * Usage:
  *   node scripts/deploy-required-edge-functions.mjs                 # dry-run plan
- *   node scripts/deploy-required-edge-functions.mjs --migrations-live
+ *   node scripts/deploy-required-edge-functions.mjs --migrations-live   # (= --migration 20261013020000)
  *   SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
- *       --execute --migrations-live [--manifest <live-manifest.json>]
+ *       --execute --migration 20261013020000 --migration 20261014010000 \
+ *       [--manifest <live-manifest.json>]
  *   node scripts/deploy-required-edge-functions.mjs \
  *       --prove-401 https://<ref>.functions.supabase.co/delete-account
  *
  * Pure injectable API (for node --test, no I/O):
  *   REQUIRED_FUNCTIONS, FORBIDDEN_FUNCTIONS,
- *   buildDeploymentPlan({ cleanupMigrationsLive }), deployArgs(step),
+ *   buildDeploymentPlan({ liveMigrations, cleanupMigrationsLive }), deployArgs(step),
  *   formatPlan(plan), assertNoForbidden(names, forbidden),
  *   preflightBlockers({ plan, pushOk }),
  *   classifyAuthGuardProbe({ status }), probeDeleteAccountAuthGuard(fetchFn, url)
@@ -64,8 +69,12 @@ export const REQUIRED_FUNCTIONS = [
     requiresMigrationsLive: "20261013020000",
   },
   {
+    // JWT-verify ON, and GATED: the fence RPC (findback_begin_account_deletion)
+    // ships in 20261014010000, so deploying the function before the migration
+    // would fail closed with 503 on every delete attempt.
     name: "delete-account",
     verifyJwt: true,
+    requiresMigrationsLive: "20261014010000",
   },
 ];
 
@@ -77,11 +86,11 @@ export const REQUIRED_FUNCTIONS = [
  */
 export const FORBIDDEN_FUNCTIONS = [];
 
-/** Build the ordered plan, dropping gated steps whose gate is unmet. */
-export function buildDeploymentPlan({ cleanupMigrationsLive = false } = {}) {
-  return REQUIRED_FUNCTIONS.filter(
-    (fn) => !fn.requiresMigrationsLive || cleanupMigrationsLive,
-  );
+/** Build the ordered plan, dropping gated steps whose migration gate is unmet. */
+export function buildDeploymentPlan({ liveMigrations, cleanupMigrationsLive = false } = {}) {
+  const live = new Set(liveMigrations ?? []);
+  if (cleanupMigrationsLive) live.add("20261013020000");
+  return REQUIRED_FUNCTIONS.filter((fn) => !fn.requiresMigrationsLive || live.has(fn.requiresMigrationsLive));
 }
 
 /** `supabase functions deploy <name> [--no-verify-jwt]` argv (minus the binary). */
@@ -165,11 +174,12 @@ function pushConfigPasses() {
 }
 
 function parseArgs(args) {
-  const parsed = { execute: false, migrationsLive: false, manifest: null, prove401Url: null, ref: process.env.SUPABASE_PROJECT_REF ?? "" };
+  const parsed = { execute: false, migrationsLive: false, migrations: [], manifest: null, prove401Url: null, ref: process.env.SUPABASE_PROJECT_REF ?? "" };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--execute") parsed.execute = true;
     else if (arg === "--migrations-live") parsed.migrationsLive = true;
+    else if (arg === "--migration") parsed.migrations.push(args[++i]);
     else if (arg === "--manifest") parsed.manifest = args[++i];
     else if (arg === "--prove-401") parsed.prove401Url = args[++i];
     else if (arg === "--project-ref") parsed.ref = args[++i];
@@ -184,10 +194,12 @@ function main() {
     console.log(`deploy-required-edge-functions: safe Edge deploy orchestration
 
 usage:
-  node scripts/deploy-required-edge-functions.mjs [--execute] [--migrations-live] [--manifest <path>] [--project-ref <ref>] [--prove-401 <function-url>]
+  node scripts/deploy-required-edge-functions.mjs [--execute] [--migration <version> ...] [--migrations-live] [--manifest <path>] [--project-ref <ref>] [--prove-401 <function-url>]
 
   (default: dry-run plan; --execute performs real deploys)
-  (--migrations-live required to include cleanup-comment-media)
+  (--migration <version> marks a migration live so its gated step is included;
+   repeatable. --migrations-live is shorthand for --migration 20261013020000)
+  (cleanup-comment-media needs 20261013020000; delete-account needs 20261014010000)
   (delete-account IS in the deploy set: JWT-verify ON, fail-closed 401.
    --prove-401 posts WITHOUT credentials and expects 401; non-destructive,
    owner-runner only, never sends a token.)`);
@@ -205,7 +217,7 @@ usage:
     process.exit(2);
   }
 
-  const plan = buildDeploymentPlan({ cleanupMigrationsLive: parsed.migrationsLive });
+  const plan = buildDeploymentPlan({ liveMigrations: parsed.migrations, cleanupMigrationsLive: parsed.migrationsLive });
   console.log(formatPlan(plan));
 
   const needsPushConfig = plan.some((fn) => fn.requiresPushConfig);

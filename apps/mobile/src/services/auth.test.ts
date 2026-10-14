@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { clearAllAuth, getToken, setToken } from "./session";
 import {
   askAiHelp,
@@ -753,15 +754,16 @@ describe("password recovery (Forgot password → reset email → verified deep l
 });
 
 describe("account deletion (Settings → Account → typed-email confirm → purge)", () => {
+  beforeEach(() => clientMock.auth.getSession.mockResolvedValue({ data: { session: { user: USER, access_token: "delete-token" } }, error: null }));
   it("invokes delete-account and returns the server-confirmed removal count", async () => {
-    clientMock.functions.invoke.mockResolvedValue({ data: { storageRemoved: 3 }, error: null });
-    await expect(requestAccountDeletion()).resolves.toEqual({ storageRemoved: 3 });
-    expect(clientMock.functions.invoke).toHaveBeenCalledWith("delete-account", { method: "POST" });
+    clientMock.functions.invoke.mockResolvedValue({ data: { uid: "u1", storageRemoved: 3, profileDeleted: true, authDeleted: true }, error: null });
+    await expect(requestAccountDeletion("u1")).resolves.toEqual({ storageRemoved: 3 });
+    expect(clientMock.functions.invoke).toHaveBeenCalledWith("delete-account", { method: "POST", headers: { Authorization: "Bearer delete-token" } });
   });
 
   it("refuses an unconfirmed server response instead of claiming deletion", async () => {
     clientMock.functions.invoke.mockResolvedValue({ data: {}, error: null });
-    await expect(requestAccountDeletion()).rejects.toThrow(/did not confirm/i);
+    await expect(requestAccountDeletion("u1")).rejects.toThrow(/did not confirm/i);
   });
 
   it("maps an expired session to a sign-in-again message", async () => {
@@ -769,19 +771,34 @@ describe("account deletion (Settings → Account → typed-email confirm → pur
       data: null,
       error: { message: "invalid JWT: expired", status: 401 },
     });
-    await expect(requestAccountDeletion()).rejects.toThrow(/sign in again/i);
+    await expect(requestAccountDeletion("u1")).rejects.toThrow(/sign in again/i);
   });
 
   it("surfaces the server reason on a partway purge failure", async () => {
     clientMock.functions.invoke.mockResolvedValue({
       data: null,
-      error: { message: "purge failed", status: 502, context: { error: "storage list failed: boom" } },
+      error: new FunctionsHttpError(Response.json({ error: "storage list failed: boom", storageRemoved: 1000, profileDeleted: false, authDeleted: false }, { status: 502 })),
     });
-    await expect(requestAccountDeletion()).rejects.toThrow(/storage list failed: boom/i);
+    await expect(requestAccountDeletion("u1")).rejects.toThrow(/1000.*files.*already removed/i);
   });
 
   it("fails closed on transport errors without claiming anything", async () => {
     clientMock.functions.invoke.mockRejectedValue(new Error("network down"));
-    await expect(requestAccountDeletion()).rejects.toThrow(/Account deletion failed: network down/i);
+    await expect(requestAccountDeletion("u1")).rejects.toThrow(/Account deletion failed: network down/i);
+  });
+
+  it("refuses mismatched accounts before invoking deletion", async () => {
+    await expect(requestAccountDeletion("other")).rejects.toThrow(/account changed/i);
+    expect(clientMock.functions.invoke).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { uid: "u1", storageRemoved: 1 },
+    { uid: "u1", storageRemoved: 1, profileDeleted: true, authDeleted: false },
+    { uid: "other", storageRemoved: 1, profileDeleted: true, authDeleted: true },
+    { uid: "u1", storageRemoved: -1, profileDeleted: true, authDeleted: true },
+  ])("refuses incomplete or wrong-account success: %j", async (data) => {
+    clientMock.functions.invoke.mockResolvedValue({ data, error: null });
+    await expect(requestAccountDeletion("u1")).rejects.toThrow(/did not confirm/i);
   });
 });

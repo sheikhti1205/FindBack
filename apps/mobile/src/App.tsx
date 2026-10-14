@@ -7,6 +7,7 @@ import { motionConfigValueFor, useAppearance } from "./appearance";
 import { GuestOnly, OnboardingRoute, RequireAuth } from "./components/Guards";
 import { Shell } from "./components/Shell";
 import { BackButtonHandler } from "./components/BackButtonHandler";
+import { AccountDeletionFeedback } from "./components/AccountDeletionFeedback";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Splash } from "./screens/Splash";
 import { AuthGateway } from "./screens/AuthGateway";
@@ -82,6 +83,7 @@ export function App() {
           <ReportLinkHandler />
           <BackButtonHandler />
           <ErrorBoundary>
+           <AccountDeletionFeedback />
            <Routes>
              <Route path="/shared/:id" element={<SharedReport />} />
              <Route path="/" element={<StartScreen />}>

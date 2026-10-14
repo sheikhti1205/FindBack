@@ -17,6 +17,8 @@ vi.mock("../auth", () => ({
   useAuth: () => ({
     user: mockUser.value,
     logout: mockLogout,
+    finishAccountDeletion: () => mockLogout(),
+    retryDeletionCleanup: () => mockLogout(),
     refreshUser: vi.fn(),
   }),
 }));
@@ -228,6 +230,35 @@ describe("AccountSettings", () => {
     await waitFor(() => expect(mockRequestDeletion).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("status").textContent).toMatch(/permanently deleted/i);
+  });
+
+  it("does not claim local cleanup succeeded when logout fails", async () => {
+    mockRequestDeletion.mockResolvedValue({ storageRemoved: 2 });
+    mockLogout.mockRejectedValue(new Error("Local cleanup failed"));
+    renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/type your email address/i), { target: { value: "tester@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /permanently delete/i }));
+    await screen.findByRole("alert");
+    expect(document.body.textContent).not.toContain("stored keys removed");
+    expect(mockRequestDeletion).toHaveBeenCalledWith("u1");
+    expect(screen.queryByRole("button", { name: /permanently delete/i })).toBeNull();
+  });
+
+  it("does not log a newly switched account out after an old deletion settles", async () => {
+    let finish!: (result: { storageRemoved: number }) => void;
+    mockRequestDeletion.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const view = renderAccount();
+    fireEvent.click(screen.getByRole("button", { name: /delete account/i }));
+    fireEvent.change(screen.getByLabelText(/type your email address/i), { target: { value: "tester@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /permanently delete/i }));
+    mockUser.value = { ...verifiedUser, id: "u2", email: "other@example.com" };
+    view.rerender(<MemoryRouter><AccountSettings /></MemoryRouter>);
+    finish({ storageRemoved: 2 });
+    await waitFor(() => expect(screen.getByText("other@example.com")).toBeTruthy());
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(screen.queryByText(/permanently deleted/i)).toBeNull();
+    expect(screen.queryByLabelText(/type your email address/i)).toBeNull();
   });
 
   it("keeps the account and shows an alert when the server purge fails", async () => {

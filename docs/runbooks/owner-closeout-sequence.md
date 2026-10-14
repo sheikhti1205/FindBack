@@ -65,16 +65,22 @@ Preferred: the canonical safe orchestrator (dry-run first, then execute):
 
 ```sh
 node scripts/deploy-required-edge-functions.mjs                  # dry-run plan
-node scripts/deploy-required-edge-functions.mjs --migrations-live # + cleanup step
+node scripts/deploy-required-edge-functions.mjs --migration 20261013020000 --migration 20261014010000
 SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
-  --execute --migrations-live --manifest <fresh-manifest.json>
+  --execute --migration 20261013020000 --migration 20261014010000 --manifest <fresh-manifest.json>
 ```
 
 It stops on missing config (push-config must read PRESENT + ALIGNED), deploys
 `delete-account` JWT-verify ON (source-reviewed 2026-10-14: JWT-uid-only, no
 uid parameter, all three storage namespaces covered, 401 without a session
-JWT), and runs edge parity afterwards when `--manifest`
-is supplied. Equivalent manual commands:
+JWT, and a storage write fence proven on real PostgreSQL — see
+`supabase/tests/run-account-deletion-fence.mjs`), and runs edge parity
+afterwards when `--manifest` is supplied. `--migration <version>` marks a
+gate live and is repeatable; `--migrations-live` is shorthand for
+`--migration 20261013020000`. Both `cleanup-comment-media` (needs
+`20261013020000`) and `delete-account` (needs the fence migration
+`20261014010000`, whose RPC the function calls first) are gated. Equivalent
+manual commands:
 
 ```sh
 node scripts/check-push-config.mjs   # must read all PRESENT + ALIGNED first
@@ -83,6 +89,8 @@ supabase functions deploy reply-comment --no-verify-jwt
 supabase functions deploy push-dispatch --no-verify-jwt   # only after push-config PASS
 # ONLY after migration 20261013020000 is live:
 supabase functions deploy cleanup-comment-media --no-verify-jwt
+# ONLY after migration 20261014010000 (storage write fence) is live:
+supabase functions deploy delete-account     # JWT verify ON (no flag)
 node scripts/check-edge-parity.mjs --manifest <fresh-manifest.json>  # expect all CURRENT
 ```
 
@@ -92,9 +100,9 @@ and source-sha parity. Exact owner-runner sequence (non-destructive until
 the final disposable-account step; never run the last step on a real account):
 
 ```sh
-node scripts/deploy-required-edge-functions.mjs --migrations-live  # plan shows delete-account | ON
+node scripts/deploy-required-edge-functions.mjs --migration 20261014010000  # plan shows delete-account | ON
 SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
-  --execute --migrations-live --manifest <fresh-manifest.json>
+  --execute --migration 20261013020000 --migration 20261014010000 --manifest <fresh-manifest.json>
 node scripts/check-edge-parity.mjs --manifest <fresh-manifest.json>  # delete-account must read CURRENT
 node scripts/deploy-required-edge-functions.mjs \
   --prove-401 https://<ref>.functions.supabase.co/delete-account  # expect: 401 guard PROVEN

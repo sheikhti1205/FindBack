@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LogOut } from "lucide-react";
 import { useAuth } from "../auth";
 import { requestAccountDeletion } from "../services/auth";
@@ -31,7 +31,7 @@ import "./AccountSettings.css";
  * - no avatar upload affordance: initials fallback only.
  */
 export function AccountSettings() {
-  const { user, logout } = useAuth();
+  const { user, logout, finishAccountDeletion, retryDeletionCleanup } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const [checkingKeys, setCheckingKeys] = useState(false);
   const [confirmKeyRemoval, setConfirmKeyRemoval] = useState(false);
@@ -41,6 +41,9 @@ export function AccountSettings() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleted, setDeleted] = useState(false);
+  const [localCleanupDone, setLocalCleanupDone] = useState(false);
+  const currentAccount = useRef(user?.id ?? null);
+  currentAccount.current = user?.id ?? null;
   // Six-month replacement gate (spec 25, W5-IDENTITY): server-read only.
   // A fetch failure leaves this null and the row keeps its default copy —
   // availability is never guessed locally and no countdown is fabricated.
@@ -53,6 +56,11 @@ export function AccountSettings() {
   // account; failures are supplementary (default copy stays). Declared before
   // the early returns below so hook order stays stable.
   const accountId = user?.id ?? null;
+  useEffect(() => {
+    if (accountId === null) return;
+    setDeleteArmed(false); setDeleteEmail(""); setDeleteError(null); setDeleting(false);
+    setDeleted(false); setLocalCleanupDone(false);
+  }, [accountId]);
   useEffect(() => {
     let alive = true;
     setPhoneEligibility(null);
@@ -71,16 +79,20 @@ export function AccountSettings() {
     };
   }, [accountId]);
 
-  // After a confirmed deletion the logout wipe signs the user out; the
-  // success panel stays mounted so the outcome is never a silent landing.
+  // The auth-owned feedback in App survives the protected-route redirect.
   if (deleted) {
     return (
       <SettingsPage title="Account" description="Your sign-in details." backTo="/settings">
         <p role="status" className="fb-account-notice">
-          Your account was permanently deleted, including its reports, photos,
-          and data on our servers. This device has been signed out and its
-          stored keys removed.
+          Your account was permanently deleted. {localCleanupDone ? "This device has been signed out and its stored keys removed." : "Finishing sign-out on this device…"}
         </p>
+        {deleteError ? <>
+          <p role="alert" className="fb-account-error">Your account was deleted, but cleanup on this device did not finish. {deleteError}</p>
+          <Button disabled={deleting} onClick={() => {
+            setDeleting(true);
+            void retryDeletionCleanup().finally(() => setDeleting(false));
+          }}>Finish signing out</Button>
+        </> : null}
       </SettingsPage>
     );
   }
@@ -151,16 +163,21 @@ export function AccountSettings() {
     if (deleting || !user) return;
     setDeleting(true);
     setDeleteError(null);
-    void requestAccountDeletion()
+    const deletingAccount = user.id;
+    void requestAccountDeletion(deletingAccount)
       .then(async () => {
+        if (currentAccount.current !== deletingAccount) return;
         setDeleted(true);
         setDeleteArmed(false);
-        await logout();
+        await finishAccountDeletion(deletingAccount);
+        if (currentAccount.current !== deletingAccount && currentAccount.current !== null) return;
+        setLocalCleanupDone(true);
       })
       .catch((err: unknown) => {
+        if (currentAccount.current !== deletingAccount && currentAccount.current !== null) return;
         setDeleteError(friendlyError(err).message);
       })
-      .finally(() => setDeleting(false));
+       .finally(() => { if (currentAccount.current === deletingAccount) setDeleting(false); });
   }
 
   function cancelDeleteAccount() {

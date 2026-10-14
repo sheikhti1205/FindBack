@@ -78,13 +78,23 @@ psql "$DATABASE_URL" -f supabase/tests/verify_20261013010000_attachment_update_b
 supabase db push
 psql "$DATABASE_URL" -f supabase/tests/verify_20261013020000_cleanup_lease.sql
 
-# parity: live head MUST read 20261013020000 (== BACKEND_SCHEMA_VERSION)
+# 4. APPLY 140100 (storage write fence)  →  VERIFY 140100
+supabase db push
+psql "$DATABASE_URL" -f supabase/tests/verify_20261014010000_deletion_fence.sql
+
+# parity: live head MUST read the newest applied migration (140100 once the
+# fence ships). BACKEND_SCHEMA_VERSION in apps/mobile/src/services/appCapabilities.ts
+# MUST be bumped to match in the same change that records the live apply.
 node --test supabase/tests/migration_parity.test.mjs
 ```
 
 Post-apply assertions the verify files cover: migration head in
 `supabase_migrations.schema_migrations`; avatar host/object ownership; comment
-attachment **UPDATE** ownership; cleanup lease + ack behavior; and the RLS /
+attachment **UPDATE** ownership; cleanup lease + ack behavior; the deletion
+storage write fence (fence table locked down, final-write trigger on
+`storage.objects`, restrictive policies, advisory-lock serialization — the
+host-side equivalent runs hermetically in
+`supabase/tests/run-account-deletion-fence.mjs`); and the RLS /
 grants / functions each migration touches. Do not claim `LIVE_DATABASE` PASS
 until the hosted checks actually pass.
 
@@ -92,9 +102,9 @@ until the hosted checks actually pass.
 
 ```sh
 node scripts/deploy-required-edge-functions.mjs                    # dry-run plan
-node scripts/deploy-required-edge-functions.mjs --migrations-live  # + cleanup step
+node scripts/deploy-required-edge-functions.mjs --migration 20261013020000 --migration 20261014010000
 SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
-  --execute --migrations-live --manifest <fresh-manifest.json>
+  --execute --migration 20261013020000 --migration 20261014010000 --manifest <fresh-manifest.json>
 ```
 
 - `delete-account` IS in this set (source-reviewed 2026-10-14, JWT-verify
@@ -105,6 +115,10 @@ SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
 - `push-dispatch` is refused unless `check-push-config.mjs` reads all PRESENT +
   ALIGNED (§E).
 - `cleanup-comment-media` deploys only after migration `20261013020000` is live.
+- `delete-account` deploys only after migration `20261014010000` (the storage
+  write fence) is live — the function's first RPC call is gated on it and
+  would fail closed with 503 otherwise. `--migration <version>` marks a gate
+  live and is repeatable; `--migrations-live` == `--migration 20261013020000`.
 - `ai-help` / `reply-comment` redeploy only if `check-edge-parity.mjs` proves
   them STALE against the fresh manifest (no shared-dependency change forces it).
 - No function is accepted merely because its slug exists — parity is by

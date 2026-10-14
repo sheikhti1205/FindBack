@@ -7,7 +7,8 @@
  * are purged, a sibling account's keys are untouched, and a purge failure
  * still completes the logout (fail-closed toward signed-out).
  */
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicUser } from "@findback/shared";
 import { clearUserScopedLocalState } from "./services/userScopedState";
@@ -17,6 +18,9 @@ const hoisted = vi.hoisted(() => ({
   restoreSession: vi.fn(),
   onAuthStateChange: vi.fn(),
   beginAccountSwitch: vi.fn(),
+  stopPush: vi.fn(async () => {}),
+  fetchMe: vi.fn(() => new Promise(() => {})),
+  authCallback: null as ((event: string, session: unknown) => void) | null,
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -26,7 +30,7 @@ vi.mock("@capacitor/core", () => ({
 
 vi.mock("./services/auth", () => ({
   BootTimeoutError: class BootTimeoutError extends Error {},
-  fetchMe: vi.fn(),
+  fetchMe: () => hoisted.fetchMe(),
   login: vi.fn(),
   logout: (...args: unknown[]) => hoisted.apiLogout(...args),
   register: vi.fn(),
@@ -38,15 +42,18 @@ vi.mock("./services/auth", () => ({
 vi.mock("./services/supabaseClient", () => ({
   getSupabase: () => ({
     auth: {
-      onAuthStateChange: (...args: unknown[]) => hoisted.onAuthStateChange(...args),
+      onAuthStateChange: (cb: (event: string, session: unknown) => void) => {
+        hoisted.authCallback = cb;
+        return hoisted.onAuthStateChange(cb);
+      },
     },
   }),
 }));
 
-vi.mock("./services/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./services/session")>()),
-  beginAccountSwitch: hoisted.beginAccountSwitch,
-}));
+vi.mock("./services/session", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./services/session")>();
+  return { ...actual, beginAccountSwitch: () => { hoisted.beginAccountSwitch(); actual.beginAccountSwitch(); } };
+});
 
 vi.mock("./services/realtime", () => ({
   connectRealtime: vi.fn(),
@@ -57,7 +64,7 @@ vi.mock("./services/realtime", () => ({
 
 vi.mock("./services/pushRuntime", () => ({
   startPushNotifications: vi.fn(async () => {}),
-  stopPushNotifications: vi.fn(async () => {}),
+  stopPushNotifications: () => hoisted.stopPush(),
 }));
 
 vi.mock("./services/userScopedState", () => ({
@@ -67,6 +74,10 @@ vi.mock("./services/userScopedState", () => ({
 import { AuthProvider, useAuth } from "./auth";
 import type { ComponentType, ReactNode } from "react";
 import { aiCredentials } from "./services/aiCredentials";
+import { AccountDeletionFeedback } from "./components/AccountDeletionFeedback";
+import { RequireAuth } from "./components/Guards";
+import { storage } from "./services/storage";
+import { AuthAccountChangedError } from "./services/accountScopedAuthStorage";
 
 const USER_A: PublicUser = {
   id: "f08-alice",
@@ -85,6 +96,7 @@ const ALICE_SAVED = "F08-ALICE-SAVED-KEY";
 const ALICE_SESSION = "F08-ALICE-SESSION-KEY";
 const BOB_SAVED = "F08-BOB-SAVED-KEY";
 
+type AuthState = ReturnType<typeof useAuth>;
 function probeHarness(capture: { current: { logout: () => Promise<void>; user: PublicUser | null } | null }) {
   const Probe: ComponentType = () => {
     const ctx = useAuth();
@@ -92,16 +104,18 @@ function probeHarness(capture: { current: { logout: () => Promise<void>; user: P
     return null;
   };
   return function Harness({ children }: { children?: ReactNode }) {
-    void children;
     return (
       <AuthProvider>
         <Probe />
+        {children}
       </AuthProvider>
     );
   };
 }
 
 beforeEach(() => {
+  storage.removeItem("findback.auth.deletedAccountCleanup");
+  hoisted.stopPush.mockResolvedValue(undefined);
   hoisted.apiLogout.mockResolvedValue(undefined);
   hoisted.restoreSession.mockResolvedValue({ ...USER_A });
   hoisted.onAuthStateChange.mockReturnValue({
@@ -115,6 +129,7 @@ afterEach(async () => {
   await aiCredentials.removeAccountCredentials(USER_A.id);
   await aiCredentials.removeAccountCredentials(USER_B_ID);
   aiCredentials.clearSession();
+  storage.removeItem("findback.auth.deletedAccountCleanup");
 });
 
 describe("F08 AuthProvider logout purges AI provider credentials", () => {
@@ -153,7 +168,7 @@ describe("F08 AuthProvider logout purges AI provider credentials", () => {
     expect(capture.current!.user).toBeNull();
   });
 
-  it("still completes logout when the credential purge fails", async () => {
+  it("signs out but reports credential cleanup failure instead of claiming keys removed", async () => {
     await aiCredentials.connect(USER_A.id, ALICE_SESSION, { remember: false, provider: "openai" });
     const purge = vi
       .spyOn(aiCredentials, "removeAccountCredentials")
@@ -166,7 +181,7 @@ describe("F08 AuthProvider logout purges AI provider credentials", () => {
     await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
 
     await act(async () => {
-      await capture.current!.logout();
+      await expect(capture.current!.logout()).rejects.toThrow(/stored.*keys/i);
     });
 
     expect(purge).toHaveBeenCalledWith(USER_A.id);
@@ -188,5 +203,97 @@ describe("F08 AuthProvider logout purges AI provider credentials", () => {
     expect(hoisted.beginAccountSwitch).toHaveBeenCalledTimes(1);
     expect(clearUserScopedLocalState).toHaveBeenCalled();
     expect(capture.current!.user).toBeNull();
+  });
+
+  it("keeps failed deletion cleanup visible through the real route guard and retries the captured account", async () => {
+    const capture: { current: AuthState | null } = { current: null };
+    const purge = vi.spyOn(aiCredentials, "removeAccountCredentials").mockRejectedValueOnce(new Error("vault down"));
+    render(probeHarness(capture)({ children: <MemoryRouter initialEntries={["/account"]}><AccountDeletionFeedback /><Routes><Route path="/account" element={<RequireAuth><span>Protected account</span></RequireAuth>} /><Route path="/auth" element={<span>Sign in</span>} /></Routes></MemoryRouter> }));
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    await act(async () => { await expect(capture.current!.finishAccountDeletion(USER_A.id)).rejects.toThrow(/stored/i); });
+    expect(screen.getByText("Sign in")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("Cleanup on this device did not finish");
+    expect(storage.getItem("findback.auth.deletedAccountCleanup")).toBe(USER_A.id);
+    fireEvent.click(screen.getByRole("button", { name: "Retry cleanup" }));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("stored AI keys were removed"));
+    expect(hoisted.apiLogout).toHaveBeenLastCalledWith(USER_A.id);
+    expect(purge).toHaveBeenLastCalledWith(USER_A.id);
+    expect(storage.getItem("findback.auth.deletedAccountCleanup")).toBeNull();
+    purge.mockRestore();
+  });
+
+  it("retries persisted-auth removal too, without certifying a failed SDK cleanup", async () => {
+    const capture: { current: AuthState | null } = { current: null };
+    hoisted.apiLogout.mockRejectedValueOnce(new Error("session storage down"));
+    render(probeHarness(capture)({}));
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    await act(async () => { await expect(capture.current!.finishAccountDeletion(USER_A.id)).rejects.toThrow(/stored/i); });
+    expect(capture.current?.deletionCompletion?.state).toBe("cleanup-failed");
+    await act(async () => { await capture.current!.retryDeletionCleanup(); });
+    expect(hoisted.apiLogout).toHaveBeenCalledTimes(2);
+    expect(hoisted.apiLogout).toHaveBeenLastCalledWith(USER_A.id);
+    expect(capture.current?.deletionCompletion?.state).toBe("complete");
+  });
+
+  it("does not abandon A's keys when B is adopted during push teardown", async () => {
+    const capture: { current: AuthState | null } = { current: null };
+    render(probeHarness(capture)({}));
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    let release!: () => void;
+    hoisted.stopPush.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    const purge = vi.spyOn(aiCredentials, "removeAccountCredentials");
+    let finishing!: Promise<void>;
+    await act(async () => { finishing = capture.current!.finishAccountDeletion(USER_A.id); });
+    await waitFor(() => expect(release).toBeDefined());
+    await act(async () => { capture.current!.setUser({ ...USER_A, id: USER_B_ID }); release(); await finishing; });
+    expect(purge).toHaveBeenCalledWith(USER_A.id);
+    expect(hoisted.apiLogout).not.toHaveBeenCalled();
+    expect(capture.current?.user?.id).toBe(USER_B_ID);
+    expect(capture.current?.deletionCompletion).toBeNull();
+    purge.mockRestore();
+  });
+
+  it("restores unfinished deletion cleanup after process restart", async () => {
+    storage.setItem("findback.auth.deletedAccountCleanup", USER_A.id);
+    hoisted.restoreSession.mockResolvedValue(null);
+    const capture: { current: AuthState | null } = { current: null };
+    render(probeHarness(capture)({ children: <AccountDeletionFeedback /> }));
+    await waitFor(() => expect(capture.current?.booting).toBe(false));
+    expect(screen.getByRole("alert").textContent).toContain("Your account was permanently deleted");
+    fireEvent.click(screen.getByRole("button", { name: "Retry cleanup" }));
+    await waitFor(() => expect(capture.current?.deletionCompletion?.state).toBe("complete"));
+    expect(hoisted.apiLogout).toHaveBeenCalledWith(USER_A.id);
+  });
+
+  it("does not sign out or clear the account that replaced A mid-cleanup", async () => {
+    const capture: { current: AuthState | null } = { current: null };
+    hoisted.apiLogout.mockRejectedValueOnce(new AuthAccountChangedError());
+    render(probeHarness(capture)({}));
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    // The SDK reports a different session holding the device slot.
+    await act(async () => {
+      hoisted.authCallback?.("SIGNED_IN", { user: { id: USER_B_ID }, access_token: "synthetic-b" });
+    });
+    await act(async () => {
+      await capture.current!.finishAccountDeletion(USER_A.id);
+    });
+    // The persistence boundary refused because the slot belongs to someone
+    // else: A must never be certified complete, and B must not be disturbed.
+    expect(capture.current?.deletionCompletion).toBeNull();
+    expect(capture.current?.user?.id).toBe(USER_A.id);
+    expect(storage.getItem("findback.auth.deletedAccountCleanup")).toBeNull();
+  });
+
+  it("clearing the completion also clears the persisted retry marker", async () => {
+    storage.setItem("findback.auth.deletedAccountCleanup", USER_A.id);
+    hoisted.restoreSession.mockResolvedValue(null);
+    const capture: { current: AuthState | null } = { current: null };
+    render(probeHarness(capture)({ children: <AccountDeletionFeedback /> }));
+    await waitFor(() => expect(capture.current?.deletionCompletion?.state).toBe("cleanup-failed"));
+    fireEvent.click(screen.getByRole("button", { name: "Retry cleanup" }));
+    await waitFor(() => expect(capture.current?.deletionCompletion?.state).toBe("complete"));
+    act(() => capture.current!.dismissDeletionCompletion());
+    expect(capture.current?.deletionCompletion).toBeNull();
+    expect(storage.getItem("findback.auth.deletedAccountCleanup")).toBeNull();
   });
 });

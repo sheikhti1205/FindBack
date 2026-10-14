@@ -289,6 +289,95 @@ describe("comment-media cleanup lease/ack redesign (20261013020000)", () => {
   });
 });
 
+describe("account-deletion storage fence (20261014010000)", () => {
+  const FENCE = "20261014010000_account_deletion_storage_fence.sql";
+  const sql = () => mig(FENCE);
+  const consumer = () => read(join(ROOT, "functions", "delete-account", "index.ts"));
+  const code = () => sql().replace(/--[^\n]*/g, "");
+
+  it("additive, live-pending, verification pointer, and never destructive", () => {
+    assert.ok(ls().includes(FENCE), "fence migration present");
+    assert.ok(ls().indexOf(FENCE) > ls().indexOf("20261013020000_comment_media_cleanup_lease.sql"), "lands last");
+    assert.ok(sql().includes("LIVE-PENDING"), "live-pending note");
+    assert.ok(sql().includes("supabase/tests/verify_20261014010000_deletion_fence.sql"), "verification pointer");
+    assert.ok(sql().includes("ADDITIVE ONLY"), "additive header");
+    const lower = code().toLowerCase();
+    assert.ok(!lower.includes("drop table"), "no DROP TABLE");
+    assert.ok(!lower.includes("drop column"), "no DROP COLUMN");
+    assert.ok(!lower.includes("truncate"), "no TRUNCATE");
+    assert.ok(!/\bdelete\s+from\b/.test(lower), "no DELETE FROM");
+    assert.ok(!/^begin;/m.test(sql()), "no explicit BEGIN (matches the CLI's own transaction)");
+    assert.ok(!/^commit;/m.test(sql()), "no explicit COMMIT");
+    assert.ok(!/alter table storage\.objects/i.test(code()), "never alters the storage table itself");
+  });
+
+  it("enforces at the privileged final-write boundary, not only via RLS", () => {
+    const text = code();
+    assert.ok(text.includes("create trigger findback_guard_storage_account_write"), "trigger created");
+    assert.ok(/before insert or update on storage\.objects/.test(text), "fires on storage.objects insert/update");
+    assert.ok(/for each row execute function public\.findback_guard_storage_account_write/.test(text), "row-level");
+    assert.ok(!/tgisinternal/.test(text), "sanity: no internal-trigger trickery");
+    assert.ok(text.includes("raise exception 'account deletion prevents storage writes'"), "refuses fenced writes");
+    assert.ok(text.includes("raise exception 'account required for storage write'"), "fail-closed on unknown owner");
+  });
+
+  it("serializes through one shared advisory lock, and tolerates versioning removals", () => {
+    const text = code();
+    const locks = (text.match(/pg_advisory_xact_lock/g) ?? []).length;
+    assert.ok(locks >= 2, "begin + trigger both take the lock");
+    assert.ok(text.includes("hashtextextended(p_user_id, 714)"), "begin locks the account");
+    assert.ok(text.includes("hashtextextended(account_id, 714)"), "trigger locks the same namespace");
+    assert.ok(/order by id/.test(text), "trigger walks accounts in a fixed order");
+    assert.ok(text.includes("is_delete_marker"), "delete markers pass while fenced (sweep cannot wedge)");
+    assert.ok(text.includes("archived_at"), "archived rows pass while fenced");
+    assert.ok(/to_jsonb\(new\)/.test(text), "versioning columns read defensively (schema-version safe)");
+  });
+
+  it("owner mapping matches delete-account OWNED_STORAGE_NAMESPACES", () => {
+    const text = code();
+    assert.ok(text.includes("'findback-images'") && text.includes("'findback-comment-media'"), "both buckets mapped");
+    assert.ok(text.includes("'avatars'"), "avatar prefix handled distinctly");
+    for (const ns of ["${uid}/", "avatars/${uid}/"]) {
+      assert.ok(consumer().includes(ns), `consumer registers ${ns}`);
+    }
+    assert.ok(consumer().includes("findback-comment-media"), "consumer registers comment media");
+  });
+
+  it("fence survives the cascade and stays client-denied", () => {
+    const text = code();
+    assert.ok(text.includes("create table public.account_deletion_fences"), "fence table");
+    assert.ok(text.includes("enable row level security"), "RLS on");
+    assert.ok(text.includes("revoke all on public.account_deletion_fences from public, anon, authenticated"), "clients revoked");
+    assert.ok(text.includes("grant select, insert on public.account_deletion_fences to service_role"), "service-role only");
+    assert.ok(!/references\s+public\.users/i.test(text), "no cascading FK to users");
+  });
+
+  it("fences via a trigger, never a policy that could wedge the deletion sweep", () => {
+    const text = code();
+    assert.ok(!/create policy/i.test(text), "no RESTRICTIVE policy (versioning marker writes would be refused)");
+    assert.ok(/before insert or update on storage\.objects/.test(text), "trigger is the single enforcement point");
+    assert.ok(text.includes("raise exception 'account deletion prevents storage writes'"), "refuses fenced writes");
+    assert.ok(text.includes("raise exception 'account required for storage write'"), "fail-closed on malformed keys");
+    assert.ok(/p_name like '%\/%'/.test(text), "a bare filename in a gated bucket is refused, not treated as an owner");
+  });
+
+  it("every SECURITY DEFINER function pins an empty search_path", () => {
+    const text = sql();
+    const definers = (text.match(/security definer/gi) ?? []).length;
+    const paths = (text.match(/set search_path = ''/g) ?? []).length;
+    assert.ok(definers > 0, "has definer functions");
+    assert.ok(paths >= definers, "every definer pins search_path");
+  });
+
+  it("delete-account calls the fence BEFORE it sweeps storage", () => {
+    const src = consumer();
+    assert.ok(src.includes("findback_begin_account_deletion"), "calls the fence RPC");
+    const fence = src.indexOf("beginDeletion(uid)");
+    const sweep = src.indexOf("purgeUserData(clients, uid)");
+    assert.ok(fence > 0 && sweep > fence, "fence is acquired before the sweep");
+  });
+});
+
 describe("FB-AUD-03 attachment UPDATE bind (20261013010000)", () => {
   const NEW_BIND = "20261013010000_comment_attachments_update_bind.sql";
   const sql = () => mig(NEW_BIND);

@@ -2,7 +2,9 @@
 declare const __SUPABASE_URL__: string;
 declare const __SUPABASE_PUBLISHABLE_KEY__: string;
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, navigatorLock, processLock, type SupabaseClient } from "@supabase/supabase-js";
+import { storage } from "./storage";
+import { createAccountScopedAuthStorage } from "./accountScopedAuthStorage";
 
 export class SupabaseConfigError extends Error {
   constructor(message: string) {
@@ -48,6 +50,7 @@ export function validateSupabaseConfig(url: string, key: string): { url: string;
 }
 
 let client: SupabaseClient | null = null;
+let authPersistence: ReturnType<typeof createAccountScopedAuthStorage> | null = null;
 
 /**
  * Lazily create the Supabase client. Config is validated on first use (not at
@@ -56,8 +59,13 @@ let client: SupabaseClient | null = null;
 export function getSupabase(): SupabaseClient {
   if (client) return client;
   const { url, key } = validateSupabaseConfig(__SUPABASE_URL__, __SUPABASE_PUBLISHABLE_KEY__);
+  const storageKey = `sb-${new URL(url).hostname.split(".")[0]}-auth-token`;
+  authPersistence = createAccountScopedAuthStorage(storage, storageKey);
   client = createClient(url, key, {
     auth: {
+      storageKey,
+      storage: authPersistence.storage,
+      lock: globalThis.navigator?.locks ? navigatorLock : processLock,
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: false,
@@ -68,4 +76,16 @@ export function getSupabase(): SupabaseClient {
     },
   });
   return client;
+}
+
+/** Keep cleanup attached to its captured account across SDK/network awaits. */
+export async function signOutSupabaseAccount(accountId: string): Promise<void> {
+  const sdk = getSupabase();
+  await authPersistence!.cleanAccount(accountId, async () => {
+    // Default (global) scope is preserved: sign-out still revokes this
+    // account's other sessions server-side, matching the pre-existing
+    // behavior. The SDK removes persisted state even when the remote call
+    // fails, and the boundary verifies that removal rather than trusting a 200.
+    await sdk.auth.signOut();
+  });
 }

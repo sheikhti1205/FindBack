@@ -22,7 +22,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["scripts/**/*.mjs", "tools/**/*.mjs"],
+    files: ["scripts/**/*.mjs", "tools/**/*.mjs", "supabase/tests/**/*.mjs"],
     languageOptions: {
       globals: {
         process: "readonly",

@@ -10,6 +10,9 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   REQUIRED_FUNCTIONS,
   FORBIDDEN_FUNCTIONS,
@@ -49,13 +52,30 @@ describe("deploy-required-edge-functions plan", () => {
     assert.equal(byName["cleanup-comment-media"], false);
   });
 
-  it("excludes cleanup-comment-media until the cleanup migration is live (delete-account is ungated)", () => {
-    const withoutMigration = buildDeploymentPlan({ cleanupMigrationsLive: false }).map((f) => f.name);
-    assert.ok(!withoutMigration.includes("cleanup-comment-media"));
-    assert.ok(withoutMigration.includes("delete-account"));
-    const withMigration = buildDeploymentPlan({ cleanupMigrationsLive: true }).map((f) => f.name);
-    assert.ok(withMigration.includes("cleanup-comment-media"));
-    assert.ok(withMigration.includes("delete-account"));
+  it("gates cleanup-comment-media on 20261013020000 and delete-account on the 20261014010000 fence", () => {
+    const none = buildDeploymentPlan({}).map((f) => f.name);
+    assert.ok(!none.includes("cleanup-comment-media"), "cleanup gated off without the lease migration");
+    assert.ok(!none.includes("delete-account"), "delete-account gated off without the fence migration");
+    const cleanupOnly = buildDeploymentPlan({ cleanupMigrationsLive: true }).map((f) => f.name);
+    assert.ok(cleanupOnly.includes("cleanup-comment-media"), "cleanup included once its migration is live");
+    assert.ok(!cleanupOnly.includes("delete-account"), "delete-account still gated by the fence migration, not the cleanup one");
+    const both = buildDeploymentPlan({ liveMigrations: ["20261013020000", "20261014010000"] }).map((f) => f.name);
+    assert.ok(both.includes("cleanup-comment-media"), "cleanup included");
+    assert.ok(both.includes("delete-account"), "delete-account included once the fence migration is live");
+    const fenceOnly = buildDeploymentPlan({ liveMigrations: ["20261014010000"] }).map((f) => f.name);
+    assert.ok(fenceOnly.includes("delete-account"), "fence migration alone unblocks delete-account");
+    assert.ok(!fenceOnly.includes("cleanup-comment-media"), "cleanup still gated by its own migration");
+  });
+
+  it("every gated step names a migration that a repository migration file provides", () => {
+    const migrations = new Set(
+      readdirSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "migrations"))
+        .map((name) => name.slice(0, 14)),
+    );
+    for (const fn of REQUIRED_FUNCTIONS) {
+      if (!fn.requiresMigrationsLive) continue;
+      assert.ok(migrations.has(fn.requiresMigrationsLive), `${fn.name}: ${fn.requiresMigrationsLive} exists as a migration`);
+    }
   });
 
   it("builds flags-free argv for ai-help and delete-account, --no-verify-jwt for the rest", () => {
@@ -74,7 +94,7 @@ describe("deploy-required-edge-functions plan", () => {
   });
 
   it("blocks push-dispatch deploy when push-config is not PASS", () => {
-    const plan = buildDeploymentPlan({ cleanupMigrationsLive: false });
+    const plan = buildDeploymentPlan({ liveMigrations: ["20261013020000", "20261014010000"] });
     assert.equal(preflightBlockers({ plan, pushOk: true }).length, 0);
     assert.equal(preflightBlockers({ plan, pushOk: false }).length, 1);
   });
@@ -86,7 +106,7 @@ describe("deploy-required-edge-functions plan", () => {
   });
 
   it("renders a names-only plan and states delete-account is included JWT-verify ON", () => {
-    const report = formatPlan(buildDeploymentPlan({ cleanupMigrationsLive: true }));
+    const report = formatPlan(buildDeploymentPlan({ liveMigrations: ["20261013020000", "20261014010000"] }));
     for (const name of ["ai-help", "reply-comment", "push-dispatch", "cleanup-comment-media", "delete-account"]) {
       assert.ok(report.includes(name));
     }

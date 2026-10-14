@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -27,6 +28,8 @@ import {
   setToken,
 } from "./services/session";
 import { getSupabase } from "./services/supabaseClient";
+import { AuthAccountChangedError } from "./services/accountScopedAuthStorage";
+import { storage } from "./services/storage";
 import {
   connectRealtime,
   disconnectRealtime,
@@ -76,6 +79,10 @@ interface AuthContextValue {
   /** Resend the pending-signup confirmation code. */
   resendPendingEmail: () => Promise<void>;
   logout: () => Promise<void>;
+  deletionCompletion: { accountId: string; state: "cleaning" | "complete" | "cleanup-failed" } | null;
+  finishAccountDeletion: (accountId: string) => Promise<void>;
+  retryDeletionCleanup: () => Promise<void>;
+  dismissDeletionCompletion: () => void;
   refreshUser: () => Promise<void>;
   setUser: (user: PublicUser) => void;
   /** W0-B (S2, additive): bridge token → Supabase session. Returns the user
@@ -92,9 +99,23 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const DELETION_CLEANUP_KEY = "findback.auth.deletedAccountCleanup";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUserState] = useState<PublicUser | null>(null);
+  const [user, publishUser] = useState<PublicUser | null>(null);
+  const currentUser = useRef<PublicUser | null>(null);
+  const sdkAccount = useRef<string | null>(null);
+  const authEpoch = useRef(0);
+  const setUserState = useCallback((next: PublicUser | null) => {
+    currentUser.current = next;
+    publishUser(next);
+  }, []);
+  const [deletionCompletion, setDeletionCompletion] = useState<AuthContextValue["deletionCompletion"]>(() => {
+    try {
+      const accountId = storage.getItem(DELETION_CLEANUP_KEY);
+      return accountId ? { accountId, state: "cleanup-failed" } : null;
+    } catch { return null; }
+  });
   const [pendingEmail, setPendingEmailState] = useState<string | null>(() => getPendingEmail());
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
@@ -103,13 +124,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [needsProfile, setNeedsProfileState] = useState<GoogleProfileSeed | null>(null);
 
   const runBoot = useCallback(() => {
+    const epoch = authEpoch.current;
     let cancelled = false;
     setBooting(true);
     setBootError(null);
     void (async () => {
       try {
         const restored = await restoreSession();
-        if (!cancelled) {
+        if (!cancelled && epoch === authEpoch.current) {
           // W0-B (S2, additive): a loaded profile is complete by definition.
           setNeedsProfileState(null);
           setUserState(restored);
@@ -150,6 +172,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let unsubscribe: (() => void) | undefined;
     try {
       const { data } = getSupabase().auth.onAuthStateChange((event, session) => {
+        const epoch = ++authEpoch.current;
+        sdkAccount.current = session?.user.id ?? null;
         setToken(session?.access_token ?? null);
         if (event === "SIGNED_OUT") {
           aiCredentials.clearSession();
@@ -163,8 +187,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
           // Defer network work: awaiting Supabase inside this callback can deadlock.
           setTimeout(() => {
-            void fetchMe()
-              .then((next) => setUserState(next))
+            void fetchMe(session?.user.id)
+              .then((next) => { if (epoch === authEpoch.current) setUserState(next); })
               .catch(() => {
                 /* ignore transient profile fetch errors */
               });
@@ -251,38 +275,100 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendPendingEmailCode(pendingEmail);
   }, [pendingEmail]);
 
-  const logout = useCallback(async () => {
+  const deviceSignedOut = useCallback(() => currentUser.current === null && sdkAccount.current === null, []);
+
+  const cleanAccountOnDevice = useCallback(async (accountId: string | null) => {
     // Account A -> B switch starts here: drop this session's token cache and
     // pending email and notify signed-out handlers BEFORE the sign-out call,
     // so no A-owned slice can leak into the next account's calls.
-    beginAccountSwitch();
+    const switched = () => (sdkAccount.current !== null && sdkAccount.current !== accountId)
+      || (currentUser.current !== null && currentUser.current.id !== accountId);
+    if (!switched()) beginAccountSwitch();
     // Capture the account before clearing state: signing out wipes that
-    // account's AI provider credentials (session + persisted/remembered
-    // keys) from this device by default.
-    const accountId = user?.id ?? null;
-    // Unregister this device's push token while the session is still valid,
-    // then clear auth. The user->null effect's stop() is then a no-op.
-    await stopPushNotifications();
-    try {
-      await apiLogout();
-    } catch {
-      /* best effort: local state is cleared regardless */
-    }
-    clearAllAuth();
+    // account's AI provider credentials (session + persisted/remembered keys)
+    // from this device by default. This runs BEFORE any switch check, so a
+    // switch cannot abandon A's keys — and a purge failure is never swallowed.
+    let keysFailed = false;
+    let sessionFailed = false;
     if (accountId) {
       try {
         await aiCredentials.removeAccountCredentials(accountId);
       } catch {
-        /* fail-closed: a purge failure must not block logout */
+        keysFailed = true;
       }
     }
+    if (!switched()) {
+      try { await stopPushNotifications(); } catch { /* Push teardown cannot block auth cleanup. */ }
+    }
+    // A switch must never clear or sign out the account that replaced A, but a
+    // real cleanup failure for A still has to surface so it can be retried.
+    if (switched()) {
+      if (keysFailed) throw new Error("Stored AI keys could not be removed. Retry cleanup on this device.");
+      return;
+    }
+    try { await apiLogout(accountId ?? undefined); }
+    catch (error) {
+      // The persistence boundary refused because A's slot now holds B: A's
+      // session is already gone, so nothing to clean, but keys still surface.
+      if (error instanceof AuthAccountChangedError) {
+        if (keysFailed) throw new Error("Stored AI keys could not be removed. Retry cleanup on this device.");
+        return;
+      }
+      sessionFailed = true;
+    }
+    if (switched()) {
+      if (keysFailed || sessionFailed) throw new Error("Stored sign-in or AI keys could not be removed. Retry cleanup on this device.");
+      return;
+    }
+    clearAllAuth();
     aiCredentials.clearSession();
     setPendingEmailState(null);
     setNeedsProfileState(null); // W0-B (S2, additive): completion cannot outlive the session.
     disconnectRealtime();
     clearUserScopedLocalState();
     setUserState(null);
-  }, [user]);
+    if (keysFailed || sessionFailed) throw new Error("Stored sign-in or AI keys could not be removed. Retry cleanup on this device.");
+  }, [setUserState]);
+
+  const logout = useCallback(() => cleanAccountOnDevice(currentUser.current?.id ?? sdkAccount.current), [cleanAccountOnDevice]);
+
+  const finishAccountDeletion = useCallback(async (accountId: string) => {
+    if (currentUser.current?.id !== accountId) throw new Error("Your account changed. Open the current account to continue.");
+    storage.setItem(DELETION_CLEANUP_KEY, accountId);
+    setDeletionCompletion({ accountId, state: "cleaning" });
+    try {
+      await logout();
+      // "Complete" is only ever shown when the device is genuinely signed out
+      // and the persisted session is verifiably gone; a foreign session taking
+      // the slot means A's cleanup is done (A's keys were purged) but there is
+      // nothing left for the user to act on.
+      if (deviceSignedOut()) setDeletionCompletion({ accountId, state: "complete" });
+      else setDeletionCompletion(null);
+      storage.removeItem(DELETION_CLEANUP_KEY);
+    } catch (error) {
+      const foreign = currentUser.current !== null && currentUser.current.id !== accountId;
+      setDeletionCompletion(foreign ? null : { accountId, state: "cleanup-failed" });
+      throw error;
+    }
+  }, [logout, deviceSignedOut]);
+
+  const retryDeletionCleanup = useCallback(async () => {
+    if (!deletionCompletion || deletionCompletion.state === "cleaning" || currentUser.current !== null) return;
+    const accountId = deletionCompletion.accountId;
+    setDeletionCompletion({ accountId, state: "cleaning" });
+    try {
+      await cleanAccountOnDevice(accountId);
+      if (deviceSignedOut()) setDeletionCompletion({ accountId, state: "complete" });
+      else setDeletionCompletion(null);
+      storage.removeItem(DELETION_CLEANUP_KEY);
+    } catch {
+      setDeletionCompletion(deviceSignedOut() ? { accountId, state: "cleanup-failed" } : null);
+    }
+  }, [deletionCompletion, cleanAccountOnDevice, deviceSignedOut]);
+  const dismissDeletionCompletion = useCallback(() => {
+    storage.removeItem(DELETION_CLEANUP_KEY);
+    setDeletionCompletion(null);
+  }, []);
 
   // Coordinator integration (S1 landed): full Google flow — S1 bridge token
   // → S2 seam → auth state. Static S1 import with the typed kind taxonomy;
@@ -367,6 +453,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       verifyPendingEmail,
       resendPendingEmail,
       logout,
+      deletionCompletion,
+      finishAccountDeletion,
+      retryDeletionCleanup,
+      dismissDeletionCompletion,
       refreshUser,
       setUser,
       signInWithGoogle,
@@ -385,6 +475,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       verifyPendingEmail,
       resendPendingEmail,
       logout,
+      deletionCompletion,
+      finishAccountDeletion,
+      retryDeletionCleanup,
+      dismissDeletionCompletion,
       refreshUser,
       setUser,
       signInWithGoogle,

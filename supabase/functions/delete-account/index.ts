@@ -25,18 +25,20 @@
  * `authDeleted`) so partial progress is never presented as complete.
  *
  * Required function environment (set with `supabase secrets set`):
- * - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — injected by the runtime.
+ * - `SUPABASE_URL`, `SUPABASE_SECRET_KEYS` — injected by the runtime.
  *
  * Pure orchestration (`handleDelete`, `purgeUserData`, `extractBearer`) is
  * dependency-injected for unit tests: `deno test supabase/functions/delete-account/`.
  */
-import { createClient } from "npm:@supabase/supabase-js@2";
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createAdminClient } from "npm:@supabase/server@1.6.0/core";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const STORAGE_PAGE_SIZE = 1000;
 
 export interface StorageObject {
   name: string;
+  /** Supabase folder entries have a null id; they are not removable objects. */
+  id: string | null;
 }
 
 export interface StorageAdmin {
@@ -44,7 +46,7 @@ export interface StorageAdmin {
     data: StorageObject[] | null;
     error: { message: string } | null;
   }>;
-  remove(paths: string[]): Promise<{ error: { message: string } | null }>;
+  remove(paths: string[]): Promise<{ data: { name: string }[] | null; error: { message: string } | null }>;
 }
 
 /**
@@ -85,17 +87,22 @@ export interface TableAdmin {
 }
 
 export interface AuthAdmin {
+  deleteUser(uid: string): Promise<{ error: { message: string } | null }>;
+}
+
+export interface DeletionAuth {
   getUser(jwt: string): Promise<{
     data: { user: { id: string } | null };
     error: { message: string } | null;
   }>;
-  deleteUser(uid: string): Promise<{ error: { message: string } | null }>;
+  admin: AuthAdmin;
 }
 
 export interface DeletionClients {
+  beginDeletion(uid: string): Promise<void>;
   storage: { from(bucket: string): StorageAdmin };
   from(table: string): TableAdmin;
-  auth: { admin: AuthAdmin };
+  auth: DeletionAuth;
 }
 
 export interface PurgeResult {
@@ -120,28 +127,30 @@ export function extractBearer(header: string | null): string | null {
  * identical page — the silent-no-op case that would otherwise spin
  * forever. Throws with the provider message on any list/remove failure.
  */
-async function sweepNamespace(bucket: StorageAdmin, prefix: string): Promise<number> {
-  let removed = 0;
-  let previousPage: string[] | null = null;
+async function sweepNamespace(bucket: StorageAdmin, prefix: string, progress: { removed: number }, depth = 0): Promise<void> {
+  if (depth > 32) throw new Error("storage folder depth exceeded");
   for (;;) {
     const listed = await bucket.list(prefix, { limit: STORAGE_PAGE_SIZE, offset: 0 });
     if (listed.error) throw new Error(`storage list failed: ${listed.error.message}`);
-    const names: string[] = (listed.data ?? []).map((o) => o.name);
-    if (names.length === 0) break;
-    const previous: string[] | null = previousPage;
-    const stalled =
-      previous !== null &&
-      names.length === previous.length &&
-      names.every((name, i) => name === previous[i]);
-    if (stalled) {
-      throw new Error(`storage sweep stalled at ${prefix}: page unchanged after remove`);
+    const entries = listed.data ?? [];
+    if (entries.length === 0) return;
+    const before = progress.removed;
+    for (const entry of entries) {
+      if (!entry.name || entry.name === "." || entry.name === ".." || /[\\/]/.test(entry.name) || entry.name.includes(String.fromCharCode(0))) {
+        throw new Error("invalid storage entry");
+      }
+      if (entry.id === null) await sweepNamespace(bucket, `${prefix}${entry.name}/`, progress, depth + 1);
     }
-    const removedNow = await bucket.remove(names.map((name) => `${prefix}${name}`));
-    if (removedNow.error) throw new Error(`storage remove failed: ${removedNow.error.message}`);
-    removed += names.length;
-    previousPage = names;
+    const paths = entries.filter((entry) => entry.id !== null).map((entry) => `${prefix}${entry.name}`);
+    if (paths.length > 0) {
+      const removedNow = await bucket.remove(paths);
+      if (removedNow.error) throw new Error(`storage remove failed: ${removedNow.error.message}`);
+      const confirmed = new Set((removedNow.data ?? []).map((entry) => entry.name).filter((name) => paths.includes(name)));
+      progress.removed += confirmed.size;
+      if (confirmed.size !== paths.length) throw new Error("storage sweep stalled: removal not confirmed");
+    }
+    if (progress.removed === before) throw new Error("storage sweep stalled: no objects removed");
   }
-  return removed;
 }
 
 /**
@@ -156,17 +165,18 @@ export async function purgeUserData(
   clients: DeletionClients,
   uid: string,
 ): Promise<{ storageRemoved: number }> {
-  let storageRemoved = 0;
+  const progress = { removed: 0 };
   try {
     for (const namespace of OWNED_STORAGE_NAMESPACES) {
-      storageRemoved += await sweepNamespace(
+      await sweepNamespace(
         clients.storage.from(namespace.bucket),
         namespace.prefixFor(uid),
+        progress,
       );
     }
   } catch (err) {
     throw Object.assign(err instanceof Error ? err : new Error("storage sweep failed"), {
-      storageRemoved,
+      storageRemoved: progress.removed,
     });
   }
   const deleted = await clients.from("users").delete().eq("id", uid);
@@ -174,10 +184,10 @@ export async function purgeUserData(
     // The storage files are already gone: carry the count on the error so
     // the caller reports partial progress instead of zero.
     throw Object.assign(new Error(`profile delete failed: ${deleted.error.message}`), {
-      storageRemoved,
+      storageRemoved: progress.removed,
     });
   }
-  return { storageRemoved };
+  return { storageRemoved: progress.removed };
 }
 
 /** Deletes the auth user. Throws with the provider message on failure. */
@@ -202,9 +212,14 @@ export async function handleDelete(
 ): Promise<DeleteResponse> {
   const jwt = extractBearer(authHeader);
   if (!jwt) return { status: 401, body: { error: "missing credentials" } };
-  const { data, error } = await clients.auth.admin.getUser(jwt);
+  let verified;
+  try { verified = await clients.auth.getUser(jwt); }
+  catch { return { status: 503, body: { error: "session verification unavailable" } }; }
+  const { data, error } = verified;
   const uid = data?.user?.id ?? null;
   if (error || !uid) return { status: 401, body: { error: "invalid session" } };
+  try { await clients.beginDeletion(uid); }
+  catch { return { status: 503, body: { error: "account deletion could not start" } }; }
   let storageRemoved = 0;
   try {
     ({ storageRemoved } = await purgeUserData(clients, uid));
@@ -225,30 +240,43 @@ export async function handleDelete(
   return { status: 200, body: { uid, storageRemoved, profileDeleted: true, authDeleted: true } };
 }
 
+const CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "authorization, apikey, content-type, x-client-info, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
 function jsonResponse(response: DeleteResponse): Response {
   return new Response(JSON.stringify(response.body), {
     status: response.status,
-    headers: { "content-type": "application/json" },
+    headers: { ...CORS_HEADERS, "content-type": "application/json" },
   });
 }
 
-if (import.meta.main) {
-  serve(async (req: Request): Promise<Response> => {
-    if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "method not allowed" }), {
-        status: 405,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    const url = Deno.env.get("SUPABASE_URL") ?? "";
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    if (!url || !serviceKey) {
-      return new Response(JSON.stringify({ error: "server misconfigured" }), {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    const clients = createClient(url, serviceKey) as unknown as DeletionClients;
-    return jsonResponse(await handleDelete(clients, req.headers.get("authorization")));
-  });
+/** Typed SDK adapter: compiler checks the real getUser/admin/storage boundary. */
+export function deletionClients(client: SupabaseClient): DeletionClients {
+  return {
+    beginDeletion: async (uid) => {
+      const { error } = await client.rpc("findback_begin_account_deletion", { p_user_id: uid });
+      if (error) throw new Error("account deletion fence unavailable");
+    },
+    auth: { getUser: (jwt) => client.auth.getUser(jwt), admin: { deleteUser: (uid) => client.auth.admin.deleteUser(uid) } },
+    storage: { from: (bucket) => ({
+      list: (prefix, options) => client.storage.from(bucket).list(prefix, options),
+      remove: (paths) => client.storage.from(bucket).remove(paths),
+    }) },
+    from: (table) => ({ delete: () => ({ eq: async (column, value) => await client.from(table).delete().eq(column, value) }) }),
+  };
 }
+
+export function createDeletionHandler(clients: () => DeletionClients = () => deletionClients(createAdminClient())) {
+  return async (req: Request): Promise<Response> => {
+    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+    if (req.method !== "POST") return jsonResponse({ status: 405, body: { error: "method not allowed" } });
+    if (!extractBearer(req.headers.get("authorization"))) return jsonResponse({ status: 401, body: { error: "missing credentials" } });
+    try { return jsonResponse(await handleDelete(clients(), req.headers.get("authorization"))); }
+    catch { return jsonResponse({ status: 503, body: { error: "account deletion unavailable" } }); }
+  };
+}
+
+export default { fetch: createDeletionHandler() };
