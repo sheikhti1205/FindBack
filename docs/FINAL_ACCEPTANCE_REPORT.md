@@ -1,10 +1,27 @@
 # FindBack — current verification and closure report
 
-**Decision: READY for the v8 beta line.** Reconciled 2026-10-06 (closure-review wave + deletion build + owner beta waivers).
+**Decision: HOLD for `2.0.0-beta.1`.** Updated 2026-10-14. Host AI/UI and
+auth/account-reset waves have independent PASS; full mobile verification passed
+4,841 tests with clean typecheck/lint. The source remains an uncommitted working
+tree with committed source anchor `0d2a293`.
+No exact-final-SHA release acceptance is established.
+
+Current evidence and outstanding gates are recorded in
+[the 2026-10-14 host verification record](evidence/2026-10-14-host-ai-auth-ui.md).
+Hosted account-deletion deployment, physical acceptance, whole-app rendered
+review, remote exact-SHA CI, and release telemetry/artifacts remain open. The
+ledger's `generatedFor` still names `18280c8f5d74150dc63628cd4cdbd87bbcb44edb` and
+has not been reconciled to these changes. Historical beta waivers are not fresh
+candidate evidence.
+
+## Historical v8-beta reconciliation (2026-10-06)
+
+The former READY decision below applied to the v8 beta line only and is
+superseded by the current HOLD decision. Its evidence is preserved as history.
 
 The 2026-10-05 audit baseline below is historical provenance. The active source
-of truth is [`completion-ledger.json`](../completion-ledger.json) (`generatedFor`
-names the exact reconciliation commit; the completion gate binds it to HEAD).
+of truth for that reconciliation was [`completion-ledger.json`](../completion-ledger.json)
+(`generatedFor` names its reconciliation commit; the completion gate binds it to HEAD).
 This is a verification reconciliation, **not** a final release certificate.
 Photo grounding, account-bound sends, mode-honest consent, assistant modes,
 phone verification, matching fixtures, SEN-01 automation, route/map QA, schema

@@ -1,6 +1,11 @@
 # Decisions and remaining prerequisites — FindBack
 
-Reconciled 2026-10-13 (corrective wave after owner audit FB-AUD-01..08,
+Current host update 2026-10-14: independent AI/UI and auth/account-reset reviews
+passed; mobile host suite 4,841 tests passed with clean typecheck/lint. See
+`docs/evidence/2026-10-14-host-ai-auth-ui.md` for scope and remaining gates.
+Source integration and exact-head ledger reconciliation remain pending.
+
+Prior reconciliation 2026-10-13 (corrective wave after owner audit FB-AUD-01..08,
 as-of audited main `fb66238`; ledger `completion-ledger.json` names the exact
 reconciliation commit). The 2026-10-06 v8-beta reconciliation below is
 historical provenance, not the active baseline.
@@ -15,14 +20,15 @@ reactions, assistant restructure). Current candidate is `2.0.0-beta.1`
 acceptance from the version bump. The 2026-10-06 "READY (v8 beta line)" below
 is superseded. Runtime acceptance is deferred per
 `Communication/DEFERRED_RUNTIME_ACCEPTANCE.md` (D01–D14); live migration truth
-per the closure lane: hosted head is `20261013020000` (==
-`BACKEND_SCHEMA_VERSION`): `20261012030000` (avatar host-bind) +
+per the last hosted closure record: hosted head is `20261013020000`;
+current build expects `BACKEND_SCHEMA_VERSION=20261014010000`, whose deletion
+storage fence remains live-pending. `20261012030000` (avatar host-bind) +
 `20261013010000` (attachment UPDATE bind) + `20261013020000` (comment-media
 cleanup lease) are all APPLIED and verify-probed live — the "pending" wording
 below is superseded by `docs/runbooks/cross-environment-closure.md` and
 `docs/evidence/live-database.json`. The ledger holds 38 items (36 + 2 split
-entries); all are in closed statuses with the device/live-bound ones WAIVED or
-BLOCKED_EXTERNAL, not proven.
+entries); its historical DONE/WAIVED cells and BLOCKED_EXTERNAL items do not
+establish current live/device acceptance.
 Photo grounding, account-bound sends, assistant modes, phone verification and
 password recovery are shipped, reviewed and CI-executed; device, live-provider
 and licensed-tooling acceptance remain external. Nothing here is intentionally

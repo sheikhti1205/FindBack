@@ -1,6 +1,13 @@
 # FindBack completion audit — closure register
 
-**Release: READY (v8 beta line, owner decision 2026-10-06).** Reconciled 2026-10-06.
+**Release: HOLD (`2.0.0-beta.1`, 2026-10-14).** Current host evidence is in
+[the AI/auth/UI verification record](evidence/2026-10-14-host-ai-auth-ui.md).
+Its independent PASS and 4,841 passing mobile tests do not close live/device,
+whole-app rendered, exact-head CI, or release-artifact acceptance. The source is
+uncommitted and the ledger reconciliation is stale.
+
+The v8-beta READY decision and FBA rows below preserve the 2026-10-06 historical
+register. Its DONE/WAIVED cells are not a fresh certificate for this candidate.
 Baseline: `b472a247ae593b8eb4e9585bb8947a87ccfaf6c7` (2026-10-05).
 Source packet: `/tmp/opencode/FindBack_completion_audit_b472a24_2026-10-05`.
 All human documents were read: README, 00–18, FINAL_COMPLETION_CHECKLIST,
