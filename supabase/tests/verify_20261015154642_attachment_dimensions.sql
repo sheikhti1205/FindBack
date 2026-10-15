@@ -54,8 +54,16 @@ where (
 ) = 2;
 -- EXPECT: 1 row.
 
--- P3. attachments_dims_check bounds both columns 1..8192 and is NOT VALID.
-select 'P3 attachments_dims_check bounded 1..8192 and NOT VALID' as probe
+-- P3. attachments_dims_check bounds both columns and is NOT VALID.
+-- SUPERSEDED BOUND: this probe originally asserted 1..8192. Independent review
+-- (REVIEW-M1 F4) found that ceiling tighter than the media pipeline - an animated
+-- GIF is passed through untouched up to 30M decoded pixels, so a publishable
+-- 9000x3000 file failed staging - and 20261015163718 widened it to 1..100000.
+-- The probe is kept as the CURRENT expectation (a probe frozen on a superseded
+-- value would fail on every run and teach nothing); the history is in the
+-- repair migration's header and in
+-- supabase/tests/verify_20261015163718_media_read_grants.sql P3/P4.
+select 'P3 attachments_dims_check bounded 1..100000 and NOT VALID' as probe
 where exists (
   select 1 from pg_constraint
   where conrelid = 'public.attachments'::regclass
@@ -63,14 +71,14 @@ where exists (
     and contype = 'c'
     and not convalidated
     and regexp_replace(lower(pg_get_constraintdef(oid)), '\s', '', 'g')
-        like '%width>=1%width<=8192%height>=1%height<=8192%'
+        like '%width>=1%width<=100000%height>=1%height<=100000%'
 );
 -- EXPECT: 1 row. `not convalidated` is the point: adding a validated check
 -- would force a full-table scan of production rows for no benefit.
 
 -- P4. Same guarantee on the staging table, so a bogus dimension cannot be
 -- staged and then copied across.
-select 'P4 uploads_dims_check bounded 1..8192 and NOT VALID' as probe
+select 'P4 uploads_dims_check bounded 1..100000 and NOT VALID' as probe
 where exists (
   select 1 from pg_constraint
   where conrelid = 'public.uploads'::regclass
@@ -78,7 +86,7 @@ where exists (
     and contype = 'c'
     and not convalidated
     and regexp_replace(lower(pg_get_constraintdef(oid)), '\s', '', 'g')
-        like '%width>=1%width<=8192%height>=1%height<=8192%'
+        like '%width>=1%width<=100000%height>=1%height<=100000%'
 );
 -- EXPECT: 1 row.
 

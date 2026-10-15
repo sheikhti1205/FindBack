@@ -545,3 +545,292 @@ describe("CREATE OR REPLACE signature-drift guard", () => {
     assert.deepEqual(findSignatureDrift(ok), []);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Column-grant coverage for the tables the client reads directly
+// (REVIEW-M1 F1/F2, 2026-10-15)
+//
+// 20261015154642 added width/height to public.uploads and public.attachments,
+// two tables whose `authenticated` SELECT is granted column-by-column (both were
+// `revoke all`-ed and re-granted by name in 20260914180000_client_post_reads.sql,
+// 20260914190000_post_mutations.sql and 20260914120000_direct_auth_profiles.sql).
+// A column list does not cover a column added later, so in an environment built
+// from this repo:
+//   * `select * into v_upload` in BOTH publish RPCs meets 9 columns against 7
+//     granted and raises 42501 - every photo report fails to publish;
+//   * both consumer readers fail on width/height, so the dimensions that change
+//     exists to carry can never reach the feed.
+// The verify file shipped with that migration could not see it: every probe was
+// catalog-only. This guard makes the class statically visible with no database.
+//
+// SCOPE IS DELIBERATE. Only the tables the consumer report path reads directly
+// are asserted. The repo also column-restricts comments/reactions/ratings/users
+// on purpose (e.g. `grant select (id, post_id)` on comments is a deliberate
+// aggregate-only surface), and a global rule would either need those grants
+// widened - an ACL-doctrine decision for the owner, not a cleanup - or would
+// fail the build on the intended design. A finding for those tables is reported
+// by the same helper when a caller passes them in.
+// ---------------------------------------------------------------------------
+const CLIENT_READ_MEDIA_TABLES = ["uploads", "attachments"];
+
+/** Body lines that are not column definitions. */
+const TABLE_BODY_KEYWORDS = new Set([
+  "constraint",
+  "primary",
+  "unique",
+  "check",
+  "foreign",
+  "exclude",
+  "like",
+]);
+
+/** Collapse a migration to one comment-free, whitespace-normalised lowercase line. */
+function flattenSql(sql) {
+  return sql
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+/** The text between the "(" at openIdx and its matching ")". */
+function parenBodyAt(text, openIdx) {
+  let depth = 0;
+  for (let i = openIdx; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")") {
+      depth--;
+      if (depth === 0) return text.slice(openIdx + 1, i);
+    }
+  }
+  return "";
+}
+
+/** Top-level (depth-zero) comma-separated parts. */
+function topLevelParts(body) {
+  const parts = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of body) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+/**
+ * Walk the chain in order and model how `authenticated` may read each table.
+ *
+ * Order matters: this repo revokes the Supabase default ACL and then grants a
+ * column list in the same file, so `revoke` must undo earlier grants.
+ */
+function readGrantModel(migrations) {
+  const columns = new Map();
+  const tableSelect = new Set();
+  const columnSelect = new Map();
+  const columnsOf = (table) => {
+    if (!columns.has(table)) columns.set(table, new Set());
+    return columns.get(table);
+  };
+  const grantedColumns = (table) => {
+    if (!columnSelect.has(table)) columnSelect.set(table, new Set());
+    return columnSelect.get(table);
+  };
+  const targets = (list) => list.split(",").map((r) => r.trim());
+
+  for (const { sql } of migrations) {
+    const text = flattenSql(sql);
+
+    for (const m of text.matchAll(/create table (?:if not exists )?(?:public\.)?([a-z0-9_]+)\s*\(/g)) {
+      const body = parenBodyAt(text, m.index + m[0].length - 1);
+      for (const part of topLevelParts(body)) {
+        const token = part.split(/[\s(]+/)[0];
+        if (/^[a-z_][a-z0-9_]*$/.test(token) && !TABLE_BODY_KEYWORDS.has(token)) {
+          columnsOf(m[1]).add(token);
+        }
+      }
+    }
+
+    for (const m of text.matchAll(
+      /alter table (?:if exists )?(?:only )?public\.([a-z0-9_]+) add column (?:if not exists )?([a-z0-9_]+)/g,
+    )) {
+      columnsOf(m[1]).add(m[2]);
+    }
+
+    // Grants and revokes are applied in SOURCE ORDER, because this repo's pattern
+    // is `revoke all ... ; grant select (cols) ...` inside one migration - a
+    // two-pass model would read that as "granted, then fully revoked".
+    const events = [];
+    for (const m of text.matchAll(
+      /grant ([a-z, ]*?) on (?:table )?public\.([a-z0-9_]+) to ([a-z_, ]+?)(?=[;)]|$)/g,
+    )) {
+      events.push({ index: m.index, kind: "grant", privs: m[1], table: m[2], roles: m[3], cols: null });
+    }
+    for (const m of text.matchAll(
+      /grant select \(([^)]*)\) on public\.([a-z0-9_]+) to ([a-z_, ]+?)(?=[;)]|$)/g,
+    )) {
+      events.push({ index: m.index, kind: "grant", privs: "select", table: m[2], roles: m[3], cols: m[1] });
+    }
+    for (const m of text.matchAll(
+      /revoke ([a-z, ]*?) on (?:table )?public\.([a-z0-9_]+) from ([a-z_, ]+?)(?=[;)]|$)/g,
+    )) {
+      events.push({ index: m.index, kind: "revoke", privs: m[1], table: m[2], roles: m[3], cols: null });
+    }
+
+    for (const event of events.sort((a, b) => a.index - b.index)) {
+      if (!targets(event.roles).includes("authenticated")) continue;
+      // The DML surface is not modelled: this guard exists for the read path.
+      const touchesSelect = event.privs.includes("select") || event.privs.includes("all");
+      if (!touchesSelect) continue;
+      if (event.kind === "grant") {
+        if (event.cols === null) {
+          tableSelect.add(event.table);
+        } else {
+          for (const col of event.cols.split(",").map((c) => c.trim()).filter(Boolean)) {
+            grantedColumns(event.table).add(col);
+          }
+        }
+        continue;
+      }
+      tableSelect.delete(event.table);
+      if (event.cols === null) columnSelect.delete(event.table);
+      else columnSelect.get(event.table)?.clear();
+    }
+  }
+
+  return { columns, tableSelect, columnSelect };
+}
+
+/**
+ * Columns of `tables` that no grant lets `authenticated` read.
+ *
+ * A table with no grant at all is skipped: "the client cannot read this" is a
+ * deliberate state, not a gap.
+ */
+function findColumnGrantGaps(migrations, tables = CLIENT_READ_MEDIA_TABLES) {
+  const { columns, tableSelect, columnSelect } = readGrantModel(migrations);
+  const gaps = [];
+  for (const table of tables) {
+    if (tableSelect.has(table)) continue;
+    const granted = columnSelect.get(table);
+    if (!granted) continue;
+    const missing = [...(columns.get(table) ?? [])].filter((c) => !granted.has(c)).sort();
+    if (missing.length > 0) gaps.push({ table, missing });
+  }
+  return gaps;
+}
+
+describe("column-grant coverage (client-read media tables)", () => {
+  it("the real chain lets authenticated read every column of the media tables", () => {
+    const chain = ls().map((file) => ({ file, sql: mig(file) }));
+    assert.deepEqual(findColumnGrantGaps(chain), []);
+  });
+
+  it("detects the exact 20261015154642 defect (REVIEW-M1 F1/F2)", () => {
+    const buggy = [
+      {
+        file: "a.sql",
+        sql: "create table if not exists uploads (id text, file_url text); grant select (id, file_url) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "alter table public.uploads add column if not exists width integer; alter table public.uploads add column if not exists height integer;",
+      },
+    ];
+    assert.deepEqual(findColumnGrantGaps(buggy), [{ table: "uploads", missing: ["height", "width"] }]);
+  });
+
+  it("treats a table-level SELECT as covering every column", () => {
+    const ok = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select, insert on public.uploads to authenticated;",
+      },
+    ];
+    assert.deepEqual(findColumnGrantGaps(ok), []);
+  });
+
+  it("honours revoke-then-grant ordering, the repo's least-privilege pattern", () => {
+    const revoked = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select on public.uploads to authenticated; revoke all on public.uploads from anon, authenticated; grant select (id) on public.uploads to authenticated;",
+      },
+    ];
+    assert.deepEqual(findColumnGrantGaps(revoked), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("ignores grants that target other roles", () => {
+    const anonOnly = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to anon;",
+      },
+    ];
+    assert.deepEqual(findColumnGrantGaps(anonOnly), []);
+  });
+
+  it("only inspects the declared tables, so an unrelated gap cannot fail the build", () => {
+    const others = [
+      {
+        file: "a.sql",
+        sql: "create table public.comments (id text, body text); grant select (id) on public.comments to authenticated;",
+      },
+    ];
+    assert.deepEqual(findColumnGrantGaps(others), []);
+    assert.deepEqual(findColumnGrantGaps(others, ["comments"]), [{ table: "comments", missing: ["body"] }]);
+  });
+});
+
+describe("media read grants + dims bound repair (20261015163718)", () => {
+  const REPAIR = "20261015163718_media_read_grants_and_dims_bound.sql";
+
+  it("follows the migration hygiene contract", () => {
+    const sql = mig(REPAIR);
+    assert.ok(sql.includes("LIVE-PENDING"), "LIVE-PENDING note");
+    assert.ok(sql.includes("supabase/tests/verify_20261015163718_media_read_grants.sql"), "verify pointer");
+    assert.ok(sql.includes("ADDITIVE ONLY"), "additive header");
+  });
+
+  it("is additive only: no function, policy, column or row change", () => {
+    const sql = mig(REPAIR).toLowerCase().replace(/--[^\n]*/g, " ");
+    assert.ok(!sql.includes("create or replace function"), "no function body rewritten");
+    assert.ok(!sql.includes("drop function"), "no function dropped");
+    assert.ok(!sql.includes("add column"), "no column added");
+    assert.ok(!sql.includes("drop column"), "no column dropped");
+    assert.ok(!sql.includes("alter column"), "no column retyped");
+    assert.ok(!sql.includes("create policy"), "no policy created");
+    assert.ok(!sql.includes("drop policy"), "no policy dropped or altered");
+    assert.ok(!/delete\s+from\s+public\./.test(sql), "no row deleted");
+    assert.ok(!/update\s+public\./.test(sql), "no row rewritten");
+  });
+
+  it("grants the exact column set of each table, and nothing else", () => {
+    // Read the columns from the whole chain (a migration that only grants does not
+    // declare them), then assert this file's grant is exhaustive for each table.
+    const chain = ls().map((file) => ({ file, sql: mig(file) }));
+    const { columns } = readGrantModel(chain);
+    const repairOnly = readGrantModel([{ file: REPAIR, sql: mig(REPAIR) }]);
+    for (const table of CLIENT_READ_MEDIA_TABLES) {
+      assert.ok(repairOnly.columnSelect.has(table), `${table}: column grant present`);
+      assert.deepEqual(
+        [...repairOnly.columnSelect.get(table)].sort(),
+        [...columns.get(table)].sort(),
+        `${table}: exhaustive`,
+      );
+    }
+    assert.equal(repairOnly.columnSelect.size, 2, "no third table touched");
+  });
+
+  it("keeps the dims checks NOT VALID so no existing row is rescanned", () => {
+    const sql = mig(REPAIR).toLowerCase().replace(/--[^\n]*/g, " ");
+    assert.equal((sql.match(/not valid/g) ?? []).length, 2, "both dims checks stay NOT VALID");
+    assert.ok(sql.includes("100000"), "ceiling matches the client mirror");
+  });
+});

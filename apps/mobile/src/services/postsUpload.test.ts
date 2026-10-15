@@ -4,7 +4,9 @@ import { uploadImage } from "./posts";
 const { clientMock, uploadMock, removeMock, insertMock, normalizeMock } = vi.hoisted(() => {
   const uploadMock = vi.fn(async () => ({ error: null as { message?: string } | null }));
   const removeMock = vi.fn(async () => ({ error: null as { message?: string } | null }));
-  const insertMock = vi.fn(async () => ({ error: null as { message?: string } | null }));
+  const insertMock = vi.fn(async (_payload: Record<string, unknown>) => ({
+    error: null as { message?: string } | null,
+  }));
   const storageApi = {
     upload: uploadMock,
     remove: removeMock,
@@ -102,5 +104,42 @@ describe("uploadImage", () => {
       expect.objectContaining({ width: 1234, height: 987 }),
     );
     expect(stored).toMatchObject({ width: 1234, height: 987 });
+  });
+
+  it("stages no hint for a size it cannot vouch for (REVIEW-M1 F4)", async () => {
+    // The pipeline deliberately passes large animated GIFs through untouched, so
+    // a size outside the display-hint ceiling is publishable. The staging row
+    // must carry no dimension rather than a value the database would reject:
+    // a display hint may never decide whether a report can be published.
+    normalizeMock.mockResolvedValueOnce({
+      blob: new Blob(["normalized"], { type: "image/gif" }),
+      mimeType: "image/gif",
+      width: 200000,
+      height: 400,
+    });
+
+    await uploadImage(new File(["raw"], "poster.gif", { type: "image/gif" }));
+
+    const payload = insertMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload.width).toBeUndefined();
+    expect(payload.height).toBeUndefined();
+    // Everything the publish path actually needs is still staged.
+    expect(payload.id).toBeTruthy();
+    expect(payload.file_url).toBeTruthy();
+  });
+
+  it("stages no hint when the measured pair is half-known", async () => {
+    normalizeMock.mockResolvedValueOnce({
+      blob: new Blob(["normalized"], { type: "image/jpeg" }),
+      mimeType: "image/jpeg",
+      width: 1200,
+      height: Number.NaN,
+    });
+
+    await uploadImage(new File(["raw"], "half.jpg", { type: "image/jpeg" }));
+
+    const payload = insertMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload.width).toBeUndefined();
+    expect(payload.height).toBeUndefined();
   });
 });

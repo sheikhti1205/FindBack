@@ -3,6 +3,7 @@ import { normalizeImage } from "./image";
 import { getSupabase } from "./supabaseClient";
 import { diag } from "./diag";
 import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
+import { displaySizeOrNull } from "./media/displayDimensions";
 
 export interface StoredUpload {
   id: string;
@@ -15,7 +16,8 @@ export interface StoredUpload {
    * Intrinsic dimensions of the stored blob (CF-060 M1), measured after
    * normalization so they describe the bytes actually in Storage. The staging
    * row carries them to the publish RPC, which copies them onto the attachment
-   * row the feed lays out from.
+   * row the feed lays out from — but only when they are a complete, vouchable
+   * pair (`displaySizeOrNull`), because a display hint may never block a publish.
    */
   width: number;
   height: number;
@@ -73,6 +75,12 @@ export async function uploadImage(file: File, traceId?: string): Promise<StoredU
 
   const fileUrl = supabase.storage.from(IMAGES_BUCKET).getPublicUrl(objectKey).data.publicUrl;
   const fileName = safeFileName(file.name);
+  // The display hint is staged only when it is a complete, vouchable pair. A
+  // size outside the hint ceiling (a large animated GIF is passed through
+  // untouched) or a half-known size is staged as absent, so the hint can never
+  // be the reason a publish fails - the row simply carries no ratio and the feed
+  // falls back to a default one.
+  const displaySize = displaySizeOrNull(normalized);
   const stageStart = Date.now();
   const { error: stageError } = await supabase.from("uploads").insert({
     id,
@@ -82,8 +90,7 @@ export async function uploadImage(file: File, traceId?: string): Promise<StoredU
     file_size: normalized.blob.size,
     file_url: fileUrl,
     created_at: new Date().toISOString(),
-    width: normalized.width,
-    height: normalized.height,
+    ...(displaySize ? { width: displaySize.width, height: displaySize.height } : {}),
   });
   const stageMs = Date.now() - stageStart;
   if (stageError) {

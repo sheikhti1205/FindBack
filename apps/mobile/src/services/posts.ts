@@ -21,6 +21,7 @@ import {
   type UploadProgress,
 } from "./postsUpload";
 import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
+import { displaySizeOrNull } from "./media/displayDimensions";
 import { recordOperation } from "./monitoring/operations";
 import { diag } from "./diag";
 import { withTimeout } from "./timeout";
@@ -98,27 +99,18 @@ export interface AttachmentRow {
 }
 
 /**
- * Intrinsic dimensions arrive as pg `integer` values, but a mirrored or offline
- * row may carry them as strings. Anything that is not a positive finite integer
- * reads as "unknown" so callers fall back to a default ratio rather than
- * dividing by zero.
- */
-function dimensionOrNull(raw: unknown): number | null {
-  const n =
-    typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
-
-/**
- * Intrinsic dimensions are exposed only as a complete pair (CF-060 M1): a
- * half-known size cannot produce a ratio, so presenting it as one would reserve
- * the wrong space. Absent means "unknown — use the default ratio", which is the
- * only correct reading for media published before migration 20261015154642.
+ * Intrinsic dimensions are a display hint (CF-060 M1), exposed only as a
+ * complete pair: a half-known size cannot produce a ratio, so presenting it as
+ * one would reserve the wrong space. Absent means "unknown — use the default
+ * ratio", which is the only correct reading for media published before
+ * migration 20261015154642.
+ *
+ * The hint rule itself lives in `media/displayDimensions`, shared with the
+ * staging writer, so the read path can never accept a value the writer would
+ * have refused to store (REVIEW-M1 F4/F5).
  */
 function intrinsicSize(row: AttachmentRow): Partial<{ width: number; height: number }> {
-  const width = dimensionOrNull(row.width);
-  const height = dimensionOrNull(row.height);
-  return width !== null && height !== null ? { width, height } : {};
+  return displaySizeOrNull(row) ?? {};
 }
 
 function displayOrderKey(row: AttachmentRow): number {
