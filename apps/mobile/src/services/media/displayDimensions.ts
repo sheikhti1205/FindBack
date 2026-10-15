@@ -29,6 +29,14 @@
 export const MAX_DISPLAY_DIMENSION = 100000;
 
 /**
+ * Sanity floor for a stored dimension. Mirrors the two dims checks too: zero is
+ * "unknown", never "a size", so a stored 0 is not a vouchable dimension. The
+ * floor is a named constant for the same reason as the ceiling - the SQL and the
+ * client must not be able to drift apart unnoticed.
+ */
+export const MIN_DISPLAY_DIMENSION = 1;
+
+/**
  * A vouchable dimension, or null for "unknown".
  *
  * Null means the caller must fall back to a default ratio. It never means zero
@@ -41,7 +49,7 @@ export function displayDimensionOrNull(raw: unknown): number | null {
       : typeof raw === "string" && /^\d+$/.test(raw.trim())
         ? Number(raw)
         : NaN;
-  return Number.isInteger(n) && n >= 1 && n <= MAX_DISPLAY_DIMENSION ? n : null;
+  return Number.isInteger(n) && n >= MIN_DISPLAY_DIMENSION && n <= MAX_DISPLAY_DIMENSION ? n : null;
 }
 
 /**

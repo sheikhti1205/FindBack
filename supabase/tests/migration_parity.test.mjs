@@ -596,14 +596,38 @@ describe("CREATE OR REPLACE signature-drift guard", () => {
 // ---------------------------------------------------------------------------
 const CLIENT_READ_MEDIA_TABLES = ["uploads", "attachments"];
 
-/** The repo's naming convention for entry points that `authenticated` may call. */
-const CLIENT_FUNCTION_SUFFIX = "_client";
+/**
+ * EXECUTE membership that makes a function client-callable
+ * (REVIEW-M1-ACL-CLOSURE A2/A4).
+ *
+ * The reader walk used to select functions by NAME (`_client` suffix). That is a
+ * convention, not a fact: `findback_create_post_client_multi` is a shipped
+ * publish RPC the walk could not see, and an ungranted read added to its body
+ * left the gate green while the same read added to a `_client` reader failed it.
+ * Reachability is now modelled the way Postgres decides it:
+ *
+ *   * a function is created with EXECUTE granted to PUBLIC, so `authenticated`
+ *     may call it until that grant is revoked;
+ *   * `grant execute ... to authenticated` makes it reachable again;
+ *   * a direct `revoke ... from authenticated` does NOT remove the PUBLIC path
+ *     (the role still inherits it), so the two are tracked separately and ORed.
+ */
+const CLIENT_EXECUTE_ROLES = ["public", "authenticated"];
 
 /**
- * Client entry points that run SECURITY DEFINER, so their reads need no grant.
+ * Client-reachable SECURITY DEFINER functions, pinned.
+ *
+ * A definer function runs with its owner's privileges, so its reads legitimately
+ * need no grant - which is exactly why the set must be frozen: a reader that
+ * silently flips from INVOKER to DEFINER would leave the walk without anything
+ * to complain about. The set is derived from reachability (EXECUTE membership),
+ * not from the `_client` name suffix, so the nine client-reachable definers the
+ * suffix filter used to miss are pinned too (REVIEW-M1-ACL-CLOSURE A4).
  * Any change here is a security-model change and should be deliberate.
  */
-const DEFINER_CLIENT_FUNCTIONS = [
+const CLIENT_REACHABLE_DEFINERS = [
+  "complete_social_profile",
+  "findback_add_comment_with_attachments",
   "findback_delete_notifications_client",
   "findback_get_notification_preferences_client",
   "findback_list_notifications_client",
@@ -616,6 +640,13 @@ const DEFINER_CLIENT_FUNCTIONS = [
   "findback_search_profiles_client",
   "findback_set_notification_preferences_client",
   "findback_unregister_device_token_client",
+  "is_username_available",
+  "phone_change_eligibility",
+  "public_profile_by_username",
+  "request_phone_change",
+  "update_my_avatar",
+  "update_my_avatar_by_key",
+  "update_my_profile",
 ];
 
 /** Source of the client-side constant the SQL dims bound must agree with. */
@@ -843,50 +874,329 @@ function readFunctionModel(migrations) {
 
 /** Words that can follow a table in FROM/JOIN but are not aliases. */
 const ALIAS_STOP_WORDS = new Set([
-  "and", "as", "asc", "between", "cross", "desc", "else", "end", "except", "exists", "for",
-  "full", "group", "having", "in", "inner", "is", "join", "left", "like", "limit", "not",
-  "null", "offset", "on", "or", "order", "outer", "returning", "right", "select", "set",
-  "then", "union", "using", "values", "when", "where", "with",
+  "all", "and", "as", "asc", "begin", "between", "by", "case", "conflict", "cross", "declare",
+  "delete", "desc", "distinct", "do", "else", "end", "except", "execute", "exists", "fetch",
+  "for", "from", "full", "group", "having", "if", "in", "inner", "insert", "into", "is", "join",
+  "lateral", "left", "like", "limit", "loop", "not", "nothing", "null", "offset", "on", "open",
+  "or", "order", "outer", "perform", "raise", "return", "returning", "right", "select", "set",
+  "then", "union", "update", "using", "values", "when", "where", "while", "with",
 ]);
+
+/** Bare words that are SQL syntax or built-ins, never a column reference. */
+const SQL_WORDS = new Set([
+  ...ALIAS_STOP_WORDS,
+  "array", "auth", "authenticated", "bigint", "boolean", "cast", "coalesce", "count",
+  "current_user", "definer", "elseif", "elsif", "exception", "extensions", "false", "found",
+  "greatest", "immutable", "integer", "interval", "invoker", "json", "jsonb", "language",
+  "least", "max", "min", "new", "notice", "now", "nullif", "numeric", "old", "others",
+  "plpgsql", "primary", "public", "record", "returned_sqlstate", "row_count", "security",
+  "service_role", "sql", "stable", "storage", "text", "timestamptz", "timestamp", "trigger",
+  "true", "uuid", "void", "volatile",
+]);
+
+/**
+ * One scanner that drops line comments, block comments and string literals, so
+ * the walk reads code rather than prose or data (REVIEW-M1-ACL-CLOSURE A3).
+ *
+ * One pass on purpose: a `'` inside a `--` comment and a `--` inside a literal
+ * both corrupt any sequential-regex approach, and this repo has both kinds of
+ * text in function bodies.
+ */
+function stripSqlNoise(text) {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (ch === "-" && next === "-") {
+      while (i < text.length && text[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    if (ch === "'") {
+      i++;
+      while (i < text.length) {
+        if (text[i] === "'") {
+          if (text[i + 1] === "'") {
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        i++;
+      }
+      out += " '' ";
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Parenthesis depth at every character.
+ *
+ * Depth is the scope: `from public.comments c` inside a subquery binds `c` for
+ * that subquery only, so one alias can legitimately name two tables in two
+ * scopes of one statement (REVIEW-M1-ACL-CLOSURE A3).
+ */
+function scopeDepths(text) {
+  const depths = new Array(text.length + 1).fill(0);
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    depths[i] = depth;
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")") depth = Math.max(0, depth - 1);
+  }
+  depths[text.length] = depth;
+  return depths;
+}
+
+/**
+ * Table/alias bindings for ONE statement, with the scope each was bound in.
+ *
+ * Handles the forms the old walk missed: comma-joined FROM lists
+ * (`from public.comments c, public.users u` - `u` used to be invisible), `into`,
+ * `update` and `delete from` targets, and aliases written with `as`.
+ */
+function bindingsForStatement(statement, columns) {
+  const depths = scopeDepths(statement);
+  const binds = [];
+  const reads = [];
+  const targets = [];
+  const stop = [...ALIAS_STOP_WORDS].join("|");
+  const binding = new RegExp(
+    `\\b(from|join|into|update|delete\\s+from)\\s+((?:public\\.)?[a-z0-9_]+(?:\\s+(?:as\\s+)?(?!(?:${stop})\\b)[a-z0-9_]+)?(?:\\s*,\\s*(?:public\\.)?[a-z0-9_]+(?:\\s+(?:as\\s+)?(?!(?:${stop})\\b)[a-z0-9_]+)?)*)`,
+    "g",
+  );
+  for (const m of statement.matchAll(binding)) {
+    const depth = depths[m.index];
+    const fromSource = m[1].startsWith("from") || m[1].startsWith("join");
+    for (const part of m[2].split(",")) {
+      const parsed = part.trim().match(/^(?:public\.)?([a-z0-9_]+)(?:\s+(?:as\s+)?([a-z0-9_]+))?$/);
+      if (!parsed) continue;
+      const table = parsed[1];
+      if (!columns.has(table)) continue; // a CTE, a set-returning function, a variable
+      binds.push({ name: table, table, depth, source: fromSource });
+      if (parsed[2] && !ALIAS_STOP_WORDS.has(parsed[2])) {
+        binds.push({ name: parsed[2], table, depth, source: fromSource });
+      }
+      (fromSource ? reads : targets).push({ table, depth });
+    }
+  }
+  return { binds, reads, targets };
+}
+
+/** Tables a name refers to in the innermost scope at or around `depth`. */
+function resolveBinding(binds, name, depth) {
+  for (let d = depth; d >= 0; d--) {
+    const tables = new Set();
+    for (const bind of binds) if (bind.depth === d && bind.name === name) tables.add(bind.table);
+    if (tables.size > 0) return tables;
+  }
+  return null;
+}
+
+/** Source tables of the innermost scope at or around `depth` that has any. */
+function nearestScopeTables(entries, depth) {
+  for (let d = depth; d >= 0; d--) {
+    const tables = new Set();
+    for (const entry of entries) if (entry.depth === d) tables.add(entry.table);
+    if (tables.size > 0) return tables;
+  }
+  return new Set();
+}
+
+/**
+ * Bare column names the statement reads from `table` in `scopeDepth`.
+ *
+ * Reserved for scopes with exactly one source table: with two tables in scope an
+ * unqualified name is ambiguous and would be a guess. The written-but-not-read
+ * positions are blanked before scanning - an INSERT target list and the SET
+ * targets of an UPDATE need no SELECT privilege - and the blanking is
+ * length-preserving so the depth map still lines up.
+ */
+function unqualifiedColumnRefs(statement, table, columns, scopeDepth, boundNames) {
+  const colSet = columns.get(table) ?? new Set();
+  const text = statement
+    .replace(/\binsert\s+into\s+(?:public\.)?[a-z0-9_]+\s*\([^)]*\)/g, (m) => " ".repeat(m.length))
+    .replace(/\bset\s+([\s\S]*?)(?=\bwhere\b|\breturning\b|$)/g, (whole) =>
+      whole.replace(/[a-z_][a-z0-9_]*\s*=/g, (pair) => " ".repeat(pair.length)),
+    );
+  const depths = scopeDepths(text);
+  const found = new Set();
+  for (const m of text.matchAll(/[a-z_][a-z0-9_]*/g)) {
+    const token = m[0];
+    if (!colSet.has(token) || SQL_WORDS.has(token) || boundNames.has(token)) continue;
+    if (depths[m.index] !== scopeDepth) continue;
+    if (text[m.index - 1] === ".") continue; // qualified, handled as a reference
+    if (/^\s*\(/.test(text.slice(m.index + token.length))) continue; // a function call
+    found.add(token);
+  }
+  return found;
+}
+
+/**
+ * EXECUTE membership per function (REVIEW-M1-ACL-CLOSURE A2).
+ *
+ * A freshly created function is PUBLIC-executable, so the model starts there and
+ * applies grant/revoke in source order. PUBLIC and the role are tracked
+ * separately: `revoke ... from authenticated` does not take away what the role
+ * inherits from PUBLIC, so reachability is the OR of the two.
+ */
+function readExecuteModel(migrations) {
+  const state = new Map();
+  const stateOf = (name) => {
+    if (!state.has(name)) {
+      state.set(name, { public: true, authenticated: false, anon: false, service_role: false });
+    }
+    return state.get(name);
+  };
+  for (const { sql } of migrations) {
+    const text = flattenSql(stripSqlNoise(sql));
+    for (const m of text.matchAll(
+      /(grant|revoke) ([a-z, ]*?) on function public\.([a-z0-9_]+)\s*\(([^)]*)\) (to|from) ([a-z_, ]+?)(?=[;)]|$)/g,
+    )) {
+      if (m[1] === "grant" && !/execute|all/.test(m[2])) continue;
+      const roles = m[6].split(",").map((r) => r.trim());
+      const target = stateOf(m[3]);
+      for (const role of CLIENT_EXECUTE_ROLES.concat("anon", "service_role")) {
+        if (!roles.includes(role)) continue;
+        target[role] = m[1] === "grant";
+      }
+    }
+  }
+  return state;
+}
+
+/** Functions `authenticated` can call: explicit grant, or an unrevoked PUBLIC grant. */
+function clientReachableFunctions(functions, execute) {
+  const reachable = new Set();
+  for (const name of functions.keys()) {
+    const state = execute.get(name) ?? { public: true, authenticated: false, anon: false };
+    if (state.public || state.authenticated) reachable.add(name);
+  }
+  return reachable;
+}
 
 /**
  * Columns a client-reachable reader asks for that `authenticated` cannot read.
  *
- * The question is asked of READERS, not of a table list: every SECURITY INVOKER
- * `findback_*_client` function runs with the caller's privileges, so every column
- * its body reads is a column the grant model must cover. Column references are
- * attributed through the alias bound to each `public.<table>` in a FROM/JOIN
- * clause, and a `select *` from such a table demands all of its columns - which
- * is exactly how the 20261015154642 defect (`select * into v_upload`) appears
- * here without naming uploads anywhere.
+ * The question is asked of READERS: every client-reachable SECURITY INVOKER
+ * function runs with the caller's privileges, so every column its body reads is a
+ * column the grant model must cover. Readers are selected by EXECUTE membership
+ * rather than by the `_client` name suffix (REVIEW-M1-ACL-CLOSURE A2), and every
+ * shape Postgres expands into a column read is modelled: `*`, `alias.*`,
+ * schema-qualified names, comma-joined FROM lists, RETURNING lists, and the
+ * unqualified names of a single-table scope (REVIEW-M1-ACL-CLOSURE A1).
+ *
+ * What it deliberately does not model: dynamic SQL assembled at runtime, and an
+ * unqualified name in a scope that has more than one source table (which would
+ * be a guess, not an attribution). Both are reported by the guard's own
+ * limitations note in the migration's header rather than silently trusted.
  */
 function findReaderGrantGaps(migrations) {
   const { columns, tableSelect, columnSelect } = readGrantModel(migrations);
   const functions = readFunctionModel(migrations);
+  const reachable = clientReachableFunctions(functions, readExecuteModel(migrations));
   const required = new Map();
   const requireColumn = (table, column) => {
     if (!required.has(table)) required.set(table, new Set());
     required.get(table).add(column);
   };
+  const requireAll = (table) => {
+    for (const column of columns.get(table) ?? []) requireColumn(table, column);
+  };
 
   for (const [name, fn] of functions) {
-    if (!name.endsWith(CLIENT_FUNCTION_SUFFIX) || fn.definer) continue;
-    const body = flattenSql(fn.body);
-    const aliases = new Map();
-    for (const m of body.matchAll(/\b(?:from|join)\s+(?:public\.)?([a-z0-9_]+)(?:\s+(?:as\s+)?([a-z0-9_]+))?/g)) {
-      const table = m[1];
-      const alias = m[2];
-      if (!columns.has(table)) continue; // a CTE, a set-returning function, a variable
-      if (alias && !ALIAS_STOP_WORDS.has(alias)) aliases.set(alias, table);
-    }
-    for (const [alias, table] of aliases) {
-      for (const m of body.matchAll(new RegExp(`\\b${alias}\\.([a-z0-9_]+)`, "g"))) {
-        requireColumn(table, m[1]);
+    if (fn.definer || !reachable.has(name)) continue;
+    const body = flattenSql(stripSqlNoise(fn.body));
+    for (const statement of body.split(";")) {
+      if (!statement.trim()) continue;
+      const { binds, reads, targets } = bindingsForStatement(statement, columns);
+      if (binds.length === 0) continue;
+      const depths = scopeDepths(statement);
+
+      // `alias.*` / `table.*` / `public.table.*`: Postgres expands the star into
+      // every column of that table, so the star IS a demand for all of them.
+      for (const m of statement.matchAll(/([a-z0-9_]+)\s*\.\s*\*/g)) {
+        const owner = m[1];
+        const viaBinding = resolveBinding(binds, owner, depths[m.index]);
+        if (viaBinding) for (const table of viaBinding) requireAll(table);
+        else if (columns.has(owner)) requireAll(owner);
       }
-    }
-    for (const m of body.matchAll(/select\s+(?:distinct\s+)?\*\s*(?:into\s+[a-z0-9_]+\s*)?from\s+(?:public\.)?([a-z0-9_]+)/g)) {
-      if (!columns.has(m[1])) continue;
-      for (const column of columns.get(m[1])) requireColumn(m[1], column);
+
+      // A bare star reads every column of its scope's tables; `count(*)` reads
+      // none, a qualified star is handled above, and `*` as multiplication is
+      // preceded by an operand rather than by SELECT/RETURNING/`,`.
+      for (const m of statement.matchAll(/\*/g)) {
+        const before = statement.slice(0, m.index).trimEnd();
+        if (before.endsWith("(") || before.endsWith(".")) continue;
+        const operator = /([a-z_][a-z0-9_]*)$/.exec(before)?.[1];
+        const isStar = before.endsWith(",") || ["select", "distinct", "all", "returning"].includes(operator);
+        if (!isStar) continue;
+        const depth = depths[m.index];
+        const sources = nearestScopeTables(reads, depth);
+        for (const table of sources.size > 0 ? sources : nearestScopeTables(targets, depth)) {
+          requireAll(table);
+        }
+      }
+
+      // Qualified references in every form that names a table: alias.col,
+      // table.col, public.table.col, and the second table of a comma join.
+      const refs = /([a-z0-9_]+)\.([a-z0-9_]+)/g;
+      let ref;
+      while ((ref = refs.exec(statement)) !== null) {
+        const owner = ref[1];
+        const column = ref[2];
+        const viaBinding = resolveBinding(binds, owner, depths[ref.index]);
+        if (viaBinding) for (const table of viaBinding) requireColumn(table, column);
+        else if (columns.has(owner)) requireColumn(owner, column);
+        refs.lastIndex = ref.index + 1; // overlapping: public.t.col has two pairs
+      }
+
+      // Unqualified references, per single-table scope.
+      const sourcesByDepth = new Map();
+      for (const read of reads) {
+        if (!sourcesByDepth.has(read.depth)) sourcesByDepth.set(read.depth, new Set());
+        sourcesByDepth.get(read.depth).add(read.table);
+      }
+      for (const [depth, tables] of sourcesByDepth) {
+        if (tables.size !== 1) continue;
+        const table = [...tables][0];
+        const boundNames = new Set(
+          binds.filter((bind) => bind.depth === depth).map((bind) => bind.name),
+        );
+        for (const column of unqualifiedColumnRefs(statement, table, columns, depth, boundNames)) {
+          requireColumn(table, column);
+        }
+      }
+      // A statement that reads nothing still reads through its target: an
+      // `insert ... returning col` and an `update ... where col` both need
+      // SELECT on the columns they name.
+      if (reads.length === 0) {
+        for (const target of new Set(targets.map((t) => t.table))) {
+          const boundNames = new Set(
+            binds.filter((bind) => bind.table === target).map((bind) => bind.name),
+          );
+          for (const column of unqualifiedColumnRefs(
+            statement,
+            target,
+            columns,
+            targets.find((t) => t.table === target).depth,
+            boundNames,
+          )) {
+            requireColumn(target, column);
+          }
+        }
+      }
     }
   }
 
@@ -1030,7 +1340,7 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     assert.deepEqual(findReaderGrantGaps(definer), []);
   });
 
-  it("ignores an invoker function that is not a client entry point", () => {
+  it("ignores an invoker function whose EXECUTE was revoked from every client role", () => {
     const internal = [
       {
         file: "a.sql",
@@ -1038,17 +1348,146 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
       },
       {
         file: "b.sql",
-        sql: "create or replace function public.findback_cleanup_tick() returns void language sql security invoker as $$ select width from public.uploads; $$;",
+        sql: "create or replace function public.findback_cleanup_tick() returns void language sql security invoker as $$ select width from public.uploads; $$; revoke all on function public.findback_cleanup_tick() from public, anon, authenticated;",
       },
     ];
     assert.deepEqual(findReaderGrantGaps(internal), []);
   });
 
-  it("pins the definer set, so a reader turning definer cannot leave the check", () => {
-    const clients = [...readFunctionModel(CHAIN())].filter(([n]) => n.endsWith(CLIENT_FUNCTION_SUFFIX));
-    const definers = clients.filter(([, fn]) => fn.definer).map(([n]) => n).sort();
-    assert.deepEqual(definers, DEFINER_CLIENT_FUNCTIONS);
-    assert.ok(clients.length > definers.length, "the chain has invoker readers too");
+  it("walks a client-reachable reader that does not use the `_client` name (A2)", () => {
+    // REVIEW-M1-ACL-CLOSURE A2 in miniature: the same ungranted read, in a
+    // function whose name does not follow the convention. Reachability is an
+    // EXECUTE fact, so the read is a gap here too.
+    const unmarked = [
+      {
+        file: "a.sql",
+        sql: "create table public.reactions (id text, created_at timestamptz); grant select (id) on public.reactions to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_create_post_client_multi() returns void language plpgsql security invoker as $$ begin if exists (select 1 from public.reactions rx where rx.created_at = now()) then null; end if; end; $$; grant execute on function public.findback_create_post_client_multi() to authenticated;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(unmarked), [{ table: "reactions", missing: ["created_at"] }]);
+  });
+
+  it("walks a reader reachable only through the default PUBLIC grant (A2)", () => {
+    // `create function` grants EXECUTE to PUBLIC, so a function nobody granted
+    // explicitly is still callable by `authenticated`.
+    const implicit = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_scan_tick() returns void language sql security invoker as $$ select width from public.uploads; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(implicit), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("treats `alias.*` as a demand for every column of the bound table (A1)", () => {
+    const star = [
+      {
+        file: "a.sql",
+        sql: "create table public.item_posts (id text, title text); grant select (id) on public.item_posts to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_feed_client() returns void language sql security invoker as $$ select p.* from public.item_posts p; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(star), [{ table: "item_posts", missing: ["title"] }]);
+  });
+
+  it("reads unqualified and schema-qualified columns of a single-table scope (A1)", () => {
+    const shapes = [
+      {
+        file: "a.sql",
+        sql: "create table public.comments (id text, depth integer); grant select (id) on public.comments to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_reply_client() returns void language sql security invoker as $$ select depth from public.comments where id = 'x'; $$;",
+      },
+      {
+        file: "c.sql",
+        sql: "create or replace function public.findback_depth_client() returns void language sql security invoker as $$ select public.comments.depth from public.comments; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(shapes), [{ table: "comments", missing: ["depth"] }]);
+  });
+
+  it("binds the second table of a comma join, which the alias map could not see (A1)", () => {
+    const joined = [
+      {
+        file: "a.sql",
+        sql: "create table public.comments (id text, body text); create table public.users (id text, email text); grant select (id, body) on public.comments to authenticated; grant select (id) on public.users to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_join_client() returns void language sql security invoker as $$ select c.id, u.email from public.comments c, public.users u where u.id = c.id; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(joined), [{ table: "users", missing: ["email"] }]);
+  });
+
+  it("reads through an INSERT ... RETURNING and an UPDATE ... WHERE (A1)", () => {
+    const written = [
+      {
+        file: "a.sql",
+        sql: "create table public.item_posts (id text, title text, status text); grant select (id) on public.item_posts to authenticated; grant insert, update on public.item_posts to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_publish_client() returns void language plpgsql security invoker as $$ declare v_id text; begin insert into public.item_posts (id, title) values (v_id, 'x') returning title into v_id; update public.item_posts set status = 'y' where title = v_id; end; $$;",
+      },
+    ];
+    // `title` is read (RETURNING, then WHERE); `status` is only written.
+    assert.deepEqual(findReaderGrantGaps(written), [{ table: "item_posts", missing: ["title"] }]);
+  });
+
+  it("scans code, not prose: a table named in a literal or a comment is not a read (A3)", () => {
+    const noisy = [
+      {
+        file: "a.sql",
+        sql: "create table public.reactions (id text, created_at timestamptz); grant select (id) on public.reactions to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_noisy_client() returns void language plpgsql security invoker as $$ begin raise notice 'from public.reactions r where r.created_at is not null'; /* select created_at from public.reactions */ end; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(noisy), []);
+  });
+
+  it("resolves one alias reused in two scopes to the table of each scope (A3)", () => {
+    const scoped = [
+      {
+        file: "a.sql",
+        sql: "create table public.comments (id text, depth integer); create table public.reactions (id text, created_at timestamptz); grant select (id) on public.comments to authenticated; grant select (id) on public.reactions to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_pair_client() returns void language sql security invoker as $$ select c.depth from public.comments c where exists (select 1 from public.reactions c where c.id is not null); $$;",
+      },
+    ];
+    // `c.depth` is the outer comments scope; the inner `c` is reactions and only
+    // its id is read, so reactions must not be charged for depth/created_at.
+    assert.deepEqual(findReaderGrantGaps(scoped), [{ table: "comments", missing: ["depth"] }]);
+  });
+
+  it("pins the client-reachable definer set, so a reader turning definer cannot leave the check (A4)", () => {
+    const functions = readFunctionModel(CHAIN());
+    const reachable = clientReachableFunctions(functions, readExecuteModel(CHAIN()));
+    const definers = [...functions]
+      .filter(([name, fn]) => fn.definer && reachable.has(name))
+      .map(([name]) => name)
+      .sort();
+    assert.deepEqual(definers, CLIENT_REACHABLE_DEFINERS);
+    const invokers = [...functions].filter(([name, fn]) => !fn.definer && reachable.has(name));
+    assert.ok(invokers.length > 0, "the chain has client-reachable invoker readers too");
   });
 
   it("models `add` without the optional COLUMN keyword (R3)", () => {
@@ -1084,15 +1523,38 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
   });
 });
 
-describe("dims bound parity with the client mirror (REVIEW-M1-REPAIR R5)", () => {
-  it("binds every SQL ceiling to MAX_DISPLAY_DIMENSION in the app source", () => {
-    const mirror = read(DIMS_MIRROR).match(/MAX_DISPLAY_DIMENSION\s*=\s*(\d+)/)?.[1];
-    assert.ok(mirror, "client mirror constant found");
-    const ceilings = [...mig("20261015163718_media_read_grants_and_dims_bound.sql").matchAll(/<=\s*(\d+)/g)].map(
-      (m) => m[1],
-    );
-    assert.equal(ceilings.length, 4, "both dims of both checks carry the ceiling");
-    for (const ceiling of ceilings) assert.equal(ceiling, mirror, "SQL bound equals the client mirror");
+describe("dims bound parity with the client mirror (REVIEW-M1-REPAIR R5, A5, A8)", () => {
+  const DIMS_SQL = "20261015163718_media_read_grants_and_dims_bound.sql";
+
+  it("binds every SQL dims floor and ceiling to the app mirror", () => {
+    const source = read(DIMS_MIRROR);
+    const ceiling = source.match(/MAX_DISPLAY_DIMENSION\s*=\s*(\d+)/)?.[1];
+    const floor = source.match(/MIN_DISPLAY_DIMENSION\s*=\s*(\d+)/)?.[1];
+    assert.ok(ceiling, "client mirror ceiling found");
+    assert.ok(floor, "client mirror floor found");
+
+    const text = flattenSql(mig(DIMS_SQL));
+    for (const name of ["uploads_dims_check", "attachments_dims_check"]) {
+      const at = text.indexOf(name);
+      assert.ok(at >= 0, `${name} present`);
+      const body = parenBodyAt(text, text.indexOf("(", at));
+      // `< N` and `> N` are the same bounds written the other way round, so both
+      // spellings are normalised before comparing. The count is not asserted -
+      // the BINDING is (A8): a rewrite that keeps the same bound must pass, and a
+      // bound that stops mirroring the app must fail.
+      const ceilings = [
+        ...[...body.matchAll(/<=\s*(\d+)/g)].map((m) => m[1]),
+        ...[...body.matchAll(/<\s*(\d+)/g)].map((m) => String(Number(m[1]) - 1)),
+      ];
+      const floors = [
+        ...[...body.matchAll(/>=\s*(\d+)/g)].map((m) => m[1]),
+        ...[...body.matchAll(/>\s*(\d+)/g)].map((m) => String(Number(m[1]) + 1)),
+      ];
+      assert.ok(ceilings.length >= 2, `${name} carries a ceiling for both dimensions`);
+      assert.ok(floors.length >= 2, `${name} carries a floor for both dimensions`);
+      for (const value of ceilings) assert.equal(value, ceiling, `${name} ceiling mirrors the app`);
+      for (const value of floors) assert.equal(value, floor, `${name} floor mirrors the app`);
+    }
   });
 });
 
