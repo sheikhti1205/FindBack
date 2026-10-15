@@ -30,6 +30,7 @@ import { getSupabase } from "./supabaseClient";
 // Still used by the legacy cloud transport's on-device-only privacy guard.
 import { loadSeededAiPreferences } from "./ai/aiPreferences";
 import { profileFor } from "./ai/modelProfiles";
+import { NEEDLE_MODEL_ID } from "./ai/needle/embedder";
 import type { AiTaskId, GenerateFn } from "./ai/types";
 import { extractNlFilters, type NlFilterPatch } from "./search/nlFilters";
 
@@ -145,7 +146,16 @@ export const generateForFieldsLive: GenerateFn = liveGenerateFor("extract-report
 /** Live composer for the category suggestion op. */
 export const generateForCategoryLive: GenerateFn = liveGenerateFor("classify-category");
 
-const SEARCH_PROFILE_ID = "qwen3-0.6b-dynamic-int4";
+/**
+ * Profile for the search extractor: the model that actually serves the route.
+ * `extract-search-filters` is a tool-constrained (structured) task, and the
+ * production seam serves structured roles ONLY through Needle
+ * (`applicationAi.ts` `structuredModelId`, enforced in `productionRuntimes.ts`).
+ * Parsing with the Qwen *prose* profile applied that engine's `[thought]`
+ * envelope to tool output, which truncated any value containing the literal
+ * marker and silently dropped the whole patch.
+ */
+const SEARCH_PROFILE_ID = NEEDLE_MODEL_ID;
 
 /**
  * Live NL search extractor: raw input through `extract-search-filters`

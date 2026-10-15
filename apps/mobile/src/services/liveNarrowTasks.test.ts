@@ -268,6 +268,15 @@ describe("ready-made live composers", () => {
     expect(patch.dateTo).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it("parses with the structured route's profile, not the prose engine's thought envelope", async () => {
+    // Regression (CF-040 S2): `extract-search-filters` is served by the tool
+    // model, but the parse used the Qwen *prose* profile, whose `[thought]`
+    // envelope truncated any output containing the literal marker — the whole
+    // patch was silently dropped.
+    state.route.mockResolvedValue(okRoute(JSON.stringify({ query: "[thought] wallet" })));
+    await expect(nlExtractLive("[thought] wallet")).resolves.toEqual({ query: "[thought] wallet" });
+  });
+
   it("nlExtractLive fails closed to an empty patch when the on-device route fails", async () => {
     state.route.mockResolvedValue(failRoute("RUNTIME_ERROR"));
     state.text.mockRejectedValue(new Error("no key"));
