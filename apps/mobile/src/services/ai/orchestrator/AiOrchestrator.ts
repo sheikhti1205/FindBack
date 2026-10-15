@@ -348,9 +348,9 @@ export class AiOrchestrator {
     // Task output contracts own SUCCESS — re-checked here even though
     // adapters interpret first, so no adapter can bypass interpretation
     // and still succeed. A technically successful generation whose value
-    // fails the task schema is LOCAL_TASK_INVALID — eligible for allowed
-    // cloud fallback in Automatic mode, surfaced in on-device-only, never
-    // a silent downstream drop.
+    // fails the task schema is LOCAL_TASK_INVALID — surfaced to the caller,
+    // which fails closed (narrow tasks never escalate to cloud), never a
+    // silent downstream drop.
     const checked = validateRouteValue(taskId, outcome.value, input);
     if (!checked.ok) {
       return this.fail({

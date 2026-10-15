@@ -1,25 +1,33 @@
 /**
- * Live narrow-task transport (local-first with cloud fallback).
+ * Live narrow-task transport — strictly on-device.
  *
- * Automatic tries on-device `route(...)` before OpenRouter cloud text.
- * On-device only never reads a cloud key; cloud only skips local inference.
+ * Narrow tasks (Smart Search filter extraction, report-field and category
+ * suggestions) are served only by the on-device router. There is deliberately
+ * no cloud fallback: a natural-language query about a user's lost property must
+ * never leave the device. When the local helper is unavailable the caller fails
+ * closed (see `nlExtractLive`, which yields an empty patch), and the ordinary
+ * non-AI path keeps working.
+ *
  * Suggestions only — nothing here publishes, writes drafts, or auto-applies.
  *
  * - `generateLocalFirst(taskId, prompt)`: routes one task via
  *   `getApplicationAi().route(taskId, { prompt }, { traceId, consent: true })`.
  *   A non-ok route throws `Error(result.error)`; a string value passes
  *   through as-is, any other value is JSON-stringified for the op parsers.
- *   AbortError always propagates (never swallowed, never falls back).
- * - Cloud transport captures the authenticated account, checks privacy and
- *   cancellation around asynchronous key access, then uses the free route.
- *   A missing key surfaces honestly as MISSING_KEY from the transport.
- * - `liveGenerateFor(taskId)` resolves the current account's mode each call;
- *   cancellation and account changes never authorize cloud fallback.
+ *   AbortError always propagates (never swallowed).
+ * - `liveGenerateFor(taskId)` is the composer the consumer features use. It is
+ *   local-only, so a local failure surfaces to the caller unchanged.
+ * - The legacy cloud transports (`generateCloud`, `generateCloudForAccount`) are
+ *   retained only for the guided Help assistant: `Help.tsx` imports
+ *   `generateCloudForAccount` alone, and `generateCloud` has no production
+ *   consumer. Both go when Help does; nothing in the narrow-task path calls
+ *   either.
  */
 import { getApplicationAi } from "./ai/applicationAi";
 import { createOpenRouterClient } from "./openRouter";
 import { aiCredentials } from "./aiCredentials";
 import { getSupabase } from "./supabaseClient";
+// Still used by the legacy cloud transport's on-device-only privacy guard.
 import { loadSeededAiPreferences } from "./ai/aiPreferences";
 import { profileFor } from "./ai/modelProfiles";
 import type { AiTaskId, GenerateFn } from "./ai/types";
@@ -35,13 +43,9 @@ export interface LocalFirstOptions {
   /**
    * Phase A.4: raw task input routed to the on-device engine instead of
    * the engineered prompt. Absent means the prompt itself is the input
-   * (legacy callers); the cloud fallback always receives the prompt.
+   * (legacy callers).
    */
   readonly localInput?: unknown;
-}
-
-function isAbort(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }
 
 function abortError(): Error {
@@ -51,7 +55,7 @@ function abortError(): Error {
 }
 
 /**
- * One local-first generation against the on-device router. Throws on
+ * One on-device generation against the local router. Throws on
  * non-ok routes; AbortError propagates untouched.
  */
 export async function generateLocalFirst(
@@ -61,10 +65,9 @@ export async function generateLocalFirst(
 ): Promise<string> {
   if (opts?.signal?.aborted) throw abortError();
   // No catch here: route rejections (including AbortError on user cancel)
-  // propagate to the caller, which decides fallback vs fail-closed.
+  // propagate to the caller, which decides fail-closed behaviour.
   // The local route gets the raw task input when the op supplied one —
-  // a tool model must see the original request, not the cloud-engineered
-  // prompt. The cloud fallback (below) always receives the prompt.
+  // a tool model must see the original request, not an engineered prompt.
   const input = opts?.localInput ?? { prompt };
   const result: Awaited<ReturnType<import("./ai/applicationAi").ApplicationAiService["route"]>> =
     await getApplicationAi().route(
@@ -114,27 +117,24 @@ export async function generateCloudForAccount(account: string | null, prompt: st
 }
 
 /**
- * Live `GenerateFn` for one narrow task: local first, cloud fallback on any
- * non-abort local failure. An abort (thrown or pre-signalled) never touches
- * the network.
+ * Live `GenerateFn` for one narrow task. On-device only, by design: a local
+ * failure is surfaced to the caller instead of being escalated to any network
+ * transport. An abort (thrown or pre-signalled) propagates untouched.
  */
 export function liveGenerateFor(taskId: LiveNarrowTaskId): GenerateFn {
   return async (prompt, genOpts) => {
     const signal = (genOpts as unknown as { signal?: AbortSignal } | undefined)?.signal;
     if (signal?.aborted) throw abortError();
-    const account = await authenticatedAccount();
-    if (signal?.aborted) throw abortError();
-    const mode = loadSeededAiPreferences(account ?? "local").assistantMode;
-    if (mode === "cloud-only") return generateCloudForAccount(account, prompt, signal);
     try {
       return await generateLocalFirst(taskId, prompt, {
         signal,
         ...(genOpts.localTaskInput !== undefined ? { localInput: genOpts.localTaskInput } : {}),
       });
     } catch (error) {
+      // A cancel that races a local failure must still surface as an abort
+      // rather than as a generic engine error — and it must never escalate.
       if (signal?.aborted) throw abortError();
-      if (isAbort(error) || mode === "on-device-only") throw error;
-      return generateCloudForAccount(account, prompt, signal);
+      throw error;
     }
   };
 }
@@ -149,7 +149,7 @@ const SEARCH_PROFILE_ID = "qwen3-0.6b-dynamic-int4";
 
 /**
  * Live NL search extractor: raw input through `extract-search-filters`
- * (local-first, cloud fallback) mapped to a validated patch. Fail-closed:
+ * (on-device only) mapped to a validated patch. Fail-closed:
  * empty input never calls generate, and any failure yields an empty patch
  * via `extractNlFilters`.
  */

@@ -67,40 +67,45 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe("account-scoped mode enforcement", () => {
-  it.each(["extract-report-fields", "classify-category", "extract-search-filters"] as const)("%s on-device-only refuses cloud even after local failure", async (task) => {
-    updateAiPreferences("account-a", { assistantMode: "on-device-only" });
-    state.route.mockResolvedValue(failRoute("MODEL_NOT_READY"));
-    state.text.mockResolvedValue("must not send");
-    await expect(liveGenerateFor(task)("private", { maxOutputTokens: 8, temperature: 0 })).rejects.toThrow("MODEL_NOT_READY");
-    expect(state.keyReads).not.toHaveBeenCalled();
-    expect(state.text).not.toHaveBeenCalled();
-  });
-  it("cloud-only skips local and reads only the authenticated account slot", async () => {
-    updateAiPreferences("account-a", { assistantMode: "cloud-only" });
-    state.route.mockResolvedValue(okRoute("wrong local answer"));
-    state.text.mockResolvedValue("cloud answer");
-    await expect(generateForFieldsLive("p", { maxOutputTokens: 8, temperature: 0 })).resolves.toBe("cloud answer");
-    expect(state.route).not.toHaveBeenCalled();
-    expect(state.keyReads).toHaveBeenCalledWith("account-a", "openrouter");
-  });
-  it("ready-made composers resolve the current account on every invocation", async () => {
-    updateAiPreferences("account-a", { assistantMode: "cloud-only" });
-    updateAiPreferences("account-b", { assistantMode: "on-device-only" });
-    state.text.mockResolvedValue("cloud"); state.route.mockResolvedValue(okRoute("local"));
-    await expect(generateForCategoryLive("p", { maxOutputTokens: 8, temperature: 0 })).resolves.toBe("cloud");
-    state.account = "account-b";
+describe("narrow tasks are strictly on-device", () => {
+  it.each(["extract-report-fields", "classify-category", "extract-search-filters"] as const)(
+    "%s surfaces a local failure instead of escalating to the network",
+    async (task) => {
+      state.route.mockResolvedValue(failRoute("MODEL_NOT_READY"));
+      state.text.mockResolvedValue("must not send");
+      await expect(liveGenerateFor(task)("private", { maxOutputTokens: 8, temperature: 0 })).rejects.toThrow("MODEL_NOT_READY");
+      expect(state.keyReads).not.toHaveBeenCalled();
+      expect(state.text).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["automatic", "cloud-only", "on-device-only"] as const)(
+    "the %s assistant preference does not reintroduce a cloud fallback",
+    async (assistantMode) => {
+      updateAiPreferences("account-a", { assistantMode });
+      state.route.mockResolvedValue(failRoute("RUNTIME_ERROR"));
+      state.text.mockResolvedValue("must not send");
+      await expect(generateForCategoryLive("p", { maxOutputTokens: 8, temperature: 0 })).rejects.toThrow("RUNTIME_ERROR");
+      expect(state.keyReads).not.toHaveBeenCalled();
+      expect(state.text).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns a successful local result without ever reading a cloud key", async () => {
+    state.route.mockResolvedValue(okRoute("local"));
     await expect(generateForCategoryLive("p", { maxOutputTokens: 8, temperature: 0 })).resolves.toBe("local");
-    expect(state.keyReads.mock.calls).toEqual([["account-a", "openrouter"]]);
+    expect(state.keyReads).not.toHaveBeenCalled();
   });
-  it("structured cancellation is not a cloud fallback", async () => {
+
+  it("structured cancellation is never a network event", async () => {
     state.route.mockResolvedValue({ ...failRoute("cancelled"), state: "CANCELLED" });
     await expect(generateForFieldsLive("p", { maxOutputTokens: 8, temperature: 0 })).rejects.toMatchObject({ name: "AbortError" });
     expect(state.text).not.toHaveBeenCalled();
   });
-  it("account switch during local failure cannot send to the new account's cloud", async () => {
+
+  it("a local failure after an account switch still cannot reach the network", async () => {
     state.route.mockImplementation(async () => { state.account = "account-b"; return failRoute("runtime failed"); });
-    await expect(generateForFieldsLive("p", { maxOutputTokens: 8, temperature: 0 })).rejects.toThrow(/account/i);
+    await expect(generateForFieldsLive("p", { maxOutputTokens: 8, temperature: 0 })).rejects.toThrow("runtime failed");
     expect(state.keyReads).not.toHaveBeenCalled();
     expect(state.text).not.toHaveBeenCalled();
   });
@@ -155,8 +160,8 @@ describe("generateLocalFirst", () => {
   });
 });
 
-describe("local/cloud input split (Phase A.4)", () => {
-  it("routes localTaskInput locally while the cloud fallback keeps the engineered prompt", async () => {
+describe("local task input (Phase A.4)", () => {
+  it("routes localTaskInput to the on-device engine and returns its value", async () => {
     state.route.mockResolvedValue(okRoute('{"category":"electronics"}'));
     const out = await liveGenerateFor("classify-category")(
       "Classify the item text. Return ONLY one JSON object.",
@@ -167,19 +172,21 @@ describe("local/cloud input split (Phase A.4)", () => {
     expect(state.text).not.toHaveBeenCalled();
   });
 
-  it("cloud fallback receives the engineered prompt, never the raw input", async () => {
+  it("the engineered prompt is never sent to a network transport on local failure", async () => {
     state.route.mockResolvedValue(failRoute("RUNTIME_ERROR"));
     state.text.mockResolvedValue('{"category":"electronics"}');
-    await liveGenerateFor("classify-category")("Engineered prompt here.", {
-      maxOutputTokens: 8,
-      temperature: 0,
-      localTaskInput: { text: "red umbrella" },
-    });
-    expect(state.text.mock.calls[0]![0]).toBe("Engineered prompt here.");
+    await expect(
+      liveGenerateFor("classify-category")("Engineered prompt here.", {
+        maxOutputTokens: 8,
+        temperature: 0,
+        localTaskInput: { text: "red umbrella" },
+      }),
+    ).rejects.toThrow("RUNTIME_ERROR");
+    expect(state.text).not.toHaveBeenCalled();
   });
 });
 
-describe("liveGenerateFor (local-first, cloud fallback)", () => {
+describe("liveGenerateFor (on-device only)", () => {
   it("uses the local result and never touches the network", async () => {
     state.route.mockResolvedValue(okRoute('{"category":"electronics"}'));
     const out = await liveGenerateFor("classify-category")("prompt", {
@@ -190,16 +197,14 @@ describe("liveGenerateFor (local-first, cloud fallback)", () => {
     expect(state.text).not.toHaveBeenCalled();
   });
 
-  it("falls back to cloud on non-abort local failure", async () => {
+  it("rejects on non-abort local failure instead of falling back to cloud", async () => {
     state.route.mockResolvedValue(failRoute("RUNTIME_ERROR"));
     state.text.mockResolvedValue('{"category":"electronics"}');
-    const out = await liveGenerateFor("classify-category")("prompt", {
-      maxOutputTokens: 8,
-      temperature: 0,
-    });
-    expect(out).toBe('{"category":"electronics"}');
-    expect(state.text).toHaveBeenCalledTimes(1);
-    expect(state.text.mock.calls[0]![0]).toBe("prompt");
+    await expect(
+      liveGenerateFor("classify-category")("prompt", { maxOutputTokens: 8, temperature: 0 }),
+    ).rejects.toThrow("RUNTIME_ERROR");
+    expect(state.text).not.toHaveBeenCalled();
+    expect(state.keyReads).not.toHaveBeenCalled();
   });
 
   it("an abort never touches the network", async () => {
@@ -263,9 +268,10 @@ describe("ready-made live composers", () => {
     expect(patch.dateTo).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("nlExtractLive fails closed to an empty patch when both transports fail", async () => {
+  it("nlExtractLive fails closed to an empty patch when the on-device route fails", async () => {
     state.route.mockResolvedValue(failRoute("RUNTIME_ERROR"));
     state.text.mockRejectedValue(new Error("no key"));
     await expect(nlExtractLive("black wallet")).resolves.toEqual({});
+    expect(state.text).not.toHaveBeenCalled();
   });
 });
