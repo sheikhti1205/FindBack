@@ -65,6 +65,44 @@ describe("extract-report-fields op", () => {
     if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
   });
 
+  it("returns a result, not a rejection, when the engine fails (CF-040 F7)", async () => {
+    const failing = Object.assign(
+      async (): Promise<string> => {
+        throw new Error("On-device runtime is busy");
+      },
+      { calls: 0 },
+    );
+    const result = await extractReportFields(
+      failing,
+      "Lost keys.",
+      mustProfile("qwen3-0.6b-dynamic-int4"),
+    );
+    // This op promises `AiResult`: an engine failure must come back as a result
+    // the screen renders, never as a rejection the caller has to remember to
+    // catch (that rejection is what made a local failure invisible).
+    expect(result).toEqual({
+      ok: false,
+      error: { errorClass: "RUNTIME_ERROR", diagnostic: "FIELDS_GENERATION_FAILED" },
+    });
+  });
+
+  it("keeps a real cancellation CANCELLED rather than a runtime error", async () => {
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    const aborting = Object.assign(async (): Promise<string> => Promise.reject(abortError), {
+      calls: 0,
+    });
+    const result = await extractReportFields(
+      aborting,
+      "Lost keys.",
+      mustProfile("qwen3-0.6b-dynamic-int4"),
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: { errorClass: "CANCELLED", diagnostic: "ABORT_MID_GENERATION" },
+    });
+  });
+
   it("rejects instruction verbatim in free text with no explicit context (BV08-stock shape)", async () => {
     const result = await extractReportFields(
       stubGenerate(JSON.stringify({ title: "Umbrella", description: REPORT_SLOTS_INSTRUCTION })),

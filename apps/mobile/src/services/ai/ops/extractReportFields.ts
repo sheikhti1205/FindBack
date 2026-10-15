@@ -8,11 +8,12 @@
 import type { ModelProfile } from "../modelProfiles";
 import { makeAskUserPrompt } from "../clarificationCopy";
 import { normalizeJsonOp, validateReportSlots, validateSlotEnvelope, type NormalizeOptions } from "../normalize";
-import type {
-  AiResult,
-  AssistantAction,
-  GenerateFn,
-  ReportExtraction,
+import {
+  makeAiError,
+  type AiResult,
+  type AssistantAction,
+  type GenerateFn,
+  type ReportExtraction,
 } from "../types";
 
 export const REPORT_SLOTS_INSTRUCTION =
@@ -30,13 +31,26 @@ export async function extractReportFields(
   profile: ModelProfile,
   options?: NormalizeOptions,
 ): Promise<AiResult<ReportExtraction>> {
-  const rawText = await generate(buildReportSlotsPrompt(userMessage), {
-    maxOutputTokens: profile.maxOutputTokensText,
-    temperature: profile.defaultTemperature,
-    // The on-device route receives the raw request (a tool model selects
-    // and fills its tool from what the user said); cloud keeps the prompt.
-    localTaskInput: { text: userMessage },
-  });
+  let rawText: string;
+  try {
+    rawText = await generate(buildReportSlotsPrompt(userMessage), {
+      maxOutputTokens: profile.maxOutputTokensText,
+      temperature: profile.defaultTemperature,
+      // The on-device route receives the raw request (a tool model selects
+      // and fills its tool from what the user said); cloud keeps the prompt.
+      localTaskInput: { text: userMessage },
+    });
+  } catch (error) {
+    // This op promises `AiResult`, so an engine failure has to come back as a
+    // result: a rejection here only surfaces if every caller remembers its own
+    // try/catch, and a transient on-device failure then reads as nothing at all.
+    // A real cancellation stays CANCELLED — the screen shows "AI request
+    // cancelled." for that class and must not show it for a failure.
+    if (error instanceof Error && error.name === "AbortError") {
+      return { ok: false, error: makeAiError("CANCELLED", "ABORT_MID_GENERATION") };
+    }
+    return { ok: false, error: makeAiError("RUNTIME_ERROR", "FIELDS_GENERATION_FAILED") };
+  }
   const context = {
     instruction: REPORT_SLOTS_INSTRUCTION,
     userContext: options?.context?.userContext ?? userMessage,

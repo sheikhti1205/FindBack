@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
+import { Link } from "react-router";
 import type { PostType } from "@findback/shared";
 import { Segmented } from "../components/Segmented";
 import { PostList } from "../components/PostList";
@@ -9,7 +10,7 @@ import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 import { AdvancedSearchFilters, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
 import type { NlFilterPatch } from "../services/search/nlFilters";
-import { nlExtractLive } from "../services/liveNarrowTasks";
+import { nlExtractLive, nlHelperReady } from "../services/liveNarrowTasks";
 import {
   fadeVariants,
   motionDurations,
@@ -59,12 +60,17 @@ export function SearchScreen(props: {
   const [nlInput, setNlInput] = useState("");
   const [nlBusy, setNlBusy] = useState(false);
   const [nlNote, setNlNote] = useState<string | null>(null);
+  // True only when an empty result means "the helper isn't set up here", not
+  // "the helper looked and found nothing". Those two are different truths and
+  // must not share copy (CF-040 F6).
+  const [nlHelperMissing, setNlHelperMissing] = useState(false);
 
   async function applyNlFilters() {
     const text = nlInput.trim();
     if (nlExtract === undefined || nlBusy || text === "") return;
     setNlBusy(true);
     setNlNote(null);
+    setNlHelperMissing(false);
     try {
       const patch = await nlExtract(text);
       let applied = 0;
@@ -88,9 +94,18 @@ export function SearchScreen(props: {
         setDateToParam(patch.dateTo);
         applied += 1;
       }
+      // An empty patch has two very different causes: the helper ran and wasn't
+      // confident, or the helper isn't on this device at all (Smart Search fails
+      // closed either way). Saying "no confident filters" for the second one is
+      // a lie about why nothing happened, so check the device first and offer
+      // the one action that fixes it (CF-040 F6).
+      const helperReady = nlHelperReady();
+      setNlHelperMissing(applied === 0 && !helperReady);
       setNlNote(
         applied === 0
-          ? "No confident filters found — nothing changed."
+          ? helperReady
+            ? "No confident filters found — nothing changed."
+            : "Smart Search needs the on-device model, which isn't set up on this device yet."
           : `Applied ${applied} smart filter${applied === 1 ? "" : "s"} — review or remove them below.`,
       );
     } catch {
@@ -284,9 +299,20 @@ export function SearchScreen(props: {
           </button>
         </div>
         {nlNote !== null && (
-          <p className="text-xs text-on-surface-variant" role="status">
-            {nlNote}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs text-on-surface-variant" role="status">
+              {nlNote}
+            </p>
+            {nlHelperMissing && (
+              <Link
+                to="/settings/ai/models"
+                data-testid="smart-search-manage-models"
+                className="inline-flex min-h-[48px] items-center rounded-full border border-outline-variant px-4 text-sm font-medium text-on-surface"
+              >
+                Manage AI models
+              </Link>
+            )}
+          </div>
         )}
 
         <AdvancedSearchFilters filters={advanced} />

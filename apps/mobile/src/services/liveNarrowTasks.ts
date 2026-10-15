@@ -17,11 +17,12 @@
  *   AbortError always propagates (never swallowed).
  * - `liveGenerateFor(taskId)` is the composer the consumer features use. It is
  *   local-only, so a local failure surfaces to the caller unchanged.
- * - The legacy cloud transports (`generateCloud`, `generateCloudForAccount`) are
- *   retained only for the guided Help assistant: `Help.tsx` imports
- *   `generateCloudForAccount` alone, and `generateCloud` has no production
- *   consumer. Both go when Help does; nothing in the narrow-task path calls
- *   either.
+ * - The legacy cloud transports (`generateCloud`, `generateCloudForAccount`) sit
+ *   outside the narrow-task path and survive only as long as the guided Help
+ *   assistant does: `Help.tsx` imports `generateCloudForAccount`, and
+ *   `generateCloud` has no production consumer at all — only this module's own
+ *   tests import it. Both go when Help's cloud transports go; nothing in the
+ *   narrow-task path calls either.
  */
 import { getApplicationAi } from "./ai/applicationAi";
 import { createOpenRouterClient } from "./openRouter";
@@ -33,6 +34,7 @@ import { profileFor } from "./ai/modelProfiles";
 import { NEEDLE_MODEL_ID } from "./ai/needle/embedder";
 import type { AiTaskId, GenerateFn } from "./ai/types";
 import { extractNlFilters, type NlFilterPatch } from "./search/nlFilters";
+import { canShowOffline } from "./ai/uiGates";
 
 export type LiveNarrowTaskId =
   | "extract-search-filters"
@@ -160,6 +162,21 @@ export const generateForCategoryLive: GenerateFn = liveGenerateFor("classify-cat
  * profile.
  */
 export const NARROW_TASK_PROFILE_ID = NEEDLE_MODEL_ID;
+
+/**
+ * Is the on-device helper that serves Smart Search set up on this device?
+ *
+ * Smart Search fails closed either way, so an empty patch alone cannot tell
+ * "the helper ran and found nothing confident" apart from "the helper isn't
+ * here yet" — and reporting the second as the first is a lie about why nothing
+ * happened. This reads the same evidence the on-device AI surface gates on
+ * (installed **and** checksum-verified), so the screen can say which one it is
+ * and offer the single action that fixes it (baseline §G:370-374). A pure
+ * status read: no probe, no fetch, no credential.
+ */
+export function nlHelperReady(): boolean {
+  return canShowOffline(getApplicationAi().manager.statusOf(NARROW_TASK_PROFILE_ID));
+}
 
 /**
  * Live NL search extractor: raw input through `extract-search-filters`

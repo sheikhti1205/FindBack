@@ -3,16 +3,20 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchFeedMock, tabTapState, nlExtractLiveMock } = vi.hoisted(() => ({
+const { fetchFeedMock, tabTapState, nlExtractLiveMock, nlHelperReadyMock } = vi.hoisted(() => ({
   fetchFeedMock: vi.fn(),
   tabTapState: { tapCount: 0 },
   nlExtractLiveMock: vi.fn(),
+  nlHelperReadyMock: vi.fn(),
 }));
 
 vi.mock("../services/posts", () => ({ fetchFeed: fetchFeedMock }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../components/TabTap", () => ({ useTabTap: () => tabTapState }));
-vi.mock("../services/liveNarrowTasks", () => ({ nlExtractLive: nlExtractLiveMock }));
+vi.mock("../services/liveNarrowTasks", () => ({
+  nlExtractLive: nlExtractLiveMock,
+  nlHelperReady: nlHelperReadyMock,
+}));
 
 import { SearchScreen } from "./SearchScreen";
 import { clearFeedCaches } from "../hooks/feedCache";
@@ -36,6 +40,10 @@ describe("SearchScreen URL filters", () => {
     fetchFeedMock.mockReset();
     nlExtractLiveMock.mockReset();
     nlExtractLiveMock.mockResolvedValue({});
+    nlHelperReadyMock.mockReset();
+    // Default: the on-device helper is set up, so an empty patch really does
+    // mean "nothing confident". Tests for the not-set-up case opt in.
+    nlHelperReadyMock.mockReturnValue(true);
     tabTapState.tapCount = 0;
     clearFeedCaches();
     fetchFeedMock.mockResolvedValue({ items: [], nextCursor: null, total: 0 });
@@ -240,6 +248,49 @@ describe("SearchScreen URL filters", () => {
       expect(last[0].category).toBeUndefined();
       expect(last[0].q).toBeUndefined();
       expect(fetchFeedMock.mock.calls.length).toBe(calls);
+    });
+
+    it("says the helper is missing instead of 'no confident filters', and offers one way to fix it", async () => {
+      nlHelperReadyMock.mockReturnValue(false);
+      renderWithNl(async () => ({}));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "black wallet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      // The absence of the helper is a different truth from an unconfident
+      // model, so it gets its own sentence — never the "no confident filters" one.
+      expect(
+        await screen.findByText(
+          "Smart Search needs the on-device model, which isn't set up on this device yet.",
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByText("No confident filters found — nothing changed.")).toBeNull();
+
+      // Exactly one action, and it goes to the single download owner.
+      const actions = screen.getAllByRole("link");
+      const manageModels = screen.getByTestId("smart-search-manage-models");
+      expect(manageModels.getAttribute("href")).toBe("/settings/ai/models");
+      expect(actions.filter((a) => a.getAttribute("data-testid") === "smart-search-manage-models")).toHaveLength(1);
+      expect(manageModels.textContent).toBe("Manage AI models");
+
+      fireEvent.click(manageModels);
+      await waitFor(() =>
+        expect(screen.getByTestId("location").textContent).toBe("/settings/ai/models"),
+      );
+    });
+
+    it("does not offer the download action when a helper that is set up applied filters", async () => {
+      nlHelperReadyMock.mockReturnValue(false);
+      renderWithNl(async () => ({ query: "black wallet" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "black wallet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(await screen.findByText(/Applied 1 smart filter/)).toBeTruthy();
+      expect(screen.queryByTestId("smart-search-manage-models")).toBeNull();
+      expect(screen.queryByText(/needs the on-device model/)).toBeNull();
     });
 
     it("reports failure without changing filters", async () => {

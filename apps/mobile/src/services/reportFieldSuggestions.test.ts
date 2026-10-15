@@ -121,6 +121,14 @@ describe("suggestReportFields (extract-report-fields consumer, fakes only)", () 
       },
       { calls: 0 },
     );
-    await expect(suggestReportFields(failing, MESSAGE, PROFILE)).rejects.toThrow("transport exploded");
+    // The documented contract is `AiResult`, so an engine failure comes back as
+    // a result the screen renders ("Couldn't draft suggestions…"), never as a
+    // rejection: a rejection here is silently unhandled unless every caller
+    // remembers a try/catch (CF-040 F7).
+    const result = await suggestReportFields(failing, MESSAGE, PROFILE);
+    expect(result).toEqual({
+      ok: false,
+      error: { errorClass: "RUNTIME_ERROR", diagnostic: "FIELDS_GENERATION_FAILED" },
+    });
   });
 });
