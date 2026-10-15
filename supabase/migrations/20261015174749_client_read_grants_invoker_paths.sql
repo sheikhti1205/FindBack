@@ -1,0 +1,73 @@
+-- FindBack - close the last two client-read column gaps in the migration chain
+-- (REVIEW-M1-REPAIR R1, from the independent re-review of 20261015163718, plus
+-- the repo-wide enumeration in the trust-backend CLIENT-ACL-ANALYSIS).
+--
+-- 1. WHAT WAS BROKEN, AND WHERE.
+--    `authenticated` holds a column-scoped SELECT on public.comments
+--    (20260914200000:24) and on public.reactions (20260914180000:68). Two
+--    columns that client-reachable readers ask for were never in those lists,
+--    so an environment rebuilt from this repo fails the same way for both:
+--
+--      * public.comments.parent_id and public.comments.depth - added to the
+--        table by 20261002030000:10-13, read by findback_list_comments_client
+--        (20261012020000:170) and findback_add_comment_client
+--        (20261002030000:113,134). Opening a post's comments or posting a reply
+--        raises `permission denied for table comments` (SQLSTATE 42501) and the
+--        shipped comments screen (apps/mobile/src/services/posts.ts) is dead.
+--      * public.reactions.user_id - read by findback_query_posts_client
+--        (20261015154642:409-411) and findback_query_posts_nearby_client
+--        (20261015154642:596-598) for the caller's own-reaction flag. The same
+--        42501 takes out the feed itself, not a corner of it.
+--
+--    All four readers are SECURITY INVOKER, so a grant is the only thing that
+--    can make them work in the caller's own context. Rewriting them as definer
+--    would change the security model of the two hottest read paths, which is not
+--    what a grant repair is for.
+--
+-- 2. THIS CHANGES NOTHING IN PRODUCTION (verified before writing this file).
+--    The hosted project holds a TABLE-level SELECT for `authenticated` on both
+--    tables and its SELECT policies on both are `qual = true`
+--    (comments_select_authenticated, reactions_select_authenticated), so every
+--    column granted below - reaction user ids included - is already readable
+--    there. Checked with information_schema.table_privileges and pg_policies,
+--    then behaviourally as role `authenticated`. The repository is what rebuilds
+--    an environment, so the repository is what gets the repair, and nothing is
+--    widened relative to production.
+--
+-- 3. THE DOCTRINE CONFLICT, STATED RATHER THAN HIDDEN (open owner question).
+--    public.reactions.user_id is deliberately absent from the original grant:
+--    sibling state RPCs answer reaction questions with md5('reaction|post|uid')
+--    digests instead of identities (20260914180000:66, 20260929000000:17-18,
+--    20260909030000:20-22). The two feed readers contradict that intent by
+--    reading the column directly, and the intent is not enforced in production
+--    either - a table-level SELECT plus a `qual = true` policy expose the same
+--    column to any signed-in client today. The choice is therefore:
+--      (a) keep the readers as they are and grant what they read - this file:
+--          least code, matches production exactly, reversible by dropping the
+--          grant; or
+--      (b) restore the intent by rewriting both feed readers and tightening
+--          production - a project of its own, recorded as an owner question in
+--          the work queue.
+--    This file is (a). It does not decide (b).
+--
+-- 4. SCOPE. Every OTHER column that a client-reachable SECURITY INVOKER reader
+--    asks for is already granted; the reader-driven check added to
+--    supabase/tests/migration_parity.test.mjs alongside this migration walks all
+--    such readers, so this file is the end of the class rather than a sample of
+--    it. REVIEW-M1-REPAIR read the previous repair's header as claiming a
+--    class-wide guarantee from a two-table check; that claim is made true here
+--    by widening the check, not by softening the claim.
+--
+-- 5. ADDITIVE ONLY. Two GRANT statements. No column, row, function, policy or
+--    bound changes; no REVOKE; nothing is taken away from any role.
+--
+-- LIVE-PENDING: verified by
+-- supabase/tests/verify_20261015174055_client_read_grants.sql, which asks the
+-- catalog and then executes the exact read shapes as role `authenticated`
+-- inside a rolled-back transaction.
+
+grant select (parent_id, depth) on public.comments to authenticated;
+
+-- Column-scoped on purpose: reactions keeps its least-privilege surface
+-- (created_at stays ungranted - no client reader asks for it).
+grant select (user_id) on public.reactions to authenticated;

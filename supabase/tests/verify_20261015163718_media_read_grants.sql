@@ -80,15 +80,19 @@ where (
 -- GIF is passed through untouched up to 30M decoded pixels
 -- (apps/mobile/src/services/image.ts), so a 9000px edge is a publishable input and
 -- the stored hint must accept it. This is the REVIEW-M1 F4 regression, expressed
--- as the number it broke on.
-select 'P4 a 9000px passthrough dimension is accepted, not rejected' as probe
-where 9000 between 1 and 100000
-  and (select count(*) from pg_constraint
-       where conname in ('attachments_dims_check', 'uploads_dims_check')
-         and pg_get_constraintdef(oid) like '%100000%') = 2
-  and 9000::integer is not null;
--- EXPECT: 1 row. The client mirror is MAX_DISPLAY_DIMENSION
--- (apps/mobile/src/services/media/displayDimensions.ts); the two must agree.
+-- as the number it broke on. REVIEW-M1-REPAIR R5: the bound is PARSED out of the
+-- constraint and compared numerically - the previous form compared a literal to
+-- the same literal (`9000 between 1 and 100000`) and asserted a non-null integer,
+-- which is arithmetic, not a probe. Agreement with the client mirror
+-- (MAX_DISPLAY_DIMENSION) is asserted in code where the constant can be read:
+-- supabase/tests/migration_parity.test.mjs, "dims bound parity".
+select 'P4 the parsed dims ceiling accepts a 9000px passthrough' as probe
+where (
+  select count(*) from pg_constraint
+  where conname in ('attachments_dims_check', 'uploads_dims_check') and contype = 'c'
+    and (regexp_match(pg_get_constraintdef(oid), '<= (\d+)'))[1]::integer >= 9000
+) = 2;
+-- EXPECT: 1 row.
 
 -- P5. The four dimension columns document themselves as a display hint, so a
 -- future reader cannot mistake them for a rule about what may be published.
@@ -159,15 +163,20 @@ where (
 -- here, and 20261015154642's catalog-only probes could not see it. EXPECT: no
 -- error, and 0 rows (LIMIT 0 keeps this read-only and row-independent).
 --
--- begin;
--- set local role authenticated;
--- select * from public.uploads limit 0;
--- select * from public.attachments limit 0;
--- select width, height, display_order, file_url from public.attachments limit 0;
--- rollback;
+-- REVIEW-M1-REPAIR R4: these statements are EXECUTED, not commented out. A
+-- runner that walks this file used to execute eight catalog probes and then
+-- silently skip the only check that can see the defect class the file exists
+-- for. The text below is live SQL; the explanation around it is the comment.
 --
 -- A returned row count is NOT the assertion - a pristine database legitimately has
 -- no rows. The assertion is that nothing raised.
+
+begin;
+set local role authenticated;
+select * from public.uploads limit 0;
+select * from public.attachments limit 0;
+select width, height, display_order, file_url from public.attachments limit 0;
+rollback;
 
 -- ---------------------------------------------------------------------------
 -- 3. Publish round trip (needs a real account; run-live.sh on a disposable backend)

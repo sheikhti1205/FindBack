@@ -563,15 +563,72 @@ describe("CREATE OR REPLACE signature-drift guard", () => {
 // The verify file shipped with that migration could not see it: every probe was
 // catalog-only. This guard makes the class statically visible with no database.
 //
-// SCOPE IS DELIBERATE. Only the tables the consumer report path reads directly
-// are asserted. The repo also column-restricts comments/reactions/ratings/users
-// on purpose (e.g. `grant select (id, post_id)` on comments is a deliberate
-// aggregate-only surface), and a global rule would either need those grants
-// widened - an ACL-doctrine decision for the owner, not a cleanup - or would
-// fail the build on the intended design. A finding for those tables is reported
-// by the same helper when a caller passes them in.
+// That guard was scoped to the two media tables by declaration, and
+// REVIEW-M1-REPAIR showed what a declared scope costs: the same class was live
+// on `comments` - an invoker reader asking for parent_id/depth against a grant
+// that stopped at body - and the check could not see it, because the table was
+// never named. A separate repo-wide enumeration (trust-backend
+// CLIENT-ACL-ANALYSIS) then found the second instance: `reactions.user_id`, read
+// by both feed readers and granted to nobody.
+//
+// TWO CHECKS, ONE CLASS.
+//
+//   * findColumnGrantGaps(tables) is the coarse question for a DECLARED list of
+//     tables - "can `authenticated` read every column of these?" - and catches
+//     the next width/height on the tables the media pipeline writes. A declared
+//     table with NO read grant at all is a gap, not a deliberate state
+//     (REVIEW-M1-REPAIR R2): for a table the client is known to read, "nobody
+//     may read it" IS the defect, and the previous escape let `revoke all ...
+//     from authenticated` pass in silence.
+//
+//   * findReaderGrantGaps() is the precise question for the WHOLE class - "is
+//     every column a client-reachable reader asks for readable?" - answered by
+//     parsing the latest body of every SECURITY INVOKER `findback_*_client`
+//     function in the chain. Readers, not tables, are what the grant model
+//     serves, and walking readers is what found both R1 instances. `select *`
+//     in a reader counts as "every column of that table", which is how the
+//     original F1/F2 defect appears in this model without naming any table.
+//
+// A `findback_*_client` function that is SECURITY DEFINER runs as its owner and
+// needs no grant, so it is skipped - but the set is pinned by name below, so a
+// reader turning definer (a security-model change) fails this file instead of
+// quietly leaving the check.
 // ---------------------------------------------------------------------------
 const CLIENT_READ_MEDIA_TABLES = ["uploads", "attachments"];
+
+/** The repo's naming convention for entry points that `authenticated` may call. */
+const CLIENT_FUNCTION_SUFFIX = "_client";
+
+/**
+ * Client entry points that run SECURITY DEFINER, so their reads need no grant.
+ * Any change here is a security-model change and should be deliberate.
+ */
+const DEFINER_CLIENT_FUNCTIONS = [
+  "findback_delete_notifications_client",
+  "findback_get_notification_preferences_client",
+  "findback_list_notifications_client",
+  "findback_mark_notifications_read_client",
+  "findback_mark_notifications_unread_client",
+  "findback_notification_count_client",
+  "findback_react_comment_client",
+  "findback_register_device_token_client",
+  "findback_restore_notifications_client",
+  "findback_search_profiles_client",
+  "findback_set_notification_preferences_client",
+  "findback_unregister_device_token_client",
+];
+
+/** Source of the client-side constant the SQL dims bound must agree with. */
+const DIMS_MIRROR = join(
+  ROOT,
+  "..",
+  "apps",
+  "mobile",
+  "src",
+  "services",
+  "media",
+  "displayDimensions.ts",
+);
 
 /** Body lines that are not column definitions. */
 const TABLE_BODY_KEYWORDS = new Set([
@@ -657,10 +714,13 @@ function readGrantModel(migrations) {
       }
     }
 
+    // `add width integer` and `add column width integer` are the same statement
+    // and the keyword is not always written (REVIEW-M1-REPAIR R3); `add
+    // constraint` / `add primary key` must not be read as a column either.
     for (const m of text.matchAll(
-      /alter table (?:if exists )?(?:only )?public\.([a-z0-9_]+) add column (?:if not exists )?([a-z0-9_]+)/g,
+      /alter table (?:if exists )?(?:only )?public\.([a-z0-9_]+) add (?:column )?(?:if not exists )?([a-z0-9_]+)/g,
     )) {
-      columnsOf(m[1]).add(m[2]);
+      if (!TABLE_BODY_KEYWORDS.has(m[2])) columnsOf(m[1]).add(m[2]);
     }
 
     // Grants and revokes are applied in SOURCE ORDER, because this repo's pattern
@@ -682,6 +742,13 @@ function readGrantModel(migrations) {
     )) {
       events.push({ index: m.index, kind: "revoke", privs: m[1], table: m[2], roles: m[3], cols: null });
     }
+    // `revoke select (col) ...` is a narrowing, not a blanket revoke
+    // (REVIEW-M1-REPAIR R3).
+    for (const m of text.matchAll(
+      /revoke ([a-z, ]*?) \(([^)]*)\) on (?:table )?public\.([a-z0-9_]+) from ([a-z_, ]+?)(?=[;)]|$)/g,
+    )) {
+      events.push({ index: m.index, kind: "revoke", privs: m[1], table: m[3], roles: m[4], cols: m[2] });
+    }
 
     for (const event of events.sort((a, b) => a.index - b.index)) {
       if (!targets(event.roles).includes("authenticated")) continue;
@@ -699,8 +766,22 @@ function readGrantModel(migrations) {
         continue;
       }
       tableSelect.delete(event.table);
-      if (event.cols === null) columnSelect.delete(event.table);
-      else columnSelect.get(event.table)?.clear();
+      if (event.cols === null) {
+        columnSelect.delete(event.table);
+      } else {
+        // A column revoke narrows a table-level grant too: Postgres layers the
+        // column restriction on top of it.
+        if (tableSelect.has(event.table)) {
+          tableSelect.delete(event.table);
+          const revoked = event.cols.split(",").map((c) => c.trim()).filter(Boolean);
+          for (const col of columns.get(event.table) ?? []) {
+            if (!revoked.includes(col)) grantedColumns(event.table).add(col);
+          }
+        }
+        for (const col of event.cols.split(",").map((c) => c.trim()).filter(Boolean)) {
+          columnSelect.get(event.table)?.delete(col);
+        }
+      }
     }
   }
 
@@ -710,20 +791,115 @@ function readGrantModel(migrations) {
 /**
  * Columns of `tables` that no grant lets `authenticated` read.
  *
- * A table with no grant at all is skipped: "the client cannot read this" is a
- * deliberate state, not a gap.
+ * A declared table with NO grant at all is a gap covering every column: the
+ * caller passed it in because the client is known to read it, so "nobody may
+ * read this" is the defect this check exists to catch rather than a deliberate
+ * state that exempts it (REVIEW-M1-REPAIR R2 - the previous escape meant
+ * `revoke all ... from authenticated` produced zero findings).
  */
 function findColumnGrantGaps(migrations, tables = CLIENT_READ_MEDIA_TABLES) {
   const { columns, tableSelect, columnSelect } = readGrantModel(migrations);
   const gaps = [];
   for (const table of tables) {
     if (tableSelect.has(table)) continue;
-    const granted = columnSelect.get(table);
-    if (!granted) continue;
+    const granted = columnSelect.get(table) ?? new Set();
     const missing = [...(columns.get(table) ?? [])].filter((c) => !granted.has(c)).sort();
     if (missing.length > 0) gaps.push({ table, missing });
   }
   return gaps;
+}
+
+/**
+ * Latest definition of every `public` function in the chain.
+ *
+ * Definitions and `drop function` are applied in source order because this repo
+ * drops and recreates a function whenever its signature changes, and the body is
+ * the dollar-quoted literal following the declaration.
+ */
+function readFunctionModel(migrations) {
+  const functions = new Map();
+  for (const { sql } of migrations) {
+    const marks = [];
+    for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+public\.([a-z0-9_]+)\s*\(/gi)) {
+      marks.push({ index: m.index, kind: "create", name: m[1] });
+    }
+    for (const m of sql.matchAll(/drop function if exists public\.([a-z0-9_]+)\s*\(/gi)) {
+      marks.push({ index: m.index, kind: "drop", name: m[1] });
+    }
+    for (const mark of marks.sort((a, b) => a.index - b.index)) {
+      if (mark.kind === "drop") {
+        functions.delete(mark.name);
+        continue;
+      }
+      const tail = sql.slice(mark.index);
+      const dollar = tail.match(/\$([a-z_]*)\$([\s\S]*?)\$\1\$/);
+      if (!dollar) continue;
+      const head = flattenSql(tail.slice(0, tail.indexOf(dollar[0])));
+      functions.set(mark.name, { body: dollar[2], definer: /security\s+definer/.test(head) });
+    }
+  }
+  return functions;
+}
+
+/** Words that can follow a table in FROM/JOIN but are not aliases. */
+const ALIAS_STOP_WORDS = new Set([
+  "and", "as", "asc", "between", "cross", "desc", "else", "end", "except", "exists", "for",
+  "full", "group", "having", "in", "inner", "is", "join", "left", "like", "limit", "not",
+  "null", "offset", "on", "or", "order", "outer", "returning", "right", "select", "set",
+  "then", "union", "using", "values", "when", "where", "with",
+]);
+
+/**
+ * Columns a client-reachable reader asks for that `authenticated` cannot read.
+ *
+ * The question is asked of READERS, not of a table list: every SECURITY INVOKER
+ * `findback_*_client` function runs with the caller's privileges, so every column
+ * its body reads is a column the grant model must cover. Column references are
+ * attributed through the alias bound to each `public.<table>` in a FROM/JOIN
+ * clause, and a `select *` from such a table demands all of its columns - which
+ * is exactly how the 20261015154642 defect (`select * into v_upload`) appears
+ * here without naming uploads anywhere.
+ */
+function findReaderGrantGaps(migrations) {
+  const { columns, tableSelect, columnSelect } = readGrantModel(migrations);
+  const functions = readFunctionModel(migrations);
+  const required = new Map();
+  const requireColumn = (table, column) => {
+    if (!required.has(table)) required.set(table, new Set());
+    required.get(table).add(column);
+  };
+
+  for (const [name, fn] of functions) {
+    if (!name.endsWith(CLIENT_FUNCTION_SUFFIX) || fn.definer) continue;
+    const body = flattenSql(fn.body);
+    const aliases = new Map();
+    for (const m of body.matchAll(/\b(?:from|join)\s+(?:public\.)?([a-z0-9_]+)(?:\s+(?:as\s+)?([a-z0-9_]+))?/g)) {
+      const table = m[1];
+      const alias = m[2];
+      if (!columns.has(table)) continue; // a CTE, a set-returning function, a variable
+      if (alias && !ALIAS_STOP_WORDS.has(alias)) aliases.set(alias, table);
+    }
+    for (const [alias, table] of aliases) {
+      for (const m of body.matchAll(new RegExp(`\\b${alias}\\.([a-z0-9_]+)`, "g"))) {
+        requireColumn(table, m[1]);
+      }
+    }
+    for (const m of body.matchAll(/select\s+(?:distinct\s+)?\*\s*(?:into\s+[a-z0-9_]+\s*)?from\s+(?:public\.)?([a-z0-9_]+)/g)) {
+      if (!columns.has(m[1])) continue;
+      for (const column of columns.get(m[1])) requireColumn(m[1], column);
+    }
+  }
+
+  const gaps = [];
+  for (const [table, wanted] of required) {
+    if (tableSelect.has(table)) continue;
+    const granted = columnSelect.get(table) ?? new Set();
+    const missing = [...wanted]
+      .filter((c) => columns.get(table)?.has(c) && !granted.has(c))
+      .sort();
+    if (missing.length > 0) gaps.push({ table, missing });
+  }
+  return gaps.sort((a, b) => a.table.localeCompare(b.table));
 }
 
 describe("column-grant coverage (client-read media tables)", () => {
@@ -766,14 +942,16 @@ describe("column-grant coverage (client-read media tables)", () => {
     assert.deepEqual(findColumnGrantGaps(revoked), [{ table: "uploads", missing: ["width"] }]);
   });
 
-  it("ignores grants that target other roles", () => {
-    const anonOnly = [
+  it("does not accept a grant that targets another role as a read for `authenticated`", () => {
+    const mixed = [
       {
         file: "a.sql",
-        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to anon;",
+        sql: "create table public.comments (id text, body text); grant select (id, body) on public.comments to anon; grant select (id) on public.comments to authenticated;",
       },
     ];
-    assert.deepEqual(findColumnGrantGaps(anonOnly), []);
+    assert.deepEqual(findColumnGrantGaps(mixed, ["comments"]), [
+      { table: "comments", missing: ["body"] },
+    ]);
   });
 
   it("only inspects the declared tables, so an unrelated gap cannot fail the build", () => {
@@ -785,6 +963,136 @@ describe("column-grant coverage (client-read media tables)", () => {
     ];
     assert.deepEqual(findColumnGrantGaps(others), []);
     assert.deepEqual(findColumnGrantGaps(others, ["comments"]), [{ table: "comments", missing: ["body"] }]);
+  });
+});
+
+describe("reader-driven grant coverage (the whole client-read surface)", () => {
+  const CHAIN = () => ls().map((file) => ({ file, sql: mig(file) }));
+  const GRANTS = "20261015174749_client_read_grants_invoker_paths.sql";
+
+  it("every column a client-reachable reader asks for is readable", () => {
+    assert.deepEqual(findReaderGrantGaps(CHAIN()), []);
+  });
+
+  it("detects the exact REVIEW-M1-REPAIR R1 break when the repair is absent", () => {
+    // This is the finding that failed the media-only guard: two invoker readers
+    // ask for comments.parent_id/depth against a grant that stops at body, and
+    // both feed readers ask for reactions.user_id against a grant that never
+    // had it. Remove the migration that closed them and both come back.
+    const without = CHAIN().filter(({ file }) => file !== GRANTS);
+    assert.deepEqual(findReaderGrantGaps(without), [
+      { table: "comments", missing: ["depth", "parent_id"] },
+      { table: "reactions", missing: ["user_id"] },
+    ]);
+  });
+
+  it("reads `select *` in a reader as a demand for every column (the F1/F2 class)", () => {
+    const buggy = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_publish_client() returns void language plpgsql security invoker as $$ begin select * into v_upload from public.uploads where id = 'x'; end; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(buggy), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("attributes a column through the alias bound to the table", () => {
+    // The comments defect in miniature: only `depth`, which the alias reads, is
+    // demanded - not every column of the table.
+    const aliased = [
+      {
+        file: "a.sql",
+        sql: "create table public.comments (id text, body text, depth integer); grant select (id, body) on public.comments to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_list_comments_client(p text) returns void language sql stable security invoker as $$ select c.id, c.body, c.depth from public.comments c where c.id = p; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(aliased), [{ table: "comments", missing: ["depth"] }]);
+  });
+
+  it("skips a SECURITY DEFINER reader, whose reads run as its owner", () => {
+    const definer = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); revoke all on public.uploads from authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_publish_client() returns void language sql security definer set search_path = public, pg_temp as $$ select id, width from public.uploads; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(definer), []);
+  });
+
+  it("ignores an invoker function that is not a client entry point", () => {
+    const internal = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); revoke all on public.uploads from authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_cleanup_tick() returns void language sql security invoker as $$ select width from public.uploads; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(internal), []);
+  });
+
+  it("pins the definer set, so a reader turning definer cannot leave the check", () => {
+    const clients = [...readFunctionModel(CHAIN())].filter(([n]) => n.endsWith(CLIENT_FUNCTION_SUFFIX));
+    const definers = clients.filter(([, fn]) => fn.definer).map(([n]) => n).sort();
+    assert.deepEqual(definers, DEFINER_CLIENT_FUNCTIONS);
+    assert.ok(clients.length > definers.length, "the chain has invoker readers too");
+  });
+
+  it("models `add` without the optional COLUMN keyword (R3)", () => {
+    const noKeyword = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text); grant select (id) on public.uploads to authenticated; alter table public.uploads add width integer;",
+      },
+    ];
+    assert.deepEqual(findColumnGrantGaps(noKeyword, ["uploads"]), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("models a column-scoped revoke as a narrowing, not a blanket revoke (R3)", () => {
+    const scoped = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id, width) on public.uploads to authenticated; revoke select (width) on public.uploads from authenticated;",
+      },
+    ];
+    assert.deepEqual(findColumnGrantGaps(scoped, ["uploads"]), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("reports a declared client-read table whose read was revoked outright (R2)", () => {
+    const revoked = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select on public.uploads to authenticated; revoke all on public.uploads from anon, authenticated;",
+      },
+    ];
+    assert.deepEqual(findColumnGrantGaps(revoked, ["uploads"]), [
+      { table: "uploads", missing: ["id", "width"] },
+    ]);
+  });
+});
+
+describe("dims bound parity with the client mirror (REVIEW-M1-REPAIR R5)", () => {
+  it("binds every SQL ceiling to MAX_DISPLAY_DIMENSION in the app source", () => {
+    const mirror = read(DIMS_MIRROR).match(/MAX_DISPLAY_DIMENSION\s*=\s*(\d+)/)?.[1];
+    assert.ok(mirror, "client mirror constant found");
+    const ceilings = [...mig("20261015163718_media_read_grants_and_dims_bound.sql").matchAll(/<=\s*(\d+)/g)].map(
+      (m) => m[1],
+    );
+    assert.equal(ceilings.length, 4, "both dims of both checks carry the ceiling");
+    for (const ceiling of ceilings) assert.equal(ceiling, mirror, "SQL bound equals the client mirror");
   });
 });
 
@@ -831,6 +1139,54 @@ describe("media read grants + dims bound repair (20261015163718)", () => {
   it("keeps the dims checks NOT VALID so no existing row is rescanned", () => {
     const sql = mig(REPAIR).toLowerCase().replace(/--[^\n]*/g, " ");
     assert.equal((sql.match(/not valid/g) ?? []).length, 2, "both dims checks stay NOT VALID");
-    assert.ok(sql.includes("100000"), "ceiling matches the client mirror");
+    // The ceiling's VALUE is bound to the client mirror numerically in "dims
+    // bound parity with the client mirror" (REVIEW-M1-REPAIR R5); here all that
+    // is asserted is that every dimension still carries one.
+    assert.equal((sql.match(/<= \d+/g) ?? []).length, 4, "every dim carries a ceiling");
+  });
+});
+
+describe("client-read grant closure (20261015174749)", () => {
+  const CLOSURE = "20261015174749_client_read_grants_invoker_paths.sql";
+
+  it("follows the migration hygiene contract", () => {
+    const sql = mig(CLOSURE);
+    assert.ok(sql.includes("LIVE-PENDING"), "LIVE-PENDING note");
+    assert.ok(sql.includes("supabase/tests/verify_20261015174055_client_read_grants.sql"), "verify pointer");
+    assert.ok(sql.includes("ADDITIVE ONLY"), "additive header");
+  });
+
+  it("is additive only: two column-scoped grants, nothing created, dropped or altered", () => {
+    const sql = mig(CLOSURE).toLowerCase().replace(/--[^\n]*/g, " ");
+    const statements = sql.split(";").map((s) => s.trim()).filter(Boolean);
+    assert.equal(statements.length, 2, "exactly two statements");
+    for (const statement of statements) {
+      assert.match(
+        statement,
+        /^grant select \([a-z_, ]+\) on public\.[a-z0-9_]+ to authenticated$/,
+        "a column-scoped grant, to the consumer role only",
+      );
+    }
+    assert.ok(!sql.includes("revoke"), "nothing is taken away from any role");
+    assert.ok(!sql.includes("create "), "no object created");
+    assert.ok(!sql.includes("drop "), "no object dropped");
+    assert.ok(!sql.includes("alter "), "no object altered");
+    assert.ok(!/delete\s+from/.test(sql), "no row deleted");
+    assert.ok(!/update\s+/.test(sql), "no row rewritten");
+  });
+
+  it("grants exactly the columns the readers ask for, and nothing else", () => {
+    const model = readGrantModel([{ file: CLOSURE, sql: mig(CLOSURE) }]);
+    assert.deepEqual([...model.columnSelect.keys()].sort(), ["comments", "reactions"]);
+    assert.deepEqual([...model.columnSelect.get("comments")].sort(), ["depth", "parent_id"]);
+    assert.deepEqual([...model.columnSelect.get("reactions")], ["user_id"]);
+    assert.deepEqual([...model.tableSelect], [], "no table-level grant");
+  });
+
+  it("states the doctrine conflict instead of hiding it, and routes the decision to the owner", () => {
+    const sql = mig(CLOSURE);
+    assert.ok(sql.includes("DOCTRINE"), "the conflict with the md5-digest pattern is named");
+    assert.ok(/owner question/i.test(sql), "the choice is recorded as an owner question");
+    assert.ok(/changes nothing in production/i.test(sql), "the live evidence is in the file");
   });
 });
