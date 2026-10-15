@@ -45,6 +45,7 @@ import { profileFor } from "../services/ai/modelProfiles";
 import type { GenerateFn } from "../services/ai/types";
 import { aiPreferencesKey, effectivePhotoEngine } from "../services/ai/aiPreferences";
 import {
+  NARROW_TASK_PROFILE_ID,
   generateForCategoryLive,
   generateForFieldsLive,
 } from "../services/liveNarrowTasks";
@@ -508,7 +509,11 @@ function ReportForm() {
       setAiSuggestError("Describe the item first — in the box above or in your title and description.");
       return;
     }
-    const profile = profileFor("qwen3-0.6b-dynamic-int4");
+    // IF-108: both ops are served by the same on-device structured (tool) model
+    // as Smart Search, so they must be parsed with that model's profile. The
+    // prose profile's `[thought]` envelope truncated tool output and silently
+    // dropped the whole suggestion set.
+    const profile = profileFor(NARROW_TASK_PROFILE_ID);
     if (!profile) {
       setAiSuggestError("AI suggestions are unavailable right now. Continue writing manually.");
       return;

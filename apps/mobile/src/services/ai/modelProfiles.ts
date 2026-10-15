@@ -275,7 +275,11 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
       "single-record. Every response carries calibrated confidence: route " +
       "below-threshold extractions to escalate/re-ask via uncertainFields. " +
        "Apache-2.0 (redistribution subject to its conditions). Telemetry off at the " +
-      "native boundary (NEEDLE_TELEMETRY=0, DO_NOT_TRACK=1).",
+      "native boundary (NEEDLE_TELEMETRY=0, DO_NOT_TRACK=1). " +
+      "At runtime it serves EVERY structured narrow task — extract-search-filters, " +
+      "extract-report-fields, classify-category — so parsers for those ops must use " +
+      "this profile. `roles` above is lab-corpus descriptive, not the routing " +
+      "authority; never re-pin a structured op to the prose profile (IF-108).",
     defaultTemperature: 0.0,
     maxOutputTokensText: 256,
     stopSequences: [],

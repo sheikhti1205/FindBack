@@ -110,6 +110,27 @@ describe("classify-category op", () => {
     });
   });
 
+  it("reports CANCELLED for a route-level abort even when the caller's signal is not aborted", async () => {
+    // `liveGenerateFor` turns a route-level cancel (residency coordinator,
+    // logout / account switch) into a name-`AbortError` rejection while the
+    // caller's own signal stays live. That is still a cancellation, not an
+    // engine failure — and it must never render as one.
+    const generate: GenerateFn = async () => {
+      const error = new Error("AI request cancelled.");
+      error.name = "AbortError";
+      throw error;
+    };
+    const controller = new AbortController();
+    const result = await classifyCategory(generate, { text: "keys" }, mustProfile(PROFILE), {
+      signal: controller.signal,
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { errorClass: "CANCELLED", diagnostic: "ABORT_MID_GENERATION" },
+    });
+    expect(controller.signal.aborted).toBe(false);
+  });
+
   it("carries the canonical task envelope with budgets, runtimes, timeout, and no route consent", () => {
     const spec = getTaskSpec("classify-category")!;
     expect(spec.taskId).toBe("classify-category");

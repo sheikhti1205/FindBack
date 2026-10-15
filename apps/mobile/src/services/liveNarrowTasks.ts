@@ -147,15 +147,19 @@ export const generateForFieldsLive: GenerateFn = liveGenerateFor("extract-report
 export const generateForCategoryLive: GenerateFn = liveGenerateFor("classify-category");
 
 /**
- * Profile for the search extractor: the model that actually serves the route.
- * `extract-search-filters` is a tool-constrained (structured) task, and the
- * production seam serves structured roles ONLY through Needle
- * (`applicationAi.ts` `structuredModelId`, enforced in `productionRuntimes.ts`).
- * Parsing with the Qwen *prose* profile applied that engine's `[thought]`
- * envelope to tool output, which truncated any value containing the literal
- * marker and silently dropped the whole patch.
+ * Profile for every narrow task: the model that actually serves the route.
+ * `extract-search-filters`, `extract-report-fields` and `classify-category` are
+ * tool-constrained (structured) tasks, and the production seam serves structured
+ * roles ONLY through Needle (`applicationAi.ts` `structuredModelId`, enforced in
+ * `productionRuntimes.ts`). Parsing with the Qwen *prose* profile applied that
+ * engine's `[thought]` envelope to tool output, which truncated any value
+ * containing the literal marker and silently dropped the whole patch.
+ *
+ * Single source of truth (IF-108): `CreateReport.tsx` parses the SAME two ops, so
+ * it must hand its ops this same profile. Never re-pin a narrow task to the prose
+ * profile.
  */
-const SEARCH_PROFILE_ID = NEEDLE_MODEL_ID;
+export const NARROW_TASK_PROFILE_ID = NEEDLE_MODEL_ID;
 
 /**
  * Live NL search extractor: raw input through `extract-search-filters`
@@ -164,7 +168,7 @@ const SEARCH_PROFILE_ID = NEEDLE_MODEL_ID;
  * via `extractNlFilters`.
  */
 export async function nlExtractLive(input: string): Promise<NlFilterPatch> {
-  const profile = profileFor(SEARCH_PROFILE_ID);
+  const profile = profileFor(NARROW_TASK_PROFILE_ID);
   if (!profile) return {};
   return extractNlFilters(liveGenerateFor("extract-search-filters"), input, profile);
 }

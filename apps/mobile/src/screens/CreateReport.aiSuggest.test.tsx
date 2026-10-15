@@ -59,6 +59,7 @@ vi.mock("../services/categorySuggestion", async (importOriginal) => {
 });
 
 import { CreateReport } from "./CreateReport";
+import { NARROW_TASK_PROFILE_ID } from "../services/liveNarrowTasks";
 import { clearDraft } from "../services/reportDraft";
 import { clearPhotoStore } from "../services/photoStore";
 import { clearStagedAssistantReportHandoff } from "../services/assistant/assistantReportNavigation";
@@ -269,5 +270,49 @@ describe("CreateReport AI field suggestions", () => {
     const applyDate = screen.getByRole("button", { name: "Apply date" }) as HTMLButtonElement;
     expect(applyDate.disabled).toBe(true);
     expect(screen.getByText(/pick it in the date field instead/)).toBeTruthy();
+  });
+
+  it("parses both suggestion ops with the on-device structured profile, never the prose envelope", async () => {
+    // IF-108 / CF-040 S2: `extract-report-fields` and `classify-category` are
+    // served by the same tool model as Smart Search, so a prose profile's
+    // `[thought]` envelope would truncate tool output and silently drop the
+    // whole suggestion set.
+    await requestSuggestions("Black umbrella lost yesterday near the central market.");
+    for (const op of [suggestFieldsMock, suggestCategoryMock]) {
+      const profile = op.mock.calls[0]![2] as { id: string; thoughtEnvelope?: unknown };
+      expect(profile.id).toBe(NARROW_TASK_PROFILE_ID);
+      expect(profile.thoughtEnvelope).toBeUndefined();
+    }
+  });
+
+  it("an engine failure reads as undrafted suggestions, not as a cancellation", async () => {
+    const engineFailure = {
+      ok: false,
+      error: { errorClass: "RUNTIME_ERROR", diagnostic: "CATEGORY_GENERATION_FAILED" },
+    };
+    suggestFieldsMock.mockImplementation(cancellable(engineFailure));
+    suggestCategoryMock.mockImplementation(cancellable(engineFailure));
+    render(<CreateReport />);
+    await screen.findByRole("toolbar", { name: /description formatting/i });
+    fireEvent.change(screen.getByLabelText("Describe the item for AI suggestions"), {
+      target: { value: "Black umbrella lost yesterday." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^suggest fields$/i }));
+    await screen.findByText(/Couldn't draft suggestions/);
+    expect(screen.queryByText("AI request cancelled.")).toBeNull();
+  });
+
+  it("a failed category op with field patches present stays silent: no error copy, no category chip", async () => {
+    suggestCategoryMock.mockImplementation(
+      cancellable({
+        ok: false,
+        error: { errorClass: "RUNTIME_ERROR", diagnostic: "CATEGORY_GENERATION_FAILED" },
+      }),
+    );
+    await requestSuggestions("Black umbrella lost yesterday near the central market.");
+    expect(screen.getByText("Black umbrella")).toBeTruthy();
+    expect(screen.queryByText("Suggested category · via classify-category")).toBeNull();
+    expect(screen.queryByText(/Couldn't draft suggestions/)).toBeNull();
+    expect(screen.queryByText("AI request cancelled.")).toBeNull();
   });
 });
