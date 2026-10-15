@@ -6,7 +6,13 @@
      accent. Status colors (error badge, Lost/Found) are never recolored. */
   padding: 8px 16px 12px; background: var(--fb-surface);
 }
-.fb-nav-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.fb-nav-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
+  /* CF-010: on a wide canvas the bar stays full-width but its contents keep a
+     comfortable width, so the pill does not stretch across a tablet. Below this
+     width (every phone, portrait and landscape) nothing changes. */
+  max-width: 44rem; margin-inline: auto;
+}
 .fb-nav-pill {
   display: flex; flex: 1 1 0; min-width: 0; align-items: stretch;
   padding: 4px; border-radius: 999px;

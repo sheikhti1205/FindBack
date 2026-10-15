@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Bell, ClipboardList, Home, Plus, UserRound } from "lucide-react";
 import { TabTapProvider, useTabTap } from "./TabTap";
 import { LiveRegion } from "./LiveRegion";
+import { READABLE_COLUMN_CLASS, WIDE_CANVAS_CLASS } from "./responsive";
 import { RouteTransition } from "./RouteTransition";
 import { requestHistorySuppression } from "./backNavigation";
 import { fetchUnreadCount } from "../services/notifications";
@@ -31,16 +32,32 @@ const NAV = [
 
 const HIDE_NAV = ["/help", "/posts/", "/ai-connection"];
 
+/**
+ * Surfaces designed for a wide canvas (packet `09` §1/§2/§21).
+ *
+ * The shell used to clamp every screen to a 448px phone column. The feed
+ * surfaces now use the canvas and grow more masonry columns; every other route
+ * keeps the readable column so a tablet does not stretch paragraphs. A route
+ * joins this set when it has actually been laid out for wide viewports — no
+ * screen ever gets a wide layout nobody designed.
+ */
+const WIDE_CANVAS = ["/", "/search"];
+
 /** The document never scrolls: routes own the bounded viewport scroller. */
 export function Shell() {
   const { pathname } = useLocation();
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
+  const wideCanvas = WIDE_CANVAS.includes(pathname);
   const ownsInternalScroll =
     pathname === "/" || pathname === "/search" || pathname.startsWith("/help");
 
   return (
     <TabTapProvider>
-      <div className="fb-app-viewport mx-auto flex w-full max-w-md flex-col bg-surface text-on-surface">
+      <div
+        className={`fb-app-viewport mx-auto flex w-full flex-col bg-surface text-on-surface ${
+          wideCanvas ? WIDE_CANVAS_CLASS : READABLE_COLUMN_CLASS
+        }`}
+      >
         <main className={`relative min-h-0 flex-1 ${ownsInternalScroll ? "overflow-hidden" : "overflow-y-auto"}`}>
           <RouteTransition />
         </main>
