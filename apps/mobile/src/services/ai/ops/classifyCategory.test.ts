@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyCategory } from "./classifyCategory";
 import { getTaskSpec } from "../orchestrator/taskRegistry";
+import type { GenerateFn } from "../types";
 import { mustProfile, stubGenerate } from "./testSupport";
 
 const PROFILE = "qwen3-0.6b-dynamic-int4";
@@ -76,6 +77,37 @@ describe("classify-category op", () => {
     });
     expect(result).toEqual({ ok: false, error: { errorClass: "CANCELLED", diagnostic: "ABORT_BEFORE_START" } });
     expect(generate.calls).toBe(0);
+  });
+
+  it("reports an engine failure honestly instead of relabelling it a cancellation", async () => {
+    const generate: GenerateFn & { calls: number } = Object.assign(
+      async (): Promise<string> => {
+        generate.calls += 1;
+        throw new Error("No available runtime for this task.");
+      },
+      { calls: 0 },
+    );
+    const result = await classifyCategory(generate, { text: "a black wallet" }, mustProfile(PROFILE));
+    expect(result).toEqual({
+      ok: false,
+      error: { errorClass: "RUNTIME_ERROR", diagnostic: "CATEGORY_GENERATION_FAILED" },
+    });
+    expect(generate.calls).toBe(1);
+  });
+
+  it("still reports CANCELLED when generate fails while the signal aborts", async () => {
+    const controller = new AbortController();
+    const generate: GenerateFn = async () => {
+      controller.abort();
+      throw new Error("native stopped");
+    };
+    const result = await classifyCategory(generate, { text: "keys" }, mustProfile(PROFILE), {
+      signal: controller.signal,
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { errorClass: "CANCELLED", diagnostic: "ABORT_MID_GENERATION" },
+    });
   });
 
   it("carries the canonical task envelope with budgets, runtimes, timeout, and no route consent", () => {

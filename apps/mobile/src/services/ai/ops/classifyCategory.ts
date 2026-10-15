@@ -143,8 +143,14 @@ export async function classifyCategory(
       }),
       signal,
     );
-  } catch {
-    return { ok: false, error: makeAiError("CANCELLED", "ABORT_MID_GENERATION") };
+  } catch (error) {
+    // A real cancellation and an engine failure must not look the same: the
+    // screen renders "AI request cancelled." for CANCELLED, which is wrong
+    // (and misleading) when the on-device engine actually failed.
+    if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+      return { ok: false, error: makeAiError("CANCELLED", "ABORT_MID_GENERATION") };
+    }
+    return { ok: false, error: makeAiError("RUNTIME_ERROR", "CATEGORY_GENERATION_FAILED") };
   }
   if (signal !== undefined && signal.aborted) {
     return { ok: false, error: makeAiError("CANCELLED", "ABORT_MID_GENERATION") };
