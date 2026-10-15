@@ -347,6 +347,16 @@ describe("nlHelperState (Smart Search readiness)", () => {
     },
   );
 
+  it("requires the download state as well as the pin, should they ever decouple", async () => {
+    // REVIEW-CF040-RESIDUAL-R2 N4: every other not-installed fixture also
+    // clears the pin, so a predicate that checked only `checksumVerified`
+    // would pass. The state machine cannot produce this pair today, but the
+    // conjunct is what routing means, so pin both halves.
+    await expect(
+      nlHelperState(source(() => status({ download: "queued", checksumVerified: true }))),
+    ).resolves.toBe("not-set-up");
+  });
+
   it("reports an unknown model id as not set up", async () => {
     await expect(nlHelperState(source(() => undefined))).resolves.toBe("not-set-up");
   });
