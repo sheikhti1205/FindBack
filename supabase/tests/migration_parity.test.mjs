@@ -469,16 +469,23 @@ function parseParams(args) {
  * Postgres overloads on the ARGUMENT TYPE LIST alone — parameter names and
  * defaults never distinguish two overloads — so a signature is the only correct
  * key for both the function model and its EXECUTE state
- * (REVIEW-M1-ACL-CLOSURE-R2 B4). A declaration (`p_id text, p_note text`) and a
- * GRANT/REVOKE reference (`text, text`) both reduce to `text,text`.
+ * (REVIEW-M1-ACL-CLOSURE-R2 B4).
  *
- * Unnamed multi-word types (`character varying`) and explicit argmodes are read
- * the way `parseParams` reads them today, so an exotic spelling resolves to no
- * key at all rather than to the wrong one; callers fall back to the name's
- * overloads, which over-applies rather than silently narrowing.
+ * `kind` is what makes the two spellings reducible to one key. A DECLARATION is
+ * `name type` per parameter (or a bare type), so the parameter name is dropped;
+ * a GRANT/REVOKE reference is TYPES ONLY, so `double precision` keeps both of
+ * its words. Reading a reference as a declaration turned `double precision` into
+ * `precision` and made a real statement look unresolvable
+ * (REVIEW-M1-ACL-CLOSURE-R3 C2).
+ *
+ * Still not perfect, and reported rather than trusted: a declaration that MIXES
+ * named parameters with unnamed multi-word types (`p_x text, double precision`)
+ * is read as all-named, so that one entry loses a word. `unresolvedExecuteStatements`
+ * fails the gate for any GRANT/REVOKE that then cannot be resolved, so a
+ * mis-keyed declaration is loud rather than silent.
  */
-function signatureKey(name, args) {
-  const types = splitTopLevel(args).map((part) => {
+function signatureKey(name, args, kind = "declaration") {
+  const parts = splitTopLevel(args).map((part) => {
     let words = part
       .replace(/\s+/g, " ")
       .trim()
@@ -486,8 +493,13 @@ function signatureKey(name, args) {
       .split(" ")
       .filter(Boolean);
     while (words.length > 1 && /^(in|out|inout|variadic)$/i.test(words[0])) words = words.slice(1);
-    return (words.length > 1 ? words.slice(1) : words).join(" ").toLowerCase();
+    return words;
   });
+  // A declaration list is read as `name type` pairs only when every entry has a
+  // name; otherwise the whole list is already types, which is what an unnamed
+  // parameter list and every GRANT/REVOKE reference look like.
+  const dropName = kind === "declaration" && parts.every((words) => words.length > 1);
+  const types = parts.map((words) => (dropName ? words.slice(1) : words).join(" ").toLowerCase());
   return `${name}(${types.join(",")})`;
 }
 
@@ -618,7 +630,7 @@ describe("CREATE OR REPLACE signature-drift guard", () => {
 //     "every column of that table", which is how the original F1/F2 defect
 //     appears in this model without naming any table.
 //
-// MODELLED, and how (REVIEW-M1-ACL-CLOSURE, REVIEW-M1-ACL-CLOSURE-R2):
+// MODELLED, and how (REVIEW-M1-ACL-CLOSURE, REVIEW-M1-ACL-CLOSURE-R2, -R3):
 //   * function identity is the SIGNATURE - name plus argument type list, the
 //     only thing Postgres overloads on - so a `grant/revoke execute on
 //     function f(text, text)` cannot be read onto a sibling overload, and one
@@ -626,21 +638,31 @@ describe("CREATE OR REPLACE signature-drift guard", () => {
 //   * `drop function [if exists]`, and `alter function … security
 //     definer|invoker`, which changes a reader's security model without
 //     redefining its body (B5);
-//   * tails delimited by any dollar-quote tag (`$$`, `$body$`, `$BODY$`), and
-//     DDL in any case (B1);
+//   * the schema/name spelling and the body delimiter: quoted identifiers,
+//     whitespace around the dot, either case (R3 C1), dollar-quote tags of any
+//     identifier (`$$`, `$body$`, `$BODY$`, `$v1$`, R2 B1) and single-quoted
+//     literal bodies;
 //   * a bare `*` after `distinct on (…)`, told apart from `*` multiplication
 //     and from `count(*)` (B2);
 //   * every column shape listed against findReaderGrantGaps below.
 //
-// NOT MODELLED - reported, never silently trusted:
+// NOT MODELLED - and neither silently trusted nor silently narrowing:
 //   * SQL assembled at runtime (dynamic `execute`), whose column set no static
 //     walk can know;
 //   * an unqualified column name in a scope with more than one source table
 //     (an attribution would be a guess);
-//   * an argument type spelled in a way this walk cannot normalise (`character
-//     varying` written unnamed): the statement then resolves to no signature
-//     and is applied to every overload of that name, which over-applies -
-//     the noisy direction - rather than narrowing in silence.
+//   * a declaration this walk cannot READ. Two invariants fail the gate
+//     instead of letting it pass unread: every public function the DDL text
+//     declares must be registered with a body, and every GRANT/REVOKE EXECUTE
+//     statement must resolve to exactly one declared signature at its point in
+//     the chain (with `rls_auto_enable` pinned as the platform function the
+//     chain hardens but never creates);
+//   * an argument type spelled outside `signatureKey`'s normalisation. The
+//     direction is operation-dependent and must stay that way: a GRANT then
+//     applies to every overload of the name (noisy - an extra reachable reader
+//     can only add demands), a REVOKE to none of them (narrowing a sibling
+//     Postgres never revoked would drop a real reader out of the walk in
+//     silence, R3 C2). The second invariant above is what actually catches it.
 //
 // A `findback_*_client` function that is SECURITY DEFINER runs as its owner and
 // needs no grant, so it is skipped - but the set is pinned by name below, so a
@@ -900,28 +922,96 @@ function findColumnGrantGaps(migrations, tables = CLIENT_READ_MEDIA_TABLES) {
  * drops and recreates a function whenever its signature changes, and the body is
  * the dollar-quoted literal following the declaration.
  */
+/**
+ * `public.<name>` as the chain may legally spell it.
+ *
+ * `public.f`, `public . f`, `"public"."f"`, `PUBLIC.F` are all the same
+ * function to Postgres. A pattern that only read the bare spelling let a whole
+ * reader sit outside the walk with nothing red
+ * (REVIEW-M1-ACL-CLOSURE-R3 C1, same class as R2 B1).
+ */
+const PUBLIC_FN = String.raw`"?public"?\s*\.\s*"?([a-z0-9_]+)"?`;
+
+/**
+ * Functions the chain grants/revokes EXECUTE on but does not declare.
+ *
+ * Pinned, and by name only, so a typo or a renamed function cannot slip into
+ * this class unnoticed (REVIEW-M1-ACL-CLOSURE-R3 C2). `rls_auto_enable` is the
+ * Supabase-managed updater, installed by the platform in `public` and hardened
+ * by `20260912170500_restrict_rls_auto_enable.sql`, which revokes its EXECUTE
+ * without ever creating it.
+ */
+const PLATFORM_FUNCTIONS_WITHOUT_A_DECLARATION = ["rls_auto_enable"];
+
+function createFunctionRegex() {
+  return new RegExp(String.raw`create\s+(?:or\s+replace\s+)?function\s+${PUBLIC_FN}\s*\(`, "gi");
+}
+
+function dropFunctionRegex() {
+  return new RegExp(String.raw`drop\s+function\s+(?:if\s+exists\s+)?${PUBLIC_FN}\s*\(`, "gi");
+}
+
+function alterFunctionRegex() {
+  return new RegExp(String.raw`alter\s+function\s+${PUBLIC_FN}\s*\(`, "gi");
+}
+
+/** `GRANT|REVOKE … EXECUTE ON FUNCTION public.f(args) TO|FROM roles`. */
+function executeStatementRegex() {
+  return /(grant|revoke) ([a-z, ]*?) on function\s+(?:public|"public")\s*\.\s*"?([a-z0-9_]+)"?\s*(?:\(([^)]*)\))? (to|from) ([a-z_, ]+?)(?=[;)]|$)/gi;
+}
+
+/** The DDL body of a function, in the two spellings this chain can use. */
+function functionBodyAt(tail) {
+  const dollar = tail.match(/\$([A-Za-z_][A-Za-z0-9_]*)?\$([\s\S]*?)\$\1\$/);
+  if (dollar) {
+    return { body: dollar[2], head: tail.slice(0, tail.indexOf(dollar[0])) };
+  }
+  // `language sql as 'select 1'`: a single-quoted literal body. It has to be the
+  // statement's LAST token and to sit directly after `as` - every definition in
+  // this chain carries `set search_path = ''`, and accepting any literal as the
+  // body read an unreadable declaration as an empty function, which is a silent
+  // hole exactly where the walk is supposed to shout
+  // (REVIEW-M1-ACL-CLOSURE-R3 C1/C2).
+  const end = tail.indexOf(";");
+  const statement = end === -1 ? tail : tail.slice(0, end + 1);
+  const literals = [...statement.matchAll(/'((?:[^']|'')*)'/g)];
+  const last = literals[literals.length - 1];
+  if (!last) return null;
+  const before = statement.slice(0, last.index);
+  const after = statement.slice(last.index + last[0].length);
+  if (!/\bas\s*$/i.test(before) || !/^\s*;?\s*$/.test(after)) return null;
+  return { body: last[1].replace(/''/g, "'"), head: before };
+}
+
+/**
+ * `readFunctionModel` — every public function the chain leaves declared.
+ *
+ * One entry per SIGNATURE (`name(type,type)`), carrying the body and whether it
+ * runs as definer, in chain order: `create or replace` replaces, `drop function`
+ * (with or without `if exists`) removes, and `alter function … security
+ * definer|invoker` flips the flag on the live entry.
+ */
 function readFunctionModel(migrations) {
   const functions = new Map();
   for (const { sql } of migrations) {
     const marks = [];
-    for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+public\.([a-z0-9_]+)\s*\(/gi)) {
+    for (const m of sql.matchAll(createFunctionRegex())) {
       marks.push({ index: m.index, kind: "create", name: m[1].toLowerCase() });
     }
-    for (const m of sql.matchAll(/drop\s+function\s+(?:if\s+exists\s+)?public\.([a-z0-9_]+)\s*\(/gi)) {
+    for (const m of sql.matchAll(dropFunctionRegex())) {
       marks.push({ index: m.index, kind: "drop", name: m[1].toLowerCase() });
     }
     // `alter function … security definer|invoker` flips a reader's security
     // model without redefining its body, so it has to be modelled for the pin to
     // mean anything (REVIEW-M1-ACL-CLOSURE-R2 B5).
-    for (const m of sql.matchAll(/alter\s+function\s+public\.([a-z0-9_]+)\s*\(/gi)) {
+    for (const m of sql.matchAll(alterFunctionRegex())) {
       marks.push({ index: m.index, kind: "alter", name: m[1].toLowerCase() });
     }
     for (const mark of marks.sort((a, b) => a.index - b.index)) {
       // One identity for a function: name + argument TYPE list. Postgres overloads
       // on the types alone (parameter names and defaults never distinguish two
-      // overloads), and the chain really does hold overloads — so keying by name
-      // let an older overload's body escape the reader walk entirely
-      // (REVIEW-M1-ACL-CLOSURE-R2 B4).
+      // overloads), so keying by name let an older overload's body escape the
+      // reader walk (REVIEW-M1-ACL-CLOSURE-R2 B4).
       const key = signatureKey(mark.name, parenBodyAt(sql, sql.indexOf("(", mark.index)));
       if (mark.kind === "drop") {
         functions.delete(key);
@@ -937,22 +1027,63 @@ function readFunctionModel(migrations) {
         else if (/security\s+invoker/i.test(statement)) current.definer = false;
         continue;
       }
-      // Dollar-quoted body: the tag is any identifier (`$$`, `$body$`, `$BODY$`,
-      // `$v1$`), and it is case-sensitive in Postgres, so the closing tag must be
-      // matched exactly. A narrower tag pattern used to skip a whole function
-      // body silently (REVIEW-M1-ACL-CLOSURE-R2 B1).
-      const dollar = tail.match(/\$([A-Za-z_][A-Za-z0-9_]*)?\$([\s\S]*?)\$\1\$/);
-      if (!dollar) continue;
-      const head = flattenSql(tail.slice(0, tail.indexOf(dollar[0])));
+      const found = functionBodyAt(tail);
+      if (!found) continue;
       functions.set(key, {
         name: mark.name,
         signature: key,
-        body: dollar[2],
-        definer: /security\s+definer/i.test(head),
+        body: found.body,
+        definer: /security\s+definer/i.test(flattenSql(found.head)),
       });
     }
   }
   return functions;
+}
+
+/**
+ * Declarations whose body this walk cannot read, one line per occurrence.
+ *
+ * A key-set comparison is not enough on its own: when a function is declared
+ * twice, an unreadable SECOND declaration leaves the first body in the model and
+ * the key is still present, so the walk would analyse a superseded body in
+ * silence. This reports the occurrence itself, whatever the final key set looks
+ * like (REVIEW-M1-ACL-CLOSURE-R3 C1).
+ */
+function unreadableDeclarations(migrations) {
+  const unreadable = [];
+  for (const { file, sql } of migrations) {
+    for (const m of sql.matchAll(createFunctionRegex())) {
+      if (!functionBodyAt(sql.slice(m.index))) unreadable.push(`${file}: ${m[1]}`);
+    }
+  }
+  return unreadable;
+}
+
+/**
+ * The keys the DDL text declares, read WITHOUT touching function bodies.
+ *
+ * Independent of `readFunctionModel`'s body step, so a declaration the walk
+ * cannot read (an unmodelled spelling, a body with no delimiter it recognises)
+ * shows up as a difference and fails the gate instead of disappearing
+ * (REVIEW-M1-ACL-CLOSURE-R3 C1).
+ */
+function declaredFunctionKeys(migrations) {
+  const keys = new Set();
+  for (const { sql } of migrations) {
+    const marks = [];
+    for (const m of sql.matchAll(createFunctionRegex())) {
+      marks.push({ index: m.index, kind: "create", name: m[1].toLowerCase() });
+    }
+    for (const m of sql.matchAll(dropFunctionRegex())) {
+      marks.push({ index: m.index, kind: "drop", name: m[1].toLowerCase() });
+    }
+    for (const mark of marks.sort((a, b) => a.index - b.index)) {
+      const key = signatureKey(mark.name, parenBodyAt(sql, sql.indexOf("(", mark.index)));
+      if (mark.kind === "drop") keys.delete(key);
+      else keys.add(key);
+    }
+  }
+  return keys;
 }
 
 /** Words that can follow a table in FROM/JOIN but are not aliases. */
@@ -1142,36 +1273,110 @@ function readExecuteModel(migrations, functions) {
     }
     return state.get(key);
   };
-  // `GRANT ... ON FUNCTION f(text)` is SIGNATURE-scoped: it does not touch a
-  // sibling overload of the same name. The statement's argument list is resolved
-  // against the functions the chain declares; when it does not resolve (a type
-  // spelled differently, a function this walk never sees) the statement is
-  // applied to every overload of that name, which over-applies rather than
-  // silently reading a signature-scoped revoke as a name-scoped one
-  // (REVIEW-M1-ACL-CLOSURE-R2 B4).
-  const targetsFor = (name, argList) => {
-    const overloads = [...functions.keys()].filter((key) => key.startsWith(`${name}(`));
-    if (argList === null || overloads.length === 0) return overloads.length > 0 ? overloads : [name];
-    const key = signatureKey(name, argList);
-    return functions.has(key) ? [key] : overloads;
-  };
   for (const { sql } of migrations) {
     const text = flattenSql(stripSqlNoise(sql));
-    for (const m of text.matchAll(
-      /(grant|revoke) ([a-z, ]*?) on function public\.([a-z0-9_]+)\s*(?:\(([^)]*)\))? (to|from) ([a-z_, ]+?)(?=[;)]|$)/g,
-    )) {
-      if (m[1] === "grant" && !/execute|all/.test(m[2])) continue;
+    for (const m of text.matchAll(executeStatementRegex())) {
+      if (m[1].toLowerCase() === "grant" && !/execute|all/.test(m[2])) continue;
       const roles = m[6].split(",").map((r) => r.trim());
-      for (const key of targetsFor(m[3].toLowerCase(), m[4] ?? null)) {
+      for (const key of executeTargetKeys(m[1].toLowerCase(), m[3].toLowerCase(), m[4] ?? null, functions)) {
         const target = stateOf(key);
         for (const role of CLIENT_EXECUTE_ROLES.concat("anon", "service_role")) {
           if (!roles.includes(role)) continue;
-          target[role] = m[1] === "grant";
+          target[role] = m[1].toLowerCase() === "grant";
         }
       }
     }
   }
   return state;
+}
+
+/**
+ * Which signatures a `GRANT|REVOKE EXECUTE ON FUNCTION public.f(args)` lands on.
+ *
+ * `GRANT … ON FUNCTION f(text)` is SIGNATURE-scoped: it never touches a sibling
+ * overload of the same name. When the statement's argument list resolves to a
+ * declared signature, that is the only target. When it does not resolve (a type
+ * spelled differently, a name this walk never declares), the two operations must
+ * fail in OPPOSITE directions:
+ *
+ * - a GRANT is applied to every overload — noisy, which is safe: an extra
+ *   reachable reader can only add demands, never remove one;
+ * - a REVOKE is applied to none of them — narrowing a sibling Postgres never
+ *   revoked would drop a real reader out of the walk in silence
+ *   (REVIEW-M1-ACL-CLOSURE-R3 C2). `unresolvedExecuteStatements` fails the gate
+ *   for either case, so this direction is a backstop, not the only defence.
+ */
+function executeTargetKeys(op, name, argList, functions) {
+  const overloads = [...functions.keys()].filter((key) => key.startsWith(`${name}(`));
+  if (overloads.length === 0) return [name];
+  if (argList === null) return overloads;
+  const key = signatureKey(name, argList, "reference");
+  if (functions.has(key)) return [key];
+  return op === "grant" ? overloads : [];
+}
+
+/**
+ * EXECUTE statements whose signature resolves to nothing declared (R3 C2).
+ *
+ * An unresolved statement is a hole in the model, not a fact about the chain, so
+ * it is reported rather than absorbed: the gate fails and the author either
+ * spells the signature the way the walk reads it or extends `signatureKey`.
+ */
+function unresolvedExecuteStatements(migrations) {
+  const unresolved = [];
+  // Point in time, not against the final map: the chain grants and revokes
+  // `findback_login_email(text)` and then drops it in a LATER file, which is
+  // correct SQL and must not be reported (REVIEW-M1-ACL-CLOSURE-R3 C2). File
+  // order is the chain order, so each file's declarations (raw text, where the
+  // bodies still exist) are applied before that file's statements (noise
+  // stripped, where comments cannot be mistaken for SQL).
+  const declaredNow = new Set();
+  for (const { sql } of migrations) {
+    const marks = [];
+    for (const m of sql.matchAll(createFunctionRegex())) {
+      marks.push({ index: m.index, kind: "create", name: m[1].toLowerCase() });
+    }
+    for (const m of sql.matchAll(dropFunctionRegex())) {
+      marks.push({ index: m.index, kind: "drop", name: m[1].toLowerCase() });
+    }
+    for (const mark of marks.sort((a, b) => a.index - b.index)) {
+      const key = signatureKey(mark.name, parenBodyAt(sql, sql.indexOf("(", mark.index)));
+      if (mark.kind === "create") declaredNow.add(key);
+      else declaredNow.delete(key);
+    }
+    const statements = [];
+    for (const m of flattenSql(stripSqlNoise(sql)).matchAll(executeStatementRegex())) {
+      if (m[1].toLowerCase() === "grant" && !/execute|all/.test(m[2])) continue;
+      statements.push({
+        index: m.index,
+        kind: m[1].toLowerCase(),
+        name: m[3].toLowerCase(),
+        argList: m[4] === undefined ? null : m[4],
+      });
+    }
+    for (const statement of statements.sort((a, b) => a.index - b.index)) {
+      if (PLATFORM_FUNCTIONS_WITHOUT_A_DECLARATION.includes(statement.name)) continue;
+      const overloads = [...declaredNow].filter((key) => key.startsWith(`${statement.name}(`));
+      if (overloads.length === 0) {
+        unresolved.push(
+          `${statement.kind} ${statement.name}: no public function of that name is declared at this point in the chain`,
+        );
+        continue;
+      }
+      if (statement.argList === null) {
+        unresolved.push(
+          `${statement.kind} ${statement.name}: no argument list, so the statement names every overload`,
+        );
+        continue;
+      }
+      if (!declaredNow.has(signatureKey(statement.name, statement.argList, "reference"))) {
+        unresolved.push(
+          `${statement.kind} ${statement.name}(${statement.argList.trim().replace(/\s+/g, " ")}): no declared signature of that name has this argument type list`,
+        );
+      }
+    }
+  }
+  return unresolved;
 }
 
 /** Functions `authenticated` can call: explicit grant, or an unrevoked PUBLIC grant. */
@@ -1677,6 +1882,76 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
       },
     ];
     assert.deepEqual(findReaderGrantGaps(scoped), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("walks a reader however the chain spells the schema, the name or the body (R3 C1)", () => {
+    // Every spelling here is legal Postgres and was invisible to the walk
+    // before: a quoted schema, a quoted name, whitespace around the dot, and a
+    // single-quoted literal body instead of a dollar-quoted one.
+    const spellings = [
+      "create function \"public\".\"findback_publish_client\"() returns void language sql security invoker as 'select width from public.uploads';",
+      "create function public . findback_publish_client() returns void language sql security invoker as $$ select width from public.uploads; $$;",
+      "CREATE OR REPLACE FUNCTION PUBLIC.FINDBACK_PUBLISH_CLIENT() RETURNS void LANGUAGE sql SECURITY INVOKER AS $BODY$ select width from public.uploads; $BODY$;",
+    ];
+    for (const statement of spellings) {
+      const table = {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      };
+      assert.deepEqual(
+        findReaderGrantGaps([table, { file: "b.sql", sql: statement }]),
+        [{ table: "uploads", missing: ["width"] }],
+        `the walk reads: ${statement.slice(0, 60)}…`,
+      );
+    }
+  });
+
+  it("does not narrow a sibling overload when a revoke's spelling does not resolve (R3 C2)", () => {
+    // The revoke names `character varying`, which is the same type as text but
+    // not the spelling `signatureKey` produces. Postgres would revoke only that
+    // signature; a walk that applied it to every overload would drop the
+    // still-granted sibling out of the walk in silence, so it must not narrow.
+    const unresolved = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create function public.findback_publish_client(p_id text) returns void language sql security invoker as $$ select width from public.uploads where id = p_id; $$;",
+      },
+      {
+        file: "c.sql",
+        sql: "create function public.findback_publish_client(p_id text, p_note text) returns void language sql security invoker as $$ select id from public.uploads where id = p_id; $$; revoke all on function public.findback_publish_client(character varying, character varying) from public, anon, authenticated;",
+      },
+    ];
+    // The sibling stays walkable (the read is still reported), and the
+    // unresolved statement is reported as a modelling hole rather than absorbed.
+    assert.deepEqual(findReaderGrantGaps(unresolved), [{ table: "uploads", missing: ["width"] }]);
+    const functions = readFunctionModel(unresolved);
+    assert.deepEqual(unresolvedExecuteStatements(unresolved), [
+      "revoke findback_publish_client(character varying, character varying): no declared signature of that name has this argument type list",
+    ]);
+  });
+
+  it("reads a body for every function the chain declares (R3 C1)", () => {
+    // One report per declaration, not per final key: a superseded-but-unreadable
+    // body must fail here too, or the walk would analyse the wrong body in
+    // silence while the key set still looked complete.
+    assert.deepEqual(unreadableDeclarations(CHAIN()), []);
+  });
+
+  it("reads every public function the chain declares, so none sits out the walk (R3 C1)", () => {
+    // The declaration scan never looks at a function body, so if the walk could
+    // not read one (an unmodelled spelling, a body with no delimiter it knows)
+    // the two key sets would differ and this fails.
+    const declared = [...declaredFunctionKeys(CHAIN())].sort();
+    const walked = [...readFunctionModel(CHAIN()).keys()].sort();
+    assert.deepEqual(walked, declared, "every declared public function is registered with a body");
+  });
+
+  it("resolves every EXECUTE statement to exactly one declared signature (R3 C2)", () => {
+    assert.deepEqual(unresolvedExecuteStatements(CHAIN()), []);
   });
 
   it("follows `alter function … security definer|invoker` (B5)", () => {
