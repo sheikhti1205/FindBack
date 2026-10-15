@@ -11,6 +11,14 @@ export interface StoredUpload {
   fileSize: number;
   fileUrl: string;
   objectKey: string;
+  /**
+   * Intrinsic dimensions of the stored blob (CF-060 M1), measured after
+   * normalization so they describe the bytes actually in Storage. The staging
+   * row carries them to the publish RPC, which copies them onto the attachment
+   * row the feed lays out from.
+   */
+  width: number;
+  height: number;
 }
 
 export const IMAGES_BUCKET = "findback-images";
@@ -74,6 +82,8 @@ export async function uploadImage(file: File, traceId?: string): Promise<StoredU
     file_size: normalized.blob.size,
     file_url: fileUrl,
     created_at: new Date().toISOString(),
+    width: normalized.width,
+    height: normalized.height,
   });
   const stageMs = Date.now() - stageStart;
   if (stageError) {
@@ -103,6 +113,8 @@ export async function uploadImage(file: File, traceId?: string): Promise<StoredU
     objectKey,
     bytes: normalized.blob.size,
     mimeType: normalized.mimeType,
+    width: normalized.width,
+    height: normalized.height,
     uploadMs,
     stageMs,
     totalMs: Date.now() - start,
@@ -115,6 +127,8 @@ export async function uploadImage(file: File, traceId?: string): Promise<StoredU
     fileSize: normalized.blob.size,
     fileUrl,
     objectKey,
+    width: normalized.width,
+    height: normalized.height,
   };
 }
 

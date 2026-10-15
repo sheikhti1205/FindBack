@@ -356,3 +356,38 @@ describe("mapAttachments display_order", () => {
   });
 });
 
+describe("mapAttachments intrinsic dimensions (CF-060 M1)", () => {
+  it("carries width and height when the row knows both", () => {
+    const [attachment] = mapAttachments([
+      attachmentRow({ width: 1080, height: 1440 }),
+    ] as never);
+
+    expect(attachment).toMatchObject({ width: 1080, height: 1440 });
+  });
+
+  it("coerces pg string-typed integers", () => {
+    const [attachment] = mapAttachments([
+      attachmentRow({ width: "1080", height: "1440" }),
+    ] as never);
+
+    expect(attachment).toMatchObject({ width: 1080, height: 1440 });
+  });
+
+  it("omits the pair entirely for a legacy row, a half-known pair or junk", () => {
+    // A row published before the dimensions migration, a row where only one
+    // side arrived, and a row carrying a non-positive value must all read as
+    // "ratio unknown" — never as a zero-height image.
+    const rows = [
+      attachmentRow(),
+      attachmentRow({ width: 1080 }),
+      attachmentRow({ width: 0, height: 0 }),
+      attachmentRow({ width: "abc", height: "def" }),
+    ] as never;
+
+    for (const attachment of mapAttachments(rows) as unknown as Record<string, unknown>[]) {
+      expect(attachment).not.toHaveProperty("width");
+      expect(attachment).not.toHaveProperty("height");
+    }
+  });
+});
+

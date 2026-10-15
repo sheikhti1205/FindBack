@@ -200,6 +200,17 @@ export interface Attachment {
   fileName: string;
   fileSize: number;
   createdAt: string;
+  /**
+   * Intrinsic display dimensions of the stored image, when the publish path
+   * knew them (`public.attachments.width/height`, migration 20261015154642).
+   *
+   * Always both or neither: a half-known size cannot produce a ratio, so it is
+   * omitted rather than presented as one. Absent for media published before that
+   * migration and for files whose size the device cannot measure — callers must
+   * fall back to a default ratio, never to a zero-height box.
+   */
+  width?: number;
+  height?: number;
 }
 
 export interface PostItem {

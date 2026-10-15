@@ -85,4 +85,22 @@ describe("uploadImage", () => {
     });
     expect(uploadMock).not.toHaveBeenCalled();
   });
+
+  it("stages the normalized display dimensions with the row (CF-060 M1)", async () => {
+    normalizeMock.mockResolvedValueOnce({
+      blob: new Blob(["normalized"], { type: "image/jpeg" }),
+      mimeType: "image/jpeg",
+      width: 1234,
+      height: 987,
+    });
+
+    const stored = await uploadImage(new File(["raw"], "wide.jpg", { type: "image/jpeg" }));
+
+    // The feed lays out a natural-ratio grid from these values, so they must be
+    // the dimensions of the blob that was actually stored — not the raw file's.
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 1234, height: 987 }),
+    );
+    expect(stored).toMatchObject({ width: 1234, height: 987 });
+  });
 });

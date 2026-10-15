@@ -88,6 +88,37 @@ export interface AttachmentRow {
    * relative order. Optional so legacy/detail rows stay valid.
    */
   display_order?: unknown;
+  /**
+   * Intrinsic dimensions of the stored image, carried by the feed RPCs since
+   * migration 20261015154642 (CF-060 M1). Optional: a row published before that
+   * migration — or served by an older backend — simply omits them.
+   */
+  width?: unknown;
+  height?: unknown;
+}
+
+/**
+ * Intrinsic dimensions arrive as pg `integer` values, but a mirrored or offline
+ * row may carry them as strings. Anything that is not a positive finite integer
+ * reads as "unknown" so callers fall back to a default ratio rather than
+ * dividing by zero.
+ */
+function dimensionOrNull(raw: unknown): number | null {
+  const n =
+    typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * Intrinsic dimensions are exposed only as a complete pair (CF-060 M1): a
+ * half-known size cannot produce a ratio, so presenting it as one would reserve
+ * the wrong space. Absent means "unknown — use the default ratio", which is the
+ * only correct reading for media published before migration 20261015154642.
+ */
+function intrinsicSize(row: AttachmentRow): Partial<{ width: number; height: number }> {
+  const width = dimensionOrNull(row.width);
+  const height = dimensionOrNull(row.height);
+  return width !== null && height !== null ? { width, height } : {};
 }
 
 function displayOrderKey(row: AttachmentRow): number {
@@ -119,6 +150,7 @@ export function mapAttachments(rows: AttachmentRow[] | null): Attachment[] {
       fileName: String(a.file_name),
       fileSize: Number(a.file_size),
       createdAt: String(a.created_at),
+      ...intrinsicSize(a),
     }));
 }
 
