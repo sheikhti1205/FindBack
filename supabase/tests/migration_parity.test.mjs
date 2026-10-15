@@ -464,6 +464,29 @@ function parseParams(args) {
 }
 
 /**
+ * First words Postgres reads as part of a multi-word type name.
+ *
+ * Used only to tell `p_limit integer` (a parameter NAME) from an unnamed
+ * `double precision` (a type). Quoting defeats it — `"double" precision` is a
+ * parameter named double — which no migration in this chain does; a declaration
+ * that did would be reported by the EXECUTE invariant as soon as a statement
+ * referenced it.
+ */
+const TYPE_LEAD_WORDS = new Set([
+  "double",
+  "precision",
+  "character",
+  "varying",
+  "timestamp",
+  "time",
+  "interval",
+  "bit",
+  "national",
+  "with",
+  "without",
+]);
+
+/**
  * A function's identity: `name(type,type)`, in the two spellings the chain uses.
  *
  * Postgres overloads on the ARGUMENT TYPE LIST alone — parameter names and
@@ -478,28 +501,36 @@ function parseParams(args) {
  * `precision` and made a real statement look unresolvable
  * (REVIEW-M1-ACL-CLOSURE-R3 C2).
  *
- * Still not perfect, and reported rather than trusted: a declaration that MIXES
- * named parameters with unnamed multi-word types (`p_x text, double precision`)
- * is read as all-named, so that one entry loses a word. `unresolvedExecuteStatements`
- * fails the gate for any GRANT/REVOKE that then cannot be resolved, so a
- * mis-keyed declaration is loud rather than silent.
+ * A declaration is read per parameter: `name type`, unless the first word is one
+ * Postgres parses as part of a multi-word type (`double precision`,
+ * `character varying`, `timestamp with time zone`), which is how an UNNAMED
+ * parameter is told apart from a named one. That keeps the two spellings of
+ * `double precision` on one key instead of `precision`
+ * (REVIEW-M1-ACL-CLOSURE-R3 C2). Quoting defeats the rule (`"double" precision`
+ * is a parameter named double); nothing in this chain does that, and a GRANT or
+ * REVOKE that then could not be resolved fails the gate instead of narrowing in
+ * silence.
  */
 function signatureKey(name, args, kind = "declaration") {
-  const parts = splitTopLevel(args).map((part) => {
-    let words = part
+  const parts = splitTopLevel(args).map((part) =>
+    part
       .replace(/\s+/g, " ")
       .trim()
       .replace(/\s+default\s+.*$/i, "")
       .split(" ")
-      .filter(Boolean);
+      .filter(Boolean),
+  );
+  const types = parts.map((raw) => {
+    let words = raw;
+    // `in|out|inout|variadic` is an argument mode, never a name or a type.
     while (words.length > 1 && /^(in|out|inout|variadic)$/i.test(words[0])) words = words.slice(1);
-    return words;
+    if (kind === "reference" || words.length === 1) return words.join(" ").toLowerCase();
+    // `name type` unless the first word is one Postgres reads as part of a
+    // multi-word type name, which is how an UNNAMED `double precision` parameter
+    // is told apart from `p_limit integer` (R3 C2).
+    const head = words[0].toLowerCase();
+    return (TYPE_LEAD_WORDS.has(head) ? words : words.slice(1)).join(" ").toLowerCase();
   });
-  // A declaration list is read as `name type` pairs only when every entry has a
-  // name; otherwise the whole list is already types, which is what an unnamed
-  // parameter list and every GRANT/REVOKE reference look like.
-  const dropName = kind === "declaration" && parts.every((words) => words.length > 1);
-  const types = parts.map((words) => (dropName ? words.slice(1) : words).join(" ").toLowerCase());
   return `${name}(${types.join(",")})`;
 }
 
@@ -1932,6 +1963,24 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     assert.deepEqual(unresolvedExecuteStatements(unresolved), [
       "revoke findback_publish_client(character varying, character varying): no declared signature of that name has this argument type list",
     ]);
+  });
+
+  it("keys an unnamed multi-word parameter by its type (R3 C2)", () => {
+    // `create function f(double precision)` is an UNNAMED parameter; reading the
+    // first word as the parameter name would key it `f(precision)` and make the
+    // matching grant unresolvable.
+    const chain = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create function public.findback_probe_client(double precision) returns void language sql security invoker as $$ select width from public.uploads; $$; grant execute on function public.findback_probe_client(double precision) to authenticated;",
+      },
+    ];
+    assert.deepEqual(unresolvedExecuteStatements(chain), []);
+    assert.deepEqual(findReaderGrantGaps(chain), [{ table: "uploads", missing: ["width"] }]);
   });
 
   it("reads a body for every function the chain declares (R3 C1)", () => {
