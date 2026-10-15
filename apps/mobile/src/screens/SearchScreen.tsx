@@ -10,7 +10,8 @@ import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 import { AdvancedSearchFilters, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
 import type { NlFilterPatch } from "../services/search/nlFilters";
-import { nlExtractLive, nlHelperReady } from "../services/liveNarrowTasks";
+import { nlExtractLive, nlHelperState } from "../services/liveNarrowTasks";
+import { OFFLINE_NEEDS_ANDROID } from "./AiModels";
 import {
   fadeVariants,
   motionDurations,
@@ -24,6 +25,15 @@ import {
 type TypeFilter = PostType | "ALL";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Smart Search's not-set-up sentence (CF-040 F6). It names the one action that
+ * fixes the state, because the sentence is a live region and the "Manage AI
+ * models" affordance beside it is a sibling — a screen-reader user is told what
+ * happened and what to do, without the interactive element inside the region.
+ */
+const NL_HELPER_NOT_SET_UP_NOTE =
+  "Smart Search needs the on-device model, which isn't set up on this device yet — open Manage AI models to install it.";
 
 export function SearchScreen(props: {
   /** Injected NL extractor (test fakes or a live extractNlFilters composer).
@@ -94,18 +104,25 @@ export function SearchScreen(props: {
         setDateToParam(patch.dateTo);
         applied += 1;
       }
-      // An empty patch has two very different causes: the helper ran and wasn't
-      // confident, or the helper isn't on this device at all (Smart Search fails
-      // closed either way). Saying "no confident filters" for the second one is
-      // a lie about why nothing happened, so check the device first and offer
-      // the one action that fixes it (CF-040 F6).
-      const helperReady = nlHelperReady();
-      setNlHelperMissing(applied === 0 && !helperReady);
+      // An empty patch has three very different causes: the helper ran and
+      // wasn't confident, the helper isn't on this device at all, or the engine
+      // failed after the helper was found (`extractNlFilters` collapses an op
+      // failure to `{}`, so a busy runtime still reads as the first — recorded
+      // as the F6 residual in the work queue). Because the third is known and
+      // accepted, "no confident filters" must still be the default; but the
+      // second is a lie about why nothing happened, so ask the device first and
+      // offer the one action that fixes it (CF-040 F6). On a build that cannot
+      // run on-device AI at all, the canonical Android-required line replaces
+      // the install offer, because no install will ever change it.
+      const helperState = await nlHelperState();
+      setNlHelperMissing(applied === 0 && helperState === "not-set-up");
       setNlNote(
         applied === 0
-          ? helperReady
-            ? "No confident filters found — nothing changed."
-            : "Smart Search needs the on-device model, which isn't set up on this device yet."
+          ? helperState === "unsupported-platform"
+            ? OFFLINE_NEEDS_ANDROID
+            : helperState === "not-set-up"
+              ? NL_HELPER_NOT_SET_UP_NOTE
+              : "No confident filters found — nothing changed."
           : `Applied ${applied} smart filter${applied === 1 ? "" : "s"} — review or remove them below.`,
       );
     } catch {
@@ -299,7 +316,7 @@ export function SearchScreen(props: {
           </button>
         </div>
         {nlNote !== null && (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2" data-testid="smart-search-note-row">
             <p className="text-xs text-on-surface-variant" role="status">
               {nlNote}
             </p>
@@ -307,7 +324,7 @@ export function SearchScreen(props: {
               <Link
                 to="/settings/ai/models"
                 data-testid="smart-search-manage-models"
-                className="inline-flex min-h-[48px] items-center rounded-full border border-outline-variant px-4 text-sm font-medium text-on-surface"
+                className="inline-flex min-h-[48px] items-center rounded-full border border-outline-variant px-4 text-sm font-medium text-on-surface transition-colors hover:bg-surface-container"
               >
                 Manage AI models
               </Link>

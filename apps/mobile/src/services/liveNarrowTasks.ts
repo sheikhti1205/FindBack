@@ -24,7 +24,8 @@
  *   tests import it. Both go when Help's cloud transports go; nothing in the
  *   narrow-task path calls either.
  */
-import { getApplicationAi } from "./ai/applicationAi";
+import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi";
+import { describeOfflineReadiness } from "./ai/providers/offline";
 import { createOpenRouterClient } from "./openRouter";
 import { aiCredentials } from "./aiCredentials";
 import { getSupabase } from "./supabaseClient";
@@ -34,7 +35,6 @@ import { profileFor } from "./ai/modelProfiles";
 import { NEEDLE_MODEL_ID } from "./ai/needle/embedder";
 import type { AiTaskId, GenerateFn } from "./ai/types";
 import { extractNlFilters, type NlFilterPatch } from "./search/nlFilters";
-import { canShowOffline } from "./ai/uiGates";
 
 export type LiveNarrowTaskId =
   | "extract-search-filters"
@@ -164,18 +164,47 @@ export const generateForCategoryLive: GenerateFn = liveGenerateFor("classify-cat
 export const NARROW_TASK_PROFILE_ID = NEEDLE_MODEL_ID;
 
 /**
- * Is the on-device helper that serves Smart Search set up on this device?
+ * Can the on-device helper that serves Smart Search run on this device at all?
+ *
+ * `unsupported-platform` is not the same truth as "not set up": a build without
+ * the native driver (the web app) can never run on-device AI, so telling that
+ * reader the model "isn't set up yet" and offering an install would promise
+ * something that can never arrive. The two take different copy (CF-040 F6/F9).
+ */
+export type NlHelperState = "ready" | "not-set-up" | "unsupported-platform";
+
+/**
+ * The slice of the routing seam this predicate reads. Injectable so the state
+ * machine can be exercised against real statuses instead of a mock of itself;
+ * production callers pass nothing and get the live service.
+ */
+export type NlHelperSource = Pick<ApplicationAiService, "android" | "ready" | "manager">;
+
+/**
+ * Which of the three truths applies: the helper is set up, it is absent on a
+ * device that could run it, or this build cannot run it at all.
  *
  * Smart Search fails closed either way, so an empty patch alone cannot tell
  * "the helper ran and found nothing confident" apart from "the helper isn't
  * here yet" — and reporting the second as the first is a lie about why nothing
- * happened. This reads the same evidence the on-device AI surface gates on
- * (installed **and** checksum-verified), so the screen can say which one it is
- * and offer the single action that fixes it (baseline §G:370-374). A pure
- * status read: no probe, no fetch, no credential.
+ * happened. This asks the routing seam's OWN predicate
+ * (`describeOfflineReadiness`), the same gate `applicationAi` enforces before
+ * it serves a task (`applicationAi.ts:409`), so it cannot drift from what
+ * routing will actually do.
+ *
+ * Readiness is read **after** boot reconciliation settles: before `ready`
+ * resolves, an installed model still reports `not-installed`, which would be
+ * the same lie in reverse (an installed helper described as absent). For the
+ * same reason a state of `installed` is never file presence — the checksum pin
+ * must have verified. No probe, no fetch, no credential.
  */
-export function nlHelperReady(): boolean {
-  return canShowOffline(getApplicationAi().manager.statusOf(NARROW_TASK_PROFILE_ID));
+export async function nlHelperState(source?: NlHelperSource): Promise<NlHelperState> {
+  const ai = source ?? getApplicationAi();
+  if (!ai.android) return "unsupported-platform";
+  await ai.ready;
+  return describeOfflineReadiness(ai.manager, NARROW_TASK_PROFILE_ID).ready
+    ? "ready"
+    : "not-set-up";
 }
 
 /**

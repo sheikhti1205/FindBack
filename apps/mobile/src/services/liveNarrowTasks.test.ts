@@ -32,7 +32,12 @@ import {
   generateLocalFirst,
   liveGenerateFor,
   nlExtractLive,
+  nlHelperState,
+  NARROW_TASK_PROFILE_ID,
+  type NlHelperSource,
 } from "./liveNarrowTasks";
+import type { OfflineModelStatus } from "./ai/offlineModelManager";
+import { NEEDLE_MODEL_ID } from "./ai/needle/embedder";
 
 function okRoute(value: unknown) {
   return {
@@ -282,5 +287,105 @@ describe("ready-made live composers", () => {
     state.text.mockRejectedValue(new Error("no key"));
     await expect(nlExtractLive("black wallet")).resolves.toEqual({});
     expect(state.text).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The F6 readiness predicate, tested against real statuses rather than a mock
+ * of itself. Review of a8787c1 (REVIEW-CF040-RESIDUAL, MAJOR) showed that with
+ * `nlHelperReady` mocked away by its only consumer, rewriting it to
+ * `return true` left every test in the repo green — which would silently
+ * re-introduce the defect F6 exists to fix.
+ */
+describe("nlHelperState (Smart Search readiness)", () => {
+  function status(overrides: Partial<OfflineModelStatus> = {}): OfflineModelStatus {
+    return {
+      modelId: NEEDLE_MODEL_ID,
+      download: "installed",
+      residency: "resident",
+      downloadedBytes: 1,
+      checksumVerified: true,
+      updatedAt: "2026-10-15T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  /**
+   * The seam slice the predicate reads. Only `statusOf` is ever called, so the
+   * rest of `OfflineModelManager` is not modelled here.
+   */
+  function source(
+    statusOf: (modelId: string) => OfflineModelStatus | undefined,
+    ready: Promise<void> = Promise.resolve(),
+    android = true,
+  ): NlHelperSource {
+    return {
+      android,
+      ready,
+      manager: { statusOf } as NlHelperSource["manager"],
+    };
+  }
+
+  it("is ready only for a helper whose checksum pin verified", async () => {
+    await expect(nlHelperState(source(() => status()))).resolves.toBe("ready");
+  });
+
+  it("reports an installed but unverified file as not set up", async () => {
+    await expect(
+      nlHelperState(source(() => status({ checksumVerified: false }))),
+    ).resolves.toBe("not-set-up");
+  });
+
+  it.each(["not-installed", "queued", "downloading", "paused", "verifying", "failed"] as const)(
+    "reports a %s helper as not set up",
+    async (download) => {
+      await expect(
+        nlHelperState(source(() => status({ download, checksumVerified: false }))),
+      ).resolves.toBe("not-set-up");
+    },
+  );
+
+  it("reports an unknown model id as not set up", async () => {
+    await expect(nlHelperState(source(() => undefined))).resolves.toBe("not-set-up");
+  });
+
+  it("reports a build that cannot run on-device AI as unsupported, not unset", async () => {
+    await expect(
+      nlHelperState(source(() => status(), Promise.resolve(), false)),
+    ).resolves.toBe("unsupported-platform");
+  });
+
+  it("asks about the profile the task is actually routed to (IF-108)", async () => {
+    const asked: string[] = [];
+    await nlHelperState(
+      source((modelId) => {
+        asked.push(modelId);
+        return status({ modelId });
+      }),
+    );
+    expect(asked).toEqual([NARROW_TASK_PROFILE_ID]);
+  });
+
+  it("waits for boot reconciliation before reading the model status", async () => {
+    // Before `ready` settles, an installed model still reports not-installed —
+    // describing it as absent would be the same lie in reverse.
+    let reconciled = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = () => {
+        reconciled = true;
+        resolve();
+      };
+    });
+    const reads: boolean[] = [];
+    const pending = nlHelperState(
+      source((modelId) => {
+        reads.push(reconciled);
+        return status({ modelId });
+      }, gate),
+    );
+    release();
+    await expect(pending).resolves.toBe("ready");
+    expect(reads).toEqual([true]);
   });
 });

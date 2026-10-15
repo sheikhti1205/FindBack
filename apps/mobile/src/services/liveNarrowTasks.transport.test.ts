@@ -2,10 +2,13 @@
 //
 // Boundary proof for the narrow-task transport: report-field/category
 // suggestions and Smart Search filter extraction must never produce a network
-// request and must never read a stored provider credential — under every
-// assistant preference, across `ok:false` and thrown route failures, and for a
-// cancel that races a local failure. Also pins the legacy cloud transport's
-// account-scoped guard, which the guided Help assistant still depends on.
+// request and must never read a stored provider credential. Coverage is per
+// cause, and the cause list is what the assertions below enumerate: an `ok:false`
+// route under every assistant preference, a THROWN route under every preference,
+// a thrown route with no signal, a session switch mid-flight, and a cancel that
+// races a local failure. The legacy cloud transport (which the guided Help
+// assistant still uses) is pinned separately: its on-device-only refusal, its
+// account-bound refusal, and the path where it does reach the network.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { updateAiPreferences } from "./ai/aiPreferences";
 import { generateCloudForAccount, liveGenerateFor } from "./liveNarrowTasks";
@@ -119,19 +122,22 @@ it("a successful local result is returned without a credential read", async () =
   expect(state.keys).not.toHaveBeenCalled();
 });
 
-it("a route rejection with no signal propagates without real HTTP or a credential read", async () => {
-  updateAiPreferences("transport-a", { assistantMode: "cloud-only" });
-  const fetch = vi.fn();
-  vi.stubGlobal("fetch", fetch);
-  state.route.mockImplementation(async () => {
-    throw new Error("native engine exploded");
-  });
-  await expect(
-    liveGenerateFor("extract-search-filters")("private text", { maxOutputTokens: 8, temperature: 0 }),
-  ).rejects.toThrow("native engine exploded");
-  expect(fetch).not.toHaveBeenCalled();
-  expect(state.keys).not.toHaveBeenCalled();
-});
+it.each(["automatic", "cloud-only", "on-device-only"] as const)(
+  "a thrown route under the %s preference propagates without real HTTP or a credential read",
+  async (mode) => {
+    updateAiPreferences("transport-a", { assistantMode: mode });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    state.route.mockImplementation(async () => {
+      throw new Error("native engine exploded");
+    });
+    await expect(
+      liveGenerateFor("extract-search-filters")("private text", { maxOutputTokens: 8, temperature: 0 }),
+    ).rejects.toThrow("native engine exploded");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(state.keys).not.toHaveBeenCalled();
+  },
+);
 
 // The guided Help assistant still uses the legacy cloud transport, so its
 // account-scoped guard must stay live and preference-conditional. These run
@@ -143,6 +149,20 @@ describe("legacy cloud transport guard (guided Help assistant)", () => {
     vi.stubGlobal("fetch", fetch);
     await expect(generateCloudForAccount("transport-a", "guided prompt", undefined)).rejects.toThrow(
       "On-device only: cloud is disabled.",
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(state.keys).not.toHaveBeenCalled();
+  });
+
+  it("refuses before any HTTP or credential read when the session's account changed", async () => {
+    updateAiPreferences("transport-a", { assistantMode: "automatic" });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    // The send was composed for transport-a; the session is now transport-b.
+    // A send must never be retargeted to whoever happens to be signed in.
+    state.account = "transport-b";
+    await expect(generateCloudForAccount("transport-a", "guided prompt", undefined)).rejects.toThrow(
+      "AI account changed or is not authenticated.",
     );
     expect(fetch).not.toHaveBeenCalled();
     expect(state.keys).not.toHaveBeenCalled();
