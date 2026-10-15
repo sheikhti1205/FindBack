@@ -463,6 +463,34 @@ function parseParams(args) {
   });
 }
 
+/**
+ * A function's identity: `name(type,type)`, in the two spellings the chain uses.
+ *
+ * Postgres overloads on the ARGUMENT TYPE LIST alone — parameter names and
+ * defaults never distinguish two overloads — so a signature is the only correct
+ * key for both the function model and its EXECUTE state
+ * (REVIEW-M1-ACL-CLOSURE-R2 B4). A declaration (`p_id text, p_note text`) and a
+ * GRANT/REVOKE reference (`text, text`) both reduce to `text,text`.
+ *
+ * Unnamed multi-word types (`character varying`) and explicit argmodes are read
+ * the way `parseParams` reads them today, so an exotic spelling resolves to no
+ * key at all rather than to the wrong one; callers fall back to the name's
+ * overloads, which over-applies rather than silently narrowing.
+ */
+function signatureKey(name, args) {
+  const types = splitTopLevel(args).map((part) => {
+    let words = part
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\s+default\s+.*$/i, "")
+      .split(" ")
+      .filter(Boolean);
+    while (words.length > 1 && /^(in|out|inout|variadic)$/i.test(words[0])) words = words.slice(1);
+    return (words.length > 1 ? words.slice(1) : words).join(" ").toLowerCase();
+  });
+  return `${name}(${types.join(",")})`;
+}
+
 function extractFunctionDecls(text) {
   const decls = [];
   const re = /create\s+(?:or\s+replace\s+)?function\s+([a-z0-9_."]+)\s*\(/gi;
@@ -583,11 +611,36 @@ describe("CREATE OR REPLACE signature-drift guard", () => {
 //
 //   * findReaderGrantGaps() is the precise question for the WHOLE class - "is
 //     every column a client-reachable reader asks for readable?" - answered by
-//     parsing the latest body of every SECURITY INVOKER `findback_*_client`
-//     function in the chain. Readers, not tables, are what the grant model
-//     serves, and walking readers is what found both R1 instances. `select *`
-//     in a reader counts as "every column of that table", which is how the
-//     original F1/F2 defect appears in this model without naming any table.
+//     walking every SECURITY INVOKER function the chain leaves client-callable
+//     (EXECUTE membership, not the `_client` suffix) and asking what its body
+//     reads. Readers, not tables, are what the grant model serves, and walking
+//     readers is what found both R1 instances. `select *` in a reader counts as
+//     "every column of that table", which is how the original F1/F2 defect
+//     appears in this model without naming any table.
+//
+// MODELLED, and how (REVIEW-M1-ACL-CLOSURE, REVIEW-M1-ACL-CLOSURE-R2):
+//   * function identity is the SIGNATURE - name plus argument type list, the
+//     only thing Postgres overloads on - so a `grant/revoke execute on
+//     function f(text, text)` cannot be read onto a sibling overload, and one
+//     overload's body cannot hide behind another's (B4);
+//   * `drop function [if exists]`, and `alter function … security
+//     definer|invoker`, which changes a reader's security model without
+//     redefining its body (B5);
+//   * tails delimited by any dollar-quote tag (`$$`, `$body$`, `$BODY$`), and
+//     DDL in any case (B1);
+//   * a bare `*` after `distinct on (…)`, told apart from `*` multiplication
+//     and from `count(*)` (B2);
+//   * every column shape listed against findReaderGrantGaps below.
+//
+// NOT MODELLED - reported, never silently trusted:
+//   * SQL assembled at runtime (dynamic `execute`), whose column set no static
+//     walk can know;
+//   * an unqualified column name in a scope with more than one source table
+//     (an attribution would be a guess);
+//   * an argument type spelled in a way this walk cannot normalise (`character
+//     varying` written unnamed): the statement then resolves to no signature
+//     and is applied to every overload of that name, which over-applies -
+//     the noisy direction - rather than narrowing in silence.
 //
 // A `findback_*_client` function that is SECURITY DEFINER runs as its owner and
 // needs no grant, so it is skipped - but the set is pinned by name below, so a
@@ -852,21 +905,51 @@ function readFunctionModel(migrations) {
   for (const { sql } of migrations) {
     const marks = [];
     for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+public\.([a-z0-9_]+)\s*\(/gi)) {
-      marks.push({ index: m.index, kind: "create", name: m[1] });
+      marks.push({ index: m.index, kind: "create", name: m[1].toLowerCase() });
     }
-    for (const m of sql.matchAll(/drop function if exists public\.([a-z0-9_]+)\s*\(/gi)) {
-      marks.push({ index: m.index, kind: "drop", name: m[1] });
+    for (const m of sql.matchAll(/drop\s+function\s+(?:if\s+exists\s+)?public\.([a-z0-9_]+)\s*\(/gi)) {
+      marks.push({ index: m.index, kind: "drop", name: m[1].toLowerCase() });
+    }
+    // `alter function … security definer|invoker` flips a reader's security
+    // model without redefining its body, so it has to be modelled for the pin to
+    // mean anything (REVIEW-M1-ACL-CLOSURE-R2 B5).
+    for (const m of sql.matchAll(/alter\s+function\s+public\.([a-z0-9_]+)\s*\(/gi)) {
+      marks.push({ index: m.index, kind: "alter", name: m[1].toLowerCase() });
     }
     for (const mark of marks.sort((a, b) => a.index - b.index)) {
+      // One identity for a function: name + argument TYPE list. Postgres overloads
+      // on the types alone (parameter names and defaults never distinguish two
+      // overloads), and the chain really does hold overloads — so keying by name
+      // let an older overload's body escape the reader walk entirely
+      // (REVIEW-M1-ACL-CLOSURE-R2 B4).
+      const key = signatureKey(mark.name, parenBodyAt(sql, sql.indexOf("(", mark.index)));
       if (mark.kind === "drop") {
-        functions.delete(mark.name);
+        functions.delete(key);
         continue;
       }
       const tail = sql.slice(mark.index);
-      const dollar = tail.match(/\$([a-z_]*)\$([\s\S]*?)\$\1\$/);
+      if (mark.kind === "alter") {
+        const current = functions.get(key);
+        if (!current) continue;
+        const end = tail.indexOf(";");
+        const statement = flattenSql(end === -1 ? tail : tail.slice(0, end + 1));
+        if (/security\s+definer/i.test(statement)) current.definer = true;
+        else if (/security\s+invoker/i.test(statement)) current.definer = false;
+        continue;
+      }
+      // Dollar-quoted body: the tag is any identifier (`$$`, `$body$`, `$BODY$`,
+      // `$v1$`), and it is case-sensitive in Postgres, so the closing tag must be
+      // matched exactly. A narrower tag pattern used to skip a whole function
+      // body silently (REVIEW-M1-ACL-CLOSURE-R2 B1).
+      const dollar = tail.match(/\$([A-Za-z_][A-Za-z0-9_]*)?\$([\s\S]*?)\$\1\$/);
       if (!dollar) continue;
       const head = flattenSql(tail.slice(0, tail.indexOf(dollar[0])));
-      functions.set(mark.name, { body: dollar[2], definer: /security\s+definer/.test(head) });
+      functions.set(key, {
+        name: mark.name,
+        signature: key,
+        body: dollar[2],
+        definer: /security\s+definer/i.test(head),
+      });
     }
   }
   return functions;
@@ -1051,25 +1134,40 @@ function unqualifiedColumnRefs(statement, table, columns, scopeDepth, boundNames
  * separately: `revoke ... from authenticated` does not take away what the role
  * inherits from PUBLIC, so reachability is the OR of the two.
  */
-function readExecuteModel(migrations) {
+function readExecuteModel(migrations, functions) {
   const state = new Map();
-  const stateOf = (name) => {
-    if (!state.has(name)) {
-      state.set(name, { public: true, authenticated: false, anon: false, service_role: false });
+  const stateOf = (key) => {
+    if (!state.has(key)) {
+      state.set(key, { public: true, authenticated: false, anon: false, service_role: false });
     }
-    return state.get(name);
+    return state.get(key);
+  };
+  // `GRANT ... ON FUNCTION f(text)` is SIGNATURE-scoped: it does not touch a
+  // sibling overload of the same name. The statement's argument list is resolved
+  // against the functions the chain declares; when it does not resolve (a type
+  // spelled differently, a function this walk never sees) the statement is
+  // applied to every overload of that name, which over-applies rather than
+  // silently reading a signature-scoped revoke as a name-scoped one
+  // (REVIEW-M1-ACL-CLOSURE-R2 B4).
+  const targetsFor = (name, argList) => {
+    const overloads = [...functions.keys()].filter((key) => key.startsWith(`${name}(`));
+    if (argList === null || overloads.length === 0) return overloads.length > 0 ? overloads : [name];
+    const key = signatureKey(name, argList);
+    return functions.has(key) ? [key] : overloads;
   };
   for (const { sql } of migrations) {
     const text = flattenSql(stripSqlNoise(sql));
     for (const m of text.matchAll(
-      /(grant|revoke) ([a-z, ]*?) on function public\.([a-z0-9_]+)\s*\(([^)]*)\) (to|from) ([a-z_, ]+?)(?=[;)]|$)/g,
+      /(grant|revoke) ([a-z, ]*?) on function public\.([a-z0-9_]+)\s*(?:\(([^)]*)\))? (to|from) ([a-z_, ]+?)(?=[;)]|$)/g,
     )) {
       if (m[1] === "grant" && !/execute|all/.test(m[2])) continue;
       const roles = m[6].split(",").map((r) => r.trim());
-      const target = stateOf(m[3]);
-      for (const role of CLIENT_EXECUTE_ROLES.concat("anon", "service_role")) {
-        if (!roles.includes(role)) continue;
-        target[role] = m[1] === "grant";
+      for (const key of targetsFor(m[3].toLowerCase(), m[4] ?? null)) {
+        const target = stateOf(key);
+        for (const role of CLIENT_EXECUTE_ROLES.concat("anon", "service_role")) {
+          if (!roles.includes(role)) continue;
+          target[role] = m[1] === "grant";
+        }
       }
     }
   }
@@ -1079,9 +1177,12 @@ function readExecuteModel(migrations) {
 /** Functions `authenticated` can call: explicit grant, or an unrevoked PUBLIC grant. */
 function clientReachableFunctions(functions, execute) {
   const reachable = new Set();
-  for (const name of functions.keys()) {
-    const state = execute.get(name) ?? { public: true, authenticated: false, anon: false };
-    if (state.public || state.authenticated) reachable.add(name);
+  for (const [key, fn] of functions) {
+    const state =
+      execute.get(key) ??
+      execute.get(fn.name) ??
+      { public: true, authenticated: false, anon: false };
+    if (state.public || state.authenticated) reachable.add(key);
   }
   return reachable;
 }
@@ -1092,10 +1193,12 @@ function clientReachableFunctions(functions, execute) {
  * The question is asked of READERS: every client-reachable SECURITY INVOKER
  * function runs with the caller's privileges, so every column its body reads is a
  * column the grant model must cover. Readers are selected by EXECUTE membership
- * rather than by the `_client` name suffix (REVIEW-M1-ACL-CLOSURE A2), and every
- * shape Postgres expands into a column read is modelled: `*`, `alias.*`,
- * schema-qualified names, comma-joined FROM lists, RETURNING lists, and the
- * unqualified names of a single-table scope (REVIEW-M1-ACL-CLOSURE A1).
+ * rather than by the `_client` name suffix (REVIEW-M1-ACL-CLOSURE A2), each one
+ * identified by its signature rather than by its name alone (R2 B4), and every
+ * shape Postgres expands into a column read is modelled: `*` (including after
+ * `distinct on (…)`), `alias.*`, schema-qualified names, comma-joined FROM lists,
+ * RETURNING lists, and the unqualified names of a single-table scope
+ * (REVIEW-M1-ACL-CLOSURE A1).
  *
  * What it deliberately does not model: dynamic SQL assembled at runtime, and an
  * unqualified name in a scope that has more than one source table (which would
@@ -1105,7 +1208,7 @@ function clientReachableFunctions(functions, execute) {
 function findReaderGrantGaps(migrations) {
   const { columns, tableSelect, columnSelect } = readGrantModel(migrations);
   const functions = readFunctionModel(migrations);
-  const reachable = clientReachableFunctions(functions, readExecuteModel(migrations));
+  const reachable = clientReachableFunctions(functions, readExecuteModel(migrations, functions));
   const required = new Map();
   const requireColumn = (table, column) => {
     if (!required.has(table)) required.set(table, new Set());
@@ -1115,8 +1218,8 @@ function findReaderGrantGaps(migrations) {
     for (const column of columns.get(table) ?? []) requireColumn(table, column);
   };
 
-  for (const [name, fn] of functions) {
-    if (fn.definer || !reachable.has(name)) continue;
+  for (const [key, fn] of functions) {
+    if (fn.definer || !reachable.has(key)) continue;
     const body = flattenSql(stripSqlNoise(fn.body));
     for (const statement of body.split(";")) {
       if (!statement.trim()) continue;
@@ -1135,12 +1238,18 @@ function findReaderGrantGaps(migrations) {
 
       // A bare star reads every column of its scope's tables; `count(*)` reads
       // none, a qualified star is handled above, and `*` as multiplication is
-      // preceded by an operand rather than by SELECT/RETURNING/`,`.
+      // told apart by the token on either side (an operand, not SELECT/RETURNING
+      // or FROM/INTO). The look-ahead matters for `select distinct on (id) *`
+      // (REVIEW-M1-ACL-CLOSURE-R2 B2), where the preceding word is `)`.
       for (const m of statement.matchAll(/\*/g)) {
         const before = statement.slice(0, m.index).trimEnd();
         if (before.endsWith("(") || before.endsWith(".")) continue;
         const operator = /([a-z_][a-z0-9_]*)$/.exec(before)?.[1];
-        const isStar = before.endsWith(",") || ["select", "distinct", "all", "returning"].includes(operator);
+        const after = statement.slice(m.index + 1).trimStart();
+        const isStar =
+          before.endsWith(",") ||
+          ["select", "distinct", "all", "returning"].includes(operator) ||
+          /^(,|\)|;|from\b|into\b|$)/i.test(after);
         if (!isStar) continue;
         const depth = depths[m.index];
         const sources = nearestScopeTables(reads, depth);
@@ -1478,15 +1587,128 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     assert.deepEqual(findReaderGrantGaps(scoped), [{ table: "comments", missing: ["depth"] }]);
   });
 
+  it("registers a reader whose body uses a tagged, mixed-case dollar quote (B1)", () => {
+    // `$BODY$` — and an uppercase CREATE — used to skip the whole function, so a
+    // reader could leave the walk with nothing red.
+    const tagged = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "CREATE OR REPLACE FUNCTION public.findback_tagged_client() RETURNS void LANGUAGE sql SECURITY INVOKER AS $BODY$ select width from public.uploads; $BODY$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(tagged), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("reads a bare `*` after `distinct on (...)` as every column (B2)", () => {
+    const distinct = [
+      {
+        file: "a.sql",
+        sql: "create table public.item_posts (id text, title text); grant select (id) on public.item_posts to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_distinct_client() returns void language sql security invoker as $$ select distinct on (id) * from public.item_posts; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(distinct), [{ table: "item_posts", missing: ["title"] }]);
+  });
+
+  it("never mistakes arithmetic for a star (A3/B2)", () => {
+    const arithmetic = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id, width) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create or replace function public.findback_math_client() returns void language sql security invoker as $$ select count(*) as n, 2 * cos(width) as m from public.uploads; $$;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(arithmetic), []);
+  });
+
+  it("keys a reader by signature, so an older overload cannot hide its body (B4)", () => {
+    // The chain really does hold overloads (findback_list_notifications_client
+    // among them), and a name-keyed model kept only the newest body, so an older
+    // overload that is still granted EXECUTE could read an ungranted column with
+    // nothing going red. Here the OLDER overload is the one with the ungranted
+    // read, which is exactly the shape a name-keyed walk misses.
+    const overloaded = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create function public.findback_publish_client(p_id text) returns void language sql security invoker as $$ select width from public.uploads where id = p_id; $$;",
+      },
+      {
+        file: "c.sql",
+        sql: "create function public.findback_publish_client(p_id text, p_note text) returns void language sql security invoker as $$ select id from public.uploads where id = p_id; $$; revoke all on function public.findback_publish_client(text, text) from public, anon; grant execute on function public.findback_publish_client(text, text) to authenticated;",
+      },
+    ];
+    assert.deepEqual(
+      [...readFunctionModel(overloaded).keys()].sort(),
+      ["findback_publish_client(text)", "findback_publish_client(text,text)"],
+      "one key per overload",
+    );
+    assert.deepEqual(findReaderGrantGaps(overloaded), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("honours a signature-scoped revoke as exactly that (B4)", () => {
+    // Revoking the two-argument overload must not revoke its one-argument
+    // sibling, and the still-granted sibling's reads are still checked.
+    const scoped = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create function public.findback_publish_client(p_id text) returns void language sql security invoker as $$ select width from public.uploads where id = p_id; $$;",
+      },
+      {
+        file: "c.sql",
+        sql: "create function public.findback_publish_client(p_id text, p_note text) returns void language sql security invoker as $$ select id from public.uploads where id = p_id; $$; revoke all on function public.findback_publish_client(text, text) from public, anon, authenticated;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(scoped), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("follows `alter function … security definer|invoker` (B5)", () => {
+    const tables = {
+      file: "a.sql",
+      sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+    };
+    const body = "create or replace function public.findback_publish_client() returns void language sql security invoker as $$ select id, width from public.uploads; $$;";
+    // Flipping to definer makes its reads run as the owner, so they stop being
+    // the client's problem; flipping back makes them the client's problem again.
+    assert.deepEqual(
+      findReaderGrantGaps([tables, { file: "b.sql", sql: `${body} alter function public.findback_publish_client() security definer;` }]),
+      [],
+    );
+    assert.deepEqual(
+      findReaderGrantGaps([tables, { file: "b.sql", sql: `${body} alter function public.findback_publish_client() security invoker;` }]),
+      [{ table: "uploads", missing: ["width"] }],
+    );
+  });
+
   it("pins the client-reachable definer set, so a reader turning definer cannot leave the check (A4)", () => {
     const functions = readFunctionModel(CHAIN());
-    const reachable = clientReachableFunctions(functions, readExecuteModel(CHAIN()));
-    const definers = [...functions]
-      .filter(([name, fn]) => fn.definer && reachable.has(name))
-      .map(([name]) => name)
-      .sort();
+    const reachable = clientReachableFunctions(functions, readExecuteModel(CHAIN(), functions));
+    const definers = [
+      ...new Set(
+        [...functions]
+          .filter(([key, fn]) => fn.definer && reachable.has(key))
+          .map(([, fn]) => fn.name),
+      ),
+    ].sort();
     assert.deepEqual(definers, CLIENT_REACHABLE_DEFINERS);
-    const invokers = [...functions].filter(([name, fn]) => !fn.definer && reachable.has(name));
+    const invokers = [...functions].filter(([key, fn]) => !fn.definer && reachable.has(key));
     assert.ok(invokers.length > 0, "the chain has client-reachable invoker readers too");
   });
 
@@ -1525,6 +1747,7 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
 
 describe("dims bound parity with the client mirror (REVIEW-M1-REPAIR R5, A5, A8)", () => {
   const DIMS_SQL = "20261015163718_media_read_grants_and_dims_bound.sql";
+  const COMMENT_PARITY = "20261012020000_comment_attachments_parity.sql";
 
   it("binds every SQL dims floor and ceiling to the app mirror", () => {
     const source = read(DIMS_MIRROR);
@@ -1554,6 +1777,40 @@ describe("dims bound parity with the client mirror (REVIEW-M1-REPAIR R5, A5, A8)
       assert.ok(floors.length >= 2, `${name} carries a floor for both dimensions`);
       for (const value of ceilings) assert.equal(value, ceiling, `${name} ceiling mirrors the app`);
       for (const value of floors) assert.equal(value, floor, `${name} floor mirrors the app`);
+    }
+  });
+
+  it("keeps the comment-attachment bound on its own contract, not the media mirror (A5)", () => {
+    // `comment_attachments_dims_check` is a tighter, server-only bound that the
+    // comment RPC enforces itself; `displayDimensions.ts` binds the post-media
+    // checks and deliberately not this one. So instead of leaving the third dims
+    // check unbound (three mutations there used to stay green), assert its own
+    // two-sided contract: the constraint's ceiling is the ceiling both RPC guards
+    // enforce, and it is NOT the media mirror — if anyone widens it to the media
+    // ceiling, this fails and the exclusion has to be re-decided rather than rot.
+    const source = read(DIMS_MIRROR);
+    const mirrorCeiling = source.match(/MAX_DISPLAY_DIMENSION\s*=\s*(\d+)/)?.[1];
+    assert.ok(mirrorCeiling, "client mirror ceiling found");
+
+    const sql = flattenSql(mig(COMMENT_PARITY)).toLowerCase().replace(/--[^\n]*/g, " ");
+    const at = sql.indexOf("comment_attachments_dims_check");
+    assert.ok(at >= 0, "the comment-attachment dims check exists");
+    const body = parenBodyAt(sql, sql.indexOf("(", at));
+    const bounds = [...new Set([...body.matchAll(/(?:<=|>=|<|>)\s*(\d+)/g)].map((m) => m[1]))].sort();
+    assert.deepEqual(bounds, ["1", "8192"], "one floor and one ceiling, both axes");
+    const ceiling = bounds[1];
+    assert.notEqual(ceiling, mirrorCeiling, "a different contract from the post-media mirror");
+
+    for (const axis of ["v_width", "v_height"]) {
+      const guard = new RegExp(
+        `${axis}\\s+is\\s+not\\s+null\\s+and\\s+\\(${axis}\\s*<\\s*(\\d+)\\s+or\\s+${axis}\\s*>\\s*(\\d+)\\)`,
+        "g",
+      );
+      assert.deepEqual(
+        [...sql.matchAll(guard)].map((m) => m[2]),
+        [ceiling],
+        `${axis}: the RPC guard enforces the constraint's ceiling`,
+      );
     }
   });
 });
@@ -1601,10 +1858,16 @@ describe("media read grants + dims bound repair (20261015163718)", () => {
   it("keeps the dims checks NOT VALID so no existing row is rescanned", () => {
     const sql = mig(REPAIR).toLowerCase().replace(/--[^\n]*/g, " ");
     assert.equal((sql.match(/not valid/g) ?? []).length, 2, "both dims checks stay NOT VALID");
-    // The ceiling's VALUE is bound to the client mirror numerically in "dims
-    // bound parity with the client mirror" (REVIEW-M1-REPAIR R5); here all that
-    // is asserted is that every dimension still carries one.
-    assert.equal((sql.match(/<= \d+/g) ?? []).length, 4, "every dim carries a ceiling");
+    // Structural only, and per check: two dims constraints, each carrying a bound
+    // in any spelling. The VALUE binding to the client mirror belongs to "dims
+    // bound parity with the client mirror" below, so a semantically equal rewrite
+    // (`<= 100000` written `< 100001`) must not fail here (A8).
+    for (const name of ["uploads_dims_check", "attachments_dims_check"]) {
+      const at = sql.indexOf(name);
+      assert.ok(at >= 0, `${name} present`);
+      const body = parenBodyAt(sql, sql.indexOf("(", at));
+      assert.match(body, /(?:<=|>=|<|>)\s*\d+/, `${name} carries a bound`);
+    }
   });
 });
 
