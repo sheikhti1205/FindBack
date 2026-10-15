@@ -10,7 +10,8 @@ import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 import { AdvancedSearchFilters, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
 import type { NlFilterPatch } from "../services/search/nlFilters";
-import { nlExtractLive, nlHelperState } from "../services/liveNarrowTasks";
+import { nlExtractLive, nlHelperState, type NlHelperState } from "../services/liveNarrowTasks";
+import { DEVICE_INCOMPATIBLE_REASON } from "../services/ai/applicationAi";
 import { OFFLINE_NEEDS_ANDROID } from "./AiModels";
 import {
   fadeVariants,
@@ -34,6 +35,21 @@ const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
  */
 const NL_HELPER_NOT_SET_UP_NOTE =
   "Smart Search needs the on-device model, which isn't set up on this device yet — open Manage AI models to install it.";
+
+/**
+ * What an empty patch means, per helper state (CF-040 F6). Only
+ * `not-set-up` may offer an action, because only there can installing change
+ * the outcome: a build without the runtime, or a device that cannot run it, is
+ * a terminal answer and promising an install would be the same defect in
+ * reverse. `ready` and `unknown` make no claim about the device at all.
+ */
+const NL_EMPTY_PATCH_NOTE: Record<NlHelperState, string> = {
+  ready: "No confident filters found — nothing changed.",
+  "not-set-up": NL_HELPER_NOT_SET_UP_NOTE,
+  "unsupported-platform": OFFLINE_NEEDS_ANDROID,
+  "unsupported-device": DEVICE_INCOMPATIBLE_REASON,
+  unknown: "No confident filters found — nothing changed.",
+};
 
 export function SearchScreen(props: {
   /** Injected NL extractor (test fakes or a live extractNlFilters composer).
@@ -111,18 +127,14 @@ export function SearchScreen(props: {
       // as the F6 residual in the work queue). Because the third is known and
       // accepted, "no confident filters" must still be the default; but the
       // second is a lie about why nothing happened, so ask the device first and
-      // offer the one action that fixes it (CF-040 F6). On a build that cannot
-      // run on-device AI at all, the canonical Android-required line replaces
-      // the install offer, because no install will ever change it.
+      // offer the one action that fixes it (CF-040 F6). Where no install can
+      // ever help — a build without the runtime, or a device that cannot run it
+      // — the canonical line for that truth replaces the offer.
       const helperState = await nlHelperState();
       setNlHelperMissing(applied === 0 && helperState === "not-set-up");
       setNlNote(
         applied === 0
-          ? helperState === "unsupported-platform"
-            ? OFFLINE_NEEDS_ANDROID
-            : helperState === "not-set-up"
-              ? NL_HELPER_NOT_SET_UP_NOTE
-              : "No confident filters found — nothing changed."
+          ? NL_EMPTY_PATCH_NOTE[helperState]
           : `Applied ${applied} smart filter${applied === 1 ? "" : "s"} — review or remove them below.`,
       );
     } catch {

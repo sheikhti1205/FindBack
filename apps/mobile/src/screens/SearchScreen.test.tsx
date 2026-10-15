@@ -329,6 +329,36 @@ describe("SearchScreen URL filters", () => {
       expect(screen.queryByTestId("smart-search-manage-models")).toBeNull();
     });
 
+    it("says the device cannot run it instead of offering an install that cannot help", async () => {
+      nlHelperStateMock.mockResolvedValue("unsupported-device");
+      renderWithNl(async () => ({}));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "black wallet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      // The canonical device-incompatible line, and no action: installing is
+      // not something the reader could do (REVIEW-CF040-RESIDUAL-R2 N1).
+      expect(await screen.findByText("Unavailable on this device.")).toBeTruthy();
+      expect(screen.queryByText(/isn't set up on this device yet/)).toBeNull();
+      expect(screen.getByTestId("smart-search-note-row").querySelectorAll("a")).toHaveLength(0);
+    });
+
+    it("makes no claim about the device when the state cannot be determined", async () => {
+      nlHelperStateMock.mockResolvedValue("unknown");
+      renderWithNl(async () => ({}));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "black wallet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      // `unknown` is the honest fallback: the ordinary sentence, no install
+      // offer, and nothing asserted about the helper's absence.
+      expect(await screen.findByText("No confident filters found — nothing changed.")).toBeTruthy();
+      expect(screen.queryByText(/needs the on-device model/)).toBeNull();
+      expect(screen.queryByTestId("smart-search-manage-models")).toBeNull();
+    });
+
     it("reports failure without changing filters", async () => {
       renderWithNl(async () => {
         throw new Error("boom");

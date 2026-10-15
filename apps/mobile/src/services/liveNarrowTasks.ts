@@ -171,40 +171,64 @@ export const NARROW_TASK_PROFILE_ID = NEEDLE_MODEL_ID;
  * reader the model "isn't set up yet" and offering an install would promise
  * something that can never arrive. The two take different copy (CF-040 F6/F9).
  */
-export type NlHelperState = "ready" | "not-set-up" | "unsupported-platform";
+export type NlHelperState =
+  | "ready"
+  | "not-set-up"
+  | "unsupported-platform"
+  | "unsupported-device"
+  | "unknown";
 
 /**
  * The slice of the routing seam this predicate reads. Injectable so the state
  * machine can be exercised against real statuses instead of a mock of itself;
  * production callers pass nothing and get the live service.
  */
-export type NlHelperSource = Pick<ApplicationAiService, "android" | "ready" | "manager">;
+export type NlHelperSource = Pick<
+  ApplicationAiService,
+  "android" | "ready" | "manager" | "compatibility"
+>;
 
 /**
  * Which of the three truths applies: the helper is set up, it is absent on a
- * device that could run it, or this build cannot run it at all.
+ * device that could run it, or this device/build cannot run it at all.
  *
  * Smart Search fails closed either way, so an empty patch alone cannot tell
  * "the helper ran and found nothing confident" apart from "the helper isn't
  * here yet" — and reporting the second as the first is a lie about why nothing
- * happened. This asks the routing seam's OWN predicate
- * (`describeOfflineReadiness`), the same gate `applicationAi` enforces before
- * it serves a task (`applicationAi.ts:409`), so it cannot drift from what
- * routing will actually do.
+ * happened. This asks the routing seam's OWN predicates, the same ones
+ * `applicationAi` enforces before it serves a task (`applicationAi.ts:409`) and
+ * the same compatibility snapshot the models screen renders
+ * (`AiModelsRoute.tsx:126`), so this cannot drift from what routing will do.
+ *
+ * Terminal states are separated because an install offer is a promise:
+ *
+ * - `unsupported-platform` — the web build, where no install can ever help;
+ * - `unsupported-device` — Android, but this device cannot run the runtime
+ *   (ABI/runtime mismatch). Uses the canonical compatibility snapshot including
+ *   its known limit: device facts that were never collected read as
+ *   incompatible here exactly as they do on the models screen — one shared
+ *   answer, not two.
  *
  * Readiness is read **after** boot reconciliation settles: before `ready`
  * resolves, an installed model still reports `not-installed`, which would be
  * the same lie in reverse (an installed helper described as absent). For the
  * same reason a state of `installed` is never file presence — the checksum pin
- * must have verified. No probe, no fetch, no credential.
+ * must have verified. No probe, no fetch, no credential. This is a diagnostic,
+ * so it is total: a failure inside it yields `unknown`, never a rejection and
+ * never a claim about the user's device.
  */
 export async function nlHelperState(source?: NlHelperSource): Promise<NlHelperState> {
-  const ai = source ?? getApplicationAi();
-  if (!ai.android) return "unsupported-platform";
-  await ai.ready;
-  return describeOfflineReadiness(ai.manager, NARROW_TASK_PROFILE_ID).ready
-    ? "ready"
-    : "not-set-up";
+  try {
+    const ai = source ?? getApplicationAi();
+    if (!ai.android) return "unsupported-platform";
+    await ai.ready;
+    if (!ai.compatibility(NARROW_TASK_PROFILE_ID).compatible) return "unsupported-device";
+    return describeOfflineReadiness(ai.manager, NARROW_TASK_PROFILE_ID).ready
+      ? "ready"
+      : "not-set-up";
+  } catch {
+    return "unknown";
+  }
 }
 
 /**

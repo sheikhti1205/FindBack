@@ -318,10 +318,12 @@ describe("nlHelperState (Smart Search readiness)", () => {
     statusOf: (modelId: string) => OfflineModelStatus | undefined,
     ready: Promise<void> = Promise.resolve(),
     android = true,
+    compatible = true,
   ): NlHelperSource {
     return {
       android,
       ready,
+      compatibility: () => ({ compatible }),
       manager: { statusOf } as NlHelperSource["manager"],
     };
   }
@@ -353,6 +355,36 @@ describe("nlHelperState (Smart Search readiness)", () => {
     await expect(
       nlHelperState(source(() => status(), Promise.resolve(), false)),
     ).resolves.toBe("unsupported-platform");
+  });
+
+  it("reports a device that cannot run the runtime as terminal, not as an install to do", async () => {
+    // Android, but the compatibility snapshot says this device cannot run the
+    // model. Offering an install here would promise something that cannot
+    // happen; the state has to be terminal (REVIEW-CF040-RESIDUAL-R2 N1).
+    const asked: string[] = [];
+    const seam: NlHelperSource = {
+      android: true,
+      ready: Promise.resolve(),
+      compatibility: (modelId: string) => {
+        asked.push(modelId);
+        return { compatible: false, reason: "Unavailable on this device." };
+      },
+      manager: { statusOf: () => status() } as unknown as NlHelperSource["manager"],
+    };
+    await expect(nlHelperState(seam)).resolves.toBe("unsupported-device");
+    expect(asked).toEqual([NARROW_TASK_PROFILE_ID]);
+  });
+
+  it("asks the device before claiming an install is missing, and never rejects", async () => {
+    // A total diagnostic: a failure inside it must not surface as a search
+    // failure (the patch may already have been applied, so "search failed -
+    // nothing changed" would be a lie), and must not become a claim about the
+    // user's device. `unknown` says nothing about either.
+    const seam: NlHelperSource = {
+      ...source(() => status()),
+      ready: Promise.reject(new Error("boot reconciliation failed")),
+    };
+    await expect(nlHelperState(seam)).resolves.toBe("unknown");
   });
 
   it("asks about the profile the task is actually routed to (IF-108)", async () => {
