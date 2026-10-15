@@ -993,8 +993,15 @@ function executeStatementRegex() {
 
 /** The DDL body of a function, in the two spellings this chain can use. */
 function functionBodyAt(tail) {
+  // Both spellings are anchored to THIS statement. The dollar pattern used to be
+  // searched across the rest of the file, so a declaration whose body is a
+  // single-quoted literal silently absorbed the next `$$…$$` — another function,
+  // a `do` block, even a comment — and the walk analysed the wrong body with
+  // both invariants green (REVIEW-M1-ACL-CLOSURE-R4 D1). A `;` before the
+  // opening delimiter means the quoted region belongs to a later statement.
+  const firstSeparator = tail.indexOf(";");
   const dollar = tail.match(/\$([A-Za-z_][A-Za-z0-9_]*)?\$([\s\S]*?)\$\1\$/);
-  if (dollar) {
+  if (dollar && (firstSeparator === -1 || tail.indexOf(dollar[0]) < firstSeparator)) {
     return { body: dollar[2], head: tail.slice(0, tail.indexOf(dollar[0])) };
   }
   // `language sql as 'select 1'`: a single-quoted literal body. It has to be the
@@ -1003,8 +1010,7 @@ function functionBodyAt(tail) {
   // body read an unreadable declaration as an empty function, which is a silent
   // hole exactly where the walk is supposed to shout
   // (REVIEW-M1-ACL-CLOSURE-R3 C1/C2).
-  const end = tail.indexOf(";");
-  const statement = end === -1 ? tail : tail.slice(0, end + 1);
+  const statement = firstSeparator === -1 ? tail : tail.slice(0, firstSeparator + 1);
   const literals = [...statement.matchAll(/'((?:[^']|'')*)'/g)];
   const last = literals[literals.length - 1];
   if (!last) return null;
@@ -1079,6 +1085,9 @@ function readFunctionModel(migrations) {
  * the key is still present, so the walk would analyse a superseded body in
  * silence. This reports the occurrence itself, whatever the final key set looks
  * like (REVIEW-M1-ACL-CLOSURE-R3 C1).
+ *
+ * Quantifies over the declarations the DDL pattern MATCHES: a spelling the
+ * pattern cannot see at all is outside the walk by construction (R4 D3).
  */
 function unreadableDeclarations(migrations) {
   const unreadable = [];
@@ -1339,8 +1348,11 @@ function readExecuteModel(migrations, functions) {
  */
 function executeTargetKeys(op, name, argList, functions) {
   const overloads = [...functions.keys()].filter((key) => key.startsWith(`${name}(`));
-  if (overloads.length === 0) return [name];
-  if (argList === null) return overloads;
+  if (overloads.length === 0) return op === "revoke" ? [] : [name];
+  // No argument list at all: Postgres accepts that only for a unique name, and
+  // what the statement reaches is exactly what this walk cannot pin down — so a
+  // revoke still narrows nothing (REVIEW-M1-ACL-CLOSURE-R4 D4).
+  if (argList === null) return op === "revoke" ? [] : overloads;
   const key = signatureKey(name, argList, "reference");
   if (functions.has(key)) return [key];
   return op === "grant" ? overloads : [];
@@ -1352,6 +1364,8 @@ function executeTargetKeys(op, name, argList, functions) {
  * An unresolved statement is a hole in the model, not a fact about the chain, so
  * it is reported rather than absorbed: the gate fails and the author either
  * spells the signature the way the walk reads it or extends `signatureKey`.
+ *
+ * Quantifies over the statements the DDL patterns MATCH (R4 D3).
  */
 function unresolvedExecuteStatements(migrations) {
   const unresolved = [];
@@ -1440,6 +1454,21 @@ function clientReachableFunctions(functions, execute) {
  * unqualified name in a scope that has more than one source table (which would
  * be a guess, not an attribution). Both are reported by the guard's own
  * limitations note in the migration's header rather than silently trusted.
+ *
+ * Three residual classes the reviewer named at R4, all of which need a spelling
+ * this chain does not use, and none of which is silently trusted:
+ *
+ * - statement text inside a dollar-quoted region (`do $$ … $$`, or a comment
+ *   holding one) is read as a statement, because a text scan cannot tell a `do`
+ *   block from a string. Dynamic SQL belongs to the not-modelled class above;
+ *   REVIEW-M1-ACL-CLOSURE-R4 D2.
+ * - a quoted identifier is matched case-insensitively, so `"FINDBACK_X"(text)`
+ *   folds onto `findback_x(text)` and could replace its body. Nothing in this
+ *   chain quotes an identifier's case for a function; D3.
+ * - the two invariants below quantify over every declaration and every EXECUTE
+ *   statement the DDL PATTERNS MATCH. A spelling the patterns cannot capture at
+ *   all (a comment between `function` and the name, `"my fn"`, `fo$o`, another
+ *   schema) is outside the walk by construction — D3.
  */
 function findReaderGrantGaps(migrations) {
   const { columns, tableSelect, columnSelect } = readGrantModel(migrations);
@@ -1959,9 +1988,47 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     // The sibling stays walkable (the read is still reported), and the
     // unresolved statement is reported as a modelling hole rather than absorbed.
     assert.deepEqual(findReaderGrantGaps(unresolved), [{ table: "uploads", missing: ["width"] }]);
-    const functions = readFunctionModel(unresolved);
     assert.deepEqual(unresolvedExecuteStatements(unresolved), [
       "revoke findback_publish_client(character varying, character varying): no declared signature of that name has this argument type list",
+    ]);
+  });
+
+  it("does not read a later function's body as an earlier single-quoted one (R4 D1)", () => {
+    const chain = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create function public.findback_probe_client() returns void language sql security invoker as 'select width from public.uploads'; create function public.findback_probe_helper() returns void language sql security invoker as $$ select id from public.uploads; $$;",
+      },
+    ];
+    assert.deepEqual(unreadableDeclarations(chain), []);
+    // The first declaration's body is the literal, not the second function's
+    // dollar-quoted tail: its ungranted read is reported. Searching the rest of
+    // the file made this test green with the demand gone.
+    assert.deepEqual(findReaderGrantGaps(chain), [{ table: "uploads", missing: ["width"] }]);
+  });
+
+  it("does not narrow on a bare-name revoke either (R4 D4)", () => {
+    const chain = [
+      {
+        file: "a.sql",
+        sql: "create table public.uploads (id text, width integer); grant select (id) on public.uploads to authenticated;",
+      },
+      {
+        file: "b.sql",
+        sql: "create function public.findback_probe_client(p_id text) returns void language sql security invoker as $$ select width from public.uploads where id = p_id; $$;",
+      },
+      {
+        file: "c.sql",
+        sql: "revoke execute on function public.findback_probe_client from public, anon, authenticated;",
+      },
+    ];
+    assert.deepEqual(findReaderGrantGaps(chain), [{ table: "uploads", missing: ["width"] }]);
+    assert.deepEqual(unresolvedExecuteStatements(chain), [
+      "revoke findback_probe_client: no argument list, so the statement names every overload",
     ]);
   });
 
