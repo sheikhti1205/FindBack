@@ -19,8 +19,14 @@ interface PostCardProps {
    * NOT a wrapping Link — the content block owns the detail link and the
    * action controls as siblings. Default keeps the pre-existing column card
    * verbatim.
+   *
+   * CF-010 masonry: `masonry` is the same kind of chromeless block without the
+   * hairline — the grid's own gutter separates cards, and the column is already
+   * narrow, so any extra padding would only cost photo width. It is likewise
+   * not a wrapping Link (PostCardContent owns the media tap target and the
+   * detail link as siblings).
    */
-  variant?: "default" | "home-feed";
+  variant?: "default" | "home-feed" | "masonry";
 }
 
 /**
@@ -61,6 +67,8 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
       <div className="flex flex-col border-b border-outline-variant bg-transparent pb-5">
         {children}
       </div>
+    ) : variant === "masonry" ? (
+      <div className="flex flex-col bg-transparent">{children}</div>
     ) : (
       <MotionLink
         to={to}

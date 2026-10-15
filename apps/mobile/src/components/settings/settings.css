@@ -137,6 +137,8 @@ a.fb-settings-row:hover, button.fb-settings-row:hover:not(:disabled) { backgroun
 /* C6 list-first choices: theme / text-size / motion / AI-mode options render
    as compact list rows (separators, no card borders). Accent swatches keep
    their grid-swatches presentation via the .fb-accent-grid override below. */
+.fb-choice-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.fb-choice-list { display: flex; flex-direction: column; gap: 0; padding: 0; }
 .fb-choice { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 0.125rem; min-width: 0; min-height: 3rem; padding: 0.625rem 0.25rem; border: none; border-radius: 0; background: transparent; color: var(--fb-on-surface); cursor: pointer; }
 .fb-choice + .fb-choice { border-top: 1px solid var(--fb-outline-variant); }
 .fb-choice[data-checked="true"] { border-color: var(--fb-outline-variant); background: transparent; color: var(--fb-on-surface); }

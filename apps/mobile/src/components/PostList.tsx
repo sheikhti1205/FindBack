@@ -1,12 +1,15 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useMemo, useRef } from "react";
 import type { PostItem } from "@findback/shared";
 import { AnimatePresence, motion } from "framer-motion";
 import { FileQuestion } from "lucide-react";
 import { PostCard } from "./PostCard";
 import { OwnerReportCard } from "./OwnerReportCard";
-import { PostCardContent, type PostCardLayout } from "./PostCardContent";
+import { PostCardContent, masonryCardMetrics, type PostCardLayout } from "./PostCardContent";
 import { EmptyState, Spinner } from "./PostCard";
 import { FeedSkeleton } from "./uiPrimitives";
+import { FeedMasonry } from "./FeedMasonry";
+import { estimateMasonryCardHeight } from "./masonryLayout";
+import { MASONRY_GUTTER_PX } from "./responsive";
 import { fadeVariants, listItemVariants, motionDurations, motionEasings } from "./uiMotion";
 
 interface PostListProps {
@@ -23,8 +26,14 @@ interface PostListProps {
    *  `compact` (Search Variant B, dense rows). `home-feed` is the
    *  reference-inspired Home redesign (image-left/content-right). `owner-feed`
    *  is the UXN-4 My Reports owner card (image-left, prominent status).
-   *  Omitted = pre-U2 rendering. */
-  density?: "editorial" | "compact" | "home-feed" | "owner-feed";
+   *  Omitted = pre-U2 rendering. `masonry` is the CF-010 true ragged grid. */
+  density?: "editorial" | "compact" | "home-feed" | "owner-feed" | "masonry";
+  /**
+   * Columns for `density="masonry"`, from `masonryColumns(viewportWidth)`.
+   * Ignored by every other density. Default 1 so a caller that forgets it gets
+   * a readable single column rather than a broken grid.
+   */
+  masonryColumns?: number;
 }
 
 export function PostList({
@@ -38,6 +47,7 @@ export function PostList({
   emptyTitle = "Nothing here yet",
   emptySubtitle = "Be the first to post a lost or found item.",
   density,
+  masonryColumns = 1,
 }: PostListProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -63,8 +73,17 @@ export function PostList({
   // UXN-4 append-only: `owner-feed` renders compact OwnerReportCards via its
   // own component and never alters the mappings below.
   const isOwnerFeed = density === "owner-feed";
+  const isMasonry = density === "masonry" && !isOwnerFeed;
   const layout: PostCardLayout =
-    density === "compact" ? "compact" : density === "home-feed" ? "home-feed" : density === "editorial" ? "editorial" : "classic";
+    density === "masonry"
+      ? "masonry"
+      : density === "compact"
+        ? "compact"
+        : density === "home-feed"
+          ? "home-feed"
+          : density === "editorial"
+            ? "editorial"
+            : "classic";
   const listClass =
     density === "compact"
       ? "flex flex-col gap-2 px-3"
@@ -99,6 +118,41 @@ export function PostList({
     for (const post of items) seen.add(post.id);
   }, [items]);
 
+  // Card identity → source index: the masonry renderer needs the stagger index
+  // without a per-item scan of the array it is already walking.
+  const indexById = useMemo(() => new Map(items.map((post, i) => [post.id, i])), [items]);
+
+  const cardFor = (post: PostItem, index: number) => {
+    if (isOwnerFeed) return <OwnerReportCard post={post} />;
+    const variant = layout === "home-feed" || layout === "masonry" ? layout : "default";
+    return (
+      <PostCard to={`/posts/${post.id}`} index={index} variant={variant}>
+        <PostCardContent post={post} layout={layout} enableSharedMedia />
+      </PostCard>
+    );
+  };
+
+  /** One row: fades in only when it arrived after the first paint. */
+  const rowFor = (post: PostItem, index: number) => {
+    const card = cardFor(post, index);
+    // Already-seen rows render untouched (no remount, no flash).
+    if (seenIdsRef.current!.has(post.id)) {
+      return <Fragment key={post.id}>{card}</Fragment>;
+    }
+    return (
+      <motion.div
+        key={post.id}
+        data-reconcile="enter"
+        variants={listItemVariants}
+        initial="hidden"
+        animate="visible"
+        transition={stateTransition}
+      >
+        {card}
+      </motion.div>
+    );
+  };
+
   return (
     <div className="relative">
     <AnimatePresence initial={false} mode="popLayout">
@@ -113,12 +167,15 @@ export function PostList({
         >
           <FeedSkeleton
             density={
-              density === "compact" || density === "owner-feed"
-                ? "compact"
-                : density === "editorial"
-                  ? "editorial"
-                  : "home-feed"
+              isMasonry
+                ? "masonry"
+                : density === "compact" || density === "owner-feed"
+                  ? "compact"
+                  : density === "editorial"
+                    ? "editorial"
+                    : "home-feed"
             }
+            columns={masonryColumns}
           />
         </motion.div>
       )}
@@ -179,35 +236,23 @@ export function PostList({
                 </button>
               </div>
             )}
-            {items.map((post, i) => {
-              const card = isOwnerFeed ? (
-                <OwnerReportCard post={post} />
-              ) : (
-                <PostCard
-                  to={`/posts/${post.id}`}
-                  index={i}
-                  variant={layout === "home-feed" ? "home-feed" : "default"}
-                >
-                  <PostCardContent post={post} layout={layout} enableSharedMedia />
-                </PostCard>
-              );
-              // Already-seen rows render untouched (no remount, no flash).
-              if (seenIdsRef.current!.has(post.id)) {
-                return <Fragment key={post.id}>{card}</Fragment>;
-              }
-              return (
-                <motion.div
-                  key={post.id}
-                  data-reconcile="enter"
-                  variants={listItemVariants}
-                  initial="hidden"
-                  animate="visible"
-                  transition={stateTransition}
-                >
-                  {card}
-                </motion.div>
-              );
-            })}
+            {isMasonry ? (
+              /* CF-010: source order in the DOM, absolute placement from the
+                 pure model. The sentinel/spinner stay outside the grid so
+                 pagination keeps one scroll container. */
+              <FeedMasonry
+                items={items}
+                getKey={(post) => post.id}
+                columns={masonryColumns}
+                gap={MASONRY_GUTTER_PX}
+                estimateHeight={(post, columnWidth) =>
+                  estimateMasonryCardHeight(masonryCardMetrics(post), columnWidth)
+                }
+                renderItem={(post) => rowFor(post, indexById.get(post.id) ?? 0)}
+              />
+            ) : (
+              items.map(rowFor)
+            )}
             <div ref={sentinelRef} aria-hidden />
             {loadingMore && <Spinner label="Loading more…" />}
             {!hasMore && items.length > 0 && (

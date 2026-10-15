@@ -6,6 +6,8 @@ import { CircleAlert, CircleCheck, ImageOff, Link2, Lock, MapPin, MessageSquare,
 import { Link } from "react-router";
 import { timeAgo } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
+import { displaySizeOrNull } from "../services/media/displayDimensions";
+import { MASONRY_FALLBACK_RATIO, masonryAspectRatio } from "./masonryLayout";
 import { HomeFeedLoveButton } from "./HomeFeedLoveButton";
 import { ReportShareButton } from "./ReportShareButton";
 import { PhotoLightbox } from "./PhotoLightbox";
@@ -35,8 +37,9 @@ const STATUS_CLASS: Record<PostStatus, string> = {
  *  screens outside the rollout, e.g. MyPosts). `editorial` is Home Variant A
  *  (photo-led), `compact` is Search Variant B (64px-thumb rows). `home-feed`
  *  is the reference-inspired Home redesign (image-left/content-right); only
- *  Home uses it. */
-export type PostCardLayout = "classic" | "editorial" | "compact" | "home-feed";
+ *  Home uses it. `masonry` is the CF-010 ragged grid card (packet `09` §7):
+ *  natural-ratio photo, badge, two-line title, location, small counts. */
+export type PostCardLayout = "classic" | "editorial" | "compact" | "home-feed" | "masonry";
 
 type ImageState = "loading" | "loaded" | "failed";
 
@@ -580,6 +583,150 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
   );
 }
 
+/**
+ * What a masonry card knows before its photo loads (packet `09` §7, §9): the
+ * natural ratio when the report carries a vouchable size pair, the shared
+ * placeholder ratio otherwise. One owner — the grid's height estimate and the
+ * card's reserved box must agree, or the first paint would be wrong.
+ */
+export interface MasonryCardMetrics {
+  hasMedia: boolean;
+  /** width / height of the first photo, or the placeholder ratio. */
+  mediaRatio: number;
+  imageCount: number;
+  /** True when the stored size is known, so the box needs no correction. */
+  sizeKnown: boolean;
+}
+
+export function masonryCardMetrics(post: PostItem): MasonryCardMetrics {
+  const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
+  const size = images[0] ? displaySizeOrNull(images[0]) : null;
+  return {
+    hasMedia: images.length > 0,
+    mediaRatio: size ? masonryAspectRatio(size) : MASONRY_FALLBACK_RATIO,
+    imageCount: images.length,
+    sizeKnown: size !== null,
+  };
+}
+
+/**
+ * CF-010 masonry card (packet `09` §7). The photo keeps its natural ratio, so
+ * cards are honestly different heights instead of every cell being squared off
+ * and cropped; there is no description and no equalizing, and a report with no
+ * photo is a text-first card rather than a blank block.
+ *
+ * Navigation follows the same contract as the Home feed card: the media is a
+ * SIBLING of the detail link (its own tap target opening the canonical
+ * PhotoLightbox), so a tap on the photo can never navigate the report.
+ *
+ * Rows published before dimensions existed start at the placeholder ratio and
+ * correct themselves when the photo decodes; the grid re-packs from the
+ * measured height, so the correction stays bounded to that one card.
+ */
+function MasonryContent({ post, enableSharedMedia = false }: { post: PostItem; enableSharedMedia?: boolean }) {
+  const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
+  const metrics = masonryCardMetrics(post);
+  const [naturalRatio, setNaturalRatio] = useState<number | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const ratio = naturalRatio ?? metrics.mediaRatio;
+  const first = images[0];
+  const extra = metrics.imageCount - 1;
+  const sharedId = enableSharedMedia ? sharedMediaLayoutId(post.id) : undefined;
+  const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
+  const lastIndex = lightboxPhotos.length - 1;
+  return (
+    <div data-testid="masonry-content" className="flex min-w-0 flex-col">
+      {first && (
+        <button
+          type="button"
+          data-testid="masonry-media"
+          aria-label={
+            metrics.imageCount > 1
+              ? `Photo 1 of ${metrics.imageCount} for ${post.title}`
+              : `Photo for ${post.title}`
+          }
+          onClick={() => setLightboxIndex(0)}
+          className="fb-masonry-media relative block w-full overflow-hidden"
+          style={{ aspectRatio: `${ratio}` }}
+        >
+          <motion.img
+            src={first.fileUrl}
+            alt=""
+            loading="lazy"
+            className="h-full w-full object-cover"
+            {...(sharedId
+              ? { layoutId: sharedId, "data-shared-media": sharedId, transition: sharedElementTransition }
+              : {})}
+            onLoad={(event) => {
+              if (metrics.sizeKnown) return;
+              const el = event.currentTarget;
+              if (el.naturalWidth > 0 && el.naturalHeight > 0) {
+                setNaturalRatio(el.naturalWidth / el.naturalHeight);
+              }
+            }}
+          />
+          {extra > 0 && (
+            <span data-testid="masonry-more-media" className="fb-masonry-more" aria-hidden>
+              +{extra}
+            </span>
+          )}
+        </button>
+      )}
+      <div className="fb-masonry-body">
+        <StatusChip post={post} />
+        <Link
+          to={`/posts/${post.id}`}
+          data-testid="masonry-detail-link"
+          className="flex min-w-0 flex-col gap-1 rounded-m3-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
+        >
+          <SharedTitle
+            post={post}
+            className="fb-masonry-title line-clamp-2 break-words"
+            enableSharedMedia={enableSharedMedia}
+          />
+          {post.locationLabel && (
+            <p
+              data-testid="post-location"
+              className="flex min-w-0 items-center gap-1 text-[11px] text-on-surface-variant"
+            >
+              <MapPin size={12} aria-hidden className="shrink-0" />
+              <span className="truncate">{post.locationLabel}</span>
+            </p>
+          )}
+        </Link>
+        <CountRow post={post} compact />
+      </div>
+      {lightboxIndex !== null && lightboxPhotos.length > 0 && (
+        <PhotoLightbox
+          photo={lightboxPhotos[Math.min(lightboxIndex, lastIndex)]!}
+          index={Math.min(lightboxIndex, lastIndex)}
+          total={lightboxPhotos.length}
+          photos={lightboxPhotos}
+          title={post.title}
+          onSelect={(index) => setLightboxIndex(index)}
+          onClose={() => setLightboxIndex(null)}
+          onPrev={
+            lightboxPhotos.length > 1
+              ? () =>
+                  setLightboxIndex((current) =>
+                    current === null ? current : (current - 1 + lightboxPhotos.length) % lightboxPhotos.length,
+                  )
+              : undefined
+          }
+          onNext={
+            lightboxPhotos.length > 1
+              ? () =>
+                  setLightboxIndex((current) =>
+                    current === null ? current : (current + 1) % lightboxPhotos.length,
+                  )
+              : undefined
+          }
+        />
+      )}
+    </div>
+  );
+}
+
 export function PostCardContent({
   post,
   layout = "classic",
@@ -598,5 +745,6 @@ export function PostCardContent({
   if (layout === "editorial") return <EditorialContent post={post} enableSharedMedia={enableSharedMedia} />;
   if (layout === "compact") return <CompactContent post={post} enableSharedMedia={enableSharedMedia} />;
   if (layout === "home-feed") return <HomeFeedContent post={post} enableSharedMedia={enableSharedMedia} />;
+  if (layout === "masonry") return <MasonryContent post={post} enableSharedMedia={enableSharedMedia} />;
   return <ClassicContent post={post} enableSharedMedia={enableSharedMedia} />;
 }

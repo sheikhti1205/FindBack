@@ -66,6 +66,7 @@ vi.mock("./screens/Settings", () => ({ Settings: marker("Settings") }));
 vi.mock("./screens/AccountSettings", () => ({ AccountSettings: marker("AccountSettings") }));
 vi.mock("./screens/AppearanceSettings", () => ({ AppearanceSettings: marker("AppearanceSettings") }));
 vi.mock("./screens/AccessibilitySettings", () => ({ AccessibilitySettings: marker("AccessibilitySettings") }));
+vi.mock("./screens/FeedLayoutSettings", () => ({ FeedLayoutSettings: marker("FeedLayoutSettings") }));
 vi.mock("./screens/MediaSettings", () => ({ MediaSettings: marker("MediaSettings") }));
 vi.mock("./screens/NotificationPreferences", () => ({ NotificationPreferences: marker("NotificationPreferences") }));
 vi.mock("./screens/PrivacySettings", () => ({ PrivacySettings: marker("PrivacySettings") }));
@@ -192,6 +193,7 @@ describe("consumer route map", () => {
     ["/settings/account", "AccountSettings screen"],
     ["/settings/appearance", "AppearanceSettings screen"],
     ["/settings/accessibility", "AccessibilitySettings screen"],
+    ["/settings/feed-layout", "FeedLayoutSettings screen"],
     ["/settings/media", "MediaSettings screen"],
     ["/settings/notifications", "NotificationPreferences screen"],
     ["/settings/privacy", "PrivacySettings screen"],

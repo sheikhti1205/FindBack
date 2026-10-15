@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Image,
   Info,
+  LayoutGrid,
   LifeBuoy,
   LogOut,
   Palette,
@@ -35,6 +36,9 @@ import {
 import { SettingsProfileHeader } from "./settings/SettingsProfileHeader";
 import { SettingsNestedGroup } from "./settings/SettingsNestedGroup";
 import { searchSettings } from "../services/settingsIndex";
+import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
+import { resolveFeedLayout, useViewportWidth } from "../components/responsive";
+import { feedLayoutSummary } from "./FeedLayoutSettings";
 import { type AssistantMode } from "./AiModels";
 import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
 import { fetchNotificationPreferences, type NotificationPreferences } from "../services/notificationPreferences";
@@ -137,6 +141,8 @@ export function Settings() {
   const { user, logout } = useAuth();
   const { theme } = useTheme();
   const { settings } = useAppearance();
+  const { layout: feedLayout } = useFeedLayoutPreference();
+  const viewportWidth = useViewportWidth();
   const [query, setQuery] = useState("");
   const [notifValue, setNotifValue] = useState<string | null>(null);
   const [aiMode, setAiMode] = useState<AssistantMode>(() =>
@@ -236,6 +242,13 @@ export function Settings() {
               iconTone="accessibility"
               value={accessibilitySummary(settings.textScale, settings.reduceMotion)}
               route="/settings/accessibility"
+            />
+            <SettingsRow
+              title="Feed layout"
+              icon={LayoutGrid}
+              iconTone="teal"
+              value={feedLayoutSummary(feedLayout, resolveFeedLayout(feedLayout, viewportWidth))}
+              route="/settings/feed-layout"
             />
           </SettingsGroup>
           <SettingsGroup title="Intelligence">

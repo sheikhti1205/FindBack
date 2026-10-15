@@ -126,6 +126,7 @@ const SETTINGS_TARGETS = [
   "/settings/account",
   "/settings/appearance",
   "/settings/accessibility",
+  "/settings/feed-layout",
   "/settings/media",
   "/settings/notifications",
   "/settings/ai",

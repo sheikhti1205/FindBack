@@ -34,6 +34,7 @@ import { Settings } from "./screens/Settings";
 import { AccountSettings } from "./screens/AccountSettings";
 import { AppearanceSettings } from "./screens/AppearanceSettings";
 import { AccessibilitySettings } from "./screens/AccessibilitySettings";
+import { FeedLayoutSettings } from "./screens/FeedLayoutSettings";
 import { MediaSettings } from "./screens/MediaSettings";
 import { NotificationPreferences } from "./screens/NotificationPreferences";
 import { PrivacySettings } from "./screens/PrivacySettings";
@@ -153,6 +154,7 @@ export function App() {
               <Route path="/settings/account" element={<AccountSettings />} />
               <Route path="/settings/appearance" element={<AppearanceSettings />} />
               <Route path="/settings/accessibility" element={<AccessibilitySettings />} />
+              <Route path="/settings/feed-layout" element={<FeedLayoutSettings />} />
               <Route path="/settings/media" element={<MediaSettings />} />
               <Route path="/settings/notifications" element={<NotificationPreferences />} />
               <Route path="/settings/privacy" element={<PrivacySettings />} />

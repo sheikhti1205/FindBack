@@ -4,6 +4,8 @@ import type { PostType } from "@findback/shared";
 import { HomeFilterChips, HomeScopeChips } from "./HomeFilterChips";
 import { HomeSearchBar } from "./HomeSearchBar";
 import { PostList } from "../components/PostList";
+import { READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, useViewportWidth } from "../components/responsive";
+import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
 import { BrandMark } from "../components/BrandMark";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { NewPostsPill } from "../components/NewPostsPill";
@@ -57,6 +59,17 @@ export function Home() {
   // instant when the OS prefers reduced motion. Read live (not the cached
   // framer-motion singleton) so the value is exact at render/scroll time.
   const reduceMotion = shouldReduceMotion();
+
+  // CF-010 §6/§23: the stored layout preference resolved against this viewport.
+  // Resolution depends on the width *band*, so a few pixels of movement (a
+  // scrollbar appearing, a keyboard opening) cannot re-lay-out the feed.
+  const { layout: feedLayout } = useFeedLayoutPreference();
+  const viewportWidth = useViewportWidth();
+  const resolvedLayout = resolveFeedLayout(feedLayout, viewportWidth);
+  // Wide canvas for the ragged grid (photographs want width); a readable column
+  // for the single-column layouts, so a desktop window does not stretch titles
+  // to absurd line lengths. Both are centred, so no phone-width strip survives.
+  const canvasClass = resolvedLayout === "masonry" ? "mx-auto w-full max-w-[72rem]" : READABLE_COLUMN_CLASS;
   // Type + search survive in the URL so back-nav, deep-links, and copied
   // links restore the feed the reader was looking at.
   const [typeParam, setTypeParam] = useUrlParam("type");
@@ -395,10 +408,11 @@ export function Home() {
       <header
         data-testid="home-toolbar"
         style={{ transitionDuration: reduceMotion ? "0s" : `${motionDurations.fast}s` }}
-        className={`border-b px-4 pt-5 transition-[border-color,box-shadow] ${
+        className={`border-b pt-5 transition-[border-color,box-shadow] ${
           toolbarSeparated ? "border-outline-variant shadow-sm" : "border-transparent shadow-none"
         }`}
       >
+        <div className={`${canvasClass} px-4`}>
         <div className="flex items-center gap-2">
           <BrandMark size={24} />
           <h1 className="text-xl font-semibold tracking-tight">FindBack</h1>
@@ -416,9 +430,10 @@ export function Home() {
             {total} item{total === 1 ? "" : "s"} · signed in as @{user?.username}
           </motion.p>
         </AnimatePresence>
+        </div>
       </header>
 
-      <div className="flex flex-col gap-3 px-4">
+      <div className={`${canvasClass} flex flex-col gap-3 px-4`}>
         <HomeSearchBar
           query={query}
           onQueryChange={setQuery}
@@ -544,26 +559,29 @@ export function Home() {
             PostList itself is untouched — the provider flows state to each
             home-feed card's Love toggle via context. */}
         <FeedLoveProvider items={items} patchItem={patchItem}>
-          <PostList
-            items={items}
-            loading={loading}
-            loadingMore={loadingMore}
-            error={error}
-            hasMore={hasMore}
-            onLoadMore={loadMore}
-            onRetry={refresh}
-            density="home-feed"
-            emptyTitle={appliedQuery || advanced.category || advanced.status || nearbyActive ? "No matches" : "Nothing here yet"}
-            emptySubtitle={
-              nearbyActive
-                ? "Try a wider radius or different filters. Nearby uses reports with a map pin."
-                : advanced.category || advanced.status
-                  ? "Try different filters or a broader search."
-                  : appliedQuery
-                    ? `No posts match “${appliedQuery}”.`
-                    : "Tap Create report to post a lost or found item."
-            }
-          />
+          <div className={canvasClass}>
+            <PostList
+              items={items}
+              loading={loading}
+              loadingMore={loadingMore}
+              error={error}
+              hasMore={hasMore}
+              onLoadMore={loadMore}
+              onRetry={refresh}
+              density={feedDensity(resolvedLayout)}
+              masonryColumns={masonryColumns(viewportWidth)}
+              emptyTitle={appliedQuery || advanced.category || advanced.status || nearbyActive ? "No matches" : "Nothing here yet"}
+              emptySubtitle={
+                nearbyActive
+                  ? "Try a wider radius or different filters. Nearby uses reports with a map pin."
+                  : advanced.category || advanced.status
+                    ? "Try different filters or a broader search."
+                    : appliedQuery
+                      ? `No posts match “${appliedQuery}”.`
+                      : "Tap Create report to post a lost or found item."
+              }
+            />
+          </div>
         </FeedLoveProvider>
       </PullToRefresh>
     </div>

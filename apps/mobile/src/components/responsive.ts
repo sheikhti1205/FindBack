@@ -89,6 +89,17 @@ export function resolveFeedLayout(
 }
 
 /**
+ * `PostList` density for a resolved layout.
+ *
+ * The reader-facing name of the single-column photo layout is "Feed"; the card
+ * component has always called that rendering `home-feed`. Translating in one
+ * place keeps the two vocabularies from leaking into each other.
+ */
+export function feedDensity(layout: ResolvedFeedLayout): "home-feed" | "compact" | "masonry" {
+  return layout === "feed" ? "home-feed" : layout;
+}
+
+/**
  * Live viewport width in CSS pixels.
  *
  * Starts from `window.innerWidth` so the first paint already has the right

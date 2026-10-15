@@ -67,12 +67,52 @@ export function Skeleton({
 export function FeedSkeleton({
   density = "home-feed",
   count = 3,
+  columns = 1,
   label = "Loading posts",
 }: {
-  density?: "home-feed" | "compact" | "classic" | "editorial";
+  density?: "home-feed" | "compact" | "classic" | "editorial" | "masonry";
   count?: number;
+  /** Masonry only: skeleton columns, from `masonryColumns(viewportWidth)`. */
+  columns?: number;
   label?: string;
 }) {
+  // Masonry reserves the grid it is about to show: same column count, and
+  // ragged photo ratios rather than equal rows, because the unequal card
+  // heights are the whole point of the layout (packet `09` §7). Rendering it
+  // as stacked rows would make the first paint jump when the real cards land.
+  if (density === "masonry") {
+    const columnCount = Math.max(1, Math.floor(columns));
+    const perColumn = Math.max(1, Math.ceil(count / columnCount));
+    const ratios = ["4 / 3", "1 / 1", "3 / 4", "5 / 4"];
+    return (
+      <div
+        role="status"
+        aria-label={label}
+        data-testid="feed-skeleton-masonry"
+        data-columns={columnCount}
+        className="flex items-start gap-3 px-4"
+      >
+        {Array.from({ length: columnCount }, (_, column) => (
+          <div key={column} aria-hidden="true" className="flex min-w-0 flex-1 flex-col gap-3">
+            {Array.from({ length: perColumn }, (_, row) => (
+              <div key={row} data-testid="feed-skeleton-card" className="flex flex-col">
+                <span
+                  data-testid="feed-skeleton-media"
+                  className={`${SHIMMER} w-full rounded-m3-md`}
+                  style={{ aspectRatio: ratios[(column * perColumn + row) % ratios.length] }}
+                />
+                <div className="flex flex-col gap-2 pt-3">
+                  <span className={`${LINE} ${SHIMMER} h-4 w-3/4 rounded-m3-xs`} />
+                  <span className={`${LINE} ${SHIMMER} h-3 w-1/2 rounded-m3-xs`} />
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   const cards = Array.from({ length: count }, (_, i) => i);
   return (
     <div role="status" aria-label={label} className="flex flex-col gap-3 px-4">

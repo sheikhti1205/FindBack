@@ -43,9 +43,9 @@ export function AppearanceSettings() {
         title="Theme"
         description="System follows your device. True black uses a pure black background."
       >
-        <fieldset className="fb-personal-fieldset">
+        <fieldset className="fb-choice-fieldset">
           <legend className="sr-only">Theme</legend>
-          <div className="fb-theme-grid">
+          <div className="fb-choice-list">
             {THEMES.map((value) => (
               <ThemeCard
                 key={value}
@@ -77,7 +77,7 @@ export function AppearanceSettings() {
         title="Accent"
         description="Used for buttons, selections, and highlights. Status colors, reactions, and mention links keep their own meaning and never follow the accent."
       >
-        <fieldset className="fb-personal-fieldset">
+        <fieldset className="fb-choice-fieldset">
           <legend className="sr-only">Accent</legend>
           <div className="fb-accent-grid">
             {ACCENT_OPTIONS.map((option) => (

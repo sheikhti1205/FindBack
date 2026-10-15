@@ -82,6 +82,7 @@ const BACK_TO_ROUTES = [
   "/",
   "/settings/appearance",
   "/settings/accessibility",
+  "/settings/feed-layout",
   "/settings/media",
   "/settings/notifications",
   "/settings/privacy",

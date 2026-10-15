@@ -94,3 +94,56 @@ describe("PostList refresh contract", () => {
     expect(container.querySelector('[data-reconcile="enter"]')).toBeNull();
   });
 });
+
+describe("PostList masonry density (CF-010)", () => {
+  function masonryList(items: PostItem[], columns = 3) {
+    return (
+      <MemoryRouter>
+        <PostList items={items} {...base} density="masonry" masonryColumns={columns} />
+      </MemoryRouter>
+    );
+  }
+
+  const photo = { id: "a1", postId: "p1", fileUrl: "https://example.test/a1.jpg", mimeType: "image/jpeg", fileName: "a1.jpg", fileSize: 1000, createdAt: "2026-09-24T00:00:00.000Z" };
+
+  it("renders the ragged grid instead of a list of rows", () => {
+    render(masonryList([post("p1", "Keys"), post("p2", "Wallet")]));
+    expect(screen.getByTestId("feed-masonry")).toBeTruthy();
+    expect(screen.getAllByTestId("feed-masonry-item")).toHaveLength(2);
+  });
+
+  it("uses the masonry card, whose photo keeps its own shape", () => {
+    render(
+      masonryList([
+        post("p1", "Keys", { attachments: [{ ...photo, width: 1200, height: 900 }] as PostItem["attachments"] }),
+        post("p2", "Wallet", { attachments: [photo] as PostItem["attachments"] }),
+      ]),
+    );
+    const cards = screen.getAllByTestId("masonry-content");
+    expect(cards).toHaveLength(2);
+    const media = screen.getAllByTestId("masonry-media");
+    // Known dimensions: the stored ratio, not a forced square and not a crop-all.
+    expect(media[0]!.getAttribute("style")).toContain("1.3333333333333333");
+    // Unknown dimensions: the documented placeholder ratio, so the box is never zero-height.
+    expect(media[1]!.getAttribute("style")).toContain(`${4 / 3}`);
+    expect(media[0]!.getAttribute("style")).not.toContain("1 / 1");
+  });
+
+  it("keeps a report with no photo as a text-first card", () => {
+    render(masonryList([post("p1", "Keys")]));
+    expect(screen.getByTestId("masonry-content")).toBeTruthy();
+    expect(screen.queryByTestId("masonry-media")).toBeNull();
+    expect(screen.getByTestId("masonry-detail-link")).toBeTruthy();
+  });
+
+  it("reserves the same grid while loading, so the first paint does not jump", () => {
+    render(
+      <MemoryRouter>
+        <PostList items={[]} {...base} loading density="masonry" masonryColumns={2} />
+      </MemoryRouter>,
+    );
+    const skeleton = screen.getByTestId("feed-skeleton-masonry");
+    expect(skeleton.getAttribute("data-columns")).toBe("2");
+    expect(skeleton.querySelectorAll("[data-testid='feed-skeleton-card']").length).toBeGreaterThan(0);
+  });
+});

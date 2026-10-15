@@ -14,6 +14,11 @@ describe("settingsIndex", () => {
         "/settings/ai/connections",
         "/settings/appearance",
         "/settings/diagnostics",
+        // CF-010 (packet `09` §6, §23): the feed layout preference is a settings
+        // row like the others. It postdates the 2026-10-03 route map this test
+        // was written against, which is the only reason it is the lone entry
+        // without a route_map.csv line.
+        "/settings/feed-layout",
         "/settings/help",
         "/settings/media",
         "/settings/notifications",

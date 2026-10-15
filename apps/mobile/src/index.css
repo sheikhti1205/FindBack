@@ -855,3 +855,43 @@ html.fb-reduce-motion .fb-feed-img[data-state="loading"]::after {
   border-color: var(--fb-outline-variant);
   color: var(--fb-outline);
 }
+
+/* CF-010 (packet `09` §6–§8) true ratio masonry: the photo keeps its natural
+ * shape (the shape itself is inline, computed from the stored dimensions), so
+ * these rules only give the frame its radius, reserve a surface behind the
+ * decode, and set the text block that sits under it. No equalising, no forced
+ * square, no crop-all: card heights are meant to differ. New `fb-masonry-*`
+ * classes only — every existing rule above is untouched. */
+.fb-masonry-media {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-m3-md, 12px);
+  background: var(--fb-surface-container);
+}
+/* `+N` on a multi-photo report: the count only, never a second photo wall. */
+.fb-masonry-more {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  padding: 0.0625rem 0.4375rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #ffffff;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.fb-masonry-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding-top: 0.5rem;
+}
+.fb-masonry-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--fb-on-surface);
+}

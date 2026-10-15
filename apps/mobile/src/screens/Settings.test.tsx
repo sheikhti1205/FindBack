@@ -168,6 +168,21 @@ describe("Settings home", () => {
     expect(aiRow.getAttribute("href")).toBe("/settings/ai");
   });
 
+  it("offers the CF-010 feed layout row, showing what it resolves to on this screen", () => {
+    renderSettings();
+    // jsdom is 1024 wide: the Auto default resolves to the photo grid, and the
+    // row says so rather than leaving the reader to guess behind a bare "Auto".
+    const row = screen.getByRole("link", { name: /Feed layout/ });
+    expect(row.getAttribute("href")).toBe("/settings/feed-layout");
+    expect(row.textContent).toMatch(/Auto · Masonry/);
+  });
+
+  it("states the feed layout in the row once the reader picks one", () => {
+    localStorage.setItem("findback.feedLayout.v1", JSON.stringify("compact"));
+    renderSettings();
+    expect(screen.getByRole("link", { name: /Feed layout/ }).textContent).toMatch(/Compact/);
+  });
+
   it("groups moved rows under the Advanced and Help & about disclosures", () => {
     renderSettings();
     const more = screen.getByRole("region", { name: "More" });

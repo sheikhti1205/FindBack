@@ -1,20 +1,9 @@
 /* Co-located styles for Settings → Appearance. Choice/radio behavior and
    focus rings come from the settings foundation (settings.css). */
 
-/* C6 list-first: theme options are compact list rows, not cards. */
-.fb-personal-fieldset {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  min-width: 0;
-}
-
-.fb-theme-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 0;
-}
+/* C6 list-first: theme options are compact list rows, not cards. The fieldset
+   reset and the row rhythm live in the settings foundation (settings.css:
+   `.fb-choice-fieldset`, `.fb-choice-list`). */
 
 /* C6 exception: accent stays a grid of swatches. Denser 12-swatch grid with
    a compact 24px dot; the label keeps the 48px target. */

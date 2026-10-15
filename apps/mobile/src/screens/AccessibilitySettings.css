@@ -1,13 +1,8 @@
 /* Co-located styles for Settings → Accessibility. Choice/radio behavior and
    focus rings come from the settings foundation (settings.css). */
 
-/* C6 list-first: text-size and motion options are compact list rows. */
-.fb-a11y-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 0;
-}
+/* C6 list-first: text-size and motion options are compact list rows sharing the
+   settings foundation's fieldset reset and row rhythm (settings.css). */
 
 .fb-a11y-preview {
   display: flex;

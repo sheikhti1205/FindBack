@@ -1,5 +1,3 @@
-import { useId } from "react";
-import { Check } from "lucide-react";
 import {
   REDUCE_MOTION_OPTIONS,
   TEXT_SCALE_OPTIONS,
@@ -7,7 +5,7 @@ import {
   type ReduceMotionOverride,
   type TextScaleId,
 } from "../appearance";
-import { SettingsGroup, SettingsPage } from "../components/settings";
+import { PreferenceRadioRow, SettingsGroup, SettingsPage } from "../components/settings";
 import "./AccessibilitySettings.css";
 
 const TEXT_DESCRIPTIONS: Record<TextScaleId, string> = {
@@ -28,41 +26,6 @@ const MOTION_DESCRIPTIONS: Record<ReduceMotionOverride, string> = {
   reduce: "Calm transitions with no extra movement.",
   full: "Play every animation.",
 };
-
-interface RadioChoiceProps {
-  name: string;
-  value: string;
-  title: string;
-  description: string;
-  checked: boolean;
-  onChange: () => void;
-}
-
-/** Native radio card reusing the foundation choice styling (incl. focus ring). */
-function RadioChoice({ name, value, title, description, checked, onChange }: RadioChoiceProps) {
-  const id = useId();
-  return (
-    <label className="fb-choice" data-checked={checked}>
-      <input
-        className="fb-choice-input"
-        type="radio"
-        name={name}
-        value={value}
-        checked={checked}
-        onChange={onChange}
-        aria-labelledby={`${id}-label`}
-        aria-describedby={`${id}-description`}
-      />
-      <span className="fb-choice-title" id={`${id}-label`}>
-        {title}
-        {checked && <Check size={16} aria-hidden="true" />}
-      </span>
-      <span className="fb-choice-description" id={`${id}-description`}>
-        {description}
-      </span>
-    </label>
-  );
-}
 
 /**
  * Settings → Accessibility (`/settings/accessibility`): the canonical text
@@ -86,11 +49,11 @@ export function AccessibilitySettings() {
         title="Text size"
         description="Scales text across the whole app."
       >
-        <fieldset className="fb-personal-fieldset">
+        <fieldset className="fb-choice-fieldset">
           <legend className="sr-only">Text size</legend>
-          <div className="fb-a11y-grid">
+          <div className="fb-choice-list">
             {TEXT_SCALE_OPTIONS.map((option) => (
-              <RadioChoice
+              <PreferenceRadioRow
                 key={option.id}
                 name="accessibility-text-size"
                 value={option.id}
@@ -108,11 +71,11 @@ export function AccessibilitySettings() {
         title="Motion"
         description="Control animation and movement on screen."
       >
-        <fieldset className="fb-personal-fieldset">
+        <fieldset className="fb-choice-fieldset">
           <legend className="sr-only">Motion</legend>
-          <div className="fb-a11y-grid">
+          <div className="fb-choice-list">
             {REDUCE_MOTION_OPTIONS.map((option) => (
-              <RadioChoice
+              <PreferenceRadioRow
                 key={option.value}
                 name="accessibility-motion"
                 value={option.value}

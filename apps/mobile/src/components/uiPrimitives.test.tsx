@@ -41,6 +41,29 @@ describe("uiPrimitives", () => {
     expect(media).toBeTruthy();
   });
 
+  it("FeedSkeleton reserves the masonry grid it is about to replace (CF-010)", () => {
+    render(<FeedSkeleton density="masonry" count={6} columns={3} label="Loading posts" />);
+    const grid = screen.getByTestId("feed-skeleton-masonry");
+    expect(grid.getAttribute("data-columns")).toBe("3");
+    // Two skeleton cards per column, so the first paint occupies the same grid
+    // the real cards land in instead of moving with the page.
+    expect(grid.querySelectorAll("[data-testid='feed-skeleton-card']").length).toBe(6);
+    // Ragged ratios, never equal rows: the unequal heights are the layout.
+    const ratios = new Set(
+      Array.from(grid.querySelectorAll<HTMLElement>("[data-testid='feed-skeleton-media']")).map(
+        (media) => media.style.aspectRatio,
+      ),
+    );
+    expect(ratios.size).toBeGreaterThan(1);
+    // Every reserved box has a shape, so nothing collapses before the photos land.
+    expect([...ratios].every((ratio) => ratio.length > 0)).toBe(true);
+  });
+
+  it("FeedSkeleton never picks a column count of zero", () => {
+    render(<FeedSkeleton density="masonry" count={3} columns={0} label="Loading posts" />);
+    expect(screen.getByTestId("feed-skeleton-masonry").getAttribute("data-columns")).toBe("1");
+  });
+
   it("InboxSkeleton renders fixed avatar+line rows", () => {
     render(<InboxSkeleton count={3} />);
     expect(document.querySelectorAll("[data-testid='inbox-skeleton-row']").length).toBe(3);

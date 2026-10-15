@@ -186,6 +186,33 @@ export function ThemeCard({ name, value, checked, onChange, disabled = false, de
   </label>;
 }
 
+export interface PreferenceRadioRowProps {
+  name: string;
+  value: string;
+  title: string;
+  description?: ReactNode;
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  className?: string;
+}
+/**
+ * One native radio in a choice list.
+ *
+ * Use inside `fieldset.fb-choice-fieldset` + `div.fb-choice-list`; every row in
+ * one group shares `name`, so the browser's own arrow-key behaviour moves
+ * between options and the list draws its hairline separators. `aria-checked`,
+ * focus ring and 48px target come from the settings foundation.
+ */
+export function PreferenceRadioRow({ name, value, title, description, checked, onChange, disabled = false, className = "" }: PreferenceRadioRowProps) {
+  const id = useId();
+  return <label className={`fb-choice ${className}`} data-checked={checked} data-disabled={disabled}>
+    <input className="fb-choice-input" type="radio" name={name} value={value} checked={checked} disabled={disabled} onChange={() => onChange()} aria-labelledby={`${id}-label`} aria-describedby={description ? `${id}-description` : undefined} />
+    <span className="fb-choice-title" id={`${id}-label`}>{title}{checked && <Check size={16} aria-hidden="true" />}</span>
+    {description && <span className="fb-choice-description" id={`${id}-description`}>{description}</span>}
+  </label>;
+}
+
 export interface AccentSwatchProps {
   name: string;
   accent: AccentId;
