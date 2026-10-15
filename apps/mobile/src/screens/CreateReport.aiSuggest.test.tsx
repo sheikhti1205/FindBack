@@ -59,7 +59,7 @@ vi.mock("../services/categorySuggestion", async (importOriginal) => {
 });
 
 import { CreateReport } from "./CreateReport";
-import { NARROW_TASK_PROFILE_ID } from "../services/liveNarrowTasks";
+import { NEEDLE_DESCRIPTOR, QWEN_TEXT_DESCRIPTOR } from "../services/ai/modelDescriptors";
 import { clearDraft } from "../services/reportDraft";
 import { clearPhotoStore } from "../services/photoStore";
 import { clearStagedAssistantReportHandoff } from "../services/assistant/assistantReportNavigation";
@@ -277,12 +277,41 @@ describe("CreateReport AI field suggestions", () => {
     // served by the same tool model as Smart Search, so a prose profile's
     // `[thought]` envelope would truncate tool output and silently drop the
     // whole suggestion set.
+    //
+    // The expectation is anchored on the descriptor registry that owns
+    // `taskRoles` — NOT on the call-site constant — so re-pointing the constant
+    // at any other profile (envelope-free or not) fails here.
+    expect(NEEDLE_DESCRIPTOR.taskRoles).toEqual(
+      expect.arrayContaining(["extract-report-fields", "classify-category"]),
+    );
+    expect(QWEN_TEXT_DESCRIPTOR.taskRoles).not.toContain("extract-report-fields");
     await requestSuggestions("Black umbrella lost yesterday near the central market.");
     for (const op of [suggestFieldsMock, suggestCategoryMock]) {
       const profile = op.mock.calls[0]![2] as { id: string; thoughtEnvelope?: unknown };
-      expect(profile.id).toBe(NARROW_TASK_PROFILE_ID);
+      expect(profile.id).toBe(NEEDLE_DESCRIPTOR.modelId);
       expect(profile.thoughtEnvelope).toBeUndefined();
     }
+  });
+
+  it("a fields-op engine failure alone reads as undrafted suggestions and keeps the category suggestion", async () => {
+    // The category branch's copy overwrites the fields branch's copy when both
+    // ops fail, so only this shape pins the fields-op message.
+    suggestFieldsMock.mockImplementation(
+      cancellable({
+        ok: false,
+        error: { errorClass: "RUNTIME_ERROR", diagnostic: "FIELDS_GENERATION_FAILED" },
+      }),
+    );
+    render(<CreateReport />);
+    await screen.findByRole("toolbar", { name: /description formatting/i });
+    fireEvent.change(screen.getByLabelText("Describe the item for AI suggestions"), {
+      target: { value: "Black umbrella lost yesterday." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^suggest fields$/i }));
+    // Deterministic settle: the category op succeeded, so its chip appears.
+    await screen.findByText("Suggested category · via classify-category");
+    expect(screen.getByText(/Couldn't draft suggestions/)).toBeTruthy();
+    expect(screen.queryByText("AI request cancelled.")).toBeNull();
   });
 
   it("an engine failure reads as undrafted suggestions, not as a cancellation", async () => {

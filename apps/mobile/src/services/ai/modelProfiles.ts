@@ -276,10 +276,12 @@ export const MODEL_PROFILES: readonly ModelProfile[] = [
       "below-threshold extractions to escalate/re-ask via uncertainFields. " +
        "Apache-2.0 (redistribution subject to its conditions). Telemetry off at the " +
       "native boundary (NEEDLE_TELEMETRY=0, DO_NOT_TRACK=1). " +
-      "At runtime it serves EVERY structured narrow task — extract-search-filters, " +
-      "extract-report-fields, classify-category — so parsers for those ops must use " +
-      "this profile. `roles` above is lab-corpus descriptive, not the routing " +
-      "authority; never re-pin a structured op to the prose profile (IF-108).",
+      "At runtime it serves the advertised structured narrow tasks — " +
+      "extract-search-filters, extract-report-fields and classify-category " +
+      "(NEEDLE_TEXT_ROLES in modelDescriptors.ts) — so parsers for those ops must " +
+      "use this profile. The `roles` array here is the lab corpus description and " +
+      "omits two of them; it is never the routing authority, so never re-pin a " +
+      "structured op to the prose profile (IF-108).",
     defaultTemperature: 0.0,
     maxOutputTokensText: 256,
     stopSequences: [],
@@ -293,7 +295,12 @@ export function profileFor(id: string): ModelProfile | undefined {
   return MODEL_PROFILES.find((profile) => profile.id === id);
 }
 
-/** Profiles allowed to serve an op. Eval-only arms need explicit opt-in. */
+/** Profiles allowed to serve an op. Eval-only arms need explicit opt-in.
+ *  Lab metadata only — NEVER use this to select a parse profile for a narrow
+ *  (structured) task. It reads the descriptive `roles` array, so it returns the
+ *  Qwen prose profile for `extract-report-fields` / `extract-search-filters`,
+ *  which the production seam serves only through Needle (see IF-108 and
+ *  `NARROW_TASK_PROFILE_ID`). */
 export function profilesForOp(op: NarrowOp, includeEvalOnly = false): readonly ModelProfile[] {
   return MODEL_PROFILES.filter(
     (profile) =>
