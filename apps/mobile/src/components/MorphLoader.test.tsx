@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, saveAppearance } from "../appearance";
-import { MorphLoader } from "./MorphLoader";
+import { MORPH_SHELL_CLASS, MorphLoader } from "./MorphLoader";
 
 // vitest runs without `globals`, so RTL's auto-cleanup never registers.
 afterEach(() => {
@@ -80,6 +80,17 @@ describe("MorphLoader (CF-010 §15)", () => {
     const shell = screen.getByTestId("morph-shell");
     expect(shell.className).toContain("h-6");
     expect(shell.className).toContain("w-16");
+  });
+
+  it("keeps the shared shell free of any position utility", () => {
+    // The pull indicator IS the shell and is absolutely positioned inside its
+    // sticky slot (`absolute left-1/2`). Tailwind emits `relative` after
+    // `absolute`, so a position utility in this shared string would win the
+    // cascade and push the capsule off-centre — proven in a browser once, and
+    // pinned here so it cannot come back silently.
+    expect(MORPH_SHELL_CLASS).not.toMatch(/\b(static|relative|absolute|fixed|sticky)\b/);
+    render(<MorphLoader label="Loading…" />);
+    expect(screen.getByTestId("morph-shell").className).not.toMatch(/\brelative\b/);
   });
 });
 

@@ -313,7 +313,14 @@ describe("PullToRefresh — capsule-only indicator, list never moves", () => {
     const bar = screen.getByTestId("refresh-bar");
     expect(bar.getAttribute("data-animated")).toBe("true");
     expect(bar.className).toContain("fb-morph-bar");
-    expect(screen.getByTestId("refresh-pill").querySelector("svg")).toBeNull();
+    const capsule = screen.getByTestId("refresh-pill");
+    expect(capsule.querySelector("svg")).toBeNull();
+    // The indicator centres itself in its sticky slot: `absolute left-1/2` plus
+    // a -50% translate. A `relative` in the shared shell class would win the
+    // Tailwind cascade and push it off-centre (found in a browser, pinned here).
+    expect(capsule.className).toContain("absolute");
+    expect(capsule.className).not.toContain("relative");
+    expect(capsule.style.transform).toContain("translate(-50%");
     expect(screen.getByText("Lost keys")).toBe(before);
   });
 

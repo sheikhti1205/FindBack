@@ -33,13 +33,16 @@ type PullDirection = "none" | "vertical" | "horizontal";
  * - only at real scrollTop 0
  * - resistance (pull distance is dampened)
  * - threshold before refresh triggers
- * - the pull reveals ONLY a compact pill/circular refresh glyph that
- *   animates with progress (rotation tracks the finger, the pill scales in).
- *   No text states for sighted users — position is exposed through the
+ * - the pull reveals ONLY a compact Morph capsule (§12/§15 of packet 09): the
+ *   bar stretches with the pull distance, and while the request is under way it
+ *   carries the Morph keyframe. The identity is imported from MorphLoader, never
+ *   re-declared here, so the indicator and the pagination slot cannot drift.
+ *   No text states for sighted users — progress is exposed through the
  *   status role's accessible name and a visually-hidden label only.
  * - the list stays visually in place: the indicator floats in a zero-height
  *   sticky slot, so there is no yank, no push-down, and no blank flash
- * - the spinner persists on the pill for the whole request
+ * - the Morph capsule persists for the whole request (the bar keeps morphing,
+ *   the list below is untouched)
  * - below-threshold cancel snaps back (pill unmounts)
  * - exactly ONE refresh per release: a release is consumed once per gesture,
  *   an in-flight refresh is guarded synchronously (no stale-closure double
@@ -57,9 +60,9 @@ type PullDirection = "none" | "vertical" | "horizontal";
  *   at gesture start (pill mount), release (unmount/refresh) and
  *   refresh settle. No setState — and no layout-height animation — runs per
  *   touch move.
- * - reduced motion: the refresh spinner resolves to a static glyph
- *   (`motion-reduce:animate-none`); finger-tracked progress is functional
- *   tracking and is never disabled.
+ * - reduced motion: the bar holds a static width — no morph keyframe — while
+ *   the finger-tracked stretch still follows the gesture (functional tracking
+ *   is never disabled)
  *
  * The component IS the scroll container; the parent can read scrollTop and
  * scroll to top through the forwarded handle.

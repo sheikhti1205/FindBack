@@ -92,8 +92,35 @@ function ChromePage({ hidden, initialQuery = "" }: { hidden: boolean; initialQue
   );
 }
 
-export function ChromeFixtures() {
+/**
+ * Fixture-level control: the collapse is a motion, so a screenshot alone cannot
+ * prove it. This frame lets a reviewer toggle it and watch, and lets the review
+ * script sample the height mid-animation (motion allowed) versus instantly
+ * (reduced motion).
+ */
+function ChromeTogglePage() {
+  const [hidden, setHidden] = useState(false);
   return (
+    <div className="flex h-72 flex-col gap-3 overflow-hidden">
+      <button
+        type="button"
+        data-testid="fixture-chrome-toggle"
+        onClick={() => setHidden((value) => !value)}
+        className="mx-3 self-start rounded-m3-sm border border-outline-variant px-3 py-1 text-xs font-medium"
+      >
+        Toggle chrome
+      </button>
+      <ScrollChrome hidden={hidden} testId="fixture-chrome-toggle-shell">
+        <ChromeContent />
+      </ScrollChrome>
+      <div className="flex flex-1 items-start justify-center px-4 text-sm text-on-surface-variant">
+        <span>Feed content starts here</span>
+      </div>
+    </div>
+  );
+}
+
+export function ChromeFixtures() {  return (
     <FixtureSection
       id="home-chrome"
       title="Home chrome (collapsing)"
@@ -124,7 +151,11 @@ export function ChromeFixtures() {
         <ChromePage hidden={false} />
       </FixtureFrame>
       <FixtureFrame section="home-chrome" variant="long-content">
-        <ChromePage hidden={false} />
+        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
+          Interactive (fixture control): toggle to watch the collapse — instant
+          under reduced motion
+        </p>
+        <ChromeTogglePage />
       </FixtureFrame>
       <FixtureFrame section="home-chrome" variant="large-text">
         <ChromePage hidden={false} />

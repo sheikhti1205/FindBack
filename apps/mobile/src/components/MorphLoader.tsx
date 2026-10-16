@@ -39,9 +39,17 @@ const BAR_SIZE: Record<MorphLoaderSize, string> = {
   md: "h-1.5",
 };
 
-/** The capsule shell, without geometry. Shared with PullToRefresh. */
+/**
+ * The capsule shell, without geometry. Shared with PullToRefresh.
+ *
+ * Deliberately carries NO `position` utility. The pull indicator is the shell
+ * itself, absolutely positioned (`absolute left-1/2`) inside its sticky slot,
+ * and Tailwind emits `relative` after `absolute` — so a `relative` here would
+ * win the cascade and shove the capsule off to the side. Nothing inside the
+ * shell is absolutely positioned, so it has no need of one either.
+ */
 export const MORPH_SHELL_CLASS =
-  "relative inline-flex shrink-0 items-center justify-center rounded-full bg-surface-container-high";
+  "inline-flex shrink-0 items-center justify-center rounded-full bg-surface-container-high";
 /** The inner bar, without geometry. Shared with PullToRefresh. */
 export const MORPH_BAR_CLASS = "rounded-full bg-on-surface-variant";
 /** The keyframed morph (index.css). Applied only when motion is allowed. */

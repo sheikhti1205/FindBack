@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { PostItem } from "@findback/shared";
 import { afterEach, describe, expect, it } from "vitest";import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { MotionConfig } from "framer-motion";
 import { PostCardContent, sharedMediaLayoutId, sharedTitleLayoutId } from "./PostCardContent";
 
@@ -34,6 +35,43 @@ function post(overrides: Partial<PostItem> = {}): PostItem {
     ...overrides,
   } as PostItem;
 }
+
+describe("masonry media failure (CF-010)", () => {
+  const photo = {
+    id: "a1",
+    postId: "p1",
+    fileUrl: "https://example.test/gone.jpg",
+    mimeType: "image/jpeg",
+    fileName: "gone.jpg",
+    fileSize: 100,
+    createdAt: "2026-09-01T00:00:00.000Z",
+    width: 900,
+    height: 1200,
+  };
+
+  it("says the photo is unavailable inside the reserved box, not as a broken image", () => {
+    render(
+      <MemoryRouter>
+        <PostCardContent post={post({ title: "Keys", attachments: [photo] })} layout="masonry" />
+      </MemoryRouter>,
+    );
+
+    const box = screen.getByTestId("masonry-media");
+    const reserved = box.getAttribute("style");
+    expect(box.querySelector("img")).toBeTruthy();
+
+    fireEvent.error(box.querySelector("img")!);
+
+    expect(screen.getByTestId("masonry-media-fallback").textContent).toContain("Photo unavailable");
+    // The broken <img> is gone rather than left behind the fallback.
+    expect(screen.getByTestId("masonry-media").querySelector("img")).toBeNull();
+    // The true-ratio box is untouched: a failure never re-packs the grid.
+    expect(screen.getByTestId("masonry-media").getAttribute("style")).toBe(reserved);
+    // Decorative: the button above already names itself for assistive tech.
+    expect(screen.getByTestId("masonry-media-fallback").getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByTestId("masonry-media").getAttribute("aria-label")).toBe("Photo for Keys");
+  });
+});
 
 describe("PostCardContent overflow", () => {
   it("breaks long unbroken titles and excerpts instead of overflowing", () => {

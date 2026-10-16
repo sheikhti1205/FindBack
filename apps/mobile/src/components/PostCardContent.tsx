@@ -627,6 +627,7 @@ function MasonryContent({ post, enableSharedMedia = false }: { post: PostItem; e
   const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
   const metrics = masonryCardMetrics(post);
   const [naturalRatio, setNaturalRatio] = useState<number | null>(null);
+  const [mediaFailed, setMediaFailed] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const ratio = naturalRatio ?? metrics.mediaRatio;
   const first = images[0];
@@ -649,22 +650,36 @@ function MasonryContent({ post, enableSharedMedia = false }: { post: PostItem; e
           className="fb-masonry-media relative block w-full overflow-hidden"
           style={{ aspectRatio: `${ratio}` }}
         >
-          <motion.img
-            src={first.fileUrl}
-            alt=""
-            loading="lazy"
-            className="h-full w-full object-cover"
-            {...(sharedId
-              ? { layoutId: sharedId, "data-shared-media": sharedId, transition: sharedElementTransition }
-              : {})}
-            onLoad={(event) => {
-              if (metrics.sizeKnown) return;
-              const el = event.currentTarget;
-              if (el.naturalWidth > 0 && el.naturalHeight > 0) {
-                setNaturalRatio(el.naturalWidth / el.naturalHeight);
-              }
-            }}
-          />
+          {!mediaFailed && (
+            <motion.img
+              src={first.fileUrl}
+              alt=""
+              loading="lazy"
+              className="h-full w-full object-cover"
+              {...(sharedId
+                ? { layoutId: sharedId, "data-shared-media": sharedId, transition: sharedElementTransition }
+                : {})}
+              onLoad={(event) => {
+                if (metrics.sizeKnown) return;
+                const el = event.currentTarget;
+                if (el.naturalWidth > 0 && el.naturalHeight > 0) {
+                  setNaturalRatio(el.naturalWidth / el.naturalHeight);
+                }
+              }}
+              onError={() => setMediaFailed(true)}
+            />
+          )}
+          {/* A photo that cannot load says so, in the same words and the same
+              box as every other density (`.fb-img-fallback`). Without this the
+              grid keeps a bare <img> and the reader sees the browser's
+              broken-image glyph in the middle of a card. aria-hidden: the
+              button above already carries the accessible name. */}
+          {mediaFailed && (
+            <span data-testid="masonry-media-fallback" className="fb-img-fallback" aria-hidden>
+              <ImageOff size={16} aria-hidden />
+              Photo unavailable
+            </span>
+          )}
           {extra > 0 && (
             <span data-testid="masonry-more-media" className="fb-masonry-more" aria-hidden>
               +{extra}

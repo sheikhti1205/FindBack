@@ -1,6 +1,6 @@
 import type { PostItem } from "@findback/shared";
 import { PostList } from "../../components/PostList";
-import { MorphLoader } from "../../components/MorphLoader";
+import { PullToRefresh } from "../../components/PullToRefresh";
 import { FixtureFrame, FixtureSection } from "../FixtureSection";
 import { LONG_DESCRIPTION, LONG_TITLE, makePost, masonryRatioPosts } from "../posts";
 
@@ -19,6 +19,17 @@ import { LONG_DESCRIPTION, LONG_TITLE, makePost, masonryRatioPosts } from "../po
 
 function noopLoadMore(): Promise<void> {
   return Promise.resolve();
+}
+
+/**
+ * A refresh that stays pending long enough for a reviewer to look at the
+ * capsule, then settles on its own so the fixture route does not leave a
+ * request hanging forever.
+ */
+function fixtureRefresh(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 8000);
+  });
 }
 
 function masonry(
@@ -61,29 +72,29 @@ export function FeedLayoutFixtures() {
     <FixtureSection
       id="feed-layouts"
       title="Feed layouts (masonry + compact)"
-      description="Production PostList in the masonry density at the compact / medium / expanded column counts, plus the compact Morph pagination capsule from §10."
+      description="Production PostList in the masonry density at each column count `masonryColumns` can return (1 / 2 / 3 / 4), plus the compact Morph pagination capsule from §10 and the pull-to-refresh capsule from §12."
     >
       <FixtureFrame section="feed-layouts" variant="normal">
         <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          Compact band — 1 column (320dp)
+          1 column — up to 555px (a phone: `auto` picks the Feed layout there, see the home section)
         </p>
         {masonry(1)}
       </FixtureFrame>
       <FixtureFrame section="feed-layouts" variant="normal">
         <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          Medium band — 2 columns
+          2 columns — 556-827px (a small tablet or a landscape phone)
         </p>
         {masonry(2)}
       </FixtureFrame>
       <FixtureFrame section="feed-layouts" variant="normal">
         <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          Expanded band — 3 columns
+          3 columns — 828-1099px (a 1024px tablet)
         </p>
         {masonry(3)}
       </FixtureFrame>
       <FixtureFrame section="feed-layouts" variant="normal">
         <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          Expanded band — 4 columns
+          4 columns — 1100px and up, never more (`MASONRY_MAX_COLUMNS`)
         </p>
         {masonry(4)}
       </FixtureFrame>
@@ -95,12 +106,24 @@ export function FeedLayoutFixtures() {
       </FixtureFrame>
       <FixtureFrame section="feed-layouts" variant="loading">
         <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          Pagination slot — compact Morph capsule (§10)
+          Pagination slot — compact Morph capsule (§10): the capsule comes from
+          PostList itself, exactly as the Home feed mounts it
         </p>
-        <div className="flex flex-col">
-          {masonry(2, { items: masonryRatioPosts.slice(0, 4) })}
-          <MorphLoader label="Loading more…" size="sm" className="py-6" />
-        </div>
+        {masonry(2, { items: masonryRatioPosts.slice(0, 4), loadingMore: true })}
+      </FixtureFrame>
+      <FixtureFrame section="feed-layouts" variant="loading">
+        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
+          Pull to refresh — stretched Morph capsule (§12, drag the frame down)
+        </p>
+        <PullToRefresh onRefresh={fixtureRefresh}>
+          <div className="flex flex-col gap-2 px-4 py-3">
+            {masonryRatioPosts.slice(0, 3).map((post) => (
+              <p key={post.id} className="text-sm text-on-surface">
+                {post.title}
+              </p>
+            ))}
+          </div>
+        </PullToRefresh>
       </FixtureFrame>
       <FixtureFrame section="feed-layouts" variant="empty">
         {masonry(2, { items: [] })}

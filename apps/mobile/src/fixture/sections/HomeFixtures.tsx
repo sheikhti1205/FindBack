@@ -21,7 +21,11 @@ function MatrixCards({ posts }: { posts: PostItem[] }) {
   return (
     <div className="flex flex-col gap-3">
       {posts.map((post, i) => (
-        <PostCard key={post.id} to={`/posts/${post.id}`} index={i}>
+        /* `variant` must match the layout: home-feed and masonry cards own
+           their own detail link, so wrapping them in PostCard's default link
+           would nest an <a> inside an <a>. PostList derives this the same way
+           (`layout === "home-feed" || layout === "masonry" ? layout : "default"`). */
+        <PostCard key={post.id} to={`/posts/${post.id}`} index={i} variant="home-feed">
           <PostCardContent post={post} layout="home-feed" />
         </PostCard>
       ))}
