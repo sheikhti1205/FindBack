@@ -9,6 +9,7 @@ import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
 import { BrandMark } from "../components/BrandMark";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { CHROME_TOP_ZONE, useScrollChrome } from "../components/scrollChrome";
+import { ScrollChrome } from "../components/ScrollChrome";
 import { NewPostsPill } from "../components/NewPostsPill";
 import { BottomSheet } from "../components/BottomSheet";
 import { MapPickerSheet } from "../components/MapPickerSheet";
@@ -428,27 +429,10 @@ export function Home() {
   return (
     <div className="flex h-full flex-col gap-4" onScrollCapture={handleFeedScroll}>
       {/* CF-010 §3: the chrome collapses on an intentional downward scroll so
-          the feed gains real vertical room. It is `inert` while collapsed, so a
-          keyboard or switch user can never land on a control that is not on
-          screen. The sheets live outside this wrapper (BottomSheet mounts in
-          the tree, not a portal), so an open sheet is never clipped. */}
-      <motion.div
-        data-testid="home-chrome"
-        data-collapsed={chromeHidden ? "true" : "false"}
-        inert={chromeHidden ? true : undefined}
-        initial={false}
-        animate={{ height: chromeHidden ? 0 : "auto", opacity: chromeHidden ? 0 : 1 }}
-        transition={
-          reduceMotion ? { duration: 0 } : { duration: motionDurations.standard, ease: motionEasings.out }
-        }
-        style={{
-          overflow: chromeHidden ? "hidden" : "visible",
-          // Cancels the parent's gap while collapsed, so no stray band of empty
-          // space is left where the chrome used to be.
-          marginBottom: chromeHidden ? "-1rem" : 0,
-        }}
-        className="flex shrink-0 flex-col gap-4"
-      >
+          the feed gains real vertical room. The wrapper owns the geometry, the
+          reduced-motion override and the `inert` contract; the sheets stay
+          outside it (BottomSheet mounts in the tree, not a portal). */}
+      <ScrollChrome hidden={chromeHidden}>
       <header
         data-testid="home-toolbar"
         style={{ transitionDuration: reduceMotion ? "0s" : `${motionDurations.fast}s` }}
@@ -547,7 +531,7 @@ export function Home() {
           </div>
         )}
       </div>
-      </motion.div>
+      </ScrollChrome>
 
       <AdvancedSearchFilters
         filters={advanced}

@@ -8,6 +8,7 @@ import { ALL_VARIANTS } from "./FixtureSection";
 const SECTIONS = [
   "home",
   "feed-layouts",
+  "home-chrome",
   "detail",
   "create",
   "comments",
