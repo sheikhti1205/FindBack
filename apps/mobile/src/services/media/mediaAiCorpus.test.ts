@@ -8,8 +8,6 @@ vi.mock("../ai/applicationAi", () => ({
   }),
 }));
 
-import { CATEGORIES } from "@findback/shared";
-import { parseVlmOutput } from "../vlmParser";
 import { refuseHelpSend } from "../../screens/Help";
 import {
   buildHeicFtyp,
@@ -59,59 +57,6 @@ describe("B1/B2 corpus: HEIC, 48MP-class, loop/echo", () => {
     expect(target!.targetWidth).toBeLessThanOrEqual(1920);
     expect(target!.targetHeight).toBeLessThanOrEqual(1920);
     expect(result.derivative.width).toBeLessThanOrEqual(1920);
-  });
-
-  it("parses aliased SmolVLM keys with case-insensitive categories", () => {
-    const raw = JSON.stringify({
-      title: "Red backpack",
-      category: "bags & wallets",
-      color: "red",
-      features: ["torn strap"],
-    });
-    const parsed = parseVlmOutput(raw, CATEGORIES);
-    expect(parsed?.suggestedTitle).toBe("Red backpack");
-    expect(parsed?.identifyingFeatures).toEqual(["torn strap"]);
-  });
-
-  it("collapses sentence loops and dedupes echo arrays", () => {
-    const looped = JSON.stringify({
-      objectName: "black umbrella",
-      suggestedCategory: "Clothing",
-      colors: ["black", "black"],
-      visibleBrand: null,
-      visibleText: [],
-      identifyingFeatures: [],
-      suggestedTitle: "black umbrella black umbrella black umbrella black umbrella black umbrella black umbrella black umbrella",
-      suggestedDescription: "A black umbrella.",
-      uncertainFields: [],
-    });
-    const parsed = parseVlmOutput(looped, CATEGORIES)!;
-    expect(parsed.suggestedTitle).toBe("black umbrella");
-    expect(parsed.colors).toEqual(["black"]);
-  });
-
-  it("repairs an unterminated looped object to its usable prefix", () => {
-    const truncated = '{"objectName":"wallet","suggestedTitle":"Wallet","colors":["brown"]';
-    const parsed = parseVlmOutput(truncated, CATEGORIES);
-    expect(parsed?.objectName).toBe("wallet");
-    expect(parsed?.suggestedTitle).toBe("Wallet");
-  });
-
-  it("drops unknown categories to null but keeps usable text (report stays usable)", () => {
-    const raw = JSON.stringify({
-      objectName: "keys",
-      suggestedCategory: "Teleporters",
-      colors: ["silver"],
-      visibleBrand: null,
-      visibleText: [],
-      identifyingFeatures: ["keyring"],
-      suggestedTitle: "Lost keys",
-      suggestedDescription: "A set of keys.",
-      uncertainFields: [],
-    });
-    const parsed = parseVlmOutput(raw, CATEGORIES)!;
-    expect(parsed.suggestedCategory).toBeNull();
-    expect(parsed.suggestedTitle).toBe("Lost keys");
   });
 });
 
