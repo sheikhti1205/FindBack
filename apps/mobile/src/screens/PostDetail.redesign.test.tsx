@@ -222,12 +222,12 @@ describe("PostDetail redesign (UXN-3)", () => {
     expect(screen.queryByRole("region", { name: /manage report/i })).toBeNull();
   });
 
-  it("social row keeps Love with count, share copies without a count", async () => {
+  it("social row keeps Like with count, share copies without a count", async () => {
     postsMock.reactToPost.mockResolvedValue({ likeCount: 5, dislikeCount: 1 });
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
     Object.assign(navigator, { clipboard, share: undefined });
     renderDetail();
-    const love = await screen.findByRole("button", { name: /love, 4/i });
+    const love = await screen.findByRole("button", { name: /like, 4 likes/i });
     fireEvent.click(love);
     await waitFor(() => expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE"));
     const share = screen.getByRole("button", { name: /share/i });

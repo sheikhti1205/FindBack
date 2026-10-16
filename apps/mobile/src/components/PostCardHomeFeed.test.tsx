@@ -17,7 +17,7 @@ vi.mock("../services/feedReactions", async (importOriginal) => {
   return {
     ...actual,
     fetchFeedReactionState: feedFetchMock,
-    toggleLoveReaction: loveToggleMock,
+    toggleLikeReaction: loveToggleMock,
   };
 });
 
@@ -184,7 +184,7 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     }
   });
 
-  it("has separate Love, Comments and Share controls outside the report link", () => {
+  it("has separate Like, Comments and Share controls outside the report link", () => {
     renderHomeFeed(imagePost());
     const detail = screen.getByTestId("home-feed-detail-link");
     const love = screen.getByTestId("home-feed-love");
@@ -303,14 +303,14 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     expect(order.indexOf("post-footer")).toBe(order.length - 1);
   });
 
-  it("meets the 44px minimum touch target on the Love toggle", () => {
+  it("meets the 44px minimum touch target on the Like toggle", () => {
     renderHomeFeed(imagePost());
     const love = screen.getByTestId("home-feed-love");
     expect(love.className).toMatch(/min-h-\[44px\]/);
     expect(love.className).toMatch(/min-w-\[44px\]/);
   });
 
-  it("shows and announces a failure message when a Love toggle fails", async () => {
+  it("shows and announces a failure message when a Like toggle fails", async () => {
     const heard: string[] = [];
     const handler = (e: Event) => {
       heard.push((e as CustomEvent<string>).detail ?? "");
@@ -327,7 +327,7 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     }
   });
 
-  it("disables the Love toggle while a toggle is in flight", async () => {
+  it("disables the Like toggle while a toggle is in flight", async () => {
     let release!: (value: unknown) => void;
     loveToggleMock.mockImplementationOnce(
       () =>
@@ -344,7 +344,7 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     await waitFor(() => expect(love.disabled).toBe(false));
   });
 
-  it("exposes aria-busy while a Love toggle is in flight", async () => {
+  it("exposes aria-busy while a Like toggle is in flight", async () => {
     let release!: (value: unknown) => void;
     loveToggleMock.mockImplementationOnce(
       () =>
@@ -394,7 +394,7 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
   });
 });
 
-describe("home-feed detail link + Love action siblings (never nested)", () => {
+describe("home-feed detail link + Like action siblings (never nested)", () => {
   it("routes the card body through a detail link to the post", () => {
     renderHomeFeed(imagePost());
     const link = screen.getByTestId("home-feed-detail-link");
@@ -402,7 +402,7 @@ describe("home-feed detail link + Love action siblings (never nested)", () => {
     expect(link.textContent).toContain("Golden Retriever near Riverside Park");
   });
 
-  it("renders the Love toggle as a sibling of the detail link, never inside it", () => {
+  it("renders the Like toggle as a sibling of the detail link, never inside it", () => {
     render(
       <MemoryRouter>
         <PostCard to="/posts/p1" index={0} variant="home-feed">
@@ -414,11 +414,11 @@ describe("home-feed detail link + Love action siblings (never nested)", () => {
     );
     const card = screen.getByTestId("post-card");
     const link = screen.getByTestId("home-feed-detail-link");
-    const love = screen.getByRole("button", { name: /love/i });
+    const like = screen.getByRole("button", { name: /like/i });
     expect(card.contains(link)).toBe(true);
-    expect(card.contains(love)).toBe(true);
-    expect(link.contains(love)).toBe(false);
-    expect(love.closest("a")).toBeNull();
+    expect(card.contains(like)).toBe(true);
+    expect(link.contains(like)).toBe(false);
+    expect(like.closest("a")).toBeNull();
     // No nested interactive controls anywhere in the card.
     expect(card.querySelector("a button")).toBeNull();
     expect(card.querySelector("button a")).toBeNull();
@@ -443,27 +443,27 @@ describe("home-feed detail link + Love action siblings (never nested)", () => {
   });
 });
 
-describe("home-feed Love/Unlove", () => {
-  it("offers an unpressed Love toggle showing the live like count", async () => {
+describe("home-feed Like/Unlike", () => {
+  it("offers an unpressed Like toggle showing the live like count", async () => {
     renderHomeFeed(imagePost());
     await waitFor(() => expect(feedFetchMock).toHaveBeenCalledTimes(1));
-    const love = screen.getByRole("button", { name: /love this report/i });
+    const love = screen.getByRole("button", { name: /like this report/i });
     expect(love.getAttribute("aria-pressed")).toBe("false");
     expect(love.textContent).toContain("24");
   });
 
-  it("reflects a previously loved post as pressed after batch hydration", async () => {
+  it("reflects a previously liked post as pressed after batch hydration", async () => {
     renderHomeFeed(imagePost(), {
       reactions: { p1: { myReaction: "LIKE", myRating: null } },
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /loved/i }).getAttribute("aria-pressed")).toBe(
+      expect(screen.getByRole("button", { name: /liked/i }).getAttribute("aria-pressed")).toBe(
         "true",
       ),
     );
   });
 
-  it("loves optimistically through LIKE and patches the feed cache item", async () => {
+  it("likes optimistically through LIKE and patches the feed cache item", async () => {
     loveToggleMock.mockResolvedValue({
       postId: "p1",
       likeCount: 30,
@@ -473,14 +473,14 @@ describe("home-feed Love/Unlove", () => {
     const { patchItem } = renderHomeFeed(imagePost());
     await waitFor(() => expect(feedFetchMock).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByRole("button", { name: /love this report/i }));
+    fireEvent.click(screen.getByRole("button", { name: /like this report/i }));
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /loved/i }).getAttribute("aria-pressed")).toBe(
+      expect(screen.getByRole("button", { name: /liked/i }).getAttribute("aria-pressed")).toBe(
         "true",
       ),
     );
-    // Love goes through the existing LIKE reaction — never a LOVE kind.
+    // Like goes through the existing LIKE reaction — never a canonical kind.
     expect(loveToggleMock).toHaveBeenCalledWith("p1", null);
     // Optimistic patch (+1) then server reconciliation land in the feed cache.
     expect(patchItem).toHaveBeenCalledWith("p1", { likeCount: 25, dislikeCount: 1 });
@@ -489,7 +489,7 @@ describe("home-feed Love/Unlove", () => {
     );
   });
 
-  it("unloves a loved post through null", async () => {
+  it("unlikes a liked post through null", async () => {
     loveToggleMock.mockResolvedValue({
       postId: "p1",
       likeCount: 23,
@@ -500,18 +500,18 @@ describe("home-feed Love/Unlove", () => {
       reactions: { p1: { myReaction: "LIKE", myRating: null } },
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /loved/i }).getAttribute("aria-pressed")).toBe(
+      expect(screen.getByRole("button", { name: /liked/i }).getAttribute("aria-pressed")).toBe(
         "true",
       ),
     );
     patchItem.mockClear();
 
-    fireEvent.click(screen.getByRole("button", { name: /loved/i }));
+    fireEvent.click(screen.getByRole("button", { name: /liked/i }));
 
     expect(loveToggleMock).toHaveBeenCalledWith("p1", "LIKE");
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /love this report/i }).getAttribute("aria-pressed"),
+        screen.getByRole("button", { name: /like this report/i }).getAttribute("aria-pressed"),
       ).toBe("false"),
     );
     expect(patchItem).toHaveBeenCalled();
@@ -533,7 +533,7 @@ describe("home-feed media polish (edge-to-edge cover for loaded photos)", () => 
     renderHomeFeed(post());
     expect(screen.queryByTestId("home-feed-no-photo")).toBeNull();
     expect(screen.queryByTestId("feed-media-viewport")).toBeNull();
-    expect(screen.getByRole("button", { name: /love/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /like/i })).toBeTruthy();
   });
 });
 

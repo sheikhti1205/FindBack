@@ -18,7 +18,7 @@ vi.mock("../services/feedReactions", async (importOriginal) => {
   return {
     ...actual,
     fetchFeedReactionState: feedFetchMock,
-    toggleLoveReaction: loveToggleMock,
+    toggleLikeReaction: loveToggleMock,
   };
 });
 

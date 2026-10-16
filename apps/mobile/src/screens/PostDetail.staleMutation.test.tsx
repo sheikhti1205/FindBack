@@ -107,21 +107,21 @@ describe("PostDetail stale mutation guard (W8-STATIC)", () => {
     postsMock.reactToPost.mockImplementation(() => reaction.promise);
 
     renderDetail();
-    const likeButton = await screen.findByRole("button", { name: /Love, 1 love/ });
+    const likeButton = await screen.findByRole("button", { name: /Like, 1 like/ });
     fireEvent.click(likeButton);
     expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE");
 
     // Same component instance serves the new post (the route carries no key).
     fireEvent.click(screen.getByTestId("go-p2"));
-    const p2Love = await screen.findByRole("button", { name: /Love, 5 loves/ });
+    const p2Love = await screen.findByRole("button", { name: /Like, 5 likes/ });
     expect(await screen.findByRole("heading", { name: "P2 title" })).toBeTruthy();
 
     await act(async () => reaction.resolve({ postId: "p1", likeCount: 99, dislikeCount: 0, myReaction: "LIKE" }));
 
     // p1's late truth must not rewrite p2's counts or reaction state.
     expect(p2Love.getAttribute("aria-pressed")).toBe("false");
-    await waitFor(() => expect(screen.getByRole("button", { name: /Love, 5 loves/ })).toBeTruthy());
-    expect(screen.queryByRole("button", { name: /Love, 99 loves/ })).toBeNull();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Like, 5 likes/ })).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /Liked, 99 likes/ })).toBeNull();
   });
 
   it("drops a late reaction result after an account switch", async () => {
@@ -136,8 +136,8 @@ describe("PostDetail stale mutation guard (W8-STATIC)", () => {
       </MemoryRouter>
     );
     const rendered = render(tree);
-    await screen.findByRole("button", { name: /Love, 1 love/ });
-    fireEvent.click(screen.getByRole("button", { name: /Love/ }));
+    await screen.findByRole("button", { name: /Like, 1 like/ });
+    fireEvent.click(screen.getByRole("button", { name: /Like, 1 like/ }));
     expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE");
 
     // Account switch does not remount the screen; the late callback for the
@@ -155,7 +155,7 @@ describe("PostDetail stale mutation guard (W8-STATIC)", () => {
 
     await act(async () => reaction.resolve({ postId: "p1", likeCount: 99, dislikeCount: 0, myReaction: "LIKE" }));
 
-    expect(screen.queryByRole("button", { name: /Love, 99 loves/ })).toBeNull();
-    await waitFor(() => expect(screen.getByRole("button", { name: /Love, 1 love/ })).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /Liked, 99 likes/ })).toBeNull();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Liked, 2 likes/ })).toBeTruthy());
   });
 });

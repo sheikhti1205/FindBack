@@ -262,14 +262,16 @@ describe("PostDetail mutation locks", () => {
     });
     postsMock.fetchSocialState.mockResolvedValue({ myReaction: "HELPFUL", myRating: null });
     renderDetail();
-    // Row truth (total 3) wins over the legacy-bucket seed (which would read 1).
-    const loveButton = await screen.findByRole("button", { name: "Helpful, 3 reactions" });
-    expect(loveButton.getAttribute("aria-pressed")).toBe("true");
+    // Row truth (3 positive reactions, one of them the caller's) wins over the
+    // legacy-bucket seed, which would read 0.
+    const likeButton = await screen.findByTestId("detail-like");
+    expect(likeButton.getAttribute("aria-label")).toBe("Liked, 3 likes");
+    expect(likeButton.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("sends one Love RPC on a rapid double tap and shares the lock with Not helpful", async () => {
+  it("sends one Like RPC on a rapid double tap and shares the lock with Not helpful", async () => {
     renderDetail();
-    const likeButton = await screen.findByRole("button", { name: /Love/ });
+    const likeButton = await screen.findByTestId("detail-like");
     const dislikeButton = screen.getByRole("button", { name: /Not helpful/ });
     // Same React batch also exercises the synchronous ref guard.
     act(() => {
@@ -292,9 +294,9 @@ describe("PostDetail mutation locks", () => {
     expect(postsMock.reactToPost).toHaveBeenLastCalledWith("p1", null);
   });
 
-  it("Not helpful locks Love until the reaction settles", async () => {
+  it("Not helpful locks Like until the reaction settles", async () => {
     renderDetail();
-    const likeButton = await screen.findByRole("button", { name: /Love/ });
+    const likeButton = await screen.findByTestId("detail-like");
     const dislikeButton = screen.getByRole("button", { name: /Not helpful/ });
     fireEvent.click(dislikeButton);
     fireEvent.click(likeButton);
@@ -310,7 +312,7 @@ describe("PostDetail mutation locks", () => {
     postsMock.fetchSocialState.mockResolvedValue({ myReaction: "LIKE", myRating: null });
     render(<LiveRegion />);
     renderDetail();
-    const likeButton = await screen.findByRole("button", { name: /Love/ });
+    const likeButton = await screen.findByTestId("detail-like");
     await waitFor(() => expect(likeButton.getAttribute("aria-pressed")).toBe("true"));
     fireEvent.click(likeButton);
     expect(likeButton.getAttribute("aria-pressed")).toBe("false");
@@ -373,7 +375,7 @@ describe("PostDetail mutation locks", () => {
   it("keeps owner controls locked until both independent social requests settle", async () => {
     authState.user = { id: "u2", username: "owner" };
     renderDetail();
-    const likeButton = await screen.findByRole("button", { name: /Love/ });
+    const likeButton = await screen.findByTestId("detail-like");
     fireEvent.click(likeButton);
     fireEvent.click(screen.getByRole("radio", { name: "3 stars" }));
     await act(async () => rating.resolve({ postId: "p1", score: 3, ratingAvg: 3, ratingCount: 1 }));

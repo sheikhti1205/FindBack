@@ -120,7 +120,7 @@ describe("PostDetail comment identity (W7)", () => {
     authState.user = { id: "u2", username: "owner" } as { id: string; username: string };
   });
 
-  it("keeps @username, time, and the W3.3 reaction controls on avatar rows", async () => {
+  it("keeps @username, time, and the Like control on avatar rows", async () => {
     postsMock.fetchComments.mockResolvedValue([makeComment("c1", "helper", "try the library desk")]);
     renderDetail();
 
@@ -128,6 +128,7 @@ describe("PostDetail comment identity (W7)", () => {
     const row = document.getElementById("detail-comment-c1")!;
     expect(within(row).getByText("@helper")).toBeTruthy();
     expect(within(row).getByTestId("comment-react-c1")).toBeTruthy();
-    expect(within(row).getByTestId("comment-choose-c1")).toBeTruthy();
+    // Like-only: the comment chevron/tray is gone (packet 08 §2).
+    expect(within(row).queryByTestId("comment-choose-c1")).toBeNull();
   });
 });

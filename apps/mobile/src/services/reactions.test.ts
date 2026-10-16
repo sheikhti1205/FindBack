@@ -1,21 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DEFAULT_REACTION_KIND,
   REACTION_EMOJI,
   REACTION_KINDS,
+  applyCountDeltas,
   isReactionKind,
-  nextReactionForTap,
+  likeMine,
+  likeState,
+  likeToggleDeltas,
+  nextLikeReaction,
   normalizeReactionKind,
   reactionCountsFromJson,
-  reactionEmoji,
   reactionEmojiForWire,
+  reactionKindLabel,
+  reactionMoveDeltas,
   reactionSummaryFromCounts,
   reactionSummaryFromRow,
-  reactionToggleDeltas,
   setCommentReaction,
   setPostReaction,
   summarizeReactions,
-  topKinds,
 } from "./reactions";
 
 const { clientMock } = vi.hoisted(() => ({ clientMock: { rpc: vi.fn() } }));
@@ -47,7 +49,6 @@ describe("REACTION_KINDS metadata", () => {
     });
     for (const meta of REACTION_KINDS) {
       expect(meta.emoji).toBe(REACTION_EMOJI[meta.kind]);
-      expect(reactionEmoji(meta.kind)).toBe(REACTION_EMOJI[meta.kind]);
     }
     // Accessible names stay human-readable next to the emoji.
     expect(REACTION_KINDS.map((k) => k.label)).toEqual(["Love", "Helpful", "Support", "Wow"]);
@@ -85,42 +86,97 @@ describe("isReactionKind", () => {
   });
 });
 
-describe("nextReactionForTap", () => {
-  it("defaults to Love from no reaction", () => {
-    expect(DEFAULT_REACTION_KIND).toBe("LOVE");
-    expect(nextReactionForTap(null)).toBe("LOVE");
+describe("Like model (packet 08 §2 — reactions are Like-only)", () => {
+  it("counts every positive kind and never a DISLIKE", () => {
+    const summary = reactionSummaryFromCounts(
+      { LOVE: 2, HELPFUL: 1, SUPPORT: 0, WOW: 3, DISLIKE: 4 },
+      null,
+    );
+    expect(likeState(summary)).toEqual({ count: 6, mine: false });
   });
 
-  it("tapping the same kind clears it", () => {
-    expect(nextReactionForTap("LOVE", "LOVE")).toBeNull();
-    expect(nextReactionForTap("HELPFUL", "HELPFUL")).toBeNull();
+  it("treats any positive own reaction as mine (legacy LIKE included) and DISLIKE as not mine", () => {
+    expect(likeMine(null)).toBe(false);
+    expect(likeMine("DISLIKE")).toBe(false);
+    for (const kind of ["LIKE", "LOVE", "HELPFUL", "SUPPORT", "WOW"] as const) {
+      expect(likeMine(kind)).toBe(true);
+    }
   });
 
-  it("treats legacy LIKE as the same kind as LOVE", () => {
-    expect(nextReactionForTap("LIKE", "LOVE")).toBeNull();
+  it("writes LIKE or null only, whatever the caller already holds", () => {
+    expect(nextLikeReaction(null)).toBe("LIKE");
+    expect(nextLikeReaction("DISLIKE")).toBe("LIKE");
+    for (const kind of ["LIKE", "LOVE", "HELPFUL", "SUPPORT", "WOW"] as const) {
+      expect(nextLikeReaction(kind)).toBeNull();
+    }
   });
 
-  it("switches to the tapped kind", () => {
-    expect(nextReactionForTap("LOVE", "WOW")).toBe("WOW");
-    expect(nextReactionForTap("DISLIKE", "LOVE")).toBe("LOVE");
+  it("moves the Like count by exactly one on like → unlike", () => {
+    const empty = reactionSummaryFromCounts({}, null);
+    const likedCounts = applyCountDeltas(empty.counts, likeToggleDeltas(null));
+    expect(likeState({ counts: likedCounts, myReaction: "LIKE", total: 1 })).toEqual({
+      count: 1,
+      mine: true,
+    });
+    const unlikedCounts = applyCountDeltas(likedCounts, likeToggleDeltas("LIKE"));
+    expect(likeState({ counts: unlikedCounts, myReaction: null, total: 0 })).toEqual({
+      count: 0,
+      mine: false,
+    });
+  });
+
+  it("clears a multi-kind-era positive row the caller owns", () => {
+    const counts = { LOVE: 2, HELPFUL: 1 };
+    const deltas = likeToggleDeltas("HELPFUL");
+    expect(deltas).toEqual({ HELPFUL: -1 });
+    expect(
+      likeState({ counts: applyCountDeltas(counts, deltas), myReaction: null, total: 2 }),
+    ).toEqual({ count: 2, mine: false });
+  });
+
+  it("replaces a legacy DISLIKE with a Like (one row per caller per target)", () => {
+    const counts = { LOVE: 2, DISLIKE: 1 };
+    const deltas = likeToggleDeltas("DISLIKE");
+    expect(deltas).toEqual({ LOVE: 1, DISLIKE: -1 });
+    expect(
+      likeState({ counts: applyCountDeltas(counts, deltas), myReaction: "LIKE", total: 3 }),
+    ).toEqual({ count: 3, mine: true });
   });
 });
 
-describe("reactionToggleDeltas", () => {
-  it("adds on a fresh reaction", () => {
-    expect(reactionToggleDeltas(null, "LOVE")).toEqual({ LOVE: 1 });
-  });
-
-  it("removes on unreact", () => {
-    expect(reactionToggleDeltas("LOVE", null)).toEqual({ LOVE: -1 });
-  });
-
+describe("reactionMoveDeltas / applyCountDeltas", () => {
   it("moves one reaction across kinds", () => {
-    expect(reactionToggleDeltas("DISLIKE", "HELPFUL")).toEqual({ DISLIKE: -1, HELPFUL: 1 });
+    expect(reactionMoveDeltas("DISLIKE", "HELPFUL")).toEqual({ DISLIKE: -1, HELPFUL: 1 });
   });
 
-  it("is a no-op between legacy LIKE and LOVE", () => {
-    expect(reactionToggleDeltas("LIKE", "LOVE")).toEqual({});
+  it("is a no-op between legacy LIKE and canonical LOVE", () => {
+    expect(reactionMoveDeltas("LIKE", "LOVE")).toEqual({});
+  });
+
+  it("applies deltas immutably and drops buckets that reach zero", () => {
+    const counts = { LOVE: 1, WOW: 2 };
+    expect(applyCountDeltas(counts, { LOVE: -1, HELPFUL: 3 })).toEqual({ HELPFUL: 3, WOW: 2 });
+    expect(counts).toEqual({ LOVE: 1, WOW: 2 });
+  });
+
+  it("ignores non-integer values and unknown keys", () => {
+    expect(
+      applyCountDeltas({ LOVE: 1 }, { LOVE: Number.NaN, BOGUS: 5 } as never),
+    ).toEqual({ LOVE: 1 });
+    expect(applyCountDeltas({ LOVE: 1 }, { LOVE: 1 })).toEqual({ LOVE: 2 });
+  });
+});
+
+describe("reactionKindLabel (legacy row copy)", () => {
+  it("labels canonical kinds, folds legacy LIKE, and stays null for anything else", () => {
+    expect(reactionKindLabel("LOVE")).toBe("Love");
+    expect(reactionKindLabel("LIKE")).toBe("Love");
+    expect(reactionKindLabel("HELPFUL")).toBe("Helpful");
+    expect(reactionKindLabel("SUPPORT")).toBe("Support");
+    expect(reactionKindLabel("WOW")).toBe("Wow");
+    expect(reactionKindLabel("DISLIKE")).toBeNull();
+    expect(reactionKindLabel(null)).toBeNull();
+    expect(reactionKindLabel("BOGUS" as never)).toBeNull();
   });
 });
 
@@ -217,16 +273,6 @@ describe("reactionSummaryFromCounts (the one aggregator)", () => {
     expect(reactionSummaryFromRow({ reaction_counts: { LIKE: 1, WOW: 1 }, my_reaction: "WOW" })).toEqual(
       reactionSummaryFromCounts({ LOVE: 1, WOW: 1 }, "WOW"),
     );
-  });
-});
-
-describe("topKinds (the one top-kinds helper)", () => {
-  it("orders best-first with canonical-order ties and honors n", () => {
-    expect(topKinds({ LOVE: 1, WOW: 4, HELPFUL: 2 })).toEqual(["WOW", "HELPFUL", "LOVE"]);
-    expect(topKinds({ WOW: 2, LOVE: 2 })).toEqual(["LOVE", "WOW"]);
-    expect(topKinds({ LOVE: 4, HELPFUL: 3, SUPPORT: 2, WOW: 1 }, 2)).toEqual(["LOVE", "HELPFUL"]);
-    expect(topKinds({})).toEqual([]);
-    expect(topKinds({ LOVE: 1 }, 0)).toEqual([]);
   });
 });
 

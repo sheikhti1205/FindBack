@@ -15,7 +15,7 @@ import {
   type NotificationType,
 } from "../services/notifications";
 import { signalInboxChanged } from "../services/notificationSignals";
-import { REACTION_KINDS, reactionEmojiForWire } from "../services/reactions";
+import { reactionEmojiForWire, reactionKindLabel } from "../services/reactions";
 import { onRealtime } from "../services/realtime";
 import { friendlyError } from "../utils/friendlyErrors";
 import { formatTimestamp, timeAgo } from "../utils/dates";
@@ -75,11 +75,6 @@ export function typeLabel(type: NotificationType): string {
     default:
       return "sent you an update";
   }
-}
-
-function reactionKindLabel(kind: NotificationItem["reactionKind"]): string | null {
-  if (!kind) return null;
-  return REACTION_KINDS.find((meta) => meta.kind === kind)?.label ?? null;
 }
 
 type InboxView = "inbox" | "deleted";

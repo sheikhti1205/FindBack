@@ -9,13 +9,15 @@ import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 
 /**
- * Multi-kind FindBack reactions (W3.3) — backend/service layer, no UI.
+ * FindBack reactions — backend/service layer, no UI.
  *
- * The canonical model is LOVE / HELPFUL / SUPPORT / WOW. Legacy LIKE/DISLIKE
- * stay valid on the wire and are retained: LIKE is displayed as LOVE (mapped by
- * the SQL via `case when type = 'LIKE' then 'LOVE' else type end`), DISLIKE is
- * surfaced as itself. All counts returned here are keyed by that canonical
- * kind, so callers never branch on the legacy names.
+ * The stored vocabulary is LOVE / HELPFUL / SUPPORT / WOW with legacy
+ * LIKE/DISLIKE still valid on the wire. Since packet `08` §2 the **UI writes
+ * Like-only**: a Like writes `LIKE` (which the SQL folds to LOVE for every
+ * count it returns) and clears with null. The four canonical kinds remain the
+ * keying for counts and the labelling of historical rows, so legacy
+ * notification/inbox rows still render consistently; nothing here presents a
+ * picker any more.
  *
  * The RPCs are the existing `findback_react_client` (post) and the new
  * `findback_react_comment_client` (comment); both return per-kind counts plus
@@ -35,9 +37,9 @@ export interface ReactionKindMeta {
   label: string;
   /**
    * Canonical system-emoji presentation for the kind, rendered by the
-   * platform emoji font. THE ONE mapping reused by feed cards, post detail,
-   * comment reactions, the reaction tray, notification/inbox rows, counts
-   * chips, tests, and accessibility labels — never per-screen dialects.
+   * platform emoji font. THE ONE mapping for historical notification/inbox
+   * rows (the Like-only UI no longer presents reaction art) — never
+   * per-screen dialects.
    */
   emoji: string;
   /**
@@ -60,9 +62,9 @@ export const REACTION_EMOJI: Record<CanonicalReactionKind, string> = {
 };
 
 /**
- * Ordered metadata for the four canonical kinds (tap tray / picker order).
- * `emoji` is the canonical system-emoji char; `glyph` is the deprecated
- * semantic name from the custom-art era.
+ * Ordered metadata for the four canonical kinds. `emoji` is the canonical
+ * system-emoji char; `glyph` is the deprecated semantic name from the
+ * custom-art era.
  */
 export const REACTION_KINDS: readonly ReactionKindMeta[] = [
   { kind: "LOVE", label: "Love", emoji: REACTION_EMOJI.LOVE, glyph: "heart" },
@@ -70,11 +72,6 @@ export const REACTION_KINDS: readonly ReactionKindMeta[] = [
   { kind: "SUPPORT", label: "Support", emoji: REACTION_EMOJI.SUPPORT, glyph: "hand-heart" },
   { kind: "WOW", label: "Wow", emoji: REACTION_EMOJI.WOW, glyph: "sparkles" },
 ];
-
-/** Canonical system-emoji char for a canonical kind. */
-export function reactionEmoji(kind: CanonicalReactionKind): string {
-  return REACTION_EMOJI[kind];
-}
 
 /**
  * Canonical system-emoji char for any wire kind (legacy LIKE reads as LOVE);
@@ -88,37 +85,47 @@ export function reactionEmojiForWire(kind: ReactionKind | null): string | null {
   return (REACTION_EMOJI as Partial<Record<ReactionKind, string>>)[canonical] ?? null;
 }
 
-/** A plain tap (no long-press tray) applies Love. */
-export const DEFAULT_REACTION_KIND: ReactionKind = "LOVE";
+/**
+ * THE ONE Like rule (packet `08` §2, "reactions become Like-only").
+ *
+ * A Like is a positive reaction, so a target's Like count is every
+ * LOVE/HELPFUL/SUPPORT/WOW row it has; the SQL folds legacy LIKE rows into
+ * LOVE, so history keeps counting. A legacy DISLIKE is **not** a like: it never
+ * counts and never fills the control, and it keeps its own meaning for the
+ * community-rating surface that still writes it. "Mine" is true when the caller
+ * holds *any* positive reaction, so a reader who once reacted with Helpful sees
+ * a filled Like and tapping it clears their row (one row per caller per target
+ * is the RPC's contract — a legacy DISLIKE row is replaced by the LIKE).
+ *
+ * New writes are `LIKE` or null only (packet §2). Everything here is derived
+ * from the canonical counts, so no surface can show a Like total that disagrees
+ * with the per-kind truth the server returned.
+ */
+export const LIKE_KINDS: readonly CanonicalReactionKind[] = CANONICAL_REACTION_KINDS;
 
-export function isReactionKind(value: unknown): value is ReactionKind {
-  return typeof value === "string" && (ALL_REACTION_KINDS as readonly string[]).includes(value);
-}
-
-/** Legacy LIKE is the canonical Love; every other kind is its own canonical. */
-export function normalizeReactionKind(kind: ReactionKind): ReactionKind {
-  return kind === "LIKE" ? "LOVE" : kind;
+export interface LikeState {
+  /** Positive reactions on the target (legacy LIKE rows live in the LOVE bucket). */
+  count: number;
+  /** Whether the caller holds any positive reaction. */
+  mine: boolean;
 }
 
 /**
- * Reaction for a tap on `kind` (default Love) given the caller's `current`
- * reaction: same canonical kind again → null (unreact); otherwise the tapped
- * kind. Legacy LIKE and canonical LOVE are the same kind for this decision.
+ * The caller's Like state from their own wire kind: any positive kind is a
+ * Like, DISLIKE and null are not. Legacy LIKE reads as its canonical LOVE.
  */
-export function nextReactionForTap(
-  current: ReactionKind | null,
-  kind: ReactionKind = DEFAULT_REACTION_KIND,
-): ReactionKind | null {
-  const target = normalizeReactionKind(kind);
-  if (current !== null && normalizeReactionKind(current) === target) return null;
-  return target;
+export function likeMine(current: ReactionKind | null): boolean {
+  if (current === null) return false;
+  return (LIKE_KINDS as readonly ReactionKind[]).includes(normalizeReactionKind(current));
 }
 
-/**
- * Per-kind optimistic count deltas for moving `current` → `next` (null = no
- * reaction). Only non-zero deltas are present. LIKE and LOVE share one bucket.
- */
-export function reactionToggleDeltas(
+/** The wire kind a Like tap writes: `LIKE` to set it, null to clear the caller's row. */
+export function nextLikeReaction(current: ReactionKind | null): ReactionKind | null {
+  return likeMine(current) ? null : "LIKE";
+}
+
+/** Per-kind optimistic count deltas for moving `current` → `next` (null = no reaction). */
+export function reactionMoveDeltas(
   current: ReactionKind | null,
   next: ReactionKind | null,
 ): ReactionCounts {
@@ -133,6 +140,56 @@ export function reactionToggleDeltas(
     if (deltas[key] === 0) delete deltas[key];
   }
   return deltas;
+}
+
+/** Per-kind optimistic count deltas for a Like tap on a target where the caller holds `current`. */
+export function likeToggleDeltas(current: ReactionKind | null): ReactionCounts {
+  return reactionMoveDeltas(current, nextLikeReaction(current));
+}
+
+/** Apply per-kind deltas to canonical counts, dropping buckets that reach zero. */
+export function applyCountDeltas(counts: ReactionCounts, deltas: ReactionCounts): ReactionCounts {
+  const patched: ReactionCounts = { ...counts };
+  for (const [rawKind, delta] of Object.entries(deltas)) {
+    // A non-finite delta (bad server/optimistic input) must never poison a
+    // count the Like control renders.
+    if (!Number.isFinite(delta)) continue;
+    if (!isReactionKind(rawKind)) continue;
+    const key = normalizeReactionKind(rawKind);
+    const value = (patched[key] ?? 0) + (delta ?? 0);
+    if (value <= 0) delete patched[key];
+    else patched[key] = value;
+  }
+  return patched;
+}
+
+/** The Like count and the caller's own state, derived from a summary's counts. */
+export function likeState(summary: ReactionSummary): LikeState {
+  return {
+    count: LIKE_KINDS.reduce((sum, kind) => sum + (summary.counts[kind] ?? 0), 0),
+    mine: likeMine(summary.myReaction),
+  };
+}
+
+/**
+ * Consumer label for a canonical kind, for legacy rows that still name the
+ * reaction a reader gave ("reacted to your report with Love") — never a raw
+ * enum. Null when the kind has no canonical presentation (DISLIKE/unknown/
+ * absent), so callers can skip the clause entirely.
+ */
+export function reactionKindLabel(kind: ReactionKind | null): string | null {
+  if (kind === null) return null;
+  const canonical = normalizeReactionKind(kind);
+  return REACTION_KINDS.find((meta) => meta.kind === canonical)?.label ?? null;
+}
+
+export function isReactionKind(value: unknown): value is ReactionKind {
+  return typeof value === "string" && (ALL_REACTION_KINDS as readonly string[]).includes(value);
+}
+
+/** Legacy LIKE is the canonical Love; every other kind is its own canonical. */
+export function normalizeReactionKind(kind: ReactionKind): ReactionKind {
+  return kind === "LIKE" ? "LOVE" : kind;
 }
 
 /** Coerce a PostgREST jsonb count object into canonical-keyed counts. */
@@ -191,22 +248,6 @@ export function reactionSummaryFromCounts(
     myReaction: myReaction === null ? null : normalizeReactionKind(myReaction),
     total: totalOf(merged),
   };
-}
-
-/**
- * Up to `n` canonical kinds with a positive count, best first; ties resolve
- * in canonical tray order (LOVE/HELPFUL/SUPPORT/WOW). THE ONE top-kinds
- * helper (L-CONSOLIDATE): ReactionPreviewStack imports this; ReactionTray's
- * single-best `topReactionKind` swap is reserved for the coordinator.
- */
-export function topKinds(counts: ReactionCounts, n = 3): CanonicalReactionKind[] {
-  return CANONICAL_REACTION_KINDS.filter((k) => (counts[k] ?? 0) > 0)
-    .sort((a, b) => {
-      const diff = (counts[b] ?? 0) - (counts[a] ?? 0);
-      if (diff !== 0) return diff;
-      return CANONICAL_REACTION_KINDS.indexOf(a) - CANONICAL_REACTION_KINDS.indexOf(b);
-    })
-    .slice(0, n);
 }
 
 function totalOf(counts: ReactionCounts): number {

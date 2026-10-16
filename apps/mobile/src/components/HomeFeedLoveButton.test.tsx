@@ -6,21 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HomeFeedLoveButton } from "./HomeFeedLoveButton";
 import { FeedLoveProvider, type FeedPatchItem } from "../hooks/useFeedLove";
 
-const { feedFetchMock, loveToggleMock, reactKindMock, rpcMock } = vi.hoisted(() => ({
+const { feedFetchMock, likeToggleMock, rpcMock } = vi.hoisted(() => ({
   feedFetchMock: vi.fn(),
-  loveToggleMock: vi.fn(),
-  reactKindMock: vi.fn(),
+  likeToggleMock: vi.fn(),
   rpcMock: vi.fn(),
 }));
 
 vi.mock("../services/feedReactions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/feedReactions")>();
-  return {
-    ...actual,
-    fetchFeedReactionState: feedFetchMock,
-    toggleLoveReaction: loveToggleMock,
-    togglePostReactionKind: reactKindMock,
-  };
+  return { ...actual, fetchFeedReactionState: feedFetchMock, toggleLikeReaction: likeToggleMock };
 });
 
 vi.mock("../services/supabaseClient", () => ({
@@ -70,12 +64,20 @@ function renderButton(
 
 beforeEach(() => {
   feedFetchMock.mockReset();
-  loveToggleMock.mockReset();
-  reactKindMock.mockReset();
+  likeToggleMock.mockReset();
   rpcMock.mockReset();
   feedFetchMock.mockResolvedValue({});
-  loveToggleMock.mockResolvedValue({ postId: "p1", likeCount: 25, dislikeCount: 1, myReaction: "LIKE" });
-  reactKindMock.mockResolvedValue({ counts: { LOVE: 24, HELPFUL: 1 }, myReaction: "HELPFUL", total: 25 });
+  likeToggleMock.mockResolvedValue({
+    postId: "p1",
+    likeCount: 25,
+    dislikeCount: 1,
+    myReaction: "LIKE",
+    reactionCounts: {
+      counts: { LOVE: 25, DISLIKE: 1 },
+      myReaction: "LIKE",
+      total: 26,
+    },
+  });
 });
 
 afterEach(() => {
@@ -83,174 +85,134 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("HomeFeedLoveButton reactions (W3.3)", () => {
-  it("keeps the love testid, flat styling, and 44px targets", () => {
+describe("HomeFeedLoveButton (packet 08 §2 — Like-only)", () => {
+  it("keeps the like testid, flat styling and 44px target, and offers no picker", () => {
     renderButton();
-    const love = screen.getByTestId("home-feed-love");
-    expect(love.className).toMatch(/fb-report-action/);
-    expect(love.className).toMatch(/min-h-\[44px\]/);
-    expect(love.className).toMatch(/min-w-\[44px\]/);
-    const choose = screen.getByTestId("home-feed-choose-reaction");
-    expect(choose.getAttribute("aria-haspopup")).toBe("menu");
-    expect(choose.className).toMatch(/min-h-\[44px\]/);
-  });
-
-  it("taps the default Love and unreacts on a second tap (real toggle path)", async () => {
-    renderButton();
-    const love = screen.getByTestId("home-feed-love");
-    fireEvent.click(love);
-    await waitFor(() => expect(loveToggleMock).toHaveBeenCalledWith("p1", null));
-    await waitFor(() => expect(love.getAttribute("aria-label")).toMatch(/loved — tap to unlove/i));
-    // Second tap sees the hydrated LIKE and clears it.
-    fireEvent.click(love);
-    await waitFor(() => expect(loveToggleMock).toHaveBeenLastCalledWith("p1", "LIKE"));
-  });
-
-  it("opens the tray on hold and selects a kind through the real kind path", async () => {
-    vi.useFakeTimers();
-    try {
-      renderButton();
-      const love = screen.getByTestId("home-feed-love");
-      fireEvent.pointerDown(love, { clientX: 10, clientY: 10, button: 0 });
-      act(() => {
-        vi.advanceTimersByTime(400);
-      });
-      expect(screen.getByTestId("reaction-tray")).toBeTruthy();
-      // The hold's own click must not toggle.
-      fireEvent.pointerUp(love);
-      fireEvent.click(love);
-      expect(loveToggleMock).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByTestId("reaction-option-HELPFUL"));
-    } finally {
-      vi.useRealTimers();
-    }
-    await waitFor(() => expect(reactKindMock).toHaveBeenCalledWith("p1", null, "HELPFUL"));
+    const like = screen.getByTestId("home-feed-love");
+    expect(like.tagName).toBe("BUTTON");
+    expect(like.getAttribute("type")).toBe("button");
+    expect(like.className).toMatch(/fb-report-action/);
+    expect(like.className).toMatch(/min-h-\[44px\]/);
+    expect(like.className).toMatch(/min-w-\[44px\]/);
+    // The tray, its chevron and every hold gesture are gone.
+    expect(screen.queryByTestId("home-feed-choose-reaction")).toBeNull();
     expect(screen.queryByTestId("reaction-tray")).toBeNull();
+    expect(like.getAttribute("aria-haspopup")).toBeNull();
   });
 
-  it("cancels the tray when the hold becomes a scroll", () => {
-    vi.useFakeTimers();
-    try {
-      renderButton();
-      const love = screen.getByTestId("home-feed-love");
-      fireEvent.pointerDown(love, { clientX: 10, clientY: 10, button: 0 });
-      vi.advanceTimersByTime(350);
-      fireEvent.pointerMove(love, { clientX: 10, clientY: 60 });
-      vi.advanceTimersByTime(1000);
-      expect(screen.queryByTestId("reaction-tray")).toBeNull();
-      // It was a scroll, not a tap: no toggle either.
-      expect(loveToggleMock).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("cancels the tray on pointercancel", () => {
-    vi.useFakeTimers();
-    try {
-      renderButton();
-      const love = screen.getByTestId("home-feed-love");
-      fireEvent.pointerDown(love, { clientX: 10, clientY: 10, button: 0 });
-      fireEvent.pointerCancel(love);
-      vi.advanceTimersByTime(1000);
-      expect(screen.queryByTestId("reaction-tray")).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("opens via the Choose reaction button and selects with the keyboard (no long-press)", async () => {
+  it("likes with LIKE and unlikes with null on a second tap", async () => {
     renderButton();
-    fireEvent.click(screen.getByTestId("home-feed-choose-reaction"));
-    const tray = await screen.findByTestId("reaction-tray");
-    expect(screen.getByTestId("home-feed-choose-reaction").getAttribute("aria-expanded")).toBe("true");
-    const loveOption = screen.getByTestId("reaction-option-LOVE");
-    loveOption.focus();
-    fireEvent.keyDown(tray, { key: "ArrowRight" });
-    expect(document.activeElement?.getAttribute("data-testid")).toBe("reaction-option-HELPFUL");
-    fireEvent.keyDown(tray, { key: "Enter" });
-    await waitFor(() => expect(reactKindMock).toHaveBeenCalledWith("p1", null, "HELPFUL"));
+    const like = screen.getByTestId("home-feed-love");
+    expect(like.getAttribute("aria-pressed")).toBe("false");
+    expect(like.getAttribute("aria-label")).toBe("Like this report, 24 likes");
+
+    fireEvent.click(like);
+
+    await waitFor(() => expect(likeToggleMock).toHaveBeenCalledWith("p1", null));
+    await waitFor(() => expect(like.getAttribute("aria-pressed")).toBe("true"));
+    expect(like.getAttribute("aria-label")).toBe("Liked, 25 likes");
+
+    // The second tap sees the written LIKE and clears the caller's row.
+    fireEvent.click(like);
+    await waitFor(() => expect(likeToggleMock).toHaveBeenLastCalledWith("p1", "LIKE"));
   });
 
-  it("labels the active kind (Helpful, N reactions) with aria-pressed", async () => {
+  it("counts positive kinds only — a DISLIKE never fills the control", async () => {
+    likeToggleMock.mockResolvedValue({
+      postId: "p1",
+      likeCount: 20,
+      dislikeCount: 4,
+      myReaction: "LIKE",
+      reactionCounts: {
+        counts: { LOVE: 20, WOW: 3, DISLIKE: 4 },
+        myReaction: "LIKE",
+        total: 27,
+      },
+    });
+    renderButton();
+    const like = screen.getByTestId("home-feed-love");
+
+    fireEvent.click(like);
+
+    await waitFor(() => expect(like.getAttribute("aria-label")).toBe("Liked, 23 likes"));
+  });
+
+  it("treats a hydrated canonical-era kind as mine and clears it on the next tap", async () => {
     renderButton(post(), { p1: { myReaction: "HELPFUL", myRating: null } });
-    const love = screen.getByTestId("home-feed-love");
-    await waitFor(() => expect(love.getAttribute("aria-pressed")).toBe("true"));
-    expect(love.getAttribute("aria-label")).toMatch(/helpful, 24 reactions/i);
+    const like = screen.getByTestId("home-feed-love");
+
+    await waitFor(() => expect(like.getAttribute("aria-pressed")).toBe("true"));
+    expect(like.getAttribute("aria-label")).toBe("Liked, 24 likes");
+
+    fireEvent.click(like);
+
+    await waitFor(() => expect(likeToggleMock).toHaveBeenCalledWith("p1", "HELPFUL"));
   });
 
-  it("announces a tray-write failure inline and reverts", async () => {
+  it("does not double-fire while a Like is in flight", async () => {
+    let release!: (value: unknown) => void;
+    likeToggleMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderButton();
+    const like = screen.getByTestId("home-feed-love");
+
+    fireEvent.click(like);
+    await waitFor(() => expect(like.getAttribute("aria-busy")).toBe("true"));
+    fireEvent.click(like);
+
+    expect(likeToggleMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release({ postId: "p1", likeCount: 25, dislikeCount: 1, myReaction: "LIKE" });
+    });
+    await waitFor(() => expect(like.getAttribute("aria-busy")).toBe("false"));
+  });
+
+  it("announces a failed Like inline and reverts the control", async () => {
     const heard: string[] = [];
     const handler = (e: Event) => {
       heard.push((e as CustomEvent<string>).detail ?? "");
     };
     window.addEventListener("findback:announce", handler);
     try {
-      reactKindMock.mockRejectedValueOnce(new Error("offline"));
+      likeToggleMock.mockRejectedValueOnce(new Error("offline"));
       renderButton();
-      fireEvent.click(screen.getByTestId("home-feed-choose-reaction"));
-      fireEvent.click(await screen.findByTestId("reaction-option-WOW"));
+      const like = screen.getByTestId("home-feed-love");
+
+      fireEvent.click(like);
+
       expect((await screen.findByTestId("home-feed-love-error")).textContent).toMatch(/try again/i);
       await waitFor(() => expect(heard.join(" ")).toMatch(/try again/i));
-      expect(screen.getByTestId("home-feed-love").getAttribute("aria-pressed")).toBe("false");
+      expect(like.getAttribute("aria-pressed")).toBe("false");
+      expect(like.getAttribute("aria-label")).toBe("Like this report, 24 likes");
+      expect(like.getAttribute("aria-describedby")).toBe("home-feed-like-error-p1");
     } finally {
       window.removeEventListener("findback:announce", handler);
     }
   });
 
-  it("closes the tray on Escape", async () => {
-    renderButton();
-    fireEvent.click(screen.getByTestId("home-feed-choose-reaction"));
-    const tray = await screen.findByTestId("reaction-tray");
-    fireEvent.keyDown(tray, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByTestId("reaction-tray")).toBeNull());
+  it("falls back to its own state outside a provider", async () => {
+    render(<HomeFeedLoveButton postId="p1" likeCount={3} />);
+    const like = screen.getByTestId("home-feed-love");
+    expect(like.getAttribute("aria-label")).toBe("Like this report, 3 likes");
+
+    fireEvent.click(like);
+
+    await waitFor(() => expect(likeToggleMock).toHaveBeenCalledWith("p1", null));
+    await waitFor(() => expect(like.getAttribute("aria-pressed")).toBe("true"));
   });
 
-  it("slide-to-select: hold, slide onto a choice while held, release selects it", async () => {
-    vi.useFakeTimers();
-    try {
-      renderButton();
-      const love = screen.getByTestId("home-feed-love");
-      fireEvent.pointerDown(love, { clientX: 10, clientY: 10, button: 0 });
-      act(() => {
-        vi.advanceTimersByTime(400);
-      });
-      expect(screen.getByTestId("reaction-tray")).toBeTruthy();
-      // Finger slides onto SUPPORT while still held: the hovered choice lifts.
-      const support = screen.getByTestId("reaction-option-SUPPORT");
-      (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint =
-        () => support;
-      try {
-        fireEvent.pointerMove(window, { clientX: 60, clientY: 12 });
-        expect(support.getAttribute("data-hovered")).toBe("true");
-        // Release while held selects the hovered kind (no second tap needed).
-        fireEvent.pointerUp(window);
-      } finally {
-        delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
-      }
-      // The hold's own click on the trigger must not toggle.
-      fireEvent.pointerUp(love);
-      fireEvent.click(love);
-      expect(loveToggleMock).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-    await waitFor(() => expect(reactKindMock).toHaveBeenCalledWith("p1", null, "SUPPORT"));
-    expect(screen.queryByTestId("reaction-tray")).toBeNull();
-  });
+  it("reverts the local fallback when the Like fails", async () => {
+    likeToggleMock.mockRejectedValueOnce(new Error("offline"));
+    render(<HomeFeedLoveButton postId="p1" likeCount={3} />);
+    const like = screen.getByTestId("home-feed-love");
 
-  it("shows the top-3 preview stack with the count outside the tray", async () => {
-    reactKindMock.mockResolvedValue({
-      counts: { LOVE: 20, WOW: 3, HELPFUL: 1 },
-      myReaction: "WOW",
-      total: 24,
-    });
-    renderButton();
-    fireEvent.click(screen.getByTestId("home-feed-choose-reaction"));
-    fireEvent.click(await screen.findByTestId("reaction-option-WOW"));
-    await waitFor(() => expect(screen.getByTestId("reaction-preview-stack")).toBeTruthy());
-    expect(screen.getByTestId("reaction-preview-LOVE")).toBeTruthy();
-    // Counts live on the row, never inside the icon-only tray.
-    expect(screen.getByTestId("home-feed-love").textContent).toContain("24");
+    fireEvent.click(like);
+
+    await waitFor(() => expect(screen.getByTestId("home-feed-love-error")).toBeTruthy());
+    expect(like.getAttribute("aria-pressed")).toBe("false");
   });
 });

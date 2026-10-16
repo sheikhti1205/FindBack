@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, ChevronDown, CornerDownRight, ExternalLink, MapPin, MessageCircle, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
-import type { CanonicalReactionKind, CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
+import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, MessageCircle, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
+import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
@@ -33,11 +33,6 @@ import { recordLoadTiming } from "../utils/loadTiming";
 import { openInMaps } from "../utils/location";
 import { formatEventDate, formatTimestamp } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
-import { ReactionTray, reactionKindLabel, topReactionKind } from "../components/ReactionTray";
-import { ReactionArt } from "../components/ReactionArt";
-import { ReactionPreviewStack } from "../components/ReactionPreviewStack";
-import { useLongPress } from "../hooks/useLongPress";
-import { useSlideSelect } from "../hooks/useSlideSelect";
 import {
   addComment,
   deleteComment,
@@ -49,14 +44,13 @@ import {
   updatePostStatus,
   type CommentAttachmentDescriptor,
 } from "../services/posts";
+import { seedSummaryFromItem } from "../services/feedReactions";
 import {
-  applyReactionDeltas,
-  seedSummaryFromItem,
-} from "../services/feedReactions";
-import {
-  nextReactionForTap,
-  normalizeReactionKind,
+  applyCountDeltas,
+  likeState,
+  nextLikeReaction,
   reactionCountsFromJson,
+  reactionMoveDeltas,
   reactionSummaryFromCounts,
   setCommentReaction,
 } from "../services/reactions";
@@ -88,172 +82,45 @@ function scrollToSection(id: string) {
 }
 
 /**
- * C2 compact per-comment reaction control. Tap toggles the default Love,
- * press-and-hold opens the floating pill (slide while held, release selects,
- * vertical travel cancels), and the chevron "Choose reaction" button opens
- * the same pill for keyboard/screen-reader users (no long-press needed).
- * The row shows the top preview art + the total OUTSIDE the tray; the tray
- * itself is icon-only. Writes go to the real comment RPC via the parent's
- * onToggle/onSelect; failures revert there and surface through the page's
- * existing inline actionError + announce pattern.
+ * C2 per-comment Like control (packet `08` §2 — reactions are Like-only).
+ *
+ * One tap toggles the caller's Like (`LIKE`/null through the real comment RPC),
+ * the count is the comment's positive-reaction total, and the heart is filled
+ * for the caller's own Like. There is no tray, no chevron picker and no
+ * long-press. Writes go through the parent's `onToggle`; failures revert there
+ * and surface through the page's existing inline actionError + announce
+ * pattern, so a failed Like is never silent.
  */
-function CommentReactionControl({
+function CommentLikeButton({
   comment,
   summary,
   pending,
   onToggle,
-  onSelect,
 }: {
   comment: CommentItem;
   summary: ReactionSummary;
   pending: boolean;
   onToggle: () => void;
-  onSelect: (kind: CanonicalReactionKind) => void;
 }) {
-  const [trayOpen, setTrayOpen] = useState(false);
-  const [opener, setOpener] = useState<"main" | "choose">("main");
-  const [holding, setHolding] = useState(false);
-  const press = useLongPress(
-    () => {
-      setOpener("main");
-      setTrayOpen(true);
-    },
-    { disabled: pending || trayOpen },
-  );
-  const slide = useSlideSelect(trayOpen, holding, () => setTrayOpen(false));
-  const slideHoverRef = useRef(slide.hovered);
-  slideHoverRef.current = slide.hovered;
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
-  const mainId = `detail-comment-react-${comment.id}`;
-  const chooseId = `detail-comment-choose-${comment.id}`;
-  const mine =
-    summary.myReaction === null
-      ? null
-      : (normalizeReactionKind(summary.myReaction) as CanonicalReactionKind);
-  const top = topReactionKind(summary.counts);
-  const display: CanonicalReactionKind | null = mine ?? top;
-  const countWord = summary.total === 1 ? "reaction" : "reactions";
-  const label =
-    mine !== null
-      ? `${reactionKindLabel(mine)}, ${summary.total} ${countWord}`
-      : top !== null && summary.total > 0
-        ? `${reactionKindLabel(top)}, ${summary.total} ${countWord}`
-        : `React to comment by ${comment.author.username}`;
-
-  function closeTray() {
-    slide.reset();
-    setTrayOpen(false);
-  }
-
-  // Slide-release while the opening finger is still held: select the hovered
-  // choice, else leave the tray open for a follow-up tap (claimTap still
-  // swallows the click).
-  useEffect(() => {
-    if (!trayOpen || opener !== "main") return;
-    function onUp() {
-      const hovered = slideHoverRef.current;
-      setHolding(false);
-      if (hovered !== null) {
-        const kind = hovered;
-        slide.reset();
-        setTrayOpen(false);
-        document.getElementById(mainId)?.focus({ preventScroll: true });
-        onSelectRef.current(kind);
-      } else {
-        slide.reset();
-      }
-    }
-    function onCancel() {
-      setHolding(false);
-      slide.reset();
-      setTrayOpen(false);
-    }
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
-    return () => {
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-    };
-  }, [trayOpen, opener, mainId]);
+  const state = likeState(summary);
+  const label = `${state.mine ? "Liked" : "Like this comment"}, ${state.count} ${state.count === 1 ? "like" : "likes"}`;
+  const mainId = `detail-comment-like-${comment.id}`;
 
   return (
-    <span className="relative ml-auto flex items-center gap-0.5">
-      <button
-        type="button"
-        id={mainId}
-        data-testid={`comment-react-${comment.id}`}
-        aria-pressed={mine !== null}
-        aria-label={label}
-        disabled={pending}
-        aria-busy={pending}
-        onPointerDown={(e) => {
-          setHolding(true);
-          press.onPointerDown(e);
-        }}
-        onPointerMove={press.onPointerMove}
-        onPointerUp={() => {
-          setHolding(false);
-          press.onPointerUp();
-        }}
-        onPointerCancel={() => {
-          setHolding(false);
-          press.onPointerCancel();
-        }}
-        onClick={() => {
-          if (press.claimTap()) return;
-          if (trayOpen) {
-            closeTray();
-            return;
-          }
-          onToggle();
-        }}
-        className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-2 text-xs font-medium text-on-surface-variant"
-      >
-        {display ? (
-          <ReactionArt kind={display} size={15} filled={mine !== null} />
-        ) : (
-          <ReactionArt kind="LOVE" size={15} filled={false} />
-        )}
-        <span aria-hidden className="tabular-nums">{summary.total}</span>
-      </button>
-      <button
-        type="button"
-        id={chooseId}
-        data-testid={`comment-choose-${comment.id}`}
-        aria-haspopup="menu"
-        aria-expanded={trayOpen}
-        aria-label={`Choose reaction for comment by ${comment.author.username}`}
-        disabled={pending}
-        onClick={() => {
-          setOpener("choose");
-          setTrayOpen((o) => !o);
-        }}
-        className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-1 text-xs text-on-surface-variant"
-      >
-        <ChevronDown size={14} aria-hidden />
-      </button>
-      {trayOpen && (
-        <span className="absolute bottom-full right-0 z-20 mb-1 w-max max-w-[78vw]">
-          <ReactionTray
-            open
-            myReaction={summary.myReaction}
-            counts={summary.counts}
-            total={summary.total}
-            pending={pending}
-            hoveredKind={holding ? slide.hovered : undefined}
-            onHoverChange={holding ? slide.setHovered : undefined}
-            onSelect={(kind) => {
-              closeTray();
-              document.getElementById(mainId)?.focus({ preventScroll: true });
-              onSelect(kind);
-            }}
-            onClose={closeTray}
-            triggerId={opener === "choose" ? chooseId : mainId}
-          />
-        </span>
-      )}
-    </span>
+    <button
+      type="button"
+      id={mainId}
+      data-testid={`comment-react-${comment.id}`}
+      aria-pressed={state.mine}
+      aria-label={label}
+      disabled={pending}
+      aria-busy={pending}
+      onClick={onToggle}
+      className={`ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-2 text-xs font-medium ${state.mine ? "text-primary" : "text-on-surface-variant"}`}
+    >
+      <Heart size={15} aria-hidden fill={state.mine ? "currentColor" : "none"} />
+      <span aria-hidden className="tabular-nums">{state.count}</span>
+    </button>
   );
 }
 
@@ -315,8 +182,6 @@ export function PostDetail() {
   } | null>(null);
   const [commentSummaries, setCommentSummaries] = useState<Record<string, ReactionSummary>>({});
   const [commentPending, setCommentPending] = useState<Record<string, boolean>>({});
-  const [trayTarget, setTrayTarget] = useState<"post" | string | null>(null);
-  const [trayOpener, setTrayOpener] = useState<"main" | "choose">("main");
 
   // Redesign UI state: collapsed description, lazy map/video, comment paging,
   // and the fullscreen lightbox position.
@@ -364,50 +229,6 @@ export function PostDetail() {
   // only depends on [id, load], so it reads through this ref).
   const commentsRef = useRef<CommentItem[]>([]);
   commentsRef.current = comments;
-  // Press-and-hold on the post Love button opens the tray; a quick release
-  // is a plain tap (the click handler consults claimTap). While held, the
-  // finger may slide across the pill (hovered lifts) and release selects.
-  const [postHolding, setPostHolding] = useState(false);
-  const postPress = useLongPress(
-    () => {
-      setTrayOpener("main");
-      setTrayTarget("post");
-    },
-    { disabled: reactionPendingRef.current },
-  );
-  const postSlide = useSlideSelect(trayTarget === "post", postHolding, () => setTrayTarget(null));
-  // Slide-release refs live above the post-shell early return: hooks must
-  // stay unconditional (loading renders return early below). The actual
-  // write callback is assigned once the post resolves.
-  const reactToKindRef = useRef<(kind: CanonicalReactionKind) => void>(() => {});
-  const postSlideHoverRef = useRef<CanonicalReactionKind | null>(null);
-  postSlideHoverRef.current = postSlide.hovered;
-  const postSlideResetRef = useRef(postSlide.reset);
-  postSlideResetRef.current = postSlide.reset;
-
-  // Slide-release on the post pill while the opening finger is still held:
-  // a release over a choice selects it; lifting without sliding leaves the
-  // tray open for a follow-up tap (claimTap still swallows the hold's click).
-  useEffect(() => {
-    if (trayTarget !== "post" || trayOpener !== "main") return;
-    function onUp() {
-      const hovered = postSlideHoverRef.current;
-      setPostHolding(false);
-      if (hovered !== null) reactToKindRef.current(hovered);
-      else postSlideResetRef.current();
-    }
-    function onCancel() {
-      setPostHolding(false);
-      postSlideResetRef.current();
-      setTrayTarget(null);
-    }
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
-    return () => {
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-    };
-  }, [trayTarget, trayOpener]);
 
   const loadPost = useCallback(
     async (gen: number) => {
@@ -646,25 +467,20 @@ export function PostDetail() {
     return viewedPostIdRef.current !== snap.postId || viewerIdRef.current !== snap.viewer;
   }
 
-  // W3.3 post summary: server-truth counts/total once a write or realtime
-  // event delivers them, else the row-derived summary the detail fetch
-  // already mapped via `reactionSummaryFromRow` (L-CONSOLIDATE — legacy
-  // buckets seed only when the row carries no reaction columns, i.e. older
-  // backends; +1 for an own canonical kind, which those buckets never
-  // contain). The caller's own reaction always comes from state, never from
-  // the override or the row.
-  const postActiveKind =
-    myReaction === null ? null : (normalizeReactionKind(myReaction) as CanonicalReactionKind);
+  // The Like control's state (packet `08` §2): the count is the target's
+  // positive-reaction total and "mine" is whether the caller holds one. Server
+  // truth wins once a write or realtime event delivers counts; otherwise the
+  // detail fetch's own row mapping (`reactionSummaryFromRow`, L-CONSOLIDATE)
+  // seeds it, or the legacy like/dislike buckets for older backends. The
+  // caller's own reaction always comes from state, never from the row.
   const postSummary: ReactionSummary =
     postCountsOverride !== null && postCountsOverride.postId === current.id
       ? { counts: postCountsOverride.counts, total: postCountsOverride.total, myReaction }
       : current.reactionSummary
         ? { counts: current.reactionSummary.counts, total: current.reactionSummary.total, myReaction }
         : seedSummaryFromItem(current.likeCount, current.dislikeCount, myReaction);
-  const postLoveLabel =
-    postActiveKind === null || postActiveKind === "LOVE"
-      ? `Love, ${current.likeCount} ${current.likeCount === 1 ? "love" : "loves"}`
-      : `${reactionKindLabel(postActiveKind)}, ${postSummary.total} ${postSummary.total === 1 ? "reaction" : "reactions"}`;
+  const postLike = likeState(postSummary);
+  const postLikeLabel = `${postLike.mine ? "Liked" : "Like"}, ${postLike.count} ${postLike.count === 1 ? "like" : "likes"}`;
 
   async function applyReaction(next: ReactionKind | null) {
     if (reactionPendingRef.current) return;
@@ -672,8 +488,16 @@ export function PostDetail() {
     setReactionPending(true);
     const prev = myReaction;
     const snap = { postId: current.id, viewer: user?.id };
-    // Optimistic update
+    // Optimistic update: the caller's own reaction AND the per-kind counts move
+    // with the tap (the Like control's number is derived from those counts), so
+    // the number never lags the heart. Server truth replaces both on success.
+    const optimisticCounts = applyCountDeltas(postSummary.counts, reactionMoveDeltas(prev, next));
     setMyReaction(next);
+    setPostCountsOverride({
+      postId: current.id,
+      counts: optimisticCounts,
+      total: Object.values(optimisticCounts).reduce<number>((sum, n) => sum + (n ?? 0), 0),
+    });
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++reactionSeq.current;
     try {
@@ -683,8 +507,8 @@ export function PostDetail() {
         setPost((prevPost) =>
           prevPost ? { ...prevPost, likeCount: res.likeCount, dislikeCount: res.dislikeCount } : prevPost,
         );
-        // The widened RPC returns server-truth per-kind counts; keep them so
-        // the tray/total read exact counts without a refetch.
+        // The RPC returns server-truth per-kind counts; keep them so the Like
+        // control reads exact counts without a refetch.
         if (res.reactionCounts) {
           setPostCountsOverride({
             postId: res.postId,
@@ -698,6 +522,11 @@ export function PostDetail() {
       // inline and never blow away the page.
       if (reactionSeq.current === seq && !isStaleMutation(snap)) {
         setMyReaction(prev);
+        setPostCountsOverride(
+          postCountsOverride !== null && postCountsOverride.postId === current.id
+            ? postCountsOverride
+            : null,
+        );
         const message = friendlyError(e).message;
         setActionError(message);
         announce(message);
@@ -709,23 +538,12 @@ export function PostDetail() {
   }
 
   /**
-   * Heart Love/Unlove (LIKE-era wire preserved): a LOVE-kind reaction
-   * (LIKE or canonical LOVE) clears to null, anything else switches to LIKE.
+   * Like/Unlike (packet `08` §2 — new writes are Like/null only). A caller
+   * holding any positive reaction un-likes; everyone else likes.
    */
-  function toggleLove() {
-    void applyReaction(
-      myReaction !== null && normalizeReactionKind(myReaction) === "LOVE" ? null : "LIKE",
-    );
+  function toggleLike() {
+    void applyReaction(nextLikeReaction(myReaction));
   }
-
-  /** Tray write path: the tapped canonical kind goes to the real multi-kind RPC. */
-  function reactToKind(kind: CanonicalReactionKind) {
-    postSlide.reset();
-    setTrayTarget(null);
-    document.getElementById("detail-love")?.focus({ preventScroll: true });
-    void applyReaction(nextReactionForTap(myReaction, kind));
-  }
-  reactToKindRef.current = reactToKind;
 
   /** Secondary "Not helpful" control (lives in the Community card). */
   function toggleDislike() {
@@ -832,16 +650,17 @@ export function PostDetail() {
   }
 
   /**
-   * Comment write path (W3.3): optimistic myReaction + per-kind counts over
-   * the real comment RPC, full revert + inline announce on failure (same
-   * actionError pattern as post reactions — never silent).
+   * Comment Like write path (packet `08` §2 — Like/null only): optimistic
+   * myReaction + per-kind counts over the real comment RPC, full revert +
+   * inline announce on failure (same actionError pattern as post reactions —
+   * never silent).
    */
   async function writeCommentReaction(c: CommentItem, next: ReactionKind | null) {
     if (commentPending[c.id]) return;
     const prev = commentSummaryFor(c);
     const snap = { postId: current.id, viewer: user?.id };
     const optimistic: ReactionSummary = reactionSummaryFromCounts(
-      applyReactionDeltas(prev.counts, prev.myReaction, next),
+      applyCountDeltas(prev.counts, reactionMoveDeltas(prev.myReaction, next)),
       next,
     );
     setCommentPending((p) => ({ ...p, [c.id]: true }));
@@ -868,16 +687,10 @@ export function PostDetail() {
     }
   }
 
-  /** Comment tap: default Love; tapping the active Love removes it. */
+  /** Comment Like tap (packet `08` §2): a positive row un-likes, else LIKE. */
   function toggleCommentReaction(c: CommentItem) {
     const summary = commentSummaryFor(c);
-    void writeCommentReaction(c, nextReactionForTap(summary.myReaction, "LOVE"));
-  }
-
-  /** Comment tray write: the tapped kind (or unreact when it is active). */
-  function reactCommentToKind(c: CommentItem, kind: CanonicalReactionKind) {
-    const summary = commentSummaryFor(c);
-    void writeCommentReaction(c, nextReactionForTap(summary.myReaction, kind));
+    void writeCommentReaction(c, nextLikeReaction(summary.myReaction));
   }
 
   async function onChangeStatus(status: PostStatus) {
@@ -1129,12 +942,11 @@ export function PostDetail() {
               <Trash2 size={13} aria-hidden /> Delete
             </button>
           )}
-          <CommentReactionControl
+          <CommentLikeButton
             comment={c}
             summary={commentSummaryFor(c)}
             pending={commentPending[c.id] ?? false}
             onToggle={() => toggleCommentReaction(c)}
-            onSelect={(kind) => reactCommentToKind(c, kind)}
           />
         </div>
         {children.length > 0 && nestChildren && (
@@ -1196,89 +1008,22 @@ export function PostDetail() {
         />
 
         <div id="detail-activity" tabIndex={-1} className="grid scroll-mt-4 grid-cols-3 gap-2" role="group" aria-label="Report actions">
-          {/* Post reaction cell: the Love toggle keeps its flat styling and
-              LIKE-era default-tap wire; hold opens the tray and the chevron
-              opens the same tray for keyboard/screen-reader users. */}
-          <div className="relative flex min-w-0 items-stretch gap-0.5">
-            <button
-              type="button"
-              id="detail-love"
-              className="fb-report-action min-h-[44px] flex-1"
-              onClick={() => {
-                if (postPress.claimTap()) return;
-                if (trayTarget !== null) {
-                  postSlide.reset();
-                  setTrayTarget(null);
-                  return;
-                }
-                toggleLove();
-              }}
-              disabled={reactionPending}
-              aria-busy={reactionPending}
-              aria-label={postLoveLabel}
-              aria-pressed={postActiveKind !== null}
-              onPointerDown={(e) => {
-                setPostHolding(true);
-                postPress.onPointerDown(e);
-              }}
-              onPointerMove={postPress.onPointerMove}
-              onPointerUp={() => {
-                setPostHolding(false);
-                postPress.onPointerUp();
-              }}
-              onPointerCancel={() => {
-                setPostHolding(false);
-                postPress.onPointerCancel();
-              }}
-            >
-              {postSummary.total > 0 ? (
-                <>
-                  <ReactionPreviewStack counts={postSummary.counts} />
-                  <span aria-hidden className="tabular-nums">{postSummary.total}</span>
-                </>
-              ) : (
-                <>
-                  <ReactionArt kind="LOVE" size={20} filled={postActiveKind !== null} />
-                  <span aria-hidden className="tabular-nums">{postSummary.total}</span>
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              id="detail-choose-reaction"
-              data-testid="detail-choose-reaction"
-              aria-haspopup="menu"
-              aria-expanded={trayTarget === "post"}
-              aria-label="Choose reaction"
-              className="fb-report-action min-h-[44px] min-w-[44px] shrink-0"
-              disabled={reactionPending}
-              onClick={() => {
-                setTrayOpener("choose");
-                setTrayTarget((t) => (t === "post" ? null : "post"));
-              }}
-            >
-              <ChevronDown size={16} aria-hidden />
-            </button>
-            {trayTarget === "post" && (
-              <span className="absolute bottom-full left-0 z-20 mb-1 w-max max-w-[80vw]">
-                <ReactionTray
-                  open
-                  myReaction={myReaction}
-                  counts={postSummary.counts}
-                  total={postSummary.total}
-                  pending={reactionPending}
-                  hoveredKind={postHolding ? postSlide.hovered : undefined}
-                  onHoverChange={postHolding ? postSlide.setHovered : undefined}
-                  onSelect={reactToKind}
-                  onClose={() => {
-                    postSlide.reset();
-                    setTrayTarget(null);
-                  }}
-                  triggerId={trayOpener === "choose" ? "detail-choose-reaction" : "detail-love"}
-                />
-              </span>
-            )}
-          </div>
+          {/* Post Like cell (packet `08` §2 — Like-only): one tap toggles the
+              caller's Like (LIKE/null) and the heart fills when it is theirs. */}
+          <button
+            type="button"
+            id="detail-love"
+            data-testid="detail-like"
+            className={`fb-report-action min-h-[44px] flex-1 gap-1 ${postLike.mine ? "bg-surface-container text-on-surface" : "text-on-surface-variant"}`}
+            onClick={toggleLike}
+            disabled={reactionPending}
+            aria-busy={reactionPending}
+            aria-label={postLikeLabel}
+            aria-pressed={postLike.mine}
+          >
+            <Heart size={20} aria-hidden fill={postLike.mine ? "currentColor" : "none"} />
+            <span aria-hidden className="tabular-nums">{postLike.count}</span>
+          </button>
           <button type="button" className="fb-report-action" onClick={() => scrollToSection("detail-comments")} aria-label={`Comments, ${comments.length}`}>
             <MessageCircle size={20} aria-hidden /> {comments.length}
           </button>
