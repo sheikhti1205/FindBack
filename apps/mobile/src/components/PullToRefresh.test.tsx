@@ -238,8 +238,8 @@ describe("PullToRefresh — no state per touch move", () => {
   });
 });
 
-describe("PullToRefresh — pill-only indicator, list never moves", () => {
-  it("reveals only a glyph pill while pulling: no visible text, zero-height slot", async () => {
+describe("PullToRefresh — capsule-only indicator, list never moves", () => {
+  it("reveals only a Morph capsule while pulling: no visible text, zero-height slot", async () => {
     const { container } = render(
       <PullToRefresh onRefresh={pendingRefresh()}>
         <ul data-testid="feed">
@@ -268,21 +268,27 @@ describe("PullToRefresh — pill-only indicator, list never moves", () => {
     const hidden = pill.querySelector(".sr-only");
     expect(hidden?.textContent).toMatch(/pull to refresh/i);
     expect(status.textContent).toBe(hidden?.textContent);
-    // …and the visible affordance is just the circular glyph.
-    expect(pill.querySelector("svg")).toBeTruthy();
+    // …and the visible affordance is the Morph bar inside the capsule: no
+    // rotating glyph anywhere, and the bar stretches with the finger.
+    const bar = pill.querySelector('[data-testid="refresh-bar"]') as HTMLElement;
+    expect(bar).toBeTruthy();
+    expect(pill.querySelector("svg")).toBeNull();
+    const shortWidth = parseFloat(bar.style.width);
     // The feed stays mounted, same nodes, underneath.
     expect(screen.getByText("Lost keys")).toBeTruthy();
 
-    // Past the threshold the accessible name advances — still glyph-only.
+    // Past the threshold the accessible name advances — still capsule-only.
     act(() => {
       fireEvent.touchMove(el, { touches: [pt(20, 260)] });
     });
     await flush();
     expect(pill.querySelector(".sr-only")?.textContent).toMatch(/release to refresh/i);
-    expect(screen.getByTestId("refresh-pill").querySelector("svg")).toBeTruthy();
+    const stretched = screen.getByTestId("refresh-bar") as HTMLElement;
+    // Stretched capsule: pulling widens the bar instead of spinning a glyph.
+    expect(parseFloat(stretched.style.width)).toBeGreaterThan(shortWidth);
   });
 
-  it("keeps a reduced-motion-safe spinner on the pill for the whole request", async () => {
+  it("keeps the Morph capsule on the indicator for the whole request", async () => {
     const { container } = render(
       <PullToRefresh onRefresh={pendingRefresh()}>
         <div data-testid="feed">Lost keys</div>
@@ -301,14 +307,63 @@ describe("PullToRefresh — pill-only indicator, list never moves", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
-    // Still refreshing: the pill persists with the spinner, the list intact.
+    // Still refreshing: the capsule persists with the morph, the list intact.
     const status = screen.getByRole("status");
     expect(status.getAttribute("aria-label")).toBe("Refreshing");
-    const spinner = screen.getByTestId("refresh-pill").querySelector("svg")!;
-    expect(spinner.className.baseVal ?? spinner.getAttribute("class")).toMatch(/animate-spin/);
-    // Reduced motion resolves the spin to a static glyph.
-    expect(spinner.getAttribute("class")).toMatch(/motion-reduce:animate-none/);
+    const bar = screen.getByTestId("refresh-bar");
+    expect(bar.getAttribute("data-animated")).toBe("true");
+    expect(bar.className).toContain("fb-morph-bar");
+    expect(screen.getByTestId("refresh-pill").querySelector("svg")).toBeNull();
     expect(screen.getByText("Lost keys")).toBe(before);
+  });
+
+  it("holds the bar still (no travel, no morph) when motion is reduced", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      media: "(prefers-reduced-motion: reduce)",
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    }) as unknown as typeof window.matchMedia;
+    try {
+      const { container } = render(
+        <PullToRefresh onRefresh={pendingRefresh()}>
+          <div data-testid="feed">Lost keys</div>
+        </PullToRefresh>,
+      );
+      const el = container.firstElementChild!;
+
+      act(() => {
+        pull(el);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      // The finger still stretches the bar (that is the gesture being echoed,
+      // not an autonomous animation) …
+      const bar = screen.getByTestId("refresh-bar");
+      expect(bar.getAttribute("data-animated")).toBe("false");
+      expect(bar.className).not.toContain("fb-morph-bar");
+      expect(bar.style.width).not.toBe("");
+
+      act(() => {
+        fireEvent.touchEnd(el);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      // …but nothing morphs once the app owns the wait: a static capsule.
+      const still = screen.getByTestId("refresh-bar");
+      expect(still.getAttribute("data-animated")).toBe("false");
+      expect(still.className).not.toContain("fb-morph-bar");
+      expect(screen.getByRole("status").getAttribute("aria-label")).toBe("Refreshing");
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 });
 

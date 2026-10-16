@@ -8,6 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { friendlyError } from "../utils/friendlyErrors";
+import { morphBarClass, morphShellClass } from "./MorphLoader";
+import { useShouldReduceMotion } from "./uiMotion";
 
 interface PullToRefreshProps {
   onRefresh: () => Promise<void>;
@@ -67,6 +69,10 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
     const [pulling, setPulling] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [refreshError, setRefreshError] = useState<string | null>(null);
+    // CF-010 §19: the identity consumes the app's central motion decision,
+    // never a raw media query, so an explicit in-app "Reduce" beats the OS —
+    // and a mid-session change lands without a reload.
+    const reduceMotion = useShouldReduceMotion();
     const touchRef = useRef({
       startY: 0,
       startX: 0,
@@ -84,7 +90,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
     const pillRef = useRef<HTMLSpanElement | null>(null);
     const labelRef = useRef<HTMLDivElement | null>(null);
     const labelTextRef = useRef<HTMLSpanElement | null>(null);
-    const iconRef = useRef<SVGSVGElement | null>(null);
+    const barRef = useRef<HTMLSpanElement | null>(null);
 
     const THRESHOLD = 64;
     const MAX_PULL = 100;
@@ -109,9 +115,13 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       }
     }, []);
 
-    // P6: the ONLY visual writer for the refresh pill. Reads refs, mutates
-    // the mounted pill DOM directly, commits nothing to React. The pill
+    // P6: the ONLY visual writer for the refresh capsule. Reads refs, mutates
+    // the mounted capsule DOM directly, commits nothing to React. The capsule
     // floats in a zero-height slot: painting here never moves the list.
+    //
+    // CF-010 §12: the identity is the Morph capsule, not a spinner — the inner
+    // bar stretches with pull distance (the "stretched capsule"), so there is no
+    // rotating glyph to replace. Gesture mechanics are untouched.
     const paintVisual = useCallback(() => {
       rafRef.current = null;
       const pill = pillRef.current;
@@ -124,8 +134,13 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       const label = active ? "Refreshing" : distance >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
       labelRef.current?.setAttribute("aria-label", label);
       if (labelTextRef.current) labelTextRef.current.textContent = label;
-      // Rotation tracks pull distance one-to-one (transform only, rAF-throttled).
-      if (iconRef.current) iconRef.current.style.transform = `rotate(${progress * 360}deg)`;
+      // Stretch only while the finger owns the gesture. While the request is
+      // under way the bar carries the fb-morph-bar keyframe, and a CSS
+      // animation outranks an inline width — so the inline value there is just
+      // the calm resting width, which is what a reduced-motion reader sees when
+      // the animation is switched off.
+      const bar = barRef.current;
+      if (bar) bar.style.width = active ? "45%" : `${30 + Math.round(50 * progress)}%`;
     }, []);
 
     const schedulePaint = useCallback(() => {
@@ -295,20 +310,16 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
             <span
               ref={pillRef}
               data-testid="refresh-pill"
-              className="absolute left-1/2 inline-flex h-9 w-9 items-center justify-center rounded-full bg-surface-container-high text-on-surface shadow"
+              className={`absolute left-1/2 ${morphShellClass("md")} shadow`}
               style={{ opacity: 0, transform: "translate(-50%, 0) scale(0.6)" }}
             >
-              <svg
-                ref={iconRef}
-                className={`h-4 w-4 ${refreshing ? "animate-spin motion-reduce:animate-none" : ""}`}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                aria-hidden
-              >
-                <path d="M21 12a9 9 0 11-6.219-8.56" />
-              </svg>
+              <span
+                ref={barRef}
+                data-testid="refresh-bar"
+                data-animated={refreshing && !reduceMotion ? "true" : "false"}
+                className={morphBarClass("md", refreshing && !reduceMotion)}
+                style={{ width: "45%" }}
+              />
               <span ref={labelTextRef} className="sr-only">{refreshing ? "Refreshing" : "Pull to refresh"}</span>
             </span>
           </div>

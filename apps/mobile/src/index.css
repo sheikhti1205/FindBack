@@ -343,6 +343,47 @@ html.fb-reduce-motion .fb-feed-img[data-state="loading"]::after {
   animation: none;
 }
 
+/* CF-010 §15 Morph loader: the inner bar stretches, shifts and settles inside
+ * the capsule. Width and a small translate only — no blur, no gradient — so the
+ * cost stays inside a 24-36px subtree and stops entirely when it unmounts. */
+.fb-morph-bar {
+  width: 40%;
+  transform: translateX(0);
+  animation: fb-morph-bar 1.6s ease-in-out infinite;
+}
+@keyframes fb-morph-bar {
+  0% {
+    width: 34%;
+    transform: translateX(-14%);
+  }
+  35% {
+    width: 72%;
+    transform: translateX(0);
+  }
+  70% {
+    width: 46%;
+    transform: translateX(16%);
+  }
+  100% {
+    width: 34%;
+    transform: translateX(-14%);
+  }
+}
+/* Reduced motion (§15): a static centered bar, no travel, no morph. Both the
+ * OS setting and the app override (html.fb-reduce-motion) collapse it. */
+@media (prefers-reduced-motion: reduce) {
+  .fb-morph-bar {
+    animation: none;
+    width: 45%;
+    transform: none;
+  }
+}
+html.fb-reduce-motion .fb-morph-bar {
+  animation: none;
+  width: 45%;
+  transform: none;
+}
+
 .fb-markdown p { margin: 0 0 0.5rem; }
 .fb-markdown p:last-child { margin-bottom: 0; }
 .fb-markdown ul, .fb-markdown ol { margin: 0 0 0.5rem; padding: 0; padding-inline-start: 1.5rem; }

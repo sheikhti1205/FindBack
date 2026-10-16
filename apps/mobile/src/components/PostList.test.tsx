@@ -147,3 +147,40 @@ describe("PostList masonry density (CF-010)", () => {
     expect(skeleton.querySelectorAll("[data-testid='feed-skeleton-card']").length).toBeGreaterThan(0);
   });
 });
+
+describe("PostList pagination identity (CF-010 §10)", () => {
+  it("shows the compact Morph capsule while the next page loads — not a spinner", () => {
+    render(
+      <MemoryRouter>
+        <PostList items={[post("p1", "Keys")]} {...base} loadingMore hasMore />
+      </MemoryRouter>,
+    );
+
+    const bar = screen.getByRole("status");
+    expect(bar.textContent).toBe("Loading more…");
+    expect(screen.getByTestId("morph-bar").className).toContain("bg-on-surface-variant");
+    expect(bar.querySelector("svg")).toBeNull();
+    // Nothing the reader is looking at is replaced: the loaded row is still there.
+    expect(screen.getByText("Keys")).toBeTruthy();
+  });
+
+  it("keeps appended rows in place and drops the capsule when the page lands", () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <PostList items={[post("p1", "Keys")]} {...base} loadingMore hasMore />
+      </MemoryRouter>,
+    );
+    const loadedBefore = screen.getByText("Keys");
+
+    rerender(
+      <MemoryRouter>
+        <PostList items={[post("p1", "Keys"), post("p2", "Wallet")]} {...base} hasMore />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByTestId("morph-bar")).toBeNull();
+    // Same node for the row that was already on screen — no list replacement.
+    expect(screen.getByText("Keys")).toBe(loadedBefore);
+    expect(screen.getByText("Wallet")).toBeTruthy();
+  });
+});

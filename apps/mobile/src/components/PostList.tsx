@@ -5,7 +5,8 @@ import { FileQuestion } from "lucide-react";
 import { PostCard } from "./PostCard";
 import { OwnerReportCard } from "./OwnerReportCard";
 import { PostCardContent, masonryCardMetrics, type PostCardLayout } from "./PostCardContent";
-import { EmptyState, Spinner } from "./PostCard";
+import { EmptyState } from "./PostCard";
+import { MorphLoader } from "./MorphLoader";
 import { FeedSkeleton } from "./uiPrimitives";
 import { FeedMasonry } from "./FeedMasonry";
 import { estimateMasonryCardHeight } from "./masonryLayout";
@@ -254,7 +255,10 @@ export function PostList({
               items.map(rowFor)
             )}
             <div ref={sentinelRef} aria-hidden />
-            {loadingMore && <Spinner label="Loading more…" />}
+            {/* CF-010 §10: the load-more identity is the compact Morph capsule,
+                not a spinner; the next page appends below whatever is already
+                on screen, so nothing the reader is looking at is replaced. */}
+            {loadingMore && <MorphLoader label="Loading more…" size="sm" className="py-6" />}
             {!hasMore && items.length > 0 && (
               <p className="py-3 text-center text-xs text-on-surface-variant">
                 You are all caught up.
