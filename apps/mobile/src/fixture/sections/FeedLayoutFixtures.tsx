@@ -29,8 +29,10 @@ import { LONG_DESCRIPTION, LONG_TITLE, makePost, masonryRatioPosts } from "../po
  * Two honest limits of these frames:
  * - the card widths they show depend on the text scale held on the root (the
  *   large-text frame switches it page-wide), because the list's `px-4` gutter is
- *   in `rem`: 260.00px at Extra large, 262.66px at 844px and 262.00px at 1116px
- *   at the standard scale — each caption derives its own number;
+ *   in `rem`: 260.00px at Extra large, 262.67px at 844px and 262.00px at 1116px
+ *   at the standard scale — each caption derives its own number. (Blink lays the
+ *   844px boundary out at 262.65625px, its 1/64px track quantization of 788/3;
+ *   the caption carries the arithmetic value.)
  * - the frames are narrower than `MASONRY_CANVAS_MAX_PX`, so production's pixel
  *   canvas cap is not reached here — the cap is pinned by the unit test instead.
  */
@@ -39,7 +41,12 @@ import { LONG_DESCRIPTION, LONG_TITLE, makePost, masonryRatioPosts } from "../po
  * The card width a frame's grid yields at a given text scale, from the width the
  * frame declares — the same arithmetic as the floor test. Captions use it so a
  * band's number is DERIVED from that band's own width instead of one number
- * being pasted next to two different widths (262.66px at 844, 262.00px at 1116).
+ * being pasted next to two different widths (262.67px at 844, 262.00px at 1116).
+ *
+ * The `1rem` list padding below is an assumption about `PostList`'s masonry lane,
+ * so `fixture.test.tsx` derives the same number from the lane's own `px-*` class
+ * and fails if the two disagree — a caption cannot stay green while the lane
+ * renders a different gutter.
  */
 export function cardWidthAt(width: number, rootFontSizePx: number): number {
   const columns = masonryColumns(width);

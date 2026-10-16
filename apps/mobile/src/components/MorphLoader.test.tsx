@@ -103,7 +103,8 @@ describe("Morph loader CSS contract (index.css)", () => {
    * the sibling blocks into the assertion — which is exactly how a half-pinned
    * dual kill switch passed review the first time.
    */
-  function blockContents(source: string, header: RegExp): string[] {    const out: string[] = [];
+  function blockContents(source: string, header: RegExp): string[] {
+    const out: string[] = [];
     const re = new RegExp(header.source, "g");
     for (let m = re.exec(source); m; m = re.exec(source)) {
       const open = m.index + m[0].length - 1;

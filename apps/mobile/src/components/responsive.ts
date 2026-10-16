@@ -84,8 +84,12 @@ export const MASONRY_CANVAS_CLASS = "mx-auto w-full max-w-[1152px]";
  * The gutter is in `rem`, so it grows with the reader's text size: 28px at the
  * Small scale (87.5%), 32px at the default, 40px (2 x 1rem x 1.25) at the
  * largest the app offers. The budget covers the largest, so the minimum-card
- * guarantee holds at every text scale rather than only at the default one. At
- * the default scale that leaves 8px of slack, which also absorbs a classic
+ * guarantee holds at every text scale rather than only at the default one.
+ *
+ * The inset is a fixed 40px while the padding scales, so the slack at a column
+ * boundary falls as the text grows: 12px at Small (87.5%), 8px at the default,
+ * 4px at Large (112.5%) and 0px at Extra large (125%) — the largest scale is what
+ * sets the 40px. At the default scale that 8px also absorbs a classic
  * (non-overlay) scrollbar of up to 8px — the target platform (Android WebView)
  * uses overlay scrollbars.
  */

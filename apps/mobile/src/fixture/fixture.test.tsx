@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { FixtureRoute } from "./FixtureRoute";
 import { cardWidthAt } from "./sections/FeedLayoutFixtures";
+import { masonryListPaddingRem } from "../test-utils/masonryListClass";
 import { ALL_VARIANTS, LARGE_TEXT_PERCENT, STANDARD_TEXT_PERCENT } from "./FixtureSection";
 import {
   APPEARANCE_EVENT,
@@ -227,14 +228,44 @@ describe("fixture frames are trustworthy evidence", () => {
       return caption.includes("boundary");
     });
     expect(frames.length).toBeGreaterThanOrEqual(2);
+    const threeColumn = 3 * MASONRY_MIN_CARD_PX + 2 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
+    const fourColumn = 4 * MASONRY_MIN_CARD_PX + 3 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
+    // Pinned numbers, not a second call to the derivation the caption came from:
+    // comparing the caption to `cardWidthAt(...)` compares it to itself. Pointing
+    // the derivation at the 40px inset used to leave that green while the caption
+    // read 260.00px where 262.656px renders.
+    const golden: Record<number, [extraLarge: string, standard: string]> = {
+      [threeColumn]: ["260.00", "262.67"],
+      [fourColumn]: ["260.00", "262.00"],
+    };
     for (const frame of frames) {
       const width = Number(frame.getAttribute("data-frame-width"));
+      const expected = golden[width];
+      expect(expected, `no pinned caption widths for the ${width}px frame`).toBeTruthy();
       // The frame's own header is one `p`; the BandFrame caption is another.
       const caption = [...frame.querySelectorAll("p")]
         .map((paragraph) => paragraph.textContent ?? "")
         .join(" ");
-      expect(caption).toContain(`${cardWidthAt(width, 20).toFixed(2)}px`);
-      expect(caption).toContain(`${cardWidthAt(width, 16).toFixed(2)}px`);
+      expect(caption).toContain(`${expected![0]}px`);
+      expect(caption).toContain(`${expected![1]}px`);
+    }
+  });
+
+  it("derives the caption widths from the gutter `PostList` really renders", () => {
+    // `cardWidthAt` assumes the lane's `px-*` padding. Read the lane's own class
+    // rather than trusting the assumption: widening `PostList`'s masonry arm
+    // (px-4 → px-6) must fail here, otherwise the captions would keep publishing
+    // numbers the lane no longer matches, with the suite still green.
+    const listPaddingRem = masonryListPaddingRem();
+    const threeColumn = 3 * MASONRY_MIN_CARD_PX + 2 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
+    const fourColumn = 4 * MASONRY_MIN_CARD_PX + 3 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
+    for (const width of [threeColumn, fourColumn]) {
+      const columns = masonryColumns(width);
+      for (const rootFontSizePx of [20, 16]) {
+        const container = width - 2 * listPaddingRem * rootFontSizePx;
+        const derived = (container - (columns - 1) * MASONRY_GUTTER_PX) / columns;
+        expect(cardWidthAt(width, rootFontSizePx)).toBeCloseTo(derived, 6);
+      }
     }
   });
 

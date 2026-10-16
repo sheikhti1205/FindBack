@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { readFileSync } from "node:fs";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { masonryListPaddingRem } from "../test-utils/masonryListClass";
 import {
   COMPACT_MAX_PX,
   MASONRY_CANVAS_CLASS,
@@ -22,20 +22,10 @@ import { TEXT_SCALE_OPTIONS } from "../appearance";
 
 /**
  * The masonry list's own horizontal padding, in `rem`, read from the component
- * that applies it (`PostList`'s `listClass`). The masonry density resolves to the
- * final branch, so that branch is the one the feed maths has to budget for.
- *
- * Read, not assumed: a test that hardcodes the same `px-4` the product applies is
- * a test that cannot notice the product changing it.
+ * that applies it (`PostList`'s `listClass`). The reader and its own
+ * discrimination tests live in `test-utils/masonryListClass` because the fixture
+ * captions are checked against the same number.
  */
-function masonryListPaddingRem(): number {
-  const source = readFileSync("src/components/PostList.tsx", "utf8");
-  const branches = [...source.matchAll(/:\s*"(?:flex flex-col gap-\d+ )?px-(\d+)"/g)];
-  expect(branches.length, "no px-* list class found in PostList").toBeGreaterThan(0);
-  const last = branches[branches.length - 1];
-  // Tailwind's spacing unit is 0.25rem.
-  return Number((last as RegExpMatchArray)[1]) / 4;
-}
 
 describe("widthBand", () => {
   it("names the platform bands at their boundaries", () => {
@@ -48,7 +38,8 @@ describe("widthBand", () => {
   });
 });
 
-describe("masonryColumns", () => {  it("never goes below one column on a phone", () => {
+describe("masonryColumns", () => {
+  it("never goes below one column on a phone", () => {
     expect(masonryColumns(320)).toBe(1);
     expect(masonryColumns(428)).toBe(1);
   });
