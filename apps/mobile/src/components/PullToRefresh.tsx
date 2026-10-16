@@ -31,6 +31,10 @@ type PullDirection = "none" | "vertical" | "horizontal";
  *
  * Refresh contract (C4):
  * - only at real scrollTop 0
+ * - scroll ownership: the scroller carries `overscroll-y-contain`, so a pull at
+ *   the top cannot chain the gesture to an ancestor or wake the browser's own
+ *   pull-to-refresh. The gesture never tries to `preventDefault()` — a passive
+ *   React listener cannot, so that call was inert (and logged as much)
  * - resistance (pull distance is dampened)
  * - threshold before refresh triggers
  * - the pull reveals ONLY a compact Morph capsule (§12/§15 of packet 09): the
@@ -44,10 +48,13 @@ type PullDirection = "none" | "vertical" | "horizontal";
  * - the Morph capsule persists for the whole request (the bar keeps morphing,
  *   the list below is untouched)
  * - below-threshold cancel snaps back (pill unmounts)
- * - exactly ONE refresh per release: a release is consumed once per gesture,
- *   an in-flight refresh is guarded synchronously (no stale-closure double
- *   fire), and `disabled` is honoured at release so a gesture can never stack
- *   a second refresh on top of one that is already running
+ * - exactly ONE refresh per release: the load-bearing guard is the
+ *   *synchronous* `refreshingRef` check at the top of `runRefresh` (no
+ *   stale-closure double fire, no dependence on a re-render), and `disabled` is
+ *   honoured at release, so a gesture can never stack a second refresh on top of
+ *   one that is already running. `releaseConsumedRef` is a second, redundant
+ *   net for the same release — kept because it is cheap and a real multi-touch
+ *   lift is not something jsdom reproduces.
  * - children stay mounted for the whole refresh — items are never cleared
  * - a rejected refresh keeps those children and surfaces an honest error/retry
  *   state instead of failing silently
@@ -233,9 +240,12 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       const dampened = Math.min(dy * RESISTANCE, MAX_PULL);
       pullRef.current = dampened;
       schedulePaint();
-
-      // Prevent scroll while pulling down
-      if (dampened > 0) e.preventDefault();
+      // No `preventDefault()` here on purpose. React attaches its root
+      // `touchmove` listener passively, so a call from this handler cannot stop
+      // native scrolling — it only logged "Unable to preventDefault inside
+      // passive event listener". Scroll ownership is held by
+      // `overscroll-y-contain` on the scroller instead, which is the platform's
+      // own mechanism for "do not pass this gesture to an ancestor".
     }, [schedulePaint]);
 
     const handleTouchEnd = useCallback(() => {
@@ -281,6 +291,21 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
       if (!refreshingRef.current) setPulling(false);
     }, [cancelPaint]);
 
+    // A gesture that stops being delivered while the capsule is up must not
+    // leave it frozen mid-frame. `handleTouchCancel` is the single exit, and
+    // backgrounding the app is the one stream death we can detect without
+    // guessing: no timer, because a reader holding a pull is still deciding.
+    // (A stream that simply stops with no end event is a synthetic-input case;
+    // real browsers end a touch stream with touchend or touchcancel.)
+    useEffect(() => {
+      if (!pulling) return;
+      const onVisibility = () => {
+        if (document.visibilityState === "hidden") handleTouchCancel();
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      return () => document.removeEventListener("visibilitychange", onVisibility);
+    }, [pulling, handleTouchCancel]);
+
     const handleRetry = useCallback(() => {
       if (disabled) return;
       void runRefresh();
@@ -295,7 +320,7 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
     return (
       <div
         ref={scrollRef}
-        className={`relative flex flex-col overflow-y-auto ${className ?? ""}`}
+        className={`relative flex flex-col overflow-y-auto overscroll-y-contain ${className ?? ""}`}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}

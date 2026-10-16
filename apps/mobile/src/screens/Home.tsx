@@ -47,7 +47,7 @@ import {
   fadeVariants,
   motionDurations,
   motionEasings,
-  shouldReduceMotion,
+  useShouldReduceMotion,
 } from "../components/uiMotion";
 
 type TypeFilter = PostType | "ALL";
@@ -58,9 +58,10 @@ export function Home() {
   const { user } = useAuth();
   const { tapCount } = useTabTap();
   // Imperative travel (scroll-to-top) cannot see MotionConfig — collapse to
-  // instant when the OS prefers reduced motion. Read live (not the cached
-  // framer-motion singleton) so the value is exact at render/scroll time.
-  const reduceMotion = shouldReduceMotion();
+  // instant when the app's effective preference says so. The hook (not the
+  // plain reader) keeps this value live when the reader flips the in-app
+  // Reduce switch while Home is mounted.
+  const reduceMotion = useShouldReduceMotion();
 
   // CF-010 §6/§23: the stored layout preference resolved against this viewport.
   // Resolution depends on the width *band*, so a few pixels of movement (a
@@ -280,8 +281,18 @@ export function Home() {
   // Detail comes from the useFeed session cache (items + scrollTop survive
   // unmount); mounting here never replays card entrances — no list animation is
   // owned by this file.
+  //
+  // `tapCount` is a monotonic session counter that lives above the route
+  // outlet, so it outlives this screen. Consuming it as a one-shot (the ref
+  // starts at the count this mount saw, and only a *higher* count acts) is what
+  // stops the tap from being replayed by everything else that re-runs this
+  // effect: a remount (Post Detail → Back, which must keep the restored scroll
+  // position) and a scope change (type chip, category, status, sort, debounced
+  // query — `refresh`/`scopedCacheKey` change identity on all of them).
+  const handledTapRef = useRef(tapCount);
   useEffect(() => {
-    if (tapCount === 0) return;
+    if (tapCount === handledTapRef.current) return;
+    handledTapRef.current = tapCount;
     const atTop = (scrollRef.current?.scrollTop ?? 0) <= CHROME_TOP_ZONE;
     if (atTop) void refresh();
     scrollRef.current?.scrollToTop(reduceMotion ? "auto" : "smooth");

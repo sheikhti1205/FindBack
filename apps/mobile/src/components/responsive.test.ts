@@ -3,7 +3,10 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   COMPACT_MAX_PX,
+  MASONRY_CONTAINER_INSET_PX,
+  MASONRY_GUTTER_PX,
   MASONRY_MAX_COLUMNS,
+  MASONRY_MIN_CARD_PX,
   MEDIUM_MAX_PX,
   READABLE_COLUMN_CLASS,
   WIDE_CANVAS_CLASS,
@@ -44,11 +47,32 @@ describe("masonryColumns", () => {
   it("keeps every card at or above the comfortable minimum width", () => {
     // The whole point of the cap: a 4-column 900px layout would squeeze cards
     // below the minimum, so the cap must resist it.
-    for (const width of [320, 428, 600, 768, 900, 1024, 1280, 1600]) {
+    //
+    // This asserts against the CONTAINER the feed really gets — viewport minus
+    // the list's own `px-4` — not against a restatement of the formula's own
+    // budget. The restatement is what let the formula claim 260px cards while
+    // the rendered card at the 3-column boundary was 256.7px.
+    for (let width = 320; width <= 1600; width += 1) {
       const columns = masonryColumns(width);
-      const usable = width - 2 * 12 - (columns - 1) * 12;
-      expect(usable / columns).toBeGreaterThanOrEqual(260);
+      const container = width - MASONRY_CONTAINER_INSET_PX;
+      const card = (container - (columns - 1) * MASONRY_GUTTER_PX) / columns;
+      expect(card, `cards at ${width}px / ${columns} columns`).toBeGreaterThanOrEqual(
+        MASONRY_MIN_CARD_PX,
+      );
     }
+  });
+
+  it("changes column count exactly where the container stops fitting another card", () => {
+    // Boundary widths, derived from the container budget rather than restated:
+    // n cards of 260px and n-1 gutters must fit the container.
+    const boundary = (columns: number) =>
+      columns * MASONRY_MIN_CARD_PX + (columns - 1) * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
+    expect(masonryColumns(boundary(2) - 1)).toBe(1);
+    expect(masonryColumns(boundary(2))).toBe(2);
+    expect(masonryColumns(boundary(3) - 1)).toBe(2);
+    expect(masonryColumns(boundary(3))).toBe(3);
+    expect(masonryColumns(boundary(4) - 1)).toBe(3);
+    expect(masonryColumns(boundary(4))).toBe(4);
   });
 });
 

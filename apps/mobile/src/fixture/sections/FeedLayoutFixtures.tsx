@@ -1,21 +1,46 @@
+import type { ReactNode } from "react";
 import type { PostItem } from "@findback/shared";
 import { PostList } from "../../components/PostList";
 import { PullToRefresh } from "../../components/PullToRefresh";
-import { FixtureFrame, FixtureSection } from "../FixtureSection";
+import {
+  MASONRY_CONTAINER_INSET_PX,
+  MASONRY_GUTTER_PX,
+  MASONRY_MIN_CARD_PX,
+  masonryColumns,
+} from "../../components/responsive";
+import { FixtureFrame, FixtureSection, type FixtureVariant } from "../FixtureSection";
 import { LONG_DESCRIPTION, LONG_TITLE, makePost, masonryRatioPosts } from "../posts";
 
 /**
- * CF-010 feed-layout preflight (packet 09 §6-§11).
+ * CF-010 feed-layout preflight (packet 09 §6-§12).
  *
  * The masonry grid places cards by real photo ratio, so the only honest way to
- * review it is to render the production `PostList` at each width band. These
- * frames are deterministic (non-resolving `fixture://` media, fixed literals)
- * so a reviewer can screenshot the same thing twice.
+ * review it is to render the production `PostList` at the width each band
+ * claims. Every frame therefore carries an explicit width, and its column count
+ * is DERIVED by `masonryColumns(width)` — the same function the Home screen
+ * calls with the viewport width — so a frame cannot show a layout production
+ * would not produce there. Frames are unpadded so the grid's container equals
+ * the frame width, which is the width the maths assumes.
  *
- * The width bands are simulated with `masonryColumns`, which is exactly what
- * the Home screen passes in — `masonryColumns(viewportWidth)` — so nothing here
- * invents a layout path production does not have.
+ * The data is deterministic (non-resolving `fixture://` media, fixed literals)
+ * so a reviewer can screenshot the same thing twice. Failed media exercises the
+ * real "Photo unavailable" affordance rather than a browser broken-image glyph.
  */
+
+/**
+ * The width each band frame is rendered at. The 3- and 4-column frames sit
+ * exactly on the boundary `masonryColumns` switches at (the width where another
+ * 260px card plus its gutter stops fitting the list's container).
+ */
+const BAND = {
+  phone: 390,
+  medium: 700,
+  threeColumn:
+    3 * MASONRY_MIN_CARD_PX + 2 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX,
+  fourColumn:
+    4 * MASONRY_MIN_CARD_PX + 3 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX,
+  small: 320,
+} as const;
 
 function noopLoadMore(): Promise<void> {
   return Promise.resolve();
@@ -56,6 +81,34 @@ function masonry(
   );
 }
 
+/**
+ * A frame at one width, with the caption stating what that width means for the
+ * layout. `columns` is never passed by hand: it is `masonryColumns(width)`.
+ */
+function BandFrame({
+  width,
+  variant = "normal",
+  label,
+  children,
+}: {
+  width: number;
+  variant?: FixtureVariant;
+  label: string;
+  children: ReactNode;
+}) {
+  const columns = masonryColumns(width);
+  return (
+    <div className="w-full overflow-x-auto">
+      <FixtureFrame section="feed-layouts" variant={variant} width={width} geometry>
+        <p className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
+          {columns} {columns === 1 ? "column" : "columns"} at {width}px — {label}
+        </p>
+        {children}
+      </FixtureFrame>
+    </div>
+  );
+}
+
 /** Twelve reports of uneven height — the packing case that matters most. */
 const longMasonryFeed: PostItem[] = Array.from({ length: 12 }, (_, i) => {
   const source = masonryRatioPosts[i % masonryRatioPosts.length]!;
@@ -72,49 +125,31 @@ export function FeedLayoutFixtures() {
     <FixtureSection
       id="feed-layouts"
       title="Feed layouts (masonry + compact)"
-      description="Production PostList in the masonry density at each column count `masonryColumns` can return (1 / 2 / 3 / 4), plus the compact Morph pagination capsule from §10 and the pull-to-refresh capsule from §12."
+      description="Production PostList in the masonry density, one frame per width band with the column count derived from that width by `masonryColumns` (1 / 2 / 3 / 4), plus the compact Morph pagination capsule (§10), the pull-to-refresh capsule (§12) and the real large-text / dark / AMOLED / 320dp variants."
     >
-      <FixtureFrame section="feed-layouts" variant="normal">
-        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          1 column — up to 555px (a phone: `auto` picks the Feed layout there, see the home section)
-        </p>
-        {masonry(1)}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="normal">
-        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          2 columns — 556-827px (a small tablet or a landscape phone)
-        </p>
-        {masonry(2)}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="normal">
-        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          3 columns — 828-1099px (a 1024px tablet)
-        </p>
-        {masonry(3)}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="normal">
-        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          4 columns — 1100px and up, never more (`MASONRY_MAX_COLUMNS`)
-        </p>
-        {masonry(4)}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="loading">
-        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          Masonry skeleton (3 columns) — never a centered spinner
-        </p>
-        {masonry(3, { items: [], loading: true })}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="loading">
-        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          Pagination slot — compact Morph capsule (§10): the capsule comes from
-          PostList itself, exactly as the Home feed mounts it
-        </p>
-        {masonry(2, { items: masonryRatioPosts.slice(0, 4), loadingMore: true })}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="loading">
-        <p className="mb-2 px-3 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-          Pull to refresh — stretched Morph capsule (§12, drag the frame down)
-        </p>
+      <BandFrame width={BAND.phone} label="a phone; `auto` resolves to the Feed layout here">
+        {masonry(masonryColumns(BAND.phone))}
+      </BandFrame>
+      <BandFrame width={BAND.medium} label="a small tablet or a landscape phone">
+        {masonry(masonryColumns(BAND.medium))}
+      </BandFrame>
+      <BandFrame width={BAND.threeColumn} label="the exact 3-column boundary (`masonryColumns` returns 3 here, not 2; cards are exactly 260px)">
+        {masonry(masonryColumns(BAND.threeColumn))}
+      </BandFrame>
+      <BandFrame width={BAND.fourColumn} label="the exact 4-column boundary, the maximum (`MASONRY_MAX_COLUMNS`; cards are exactly 260px)">
+        {masonry(masonryColumns(BAND.fourColumn))}
+      </BandFrame>
+      <BandFrame width={BAND.threeColumn} variant="loading" label="masonry skeleton — never a centered spinner">
+        {masonry(masonryColumns(BAND.threeColumn), { items: [], loading: true })}
+      </BandFrame>
+      <BandFrame
+        width={BAND.medium}
+        variant="loading"
+        label="pagination slot: the compact Morph capsule (§10), rendered by PostList itself exactly as Home mounts it"
+      >
+        {masonry(masonryColumns(BAND.medium), { items: masonryRatioPosts.slice(0, 4), loadingMore: true })}
+      </BandFrame>
+      <BandFrame width={BAND.phone} variant="loading" label="pull to refresh: stretched Morph capsule (§12), drag the frame down">
         <PullToRefresh onRefresh={fixtureRefresh}>
           <div className="flex flex-col gap-2 px-4 py-3">
             {masonryRatioPosts.slice(0, 3).map((post) => (
@@ -124,31 +159,35 @@ export function FeedLayoutFixtures() {
             ))}
           </div>
         </PullToRefresh>
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="empty">
-        {masonry(2, { items: [] })}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="error">
-        {masonry(2, {
+      </BandFrame>
+      <BandFrame width={BAND.medium} variant="empty" label="empty feed">
+        {masonry(masonryColumns(BAND.medium), { items: [] })}
+      </BandFrame>
+      <BandFrame width={BAND.medium} variant="error" label="feed error">
+        {masonry(masonryColumns(BAND.medium), {
           items: masonryRatioPosts.slice(0, 2),
           error: "Could not load (fixture preflight — no network is used).",
         })}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="long-content">
-        {masonry(3, { items: longMasonryFeed })}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="large-text">
-        {masonry(2)}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="dark">
-        {masonry(2)}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="amoled">
-        {masonry(2)}
-      </FixtureFrame>
-      <FixtureFrame section="feed-layouts" variant="small-width">
-        {masonry(1)}
-      </FixtureFrame>
+      </BandFrame>
+      <BandFrame width={BAND.threeColumn} variant="long-content" label="long titles and descriptions">
+        {masonry(masonryColumns(BAND.threeColumn), { items: longMasonryFeed })}
+      </BandFrame>
+      <BandFrame
+        width={BAND.medium}
+        variant="large-text"
+        label="the app's largest text scale, applied as the root font size"
+      >
+        {masonry(masonryColumns(BAND.medium))}
+      </BandFrame>
+      <BandFrame width={BAND.medium} variant="dark" label="the real dark theme tokens">
+        {masonry(masonryColumns(BAND.medium))}
+      </BandFrame>
+      <BandFrame width={BAND.medium} variant="amoled" label="the real AMOLED theme tokens">
+        {masonry(masonryColumns(BAND.medium))}
+      </BandFrame>
+      <BandFrame width={BAND.small} variant="small-width" label="the narrowest phone we support">
+        {masonry(masonryColumns(BAND.small))}
+      </BandFrame>
     </FixtureSection>
   );
 }

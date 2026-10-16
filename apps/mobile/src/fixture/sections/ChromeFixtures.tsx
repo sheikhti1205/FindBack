@@ -101,7 +101,7 @@ function ChromePage({ hidden, initialQuery = "" }: { hidden: boolean; initialQue
 function ChromeTogglePage() {
   const [hidden, setHidden] = useState(false);
   return (
-    <div className="flex h-72 flex-col gap-3 overflow-hidden">
+    <div className="flex h-72 flex-col gap-4 overflow-hidden">
       <button
         type="button"
         data-testid="fixture-chrome-toggle"

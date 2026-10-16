@@ -102,7 +102,11 @@ describe("useFeedLayoutPreference", () => {
     });
     expect(result.current.layout).toBe("masonry");
 
+    // The unrelated event must not be able to change the answer even if the
+    // storage has moved on: without the key guard the hook re-reads storage and
+    // would resolve "compact" here, so the assertion below can actually fail.
     act(() => {
+      localStorage.setItem(FEED_LAYOUT_STORAGE_KEY, JSON.stringify("compact"));
       window.dispatchEvent(
         new StorageEvent("storage", { key: "findback.appearance.v1", newValue: "{}" }),
       );

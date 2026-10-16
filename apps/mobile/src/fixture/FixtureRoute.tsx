@@ -35,7 +35,7 @@ export function FixtureRoute() {
   return (
     <main
       data-testid="fixture-route"
-      className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-4 py-6"
+      className="mx-auto flex w-full max-w-[1400px] flex-col gap-10 px-4 py-6"
     >
       <header className="flex flex-col gap-2">
         <p className="text-xs font-medium uppercase tracking-wide text-on-surface-variant">

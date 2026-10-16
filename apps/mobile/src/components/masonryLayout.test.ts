@@ -84,6 +84,39 @@ describe("placeMasonry", () => {
     expect(appended.slots.at(-1)!.column).toBe(1);
   });
 
+  it("honours the carried assignment exactly where a from-scratch pass would move the card", () => {
+    // The companion test above cannot fail with `previous` ignored, because the
+    // estimate pass it starts from is itself shortest-column packing. This one
+    // makes the two behaviours differ, so the reuse is observable.
+    const estimated = [
+      { id: "a", height: 100 },
+      { id: "b", height: 100 },
+      { id: "c", height: 100 },
+    ];
+    const first = placeMasonry(estimated, { columns: 2, gap: 10 });
+    // Equal heights: the third card's tie resolves leftmost.
+    expect(first.slots.map((s) => s.column)).toEqual([0, 1, 0]);
+
+    // "b" has now been MEASURED and is shorter than it was estimated to be.
+    const refined = [
+      { id: "a", height: 100 },
+      { id: "b", height: 60 },
+      { id: "c", height: 100 },
+    ];
+    const fromScratch = placeMasonry(refined, { columns: 2, gap: 10 });
+    // From scratch, "c" now belongs under the shorter column 1 — a card the
+    // reader is looking at would jump sideways.
+    expect(fromScratch.slots.map((s) => s.column)).toEqual([0, 1, 1]);
+
+    const carried = placeMasonry(refined, {
+      columns: 2,
+      gap: 10,
+      previous: columnAssignments(first),
+    });
+    // Carrying the assignment is what prevents that jump.
+    expect(carried.slots.map((s) => s.column)).toEqual([0, 1, 0]);
+  });
+
   it("re-packs when the caller drops the previous map (column count changed)", () => {
     // The caller (FeedMasonry) only hands over assignments captured at the
     // same column count; a resize re-flows everything, so the map is dropped

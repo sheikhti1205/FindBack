@@ -28,7 +28,7 @@ const ITEMS: Item[] = [
 ];
 
 /** Measured card heights, by DOM position: three photos of different shapes. */
-const MEASURED = [120, 340, 220];
+let MEASURED = [120, 340, 220];
 const ESTIMATE = 999;
 const CONTAINER_WIDTH = 640;
 const GAP = 12;
@@ -66,6 +66,7 @@ function measureAt(width: number): void {
 
 beforeEach(() => {
   containerWidth = 0;
+  MEASURED = [120, 340, 220];
   Object.defineProperty(HTMLElement.prototype, "clientWidth", {
     configurable: true,
     get(this: HTMLElement) {
@@ -152,6 +153,18 @@ describe("FeedMasonry", () => {
     const after = items().map((el) => el.getAttribute("data-column"));
     expect(after.slice(0, 3)).toEqual(before);
     expect(after).toHaveLength(4);
+  });
+
+  it("does not move a placed card when a measured height refines the estimate", () => {
+    // The estimate pass (all 999) puts the third card in column 0. These refined
+    // heights would re-pack it into column 1 from scratch (proved in
+    // masonryLayout.test.ts), so this test fails the moment the carried
+    // assignment stops being honoured — which is what the sibling "next page"
+    // test cannot see.
+    MEASURED = [100, 60, 100];
+    renderGrid();
+    measureAt(CONTAINER_WIDTH);
+    expect(items().map((el) => el.getAttribute("data-column"))).toEqual(["0", "1", "0"]);
   });
 
   it("re-packs when the column count changes", () => {

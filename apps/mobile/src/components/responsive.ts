@@ -53,15 +53,43 @@ export const MASONRY_GUTTER_PX = 12;
 export const MASONRY_MAX_COLUMNS = 4;
 
 /**
+ * Horizontal inset the feed adds inside the width it is measured by: `px-4` on
+ * the masonry list (`PostList`'s `listClass`), i.e. 1rem each side.
+ *
+ * This is part of the maths because the feed is measured by *viewport* width
+ * while the cards land in the container inside it. Measured in the fixture and
+ * in the running app: at an 828px frame the grid was 794px wide (828 - 32
+ * padding - 2 frame border), so the old 24px budget promised 260px cards and
+ * delivered 256.7px.
+ *
+ * The gutter is in `rem`, so it grows with the reader's text size: 32px at the
+ * standard scale and 40px (2 x 1rem x 1.25) at the largest the app offers. The
+ * budget covers the largest, so the minimum-card guarantee holds at every text
+ * scale rather than only at the default one. At the standard scale that leaves
+ * 8px of slack, which also absorbs a classic (non-overlay) scrollbar of up to
+ * 8px — the target platform (Android WebView) uses overlay scrollbars.
+ */
+export const MASONRY_CONTAINER_INSET_PX = 40;
+
+/**
  * How many masonry columns fit a viewport.
  *
  * Cards never go below `MASONRY_MIN_CARD_PX`, so a wide-but-not-huge viewport
  * lands on 2 (small tablet) or 3 (tablet/landscape) columns rather than
  * squeezing 4 narrow ones. Always at least 1.
+ *
+ * The guarantee, over the container the feed actually gets:
+ *
+ *   columns * MASONRY_MIN_CARD_PX + (columns - 1) * MASONRY_GUTTER_PX
+ *     <= widthPx - MASONRY_CONTAINER_INSET_PX
+ *
+ * which the shape below satisfies exactly (`floor(usable / step)` with
+ * `usable = contacted - inset + gutter` leaves one gutter of slack, which is the
+ * 12px that makes the last column's right edge land inside the container).
  */
 export function masonryColumns(widthPx: number): number {
   const step = MASONRY_MIN_CARD_PX + MASONRY_GUTTER_PX;
-  const usable = Math.max(0, widthPx - 2 * MASONRY_GUTTER_PX) + MASONRY_GUTTER_PX;
+  const usable = Math.max(0, widthPx - MASONRY_CONTAINER_INSET_PX) + MASONRY_GUTTER_PX;
   return Math.max(1, Math.min(MASONRY_MAX_COLUMNS, Math.floor(usable / step)));
 }
 

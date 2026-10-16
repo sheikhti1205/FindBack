@@ -3,7 +3,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { FixtureRoute } from "./FixtureRoute";
-import { ALL_VARIANTS } from "./FixtureSection";
+import { ALL_VARIANTS, LARGE_TEXT_PERCENT } from "./FixtureSection";
+import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, loadAppearance } from "../appearance";
+import {
+  MASONRY_CONTAINER_INSET_PX,
+  MASONRY_GUTTER_PX,
+  MASONRY_MIN_CARD_PX,
+  masonryColumns,
+} from "../components/responsive";
 
 const SECTIONS = [
   "home",
@@ -149,5 +156,86 @@ describe("visual fixture route (static preflight)", () => {
     expect(loader!.textContent).toBe("Loading more…");
     // No rotating glyph anywhere in the wait indicator itself.
     expect(loader!.querySelector("svg")).toBeNull();
+  });
+});
+
+/**
+ * The fixture is the wave's rendered-review surface, so a frame that cannot be
+ * trusted as evidence is a defect in the harness, not a cosmetic annoyance.
+ * These pin the three ways a frame can lie.
+ */
+describe("fixture frames are trustworthy evidence", () => {
+  it("derives each band frame's column count from its own width", () => {
+    renderRoute();
+    const section = screen.getByTestId("fixture-section-feed-layouts");
+    const frames = [...section.querySelectorAll("[data-frame-width]")] as HTMLElement[];
+    expect(frames.length).toBeGreaterThanOrEqual(4);
+    const seen = new Set<number>();
+    for (const frame of frames) {
+      const width = Number(frame.getAttribute("data-frame-width"));
+      const columns = Number(frame.getAttribute("data-columns"));
+      expect(width).toBeGreaterThan(0);
+      // Hand-picked columns are how the 3- and 4-column frames used to render
+      // inside a 768px page: a layout production never produces.
+      expect(
+        columns,
+        `frame at ${width}px claims ${columns} columns`,
+      ).toBe(masonryColumns(width));
+      seen.add(columns);
+    }
+    // The four bands are all represented.
+    expect([...seen].sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it("keeps every band frame's cards at or above the minimum card width", () => {
+    renderRoute();
+    const section = screen.getByTestId("fixture-section-feed-layouts");
+    for (const frame of [...section.querySelectorAll("[data-frame-width]")] as HTMLElement[]) {
+      const width = Number(frame.getAttribute("data-frame-width"));
+      const columns = Number(frame.getAttribute("data-columns"));
+      // The container the frame really gives the grid: the frame IS the width
+      // (geometry frames have no border or padding), minus the list's own
+      // `px-4` gutter. This is the relationship the browser measurement checks
+      // too — 836px / 3 columns renders 260px cards, not 256.7px.
+      const card =
+        (width - MASONRY_CONTAINER_INSET_PX - (columns - 1) * MASONRY_GUTTER_PX) / columns;
+      expect(card, `cards at ${width}px / ${columns} columns`).toBeGreaterThanOrEqual(
+        MASONRY_MIN_CARD_PX,
+      );
+    }
+  });
+
+  it("uses the real theme class on dark and AMOLED frames, not inline paint", () => {
+    renderRoute();
+    for (const variant of ["dark", "amoled"] as const) {
+      const frame = screen.getByTestId(`fixture-feed-layouts-${variant}`);
+      // The app's themes are class-scoped token sets; an inline background
+      // leaves every `--fb-*` consumer rendering the light theme inside a black
+      // box (measured at 1.36:1 before this was fixed).
+      expect(frame.classList.contains(variant)).toBe(true);
+      expect(frame.style.backgroundColor).toBe("");
+      expect(frame.style.color).toBe("");
+      // The frame paints its own surface from the token (a mini-viewport), so
+      // the class actually switches what the reader sees.
+      expect(frame.classList.contains("bg-surface")).toBe(true);
+    }
+  });
+
+  it("scales large text at the app's own value, and hands the root back", () => {
+    // A parent `font-size` scales nothing (every size under review is in rem),
+    // and a root font size written once is overwritten by the app's own
+    // `applyAppearance` (React runs child effects first). The frame therefore
+    // HOLDS the root at the app's Extra-large value while it is mounted.
+    localStorage.setItem(
+      APPEARANCE_STORAGE_KEY,
+      JSON.stringify({ ...DEFAULT_APPEARANCE, textScale: "large" }),
+    );
+    const { unmount } = renderRoute();
+    expect(document.documentElement.style.fontSize).toBe(`${LARGE_TEXT_PERCENT}%`);
+
+    unmount();
+    expect(document.documentElement.style.fontSize).not.toBe(`${LARGE_TEXT_PERCENT}%`);
+    // The reader's own setting is never rewritten by a review surface.
+    expect(loadAppearance().textScale).toBe("large");
   });
 });

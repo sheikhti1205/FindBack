@@ -21,6 +21,70 @@ function pull(el: Element) {
 /** A refresh that never settles — keeps `refreshing` true for the assertion. */
 const pendingRefresh = () => vi.fn(() => new Promise<void>(() => {}));
 
+describe("PullToRefresh — scroll ownership", () => {
+  it("does not pull while the list is scrolled away from the top", () => {
+    const onRefresh = vi.fn(() => Promise.resolve());
+    const { container } = render(
+      <PullToRefresh onRefresh={onRefresh}>
+        <div style={{ height: 2000 }}>feed</div>
+      </PullToRefresh>,
+    );
+    const el = container.firstElementChild as HTMLElement;
+
+    el.scrollTop = 120;
+    act(() => {
+      pull(el);
+      fireEvent.touchEnd(el);
+    });
+
+    // Mid-list the gesture belongs to the list, not to a refresh.
+    expect(onRefresh).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
+
+    el.scrollTop = 0;
+    act(() => {
+      pull(el);
+      fireEvent.touchEnd(el);
+    });
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("contains the overscroll so a pull cannot chain to an ancestor", () => {
+    const { container } = render(
+      <PullToRefresh onRefresh={vi.fn(() => Promise.resolve())}>
+        <div>feed</div>
+      </PullToRefresh>,
+    );
+    // `touchmove` from a React handler is passive, so `preventDefault()` could
+    // never hold the gesture; containment is the mechanism that does.
+    expect((container.firstElementChild as HTMLElement).className).toContain("overscroll-y-contain");
+  });
+
+  it("clears the capsule when the app is backgrounded mid-pull", () => {
+    const onRefresh = vi.fn(() => Promise.resolve());
+    const { container } = render(
+      <PullToRefresh onRefresh={onRefresh}>
+        <div>feed</div>
+      </PullToRefresh>,
+    );
+    const el = container.firstElementChild!;
+
+    act(() => {
+      pull(el);
+    });
+    expect(screen.getByTestId("refresh-pill-slot")).toBeTruthy();
+
+    // The stream dies with the app: the capsule must not stay frozen mid-frame.
+    act(() => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+});
+
 describe("PullToRefresh scroll handle", () => {
   it("exposes a writable scrollTop for feed back-nav restore", () => {
     const ref = createRef<PullToRefreshHandle>();

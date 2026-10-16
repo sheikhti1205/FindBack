@@ -602,6 +602,66 @@ describe("Home scroll-reactive chrome (CF-010)", () => {
       HTMLElement.prototype.scrollTo = originalScrollTo;
     }
   });
+
+  // `tapCount` lives above the route outlet and never resets, so the effect that
+  // serves a tap must consume it once. These two tests are the ones the suite
+  // was missing: they mount with a tap already recorded, which is what a
+  // remount sees, and they change the feed scope, which is what a chip tap
+  // does.
+  it("does not replay the last tab tap when Home remounts (Post Detail → Back)", async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    try {
+      // The reader tapped the active Home tab once, and that mount served it.
+      tabTapState.tapCount = 1;
+      const first = await renderAndWait();
+      first.unmount();
+      scrollTo.mockClear();
+      fetchFeedMock.mockClear();
+
+      await renderAndWait();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // A round trip to a post keeps the restored scroll position and its cached
+      // feed: no jump to the top and no refetch.
+      expect(scrollTo).not.toHaveBeenCalled();
+      expect(fetchFeedMock).not.toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  it("does not rewind the reader when the feed scope changes after a tap", async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    try {
+      const { rerender } = await renderAndWait();
+
+      tabTapState.tapCount = 1;
+      rerender(
+        <MemoryRouter initialEntries={["/"]}>
+          <Home />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledTimes(1));
+      scrollTo.mockClear();
+      fetchFeedMock.mockClear();
+
+      fireEvent.click(screen.getByRole("radio", { name: "Lost" }));
+
+      // The scope change refetches exactly once, from its own effect — and must
+      // not be mistaken for a tab tap, which both rewound the feed under the
+      // reader and added a second `fetchFeed` on top of the scope's own one
+      // (the reviewer's probe measured two `fetchFeed({type:"LOST"})` calls).
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
 });
 
 describe("Home feed redesign (reference-inspired)", () => {

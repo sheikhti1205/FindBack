@@ -105,8 +105,13 @@ describe("Morph loader CSS contract (index.css)", () => {
   it("kills the morph for both the OS setting and the app override", () => {
     // Same dual kill-switch discipline as the loading washes: the media query
     // covers the first paint (before JS), the class covers the saved override.
-    const overrideMedia = css.slice(css.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
-    expect(overrideMedia).toMatch(/\.fb-morph-bar\s*\{[^}]*animation:\s*none/);
+    // Each half is pinned to its OWN block. Slicing from the media query to EOF
+    // also contains the class rule below it, so one `.fb-morph-bar { … }` match
+    // there satisfied the media assertion too and deleting the whole media block
+    // left this test green — the dual switch was only half pinned.
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{[^@]*\.fb-morph-bar\s*\{[^}]*animation:\s*none/,
+    );
     expect(css).toMatch(/html\.fb-reduce-motion \.fb-morph-bar\s*\{[^}]*animation:\s*none/);
   });
 
