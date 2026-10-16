@@ -1,3 +1,4 @@
+import { FixtureLargeTextToggle } from "./FixtureSection";
 import { ChromeFixtures } from "./sections/ChromeFixtures";
 import { CreateFixtures } from "./sections/CreateFixtures";
 import { DetailFixtures } from "./sections/DetailFixtures";
@@ -62,6 +63,7 @@ export function FixtureRoute() {
             ))}
           </ul>
         </nav>
+        <FixtureLargeTextToggle />
       </header>
       <div>
         <HomeFixtures />

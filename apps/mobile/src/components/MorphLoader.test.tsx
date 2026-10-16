@@ -97,6 +97,33 @@ describe("MorphLoader (CF-010 §15)", () => {
 describe("Morph loader CSS contract (index.css)", () => {
   const css = readFileSync("src/index.css", "utf8");
 
+  /**
+   * Contents of every block whose opening line matches `header`, found by
+   * balanced braces. Slicing text to some later marker instead would also carry
+   * the sibling blocks into the assertion — which is exactly how a half-pinned
+   * dual kill switch passed review the first time.
+   */
+  function blockContents(source: string, header: RegExp): string[] {
+    const out: string[] = [];
+    const re = new RegExp(header.source, "g");
+    for (let m = re.exec(source); m; m = re.exec(source)) {
+      const open = m.index + m[0].length - 1;
+      let depth = 0;
+      for (let i = open; i < source.length; i += 1) {
+        if (source[i] === "{") depth += 1;
+        else if (source[i] === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            out.push(source.slice(open + 1, i));
+            re.lastIndex = i + 1;
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   it("defines the morph keyframe and applies it from .fb-morph-bar", () => {
     expect(css).toContain("@keyframes fb-morph-bar");
     expect(css).toMatch(/\.fb-morph-bar\s*\{[^}]*animation:\s*fb-morph-bar/);
@@ -105,13 +132,15 @@ describe("Morph loader CSS contract (index.css)", () => {
   it("kills the morph for both the OS setting and the app override", () => {
     // Same dual kill-switch discipline as the loading washes: the media query
     // covers the first paint (before JS), the class covers the saved override.
-    // Each half is pinned to its OWN block. Slicing from the media query to EOF
-    // also contains the class rule below it, so one `.fb-morph-bar { … }` match
-    // there satisfied the media assertion too and deleting the whole media block
-    // left this test green — the dual switch was only half pinned.
-    expect(css).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{[^@]*\.fb-morph-bar\s*\{[^}]*animation:\s*none/,
-    );
+    // Each half is pinned to its OWN block here, by brace matching. A regex
+    // slice from the media query to EOF also contains the class rule below it,
+    // so one `.fb-morph-bar { … }` match there satisfied the media assertion
+    // too — emptying the media block, or deleting only its `animation: none`,
+    // both left this test green while the OS half of the switch was gone.
+    const mediaBlocks = blockContents(css, /@media \(prefers-reduced-motion: reduce\) \{/);
+    const morphBlocks = mediaBlocks.filter((block) => /\.fb-morph-bar\s*\{/.test(block));
+    expect(morphBlocks).toHaveLength(1);
+    expect(morphBlocks[0]).toMatch(/\.fb-morph-bar\s*\{[^}]*animation:\s*none/);
     expect(css).toMatch(/html\.fb-reduce-motion \.fb-morph-bar\s*\{[^}]*animation:\s*none/);
   });
 

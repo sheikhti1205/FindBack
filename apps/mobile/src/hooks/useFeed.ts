@@ -133,11 +133,22 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
   // the cache key changes, so it always writes the latest state for that key.
   // Skip an empty never-loaded snapshot so an early unmount cannot pin an
   // empty artifact that would suppress the next mount's fetch.
+  //
+  // `scrollRef` itself is unusable here: React detaches it — `current` becomes
+  // null — before this cleanup runs, which wrote scrollTop 0 and sent the
+  // reader to the top of the feed on the way back from a post (measured). The
+  // handle OBJECT survives the detach, and `PullToRefresh` remembers the last
+  // position it saw inside it, so keep the handle itself while it is alive.
+  const handleRef = useRef<{ scrollTop: number } | null>(null);
+  useEffect(() => {
+    if (scrollRef?.current) handleRef.current = scrollRef.current;
+  });
+
   useEffect(() => {
     if (!cacheKey) return;
     return () => {
       if (!loadedRef.current && latestRef.current.items.length === 0) return;
-      const el = scrollRef?.current;
+      const el = handleRef.current ?? scrollRef?.current;
       saveFeedCache(cacheKey, {
         items: latestRef.current.items,
         total: latestRef.current.total,

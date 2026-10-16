@@ -25,6 +25,13 @@ import { LONG_DESCRIPTION, LONG_TITLE, makePost, masonryRatioPosts } from "../po
  * The data is deterministic (non-resolving `fixture://` media, fixed literals)
  * so a reviewer can screenshot the same thing twice. Failed media exercises the
  * real "Photo unavailable" affordance rather than a browser broken-image glyph.
+ *
+ * Two honest limits of these frames:
+ * - the card widths they show depend on the text scale held on the root (the
+ *   large-text frame switches it page-wide), because the list's `px-4` gutter is
+ *   in `rem`: exactly 260px at Extra large, 262.7px at the standard scale;
+ * - the frames are narrower than `MASONRY_CANVAS_MAX_PX`, so production's pixel
+ *   canvas cap is not reached here — the cap is pinned by the unit test instead.
  */
 
 /**
@@ -133,10 +140,10 @@ export function FeedLayoutFixtures() {
       <BandFrame width={BAND.medium} label="a small tablet or a landscape phone">
         {masonry(masonryColumns(BAND.medium))}
       </BandFrame>
-      <BandFrame width={BAND.threeColumn} label="the exact 3-column boundary (`masonryColumns` returns 3 here, not 2; cards are exactly 260px)">
+      <BandFrame width={BAND.threeColumn} label="the exact 3-column boundary (`masonryColumns` returns 3 here, not 2; 260px cards with Extra large text held below, 262.7px at the standard scale)">
         {masonry(masonryColumns(BAND.threeColumn))}
       </BandFrame>
-      <BandFrame width={BAND.fourColumn} label="the exact 4-column boundary, the maximum (`MASONRY_MAX_COLUMNS`; cards are exactly 260px)">
+      <BandFrame width={BAND.fourColumn} label="the exact 4-column boundary, the maximum (`MASONRY_MAX_COLUMNS`; 260px cards with Extra large text held below, 262.7px at the standard scale)">
         {masonry(masonryColumns(BAND.fourColumn))}
       </BandFrame>
       <BandFrame width={BAND.threeColumn} variant="loading" label="masonry skeleton — never a centered spinner">

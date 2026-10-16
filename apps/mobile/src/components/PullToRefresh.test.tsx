@@ -83,6 +83,36 @@ describe("PullToRefresh — scroll ownership", () => {
     expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
     expect(onRefresh).not.toHaveBeenCalled();
   });
+
+  it("clears the capsule when the window loses focus mid-pull", () => {
+    // The task switcher takes focus without a visibility change on some
+    // platforms, and the touch stream then has no end event at all.
+    const onRefresh = vi.fn(() => Promise.resolve());
+    const { container } = render(
+      <PullToRefresh onRefresh={onRefresh}>
+        <div>feed</div>
+      </PullToRefresh>,
+    );
+    const el = container.firstElementChild!;
+
+    act(() => {
+      pull(el);
+    });
+    expect(screen.getByTestId("refresh-pill-slot")).toBeTruthy();
+
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+
+    expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // The listener is gone once the pull is over: a later blur is a no-op.
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
+  });
 });
 
 describe("PullToRefresh scroll handle", () => {
@@ -95,6 +125,29 @@ describe("PullToRefresh scroll handle", () => {
     );
     ref.current!.scrollTop = 350;
     expect(ref.current!.scrollTop).toBe(350);
+  });
+
+  it("keeps answering scrollTop after the container is detached", () => {
+    // A consumer's unmount cleanup runs AFTER React has nulled this ref, so the
+    // handle must remember the last position the container actually had: the
+    // feed's session cache reads it to put the reader back where they were
+    // (Post Detail → Back otherwise rewound to the top of the list).
+    const ref = createRef<PullToRefreshHandle>();
+    const { container, unmount } = render(
+      <PullToRefresh ref={ref} onRefresh={vi.fn()}>
+        <div style={{ height: 2000 }}>tall</div>
+      </PullToRefresh>,
+    );
+    const el = container.firstElementChild as HTMLElement;
+    el.scrollTop = 420;
+    fireEvent.scroll(el);
+    const handle = ref.current!;
+    expect(handle.scrollTop).toBe(420);
+
+    unmount();
+
+    expect(ref.current).toBeNull();
+    expect(handle.scrollTop).toBe(420);
   });
 });
 

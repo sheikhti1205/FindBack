@@ -53,6 +53,25 @@ export const MASONRY_GUTTER_PX = 12;
 export const MASONRY_MAX_COLUMNS = 4;
 
 /**
+ * Widest the masonry canvas ever gets, in CSS pixels (the cap Home's grid
+ * container carries through `MASONRY_CANVAS_CLASS`).
+ *
+ * This is a PIXEL cap on purpose, not a `rem` one. The gutter inside it is
+ * `rem` (`px-4`), so a `rem` cap shrinks the container *below the viewport* for
+ * a reader on the Small text scale: at `max-w-[72rem]` a 14px root gave a 1008px
+ * canvas, and the 4 columns chosen for a 1116px viewport landed in 980px of grid
+ * — 236px cards against a 260px floor. A pixel cap keeps the guarantee
+ * expressible from the viewport width alone: for every width where
+ * `masonryColumns` picks `n` columns, `min(viewport, this)` is still wide
+ * enough for `n` minimum cards at the largest text scale the app offers.
+ * 1152px is comfortably above the 4-column boundary (1116px).
+ */
+export const MASONRY_CANVAS_MAX_PX = 1152;
+
+/** Centred wide canvas for the masonry feed, capped at `MASONRY_CANVAS_MAX_PX`. */
+export const MASONRY_CANVAS_CLASS = "mx-auto w-full max-w-[1152px]";
+
+/**
  * Horizontal inset the feed adds inside the width it is measured by: `px-4` on
  * the masonry list (`PostList`'s `listClass`), i.e. 1rem each side.
  *
@@ -62,12 +81,13 @@ export const MASONRY_MAX_COLUMNS = 4;
  * padding - 2 frame border), so the old 24px budget promised 260px cards and
  * delivered 256.7px.
  *
- * The gutter is in `rem`, so it grows with the reader's text size: 32px at the
- * standard scale and 40px (2 x 1rem x 1.25) at the largest the app offers. The
- * budget covers the largest, so the minimum-card guarantee holds at every text
- * scale rather than only at the default one. At the standard scale that leaves
- * 8px of slack, which also absorbs a classic (non-overlay) scrollbar of up to
- * 8px — the target platform (Android WebView) uses overlay scrollbars.
+ * The gutter is in `rem`, so it grows with the reader's text size: 28px at the
+ * Small scale (87.5%), 32px at the default, 40px (2 x 1rem x 1.25) at the
+ * largest the app offers. The budget covers the largest, so the minimum-card
+ * guarantee holds at every text scale rather than only at the default one. At
+ * the default scale that leaves 8px of slack, which also absorbs a classic
+ * (non-overlay) scrollbar of up to 8px — the target platform (Android WebView)
+ * uses overlay scrollbars.
  */
 export const MASONRY_CONTAINER_INSET_PX = 40;
 
@@ -78,14 +98,17 @@ export const MASONRY_CONTAINER_INSET_PX = 40;
  * lands on 2 (small tablet) or 3 (tablet/landscape) columns rather than
  * squeezing 4 narrow ones. Always at least 1.
  *
- * The guarantee, over the container the feed actually gets:
+ * The guarantee, over the container the feed actually gets — the canvas, capped
+ * by `MASONRY_CANVAS_MAX_PX`, minus the list's own gutter:
  *
  *   columns * MASONRY_MIN_CARD_PX + (columns - 1) * MASONRY_GUTTER_PX
- *     <= widthPx - MASONRY_CONTAINER_INSET_PX
+ *     <= min(widthPx, MASONRY_CANVAS_MAX_PX) - 2 * rootFontSizePx
  *
  * which the shape below satisfies exactly (`floor(usable / step)` with
- * `usable = contacted - inset + gutter` leaves one gutter of slack, which is the
- * 12px that makes the last column's right edge land inside the container).
+ * `usable = viewport - inset + gutter` leaves one gutter of slack, which is the
+ * 12px that makes the last column's right edge land inside the container). The
+ * cap being >= the 4-column boundary is what keeps that true for viewports
+ * wider than the cap.
  */
 export function masonryColumns(widthPx: number): number {
   const step = MASONRY_MIN_CARD_PX + MASONRY_GUTTER_PX;

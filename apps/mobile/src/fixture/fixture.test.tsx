@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { FixtureRoute } from "./FixtureRoute";
-import { ALL_VARIANTS, LARGE_TEXT_PERCENT } from "./FixtureSection";
-import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE, loadAppearance } from "../appearance";
+import { ALL_VARIANTS, LARGE_TEXT_PERCENT, STANDARD_TEXT_PERCENT } from "./FixtureSection";
+import {
+  APPEARANCE_EVENT,
+  APPEARANCE_STORAGE_KEY,
+  DEFAULT_APPEARANCE,
+  applyAppearance,
+  loadAppearance,
+} from "../appearance";
 import {
   MASONRY_CONTAINER_INSET_PX,
   MASONRY_GUTTER_PX,
@@ -237,5 +243,61 @@ describe("fixture frames are trustworthy evidence", () => {
     expect(document.documentElement.style.fontSize).not.toBe(`${LARGE_TEXT_PERCENT}%`);
     // The reader's own setting is never rewritten by a review surface.
     expect(loadAppearance().textScale).toBe("large");
+  });
+
+  it("controls the page-wide Extra-large hold from one switch, not per frame", () => {
+    // A root font size cannot be scoped to a frame, so the control lives at the
+    // top of the route and every large-text frame reports the state it is in. A
+    // per-frame switch would be a lie: nine frames hold the root, and releasing
+    // one of them would change nothing a reviewer can see.
+    //
+    // The reviewer's saved scale is deliberately NOT the standard one here: if
+    // "off" meant "hand the root back", this test would pass by accident for a
+    // reader whose own setting is already Standard (measured in the browser
+    // before the fix: the switch did nothing while reporting success).
+    localStorage.setItem(
+      APPEARANCE_STORAGE_KEY,
+      JSON.stringify({ ...DEFAULT_APPEARANCE, textScale: "large" }),
+    );
+    renderRoute();
+    const toggle = screen.getByTestId("fixture-large-text-toggle");
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(document.documentElement.style.fontSize).toBe(`${LARGE_TEXT_PERCENT}%`);
+
+    const frames = screen
+      .getAllByTestId(/^fixture-.*-large-text$/)
+      .filter((frame) => frame.getAttribute("data-fixture-variant") === "large-text");
+    expect(frames.length).toBeGreaterThan(1);
+    for (const frame of frames) {
+      expect(frame.getAttribute("data-fixture-large-text")).toBe("extralarge");
+    }
+
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    // The standard scale is HELD, not "handed back to whatever the reviewer has
+    // saved": a reviewer whose own setting is already Extra large would
+    // otherwise see the switch do nothing (measured in the browser before this
+    // was fixed).
+    expect(document.documentElement.style.fontSize).toBe(`${STANDARD_TEXT_PERCENT}%`);
+    for (const frame of frames) {
+      expect(frame.getAttribute("data-fixture-large-text")).toBe("standard");
+    }
+
+    // The app re-applies the reader's own settings on its own schedule (accent
+    // or theme change, a remount of the app shell). The comparison has to
+    // survive that, or the switch would silently drift back to the saved scale
+    // mid-review — which is what "hand the root back" actually did.
+    act(() => {
+      applyAppearance(loadAppearance());
+      window.dispatchEvent(new Event(APPEARANCE_EVENT));
+    });
+    expect(document.documentElement.style.fontSize).toBe(`${STANDARD_TEXT_PERCENT}%`);
+
+    fireEvent.click(toggle);
+    expect(document.documentElement.style.fontSize).toBe(`${LARGE_TEXT_PERCENT}%`);
+    for (const frame of frames) {
+      expect(frame.getAttribute("data-fixture-large-text")).toBe("extralarge");
+    }
   });
 });

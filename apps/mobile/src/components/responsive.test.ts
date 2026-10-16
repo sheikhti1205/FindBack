@@ -3,6 +3,8 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   COMPACT_MAX_PX,
+  MASONRY_CANVAS_CLASS,
+  MASONRY_CANVAS_MAX_PX,
   MASONRY_CONTAINER_INSET_PX,
   MASONRY_GUTTER_PX,
   MASONRY_MAX_COLUMNS,
@@ -15,6 +17,7 @@ import {
   useViewportWidth,
   widthBand,
 } from "./responsive";
+import { TEXT_SCALE_OPTIONS } from "../appearance";
 
 describe("widthBand", () => {
   it("names the platform bands at their boundaries", () => {
@@ -48,18 +51,33 @@ describe("masonryColumns", () => {
     // The whole point of the cap: a 4-column 900px layout would squeeze cards
     // below the minimum, so the cap must resist it.
     //
-    // This asserts against the CONTAINER the feed really gets — viewport minus
-    // the list's own `px-4` — not against a restatement of the formula's own
-    // budget. The restatement is what let the formula claim 260px cards while
-    // the rendered card at the 3-column boundary was 256.7px.
-    for (let width = 320; width <= 1600; width += 1) {
-      const columns = masonryColumns(width);
-      const container = width - MASONRY_CONTAINER_INSET_PX;
-      const card = (container - (columns - 1) * MASONRY_GUTTER_PX) / columns;
-      expect(card, `cards at ${width}px / ${columns} columns`).toBeGreaterThanOrEqual(
-        MASONRY_MIN_CARD_PX,
-      );
+    // This asserts against the CONTAINER the feed really gets — the capped
+    // canvas minus the list's own `px-4` at the app's own text scales — not
+    // against a restatement of the formula's own budget. The restatement is what
+    // let the formula claim 260px cards while the rendered card at the
+    // 3-column boundary was 256.7px.
+    for (const scale of TEXT_SCALE_OPTIONS) {
+      const rootFontSizePx = (16 * scale.percent) / 100;
+      for (let width = 320; width <= 1600; width += 1) {
+        const columns = masonryColumns(width);
+        const canvas = Math.min(width, MASONRY_CANVAS_MAX_PX);
+        const container = canvas - 2 * rootFontSizePx;
+        const card = (container - (columns - 1) * MASONRY_GUTTER_PX) / columns;
+        expect(
+          card,
+          `cards at ${width}px / ${columns} columns at the ${scale.id} text scale`,
+        ).toBeGreaterThanOrEqual(MASONRY_MIN_CARD_PX);
+      }
     }
+  });
+
+  it("caps the canvas in pixels, so a small text scale cannot shrink the grid", () => {
+    // A `rem` cap would shrink the canvas below the viewport for a reader on the
+    // Small text scale (1008px at 87.5%), which is how the 4-column layout lost
+    // 24px per card. The class Home applies and the constant the maths uses have
+    // to be the same decision.
+    expect(MASONRY_CANVAS_CLASS).toContain(`max-w-[${MASONRY_CANVAS_MAX_PX}px]`);
+    expect(MASONRY_CANVAS_CLASS).not.toMatch(/max-w-\[[\d.]+rem\]/);
   });
 
   it("changes column count exactly where the container stops fitting another card", () => {
@@ -73,6 +91,16 @@ describe("masonryColumns", () => {
     expect(masonryColumns(boundary(3))).toBe(3);
     expect(masonryColumns(boundary(4) - 1)).toBe(3);
     expect(masonryColumns(boundary(4))).toBe(4);
+  });
+
+  it("reaches the expanded band before it can fit three cards", () => {
+    // Documented divergence, not a bug: the shell gives an expanded canvas from
+    // 840px, while three 260px cards need 844px of container. A band decides the
+    // canvas, the card floor decides the column count, and for four pixels they
+    // disagree — 840-843 is "expanded, two columns".
+    expect(widthBand(MEDIUM_MAX_PX)).toBe("expanded");
+    expect(masonryColumns(MEDIUM_MAX_PX)).toBe(2);
+    expect(masonryColumns(MEDIUM_MAX_PX + 4)).toBe(3);
   });
 });
 

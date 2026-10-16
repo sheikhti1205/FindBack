@@ -1,8 +1,15 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
+import { createRef, useImperativeHandle } from "react";
 import { useFeed } from "./useFeed";
-import { buildFeedCacheKey, clearFeedCaches, feedFilterKey, invalidateFeedCaches } from "./feedCache";
+import {
+  buildFeedCacheKey,
+  clearFeedCaches,
+  feedFilterKey,
+  invalidateFeedCaches,
+  loadFeedCache,
+} from "./feedCache";
 
 const { fetchFeedMock } = vi.hoisted(() => ({ fetchFeedMock: vi.fn() }));
 
@@ -229,6 +236,27 @@ describe("useFeed", () => {
 
     expect(result.current.items).toHaveLength(2);
     expect(scrollEl.scrollTop).toBe(500);
+  });
+
+  it("saves the position when React detaches the scroll ref before teardown", async () => {
+    // Detail → Back: React nulls the ref before this hook's unmount cleanup
+    // runs, so reading `scrollRef.current` there wrote scrollTop 0 and the
+    // reader came back to the top of the feed. The plain `{ scrollTop: n }`
+    // fakes the other cases use never detach, which is why they stayed green.
+    fetchFeedMock.mockResolvedValueOnce(page([{ id: "a" }], null, 1));
+    const handle = createRef<{ scrollTop: number }>();
+    const { result, unmount } = renderHook(() => {
+      // The handle object survives the detach and remembers the last position,
+      // as PullToRefresh's does after a real scroll.
+      useImperativeHandle(handle, () => ({ scrollTop: 420 }));
+      return useFeed({}, { cacheKey: "test:detached", scrollRef: handle });
+    });
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+
+    unmount();
+
+    expect(handle.current).toBeNull();
+    expect(loadFeedCache(buildFeedCacheKey("test:detached", {}))?.scrollTop).toBe(420);
   });
 
   it("restores cached items + scrollTop on back-nav without refetching", async () => {

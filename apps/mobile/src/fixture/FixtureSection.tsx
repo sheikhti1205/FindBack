@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { APPEARANCE_EVENT, TEXT_SCALE_OPTIONS, applyAppearance, loadAppearance } from "../appearance";
 import { masonryColumns } from "../components/responsive";
 
@@ -55,7 +55,7 @@ export const VARIANT_LABELS: Record<FixtureVariant, string> = {
   empty: "Empty",
   error: "Error",
   "long-content": "Long content",
-  "large-text": "Large text — the app's Extra-large scale, held on the root while this frame is mounted",
+  "large-text": "Large text — page-wide: the app's Extra-large root scale, held while the top switch is on",
   dark: "Dark",
   amoled: "AMOLED",
   "small-width": "Small width (320dp)",
@@ -68,9 +68,74 @@ export const VARIANT_LABELS: Record<FixtureVariant, string> = {
 export const LARGE_TEXT_PERCENT =
   TEXT_SCALE_OPTIONS.find((option) => option.id === "xlarge")?.percent ?? 125;
 
+/**
+ * The scale the page-wide switch compares against. Held explicitly rather than
+ * "handing the root back to whatever the reviewer has saved": a reviewer whose
+ * own setting is already Extra large would otherwise see the switch do nothing,
+ * which is exactly how a comparison control turns into a decorative one.
+ */
+export const STANDARD_TEXT_PERCENT =
+  TEXT_SCALE_OPTIONS.find((option) => option.id === "standard")?.percent ?? 100;
+
 let largeTextFrames = 0;
 /** What the root font size was before the first large-text frame took it. */
 let rootFontSizeBeforeFrames: string | null = null;
+
+/**
+ * F4: whether the review surface holds the app's Extra-large scale. This is
+ * PAGE-GLOBAL on purpose — a root font size cannot be scoped to one frame, so a
+ * per-frame switch would be a lie: nine large-text frames hold the root, and
+ * releasing one of them changes nothing a reviewer can see. One switch, at the
+ * top of the route, and every large-text frame reports the state it is in.
+ */
+let fixtureLargeTextHeld = true;
+const largeTextHoldListeners = new Set<() => void>();
+
+/** Used by the page-level switch in `FixtureRoute`. */
+export function setFixtureLargeTextHeld(held: boolean): void {
+  if (fixtureLargeTextHeld === held) return;
+  fixtureLargeTextHeld = held;
+  for (const notify of largeTextHoldListeners) notify();
+}
+
+/** Whether the Extra-large scale is currently held page-wide. */
+export function useFixtureLargeTextHeld(): boolean {
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    const notify = () => forceRender((n) => n + 1);
+    largeTextHoldListeners.add(notify);
+    return () => {
+      largeTextHoldListeners.delete(notify);
+    };
+  }, []);
+  return fixtureLargeTextHeld;
+}
+
+/**
+ * The one control for the page-wide hold. A root `font-size` is global, so this
+ * belongs to the page, not to a frame.
+ */
+export function FixtureLargeTextToggle() {
+  const held = useFixtureLargeTextHeld();
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        data-testid="fixture-large-text-toggle"
+        aria-pressed={held}
+        onClick={() => setFixtureLargeTextHeld(!held)}
+        className="inline-flex min-h-[44px] items-center rounded-m3-sm border border-outline-variant px-3 text-sm font-medium"
+      >
+        {held ? "Extra large text: on (whole page)" : "Extra large text: off"}
+      </button>
+      <span className="text-xs text-on-surface-variant">
+        The text scale is a root setting, so it applies to the whole page, not to
+        one frame — flip it to compare the large-text frames against the standard
+        scale.
+      </span>
+    </div>
+  );
+}
 
 /**
  * Large text is a GLOBAL scale in this app: `appearance.ts` writes a root font
@@ -80,20 +145,24 @@ let rootFontSizeBeforeFrames: string | null = null;
  * `applyAppearance` lands last and wins (measured: the frame still drew 15px
  * card titles).
  *
- * So while a large-text frame is mounted it holds the root font size at the
- * app's Extra-large value: on mount, again on the next frame (after the app's
- * own effect), and again whenever the app re-applies appearance. It never
+ * So while a large-text frame is mounted it holds the root font size at one of
+ * the app's own two scales — Extra large, or Standard when the page switch is
+ * off: on mount, again on the next frame (after the app's own effect), and again
+ * whenever the app re-applies appearance. Holding Standard rather than "handing
+ * the root back" is what makes the switch a real comparison for a reviewer whose
+ * own saved scale is already Extra large (and it keeps the review surface
+ * deterministic). It never
  * touches the reader's stored setting — a review surface must not rewrite the
  * preference it is reviewing — and on unmount the app is asked to re-apply its
  * own settings, which is what hands the root back.
  */
-function useLargeTextScale(active: boolean): void {
+function useLargeTextScale(percent: number | null): void {
   useEffect(() => {
-    if (!active || typeof window === "undefined") return;
+    if (percent === null || typeof window === "undefined") return;
     const root = document.documentElement;
     const hold = () => {
-      if (root.style.fontSize !== `${LARGE_TEXT_PERCENT}%`) {
-        root.style.fontSize = `${LARGE_TEXT_PERCENT}%`;
+      if (root.style.fontSize !== `${percent}%`) {
+        root.style.fontSize = `${percent}%`;
       }
     };
     if (rootFontSizeBeforeFrames === null) rootFontSizeBeforeFrames = root.style.fontSize;
@@ -116,7 +185,7 @@ function useLargeTextScale(active: boolean): void {
         }
       }
     };
-  }, [active]);
+  }, [percent]);
 }
 
 function frameStyle(variant: FixtureVariant, width?: number): CSSProperties {
@@ -151,13 +220,25 @@ export function FixtureFrame({
   children: ReactNode;
 }) {
   const dark = variant === "dark" || variant === "amoled";
-  useLargeTextScale(variant === "large-text");
+  // F4: the text scale is a ROOT setting, so the hold is page-wide — it scales
+  // the other frames on the page too, which is exactly what a reader on Extra
+  // large sees. The switch makes that consequence reviewable instead of
+  // pretending the frame is self-contained: on = the Extra-large render (the
+  // worst case, and what the band/dark frames are usually measured against),
+  // off = the standard scale, held explicitly so the comparison works whatever
+  // scale the reviewer has saved.
+  const largeText = variant === "large-text";
+  const largeTextHeld = useFixtureLargeTextHeld();
+  useLargeTextScale(largeText ? (largeTextHeld ? LARGE_TEXT_PERCENT : STANDARD_TEXT_PERCENT) : null);
   return (
     <div
       data-testid={`fixture-${section}-${variant}`}
       data-fixture-section={section}
       data-fixture-variant={variant}
       data-fixture-theme={dark ? variant : "light"}
+      {...(largeText
+        ? { "data-fixture-large-text": largeTextHeld ? "extralarge" : "standard" }
+        : {})}
       {...(width
         ? { "data-frame-width": String(width), "data-columns": String(masonryColumns(width)) }
         : {})}
@@ -172,6 +253,13 @@ export function FixtureFrame({
     >
       <p className="border-b border-outline-variant px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
         {VARIANT_LABELS[variant]}
+        {largeText ? (
+          <span className="ml-2 font-normal normal-case tracking-normal">
+            {largeTextHeld
+              ? `(${LARGE_TEXT_PERCENT}% held — page-wide; switch at the top)`
+              : `(${STANDARD_TEXT_PERCENT}% held — switch at the top)`}
+          </span>
+        ) : null}
       </p>
       <div className={geometry ? "" : "p-3"}>{children}</div>
     </div>

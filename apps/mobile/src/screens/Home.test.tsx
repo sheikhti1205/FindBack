@@ -380,6 +380,26 @@ describe("Home realtime", () => {
     await waitFor(() => expect((scroller as HTMLElement).scrollTop).toBe(200));
   });
 
+  it("saves the reader's place on the way to Post Detail and restores it on return", async () => {
+    // The save half of the pair above. React detaches the scroll ref before the
+    // hook's unmount cleanup runs, so this failed in the product (the cache got
+    // scrollTop 0) while the seeded test above stayed green.
+    const first = renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    const scroller = first.container.querySelector(".fb-home-feed") as HTMLElement;
+    scroller.scrollTop = 240;
+    // jsdom does not fire a scroll event on assignment; the real container does.
+    fireEvent.scroll(scroller);
+    first.unmount();
+
+    fetchFeedMock.mockClear();
+    const second = renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    const restored = second.container.querySelector(".fb-home-feed") as HTMLElement;
+    await waitFor(() => expect(restored.scrollTop).toBe(240));
+    expect(fetchFeedMock).not.toHaveBeenCalled();
+  });
+
   it("shows the new-posts pill when scrolled and removes it cleanly on tap", async () => {
     const scrollTo = vi.fn();
     const originalScrollTo = HTMLElement.prototype.scrollTo;

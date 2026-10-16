@@ -101,6 +101,12 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
     const labelRef = useRef<HTMLDivElement | null>(null);
     const labelTextRef = useRef<HTMLSpanElement | null>(null);
     const barRef = useRef<HTMLSpanElement | null>(null);
+    // The container is detached — `scrollRef.current` becomes null — before a
+    // consumer's unmount cleanup runs, so a consumer that reads `scrollTop`
+    // during teardown used to get 0 and lose the reader's place (measured:
+    // Post Detail → Back came back to the top). The handle object outlives the
+    // detach, so it remembers the last position the container really had.
+    const lastScrollTopRef = useRef(0);
 
     const THRESHOLD = 64;
     const MAX_PULL = 100;
@@ -108,15 +114,31 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
 
     useImperativeHandle(ref, () => ({
       scrollToTop: (behavior: ScrollBehavior = "smooth") => {
+        // Track the destination too: a smooth scroll's events can still be in
+        // flight when the consumer unmounts.
+        lastScrollTopRef.current = 0;
         scrollRef.current?.scrollTo({ top: 0, behavior });
       },
       get scrollTop() {
-        return scrollRef.current?.scrollTop ?? 0;
+        return scrollRef.current?.scrollTop ?? lastScrollTopRef.current;
       },
       set scrollTop(value: number) {
+        lastScrollTopRef.current = value;
         if (scrollRef.current) scrollRef.current.scrollTop = value;
       },
     }));
+
+    // Keep the remembered position current while the container is alive.
+    useEffect(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const record = () => {
+        lastScrollTopRef.current = el.scrollTop;
+      };
+      record();
+      el.addEventListener("scroll", record, { passive: true });
+      return () => el.removeEventListener("scroll", record);
+    }, []);
 
     const cancelPaint = useCallback(() => {
       if (rafRef.current !== null) {
@@ -293,17 +315,26 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
 
     // A gesture that stops being delivered while the capsule is up must not
     // leave it frozen mid-frame. `handleTouchCancel` is the single exit, and
-    // backgrounding the app is the one stream death we can detect without
-    // guessing: no timer, because a reader holding a pull is still deciding.
-    // (A stream that simply stops with no end event is a synthetic-input case;
-    // real browsers end a touch stream with touchend or touchcancel.)
+    // two stream deaths are detectable without guessing: the page going hidden
+    // (backgrounding) and the window losing focus (task switcher, another
+    // window). No timer, because a reader holding a pull is still deciding.
+    // (A stream that simply stops with no event at all is a synthetic-input
+    // case; a real browser ends a touch stream with touchend or touchcancel —
+    // `pointercancel` is deliberately NOT wired, because it can fire when the
+    // browser claims a gesture for scrolling, which would break the pull on
+    // device.)
     useEffect(() => {
       if (!pulling) return;
       const onVisibility = () => {
         if (document.visibilityState === "hidden") handleTouchCancel();
       };
+      const onBlur = () => handleTouchCancel();
       document.addEventListener("visibilitychange", onVisibility);
-      return () => document.removeEventListener("visibilitychange", onVisibility);
+      window.addEventListener("blur", onBlur);
+      return () => {
+        document.removeEventListener("visibilitychange", onVisibility);
+        window.removeEventListener("blur", onBlur);
+      };
     }, [pulling, handleTouchCancel]);
 
     const handleRetry = useCallback(() => {

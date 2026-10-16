@@ -4,7 +4,7 @@ import type { PostType } from "@findback/shared";
 import { HomeFilterChips, HomeScopeChips } from "./HomeFilterChips";
 import { HomeSearchBar } from "./HomeSearchBar";
 import { PostList } from "../components/PostList";
-import { READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, useViewportWidth } from "../components/responsive";
+import { MASONRY_CANVAS_CLASS, READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, useViewportWidth } from "../components/responsive";
 import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
 import { BrandMark } from "../components/BrandMark";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
@@ -72,7 +72,7 @@ export function Home() {
   // Wide canvas for the ragged grid (photographs want width); a readable column
   // for the single-column layouts, so a desktop window does not stretch titles
   // to absurd line lengths. Both are centred, so no phone-width strip survives.
-  const canvasClass = resolvedLayout === "masonry" ? "mx-auto w-full max-w-[72rem]" : READABLE_COLUMN_CLASS;
+  const canvasClass = resolvedLayout === "masonry" ? MASONRY_CANVAS_CLASS : READABLE_COLUMN_CLASS;
   // Type + search survive in the URL so back-nav, deep-links, and copied
   // links restore the feed the reader was looking at.
   const [typeParam, setTypeParam] = useUrlParam("type");
