@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, saveAppearance } from "../appearance";
@@ -79,5 +80,31 @@ describe("MorphLoader (CF-010 §15)", () => {
     const shell = screen.getByTestId("morph-shell");
     expect(shell.className).toContain("h-6");
     expect(shell.className).toContain("w-16");
+  });
+});
+
+describe("Morph loader CSS contract (index.css)", () => {
+  const css = readFileSync("src/index.css", "utf8");
+
+  it("defines the morph keyframe and applies it from .fb-morph-bar", () => {
+    expect(css).toContain("@keyframes fb-morph-bar");
+    expect(css).toMatch(/\.fb-morph-bar\s*\{[^}]*animation:\s*fb-morph-bar/);
+  });
+
+  it("kills the morph for both the OS setting and the app override", () => {
+    // Same dual kill-switch discipline as the loading washes: the media query
+    // covers the first paint (before JS), the class covers the saved override.
+    const overrideMedia = css.slice(css.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
+    expect(overrideMedia).toMatch(/\.fb-morph-bar\s*\{[^}]*animation:\s*none/);
+    expect(css).toMatch(/html\.fb-reduce-motion \.fb-morph-bar\s*\{[^}]*animation:\s*none/);
+  });
+
+  it("keeps the morph to width and translate only", () => {
+    const start = css.indexOf("@keyframes fb-morph-bar");
+    const keyframes = css.slice(start, start + 400);
+    // No blur, gradient, filter or shadow in the loader — it stays cheap.
+    expect(keyframes).not.toMatch(/blur|gradient|filter|box-shadow/);
+    expect(keyframes).toMatch(/width:/);
+    expect(keyframes).toMatch(/translateX/);
   });
 });
