@@ -26,6 +26,13 @@ export interface ReportPhotoCarouselProps {
   /** `origin` is the tapped slide's viewport rect (lightbox shared element). */
   onPreview: (id: string, origin?: PhotoLightboxOriginRect) => void;
   disabled: boolean;
+  /**
+   * §8: with the on-screen keyboard up the composer narrows the box so a photo
+   * keeps roughly two fifths of the area left above the IME. The parent owns the
+   * budget because only the parent can see the visual viewport; omitted means the
+   * standalone default ({@link MAX_SLIDE_HEIGHT}).
+   */
+  maxHeightPx?: number;
 }
 
 /**
@@ -37,6 +44,7 @@ export interface ReportPhotoCarouselProps {
  * "absent pair means default ratio" rule the attachment read model uses.
  */
 const MIN_SLIDE_HEIGHT_PX = 180;
+/** Default box bound; see `maxHeightPx` for the composer's keyboard-up budget. */
 const MAX_SLIDE_HEIGHT = "min(58vh, 460px)";
 const DEFAULT_SLIDE_RATIO = "4 / 3";
 
@@ -64,6 +72,7 @@ export function ReportPhotoCarousel({
   onMakeCover,
   onPreview,
   disabled,
+  maxHeightPx,
 }: ReportPhotoCarouselProps) {
   const { trackRef, active, onScroll, goTo } = useSnapPager(photos.length);
   const { pressStart, isTap } = usePagerTap();
@@ -136,7 +145,7 @@ export function ReportPhotoCarousel({
                   style={{
                     aspectRatio: ratios[photo.id] ?? DEFAULT_SLIDE_RATIO,
                     minHeight: MIN_SLIDE_HEIGHT_PX,
-                    maxHeight: MAX_SLIDE_HEIGHT,
+                    maxHeight: maxHeightPx ? `${maxHeightPx}px` : MAX_SLIDE_HEIGHT,
                   }}
                 >
                   <SlideImage photo={photo} index={index} total={photos.length} onMeasure={measure} />

@@ -38,6 +38,7 @@ import {
   stashPhotoFile,
 } from "../services/photoStore";
 import { todayInputValue, isFutureDate } from "../utils/dates";
+import { useKeyboardInset } from "../hooks/keyboardInset";
 import { profileFor } from "../services/ai/modelProfiles";
 import type { GenerateFn } from "../services/ai/types";
 import {
@@ -233,6 +234,20 @@ export const aiSuggestDeps: {
   generateForCategory: generateForCategoryLive,
 };
 
+/**
+ * §8 keyboard composition mode, in one place:
+ *
+ * - `KEYBOARD_PHOTO_FRACTION` is the share of the visible area above the IME
+ *   the photo carousel may keep (the spec's 35–45% band, at its middle);
+ * - `KEYBOARD_PHOTO_MIN_PX` keeps a short viewport from collapsing a photo to a
+ *   sliver — under it the photo holds a usable size and the form scrolls;
+ * - `KEYBOARD_TAIL_PX` is the scroll tail the form gains so the last field (and
+ *   the formatting rail) can always be scrolled clear of the keyboard.
+ */
+const KEYBOARD_PHOTO_FRACTION = 0.4;
+const KEYBOARD_PHOTO_MIN_PX = 120;
+const KEYBOARD_TAIL_PX = 8;
+
 export function CreateReport() {
   const { user } = useAuth();
   // A mounted route can outlive an auth change. Unmount its entire form/editor
@@ -243,6 +258,26 @@ export function CreateReport() {
 function ReportForm() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  // §8: while the person is typing the description the composer switches to a
+  // composition layout — the description and its formatting rail stay above the
+  // IME, the photos keep ~40% of what is left, and the form gains a scroll tail.
+  // Sticky rather than fixed, and no programmatic scrolling: opening the keyboard
+  // must not reflow the fields or fight the browser's own scroll-into-view.
+  const keyboard = useKeyboardInset();
+  // Composition mode belongs to the description being edited, not to "a keyboard
+  // is up": a docked editor would otherwise sit over whichever field the person
+  // taps next — including the one the IME just scrolled into view.
+  const [descriptionFocused, setDescriptionFocused] = useState(false);
+  const composing = keyboard.open && descriptionFocused;
+  const photoBudgetPx = Math.max(
+    KEYBOARD_PHOTO_MIN_PX,
+    Math.round(keyboard.viewportHeightPx * KEYBOARD_PHOTO_FRACTION),
+  );
+  // The tail is reserved whenever the keyboard is up, whichever field has focus,
+  // so the focused field can always be brought clear of the IME.
+  const formStyle = keyboard.open
+    ? { paddingBottom: keyboard.insetPx + KEYBOARD_TAIL_PX }
+    : undefined;
   // Per-account draft: each signed-in account restores only its own report.
   const accountId = user?.id ?? null;
   const renderGeneration = draftGeneration(accountId);
@@ -1399,7 +1434,12 @@ function ReportForm() {
       : 0;
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-5 px-4 py-5" noValidate>
+    <form
+      onSubmit={onSubmit}
+      className="flex flex-col gap-5 px-4 py-5"
+      noValidate
+      style={formStyle}
+    >
       <header>
         <h1 className="text-xl font-semibold tracking-tight">Report an item</h1>
         <p className="text-sm text-on-surface-variant">
@@ -1481,6 +1521,9 @@ function ReportForm() {
             setPreviewOrigin(origin ?? null);
             setPreviewPhotoId(id);
           }}
+          // §8: with the keyboard up the photos keep ~40% of the viable area;
+          // omitted otherwise, so the carousel's own bound applies.
+          photoMaxHeightPx={composing ? photoBudgetPx : undefined}
         />
         <AnimatePresence mode="popLayout" initial={false}>
           {pickStatus && (
@@ -1570,21 +1613,33 @@ function ReportForm() {
         maxLength={TITLE_MAX}
       />
 
-      <RichTextEditor
-        key={editorResetKey}
-        label="Description"
-        value={description}
-        onChange={(v) => {
-          descriptionLiveRef.current = v;
-          setDescription(v);
-          if (fieldErrors.description) setFieldErrors((f) => ({ ...f, description: undefined }));
-        }}
-        placeholder="Colour, brand, markings, when and where it happened…"
-        error={fieldErrors.description}
-        required
-        maxLength={DESCRIPTION_MAX}
-        editorRef={descriptionEditorRef}
-      />
+      {/* §8: with the keyboard up this docks to the bottom edge of the visible
+          area, so the editor AND its formatting rail stay above the IME. It
+          stays `sticky` — in flow — rather than `fixed`, so nothing around it
+          reflows when the keyboard opens; the negative margin bleeds the dock's
+          background to the form's edges without changing the editor's box. */}
+      <div
+        data-testid="report-description"
+        onFocus={() => setDescriptionFocused(true)}
+        onBlur={() => setDescriptionFocused(false)}
+        className={composing ? "-mx-4 sticky bottom-0 z-10 bg-surface px-4" : undefined}
+      >
+        <RichTextEditor
+          key={editorResetKey}
+          label="Description"
+          value={description}
+          onChange={(v) => {
+            descriptionLiveRef.current = v;
+            setDescription(v);
+            if (fieldErrors.description) setFieldErrors((f) => ({ ...f, description: undefined }));
+          }}
+          placeholder="Colour, brand, markings, when and where it happened…"
+          error={fieldErrors.description}
+          required
+          maxLength={DESCRIPTION_MAX}
+          editorRef={descriptionEditorRef}
+        />
+      </div>
 
       <CategoryField
         value={category}

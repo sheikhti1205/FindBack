@@ -18,6 +18,13 @@ export interface ReportMediaPickerProps {
   /** `origin` is the tapped slide's viewport rect (shared-element start). */
   onPreview: (id: string, origin?: PhotoLightboxOriginRect) => void;
   disabled?: boolean;
+  /**
+   * §8: maximum height for one carousel slide, in px. The report composer sets it
+   * while the person is typing the description on a keyboard (photos keep ~40% of
+   * what is left above the IME); every other caller, and the closed-keyboard case,
+   * omits it.
+   */
+  photoMaxHeightPx?: number;
 }
 
 const MAX_PHOTOS = 5;
@@ -76,6 +83,7 @@ export function ReportMediaPicker({
   onMakeCover,
   onPreview,
   disabled = false,
+  photoMaxHeightPx,
 }: ReportMediaPickerProps) {
   const remaining = useMemo(() => MAX_PHOTOS - photos.length, [photos.length]);
   const atLimit = photos.length >= MAX_PHOTOS;
@@ -167,6 +175,7 @@ export function ReportMediaPicker({
           onMakeCover={handleMakeCover}
           onPreview={handlePreview}
           disabled={disabled}
+          maxHeightPx={photoMaxHeightPx}
         />
       ) : (
         <p className="text-xs text-on-surface-variant">
