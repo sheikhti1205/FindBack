@@ -16,7 +16,6 @@ import {
   reactionSummaryFromCounts,
   reactionSummaryFromRow,
   setCommentReaction,
-  setPostReaction,
   summarizeReactions,
 } from "./reactions";
 
@@ -276,52 +275,18 @@ describe("reactionSummaryFromCounts (the one aggregator)", () => {
   });
 });
 
-describe("setPostReaction", () => {
-  it("calls the widened react RPC and maps the summary", async () => {
-    clientMock.rpc.mockResolvedValue({
-      data: [
-        {
-          post_id: "p1",
-          like_count: 2,
-          dislike_count: 0,
-          my_reaction: "LOVE",
-          reaction_counts: { LOVE: 2, WOW: 1 },
-        },
-      ],
-      error: null,
-    });
-
-    const summary = await setPostReaction("p1", "LOVE");
-
-    expect(clientMock.rpc).toHaveBeenCalledWith("findback_react_client", {
-      p_post_id: "p1",
-      p_type: "LOVE",
-    });
-    expect(summary).toEqual({ counts: { LOVE: 2, WOW: 1 }, myReaction: "LOVE", total: 3 });
-  });
-
-  it("clears the reaction with null", async () => {
-    clientMock.rpc.mockResolvedValue({
-      data: [{ post_id: "p1", like_count: 0, dislike_count: 0, my_reaction: null, reaction_counts: {} }],
-      error: null,
-    });
-
-    const summary = await setPostReaction("p1", null);
-
-    expect(clientMock.rpc).toHaveBeenCalledWith("findback_react_client", {
-      p_post_id: "p1",
-      p_type: null,
-    });
-    expect(summary.myReaction).toBeNull();
-  });
-
+/**
+ * There is no `setPostReaction` any more: a post Like goes through
+ * `reactToPost(postId, nextLikeReaction(current))` / `toggleLikeReaction`, so
+ * "new writes are LIKE or null only" (packet `08` §2) is structural — no
+ * exported writer accepts a canonical kind or DISLIKE.
+ */
+describe("setCommentReaction", () => {
   it("rejects an unknown kind before calling the RPC", async () => {
-    await expect(setPostReaction("p1", "BOGUS" as never)).rejects.toMatchObject({ status: 400 });
+    await expect(setCommentReaction("c1", "BOGUS" as never)).rejects.toMatchObject({ status: 400 });
     expect(clientMock.rpc).not.toHaveBeenCalled();
   });
-});
 
-describe("setCommentReaction", () => {
   it("calls the comment react RPC and maps commentId + summary", async () => {
     clientMock.rpc.mockResolvedValue({
       data: [{ comment_id: "c1", my_reaction: "HELPFUL", reaction_counts: { HELPFUL: 1 } }],

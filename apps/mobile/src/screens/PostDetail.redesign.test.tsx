@@ -225,7 +225,12 @@ describe("PostDetail redesign (UXN-3)", () => {
   it("social row keeps Like with count, share copies without a count", async () => {
     postsMock.reactToPost.mockResolvedValue({ likeCount: 5, dislikeCount: 1 });
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
-    Object.assign(navigator, { clipboard, share: undefined });
+    // Install both explicitly: `Object.assign(navigator, …)` silently no-ops
+    // when a clipboard/share property already exists on the object, which made
+    // this assertion environment-order dependent. Same style as the other
+    // clipboard tests in this suite.
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+    Object.defineProperty(navigator, "share", { configurable: true, value: undefined });
     renderDetail();
     const love = await screen.findByRole("button", { name: /like, 4 likes/i });
     fireEvent.click(love);

@@ -177,9 +177,12 @@ describe("Like-only toggle over canonical-era rows (packet 08 §2)", () => {
     reactToPostMock.mockResolvedValue({ postId: "p1", likeCount: 1, dislikeCount: 0, myReaction: "LIKE" });
 
     await toggleLikeReaction("p1", null);
+    // Exact wire arg, not a disjunction: no row → a Like.
+    expect(reactToPostMock).toHaveBeenLastCalledWith("p1", "LIKE");
 
-    const [, written] = reactToPostMock.mock.calls[0] as [string, string | null];
-    expect(written === "LIKE" || written === null).toBe(true);
+    await toggleLikeReaction("p1", "HELPFUL");
+    // A canonical-era row is cleared with null, never rewritten as a kind.
+    expect(reactToPostMock).toHaveBeenLastCalledWith("p1", null);
   });
 });
 

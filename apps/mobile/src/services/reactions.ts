@@ -21,7 +21,11 @@ import { getSupabase } from "./supabaseClient";
  *
  * The RPCs are the existing `findback_react_client` (post) and the new
  * `findback_react_comment_client` (comment); both return per-kind counts plus
- * the caller's own reaction.
+ * the caller's own reaction. There is deliberately no exported writer that
+ * accepts an arbitrary kind: the post path goes through
+ * `reactToPost(id, nextLikeReaction(current))` and the comment path through
+ * `setCommentReaction`, so "new writes are LIKE or null only" is structural
+ * rather than a convention callers have to remember.
  */
 
 export type { ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
@@ -260,35 +264,10 @@ function assertKind(kind: ReactionKind | null): void {
   }
 }
 
-interface PostReactionRow {
-  like_count?: unknown;
-  dislike_count?: unknown;
-  my_reaction?: unknown;
-  reaction_counts?: unknown;
-}
-
 interface CommentReactionRow {
   comment_id?: unknown;
   my_reaction?: unknown;
   reaction_counts?: unknown;
-}
-
-/** Set (or clear, with null) the caller's post reaction; returns the summary. */
-export async function setPostReaction(
-  postId: string,
-  kind: ReactionKind | null,
-): Promise<ReactionSummary> {
-  assertKind(kind);
-  const { data, error } = await getSupabase().rpc("findback_react_client", {
-    p_post_id: postId,
-    p_type: kind,
-  });
-  if (error) throw new ApiError(error.message, 400);
-  const row = ((data ?? []) as PostReactionRow[])[0];
-  if (!row) throw new ApiError("Reaction was not saved", 400);
-  const counts = reactionCountsFromJson(row.reaction_counts);
-  const myReaction = isReactionKind(row.my_reaction) ? normalizeReactionKind(row.my_reaction) : null;
-  return { counts, myReaction, total: totalOf(counts) };
 }
 
 export interface CommentReactionSummary extends ReactionSummary {
@@ -328,9 +307,4 @@ export function reactionSummaryFromRow(row: {
     reactionCountsFromJson(row.reaction_counts),
     isReactionKind(row.my_reaction) ? row.my_reaction : null,
   );
-}
-
-/** Validate that `kind` is a known reaction kind (used by callers before RPCs). */
-export function assertReactionKind(kind: ReactionKind | null): void {
-  assertKind(kind);
 }

@@ -15,6 +15,8 @@ import {
   likeState,
   likeToggleDeltas,
   nextLikeReaction,
+  reactionMoveDeltas,
+  reactionSummaryFromCounts,
 } from "../services/reactions";
 import {
   fetchFeedReactionState,
@@ -53,6 +55,27 @@ function uniqueIds(items: readonly PostItem[]): string[] {
   return [...new Set(items.map((p) => p.id).filter((id) => id !== ""))];
 }
 
+/**
+ * Reconcile a summary that was captured before the caller's own row moved with
+ * the caller's fresher reaction (batch hydration, or the write that just
+ * landed). The feed item's `reactionSummary` was taken at fetch time, so it
+ * still counts the caller's old row — applying the move on top keeps the
+ * displayed count and the heart in agreement instead of showing a number that
+ * silently excludes the caller (or includes a row they just cleared).
+ *
+ * A no-op move (both sides normalize to the same bucket) returns the base
+ * object untouched, so the common path allocates nothing.
+ */
+function reconcileOwnedRow(
+  base: ReactionSummary | null,
+  mine: ReactionKind | null,
+): ReactionSummary | null {
+  if (!base) return null;
+  const deltas = reactionMoveDeltas(base.myReaction, mine);
+  if (Object.keys(deltas).length === 0) return base;
+  return reactionSummaryFromCounts(applyCountDeltas(base.counts, deltas), mine);
+}
+
 export function FeedLoveProvider({
   items,
   patchItem,
@@ -70,14 +93,23 @@ export function FeedLoveProvider({
   reactionsRef.current = reactions;
   const pendingRef = useRef<Set<string>>(new Set());
   const generationRef = useRef(0);
+  /**
+   * Per-card write counter. A hydration request that started before a write
+   * (or while one is in flight) must never overwrite the newer state with its
+   * older read, so each request remembers the counters it started at and skips
+   * any card whose counter has moved since.
+   */
+  const writeEpochRef = useRef<Record<string, number>>({});
 
   const idsSig = useMemo(() => uniqueIds(items).join(""), [items]);
   const itemsById = useMemo(() => new Map(items.map((p) => [p.id, p])), [items]);
 
   // Batch-hydrate caller reactions for the visible page. Generation-guarded:
-  // only the latest id set may write. In-flight Like toggles win over a late
-  // hydration response. Failures (offline/unauthenticated) stay silent — the
-  // feed remains usable, toggles still attempt the RPC.
+  // only the latest id set may write. In-flight or just-landed Like toggles win
+  // over a late hydration response (per-card write epochs), and a hydration
+  // never drops the server summary a Like already returned.
+  // Failures (offline/unauthenticated) stay silent — the feed remains usable,
+  // toggles still attempt the RPC.
   useEffect(() => {
     if (idsSig === "") {
       setReactions({});
@@ -85,15 +117,22 @@ export function FeedLoveProvider({
     }
     const ids = uniqueIds(itemsRef.current);
     const gen = ++generationRef.current;
+    const epochsAtStart: Record<string, number> = { ...writeEpochRef.current };
     let cancelled = false;
     void (async () => {
       try {
         const fresh = await fetchFeedReactionState(ids);
         if (cancelled || gen !== generationRef.current) return;
         setReactions((prev) => {
-          const next = { ...fresh };
-          for (const pid of pendingRef.current) {
-            if (prev[pid]) next[pid] = prev[pid];
+          const next: Record<string, FeedReactionEntry> = {};
+          for (const [pid, entry] of Object.entries(fresh)) {
+            const wrote = (writeEpochRef.current[pid] ?? 0) !== (epochsAtStart[pid] ?? 0);
+            if (pendingRef.current.has(pid) || wrote) {
+              if (prev[pid]) next[pid] = prev[pid];
+              continue;
+            }
+            const keptSummary = prev[pid]?.summary;
+            next[pid] = keptSummary ? { ...entry, summary: keptSummary } : entry;
           }
           return next;
         });
@@ -116,6 +155,10 @@ export function FeedLoveProvider({
   const togglePost = useCallback(
     async (postId: string): Promise<boolean> => {
       if (pendingRef.current.has(postId)) return true;
+      // Any hydration already in flight or started later is older than this
+      // write; the epoch makes that ordering explicit where the generation
+      // guard only orders id sets.
+      writeEpochRef.current[postId] = (writeEpochRef.current[postId] ?? 0) + 1;
       const prev = reactionsRef.current[postId] ?? {
         myReaction: null as ReactionKind | null,
         myRating: null,
@@ -125,10 +168,15 @@ export function FeedLoveProvider({
       const prevDislike = currentItem?.dislikeCount ?? 0;
       const deltas = likeBucketDeltas(prev.myReaction);
       const next = nextLikeReaction(prev.myReaction);
-      // Optimistic per-kind counts, seeded from the card's legacy buckets when
-      // no server summary has been seen yet — the Like control then reads the
-      // same number the per-kind truth will confirm.
-      const prevSummary = prev.summary ?? seedSummaryFromItem(prevLike, prevDislike, prev.myReaction);
+      // Optimistic per-kind counts, seeded from the number the card is showing
+      // right now: a server summary (reconciled with the caller's own row, so
+      // it cannot be off by the caller's contribution), else the card's legacy
+      // buckets. The Like control then reads the same number the per-kind truth
+      // will confirm.
+      const displaySummary = prev.summary ?? currentItem?.reactionSummary ?? null;
+      const prevSummary =
+        (displaySummary ? reconcileOwnedRow(displaySummary, prev.myReaction) : null) ??
+        seedSummaryFromItem(prevLike, prevDislike, prev.myReaction);
       const optimisticCounts = applyCountDeltas(prevSummary.counts, likeToggleDeltas(prev.myReaction));
       const optimisticSummary: ReactionSummary = {
         counts: optimisticCounts,
@@ -191,7 +239,11 @@ export function FeedLoveProvider({
 export interface FeedLove {
   /** Caller's own reaction (raw wire kind; LIKE reads as its canonical LOVE). */
   myReaction: ReactionKind | null;
-  /** Per-kind summary once known (batch hydration carries none — see below). */
+  /**
+   * Per-kind summary with the caller's own row applied (reconciled against
+   * `myReaction`), or null until any summary is known — then the card shows the
+   * legacy `likeCount` column.
+   */
   summary: ReactionSummary | null;
   /** The Like count the card shows: positive kinds once known, else the legacy like column. */
   likeCount: number;
@@ -208,13 +260,18 @@ export function useFeedLove(postId: string): FeedLove | null {
   if (!ctx) return null;
   const item = ctx.itemsById.get(postId);
   const entry = ctx.reactions[postId];
-  const myReaction = entry?.myReaction ?? null;
-  const summary = entry?.summary ?? item?.reactionSummary ?? null;
+  // The caller's own row is the freshest thing held here: batch hydration and
+  // the write that just landed both target it, while the feed item's summary
+  // was captured at fetch time. Prefer it, then reconcile the summary against
+  // it so the count and the heart can never disagree.
+  const baseSummary = entry?.summary ?? item?.reactionSummary ?? null;
+  const myReaction = entry?.myReaction ?? baseSummary?.myReaction ?? null;
+  const summary = reconcileOwnedRow(baseSummary, myReaction);
   return {
     myReaction,
     summary,
     likeCount: summary ? likeState(summary).count : (item?.likeCount ?? 0),
-    mine: summary ? likeState(summary).mine : likeMine(myReaction),
+    mine: likeMine(myReaction),
     pending: ctx.pendingMap[postId] ?? false,
     toggle: () => ctx.togglePost(postId),
   };

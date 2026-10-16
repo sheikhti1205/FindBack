@@ -146,6 +146,9 @@ describe("HomeFeedLoveButton (packet 08 §2 — Like-only)", () => {
 
     fireEvent.click(like);
 
+    // The second argument is the caller's CURRENT reaction (what the toggle
+    // reads to decide the move) — not the wire write. The wire write is always
+    // LIKE/null and is pinned in `feedReactions.test.ts`.
     await waitFor(() => expect(likeToggleMock).toHaveBeenCalledWith("p1", "HELPFUL"));
   });
 

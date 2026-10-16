@@ -481,3 +481,165 @@ describe("FeedLoveProvider Like-only reactions (packet 08 §2)", () => {
     expect(patchItem).toHaveBeenLastCalledWith("p1", { likeCount: 4, dislikeCount: 1 });
   });
 });
+
+/**
+ * Regressions for the two I1 MAJORs in REVIEW-CF030-CODE.md. Both were visible
+ * to a consumer as a wrong number or a lying heart, and neither had a test:
+ * - M1: the optimistic Like was seeded from the legacy bucket even when the card
+ *   was displaying a canonical per-kind summary (7 → 5 → 8 instead of 7 → 8).
+ * - M2: the caller's own hydrated row lost to a summary snapshot taken before it
+ *   moved, and a later page's hydration replaced the write's server summary.
+ */
+describe("FeedLoveProvider summary reconciliation (REVIEW-CF030-CODE I1 M1/M2)", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it("M1: seeds the optimistic Like from the displayed canonical summary, never the legacy bucket", async () => {
+    const react = deferred<{ data: unknown; error: null }>();
+    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+    clientMock.rpc.mockImplementationOnce(() => react.promise);
+    render(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 4,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 4, HELPFUL: 3 }, myReaction: null, total: 7 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("likes-p1").textContent).toBe("7"));
+
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+
+    // The card showed 7 canonical reactions; one more Like is 8. Seeding from
+    // the legacy column would drop everyone else's Helpful for a round trip.
+    expect(screen.getByTestId("likes-p1").textContent).toBe("8");
+    expect(screen.getByTestId("mine-p1").textContent).toBe("yes");
+
+    await act(async () => {
+      react.resolve({
+        data: [
+          {
+            post_id: "p1",
+            like_count: 5,
+            dislike_count: 0,
+            my_reaction: "LIKE",
+            reaction_counts: { LOVE: 5, HELPFUL: 3 },
+          },
+        ],
+        error: null,
+      });
+    });
+    await waitFor(() => expect(screen.getByTestId("likes-p1").textContent).toBe("8"));
+  });
+
+  it("M2: the caller's hydrated row wins over a stale summary and moves the count with it", async () => {
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", my_reaction: "LIKE", my_rating: null }],
+      error: null,
+    });
+    render(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 5,
+            dislikeCount: 0,
+            // Snapshot taken before the caller liked: it excludes their row.
+            reactionSummary: { counts: { LOVE: 4 }, myReaction: null, total: 4 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("yes"));
+    expect(screen.getByTestId("reaction-p1").textContent).toBe("LIKE");
+    // Count and heart agree: 4 + the caller's own row.
+    expect(screen.getByTestId("likes-p1").textContent).toBe("5");
+  });
+
+  it("M2: a later page's hydration keeps the summary the Like already confirmed", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", like_count: 5, dislike_count: 0, my_reaction: "LIKE", reaction_counts: { LOVE: 5 } },
+      ],
+      error: null,
+    });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", my_reaction: "LIKE", my_rating: null },
+        { post_id: "p2", my_reaction: null, my_rating: null },
+      ],
+      error: null,
+    });
+    const view = render(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4 })]} patchItem={vi.fn()}>
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+    await waitFor(() => expect(screen.getByTestId("likes-p1").textContent).toBe("5"));
+
+    // Scrolling loads one more card: the batch re-hydration carries no counts,
+    // and the item prop still holds the pre-Like legacy column (patchItem is
+    // not applied here), so only a kept summary can show 5.
+    view.rerender(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4 }), item({ id: "p2" })]} patchItem={vi.fn()}>
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(3));
+
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("yes"));
+    expect(screen.getByTestId("likes-p1").textContent).toBe("5");
+  });
+
+  it("M2: a hydration that started before the Like cannot un-fill the heart", async () => {
+    const hydration = deferred<{ data: unknown; error: null }>();
+    clientMock.rpc.mockImplementationOnce(() => hydration.promise);
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", like_count: 5, dislike_count: 0, my_reaction: "LIKE", reaction_counts: { LOVE: 5 } },
+      ],
+      error: null,
+    });
+    render(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4 })]} patchItem={vi.fn()}>
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("yes"));
+
+    // The older read predates the Like and says the caller has no row.
+    await act(async () => {
+      hydration.resolve({ data: [{ post_id: "p1", my_reaction: null, my_rating: null }], error: null });
+    });
+
+    expect(screen.getByTestId("mine-p1").textContent).toBe("yes");
+    expect(screen.getByTestId("reaction-p1").textContent).toBe("LIKE");
+    expect(screen.getByTestId("likes-p1").textContent).toBe("5");
+  });
+});
