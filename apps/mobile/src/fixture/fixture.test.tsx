@@ -3,7 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { FixtureRoute } from "./FixtureRoute";
-import { cardWidthAt } from "./sections/FeedLayoutFixtures";
+import { cardWidthAt, rootPxFor } from "./sections/FeedLayoutFixtures";
 import { masonryListPaddingRem } from "../test-utils/masonryListClass";
 import { ALL_VARIANTS, LARGE_TEXT_PERCENT, STANDARD_TEXT_PERCENT } from "./FixtureSection";
 import {
@@ -215,40 +215,50 @@ describe("fixture frames are trustworthy evidence", () => {
     }
   });
 
-  it("states each boundary frame's card width from that frame's own width", () => {
-    // The captions used to paste one number next to two different widths: the
-    // 4-column frame claimed 262.7px and measures 262.00px. A caption is
-    // evidence, so it is derived and then checked against the derivation.
+  it("states each frame's card widths from that frame's own width, pinned per scale", () => {
+    // Three separate ways this check used to be decorative, all closed here:
+    //  - the caption was compared against the same `cardWidthAt(...)` literals it
+    //    was built from (self-referential: pointing the derivation at the 40px
+    //    inset left this green while the caption read 260.00px where 262.656px
+    //    renders);
+    //  - the two numbers were asserted by containment only, so swapping them
+    //    ("Extra large text held below" next to the standard-scale value) stayed
+    //    green while the on-screen caption was wrong;
+    //  - the frame filter keyed off the word "boundary", so a measurement added
+    //    to any other frame was never inspected at all.
+    // Now every frame is inspected; a frame that publishes a measurement must have
+    // pinned goldens, and each golden is asserted with the scale it belongs to.
     renderRoute();
     const section = screen.getByTestId("fixture-section-feed-layouts");
-    const frames = [...section.querySelectorAll("[data-frame-width]")].filter((frame) => {
-      const caption = [...frame.querySelectorAll("p")]
-        .map((paragraph) => paragraph.textContent ?? "")
-        .join(" ");
-      return caption.includes("boundary");
-    });
-    expect(frames.length).toBeGreaterThanOrEqual(2);
     const threeColumn = 3 * MASONRY_MIN_CARD_PX + 2 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
     const fourColumn = 4 * MASONRY_MIN_CARD_PX + 3 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
-    // Pinned numbers, not a second call to the derivation the caption came from:
-    // comparing the caption to `cardWidthAt(...)` compares it to itself. Pointing
-    // the derivation at the 40px inset used to leave that green while the caption
-    // read 260.00px where 262.656px renders.
-    const golden: Record<number, [extraLarge: string, standard: string]> = {
+    const golden: Record<number, readonly [extraLarge: string, standard: string]> = {
       [threeColumn]: ["260.00", "262.67"],
       [fourColumn]: ["260.00", "262.00"],
     };
+    const frames = [...section.querySelectorAll("[data-frame-width]")];
+    expect(frames.length).toBeGreaterThanOrEqual(2);
+    let checked = 0;
     for (const frame of frames) {
       const width = Number(frame.getAttribute("data-frame-width"));
-      const expected = golden[width];
-      expect(expected, `no pinned caption widths for the ${width}px frame`).toBeTruthy();
       // The frame's own header is one `p`; the BandFrame caption is another.
       const caption = [...frame.querySelectorAll("p")]
         .map((paragraph) => paragraph.textContent ?? "")
         .join(" ");
-      expect(caption).toContain(`${expected![0]}px`);
-      expect(caption).toContain(`${expected![1]}px`);
+      const published = caption.match(/\d+\.\d{2}px/g) ?? [];
+      if (published.length === 0) continue;
+      const expected = golden[width];
+      expect(
+        expected,
+        `the ${width}px frame publishes card widths but has no pinned goldens`,
+      ).toBeTruthy();
+      expect(caption).toContain(`${expected![0]}px with Extra large text held below`);
+      expect(caption).toContain(`${expected![1]}px at the standard scale`);
+      // …and nothing else may be published from that frame as a measurement.
+      expect([...published].sort()).toEqual([`${expected![0]}px`, `${expected![1]}px`].sort());
+      checked += 1;
     }
+    expect(checked, "no frame published a card width to check").toBeGreaterThanOrEqual(2);
   });
 
   it("derives the caption widths from the gutter `PostList` really renders", () => {
@@ -261,7 +271,10 @@ describe("fixture frames are trustworthy evidence", () => {
     const fourColumn = 4 * MASONRY_MIN_CARD_PX + 3 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
     for (const width of [threeColumn, fourColumn]) {
       const columns = masonryColumns(width);
-      for (const rootFontSizePx of [20, 16]) {
+      // The scales come from the app's own options, not typed-in roots: lowering
+      // the largest scale must move the captions AND this check together.
+      for (const percent of [LARGE_TEXT_PERCENT, STANDARD_TEXT_PERCENT]) {
+        const rootFontSizePx = rootPxFor(percent);
         const container = width - 2 * listPaddingRem * rootFontSizePx;
         const derived = (container - (columns - 1) * MASONRY_GUTTER_PX) / columns;
         expect(cardWidthAt(width, rootFontSizePx)).toBeCloseTo(derived, 6);
