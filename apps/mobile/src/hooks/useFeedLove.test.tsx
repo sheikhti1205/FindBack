@@ -752,6 +752,70 @@ describe("FeedLoveProvider summary reconciliation (REVIEW-CF030-CODE I1 M1/M2)",
     });
   });
 
+  it("M2: a snapshot that moved after the read takes over from the read", async () => {
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", my_reaction: null, my_rating: null }],
+      error: null,
+    });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", like_count: 5, dislike_count: 0, my_reaction: null, reaction_counts: { LOVE: 4 } },
+      ],
+      error: null,
+    });
+    const view = render(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 4,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 4 }, myReaction: null, total: 4 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("no"));
+
+    // The same card is refreshed with a snapshot taken after the read: another
+    // client gave this account a row. Same id, so no re-hydration fires — the
+    // read is simply now older than the snapshot, which must win. The heart
+    // follows it rather than staying empty against the fetched item...
+    view.rerender(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 5,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 5 }, myReaction: "LIKE", total: 5 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("yes"));
+    expect(screen.getByTestId("reaction-p1").textContent).toBe("LIKE");
+    expect(screen.getByTestId("likes-p1").textContent).toBe("5");
+    expect(clientMock.rpc).toHaveBeenCalledTimes(1);
+
+    // ...and the tap reads that same row, clearing it instead of writing a
+    // second Like the count would then have to absorb.
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+    expect(clientMock.rpc).toHaveBeenLastCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: null,
+    });
+  });
+
   it("M2: without hydration the heart and the tap still read the same row", async () => {
     clientMock.rpc.mockRejectedValueOnce(new Error("offline"));
     clientMock.rpc.mockResolvedValueOnce({

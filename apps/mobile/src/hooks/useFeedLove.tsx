@@ -42,8 +42,23 @@ import {
 
 export type FeedPatchItem = (id: string, patch: Partial<PostItem>) => void;
 
+/**
+ * An entry plus the card snapshot's own row at the moment the entry was written.
+ *
+ * The snapshot (`item.reactionSummary`) is frozen at feed-fetch time and the
+ * entry is newer, so the entry normally wins — including when it says `null`.
+ * That authority is not permanent: a snapshot that moves *after* the entry was
+ * written (a refresh that reports a change made on another client) is newer than
+ * the entry, and shadows it from then on. `seenReaction` is what makes that
+ * comparison possible; it is re-stamped by every write that puts newer truth in
+ * the entry (hydration, commit), never by a write that only made it optimistic.
+ */
+interface FeedLoveEntry extends FeedReactionEntry {
+  seenReaction: ReactionKind | null;
+}
+
 interface FeedLoveContextValue {
-  reactions: Record<string, FeedReactionEntry>;
+  reactions: Record<string, FeedLoveEntry>;
   pendingMap: Record<string, boolean>;
   itemsById: Map<string, PostItem>;
   togglePost: (postId: string) => Promise<boolean>;
@@ -76,6 +91,33 @@ function reconcileOwnedRow(
   return reactionSummaryFromCounts(applyCountDeltas(base.counts, deltas), mine);
 }
 
+/**
+ * The caller's own row for a card, and the summary it must be reconciled
+ * against.
+ *
+ * Two sources describe the caller's own row: the card snapshot (frozen at
+ * feed-fetch time) and the entry (batch hydration, or the write that landed).
+ * The entry is the newer of the two and is authoritative even when it says
+ * `null` — a frozen snapshot must never refill a heart the tap would then
+ * contradict. That authority ends the moment the snapshot moves: a snapshot
+ * whose own row differs from the one the entry was written against is newer than
+ * the read the entry came from, so it wins. A card with no summary states
+ * nothing about the row and leaves the entry in charge.
+ */
+function resolveOwnRow(
+  entry: FeedLoveEntry | undefined,
+  snapshot: ReactionSummary | null,
+): { myReaction: ReactionKind | null; base: ReactionSummary | null } {
+  const snapshotOwn = snapshot?.myReaction ?? null;
+  if (entry !== undefined && (snapshot === null || entry.seenReaction === snapshotOwn)) {
+    return { myReaction: entry.myReaction, base: entry.summary ?? snapshot };
+  }
+  return {
+    myReaction: snapshot !== null ? snapshotOwn : (entry?.myReaction ?? null),
+    base: snapshot ?? entry?.summary ?? null,
+  };
+}
+
 export function FeedLoveProvider({
   items,
   patchItem,
@@ -85,7 +127,7 @@ export function FeedLoveProvider({
   patchItem: FeedPatchItem;
   children: ReactNode;
 }) {
-  const [reactions, setReactions] = useState<Record<string, FeedReactionEntry>>({});
+  const [reactions, setReactions] = useState<Record<string, FeedLoveEntry>>({});
   const [pendingMap, setPendingMap] = useState<Record<string, boolean>>({});
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -119,13 +161,18 @@ export function FeedLoveProvider({
     const ids = uniqueIds(itemsRef.current);
     const gen = ++generationRef.current;
     const epochsAtStart: Record<string, number> = { ...committedEpochRef.current };
+    // The snapshot each id's read is compared against, captured when the read
+    // starts: a snapshot that moves after this point is newer than the answer.
+    const snapshotRows = new Map(
+      itemsRef.current.map((p) => [p.id, p.reactionSummary?.myReaction ?? null]),
+    );
     let cancelled = false;
     void (async () => {
       try {
         const fresh = await fetchFeedReactionState(ids);
         if (cancelled || gen !== generationRef.current) return;
         setReactions((prev) => {
-          const next: Record<string, FeedReactionEntry> = {};
+          const next: Record<string, FeedLoveEntry> = {};
           for (const [pid, entry] of Object.entries(fresh)) {
             const committedSince =
               (committedEpochRef.current[pid] ?? 0) !== (epochsAtStart[pid] ?? 0);
@@ -134,7 +181,11 @@ export function FeedLoveProvider({
               continue;
             }
             const keptSummary = prev[pid]?.summary;
-            next[pid] = keptSummary ? { ...entry, summary: keptSummary } : entry;
+            next[pid] = {
+              ...entry,
+              ...(keptSummary ? { summary: keptSummary } : {}),
+              seenReaction: snapshotRows.get(pid) ?? null,
+            };
           }
           return next;
         });
@@ -158,12 +209,21 @@ export function FeedLoveProvider({
     async (postId: string): Promise<boolean> => {
       if (pendingRef.current.has(postId)) return true;
       const currentItem = itemsRef.current.find((p) => p.id === postId);
-      const prev = reactionsRef.current[postId] ?? {
-        // Before hydration lands the card's snapshot is the only statement of
-        // the caller's own row, so the tap reads the same row the heart shows —
-        // the two can never point in opposite directions.
-        myReaction: currentItem?.reactionSummary?.myReaction ?? null,
-        myRating: null,
+      const snapshot = currentItem?.reactionSummary ?? null;
+      const entry = reactionsRef.current[postId];
+      // The tap must read the same row the heart shows, so it resolves through
+      // the same rule as the render — an entry the snapshot has overtaken is not
+      // the state on screen. With no entry (hydration failed or has not landed)
+      // the snapshot is the only statement of the caller's own row, so the two
+      // can never point in opposite directions.
+      const resolved = resolveOwnRow(entry, snapshot);
+      const prev: FeedLoveEntry = {
+        myReaction: resolved.myReaction,
+        myRating: entry?.myRating ?? null,
+        // Roll back to the summary the card is displaying, never to one the
+        // snapshot has already replaced.
+        ...(resolved.base ? { summary: resolved.base } : {}),
+        seenReaction: snapshot?.myReaction ?? entry?.seenReaction ?? null,
       };
       const prevLike = currentItem?.likeCount ?? 0;
       const prevDislike = currentItem?.dislikeCount ?? 0;
@@ -188,7 +248,15 @@ export function FeedLoveProvider({
       setPendingMap((p) => ({ ...p, [postId]: true }));
       setReactions((r) => ({
         ...r,
-        [postId]: { myReaction: next, myRating: prev.myRating, summary: optimisticSummary },
+        [postId]: {
+          myReaction: next,
+          myRating: prev.myRating,
+          summary: optimisticSummary,
+          // The write is newer than every snapshot on screen, but the snapshot
+          // it was written against has not moved — the stamp only changes when
+          // newer truth (a read, a commit, a fresh snapshot) arrives.
+          seenReaction: prev.seenReaction,
+        },
       }));
       patchItem(postId, {
         likeCount: Math.max(0, prevLike + deltas.like),
@@ -199,6 +267,10 @@ export function FeedLoveProvider({
         // Committed: this row is now the newest truth for the card, so any
         // hydration that started before this point must not overwrite it.
         committedEpochRef.current[postId] = (committedEpochRef.current[postId] ?? 0) + 1;
+        // Stamped against the snapshot the card holds now: a refresh that moves
+        // the caller's own row afterwards is newer than this write and wins.
+        const commitSeen =
+          itemsRef.current.find((p) => p.id === postId)?.reactionSummary?.myReaction ?? null;
         setReactions((r) => ({
           ...r,
           [postId]: {
@@ -207,6 +279,7 @@ export function FeedLoveProvider({
             // The RPC returns server truth per kind; keep it so the card reads
             // exact counts without a second fetch.
             ...(res.reactionCounts ? { summary: res.reactionCounts } : {}),
+            seenReaction: commitSeen,
           },
         }));
         patchItem(postId, {
@@ -264,15 +337,15 @@ export function useFeedLove(postId: string): FeedLove | null {
   if (!ctx) return null;
   const item = ctx.itemsById.get(postId);
   const entry = ctx.reactions[postId];
-  // Hydration writes an entry for every id it was asked about, so an entry that
-  // exists is authoritative for the caller's own row — including when that row
-  // is `null` ("no reaction"). It must never fall through to the summary
-  // snapshot, which is frozen at feed-fetch time and still describes the row as
-  // it was then; doing so shows a filled heart the tap would then contradict.
-  const hydrated = entry !== undefined;
-  const baseSummary = entry?.summary ?? item?.reactionSummary ?? null;
-  const myReaction = hydrated ? entry.myReaction : (baseSummary?.myReaction ?? null);
-  const summary = reconcileOwnedRow(baseSummary, myReaction);
+  // Hydration writes an entry for every id it was asked about, so a present
+  // entry is authoritative for the caller's own row — including when that row is
+  // `null` ("no reaction"). It must never fall through to the summary snapshot,
+  // which is frozen at feed-fetch time and still describes the row as it was
+  // then; doing so shows a filled heart the tap would then contradict. The one
+  // thing that outranks it is a snapshot that moved *after* the entry was
+  // written (see `resolveOwnRow`): that snapshot is newer than the read.
+  const { myReaction, base } = resolveOwnRow(entry, item?.reactionSummary ?? null);
+  const summary = reconcileOwnedRow(base, myReaction);
   return {
     myReaction,
     summary,
