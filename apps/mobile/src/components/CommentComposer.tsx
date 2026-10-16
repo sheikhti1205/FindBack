@@ -67,8 +67,31 @@ import { friendlyError } from "../utils/friendlyErrors";
  *   absent. Only live-key verification stays deferred (FBX-015).
  */
 
-export interface CommentComposerProps {
-  postId: string;
+/**
+ * Packet `08` §21 failure copy. The consumer sentence is fixed — the raw
+ * mapper message is never shown (it can carry provider/transport text). An
+ * offline device or an expired session is the one case where a plain "try
+ * again" would be a lie, so the sentence gains that single instruction.
+ */
+function commentSendFailureCopy(err: unknown): string {
+  switch (friendlyError(err).code) {
+    case "OFFLINE":
+      return "Couldn't post your comment. Check your connection and try again.";
+    case "AUTH":
+      return "Couldn't post your comment. Your session expired. Please sign in again.";
+    default:
+      return "Couldn't post your comment. Try again.";
+  }
+}
+
+/** Packet `08` §21 upload copy; the strip appends "Retry or remove it to send." */
+function commentUploadFailureCopy(err: unknown): string {
+  return friendlyError(err).code === "OFFLINE"
+    ? "Couldn't upload this photo. Check your connection and try again."
+    : "Couldn't upload this photo.";
+}
+
+export interface CommentComposerProps {  postId: string;
   replyToUsername?: string | null;
   currentUser?: { id?: string | null; username?: string | null; avatarUrl?: string | null } | null;
   participants: MentionCandidate[];
@@ -296,7 +319,7 @@ export function CommentComposer({
     } catch (err) {
       patchAttachment(entry.id, {
         status: "failed",
-        error: friendlyError(err).message,
+        error: commentUploadFailureCopy(err),
       });
     }
   }
@@ -489,7 +512,7 @@ export function CommentComposer({
       setAttachNotice(null);
       onSent?.();
     } catch (err) {
-      onError(friendlyError(err).message);
+      onError(commentSendFailureCopy(err));
     } finally {
       setSending(false);
     }

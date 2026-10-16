@@ -120,8 +120,25 @@ describe("PostDetail inline comment threads", () => {
 
   afterEach(cleanup);
 
-  it("shows the first replies with a View N more replies count by default", async () => {
-    postsMock.fetchComments.mockResolvedValue([
+  it("renders the packet §4 row target: author + time, body, Reply and Like on touch targets", async () => {
+    authState.user = { id: "u1", username: "u1" };
+    postsMock.fetchComments.mockResolvedValue([makeComment("c1", "u1", "Could this be yours?")]);
+    renderDetail();
+    await screen.findByText("Could this be yours?");
+    const row = document.getElementById("detail-comment-c1") as HTMLElement;
+    expect(row).toBeTruthy();
+    // Header line: author handle (+ a relative time beside it).
+    expect(within(row).getByText("@u1")).toBeTruthy();
+    // Actions: Reply and the Like control with its count — no picker, no tray.
+    const reply = within(row).getByRole("button", { name: /reply to u1/i });
+    const like = within(row).getByRole("button", { name: /like this comment/i });
+    expect(like.textContent).toMatch(/\d/);
+    for (const control of [reply, like]) {
+      expect(control.className).toMatch(/min-h-\[4[48]px\]/);
+    }
+  });
+
+  it("shows the first replies with a View N more replies count by default", async () => {    postsMock.fetchComments.mockResolvedValue([
       makeComment("r0", "rootU", "root body"),
       makeComment("r1", "u1", "reply one", "r0", 1),
       makeComment("r2", "u2a", "reply two", "r0", 1),

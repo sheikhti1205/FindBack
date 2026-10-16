@@ -132,13 +132,34 @@ describe("CommentComposer social layout", () => {
     expect(screen.getByTestId("comment-input")).toHaveProperty("value", "");
   });
 
-  it("surfaces parent failures through onError (never silent)", async () => {
+  it("surfaces parent failures through onError with the packet sentence (never silent, never raw)", async () => {
     const onSubmit = vi.fn().mockRejectedValue(new Error("offline down"));
     const onError = vi.fn();
     render(<CommentComposer {...baseProps({ onSubmit, onError })} />);
     fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "hi" } });
     fireEvent.click(screen.getByTestId("comment-send"));
-    await waitFor(() => expect(onError).toHaveBeenCalledWith("offline down"));
+    // Packet `08` §21: the fixed sentence, not the mapper's raw message.
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith("Couldn't post your comment. Try again."),
+    );
+  });
+
+  it("tells an offline user to check the connection instead of a bare retry", async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error("offline down"));
+    const onError = vi.fn();
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    try {
+      render(<CommentComposer {...baseProps({ onSubmit, onError })} />);
+      fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "hi" } });
+      fireEvent.click(screen.getByTestId("comment-send"));
+      await waitFor(() =>
+        expect(onError).toHaveBeenCalledWith(
+          "Couldn't post your comment. Check your connection and try again.",
+        ),
+      );
+    } finally {
+      Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
+    }
   });
 });
 
@@ -390,7 +411,11 @@ describe("CommentComposer attachments", () => {
     render(<CommentComposer {...baseProps()} />);
     const picker = screen.getByTestId("comment-file-input") as HTMLInputElement;
     fireEvent.change(picker, { target: { files: [file("p.jpg", "image/jpeg")] } });
-    expect(await screen.findByTestId("comment-attach-error")).toBeTruthy();
+    // Packet `08` §21: the fixed upload sentence, never the raw transport text.
+    const alert = await screen.findByTestId("comment-attach-error");
+    expect(alert.textContent).toContain("Couldn't upload this photo.");
+    expect(alert.textContent).not.toContain("offline blip");
+    expect(alert.textContent).toContain("Retry or remove it to send.");
     expect(screen.getByTestId("comment-send")).toHaveProperty("disabled", true);
     const retry = screen.getByRole("button", { name: /retry attaching/i });
     attachMock.upload.mockResolvedValue({ remoteUrl: "https://cdn/p.jpg", objectKey: "u-9/p.jpg" });
