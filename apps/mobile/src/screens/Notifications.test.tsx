@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,6 +51,15 @@ function renderNotifications() {
       </Routes>
     </MemoryRouter>,
   );
+}
+
+/**
+ * Packet `08` §17: the row's actions live behind one overflow trigger, so a
+ * test reaches them the way a user without a swipe does.
+ */
+async function openRowActions(actor = "bob") {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(`more actions for ${actor}`, "i") }));
+  return screen.findByRole("menu");
 }
 
 beforeEach(() => {
@@ -121,7 +130,8 @@ describe("Notifications inbox", () => {
     fetchMock.mockResolvedValue([item()]);
     renderNotifications();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    await openRowActions();
+    fireEvent.click(screen.getByRole("menuitem", { name: /^delete$/i }));
     await waitFor(() => expect(deleteMock).toHaveBeenCalledWith(["n1"]));
     expect(await screen.findByText(/notification deleted/i)).toBeTruthy();
 
@@ -135,7 +145,8 @@ describe("Notifications inbox", () => {
     fetchMock.mockResolvedValue([item({ read: true })]);
     renderNotifications();
 
-    fireEvent.click(await screen.findByRole("button", { name: /mark unread/i }));
+    await openRowActions();
+    fireEvent.click(screen.getByRole("menuitem", { name: /mark unread/i }));
     await waitFor(() => expect(markUnreadMock).toHaveBeenCalledWith(["n1"]));
     expect(await screen.findByLabelText(/unread/i)).toBeTruthy();
   });
@@ -149,8 +160,35 @@ describe("Notifications inbox", () => {
     fireEvent.click(screen.getByRole("button", { name: "Deleted" }));
     await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith({ deleted: true }));
 
-    fireEvent.click(await screen.findByRole("button", { name: /restore/i }));
+    await openRowActions();
+    fireEvent.click(screen.getByRole("menuitem", { name: /^restore$/i }));
     await waitFor(() => expect(restoreMock).toHaveBeenCalledWith(["n1"]));
+  });
+
+  it("keeps the row free of a permanent action bar and drives the menu by keyboard", async () => {
+    fetchMock.mockResolvedValue([item()]);
+    renderNotifications();
+    await screen.findByText("bob");
+
+    // §17: no permanent bottom bar — nothing to delete/mark until the menu opens.
+    expect(screen.queryByRole("menuitem", { name: /^delete$/i })).toBeNull();
+    const trigger = screen.getByRole("button", { name: /more actions for bob/i });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.className).toMatch(/min-h-\[44px\]/);
+    expect(trigger.className).toMatch(/min-w-\[44px\]/);
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const menu = await screen.findByRole("menu");
+    const mark = within(menu).getByRole("menuitem", { name: /mark read/i });
+    const del = within(menu).getByRole("menuitem", { name: /^delete$/i });
+    // Focus enters the menu, arrows rove, Escape leaves and hands focus back.
+    expect(document.activeElement).toBe(mark);
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(del);
+    fireEvent.keyDown(menu, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("keeps a truthful empty state when the inbox is empty", async () => {

@@ -46,6 +46,12 @@ function renderNotifications() {
   );
 }
 
+/** Packet `08` §17: every action the swipe offers is reachable by tap too. */
+async function openRowActions() {
+  fireEvent.click(await screen.findByRole("button", { name: /more actions for bob/i }));
+  return screen.findByRole("menu");
+}
+
 beforeEach(() => {
   fetchMock.mockReset();
   deleteMock.mockReset();
@@ -98,7 +104,8 @@ describe("inbox change signal", () => {
     fetchMock.mockResolvedValue([item()]);
     renderNotifications();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    await openRowActions();
+    fireEvent.click(screen.getByRole("menuitem", { name: /^delete$/i }));
     await waitFor(() => expect(deleteMock).toHaveBeenCalledWith(["n1"]));
     await waitFor(() => expect(signalMock).toHaveBeenCalled());
   });
@@ -110,7 +117,8 @@ describe("undo window", () => {
     fetchMock.mockResolvedValue([item()]);
     renderNotifications();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    await openRowActions();
+    fireEvent.click(screen.getByRole("menuitem", { name: /^delete$/i }));
     expect(await screen.findByText(/notification deleted/i)).toBeTruthy();
 
     act(() => {

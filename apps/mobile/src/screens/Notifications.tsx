@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { motion, type PanInfo } from "framer-motion";
-import { Bell, RotateCcw, Settings, Trash2 } from "lucide-react";
+import { Bell, Check, Mail, MoreVertical, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
 import { UserAvatar } from "../components/UserAvatar";
+import { announce } from "../components/LiveRegion";
 import { ErrorView, InboxSkeleton, StateSwap } from "../components/uiPrimitives";
 import {
   deleteNotifications,
@@ -311,7 +312,7 @@ export function Notifications() {
                     else void handleMarkRead(item.id);
                   }
                 }}
-                className={`flex flex-col rounded-m3-md border ${
+                className={`flex items-start gap-1 rounded-m3-md border py-1 pl-1 pr-1 ${
                   !item.read && view === "inbox"
                     ? "border-primary bg-surface-container"
                     : "border-outline-variant"
@@ -324,55 +325,26 @@ export function Notifications() {
                       if (!item.read) void handleMarkRead(item.id);
                     }}
                     aria-label={`${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}: ${item.postTitle ?? "your report"}`}
-                    className="flex flex-col gap-1 p-3"
+                    className="flex min-w-0 flex-1 flex-col gap-1 rounded-m3-sm p-2.5"
                   >
                     <NotificationBody item={item} />
                   </Link>
                 ) : (
-                  <div className="flex flex-col gap-1 p-3">
+                  <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
                     <NotificationBody item={item} />
                   </div>
                 )}
-                <div className="flex items-center gap-1 border-t border-outline-variant/60 px-2 py-1">
-                  {view === "deleted" ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleRestore([item.id])}
-                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-sm font-medium text-on-surface"
-                    >
-                      <RotateCcw size={15} aria-hidden />
-                      Restore
-                    </button>
-                  ) : (
-                    <>
-                      {item.read ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleMarkUnread(item.id)}
-                          className="inline-flex min-h-[44px] items-center rounded-full px-3 text-sm font-medium text-on-surface-variant"
-                        >
-                          Mark unread
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => void handleMarkRead(item.id)}
-                          className="inline-flex min-h-[44px] items-center rounded-full px-3 text-sm font-medium text-on-surface-variant"
-                        >
-                          Mark read
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void handleDelete([item.id])}
-                        className="ml-auto inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-sm font-medium text-error"
-                      >
-                        <Trash2 size={15} aria-hidden />
-                        Delete
-                      </button>
-                    </>
-                  )}
-                </div>
+                {/* Packet `08` §17: swipe is a shortcut, never the only route —
+                    the row keeps one compact overflow trigger instead of a
+                    permanent action bar. */}
+                <NotificationOverflow
+                  item={item}
+                  view={view}
+                  onMarkRead={handleMarkRead}
+                  onMarkUnread={handleMarkUnread}
+                  onDelete={handleDelete}
+                  onRestore={handleRestore}
+                />
               </motion.div>
             </li>
           ))}
@@ -395,6 +367,153 @@ export function Notifications() {
           >
             Undo
           </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const NOTIFICATION_MENU_ITEM_CLASS =
+  "flex w-full min-h-[44px] items-center gap-2 rounded-m3-sm px-3 text-left text-sm font-medium text-on-surface";
+
+/**
+ * Packet `08` §17 overflow. The row's actions used to sit in a permanent
+ * bottom bar; that bar is gone (it was the heaviest thing on the row and it
+ * dominated the list), but every action it held stays reachable by tap and by
+ * keyboard — swipe alone is never the only route to an action.
+ */
+function NotificationOverflow({
+  item,
+  view,
+  onMarkRead,
+  onMarkUnread,
+  onDelete,
+  onRestore,
+}: {
+  item: NotificationItem;
+  view: "inbox" | "deleted";
+  onMarkRead: (id: string) => Promise<void>;
+  onMarkUnread: (id: string) => Promise<void>;
+  onDelete: (ids: readonly string[]) => Promise<void>;
+  onRestore: (ids: readonly string[]) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const summary = `${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}`;
+
+  // Focus moves into the menu on open, Escape/outside tap closes it, and focus
+  // returns to the trigger so a keyboard user never loses their place.
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  function close() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function run(action: () => void) {
+    setOpen(false);
+    triggerRef.current?.focus();
+    action();
+  }
+
+  function onMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key === "Tab") {
+      // Tab leaves the menu; do not trap focus in a non-modal popover.
+      setOpen(false);
+      return;
+    }
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
+    );
+    if (items.length === 0) return;
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      items[event.key === "Home" ? 0 : items.length - 1]?.focus();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    items[(current + step + items.length) % items.length]?.focus();
+  }
+
+  return (
+    <div className="relative shrink-0" onPointerDown={(event) => event.stopPropagation()}>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={open ? `Close actions for ${summary}` : `More actions for ${summary}`}
+        onClick={() => {
+          if (open) close();
+          else setOpen(true);
+        }}
+        className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant"
+      >
+        <MoreVertical size={18} aria-hidden />
+      </button>
+      {open ? (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={`Actions for ${summary}`}
+          onKeyDown={onMenuKeyDown}
+          className="absolute right-0 top-full z-20 mt-1 w-44 rounded-m3-sm border border-outline-variant bg-surface p-1 shadow-xl"
+        >
+          {view === "deleted" ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => run(() => void onRestore([item.id]))}
+              className={NOTIFICATION_MENU_ITEM_CLASS}
+            >
+              <RotateCcw size={15} aria-hidden /> Restore
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() =>
+                  run(() => {
+                    announce(item.read ? "Marked as unread" : "Marked as read");
+                    void (item.read ? onMarkUnread(item.id) : onMarkRead(item.id));
+                  })
+                }
+                className={NOTIFICATION_MENU_ITEM_CLASS}
+              >
+                {item.read ? <Mail size={15} aria-hidden /> : <Check size={15} aria-hidden />}
+                {item.read ? "Mark unread" : "Mark read"}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => run(() => void onDelete([item.id]))}
+                className={`${NOTIFICATION_MENU_ITEM_CLASS} text-error`}
+              >
+                <Trash2 size={15} aria-hidden /> Delete
+              </button>
+            </>
+          )}
         </div>
       ) : null}
     </div>
