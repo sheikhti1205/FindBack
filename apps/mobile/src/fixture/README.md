@@ -22,6 +22,7 @@ Sections (anchor links at the top of the page jump to each):
 | Section id       | Production components under test                              |
 | ---------------- | ------------------------------------------------------------- |
 | `home`           | `PostList` + `PostCard(Content)` (home-feed density)          |
+| `feed-layouts`   | `PostList` masonry at 1/2/3/4 columns + compact `MorphLoader` |
 | `detail`         | `PostCardContent`, `MarkdownView`, `UserAvatar`, `CommentComposer` |
 | `create`         | `Segmented`, `TextField`, `CategoryField`, `MapEmbed`, `Button` |
 | `comments`       | `CommentComposer` + avatar thread rows                        |
@@ -49,6 +50,22 @@ The `home` normal frame renders all of these (stable post ids):
 - High reaction counts (`fx-home-high-counts`, 1284 total, reacted LOVE)
 - Long username/display name (`fx-home-long-username`), no avatar and no
   name (`fx-home-no-avatar`)
+
+## Feed-layout matrix (CF-010)
+
+The `feed-layouts` section renders the production masonry `PostList` at each
+width band — 1 column (compact), 2 (medium), 3 and 4 (expanded) — because the
+band is the caller's decision (`masonryColumns(viewportWidth)`), not a grid
+mode. Fixed ratios from `masonryRatioPosts` in `../posts`:
+
+- 3:4 (`fx-masonry-portrait`), 4:3 (`fx-masonry-landscape`), 1:1
+  (`fx-masonry-square`), 9:16 (`fx-masonry-tall`), 16:9 (`fx-masonry-wide`)
+- no stored dimensions (`fx-masonry-unknown`) — the documented fallback ratio
+- no photo at all (`fx-masonry-text`) — a text-first card, no empty media box
+- first of three photos (`fx-masonry-multi`) — the pager in a masonry cell
+
+The second `loading` frame is the §10 pagination slot: the compact
+`MorphLoader` capsule, never a spinner.
 
 ## Tests
 

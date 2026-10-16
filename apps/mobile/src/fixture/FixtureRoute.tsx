@@ -1,11 +1,13 @@
 import { CreateFixtures } from "./sections/CreateFixtures";
 import { DetailFixtures } from "./sections/DetailFixtures";
+import { FeedLayoutFixtures } from "./sections/FeedLayoutFixtures";
 import { HomeFixtures } from "./sections/HomeFixtures";
 import { SocialFixtures } from "./sections/SocialFixtures";
 import { SystemFixtures } from "./sections/SystemFixtures";
 
 const SECTION_LINKS = [
   { id: "home", label: "Home feed" },
+  { id: "feed-layouts", label: "Feed layouts" },
   { id: "detail", label: "Post detail" },
   { id: "create", label: "Create report" },
   { id: "comments", label: "Comments & composer" },
@@ -61,6 +63,9 @@ export function FixtureRoute() {
       </header>
       <div>
         <HomeFixtures />
+      </div>
+      <div>
+        <FeedLayoutFixtures />
       </div>
       <div>
         <DetailFixtures />

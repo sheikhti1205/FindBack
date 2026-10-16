@@ -7,6 +7,7 @@ import { ALL_VARIANTS } from "./FixtureSection";
 
 const SECTIONS = [
   "home",
+  "feed-layouts",
   "detail",
   "create",
   "comments",
@@ -125,5 +126,27 @@ describe("visual fixture route (static preflight)", () => {
     const frame = screen.getByTestId("fixture-map-unavailable-normal");
     // The keyless placeholder renders; no tile grid implies no coordinates.
     expect(frame.textContent?.trim().length).toBeGreaterThan(0);
+  });
+
+  it("feed-layouts covers every masonry width band plus the compact capsule", () => {
+    renderRoute();
+    const section = screen.getByTestId("fixture-section-feed-layouts");
+    // Four bands: the compact single column and the medium/expanded grids.
+    const grids = within(section).getAllByTestId("feed-masonry");
+    expect(grids.length).toBeGreaterThanOrEqual(4);
+    // Each band renders cards with a real reserved ratio (never a code-built square).
+    const media = section.querySelectorAll("[data-testid='masonry-media']");
+    expect(media.length).toBeGreaterThan(0);
+    for (const node of media) {
+      expect(node.getAttribute("style")).toContain("aspect-ratio");
+    }
+    // §10 identity: the pagination slot is the Morph capsule, not a spinner.
+    const loadingFrame = screen.getAllByTestId("fixture-feed-layouts-loading")[1]!;
+    const bar = within(loadingFrame).getByTestId("morph-bar");
+    const loader = bar.closest('[role="status"]');
+    expect(loader).toBeTruthy();
+    expect(loader!.textContent).toBe("Loading more…");
+    // No rotating glyph anywhere in the wait indicator itself.
+    expect(loader!.querySelector("svg")).toBeNull();
   });
 });

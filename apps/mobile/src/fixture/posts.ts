@@ -79,6 +79,58 @@ function withPhotos(id: string, count: number, overrides: Partial<PostItem> = {}
   };
 }
 
+/**
+ * One attachment with a known intrinsic size — the CF-060 M1 pair
+ * (`public.attachments.width/height`, migration 20261015154642). The masonry
+ * grid derives its true ratio from exactly this pair, so the fixture has to
+ * carry real numbers rather than a shape hint.
+ */
+function sizedAttachment(id: string, index: number, width: number, height: number): Attachment {
+  return { ...attachment(id, index), width, height };
+}
+
+/**
+ * CF-010 masonry matrix: the ratios the true-ratio grid must honor, plus the
+ * two states it must degrade gracefully for — an attachment with no stored
+ * dimensions (published before the migration) and a report with no photo at
+ * all. Fixed literals only, like the rest of this module.
+ */
+export const masonryRatioPosts: PostItem[] = [
+  makePost("fx-masonry-portrait", {
+    title: "Portrait photo (3:4)",
+    attachments: [sizedAttachment("fx-masonry-portrait", 1, 900, 1200)],
+  }),
+  makePost("fx-masonry-landscape", {
+    title: "Landscape photo (4:3)",
+    attachments: [sizedAttachment("fx-masonry-landscape", 1, 1200, 900)],
+  }),
+  makePost("fx-masonry-square", {
+    title: "Square photo (1:1)",
+    attachments: [sizedAttachment("fx-masonry-square", 1, 1000, 1000)],
+  }),
+  makePost("fx-masonry-tall", {
+    title: "Tall phone photo (9:16)",
+    attachments: [sizedAttachment("fx-masonry-tall", 1, 1080, 1920)],
+  }),
+  makePost("fx-masonry-wide", {
+    title: "Wide photo (16:9)",
+    attachments: [sizedAttachment("fx-masonry-wide", 1, 1920, 1080)],
+  }),
+  makePost("fx-masonry-unknown", {
+    title: "Photo with no stored size",
+    description: "Published before dimensions were recorded, so the fallback ratio shows.",
+    attachments: [attachment("fx-masonry-unknown", 1)],
+  }),
+  makePost("fx-masonry-text", {
+    title: "Report with no photo",
+    description: "Text-first card: it must not reserve an empty media box.",
+  }),
+  makePost("fx-masonry-multi", {
+    title: "First of three photos",
+    attachments: [sizedAttachment("fx-masonry-multi", 1, 900, 1200), attachment("fx-masonry-multi", 2)],
+  }),
+];
+
 export const LONG_TITLE =
   "Very long report title that keeps going well past two lines on a narrow phone so truncation, wrapping, and card growth stay honest — black leather weekender bag with brass zips and a torn side pocket";
 
