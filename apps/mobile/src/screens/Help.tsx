@@ -71,14 +71,6 @@ import {
 } from "../services/ai/ops/intentRouter";
 import { RECOVERY_COPY, type RecoveryAction } from "../services/ai/errors";
 import type { AiErrorClass } from "../services/ai/types";
-import {
-  buildAssistantReportHandoff,
-  type AssistantReportHandoff,
-} from "../services/assistant/assistantHandoff";
-import {
-  assistantReportNavigationTarget,
-  stageAssistantReportHandoff,
-} from "../services/assistant/assistantReportNavigation";
 import { mapAssistantSearchFilters } from "../services/assistant/searchFilterMapping";
 
 /**
@@ -1407,18 +1399,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     }
   }
 
-  function reviewGuidedReport() {
-    if (guided === null) return;
-    const handoff: AssistantReportHandoff | null = buildAssistantReportHandoff(guided);
-    if (handoff === null) return;
-    const target = assistantReportNavigationTarget(handoff);
-    if (target === null) return;
-    stageAssistantReportHandoff(handoff);
-    announce("Report ready for review.");
-    endGuided();
-    navigate(target);
-  }
-
   function handleSend() {
     if (guided !== null) {
       const text = input;
@@ -1591,7 +1571,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     navigate(cta.target);
   }
   const guidedQuestion = guided === null ? null : nextMissingQuestion(guided);
-  const guidedHandoff = guided === null ? null : buildAssistantReportHandoff(guided);
   const composerBusy = busy || guidedBusy;
   // P1-2 honest fallback: the persisted default is raw and may name a paid
   // row absent from this catalogue (free seed + authorized load). Never crash
@@ -1969,23 +1948,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             )}
             {guided.state === "recovering" && guided.recovery !== undefined && (
               <GuidedRecovery errorClass={guided.recovery.errorClass} onAction={recoverGuided} />
-            )}
-            {guidedHandoff !== null && (
-              <div className="flex flex-col gap-1">
-                <button
-                  type="button"
-                  data-testid="guided-review-report"
-                  onClick={reviewGuidedReport}
-                  aria-label="Review report"
-                  className="min-h-[48px] rounded-full bg-on-surface px-3 text-xs font-medium text-surface"
-                >
-                  Review report
-                </button>
-                <p className="text-xs text-on-surface-variant">
-                  Continue to the report form to review these details before publishing. Nothing is
-                  published automatically.
-                </p>
-              </div>
             )}
             {pendingSearchTarget !== null &&
               guided.flow === "search" &&

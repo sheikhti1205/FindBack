@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { stubGenerate, mustProfile } from "./ai/ops/testSupport";
 import {
   buildReportFieldSuggestions,
-  DROPPED_CATEGORY_NOTE,
   REPORT_FIELD_SOURCE,
   suggestReportFields,
 } from "./reportFieldSuggestions";
+import { DROPPED_CATEGORY_NOTE } from "./reportSuggestionNotes";
 
 const PROFILE = mustProfile("qwen3-0.6b-dynamic-int4");
 const MESSAGE = "I lost my black umbrella yesterday near the central market.";

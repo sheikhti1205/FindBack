@@ -103,6 +103,31 @@ function storedStringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * One stored photo ref, rebuilt field by field. The ref travelled through
+ * localStorage from an older build, so its own fields are as untrusted as the
+ * top-level ones: a numeric `nativeUri` used to survive this loader and then
+ * throw inside `uri.startsWith(...)` on mount. A ref with no string id is not a
+ * ref; a wrong-typed optional field is dropped, and the URIs are strings or
+ * nothing.
+ */
+function readStoredPhotoRef(value: unknown): ReportPhotoRef | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const ref = value as Partial<ReportPhotoRef>;
+  if (typeof ref.id !== "string") return null;
+  const next: ReportPhotoRef = { id: ref.id };
+  if (typeof ref.name === "string") next.name = ref.name;
+  if (typeof ref.type === "string") next.type = ref.type;
+  if (typeof ref.size === "number" && Number.isFinite(ref.size)) next.size = ref.size;
+  if (typeof ref.format === "string") next.format = ref.format;
+  if (typeof ref.motionPhoto === "boolean") next.motionPhoto = ref.motionPhoto;
+  const nativeUri = storedStringOrNull(ref.nativeUri);
+  const webPath = storedStringOrNull(ref.webPath);
+  if (nativeUri !== null) next.nativeUri = nativeUri;
+  if (webPath !== null) next.webPath = webPath;
+  return next;
+}
+
 /** A coordinate: a finite number, a numeric string, or nothing. */
 function storedCoordinate(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -161,9 +186,9 @@ function readStoredDraft(accountId?: string | null): ReportDraft | null {
           ? parsed.photoIds.filter((v): v is string => typeof v === "string")
           : undefined,
         photoRefs: Array.isArray(parsed.photoRefs)
-          ? (parsed.photoRefs.filter(
-              (v): v is ReportPhotoRef => !!v && typeof (v as ReportPhotoRef).id === "string",
-            ) as ReportPhotoRef[])
+          ? (parsed.photoRefs
+              .map(readStoredPhotoRef)
+              .filter((ref): ref is ReportPhotoRef => ref !== null))
           : undefined,
       };
     } catch {

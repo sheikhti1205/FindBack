@@ -155,11 +155,12 @@ describe("AiModels control center (AI-022)", () => {
   it("owns Lane A assistant defaults: Automatic safe defaults, per-account persistence", async () => {
     renderModels();
     const modelSelect = screen.getByLabelText("Assistant default model") as HTMLSelectElement;
-    const photoSelect = screen.getByLabelText("Photo engine") as HTMLSelectElement;
     const matchesSelect = screen.getByLabelText("Matches engine") as HTMLSelectElement;
-    // Safe defaults: Automatic (null), automatic photo engine, use matches.
+    // §12: the photo-engine selection is gone with report photo analysis — no
+    // control offers a preference nothing reads.
+    expect(screen.queryByLabelText("Photo engine")).toBeNull();
+    // Safe defaults: Automatic (null), use matches.
     expect(modelSelect.value).toBe("automatic");
-    expect(photoSelect.value).toBe("automatic");
     expect(matchesSelect.value).toBe("use");
     // Only free rows are offered as the persisted default — paid never is.
     // On-device matching stays locked without installed/verified evidence
@@ -174,9 +175,7 @@ describe("AiModels control center (AI-022)", () => {
     });
     expect(modelSelect.textContent).toContain(FREE_ROW.id);
     expect(modelSelect.textContent).not.toContain(PAID_ROW.id);
-    fireEvent.change(photoSelect, { target: { value: "cloud-only" } });
     fireEvent.change(modelSelect, { target: { value: "openrouter/free" } });
-    expect(loadAiPreferences("u1").photoEngine).toBe("cloud-only");
     expect(loadAiPreferences("u1").preferredAssistantModel).toBe("openrouter/free");
     expect(window.localStorage.getItem(aiPreferencesKey("u2"))).toBeNull();
     await screen.findByTestId("ai-provider-openai");

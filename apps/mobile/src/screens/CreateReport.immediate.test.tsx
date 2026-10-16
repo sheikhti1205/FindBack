@@ -68,7 +68,6 @@ vi.mock("../components/RichTextEditor", async (importOriginal) => {
 import { CreateReport } from "./CreateReport";
 import { clearDraft, saveDraft } from "../services/reportDraft";
 import { clearPhotoStore } from "../services/photoStore";
-import { clearStagedAssistantReportHandoff } from "../services/assistant/assistantReportNavigation";
 import { todayInputValue } from "../utils/dates";
 import { markdownToTiptap } from "../components/RichTextEditor";
 
@@ -76,7 +75,6 @@ beforeEach(() => {
   publishReportMock.mockReset();
   clearDraft();
   clearPhotoStore();
-  clearStagedAssistantReportHandoff();
   capturedOnChange = null;
   capturedEditorRef = null;
   (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => "blob:preview");
@@ -87,7 +85,6 @@ afterEach(() => {
   cleanup();
   clearDraft();
   clearPhotoStore();
-  clearStagedAssistantReportHandoff();
 });
 
 describe("CreateReport immediate submit", () => {

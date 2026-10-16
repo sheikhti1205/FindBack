@@ -435,8 +435,9 @@ export function AiModels({
   // Account switch: mode, preferences, and slots never cross accounts.
   // The freshly loaded account's preferences are read from the per-account
   // store on every account change, so a previous account's choice never
-  // leaks into this one. Photo consumers read the same store via
-  // effectivePhotoEngine(account) — no global slot is published.
+  // leaks into this one. The stored `photoEngine` field survives for older
+  // accounts but has no consumer since report photo analysis was removed
+  // (CF-020 §12), so it is deliberately not rendered as a control.
   useEffect(() => {
     const seeded = loadSeededAiPreferences(account);
     // Authoritative store drives the radio; the legacy key is migration
@@ -893,27 +894,6 @@ export function AiModels({
             &amp; intelligence → Cloud connections); confirming
             explicit consent there updates this account&apos;s default.
           </p>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="ai-pref-photo" className="text-sm font-medium">
-            Photo engine
-          </label>
-          <select
-            id="ai-pref-photo"
-            value={prefs.photoEngine}
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value !== "automatic" && value !== "on-device-only" && value !== "cloud-only") {
-                return;
-              }
-              choosePrefs({ photoEngine: value }, `Photo engine ${value}.`);
-            }}
-            className="min-h-[48px] rounded-m3-sm border border-outline bg-surface px-3 text-on-surface"
-          >
-            <option value="automatic">Automatic (on-device first, cloud fallback)</option>
-            <option value="on-device-only">On-device only</option>
-            <option value="cloud-only">Cloud only</option>
-          </select>
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="ai-pref-matches" className="text-sm font-medium">

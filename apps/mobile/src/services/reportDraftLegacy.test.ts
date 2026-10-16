@@ -199,6 +199,56 @@ describe("a draft that is not shaped the way the form expects (§20)", () => {
     expect(draftIsMeaningful(draft)).toBe(false);
   });
 
+  it("keeps a photo ref whose id is a string but whose URIs are the wrong type", () => {
+    // The shape that reached the form as `{ id: "p1", nativeUri: 42 }` and then
+    // threw inside `uri.startsWith("blob:")` on mount: a valid id is not proof
+    // that the ref is usable, so its own fields are re-derived too.
+    backing.set(
+      DRAFT_KEY,
+      JSON.stringify({
+        title: "Phone",
+        photoIds: ["p1"],
+        photoRefs: [
+          { id: "p1", nativeUri: 42, webPath: { href: "https://x" }, format: 7, size: "big", name: 9 },
+        ],
+      }),
+    );
+
+    expect(loadDraft("u1")?.photoRefs).toEqual([{ id: "p1" }]);
+  });
+
+  it("keeps the usable fields of a ref and only the string URIs", () => {
+    backing.set(
+      DRAFT_KEY,
+      JSON.stringify({
+        title: "Phone",
+        photoIds: ["p1"],
+        photoRefs: [
+          {
+            id: "p1",
+            name: "a.jpg",
+            size: 12,
+            format: "jpg",
+            motionPhoto: true,
+            nativeUri: "content://keep",
+            webPath: 42,
+          },
+        ],
+      }),
+    );
+
+    expect(loadDraft("u1")?.photoRefs).toEqual([
+      {
+        id: "p1",
+        name: "a.jpg",
+        size: 12,
+        format: "jpg",
+        motionPhoto: true,
+        nativeUri: "content://keep",
+      },
+    ]);
+  });
+
   it("keeps a coordinate a legacy serializer stringified, and refuses one that is not a number", () => {
     backing.set(
       DRAFT_KEY,

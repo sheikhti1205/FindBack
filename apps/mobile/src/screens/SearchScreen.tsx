@@ -10,9 +10,8 @@ import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 import { AdvancedSearchFilters, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
 import type { NlFilterPatch } from "../services/search/nlFilters";
-import { nlExtractLive, nlHelperState, type NlHelperState } from "../services/liveNarrowTasks";
-import { DEVICE_INCOMPATIBLE_REASON } from "../services/ai/applicationAi";
-import { OFFLINE_NEEDS_ANDROID } from "./AiModels";
+import { nlExtractLive, nlHelperState } from "../services/liveNarrowTasks";
+import { NL_EMPTY_PATCH_NOTE } from "./nlHelperCopy";
 import {
   fadeVariants,
   motionDurations,
@@ -26,30 +25,6 @@ import {
 type TypeFilter = PostType | "ALL";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-/**
- * Smart Search's not-set-up sentence (CF-040 F6). It names the one action that
- * fixes the state, because the sentence is a live region and the "Manage AI
- * models" affordance beside it is a sibling — a screen-reader user is told what
- * happened and what to do, without the interactive element inside the region.
- */
-const NL_HELPER_NOT_SET_UP_NOTE =
-  "Smart Search needs the on-device model, which isn't set up on this device yet — open Manage AI models to install it.";
-
-/**
- * What an empty patch means, per helper state (CF-040 F6). Only
- * `not-set-up` may offer an action, because only there can installing change
- * the outcome: a build without the runtime, or a device that cannot run it, is
- * a terminal answer and promising an install would be the same defect in
- * reverse. `ready` and `unknown` make no claim about the device at all.
- */
-const NL_EMPTY_PATCH_NOTE: Record<NlHelperState, string> = {
-  ready: "No confident filters found — nothing changed.",
-  "not-set-up": NL_HELPER_NOT_SET_UP_NOTE,
-  "unsupported-platform": OFFLINE_NEEDS_ANDROID,
-  "unsupported-device": DEVICE_INCOMPATIBLE_REASON,
-  unknown: "No confident filters found — nothing changed.",
-};
 
 export function SearchScreen(props: {
   /** Injected NL extractor (test fakes or a live extractNlFilters composer).

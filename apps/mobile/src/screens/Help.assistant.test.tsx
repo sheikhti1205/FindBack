@@ -11,7 +11,6 @@ import {
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Help } from "./Help";
 import { resetBackInterceptors } from "../components/backNavigation";
-import { takeStagedAssistantReportHandoff } from "../services/assistant/assistantReportNavigation";
 import type { ProviderAdapter, StreamEvent } from "../services/ai/providerContract";
 import { buildPng } from "../services/media/__fixtures__/synthetic";
 
@@ -206,7 +205,7 @@ describe("Help full-screen assistant", () => {
     await screen.findByText("Search screen");
   });
 
-  it("stages a guided report handoff and navigates to /report without publishing", async () => {
+  it("completes a guided report without staging or routing into the form (§12)", async () => {
     renderHelp({ guidedGenerate: async (prompt: string) => prompt });
     fireEvent.click(screen.getByTestId("guided-shortcut-lost"));
     await screen.findByTestId("guided-panel");
@@ -219,9 +218,15 @@ describe("Help full-screen assistant", () => {
     fireEvent.click(screen.getByTestId("guided-photo-none"));
     await screen.findByTestId("guided-location-step");
     fireEvent.click(screen.getByTestId("guided-location-skip"));
-    fireEvent.click(await screen.findByTestId("guided-review-report"));
-    await screen.findByText("Report screen");
-    expect(takeStagedAssistantReportHandoff()?.patch.category).toBe("Keys");
+
+    // Ready: the guide stops asking. Packet §12 removed the assistant report
+    // handoff, so there is no report control and no route into the form — the
+    // answers stay in this transcript and nothing is claimed about the form.
+    await waitFor(() => expect(screen.queryByTestId("guided-question")).toBeNull());
+    expect(screen.queryByTestId("guided-review-report")).toBeNull();
+    expect(screen.queryByText(/continue to the report form/i)).toBeNull();
+    expect(screen.queryByText("Report screen")).toBeNull();
+    expect(screen.queryByRole("button", { name: /review report/i })).toBeNull();
   });
 
   it("selects up to ten chat images with previews and sends their ids", async () => {

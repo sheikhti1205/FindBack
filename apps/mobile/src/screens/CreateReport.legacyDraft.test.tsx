@@ -140,6 +140,30 @@ describe("opening a draft written by an older build (§20)", () => {
     expect(screen.getAllByTestId("report-photo-slide")).toHaveLength(1);
   });
 
+  it("opens a draft whose photo ref has the wrong type inside it", async () => {
+    // `{ id: "p1", nativeUri: 42 }` used to reach `uri.startsWith("blob:")` on
+    // mount, reject the restore and leave the form gated with no error, no
+    // retry and no way to remove the photo.
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({
+        type: "FOUND",
+        title: "Phone",
+        photoIds: ["p1"],
+        photoRefs: [{ id: "p1", nativeUri: 42, webPath: 42 }],
+      }),
+    );
+
+    render(<CreateReport />);
+    await act(async () => {});
+
+    expect((screen.getByLabelText(/what did you find\?/i) as HTMLInputElement).value).toBe("Phone");
+    // The slot is named with the actions that resolve it — never a silent gate.
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /retry recovery/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /remove unavailable and continue/i })).toBeTruthy();
+  });
+
   it("opens a draft whose retired metadata is the only thing in it, without inventing content", async () => {
     // A draft with no text and no photos is not worth restoring, but it must not
     // crash or pre-fill anything from the metadata beside it.

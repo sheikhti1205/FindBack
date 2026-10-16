@@ -4,11 +4,11 @@ import { stubGenerate, mustProfile } from "./ai/ops/testSupport";
 import {
   buildCategorySuggestionFromClassification,
   buildCategorySuggestionFromPhoto,
-  DROPPED_CATEGORY_SUGGESTION_NOTE,
   ITEM_CATEGORY_TO_RELEASED,
   resolveCategorySuggestion,
   suggestCategoryForText,
 } from "./categorySuggestion";
+import { DROPPED_CATEGORY_NOTE } from "./reportSuggestionNotes";
 
 const PROFILE = mustProfile("qwen3-0.6b-dynamic-int4");
 
@@ -45,7 +45,7 @@ describe("resolveCategorySuggestion (pure resolver)", () => {
   it("downgrades unknown categories to null + dropped (user picks manually)", () => {
     const resolved = resolveCategorySuggestion("spaceship", "classify-category");
     expect(resolved).toEqual({ suggestion: null, dropped: true });
-    expect(DROPPED_CATEGORY_SUGGESTION_NOTE).toMatch(/left out/);
+    expect(DROPPED_CATEGORY_NOTE).toMatch(/left out/);
   });
 
   it("returns null without dropped for empty input (nothing suggested)", () => {

@@ -11,24 +11,26 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { publishReportMock, suggestFieldsMock, suggestCategoryMock, photo, nativeMedia } = vi.hoisted(() => ({
-  publishReportMock: vi.fn(),
-  suggestFieldsMock: vi.fn(),
-  suggestCategoryMock: vi.fn(),
-  photo: {
-    isNativeCameraAvailable: vi.fn(() => false),
-    takePhoto: vi.fn(),
-    chooseFromGallery: vi.fn(),
-    photoToFile: vi.fn(),
-    normalizeForUpload: vi.fn(async (file: File) => file),
-    toNativeImageUri: vi.fn(),
-  },
-  nativeMedia: {
-    chooseNativeImage: vi.fn(),
-    chooseNativeImages: vi.fn(),
-    importNativeImageUri: vi.fn(),
-  },
-}));
+const { publishReportMock, suggestFieldsMock, suggestCategoryMock, nlHelperStateMock, photo, nativeMedia } =
+  vi.hoisted(() => ({
+    publishReportMock: vi.fn(),
+    suggestFieldsMock: vi.fn(),
+    suggestCategoryMock: vi.fn(),
+    nlHelperStateMock: vi.fn(),
+    photo: {
+      isNativeCameraAvailable: vi.fn(() => false),
+      takePhoto: vi.fn(),
+      chooseFromGallery: vi.fn(),
+      photoToFile: vi.fn(),
+      normalizeForUpload: vi.fn(async (file: File) => file),
+      toNativeImageUri: vi.fn(),
+    },
+    nativeMedia: {
+      chooseNativeImage: vi.fn(),
+      chooseNativeImages: vi.fn(),
+      importNativeImageUri: vi.fn(),
+    },
+  }));
 
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" },
@@ -54,6 +56,12 @@ vi.mock("../services/reportFieldSuggestions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/reportFieldSuggestions")>();
   return { ...actual, suggestReportFields: (...args: unknown[]) => suggestFieldsMock(...args) };
 });
+vi.mock("../services/liveNarrowTasks", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/liveNarrowTasks")>();
+  // The device probe is the whole point of these tests: inject the state
+  // instead of asking a runtime that does not exist under jsdom.
+  return { ...actual, nlHelperState: () => nlHelperStateMock() };
+});
 vi.mock("../services/categorySuggestion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/categorySuggestion")>();
   return { ...actual, suggestCategoryForText: (...args: unknown[]) => suggestCategoryMock(...args) };
@@ -63,7 +71,6 @@ import { CreateReport } from "./CreateReport";
 import { NEEDLE_DESCRIPTOR, QWEN_TEXT_DESCRIPTOR } from "../services/ai/modelDescriptors";
 import { clearDraft } from "../services/reportDraft";
 import { clearPhotoStore } from "../services/photoStore";
-import { clearStagedAssistantReportHandoff } from "../services/assistant/assistantReportNavigation";
 
 const FIELDS_OK = {
   ok: true,
@@ -110,11 +117,14 @@ beforeEach(() => {
   publishReportMock.mockReset();
   suggestFieldsMock.mockReset();
   suggestCategoryMock.mockReset();
+  nlHelperStateMock.mockReset();
+  // Default: the helper is installed and works. The device states are their own
+  // test below — a failure must say what the device is, not what the text is not.
+  nlHelperStateMock.mockResolvedValue("ready");
   suggestFieldsMock.mockImplementation(cancellable(FIELDS_OK));
   suggestCategoryMock.mockImplementation(cancellable(CATEGORY_OK));
   clearDraft();
   clearPhotoStore();
-  clearStagedAssistantReportHandoff();
   (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => "blob:preview");
   (URL as unknown as Record<string, unknown>).revokeObjectURL = vi.fn();
   vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -124,14 +134,13 @@ afterEach(() => {
   cleanup();
   clearDraft();
   clearPhotoStore();
-  clearStagedAssistantReportHandoff();
   vi.restoreAllMocks();
 });
 
 async function requestSuggestions(itemText: string) {
   render(<CreateReport />);
   await screen.findByRole("toolbar", { name: /description formatting/i });
-  fireEvent.change(screen.getByLabelText("Describe the item"), {
+  fireEvent.change(screen.getByLabelText(/describe the item/i), {
     target: { value: itemText },
   });
   fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
@@ -173,7 +182,7 @@ describe("CreateReport field suggestions from description", () => {
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "My own title" } });
-    fireEvent.change(screen.getByLabelText("Describe the item"), {
+    fireEvent.change(screen.getByLabelText(/describe the item/i), {
       target: { value: "Black umbrella lost yesterday." },
     });
     fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
@@ -197,7 +206,7 @@ describe("CreateReport field suggestions from description", () => {
     suggestFieldsMock.mockImplementationOnce(() => firstGate);
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    const input = screen.getByLabelText("Describe the item");
+    const input = screen.getByLabelText(/describe the item/i);
     fireEvent.change(input, { target: { value: "first text" } });
     fireEvent.click(screen.getByRole("button", { name: /^(filling…|fill missing details)$/i }));
     // A newer request supersedes the first before it resolves.
@@ -226,7 +235,7 @@ describe("CreateReport field suggestions from description", () => {
     suggestCategoryMock.mockImplementation(cancellable(undefined));
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    fireEvent.change(screen.getByLabelText("Describe the item"), {
+    fireEvent.change(screen.getByLabelText(/describe the item/i), {
       target: { value: "Black umbrella lost yesterday." },
     });
     fireEvent.click(screen.getByRole("button", { name: /^(filling…|fill missing details)$/i }));
@@ -257,7 +266,7 @@ describe("CreateReport field suggestions from description", () => {
     );
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    fireEvent.change(screen.getByLabelText("Describe the item"), {
+    fireEvent.change(screen.getByLabelText(/describe the item/i), {
       target: { value: "Black umbrella lost yesterday." },
     });
     fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
@@ -305,13 +314,13 @@ describe("CreateReport field suggestions from description", () => {
     );
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    fireEvent.change(screen.getByLabelText("Describe the item"), {
+    fireEvent.change(screen.getByLabelText(/describe the item/i), {
       target: { value: "Black umbrella lost yesterday." },
     });
     fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
     // Deterministic settle: the category op succeeded, so its chip appears.
     await screen.findByText("Suggested category");
-    expect(screen.getByText(/Couldn't find anything to suggest/)).toBeTruthy();
+    expect(screen.getByText(/Couldn't get a suggestion this time/i)).toBeTruthy();
     expect(screen.queryByText("Suggestion stopped.")).toBeNull();
   });
 
@@ -324,12 +333,33 @@ describe("CreateReport field suggestions from description", () => {
     suggestCategoryMock.mockImplementation(cancellable(engineFailure));
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    fireEvent.change(screen.getByLabelText("Describe the item"), {
+    fireEvent.change(screen.getByLabelText(/describe the item/i), {
       target: { value: "Black umbrella lost yesterday." },
     });
     fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
-    await screen.findByText(/Couldn't find anything to suggest/);
+    await screen.findByText(/Couldn't get a suggestion this time/i);
     expect(screen.queryByText("Suggestion stopped.")).toBeNull();
+  });
+
+  it("a failed helper on a device without the model offers the install, never blames the sentence", async () => {
+    const engineFailure = {
+      ok: false,
+      error: { errorClass: "RUNTIME_ERROR", diagnostic: "FIELDS_GENERATION_FAILED" },
+    };
+    suggestFieldsMock.mockImplementation(cancellable(engineFailure));
+    suggestCategoryMock.mockImplementation(cancellable(engineFailure));
+    // The helper is not installed on this device: installing is the one action
+    // that changes the outcome, so the sentence names it instead of the text.
+    nlHelperStateMock.mockResolvedValue("not-set-up");
+    render(<CreateReport />);
+    await screen.findByRole("toolbar", { name: /description formatting/i });
+    fireEvent.change(screen.getByLabelText(/describe the item/i), {
+      target: { value: "Black umbrella lost yesterday." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
+
+    await screen.findByText(/open Manage AI models to install it/i);
+    expect(screen.queryByText(/keep writing/i)).toBeNull();
   });
 
   it("a failed category op with field patches present stays silent: no error copy, no category chip", async () => {
@@ -342,7 +372,7 @@ describe("CreateReport field suggestions from description", () => {
     await requestSuggestions("Black umbrella lost yesterday near the central market.");
     expect(screen.getByText("Black umbrella")).toBeTruthy();
     expect(screen.queryByText("Suggested category")).toBeNull();
-    expect(screen.queryByText(/Couldn't find anything to suggest/)).toBeNull();
+    expect(screen.queryByText(/Couldn't get a suggestion this time/i)).toBeNull();
     expect(screen.queryByText("Suggestion stopped.")).toBeNull();
   });
 });

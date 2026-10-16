@@ -34,9 +34,6 @@ import { makeAiError } from "./ai/types";
 export const REPORT_FIELD_SOURCE = "extract-report-fields" as const;
 export type ReportFieldSource = typeof REPORT_FIELD_SOURCE;
 
-export const DROPPED_CATEGORY_NOTE =
-  "The suggested category isn't available yet, so it was left out. Pick a category manually.";
-
 export type ReportSuggestionField = "title" | "description" | "category" | "date";
 
 export interface ReportFieldSuggestion {

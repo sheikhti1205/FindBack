@@ -167,6 +167,56 @@ describe("ReportMediaPicker", () => {
     expect(props.onPreview).toHaveBeenCalledWith("p2", { x: 0, y: 0, width: 0, height: 0 });
   });
 
+  it("keyboard activation opens the preview even after a gesture left a press behind", () => {
+    const props = getDefaultProps({ photos: [createMockPhoto("p1"), createMockPhoto("p2")] });
+    render(<ReportMediaPicker {...props} />);
+
+    // A swipe fires no trailing click in some browsers, so its press origin is
+    // still recorded when the next activation arrives. Enter/Space on the slide
+    // is that activation: a click at the origin with no pointer behind it
+    // (detail 0). Judging it by the stale geometry would reject it and leave the
+    // viewer unreachable without a pointer.
+    fireEvent.touchStart(slideButtons()[1]!, { touches: [{ clientX: 260, clientY: 40 }] });
+    fireEvent.click(slideButtons()[1]!, { clientX: 0, clientY: 0, detail: 0 });
+
+    expect(props.onPreview).toHaveBeenCalledWith("p2", { x: 0, y: 0, width: 0, height: 0 });
+  });
+
+  it("names the cover in the first slide's accessible name", () => {
+    const props = getDefaultProps({ photos: [createMockPhoto("p1"), createMockPhoto("p2")] });
+    render(<ReportMediaPicker {...props} />);
+
+    // The badge is visible; a screen-reader user gets the same fact from the
+    // slide's name (the aria-label replaces the inner text).
+    expect(screen.getByRole("button", { name: /view photo 1 of 2 full size \(cover\)/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /view photo 2 of 2 full size$/i })).toBeTruthy();
+  });
+
+  it("keeps the active photo, not the index, when the order changes", () => {
+    // The action row acts on the active photo, so a reorder that left the index
+    // alone would silently re-aim it: the person taps "Move right" on photo 2
+    // and the next tap lands on a different photo.
+    const props = getDefaultProps({
+      photos: [createMockPhoto("p1"), createMockPhoto("p2"), createMockPhoto("p3")],
+    });
+    const view = render(<ReportMediaPicker {...props} />);
+
+    goToPhoto(2);
+    expect(screen.getByRole("button", { name: "Remove photo 2" })).toBeTruthy();
+
+    // The parent applies the move and hands back the reordered array.
+    view.rerender(
+      <ReportMediaPicker
+        {...props}
+        photos={[createMockPhoto("p1"), createMockPhoto("p3"), createMockPhoto("p2")]}
+      />,
+    );
+
+    // Photo 2 is now last, and the row followed it there.
+    expect(screen.getByRole("button", { name: "Remove photo 3" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Move photo 3 right" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("a swipe pages without opening the preview", () => {
     const props = getDefaultProps({ photos: [createMockPhoto("p1"), createMockPhoto("p2")] });
     render(<ReportMediaPicker {...props} />);

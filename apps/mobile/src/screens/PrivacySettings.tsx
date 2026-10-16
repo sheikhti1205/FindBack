@@ -170,7 +170,7 @@ export function PrivacySettings() {
       <SettingsGroup title="AI">
         <SettingsRow
           title="AI privacy"
-          description="Your provider key stays on this device. A report photo is analyzed only when you confirm it."
+          description="Your provider key stays on this device."
           icon={Sparkles}
           iconTone="ai"
           route="/ai-connection"

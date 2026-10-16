@@ -103,11 +103,12 @@ describe("CreateReport editor preservation (ED-05 guard)", () => {
     expect(screen.getByRole("toolbar", { name: /description formatting/i })).toBe(toolbar);
 
     // Reorder + remove: still the same editor node. The action row acts on the
-    // visible slide, so page to photo 2 before reordering/removing it.
+    // visible slide, and a reorder moves that photo instead of swapping the one
+    // on screen — so the photo is now position 1 and the row renames with it.
     fireEvent.click(screen.getByRole("button", { name: "Go to photo 2" }));
     fireEvent.click(screen.getByRole("button", { name: /move photo 2 left/i }));
     expect(screen.getByRole("toolbar", { name: /description formatting/i })).toBe(toolbar);
-    fireEvent.click(screen.getByRole("button", { name: /remove photo 2/i }));
+    fireEvent.click(screen.getByRole("button", { name: /remove photo 1/i }));
     await waitFor(() =>
       expect(screen.queryByRole("img", { name: /photo 2 of/i })).toBeNull(),
     );

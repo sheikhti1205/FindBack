@@ -45,14 +45,15 @@ import {
   NARROW_TASK_PROFILE_ID,
   generateForCategoryLive,
   generateForFieldsLive,
+  nlHelperState,
 } from "../services/liveNarrowTasks";
+import { NL_SUGGESTION_FAILURE_NOTE } from "./nlHelperCopy";
+import { DROPPED_CATEGORY_NOTE } from "../services/reportSuggestionNotes";
 import {
-  DROPPED_CATEGORY_NOTE,
   suggestReportFields,
   type ReportFieldSuggestion,
 } from "../services/reportFieldSuggestions";
 import {
-  DROPPED_CATEGORY_SUGGESTION_NOTE,
   suggestCategoryForText,
   type CategorySuggestion,
 } from "../services/categorySuggestion";
@@ -218,15 +219,16 @@ function findPendingNativeRestores(
 }
 
 /**
- * Injectable transports for the "fill missing details" panel below.
+ * The "fill missing details" panel's transports.
  *
- * Defaults are the live on-device composers (`liveNarrowTasks`, strictly
- * local: a natural-language description of someone's lost property must never
- * leave the device, so a local failure surfaces as-is and is never escalated to
- * a network transport). The seam stays overridable so tests can inject fakes.
- * Suggestions-only contract is unchanged (never publish, never auto-apply).
+ * Live on-device composers (`liveNarrowTasks`, strictly local: a natural-language
+ * description of someone's lost property must never leave the device, so a local
+ * failure surfaces as-is and is never escalated to a network transport). Tests
+ * inject fakes one level down, by mocking the composer modules, so this is not a
+ * test seam and is not exported. Suggestions-only contract is unchanged (never
+ * publish, never auto-apply).
  */
-export const aiSuggestDeps: {
+const aiSuggestDeps: {
   generateForFields: GenerateFn;
   generateForCategory: GenerateFn;
 } = {
@@ -516,6 +518,19 @@ function ReportForm() {
     aiSuggestAbort.current?.abort();
   }
 
+  /**
+   * §11: the sentence a failed/empty suggestion deserves, asked of the device.
+   *
+   * "Nothing found to suggest" was said even when the helper was absent on this
+   * device, which blames the person's sentence for a device state. The state
+   * decides the copy (CF-040 F6 pattern, one map in `nlHelperCopy`), and the
+   * answer is dropped if the request went stale while the state was read.
+   */
+  async function aiSuggestFailureNote(gen: number): Promise<string | null> {
+    const note = NL_SUGGESTION_FAILURE_NOTE[await nlHelperState()];
+    return aiSuggestGen.current === gen ? note : null;
+  }
+
   async function aiSuggestRequest(): Promise<void> {
     const text = aiSuggestInput.trim() || `${title} ${description}`.trim();
     if (!text) {
@@ -528,6 +543,9 @@ function ReportForm() {
     // dropped the whole suggestion set.
     const profile = profileFor(NARROW_TASK_PROFILE_ID);
     if (!profile) {
+      // Unreachable with today's catalogue (the narrow-task profile always
+      // resolves), kept deliberately: a build that narrows the catalogue must
+      // say so rather than send an undefined profile into the op.
       setAiSuggestError("Suggestions aren't available here. Keep writing — nothing is blocked.");
       return;
     }
@@ -558,7 +576,8 @@ function ReportForm() {
       } else if (fieldsResult.error.errorClass === "CANCELLED") {
         setAiSuggestError("Suggestion stopped.");
       } else {
-        setAiSuggestError("Couldn't find anything to suggest in that text. Try adding a bit more, or keep writing.");
+        const note = await aiSuggestFailureNote(gen);
+        if (note !== null) setAiSuggestError(note);
       }
       if (categoryResult.ok) {
         setAiCatSuggestion(categoryResult.value.suggestion);
@@ -570,11 +589,13 @@ function ReportForm() {
         // only when there is nothing else to review.
         setAiCatDropped(false);
       } else {
-        setAiSuggestError("Couldn't find anything to suggest in that text. Try adding a bit more, or keep writing.");
+        const note = await aiSuggestFailureNote(gen);
+        if (note !== null) setAiSuggestError(note);
       }
     } catch {
       if (aiSuggestGen.current !== gen) return; // stale: drop
-      setAiSuggestError("Couldn't find anything to suggest in that text. Try adding a bit more, or keep writing.");
+      const note = await aiSuggestFailureNote(gen);
+      if (note !== null) setAiSuggestError(note);
     } finally {
       if (aiSuggestGen.current === gen) {
         setAiSuggestBusy(false);
@@ -690,6 +711,19 @@ function ReportForm() {
         return;
       }
       setPhotoRecoveryReady(true);
+    } catch {
+      // A restore can fail in ways no per-photo affordance can express (a
+      // hostile draft, a broken registry). Name every slot the draft asked for
+      // that state does not hold and hand the outcome to the recovery UI, so
+      // this path can never leave publish gated with nothing to act on. With
+      // nothing outstanding there is nothing to restore, so the form opens.
+      if (isCancelled() || generation !== draftGeneration(accountId)) return;
+      const outstanding = draftPhotoIds(initialDraft)
+        .slice(0, MAX_REPORT_PHOTOS)
+        .filter((id) => !photosRef.current.some((p) => p.id === id));
+      setFailedPhotoIds(outstanding);
+      setPhotoRestoreError(outstanding.length > 0);
+      if (outstanding.length === 0) setPhotoRecoveryReady(true);
     } finally {
       recoveringRef.current = false;
     }
@@ -697,7 +731,9 @@ function ReportForm() {
 
   useEffect(() => {
     let cancelled = false;
-    restorePromiseRef.current = recoverPhotos(() => cancelled);
+    // The mount promise is never awaited bare: a rejection must not surface as
+    // an unhandled rejection, and `recoverPhotos` owns the visible outcome.
+    restorePromiseRef.current = recoverPhotos(() => cancelled).catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -707,7 +743,7 @@ function ReportForm() {
   /** Manual retry after a failed recovery: re-gates publish until it settles. */
   function retryPhotoRecovery(): void {
     setPhotoRecoveryReady(false);
-    restorePromiseRef.current = recoverPhotos(() => false);
+    restorePromiseRef.current = recoverPhotos(() => false).catch(() => {});
   }
 
   /**
@@ -1199,6 +1235,10 @@ function ReportForm() {
     next.unshift(moved);
     photosRef.current = next;
     setPhotos(next);
+    // The badge is visible; a screen-reader user gets no other confirmation
+    // that the order changed, and the slide labels are the only place the cover
+    // is named.
+    announce(`Photo ${index + 1} is now the cover.`);
   }
 
   function clearPhotos(): void {
@@ -1297,7 +1337,6 @@ function ReportForm() {
     // Let any queued duplicate-detection finish before we snapshot the files,
     // so identical bytes cannot slip into the same publish (R-068).
     await pickQueueRef.current.catch(() => {});
-    await restorePromiseRef.current;
     const reportFiles = photosRef.current.map((p) => p.file);
     // Diag: publish start
     diag("report.publish.start", {
@@ -1310,6 +1349,9 @@ function ReportForm() {
       hasYoutube: !!trimmedYoutube,
     }, { traceId: traceIdRef.current ?? undefined });
     try {
+      // Inside the try: `submitting`/`busy` are reset in the finally below, so
+      // this await must never be able to escape onSubmit and wedge the form.
+      await restorePromiseRef.current;
       // Explicit user confirmation is this submit: nothing publishes without it.
       // 0–1 photos keep the legacy single-photo path; 2–5 use the ordered multi path.
       const reportInput = {
@@ -1665,7 +1707,6 @@ function ReportForm() {
         <label className="block">
           <span className="mb-1 block text-sm font-medium">Describe the item in your own words</span>
           <textarea
-            aria-label="Describe the item"
             value={aiSuggestInput}
             onChange={(e) => setAiSuggestInput(e.target.value)}
             placeholder="e.g. Black umbrella lost yesterday near the central market"
@@ -1700,7 +1741,7 @@ function ReportForm() {
         )}
         {aiCatDropped && !aiFieldDroppedCategory && (
           <p role="status" className="text-sm text-on-surface-variant">
-            {DROPPED_CATEGORY_SUGGESTION_NOTE}
+            {DROPPED_CATEGORY_NOTE}
           </p>
         )}
         {aiFieldPatches

@@ -2,9 +2,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { publishReportMock, publishReportWithPhotosMock, photo, nativeMedia } = vi.hoisted(() => ({
+const { publishReportMock, publishReportWithPhotosMock, announceMock, photo, nativeMedia } = vi.hoisted(() => ({
   publishReportMock: vi.fn(),
   publishReportWithPhotosMock: vi.fn(),
+  announceMock: vi.fn(),
   photo: {
     isNativeCameraAvailable: vi.fn(() => false),
     normalizeForUpload: vi.fn(async (file: File) => file),
@@ -32,6 +33,10 @@ vi.mock("@capacitor/core", () => ({
   Plugins: { ShortLinkResolver: { resolve: vi.fn() } },
 }));
 vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("../components/LiveRegion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/LiveRegion")>();
+  return { ...actual, announce: (...args: unknown[]) => announceMock(...args) };
+});
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../services/posts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/posts")>();
@@ -239,5 +244,23 @@ describe("CreateReport media motion", () => {
     fireEvent.click(poster);
     expect(await screen.findByTitle("Embedded YouTube video", undefined, { timeout: 3000 })).toBeTruthy();
     await waitFor(() => expect(screen.queryByTestId("youtube-poster")).toBeNull(), { timeout: 3000 });
+  }, 15000);
+
+  it("announces the cover change for assistive tech", async () => {
+    seedBasics();
+    render(<CreateReport />);
+    await fillTitleCategory("Lost phone");
+    await addWebPhoto("one.jpg", 1);
+    await addWebPhoto("two.jpg", 2);
+
+    fireEvent.click(screen.getByRole("button", { name: /go to photo 2/i }));
+    announceMock.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /make photo 2 the cover/i }));
+
+    // The badge is visible only; the change is silent for a screen reader
+    // without this. The label follows the photo it names ("Photo 2"), not the
+    // position it moved to.
+    expect(announceMock).toHaveBeenCalledWith("Photo 2 is now the cover.");
+    expect(screen.getByRole("button", { name: /view photo 1 of 2 full size \(cover\)/i })).toBeTruthy();
   }, 15000);
 });

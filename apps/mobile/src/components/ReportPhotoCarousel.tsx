@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ImageOff } from "lucide-react";
@@ -83,6 +83,30 @@ export function ReportPhotoCarousel({
   const isFirst = activeIndex === 0;
   const isLast = activeIndex === photos.length - 1;
 
+  // A reorder or a cover change moves the photo the person is working in, but
+  // the scroll position stays where it was — so without this the slide (and the
+  // action row, which always acts on the ACTIVE photo) would silently swap
+  // identity under their fingers: tap "Move right" and the next tap would be
+  // aimed at a different photo. Keep the active photo, not the index, and
+  // follow it to wherever the parent put it. A removal is the one case where the
+  // anchored photo is gone: then the index stands and the next photo shows.
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+  const orderRef = useRef<string[]>(photos.map((photo) => photo.id));
+  useEffect(() => {
+    const next = photos.map((photo) => photo.id);
+    const previous = orderRef.current;
+    orderRef.current = next;
+    if (previous.length === next.length && previous.every((id, index) => id === next[index])) return;
+    const anchorId = previous[activeRef.current];
+    if (anchorId === undefined) return;
+    const anchored = next.indexOf(anchorId);
+    if (anchored === -1 || anchored === activeRef.current) return;
+    goTo(anchored);
+  }, [photos, goTo]);
+
   const originOf = (element: HTMLElement): PhotoLightboxOriginRect => {
     const rect = element.getBoundingClientRect();
     return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
@@ -133,7 +157,7 @@ export function ReportPhotoCarousel({
                 <button
                   type="button"
                   data-testid="report-photo-slide-button"
-                  aria-label={`View photo ${index + 1} of ${photos.length} full size`}
+                  aria-label={`View photo ${index + 1} of ${photos.length} full size${index === 0 ? " (cover)" : ""}`}
                   disabled={disabled}
                   onMouseDown={(event) => pressStart(event.clientX, event.clientY)}
                   onTouchStart={(event) => {
@@ -184,6 +208,7 @@ export function ReportPhotoCarousel({
               aria-current={index === activeIndex ? "true" : undefined}
               aria-label={`Go to photo ${index + 1}`}
               onClick={() => goTo(index)}
+              disabled={disabled}
               className="flex items-center justify-center"
               style={{ width: DOT_TARGET_PX, height: DOT_TARGET_PX }}
             >

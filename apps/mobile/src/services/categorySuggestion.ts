@@ -28,9 +28,6 @@ import type { AiResult, GenerateFn } from "./ai/types";
 export const CATEGORY_SUGGESTION_SOURCES = ["classify-category", "photo"] as const;
 export type CategorySuggestionSource = (typeof CATEGORY_SUGGESTION_SOURCES)[number];
 
-export const DROPPED_CATEGORY_SUGGESTION_NOTE =
-  "The suggested category isn't available yet, so it was left out. Pick a category manually.";
-
 export interface CategorySuggestion {
   readonly suggestedCategory: Category;
   readonly source: CategorySuggestionSource;

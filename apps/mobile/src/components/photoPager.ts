@@ -67,6 +67,16 @@ export function useSnapPager(count: number): SnapPager {
   return { trackRef, active, onScroll, goTo };
 }
 
+export interface PagerTapEvent {
+  clientX: number;
+  clientY: number;
+  /**
+   * `MouseEvent.detail`: 0 when no pointer produced this click — i.e. a
+   * keyboard activation (Enter/Space on a button).
+   */
+  detail?: number;
+}
+
 export interface PagerTap {
   /** Record a press origin (mouse down / touch start). */
   pressStart: (x: number, y: number) => void;
@@ -75,7 +85,7 @@ export interface PagerTap {
    * within slop (a real tap → open), false when it travelled (a swipe → page
    * only, never open). Always consumes, like the canonical carousel.
    */
-  isTap: (event: { clientX: number; clientY: number }) => boolean;
+  isTap: (event: PagerTapEvent) => boolean;
 }
 
 /** Tap-vs-swipe separation shared by every paging surface. */
@@ -86,9 +96,15 @@ export function usePagerTap(): PagerTap {
     pressRef.current = { x, y };
   }, []);
 
-  const isTap = useCallback((event: { clientX: number; clientY: number }) => {
+  const isTap = useCallback((event: PagerTapEvent) => {
     const start = pressRef.current;
     pressRef.current = null;
+    // A keyboard activation is never a swipe. Enter/Space on a slide button
+    // fires a click with no pointer behind it (detail 0, coordinates at the
+    // origin), so geometry cannot judge it — and a press left over from an
+    // earlier gesture that never released a click would otherwise reject it
+    // and make the viewer unreachable without a pointer.
+    if (event.detail === 0 && event.clientX === 0 && event.clientY === 0) return true;
     if (start) {
       const dx = Math.abs(event.clientX - start.x);
       const dy = Math.abs(event.clientY - start.y);
