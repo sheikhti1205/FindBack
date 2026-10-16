@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 /**
- * Lane C: extract-report-fields + classify-category wired into CreateReport
- * as user-confirmed suggestions. Suggestions only: every chip shows its
- * source with Apply/Keep, applying one field keeps the others reviewable,
- * Keep sends nothing, cancellation aborts cleanly with no fallback, stale
- * generations are dropped, unreleased categories downgrade with a notice,
- * and nothing ever publishes without the explicit form submit.
+ * §11: the local text/category helper wired into CreateReport as
+ * user-confirmed suggestions. Consumer copy only — no model/provider name and
+ * no confidence number reaches the screen. Every chip offers Use this <field> /
+ * Keep mine, applying one field keeps the others reviewable, Keep sends
+ * nothing, cancellation aborts cleanly with no fallback, stale generations are
+ * dropped, unreleased categories downgrade with a notice, and nothing ever
+ * publishes without the explicit form submit.
  */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -130,24 +131,24 @@ afterEach(() => {
 async function requestSuggestions(itemText: string) {
   render(<CreateReport />);
   await screen.findByRole("toolbar", { name: /description formatting/i });
-  fireEvent.change(screen.getByLabelText("Describe the item for AI suggestions"), {
+  fireEvent.change(screen.getByLabelText("Describe the item"), {
     target: { value: itemText },
   });
-  fireEvent.click(screen.getByRole("button", { name: /^suggest fields$/i }));
+  fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
   await screen.findByText("Black umbrella");
 }
 
-describe("CreateReport AI field suggestions", () => {
+describe("CreateReport field suggestions from description", () => {
   it("shows source-labelled chips and applies one field while keeping others reviewable", async () => {
     await requestSuggestions("Black umbrella lost yesterday near the central market.");
-    expect(screen.getByText("Suggested title · via extract-report-fields")).toBeTruthy();
-    expect(screen.getByText("Suggested category · via classify-category")).toBeTruthy();
+    expect(screen.getByText("Suggested title")).toBeTruthy();
+    expect(screen.getByText("Suggested category")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Apply title" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use this title" }));
     expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("Black umbrella");
     // Applying one field keeps the others reviewable.
-    expect(screen.getByText("Suggested description · via extract-report-fields")).toBeTruthy();
-    expect(screen.getByText("Suggested category · via classify-category")).toBeTruthy();
+    expect(screen.getByText("Suggested description")).toBeTruthy();
+    expect(screen.getByText("Suggested category")).toBeTruthy();
     // Suggestions never publish: the explicit submit path is untouched.
     expect(publishReportMock).not.toHaveBeenCalled();
   });
@@ -155,14 +156,14 @@ describe("CreateReport AI field suggestions", () => {
   it("Keep sends nothing: no setters, no network, no publish", async () => {
     await requestSuggestions("Black umbrella lost yesterday.");
     const callsBefore = suggestFieldsMock.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Apply title" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use this title" }));
     // Keep the description (title chip already resolved away, so the first
     // remaining Keep belongs to the description): its chip resolves with no
     // side effects.
     const keepButtons = screen.getAllByRole("button", { name: "Keep mine" });
     fireEvent.click(keepButtons[0]!);
-    expect(screen.queryByText("Suggested description · via extract-report-fields")).toBeNull();
-    expect(screen.getByText("Suggested category · via classify-category")).toBeTruthy();
+    expect(screen.queryByText("Suggested description")).toBeNull();
+    expect(screen.getByText("Suggested category")).toBeTruthy();
     expect(suggestFieldsMock.mock.calls.length).toBe(callsBefore);
     expect(suggestCategoryMock.mock.calls.length).toBe(1);
     expect(publishReportMock).not.toHaveBeenCalled();
@@ -172,19 +173,19 @@ describe("CreateReport AI field suggestions", () => {
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "My own title" } });
-    fireEvent.change(screen.getByLabelText("Describe the item for AI suggestions"), {
+    fireEvent.change(screen.getByLabelText("Describe the item"), {
       target: { value: "Black umbrella lost yesterday." },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^suggest fields$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
     await screen.findByText("Black umbrella");
 
     vi.mocked(window.confirm).mockReturnValue(false);
-    fireEvent.click(screen.getByRole("button", { name: "Apply title" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use this title" }));
     expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("My own title");
-    expect(screen.getByText("Suggested title · via extract-report-fields")).toBeTruthy();
+    expect(screen.getByText("Suggested title")).toBeTruthy();
 
     vi.mocked(window.confirm).mockReturnValue(true);
-    fireEvent.click(screen.getByRole("button", { name: "Apply title" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use this title" }));
     expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("Black umbrella");
   });
 
@@ -196,12 +197,12 @@ describe("CreateReport AI field suggestions", () => {
     suggestFieldsMock.mockImplementationOnce(() => firstGate);
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    const input = screen.getByLabelText("Describe the item for AI suggestions");
+    const input = screen.getByLabelText("Describe the item");
     fireEvent.change(input, { target: { value: "first text" } });
-    fireEvent.click(screen.getByRole("button", { name: /^suggest(ing…| fields)$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^(filling…|fill missing details)$/i }));
     // A newer request supersedes the first before it resolves.
     fireEvent.change(input, { target: { value: "second text" } });
-    fireEvent.click(screen.getByRole("button", { name: /^suggest(ing…| fields)$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^(filling…|fill missing details)$/i }));
     await screen.findByText("Black umbrella");
     // The stale first response resolves late with different content: dropped.
     releaseFirst({
@@ -225,16 +226,16 @@ describe("CreateReport AI field suggestions", () => {
     suggestCategoryMock.mockImplementation(cancellable(undefined));
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    fireEvent.change(screen.getByLabelText("Describe the item for AI suggestions"), {
+    fireEvent.change(screen.getByLabelText("Describe the item"), {
       target: { value: "Black umbrella lost yesterday." },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^suggest(ing…| fields)$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^(filling…|fill missing details)$/i }));
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await screen.findByText("AI request cancelled.");
+    await screen.findByText("Suggestion stopped.");
     // No retry, no second op, no chips, no publish.
     expect(suggestFieldsMock.mock.calls.length).toBe(1);
     expect(suggestCategoryMock.mock.calls.length).toBe(1);
-    expect(screen.queryByText("Suggested title · via extract-report-fields")).toBeNull();
+    expect(screen.queryByText("Suggested title")).toBeNull();
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
@@ -256,18 +257,18 @@ describe("CreateReport AI field suggestions", () => {
     );
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    fireEvent.change(screen.getByLabelText("Describe the item for AI suggestions"), {
+    fireEvent.change(screen.getByLabelText("Describe the item"), {
       target: { value: "Black umbrella lost yesterday." },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^suggest fields$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
     await screen.findByText(/isn't available yet/);
-    expect(screen.queryByRole("button", { name: "Apply category" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Apply title" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Use this category" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Use this title" })).toBeTruthy();
   });
 
   it("a free-text date is not applicable: Apply disabled, manual-pick hint, gates intact", async () => {
     await requestSuggestions("Black umbrella lost yesterday.");
-    const applyDate = screen.getByRole("button", { name: "Apply date" }) as HTMLButtonElement;
+    const applyDate = screen.getByRole("button", { name: "Use this date" }) as HTMLButtonElement;
     expect(applyDate.disabled).toBe(true);
     expect(screen.getByText(/pick it in the date field instead/)).toBeTruthy();
   });
@@ -304,14 +305,14 @@ describe("CreateReport AI field suggestions", () => {
     );
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    fireEvent.change(screen.getByLabelText("Describe the item for AI suggestions"), {
+    fireEvent.change(screen.getByLabelText("Describe the item"), {
       target: { value: "Black umbrella lost yesterday." },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^suggest fields$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
     // Deterministic settle: the category op succeeded, so its chip appears.
-    await screen.findByText("Suggested category · via classify-category");
-    expect(screen.getByText(/Couldn't draft suggestions/)).toBeTruthy();
-    expect(screen.queryByText("AI request cancelled.")).toBeNull();
+    await screen.findByText("Suggested category");
+    expect(screen.getByText(/Couldn't find anything to suggest/)).toBeTruthy();
+    expect(screen.queryByText("Suggestion stopped.")).toBeNull();
   });
 
   it("an engine failure reads as undrafted suggestions, not as a cancellation", async () => {
@@ -323,12 +324,12 @@ describe("CreateReport AI field suggestions", () => {
     suggestCategoryMock.mockImplementation(cancellable(engineFailure));
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
-    fireEvent.change(screen.getByLabelText("Describe the item for AI suggestions"), {
+    fireEvent.change(screen.getByLabelText("Describe the item"), {
       target: { value: "Black umbrella lost yesterday." },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^suggest fields$/i }));
-    await screen.findByText(/Couldn't draft suggestions/);
-    expect(screen.queryByText("AI request cancelled.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
+    await screen.findByText(/Couldn't find anything to suggest/);
+    expect(screen.queryByText("Suggestion stopped.")).toBeNull();
   });
 
   it("a failed category op with field patches present stays silent: no error copy, no category chip", async () => {
@@ -340,8 +341,8 @@ describe("CreateReport AI field suggestions", () => {
     );
     await requestSuggestions("Black umbrella lost yesterday near the central market.");
     expect(screen.getByText("Black umbrella")).toBeTruthy();
-    expect(screen.queryByText("Suggested category · via classify-category")).toBeNull();
-    expect(screen.queryByText(/Couldn't draft suggestions/)).toBeNull();
-    expect(screen.queryByText("AI request cancelled.")).toBeNull();
+    expect(screen.queryByText("Suggested category")).toBeNull();
+    expect(screen.queryByText(/Couldn't find anything to suggest/)).toBeNull();
+    expect(screen.queryByText("Suggestion stopped.")).toBeNull();
   });
 });

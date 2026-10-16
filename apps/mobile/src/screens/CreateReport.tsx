@@ -217,11 +217,13 @@ function findPendingNativeRestores(
 }
 
 /**
- * Injectable AI transports for the suggestion panel below (Lane C).
- * Defaults are the live local-first composers (on-device route with
- * OpenRouter fallback); the seam stays overridable so tests can inject
- * fakes. Suggestions-only contract is unchanged (never publish, never
- * auto-apply).
+ * Injectable transports for the "fill missing details" panel below.
+ *
+ * Defaults are the live on-device composers (`liveNarrowTasks`, strictly
+ * local: a natural-language description of someone's lost property must never
+ * leave the device, so a local failure surfaces as-is and is never escalated to
+ * a network transport). The seam stays overridable so tests can inject fakes.
+ * Suggestions-only contract is unchanged (never publish, never auto-apply).
  */
 export const aiSuggestDeps: {
   generateForFields: GenerateFn;
@@ -406,12 +408,13 @@ function ReportForm() {
   const traceIdRef = useRef<string | null>(null);
   const descriptionEditorRef = useRef<Editor | null>(null);
   const descriptionLiveRef = useRef(description);
-  // --- AI field suggestions (Lane C, additive only) -----------------------
-  // extract-report-fields + classify-category surface here as reviewable
-  // per-field patches (source-labelled, Apply/Keep each). Suggestions only:
-  // Apply writes exactly one field after an explicit confirm when it would
-  // replace existing text; Keep sends nothing (no setter, no network).
-  // Nothing here publishes, auto-applies, or touches draft/photo lifecycle.
+  // --- Fill missing details from description (§11 narrow helper) -----------
+  // The local text/category helper surfaces reviewable per-field patches.
+  // Suggestions only: accepting one writes exactly that one field, after an
+  // explicit confirm when it would replace existing text; Keep sends nothing
+  // (no setter, no network). Nothing here publishes, auto-applies, or touches
+  // draft/photo lifecycle, and nothing here names a model, a provider or a
+  // confidence score — those are diagnostics, not consumer copy.
   const [aiSuggestInput, setAiSuggestInput] = useState("");
   const [aiFieldPatches, setAiFieldPatches] = useState<ReportFieldSuggestion[]>([]);
   const [aiFieldDroppedCategory, setAiFieldDroppedCategory] = useState(false);
@@ -433,13 +436,13 @@ function ReportForm() {
   function aiSuggestApplyField(patch: ReportFieldSuggestion): void {
     if (patch.field === "title") {
       if (title.trim() && patch.suggestedValue !== title) {
-        if (!window.confirm("Replace the existing title with this reviewed AI suggestion?")) return;
+        if (!window.confirm("Replace the existing title with this suggestion?")) return;
       }
       setTitle(patch.suggestedValue);
       aiSuggestResolve(`field:${patch.field}`);
     } else if (patch.field === "description") {
       if (description.trim() && patch.suggestedValue !== description) {
-        if (!window.confirm("Replace the existing description with this reviewed AI suggestion?")) return;
+        if (!window.confirm("Replace the existing description with this suggestion?")) return;
       }
       descriptionLiveRef.current = patch.suggestedValue;
       setDescription(patch.suggestedValue);
@@ -449,7 +452,7 @@ function ReportForm() {
       // may land in the form. Free-text date hints ("yesterday") stay manual.
       if (!isValidCalendarDate(patch.suggestedValue) || isFutureDate(patch.suggestedValue)) return;
       if (eventDate !== patch.suggestedValue) {
-        if (!window.confirm("Replace the existing date with this reviewed AI suggestion?")) return;
+        if (!window.confirm("Replace the existing date with this suggestion?")) return;
       }
       setEventDate(patch.suggestedValue);
       aiSuggestResolve(`field:${patch.field}`);
@@ -458,7 +461,7 @@ function ReportForm() {
       // an unreleased value even if a service regresses.
       if (!isReleasedCategory(patch.suggestedValue)) return;
       if (category && patch.suggestedValue !== category) {
-        if (!window.confirm("Replace the existing category with this reviewed AI suggestion?")) return;
+        if (!window.confirm("Replace the existing category with this suggestion?")) return;
       }
       setCategory(patch.suggestedValue as Category);
       aiSuggestResolve(`field:${patch.field}`);
@@ -468,7 +471,7 @@ function ReportForm() {
   function aiSuggestApplyCategory(suggestion: CategorySuggestion): void {
     if (!isReleasedCategory(suggestion.suggestedCategory)) return;
     if (category && suggestion.suggestedCategory !== category) {
-      if (!window.confirm("Replace the existing category with this reviewed AI suggestion?")) return;
+      if (!window.confirm("Replace the existing category with this suggestion?")) return;
     }
     setCategory(suggestion.suggestedCategory);
     aiSuggestResolve("categorySuggestion");
@@ -490,7 +493,7 @@ function ReportForm() {
     // dropped the whole suggestion set.
     const profile = profileFor(NARROW_TASK_PROFILE_ID);
     if (!profile) {
-      setAiSuggestError("AI suggestions are unavailable right now. Continue writing manually.");
+      setAiSuggestError("Suggestions aren't available here. Keep writing — nothing is blocked.");
       return;
     }
     aiSuggestAbort.current?.abort();
@@ -518,25 +521,25 @@ function ReportForm() {
         setAiFieldPatches([...fieldsResult.value.suggestions]);
         setAiFieldDroppedCategory(fieldsResult.value.droppedCategory);
       } else if (fieldsResult.error.errorClass === "CANCELLED") {
-        setAiSuggestError("AI request cancelled.");
+        setAiSuggestError("Suggestion stopped.");
       } else {
-        setAiSuggestError("Couldn't draft suggestions from that text. You can retry or continue writing manually.");
+        setAiSuggestError("Couldn't find anything to suggest in that text. Try adding a bit more, or keep writing.");
       }
       if (categoryResult.ok) {
         setAiCatSuggestion(categoryResult.value.suggestion);
         setAiCatDropped(categoryResult.value.dropped);
       } else if (categoryResult.error.errorClass === "CANCELLED") {
-        setAiSuggestError("AI request cancelled.");
+        setAiSuggestError("Suggestion stopped.");
       } else if (fieldsResult.ok) {
         // A failed category op never blocks field patches; the failure shows
         // only when there is nothing else to review.
         setAiCatDropped(false);
       } else {
-        setAiSuggestError("Couldn't draft suggestions from that text. You can retry or continue writing manually.");
+        setAiSuggestError("Couldn't find anything to suggest in that text. Try adding a bit more, or keep writing.");
       }
     } catch {
       if (aiSuggestGen.current !== gen) return; // stale: drop
-      setAiSuggestError("Couldn't draft suggestions from that text. You can retry or continue writing manually.");
+      setAiSuggestError("Couldn't find anything to suggest in that text. Try adding a bit more, or keep writing.");
     } finally {
       if (aiSuggestGen.current === gen) {
         setAiSuggestBusy(false);
@@ -1592,24 +1595,22 @@ function ReportForm() {
         error={fieldErrors.category}
       />
 
-      {/* AI field suggestions (Lane C, additive): extract-report-fields +
-          classify-category as reviewable per-field patches. Suggestions only:
-          each chip shows its source with Apply/Keep; applying one field keeps
-          the others reviewable; Keep sends nothing. Never publishes,
-          auto-applies, or touches draft/photo lifecycle. */}
+      {/* §11 narrow helper: fill missing details from a description the person
+          writes here. Additive and reviewable — each suggestion is applied only
+          by an explicit tap on that field, and Keep leaves the form alone. */}
       <section
-        aria-label="AI field suggestions"
+        aria-label="Fill missing details from description"
         className="flex flex-col gap-2 rounded-m3-md border border-outline-variant p-3"
       >
-        <p className="text-sm font-medium">AI field suggestions</p>
+        <p className="text-sm font-medium">Fill missing details from description</p>
         <p className="text-sm text-on-surface-variant">
-          Draft title, description, date and category from your words. Review each one — nothing is
-          applied or published automatically.
+          Describe the item in your own words. Suggestions appear here one at a time — nothing changes
+          unless you accept it.
         </p>
         <label className="block">
           <span className="mb-1 block text-sm font-medium">Describe the item in your own words</span>
           <textarea
-            aria-label="Describe the item for AI suggestions"
+            aria-label="Describe the item"
             value={aiSuggestInput}
             onChange={(e) => setAiSuggestInput(e.target.value)}
             placeholder="e.g. Black umbrella lost yesterday near the central market"
@@ -1624,7 +1625,7 @@ function ReportForm() {
             size="md"
             onClick={() => void aiSuggestRequest()}
           >
-            {aiSuggestBusy ? "Suggesting…" : "Suggest fields"}
+            {aiSuggestBusy ? "Filling…" : "Fill missing details"}
           </Button>
           {aiSuggestBusy && (
             <Button type="button" variant="text" size="md" onClick={aiSuggestStop}>
@@ -1658,9 +1659,7 @@ function ReportForm() {
                 key={`ai-field-${patch.field}`}
                 className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant p-2"
               >
-                <p className="text-xs text-on-surface-variant">
-                  Suggested {patch.field} · via {patch.source}
-                </p>
+                <p className="text-xs text-on-surface-variant">Suggested {patch.field}</p>
                 <p className="text-sm">{patch.suggestedValue}</p>
                 <div className="flex gap-2">
                   <Button
@@ -1670,7 +1669,7 @@ function ReportForm() {
                     onClick={() => aiSuggestApplyField(patch)}
                     disabled={!dateApplicable}
                   >
-                    Apply {patch.field}
+                    Use this {patch.field}
                   </Button>
                   <Button
                     type="button"
@@ -1691,13 +1690,11 @@ function ReportForm() {
           })}
         {aiCatSuggestion && !aiSuggestResolved.categorySuggestion && (
           <div className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant p-2">
-            <p className="text-xs text-on-surface-variant">
-              Suggested category · via {aiCatSuggestion.source}
-            </p>
+            <p className="text-xs text-on-surface-variant">Suggested category</p>
             <p className="text-sm">{aiCatSuggestion.suggestedCategory}</p>
             <div className="flex gap-2">
               <Button type="button" variant="primary" size="md" onClick={() => aiSuggestApplyCategory(aiCatSuggestion)}>
-                Apply category
+                Use this category
               </Button>
               <Button type="button" variant="outline" size="md" onClick={() => aiSuggestResolve("categorySuggestion")}>
                 Keep mine
@@ -1709,7 +1706,7 @@ function ReportForm() {
           aiFieldPatches.every((patch) => aiSuggestResolved[`field:${patch.field}`]) &&
           (!aiCatSuggestion || aiSuggestResolved.categorySuggestion) && (
             <p role="status" className="text-xs text-on-surface-variant">
-              All suggestions reviewed. Nothing was published automatically.
+              That's everything found in that description.
             </p>
           )}
       </section>
