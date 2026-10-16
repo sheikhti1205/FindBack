@@ -67,26 +67,29 @@ function file(name: string, type: string, size = 1000): File {
   return new File([new Uint8Array(size)], name, { type });
 }
 
-describe("comment video path (deliberate URI/streaming caps)", () => {
-  it("aligns the video cap exactly with the client and Storage cap (no drift)", () => {
+describe("comment video intake is closed (packet `08` §7)", () => {
+  it("aligns the retained video cap exactly with the client and Storage cap (no drift)", () => {
+    // History keeps rendering, so the cap stays pinned to the same constant the
+    // bucket enforces — a stored row can never be judged by a different limit.
     expect(COMMENT_VIDEO_MAX_BYTES).toBe(COMMENT_ATTACH_MAX_BYTES);
   });
 
-  it("accepts exactly the video containers the bucket allows", () => {
+  it("keeps the legacy video vocabulary but offers no way to add one", () => {
+    // The stored comment rows still name these containers.
     expect([...COMMENT_VIDEO_MIME].sort()).toEqual(["video/mp4", "video/quicktime", "video/webm"]);
+    // The picker offers photos only …
+    expect(COMMENT_ATTACH_ACCEPT).toBe("image/*");
     for (const mime of COMMENT_VIDEO_MIME) {
-      expect(validateAttachableFile(file("clip", mime, 2048))).toBeNull();
-    }
-    expect(COMMENT_ATTACH_ACCEPT).toContain("image/*");
-    for (const mime of COMMENT_VIDEO_MIME) {
-      expect(COMMENT_ATTACH_ACCEPT).toContain(mime);
+      expect(COMMENT_ATTACH_ACCEPT).not.toContain(mime);
+      // … and the client gate refuses every one of them, with consumer copy.
+      expect(validateAttachableFile(file("clip", mime, 2048))).toMatch(/photos, not video/i);
     }
   });
 
-  it("rejects oversized clips at the aligned cap with consumer copy", () => {
-    expect(validateAttachableFile(file("big.mp4", "video/mp4", COMMENT_VIDEO_MAX_BYTES + 1))).toMatch(
-      /too large/i,
-    );
+  it("still refuses an oversized photo at the aligned cap with consumer copy", () => {
+    expect(
+      validateAttachableFile(file("big.jpg", "image/jpeg", COMMENT_VIDEO_MAX_BYTES + 1)),
+    ).toMatch(/too large/i);
   });
 });
 

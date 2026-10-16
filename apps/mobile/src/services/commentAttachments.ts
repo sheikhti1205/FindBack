@@ -6,13 +6,19 @@ import { ACCEPTED_STILL_MIME_TYPES } from "./media/mediaPolicy";
 import type { ImportedImage } from "./media/importImage";
 
 /**
- * C3 comment attachment model (local photo/video attach).
+ * Comment attachments.
  *
  * - Real Storage uploads: files go to the public `findback-comment-media`
  *   bucket under the caller's own folder (`<uid>/<uuid>.<ext>`), the same
  *   ownership-scoped RLS convention as report photos. Photos are normalized
  *   on-device first (EXIF/orientation, edge cap — the canonical image
- *   pipeline); videos upload as-is.
+ *   pipeline).
+ * - New intake is **photos only** (packet `08` §7): the picker's accept list
+ *   and the client gate below both refuse video, because a short clip in a
+ *   comment costs the reader far more than it gives the reporter. The video
+ *   vocabulary (`COMMENT_VIDEO_MIME`, the bucket's MIME list, the `video`
+ *   kind) and every stored video row stay exactly as they are, so history
+ *   keeps rendering — nothing here deletes or rewrites what already exists.
  * - Never base64 in text: previews are `blob:` object URLs (or the provider
  *   URL for Klipy picks); the comment body carries only `https://` remote
  *   URLs (see `commentBodyMedia`). The body never contains `data:` URLs.
@@ -22,25 +28,29 @@ import type { ImportedImage } from "./media/importImage";
  *   and best-effort deletes the uploaded object so nothing is orphaned.
  */
 
+/** Photo cap enforced by the picker, the client gate and the grid layout. */
 export const COMMENT_ATTACH_MAX = 4;
 export const COMMENT_ATTACH_MAX_BYTES = 25_000_000;
 
 /**
- * Deliberate video path: short clips upload by streaming the picked
- * File/Blob bytes straight to Storage (never base64, never a data: URL in
- * the body). The client pre-upload cap below is intentionally IDENTICAL to
- * the bucket `file_size_limit` enforced server-side (see the FBX-013
- * migration test), so a clip the client accepts can never fail the Storage
- * gate after the UI promised success. There is no duration probe on the
- * client — length is bounded by the byte cap plus the picker's short-clip
- * affordance, a conservative policy documented here instead of enforced by
- * an unreliable metadata read.
+ * Video vocabulary retained for history only (packet `08` §7).
+ *
+ * Stored rows written before intake stopped must keep their kind, their MIME
+ * and their playback surface, so this constant and the bucket's MIME list are
+ * left untouched. The client cap below is intentionally IDENTICAL to the
+ * bucket `file_size_limit` enforced server-side (see the FBX-013 migration
+ * test), so a file the client accepts can never fail the Storage gate after
+ * the UI promised success.
  */
 export const COMMENT_VIDEO_MAX_BYTES = COMMENT_ATTACH_MAX_BYTES;
-/** Video containers the picker, the client gate, and the bucket all accept. */
+/** Video containers stored comments may still carry (legacy rows only). */
 export const COMMENT_VIDEO_MIME: readonly string[] = ["video/mp4", "video/webm", "video/quicktime"];
-/** Single `accept` string for the composer file input (photos + short video). */
-export const COMMENT_ATTACH_ACCEPT = "image/*,video/mp4,video/webm,video/quicktime";
+/**
+ * Single `accept` string for the composer file input. Photos only since
+ * packet `08` §7 — the `image/*` wildcard already covers the stills the
+ * canonical pipeline advertises plus GIF, which stays available.
+ */
+export const COMMENT_ATTACH_ACCEPT = "image/*";
 
 /**
  * Dedicated public bucket for comment attachments (FBX-013).
@@ -130,15 +140,21 @@ function safeFileName(name: string): string {
   return (base || "attachment").slice(0, 120);
 }
 
-/** Human-readable validation; null when the file is attachable. */
+/**
+ * Human-readable validation; null when the file is attachable. Photos only
+ * (packet `08` §7): a video is refused here as well as in the picker's accept
+ * list, so a file that arrives through drag/drop or an "all files" picker
+ * still gets an honest sentence instead of a silent upload.
+ */
 export function validateAttachableFile(file: File): string | null {
   const type = (file.type || "").toLowerCase();
-  if (!PHOTO_MIME.has(type) && !VIDEO_MIME.has(type)) {
-    return "That file can't be attached. Pick a photo or a short video instead.";
+  if (VIDEO_MIME.has(type)) return "Comments take photos, not video. Pick a photo instead.";
+  if (!PHOTO_MIME.has(type)) {
+    return "That file can't be attached. Pick a photo instead.";
   }
-  if (file.size <= 0) return "That file looks empty. Pick another photo or video.";
+  if (file.size <= 0) return "That file looks empty. Pick another photo.";
   if (file.size > COMMENT_ATTACH_MAX_BYTES) {
-    return "That file is too large to attach (25 MB limit). Pick a smaller one.";
+    return "That photo is too large to attach (25 MB limit). Pick a smaller one.";
   }
   return null;
 }

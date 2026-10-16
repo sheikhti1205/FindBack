@@ -51,22 +51,6 @@ vi.mock("../services/klipy", async (importOriginal) => {
   };
 });
 
-const { emojiMock } = vi.hoisted(() => ({
-  emojiMock: {
-    available: false,
-    pick: vi.fn(),
-  },
-}));
-
-vi.mock("../services/emojiPicker", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../services/emojiPicker")>();
-  return {
-    ...actual,
-    isNativeEmojiAvailable: () => emojiMock.available,
-    pickNativeEmoji: (...args: unknown[]) => (emojiMock.pick as (...a: unknown[]) => unknown)(...args),
-  };
-});
-
 const { nativeMediaMock } = vi.hoisted(() => ({
   nativeMediaMock: {
     available: false,
@@ -114,9 +98,6 @@ beforeEach(() => {
   klipyMock.track.mockReset();
   klipyMock.searchGifs.mockResolvedValue([]);
   klipyMock.searchStickers.mockResolvedValue([]);
-  emojiMock.available = false;
-  emojiMock.pick.mockReset();
-  emojiMock.pick.mockResolvedValue(null);
   nativeMediaMock.available = false;
   nativeMediaMock.chooseImages.mockReset();
   nativeMediaMock.importUri.mockReset();
@@ -178,60 +159,15 @@ describe("CommentComposer mentions", () => {
   });
 });
 
-describe("CommentComposer emoji catalogue", () => {
-  it("opens a searchable panel and inserts at the caret (no vendor keyboard)", () => {
+describe("CommentComposer has no emoji affordance (packet `08` §5)", () => {
+  it("renders no emoji control and no panel — the platform keyboard is the remaining path", () => {
     globalThis.localStorage?.clear();
     render(<CommentComposer {...baseProps()} />);
-    expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
-    fireEvent.click(screen.getByTestId("comment-emoji"));
-    expect(screen.getByTestId("comment-emoji-panel").getAttribute("role")).toBe("dialog");
-    // Search-first: typing "fire" surfaces the nature-category 🔥.
-    fireEvent.change(screen.getByTestId("comment-emoji-search"), { target: { value: "fire" } });
     fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "Wow " } });
-    fireEvent.click(screen.getByTestId("comment-emoji-🔥"));
-    expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toContain("Wow 🔥");
-  });
-
-  it("browses categories and surfaces recents after a pick", () => {
-    globalThis.localStorage?.clear();
-    render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-emoji"));
-    // Default category is smileys (😀 visible, 🔥 not yet).
-    expect(screen.getByTestId("comment-emoji-😀")).toBeTruthy();
-    expect(screen.queryByTestId("comment-emoji-🔥")).toBeNull();
-    fireEvent.click(screen.getByTestId("comment-emoji-tab-nature"));
-    fireEvent.click(screen.getByTestId("comment-emoji-🔥"));
-    expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toContain("🔥");
-    // The pick heads Recents immediately (the panel stays open for multi-pick).
-    expect(screen.getByTestId("comment-emoji-recents").textContent).toContain("🔥");
-    // Close and reopen: recents persist across sessions of the panel.
-    fireEvent.click(screen.getByTestId("comment-emoji"));
+    expect(screen.queryByTestId("comment-emoji")).toBeNull();
     expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
-    fireEvent.click(screen.getByTestId("comment-emoji"));
-    expect(screen.getByTestId("comment-emoji-recents").textContent).toContain("🔥");
-  });
-
-  it("marks the trigger open while the panel shows and closes on Escape", () => {
-    render(<CommentComposer {...baseProps()} />);
-    const trigger = screen.getByTestId("comment-emoji");
-    expect(trigger.getAttribute("data-open")).toBe("false");
-    fireEvent.click(trigger);
-    expect(screen.getByTestId("comment-emoji").getAttribute("data-open")).toBe("true");
-    expect(screen.getByTestId("comment-emoji").getAttribute("aria-pressed")).toBe("true");
-    fireEvent.keyDown(screen.getByTestId("comment-emoji-panel"), { key: "Escape" });
-    expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
-    expect(screen.getByTestId("comment-emoji").getAttribute("data-open")).toBe("false");
-  });
-
-  it("inserts multi-codepoint emoji mid-text with the tail preserved", () => {
-    render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-emoji"));
-    const input = screen.getByTestId("comment-input") as HTMLTextAreaElement;
-    fireEvent.change(input, { target: { value: "ab" } });
-    input.setSelectionRange(1, 1);
-    fireEvent.change(screen.getByTestId("comment-emoji-search"), { target: { value: "family" } });
-    fireEvent.click(screen.getByTestId("comment-emoji-👨‍👩‍👧"));
-    expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toBe("a👨‍👩‍👧b");
+    expect(screen.queryByRole("button", { name: /emoji/i })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: /emoji/i })).toBeNull();
   });
 
   it("never truncates an over-limit draft (validation blocks send, content untouched)", () => {
@@ -246,6 +182,26 @@ describe("CommentComposer emoji catalogue", () => {
 });
 
 describe("CommentComposer attachments", () => {
+  it("refuses a video pick with photos-only copy and stages nothing (packet `08` §7)", async () => {
+    render(<CommentComposer {...baseProps()} />);
+    fireEvent.change(screen.getByTestId("comment-file-input") as HTMLInputElement, {
+      target: { files: [file("clip.mp4", "video/mp4", 4096)] },
+    });
+    const notice = await screen.findByTestId("comment-attach-notice");
+    expect(notice.textContent).toMatch(/photos, not video/i);
+    // Nothing staged, nothing uploaded, send stays disabled with an empty draft.
+    expect(screen.queryByTestId("comment-attachments")).toBeNull();
+    expect(attachMock.upload).not.toHaveBeenCalled();
+    expect((screen.getByTestId("comment-file-input") as HTMLInputElement).accept).toBe("image/*");
+  });
+
+  it("keeps the accepted file types photos-only in the picker", () => {
+    render(<CommentComposer {...baseProps()} />);
+    const picker = screen.getByTestId("comment-file-input") as HTMLInputElement;
+    expect(picker.accept).toBe("image/*");
+    expect(picker.accept).not.toContain("video/");
+  });
+
   it("uploads a picked photo with progress, then posts its https URL (never base64)", async () => {
     let resolveUpload: (() => void) | null = null;
     attachMock.upload.mockImplementation(
@@ -433,14 +389,14 @@ describe("CommentComposer attachments", () => {
     attachMock.upload.mockRejectedValueOnce(new Error("offline blip"));
     render(<CommentComposer {...baseProps()} />);
     const picker = screen.getByTestId("comment-file-input") as HTMLInputElement;
-    fireEvent.change(picker, { target: { files: [file("v.mp4", "video/mp4")] } });
+    fireEvent.change(picker, { target: { files: [file("p.jpg", "image/jpeg")] } });
     expect(await screen.findByTestId("comment-attach-error")).toBeTruthy();
     expect(screen.getByTestId("comment-send")).toHaveProperty("disabled", true);
     const retry = screen.getByRole("button", { name: /retry attaching/i });
-    attachMock.upload.mockResolvedValue({ remoteUrl: "https://cdn/v.mp4", objectKey: "u-9/v.mp4" });
+    attachMock.upload.mockResolvedValue({ remoteUrl: "https://cdn/p.jpg", objectKey: "u-9/p.jpg" });
     fireEvent.click(retry);
     await waitFor(() => expect(attachMock.upload).toHaveBeenCalledTimes(2));
-    const remove = screen.getByRole("button", { name: /remove v\.mp4/i });
+    const remove = screen.getByRole("button", { name: /remove p\.jpg/i });
     fireEvent.click(remove);
     await waitFor(() => expect(screen.queryByTestId("comment-attachments")).toBeNull());
     expect(attachMock.remove).toHaveBeenCalledTimes(1);
@@ -566,33 +522,6 @@ describe("CommentComposer Klipy", () => {  it("hides the GIF control when the ke
     expect(body).toContain("![gif](https://media.klipy.com/happy.gif)");
     await waitFor(() => expect(klipyMock.track).toHaveBeenCalledTimes(1));
     expect(klipyMock.track).toHaveBeenCalledWith("gifs", "happy-1", expect.any(String));
-  });
-});
-
-describe("CommentComposer emoji bridge (FBX-016)", () => {
-  it("opens the native sheet on Android and inserts the pick at the caret (no panel)", async () => {
-    emojiMock.available = true;
-    emojiMock.pick.mockResolvedValue("🚀");
-    render(<CommentComposer {...baseProps()} />);
-    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "Wow " } });
-    fireEvent.click(screen.getByTestId("comment-emoji"));
-    await waitFor(() => expect(emojiMock.pick).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toContain("🚀"),
-    );
-    // Native path never opens the web fallback panel.
-    expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
-  });
-
-  it("leaves the draft untouched when the native sheet is cancelled", async () => {
-    emojiMock.available = true;
-    emojiMock.pick.mockResolvedValue(null);
-    render(<CommentComposer {...baseProps()} />);
-    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "Wow " } });
-    fireEvent.click(screen.getByTestId("comment-emoji"));
-    await waitFor(() => expect(emojiMock.pick).toHaveBeenCalledTimes(1));
-    expect((screen.getByTestId("comment-input") as HTMLTextAreaElement).value).toBe("Wow ");
-    expect(screen.queryByTestId("comment-emoji-panel")).toBeNull();
   });
 });
 

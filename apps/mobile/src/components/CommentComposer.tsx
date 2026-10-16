@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Film, ImageOff, ImagePlus, Search, SendHorizonal, Smile, Sticker, X } from "lucide-react";
+import { Film, ImageOff, ImagePlus, Search, SendHorizonal, Sticker, X } from "lucide-react";
 import { UserAvatar } from "./UserAvatar";
 import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
 import {
@@ -14,17 +14,6 @@ import {
   validateAttachableFile,
   type CommentAttachment,
 } from "../services/commentAttachments";
-import {
-  EMOJI_CATEGORIES,
-  loadEmojiRecents,
-  recordEmojiRecent,
-  searchEmojiCatalog,
-  type EmojiCatalogEntry,
-} from "../services/emojiCatalog";
-import {
-  isNativeEmojiAvailable,
-  pickNativeEmoji,
-} from "../services/emojiPicker";
 import {
   KLIPY_ATTRIBUTION,
   KLIPY_ATTRIBUTION_URL,
@@ -55,17 +44,19 @@ import { friendlyError } from "../utils/friendlyErrors";
  * - `@` mentions through the shared `MentionAutocomplete` (ranked
  *   participants > owner > server fallback, keyboard nav, caret insertion),
  *   anchored to the composer, keyboard/touch safe.
- * - Emoji through the native `FindbackEmoji` bottom-sheet bridge on Android
- *   (`pickNativeEmoji`, inserted at the caret); everywhere else a full
- *   catalogue panel (`emojiCatalog`: search + categories + Recents) — the
- *   composer owns no emoji set itself, and never a vendor-keyboard hack.
- * - Local photo/video attach: on Android photos come through the canonical
- *   native intake (`FindbackMedia` multi-pick + per-URI import, FBX-038);
- *   video and all other runtimes use the deliberate file-input path whose
- *   preview is a `blob:` object-URI and whose upload streams bytes to
- *   Storage under the caller's own folder (same RLS path as report photos)
- *   with progress / retry / remove and the shared max-count cap. The comment
- *   body carries only `https://` remote URLs — never base64.
+ * - No emoji affordance (packet `08` §5): the custom catalogue and its native
+ *   bottom-sheet bridge were removed outright rather than reimplemented — the
+ *   platform keyboard's own emoji entry in the text field is the remaining
+ *   path, and the composer owns no emoji set.
+ * - Photo attach only (packet `08` §7): new video intake is stopped at the
+ *   picker's accept list and the client gate, while every stored video row
+ *   keeps rendering. On Android photos come through the canonical native
+ *   intake (`FindbackMedia` multi-pick + per-URI import, FBX-038); every other
+ *   runtime uses the deliberate file-input path whose preview is a `blob:`
+ *   object-URI and whose upload streams bytes to Storage under the caller's
+ *   own folder (same RLS path as report photos) with progress / retry /
+ *   remove and the shared `COMMENT_ATTACH_MAX` cap. The comment body carries
+ *   only `https://` remote URLs — never base64.
  * - GIF/Sticker through the Klipy adapter behind the `VITE_KLIPY_API_KEY`
  *   config flag: the search controller owns debounce, latest-request-wins,
  *   stale-request cancellation, trending-on-empty, pagination, and
@@ -95,19 +86,6 @@ export interface CommentComposerProps {
   onError: (message: string) => void;
   /** Parent clears reply affordances after a successful post. */
   onSent?: () => void;
-}
-
-/** Insert `insert` at the caret; returns the next value + caret. Pure (tested via UI). */
-export function insertAtCaret(
-  value: string,
-  start: number | null,
-  end: number | null,
-  insert: string,
-): { next: string; caret: number } {
-  const s = start ?? value.length;
-  const e = end ?? s;
-  const next = `${value.slice(0, s)}${insert}${value.slice(e)}`;
-  return { next, caret: s + insert.length };
 }
 
 /**
@@ -181,10 +159,6 @@ export function CommentComposer({
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<CommentAttachment[]>([]);
   const [sending, setSending] = useState(false);
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const [emojiQuery, setEmojiQuery] = useState("");
-  const [emojiCategory, setEmojiCategory] = useState<string>(EMOJI_CATEGORIES[0]?.id ?? "smileys");
-  const [emojiRecents, setEmojiRecents] = useState<string[]>([]);
   const [gifOpen, setGifOpen] = useState(false);
   const [gifTab, setGifTab] = useState<GifTab>("gifs");
   const [gifQuery, setGifQuery] = useState("");
@@ -305,42 +279,6 @@ export function CommentComposer({
     focusAt(caret);
   }
 
-  function insertEmoji(emoji: string) {
-    const el = fieldRef.current;
-    const { next, caret } = insertAtCaret(text, el?.selectionStart ?? null, el?.selectionEnd ?? null, emoji);
-    setText(next);
-    setEmojiRecents(recordEmojiRecent(emoji));
-    focusAt(caret);
-  }
-
-  function openEmojiPanel() {
-    setGifOpen(false);
-    setEmojiQuery("");
-    setEmojiRecents(loadEmojiRecents());
-    setEmojiOpen(true);
-  }
-
-  // FBX-016: native bottom-sheet pick on Android, full catalogue panel
-  // elsewhere. The composer owns no emoji set — see `emojiCatalog`.
-  // The native path never opens the web panel.
-  async function handleEmojiButton() {
-    if (isNativeEmojiAvailable()) {
-      const picked = await pickNativeEmoji();
-      if (picked) insertEmoji(picked);
-      return;
-    }
-    if (emojiOpen) {
-      setEmojiOpen(false);
-      return;
-    }
-    openEmojiPanel();
-  }
-
-  function closeEmojiPanel() {
-    setEmojiOpen(false);
-    setEmojiQuery("");
-  }
-
   function patchAttachment(id: string, patch: Partial<CommentAttachment>) {
     setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
   }
@@ -402,8 +340,8 @@ export function CommentComposer({
 
   // FBX-038: photos prefer the canonical native intake on Android
   // (permissionless multi-pick, per-URI preparation so one bad item never
-  // discards its siblings, cancel is a silent no-op). Video and every other
-  // runtime use the deliberate file-input streaming path below. The bridge
+  // discards its siblings, cancel is a silent no-op). Every other runtime
+  // uses the deliberate file-input streaming path below. The bridge
   // is dynamically imported so the composer load graph never touches the
   // plugin registry (see commentAttachments).
   async function pickNativePhotos() {
@@ -604,7 +542,7 @@ export function CommentComposer({
             data-testid="comment-attach"
             onClick={() => void handleAttachClick()}
             disabled={disabled || sending}
-            aria-label="Attach a photo or video"
+            aria-label="Attach a photo"
             className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container disabled:opacity-60"
           >
             <ImagePlus size={20} aria-hidden />
@@ -624,30 +562,11 @@ export function CommentComposer({
             className="sr-only"
             tabIndex={-1}
           />
-          <button
-            type="button"
-            data-testid="comment-emoji"
-            onClick={() => void handleEmojiButton()}
-            disabled={disabled || sending}
-            aria-label="Add emoji"
-            title="Add emoji"
-            aria-expanded={emojiOpen}
-            aria-pressed={emojiOpen}
-            data-open={emojiOpen ? "true" : "false"}
-            className={`flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full transition-colors disabled:opacity-60 ${
-              emojiOpen
-                ? "bg-surface-container-high text-on-surface"
-                : "text-on-surface-variant hover:bg-surface-container active:bg-surface-container-high"
-            }`}
-          >
-            <Smile size={20} aria-hidden />
-          </button>
           {gifEnabled && (
             <button
               type="button"
               data-testid="comment-gif"
               onClick={() => {
-                closeEmojiPanel();
                 setGifOpen((o) => !o);
               }}
               disabled={disabled || sending}
@@ -777,18 +696,6 @@ export function CommentComposer({
               );
             })}
           </div>
-        )}
-
-        {emojiOpen && (
-          <EmojiCatalogPanel
-            query={emojiQuery}
-            onQueryChange={setEmojiQuery}
-            category={emojiCategory}
-            onCategoryChange={setEmojiCategory}
-            recents={emojiRecents}
-            onPick={insertEmoji}
-            onClose={closeEmojiPanel}
-          />
         )}
 
         {gifEnabled && gifOpen && (
@@ -929,172 +836,6 @@ export function CommentComposer({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-/**
- * Full catalogue emoji panel (web + any runtime without the native sheet):
- * search-first, category tabs, Recents. Rendered offline from
- * `emojiCatalog` — no network to render. Every cell inserts at the caret
- * through `onPick` (which restores focus); cell testids keep the
- * `comment-emoji-<char>` contract so insertion tests address picks directly.
- */
-function EmojiCatalogPanel({
-  query,
-  onQueryChange,
-  category,
-  onCategoryChange,
-  recents,
-  onPick,
-  onClose,
-}: {
-  query: string;
-  onQueryChange: (q: string) => void;
-  category: string;
-  onCategoryChange: (id: string) => void;
-  recents: readonly string[];
-  onPick: (emoji: string) => void;
-  onClose: () => void;
-}) {
-  const searching = query.trim() !== "";
-  const results: EmojiCatalogEntry[] = searching ? searchEmojiCatalog(query) : [];
-  const active = EMOJI_CATEGORIES.find((c) => c.id === category) ?? EMOJI_CATEGORIES[0]!;
-
-  function EmojiCell({ entry }: { entry: EmojiCatalogEntry }) {
-    return (
-      <button
-        key={entry.char}
-        type="button"
-        role="gridcell"
-        data-testid={`comment-emoji-${entry.char}`}
-        onClick={() => onPick(entry.char)}
-        aria-label={`Insert ${entry.name} ${entry.char}`}
-        title={entry.name}
-        className="flex min-h-[44px] min-w-[40px] items-center justify-center rounded-m3-sm text-xl hover:bg-surface-container-high active:bg-surface-container-high"
-      >
-        <span aria-hidden>{entry.char}</span>
-      </button>
-    );
-  }
-
-  return (
-    <div
-      data-testid="comment-emoji-panel"
-      role="dialog"
-      aria-label="Emoji picker"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          onClose();
-        }
-      }}
-      className="mt-1 rounded-m3-md border border-outline-variant bg-surface-container p-2 shadow-lg"
-    >
-      <div className="relative">
-        <Search
-          size={16}
-          aria-hidden
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant"
-        />
-        <input
-          data-testid="comment-emoji-search"
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          placeholder="Search emoji"
-          aria-label="Search emoji"
-          enterKeyHint="search"
-          className="min-h-[44px] w-full rounded-full border border-outline-variant bg-surface-container-low py-2 pl-9 pr-11 text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
-        />
-        {query !== "" && (
-          <button
-            type="button"
-            data-testid="comment-emoji-search-clear"
-            onClick={() => onQueryChange("")}
-            aria-label="Clear emoji search"
-            className="absolute right-0.5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high"
-          >
-            <X size={14} aria-hidden />
-          </button>
-        )}
-      </div>
-
-      {searching ? (
-        <div role="grid" aria-label={`Emoji results for ${query.trim()}`} className="mt-1 grid max-h-48 grid-cols-8 gap-0.5 overflow-y-auto">
-          {results.map((entry) => (
-            <EmojiCell key={entry.char} entry={entry} />
-          ))}
-        </div>
-      ) : (
-        <>
-          <div
-            role="tablist"
-            aria-label="Emoji categories"
-            data-testid="comment-emoji-categories"
-            className="mt-1 flex gap-0.5 overflow-x-auto pb-0.5"
-          >
-            {EMOJI_CATEGORIES.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                role="tab"
-                aria-selected={c.id === active.id}
-                data-testid={`comment-emoji-tab-${c.id}`}
-                onClick={() => onCategoryChange(c.id)}
-                aria-label={c.label}
-                title={c.label}
-                className={`flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full text-lg transition-colors ${
-                  c.id === active.id
-                    ? "bg-surface-container-high"
-                    : "hover:bg-surface-container-low"
-                }`}
-              >
-                <span aria-hidden>{c.icon}</span>
-              </button>
-            ))}
-          </div>
-          {recents.length > 0 && (
-            <div className="mt-1">
-              <p
-                data-testid="comment-emoji-recents-label"
-                className="px-1 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant"
-              >
-                Recent
-              </p>
-              <div
-                role="grid"
-                aria-label="Recently used emoji"
-                data-testid="comment-emoji-recents"
-                className="grid max-h-24 grid-cols-8 gap-0.5 overflow-y-auto"
-              >
-                {recents.map((char) => (
-                  <button
-                    key={`recent-${char}`}
-                    type="button"
-                    role="gridcell"
-                    data-testid={`comment-emoji-${char}`}
-                    onClick={() => onPick(char)}
-                    aria-label={`Insert ${char}`}
-                    className="flex min-h-[44px] min-w-[40px] items-center justify-center rounded-m3-sm text-xl hover:bg-surface-container-high active:bg-surface-container-high"
-                  >
-                    <span aria-hidden>{char}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div role="grid" aria-label={`${active.label} emoji`} className="mt-1 grid max-h-48 grid-cols-8 gap-0.5 overflow-y-auto">
-            {active.items.map((entry) => (
-              <EmojiCell key={entry.char} entry={entry} />
-            ))}
-          </div>
-        </>
-      )}
-      {searching && results.length === 0 && (
-        <p data-testid="comment-emoji-empty" role="status" className="px-2 py-6 text-center text-xs text-on-surface-variant">
-          No emoji match “{query.trim()}”. Try another search.
-        </p>
-      )}
     </div>
   );
 }

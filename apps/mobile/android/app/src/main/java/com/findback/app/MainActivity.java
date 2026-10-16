@@ -1,7 +1,6 @@
 package com.findback.app;
 
 import com.findback.app.LocationServicesPlugin;
-import com.findback.app.FindbackEmojiPlugin;
 import com.findback.app.map.FindbackMapPlugin;
 import com.findback.app.GoogleAuthPlugin;
 import com.findback.app.FindbackNotificationsPlugin;
@@ -34,7 +33,6 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(GoogleAuthPlugin.class);
         registerPlugin(FindbackNotificationsPlugin.class);
         registerPlugin(FindbackMediaPlugin.class);
-        registerPlugin(FindbackEmojiPlugin.class);
         super.onCreate(savedInstanceState);
         if (savedInstanceState != null && savedInstanceState.getBundle("findbackMediaRequest") != null) {
             mediaPlugin().restoreMediaRequestState(savedInstanceState.getBundle("findbackMediaRequest"));

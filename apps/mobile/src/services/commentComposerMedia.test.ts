@@ -71,9 +71,15 @@ const TRUSTED_STORAGE = (bucket: string, path: string) =>
   `https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/${bucket}/${path}`;
 
 describe("validateAttachableFile", () => {
-  it("accepts photos and short videos within the cap", () => {
+  it("accepts photos within the cap", () => {
     expect(validateAttachableFile(file("a.jpg", "image/jpeg"))).toBeNull();
-    expect(validateAttachableFile(file("b.mp4", "video/mp4", 5_000_000))).toBeNull();
+    expect(validateAttachableFile(file("b.png", "image/png", 5_000_000))).toBeNull();
+  });
+
+  it("refuses video outright (packet `08` §7) with photos-only copy", () => {
+    for (const mime of ["video/mp4", "video/webm", "video/quicktime"]) {
+      expect(validateAttachableFile(file("clip", mime, 2048))).toMatch(/photos, not video/i);
+    }
   });
 
   it("accepts AVIF and BMP like the report pipeline (parity, no comment-scope exclusion)", () => {
@@ -84,11 +90,11 @@ describe("validateAttachableFile", () => {
   });
 
   it("rejects non-media, empty, and oversized files with consumer copy", () => {
-    expect(validateAttachableFile(file("a.pdf", "application/pdf"))).toMatch(/photo|video/i);
+    expect(validateAttachableFile(file("a.pdf", "application/pdf"))).toMatch(/photo/i);
     expect(validateAttachableFile(file("a.jpg", "image/jpeg", 0))).toMatch(/empty/i);
-    expect(validateAttachableFile(file("a.mp4", "video/mp4", COMMENT_ATTACH_MAX_BYTES + 1))).toMatch(
-      /too large/i,
-    );
+    expect(
+      validateAttachableFile(file("a.jpg", "image/jpeg", COMMENT_ATTACH_MAX_BYTES + 1)),
+    ).toMatch(/too large/i);
   });
 
   it("caps the strip (attachment model limit)", () => {
@@ -106,7 +112,10 @@ describe("createCommentAttachment", () => {
     expect(entry.remoteUrl).toBeUndefined();
   });
 
-  it("classifies video picks", () => {
+  it("classifies video defensively — no intake reaches it with a video (packet `08` §7)", () => {
+    // The picker's accept list and `validateAttachableFile` both refuse video
+    // first, so the composer can never stage a clip. The classification stays
+    // honest for a direct caller (and keeps `kind` in step with the file).
     expect(createCommentAttachment(file("v.mp4", "video/mp4")).kind).toBe("video");
   });
 });
