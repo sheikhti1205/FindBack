@@ -133,8 +133,9 @@ describe("CreateReport multi-image", () => {
     pickFile(new File(["one"], "one.jpg", { type: "image/jpeg" }));
     await screen.findByRole("img", { name: /photo 1 of/i });
 
-    expect(screen.queryByRole("button", { name: /move photo 1 earlier/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /move photo 1 later/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /move photo 1 (left|right)/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /make photo 1 the cover/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /remove photo 1/i })).toBeTruthy();
   });
 
   it("two photos publish in displayed order via the multi path", async () => {
@@ -159,7 +160,7 @@ describe("CreateReport multi-image", () => {
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
-  it("moving a photo earlier changes the published order", async () => {
+  it("moving a photo left changes the published order", async () => {
     seedBasics();
     render(<CreateReport />);
     await fillTitleCategory("Lost phone");
@@ -170,7 +171,9 @@ describe("CreateReport multi-image", () => {
     pickFile(second);
     await screen.findByRole("img", { name: /photo 2 of/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /move photo 2 earlier/i }));
+    // The action row follows the visible slide, so page to photo 2 first.
+    fireEvent.click(screen.getByRole("button", { name: "Go to photo 2" }));
+    fireEvent.click(screen.getByRole("button", { name: /move photo 2 left/i }));
     submit();
 
     await waitFor(() =>
@@ -196,6 +199,7 @@ describe("CreateReport multi-image", () => {
     pickFile(third);
     await screen.findByRole("img", { name: /photo 3 of/i });
 
+    fireEvent.click(screen.getByRole("button", { name: "Go to photo 2" }));
     fireEvent.click(screen.getByRole("button", { name: /remove photo 2/i }));
     await waitFor(() =>
       expect(screen.queryByRole("img", { name: /photo 3 of/i })).toBeNull(),

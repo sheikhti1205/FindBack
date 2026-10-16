@@ -100,7 +100,7 @@ export function ReportPhotoCarousel({
         <div
           ref={trackRef}
           data-testid="report-photo-track"
-          role="group"
+          role="list"
           aria-label="Selected photos"
           onScroll={onScroll}
           className="flex w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden"
@@ -113,6 +113,7 @@ export function ReportPhotoCarousel({
                 data-testid="report-photo-slide"
                 data-photo-id={photo.id}
                 data-active={index === activeIndex ? "true" : undefined}
+                role="listitem"
                 className="w-full shrink-0 snap-center"
                 variants={{ hidden: { opacity: 0, scale: 0.98 }, visible: { opacity: 1, scale: 1 } }}
                 initial="hidden"
@@ -138,7 +139,7 @@ export function ReportPhotoCarousel({
                     maxHeight: MAX_SLIDE_HEIGHT,
                   }}
                 >
-                  <SlideImage photo={photo} onMeasure={measure} />
+                  <SlideImage photo={photo} index={index} total={photos.length} onMeasure={measure} />
                   {index === 0 && (
                     <span
                       data-testid="report-photo-cover-badge"
@@ -202,20 +203,24 @@ export function ReportPhotoCarousel({
               Make cover
             </button>
           )}
-          <IconAction
-            label={`Move photo ${activeIndex + 1} left`}
-            disabled={disabled || isFirst}
-            onClick={() => onMove(current.id, "earlier")}
-          >
-            <ChevronLeftIcon />
-          </IconAction>
-          <IconAction
-            label={`Move photo ${activeIndex + 1} right`}
-            disabled={disabled || isLast}
-            onClick={() => onMove(current.id, "later")}
-          >
-            <ChevronRightIcon />
-          </IconAction>
+          {photos.length > 1 && (
+            <>
+              <IconAction
+                label={`Move photo ${activeIndex + 1} left`}
+                disabled={disabled || isFirst}
+                onClick={() => onMove(current.id, "earlier")}
+              >
+                <ChevronLeftIcon />
+              </IconAction>
+              <IconAction
+                label={`Move photo ${activeIndex + 1} right`}
+                disabled={disabled || isLast}
+                onClick={() => onMove(current.id, "later")}
+              >
+                <ChevronRightIcon />
+              </IconAction>
+            </>
+          )}
           <IconAction
             label={`Remove photo ${activeIndex + 1}`}
             disabled={disabled}
@@ -231,9 +236,13 @@ export function ReportPhotoCarousel({
 
 function SlideImage({
   photo,
+  index,
+  total,
   onMeasure,
 }: {
   photo: ReportMediaPhoto;
+  index: number;
+  total: number;
   onMeasure: (id: string, element: HTMLImageElement) => void;
 }) {
   const [failed, setFailed] = useState(false);
@@ -248,7 +257,7 @@ function SlideImage({
   return (
     <img
       src={photo.webPath}
-      alt={`Photo ${photo.id}`}
+      alt={`Photo ${index + 1} of ${total}`}
       loading="lazy"
       draggable={false}
       onLoad={(event) => onMeasure(photo.id, event.currentTarget)}

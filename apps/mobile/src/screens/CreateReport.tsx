@@ -1147,6 +1147,22 @@ function ReportForm() {
     setPhotos(next);
   }
 
+  /**
+   * Moving a photo to the front is what makes it the cover (packet 05 §6), so
+   * "Make cover" is one reorder with one owner — no separate cover field that
+   * could disagree with the visible order.
+   */
+  function makeCoverPhoto(id: string): void {
+    const index = photosRef.current.findIndex((p) => p.id === id);
+    if (index <= 0) return;
+    const next = [...photosRef.current];
+    const [moved] = next.splice(index, 1);
+    if (!moved) return;
+    next.unshift(moved);
+    photosRef.current = next;
+    setPhotos(next);
+  }
+
   function clearPhotos(): void {
     for (const p of photosRef.current) {
       if (p.previewUrl.startsWith("blob:")) URL.revokeObjectURL(p.previewUrl);
@@ -1448,6 +1464,96 @@ function ReportForm() {
         ]}
       />
 
+      {/* Photo (optional) */}
+      <section className="flex flex-col gap-3">
+        <ReportMediaPicker
+          photos={mediaPickerPhotos}
+          disabled={submitting.current || uncertain || !photoRecoveryReady}
+          onAddCamera={onAddCamera}
+          onAddGallery={() => void onAddGallery()}
+          onRemove={removePhoto}
+          onMove={movePhotoById}
+          onMakeCover={makeCoverPhoto}
+          onPreview={(id, origin) => {
+            setPreviewOrigin(origin ?? null);
+            setPreviewPhotoId(id);
+          }}
+        />
+        <AnimatePresence mode="popLayout" initial={false}>
+          {pickStatus && (
+            <motion.div
+              key={pickStatus.kind}
+              role="status"
+              aria-live="polite"
+              data-testid="photo-pick-status"
+              data-status={pickStatus.kind}
+              className={`flex items-center gap-2 text-xs ${pickStatus.tone}`}
+              variants={fadeVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              transition={statusCrossfade}
+            >
+              <span>{pickStatus.text}</span>
+              {pickStatus.kind === "processing" && (
+                <Button type="button" variant="text" size="md" onClick={cancelPick}>
+                  Cancel
+                </Button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {photoFileErrors.length > 0 && (
+          <div className="text-xs text-error" role="alert">
+            <p>Some photos couldn&apos;t be added:</p>
+            <ul className="list-disc pl-5">
+              {photoFileErrors.map((message, index) => (
+                <li key={`${index}-${message}`}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {failedPicks.length > 0 && (
+          <ul className="flex flex-col gap-2" role="list" aria-label="Photos that couldn't be added">
+            {failedPicks.map((failed) => (
+              <li
+                key={failed.key}
+                className="flex items-start justify-between gap-3 rounded-m3-sm border border-error/40 px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-error">Photo {failed.position} couldn&apos;t be added.</p>
+                  <p className="text-xs text-on-surface-variant">{failed.reason}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button type="button" variant="text" size="md" onClick={() => retryFailedPick(failed.key)}>
+                    Retry
+                  </Button>
+                  <Button type="button" variant="text" size="md" onClick={() => dismissFailedPick(failed.key)}>
+                    Remove
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {!isNativeCameraAvailable() && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            // FBX-003: the picker advertises EXACTLY the accepted set — one
+            // source of truth, so the file dialog and the post-prepare gate
+            // can never disagree about which containers are welcome.
+            accept={ACCEPTED_IMAGE_TYPES.join(",")}
+            className="sr-only"
+            onChange={(e) => {
+              onPickFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        )}
+      </section>
+
       <TextField
         label={type === "LOST" ? "What did you lose?" : "What did you find?"}
         value={title}
@@ -1634,94 +1740,6 @@ function ReportForm() {
         <span className="mt-1 block text-xs text-error">{fieldErrors.locationLabel}</span>
       )}
 
-      {/* Photo (optional) */}
-      <section className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-3">
-        <ReportMediaPicker
-          photos={mediaPickerPhotos}
-          disabled={submitting.current || uncertain || !photoRecoveryReady}
-          onAddCamera={onAddCamera}
-          onAddGallery={() => void onAddGallery()}
-          onRemove={removePhoto}
-          onMove={movePhotoById}
-          onPreview={(id, origin) => {
-            setPreviewOrigin(origin ?? null);
-            setPreviewPhotoId(id);
-          }}
-        />
-        <AnimatePresence mode="popLayout" initial={false}>
-          {pickStatus && (
-            <motion.div
-              key={pickStatus.kind}
-              role="status"
-              aria-live="polite"
-              data-testid="photo-pick-status"
-              data-status={pickStatus.kind}
-              className={`flex items-center gap-2 text-xs ${pickStatus.tone}`}
-              variants={fadeVariants}
-              initial="hidden"
-              animate="visible"
-              exit="hidden"
-              transition={statusCrossfade}
-            >
-              <span>{pickStatus.text}</span>
-              {pickStatus.kind === "processing" && (
-                <Button type="button" variant="text" size="md" onClick={cancelPick}>
-                  Cancel
-                </Button>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-        {photoFileErrors.length > 0 && (
-          <div className="text-xs text-error" role="alert">
-            <p>Some photos couldn&apos;t be added:</p>
-            <ul className="list-disc pl-5">
-              {photoFileErrors.map((message, index) => (
-                <li key={`${index}-${message}`}>{message}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {failedPicks.length > 0 && (
-          <ul className="flex flex-col gap-2" role="list" aria-label="Photos that couldn't be added">
-            {failedPicks.map((failed) => (
-              <li
-                key={failed.key}
-                className="flex items-start justify-between gap-3 rounded-m3-sm border border-error/40 px-3 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm text-error">Photo {failed.position} couldn&apos;t be added.</p>
-                  <p className="text-xs text-on-surface-variant">{failed.reason}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button type="button" variant="text" size="md" onClick={() => retryFailedPick(failed.key)}>
-                    Retry
-                  </Button>
-                  <Button type="button" variant="text" size="md" onClick={() => dismissFailedPick(failed.key)}>
-                    Remove
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        {!isNativeCameraAvailable() && (
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            // FBX-003: the picker advertises EXACTLY the accepted set — one
-            // source of truth, so the file dialog and the post-prepare gate
-            // can never disagree about which containers are welcome.
-            accept={ACCEPTED_IMAGE_TYPES.join(",")}
-            className="sr-only"
-            onChange={(e) => {
-              onPickFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        )}
-      </section>
 
       <PhotoLightbox
         photo={previewPhoto}

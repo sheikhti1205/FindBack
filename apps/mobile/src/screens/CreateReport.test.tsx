@@ -598,10 +598,10 @@ describe("CreateReport", () => {
       // Six serialized captures (conversion + hash + render each) exceed the
       // default 1s waitFor budget under full-suite worker load.
       await waitFor(
-        () => expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5),
+        () => expect(screen.getAllByTestId("report-photo-slide")).toHaveLength(5),
         { timeout: 5000 },
       );
-      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5);
+      expect(screen.getAllByTestId("report-photo-slide")).toHaveLength(5);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
       nativeMedia.chooseNativeImage.mockReset();
@@ -618,7 +618,7 @@ describe("CreateReport", () => {
       await screen.findByRole("button", { name: /remove photo/i });
       fireEvent.click(capture);
       await screen.findByText(/already selected/i);
-      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
+      expect(screen.getAllByTestId("report-photo-slide")).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
       nativeMedia.chooseNativeImage.mockReset();
@@ -655,7 +655,7 @@ describe("CreateReport", () => {
       // (native conversion + SHA-256 + re-render per item) exceeds the default
       // 1s waitFor budget under full-suite worker load, so allow headroom.
       await waitFor(
-        () => expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(5),
+        () => expect(screen.getAllByTestId("report-photo-slide")).toHaveLength(5),
         { timeout: 5000 },
       );
     } finally {
@@ -676,7 +676,7 @@ describe("CreateReport", () => {
       await screen.findByRole("button", { name: /remove photo/i });
       fireEvent.click(screen.getByRole("button", { name: /take photo/i }));
       await screen.findByText(/already selected/i);
-      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
+      expect(screen.getAllByTestId("report-photo-slide")).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
       nativeMedia.chooseNativeImage.mockReset();
@@ -693,7 +693,7 @@ describe("CreateReport", () => {
       photo.isNativeCameraAvailable.mockReturnValue(true);
       fireEvent.click(screen.getByRole("button", { name: /take photo/i }));
       await screen.findByText(/already selected/i);
-      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
+      expect(screen.getAllByTestId("report-photo-slide")).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
       nativeMedia.chooseNativeImage.mockReset();
@@ -712,7 +712,7 @@ describe("CreateReport", () => {
       await waitFor(() => expect(screen.getByRole("button", { name: /take photo/i }).getAttribute("aria-disabled")).toBe("false"));
       fireEvent.click(screen.getByRole("button", { name: /take photo/i }));
       await screen.findByText(/already selected/i);
-      expect(screen.getAllByRole("button", { name: /remove photo/i })).toHaveLength(1);
+      expect(screen.getAllByTestId("report-photo-slide")).toHaveLength(1);
     } finally {
       photo.isNativeCameraAvailable.mockReturnValue(false);
       nativeMedia.chooseNativeImage.mockReset();
