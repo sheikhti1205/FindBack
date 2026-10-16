@@ -216,7 +216,7 @@ describe("fixture frames are trustworthy evidence", () => {
   });
 
   it("states each frame's card widths from that frame's own width, pinned per scale", () => {
-    // Three separate ways this check used to be decorative, all closed here:
+    // Ways this check has been decorative before, all closed here:
     //  - the caption was compared against the same `cardWidthAt(...)` literals it
     //    was built from (self-referential: pointing the derivation at the 40px
     //    inset left this green while the caption read 260.00px where 262.656px
@@ -225,9 +225,20 @@ describe("fixture frames are trustworthy evidence", () => {
     //    ("Extra large text held below" next to the standard-scale value) stayed
     //    green while the on-screen caption was wrong;
     //  - the frame filter keyed off the word "boundary", so a measurement added
-    //    to any other frame was never inspected at all.
-    // Now every frame is inspected; a frame that publishes a measurement must have
-    // pinned goldens, and each golden is asserted with the scale it belongs to.
+    //    to any other frame was never inspected at all;
+    //  - the caption was re-parsed out of the prose, so a number spelled in a way
+    //    the parser did not recognise (a space before `px`, upper case, or the
+    //    same text as the stripped `at <width>px` header) was invisible;
+    //  - the geometry premise every number rests on was pinned on two nodes
+    //    (`frame.className`, `frame.lastElementChild.className`), so a padding
+    //    wrapper one level deeper shrank the cards while the caption kept its
+    //    figure — green, and a lie.
+    // Now: a frame declares the widths it publishes (`data-frame-measurements`),
+    // the declaration is pinned against per-band goldens, the rendered caption is
+    // checked against the declaration in both directions (nothing printed that was
+    // not declared, nothing declared that is not printed), and the geometry
+    // premise is pinned along the whole chain from the frame's content box down to
+    // the lane that owns the card grid.
     renderRoute();
     const section = screen.getByTestId("fixture-section-feed-layouts");
     const threeColumn = 3 * MASONRY_MIN_CARD_PX + 2 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
@@ -236,40 +247,73 @@ describe("fixture frames are trustworthy evidence", () => {
       [threeColumn]: ["260.00", "262.67"],
       [fourColumn]: ["260.00", "262.00"],
     };
+    // A class that changes the box a frame's cards are laid out in. The walk below
+    // stops at the lane (whose own `px-*` gutter is the one inset the caption
+    // arithmetic budgets, pinned to the source by `masonryListPaddingRem`), so
+    // everything between the frame and that lane must be transparent.
+    const BOX_UTILITY =
+      /^(?:p|px|py|ps|pe|pt|pb|pl|pr|m|mx|my|ms|me|mt|mb|ml|mr|w|min-w|max-w|basis|border|border-x|border-y|rounded|ring|outline)(?:-|$)/;
     const frames = [...section.querySelectorAll("[data-frame-width]")];
     expect(frames.length).toBeGreaterThanOrEqual(2);
     let checked = 0;
     for (const frame of frames) {
       const width = Number(frame.getAttribute("data-frame-width"));
-      // The frame states its own width in its header; every other `px` number it
-      // prints is a card measurement, whatever form it takes (the old detector
-      // only recognised two decimals, so `999px` slipped through).
+      const declared = (frame.getAttribute("data-frame-measurements") ?? "").split(/\s+/).filter(Boolean);
+      const grid = frame.querySelector('[data-testid="feed-masonry"]');
+      // The frame's caption prose — its own label plus any band header — and never
+      // the cards' own text, which is content and may mention anything.
       const caption = [...frame.querySelectorAll("p")]
+        .filter((paragraph) => !grid || !grid.contains(paragraph))
         .map((paragraph) => paragraph.textContent ?? "")
-        .join(" ")
-        .replaceAll(`at ${width}px`, "");
-      const published = [...caption.matchAll(/\d+(?:\.\d+)?px/g)].map((match) => match[0]);
-      if (published.length === 0) continue;
-      // A published number is only worth pinning if the frame it came from really
-      // has `width` as its content box: a border or padding here shrinks every
-      // card while the caption keeps its old figure (mine at 40px inset was the
-      // same class of lie, one layer up).
-      expect(frame.className, `the ${width}px frame is no longer a geometry frame`).not.toMatch(
-        /\bborder\b|\brounded-/,
-      );
+        .join(" ");
+      // Every `${n}px` the caption prints, with the frame naming its own width
+      // kept apart: `at <width>px` is allowed, and only once.
+      const printed = [...caption.matchAll(/(at\s+)?(\d+(?:\.\d+)?)\s*px/gi)].map((match) => ({
+        namesOwnWidth: Boolean(match[1]) && Number(match[2]) === width,
+        value: match[2] as string,
+      }));
+      const ownWidthMentions = printed.filter((entry) => entry.namesOwnWidth);
       expect(
-        frame.lastElementChild?.className ?? "",
-        `the ${width}px frame pads its content box, so its cards are narrower than its caption`,
-      ).not.toMatch(/\bp[trblxy]?-[\d.]+/);
+        ownWidthMentions.length,
+        `the ${width}px frame names its own width more than once, so a caption number hides behind it`,
+      ).toBeLessThanOrEqual(1);
+      // Both directions: a caption may print only what the frame declares, and a
+      // declaration must be printed.
+      expect(
+        printed.filter((entry) => !entry.namesOwnWidth).map((entry) => entry.value).sort(),
+        `the ${width}px frame's caption numbers do not match what it declares`,
+      ).toEqual([...declared].sort());
+      if (declared.length === 0) continue;
       const expected = golden[width];
       expect(
         expected,
         `the ${width}px frame publishes card widths but has no pinned goldens`,
       ).toBeTruthy();
+      expect(declared).toEqual([expected![0], expected![1]]);
       expect(caption).toContain(`${expected![0]}px with Extra large text held below`);
       expect(caption).toContain(`${expected![1]}px at the standard scale`);
-      // …and nothing else may be published from that frame as a measurement.
-      expect([...published].sort()).toEqual([`${expected![0]}px`, `${expected![1]}px`].sort());
+      // The premise the numbers rest on: this frame's content box IS `width`. jsdom
+      // applies no layout, so the assertions are on the inputs the render depends
+      // on — the frame's own inline width, no border/rounding on the frame, and a
+      // transparent chain from the frame down to the lane that owns the grid.
+      expect(
+        (frame as HTMLElement).style.width,
+        `the ${width}px frame no longer sets its own width`,
+      ).toBe(`${width}px`);
+      expect(frame.className, `the ${width}px frame is no longer a geometry frame`).not.toMatch(
+        /\bborder\b|\brounded-/,
+      );
+      expect(grid, `the ${width}px frame publishes card widths but renders no masonry grid`).toBeTruthy();
+      const lane = grid!.parentElement;
+      expect(lane, `the ${width}px frame's grid has no lane`).toBeTruthy();
+      for (let element = lane!.parentElement; element && element !== frame; element = element.parentElement) {
+        const offenders = [...element.classList].filter((name) => BOX_UTILITY.test(name));
+        expect(
+          offenders,
+          `the ${width}px frame stacks ${offenders.join(", ")} between its content box and the lane, so its cards are narrower than its caption`,
+        ).toEqual([]);
+      }
+      expect(lane!.className).toMatch(/\bpx-\d/);
       checked += 1;
     }
     expect(checked, "no frame published a card width to check").toBeGreaterThanOrEqual(2);

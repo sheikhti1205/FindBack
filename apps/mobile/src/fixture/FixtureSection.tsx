@@ -204,6 +204,7 @@ export function FixtureFrame({
   variant,
   width,
   geometry = false,
+  measurements,
   children,
 }: {
   section: string;
@@ -217,6 +218,16 @@ export function FixtureFrame({
    * is exactly what `masonryColumns` budgets for).
    */
   geometry?: boolean;
+  /**
+   * The card widths this frame's caption publishes, declared as data instead of
+   * being re-parsed back out of the prose. `fixture.test.tsx` pins the
+   * declaration against its goldens, the rendered caption against the
+   * declaration (both directions), and the frame's geometry against the
+   * declaration's premise — so a caption number can neither drift from the
+   * declaration nor appear undeclared. A frame that prints a measurement
+   * without declaring it fails.
+   */
+  measurements?: readonly (string | number)[];
   children: ReactNode;
 }) {
   const dark = variant === "dark" || variant === "amoled";
@@ -242,6 +253,7 @@ export function FixtureFrame({
       {...(width
         ? { "data-frame-width": String(width), "data-columns": String(masonryColumns(width)) }
         : {})}
+      {...(measurements ? { "data-frame-measurements": measurements.join(" ") } : {})}
       style={frameStyle(variant, width)}
       // Every frame is a mini-viewport: it paints the app's own surface token
       // and text token, so a `dark`/`amoled` frame is dark all the way down

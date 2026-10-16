@@ -134,19 +134,42 @@ function BandFrame({
   width,
   variant = "normal",
   label,
+  publishesCardWidths = false,
   children,
 }: {
   width: number;
   variant?: FixtureVariant;
   label: string;
+  /**
+   * Print (and declare) the two card widths this width produces. The numbers
+   * are computed here once and used for both the caption prose and the frame's
+   * `data-frame-measurements`, so the prose cannot quote a figure the
+   * declaration does not carry.
+   */
+  publishesCardWidths?: boolean;
   children: ReactNode;
 }) {
   const columns = masonryColumns(width);
+  const measurements = publishesCardWidths
+    ? [
+        cardWidthAt(width, rootPxFor(LARGE_TEXT_PERCENT)).toFixed(2),
+        cardWidthAt(width, rootPxFor(STANDARD_TEXT_PERCENT)).toFixed(2),
+      ]
+    : null;
   return (
     <div className="w-full overflow-x-auto">
-      <FixtureFrame section="feed-layouts" variant={variant} width={width} geometry>
+      <FixtureFrame
+        section="feed-layouts"
+        variant={variant}
+        width={width}
+        geometry
+        {...(measurements ? { measurements } : {})}
+      >
         <p className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-on-surface-variant">
           {columns} {columns === 1 ? "column" : "columns"} at {width}px — {label}
+          {measurements
+            ? ` (cards measure ${measurements[0]}px with Extra large text held below, ${measurements[1]}px at the standard scale)`
+            : ""}
         </p>
         {children}
       </FixtureFrame>
@@ -178,10 +201,10 @@ export function FeedLayoutFixtures() {
       <BandFrame width={BAND.medium} label="a small tablet or a landscape phone">
         {masonry(masonryColumns(BAND.medium))}
       </BandFrame>
-      <BandFrame width={BAND.threeColumn} label={`the exact 3-column boundary (\`masonryColumns\` returns 3 here, not 2; cards measure ${cardWidthAt(BAND.threeColumn, rootPxFor(LARGE_TEXT_PERCENT)).toFixed(2)}px with Extra large text held below, ${cardWidthAt(BAND.threeColumn, rootPxFor(STANDARD_TEXT_PERCENT)).toFixed(2)}px at the standard scale)`}>
+      <BandFrame width={BAND.threeColumn} publishesCardWidths label="the exact 3-column boundary (`masonryColumns` returns 3 here, not 2)">
         {masonry(masonryColumns(BAND.threeColumn))}
       </BandFrame>
-      <BandFrame width={BAND.fourColumn} label={`the exact 4-column boundary, the maximum (\`MASONRY_MAX_COLUMNS\`; cards measure ${cardWidthAt(BAND.fourColumn, rootPxFor(LARGE_TEXT_PERCENT)).toFixed(2)}px with Extra large text held below, ${cardWidthAt(BAND.fourColumn, rootPxFor(STANDARD_TEXT_PERCENT)).toFixed(2)}px at the standard scale)`}>
+      <BandFrame width={BAND.fourColumn} publishesCardWidths label="the exact 4-column boundary, the maximum (`MASONRY_MAX_COLUMNS`)">
         {masonry(masonryColumns(BAND.fourColumn))}
       </BandFrame>
       <BandFrame width={BAND.threeColumn} variant="loading" label="masonry skeleton — never a centered spinner">
