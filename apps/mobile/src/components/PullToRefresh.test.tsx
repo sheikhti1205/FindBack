@@ -89,6 +89,8 @@ describe("PullToRefresh — scroll ownership", () => {
     // platforms, and the touch stream then has no end event at all.
     const addSpy = vi.spyOn(window, "addEventListener");
     const removeSpy = vi.spyOn(window, "removeEventListener");
+    const docAddSpy = vi.spyOn(document, "addEventListener");
+    const docRemoveSpy = vi.spyOn(document, "removeEventListener");
     const onRefresh = vi.fn(() => Promise.resolve());
     try {
       const { container } = render(
@@ -125,6 +127,23 @@ describe("PullToRefresh — scroll ownership", () => {
         expect(removed, "the blur listener must be removed when the pull ends").toContain(listener);
       }
 
+      // Both nets are installed by the same effect and both must come off again.
+      // The visibilitychange one lives on `document`, so a window-only spy could
+      // not see it leak — the gap this comment closes.
+      const docAdded = docAddSpy.mock.calls
+        .filter(([type]) => type === "visibilitychange")
+        .map(([, listener]) => listener);
+      expect(docAdded.length).toBeGreaterThan(0);
+      const docRemoved = docRemoveSpy.mock.calls
+        .filter(([type]) => type === "visibilitychange")
+        .map(([, listener]) => listener);
+      for (const listener of docAdded) {
+        expect(
+          docRemoved,
+          "the visibilitychange listener must be removed when the pull ends",
+        ).toContain(listener);
+      }
+
       // A later blur is a no-op.
       act(() => {
         window.dispatchEvent(new Event("blur"));
@@ -133,6 +152,8 @@ describe("PullToRefresh — scroll ownership", () => {
     } finally {
       addSpy.mockRestore();
       removeSpy.mockRestore();
+      docAddSpy.mockRestore();
+      docRemoveSpy.mockRestore();
     }
   });
 });
