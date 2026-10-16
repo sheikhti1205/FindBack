@@ -94,20 +94,21 @@ export function FeedLoveProvider({
   const pendingRef = useRef<Set<string>>(new Set());
   const generationRef = useRef(0);
   /**
-   * Per-card write counter. A hydration request that started before a write
-   * (or while one is in flight) must never overwrite the newer state with its
-   * older read, so each request remembers the counters it started at and skips
-   * any card whose counter has moved since.
+   * Per-card commit counter: bumped only when a write actually returns server
+   * truth. A hydration request remembers the counters it started at and skips
+   * any card whose counter moved since, so a read that predates a *committed*
+   * write can never overwrite it. A failed write does not bump (its rollback
+   * restores the pre-write state, which a later read may legitimately update).
    */
-  const writeEpochRef = useRef<Record<string, number>>({});
+  const committedEpochRef = useRef<Record<string, number>>({});
 
   const idsSig = useMemo(() => uniqueIds(items).join(""), [items]);
   const itemsById = useMemo(() => new Map(items.map((p) => [p.id, p])), [items]);
 
   // Batch-hydrate caller reactions for the visible page. Generation-guarded:
   // only the latest id set may write. In-flight or just-landed Like toggles win
-  // over a late hydration response (per-card write epochs), and a hydration
-  // never drops the server summary a Like already returned.
+  // over a late hydration response (per-card committed-write epochs), and a
+  // hydration never drops the server summary a Like already returned.
   // Failures (offline/unauthenticated) stay silent — the feed remains usable,
   // toggles still attempt the RPC.
   useEffect(() => {
@@ -117,7 +118,7 @@ export function FeedLoveProvider({
     }
     const ids = uniqueIds(itemsRef.current);
     const gen = ++generationRef.current;
-    const epochsAtStart: Record<string, number> = { ...writeEpochRef.current };
+    const epochsAtStart: Record<string, number> = { ...committedEpochRef.current };
     let cancelled = false;
     void (async () => {
       try {
@@ -126,8 +127,9 @@ export function FeedLoveProvider({
         setReactions((prev) => {
           const next: Record<string, FeedReactionEntry> = {};
           for (const [pid, entry] of Object.entries(fresh)) {
-            const wrote = (writeEpochRef.current[pid] ?? 0) !== (epochsAtStart[pid] ?? 0);
-            if (pendingRef.current.has(pid) || wrote) {
+            const committedSince =
+              (committedEpochRef.current[pid] ?? 0) !== (epochsAtStart[pid] ?? 0);
+            if (pendingRef.current.has(pid) || committedSince) {
               if (prev[pid]) next[pid] = prev[pid];
               continue;
             }
@@ -155,15 +157,14 @@ export function FeedLoveProvider({
   const togglePost = useCallback(
     async (postId: string): Promise<boolean> => {
       if (pendingRef.current.has(postId)) return true;
-      // Any hydration already in flight or started later is older than this
-      // write; the epoch makes that ordering explicit where the generation
-      // guard only orders id sets.
-      writeEpochRef.current[postId] = (writeEpochRef.current[postId] ?? 0) + 1;
+      const currentItem = itemsRef.current.find((p) => p.id === postId);
       const prev = reactionsRef.current[postId] ?? {
-        myReaction: null as ReactionKind | null,
+        // Before hydration lands the card's snapshot is the only statement of
+        // the caller's own row, so the tap reads the same row the heart shows —
+        // the two can never point in opposite directions.
+        myReaction: currentItem?.reactionSummary?.myReaction ?? null,
         myRating: null,
       };
-      const currentItem = itemsRef.current.find((p) => p.id === postId);
       const prevLike = currentItem?.likeCount ?? 0;
       const prevDislike = currentItem?.dislikeCount ?? 0;
       const deltas = likeBucketDeltas(prev.myReaction);
@@ -195,6 +196,9 @@ export function FeedLoveProvider({
       });
       try {
         const res = await toggleLikeReaction(postId, prev.myReaction);
+        // Committed: this row is now the newest truth for the card, so any
+        // hydration that started before this point must not overwrite it.
+        committedEpochRef.current[postId] = (committedEpochRef.current[postId] ?? 0) + 1;
         setReactions((r) => ({
           ...r,
           [postId]: {
@@ -260,12 +264,14 @@ export function useFeedLove(postId: string): FeedLove | null {
   if (!ctx) return null;
   const item = ctx.itemsById.get(postId);
   const entry = ctx.reactions[postId];
-  // The caller's own row is the freshest thing held here: batch hydration and
-  // the write that just landed both target it, while the feed item's summary
-  // was captured at fetch time. Prefer it, then reconcile the summary against
-  // it so the count and the heart can never disagree.
+  // Hydration writes an entry for every id it was asked about, so an entry that
+  // exists is authoritative for the caller's own row — including when that row
+  // is `null` ("no reaction"). It must never fall through to the summary
+  // snapshot, which is frozen at feed-fetch time and still describes the row as
+  // it was then; doing so shows a filled heart the tap would then contradict.
+  const hydrated = entry !== undefined;
   const baseSummary = entry?.summary ?? item?.reactionSummary ?? null;
-  const myReaction = entry?.myReaction ?? baseSummary?.myReaction ?? null;
+  const myReaction = hydrated ? entry.myReaction : (baseSummary?.myReaction ?? null);
   const summary = reconcileOwnedRow(baseSummary, myReaction);
   return {
     myReaction,

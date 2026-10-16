@@ -90,6 +90,10 @@ function renderDetail(entry = "/posts/p1") {
 
 describe("PostDetail redesign (UXN-3)", () => {
   beforeEach(() => {
+    // The share path builds a public link, which reads this var and throws when
+    // it is unset. Stub it so the suite is hermetic (a fresh worktree has no
+    // untracked .env.local) instead of depending on the developer's env file.
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", "https://findback.test");
     authState.user = { id: "u9", username: "reader" };
     postsMock.fetchPost.mockResolvedValue(basePost);
     postsMock.fetchComments.mockResolvedValue([0, 1, 2, 3, 4, 5, 6].map(comment));
@@ -97,7 +101,10 @@ describe("PostDetail redesign (UXN-3)", () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 2, matches: [] });
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllEnvs();
+  });
 
   it("collapses a long description with Show more/less + aria-expanded", async () => {
     renderDetail();

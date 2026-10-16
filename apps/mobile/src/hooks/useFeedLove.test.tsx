@@ -614,8 +614,7 @@ describe("FeedLoveProvider summary reconciliation (REVIEW-CF030-CODE I1 M1/M2)",
     expect(screen.getByTestId("likes-p1").textContent).toBe("5");
   });
 
-  it("M2: a hydration that started before the Like cannot un-fill the heart", async () => {
-    const hydration = deferred<{ data: unknown; error: null }>();
+  it("M2: a hydration that started before the Like cannot un-fill the heart", async () => {    const hydration = deferred<{ data: unknown; error: null }>();
     clientMock.rpc.mockImplementationOnce(() => hydration.promise);
     clientMock.rpc.mockResolvedValueOnce({
       data: [
@@ -641,5 +640,151 @@ describe("FeedLoveProvider summary reconciliation (REVIEW-CF030-CODE I1 M1/M2)",
     expect(screen.getByTestId("mine-p1").textContent).toBe("yes");
     expect(screen.getByTestId("reaction-p1").textContent).toBe("LIKE");
     expect(screen.getByTestId("likes-p1").textContent).toBe("5");
+  });
+
+  it("M2: a failed write never suppresses a hydration that knows better", async () => {
+    const hydration = deferred<{ data: unknown; error: null }>();
+    clientMock.rpc.mockImplementationOnce(() => hydration.promise);
+    clientMock.rpc.mockRejectedValueOnce(new Error("write failed"));
+    render(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 3 })]} patchItem={vi.fn()}>
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+    // Rolled back: nothing committed, so no commit epoch was recorded.
+    await waitFor(() => expect(screen.getByTestId("reaction-p1").textContent).toBe("none"));
+
+    // The read that was already in flight is still the truth for this caller.
+    await act(async () => {
+      hydration.resolve({
+        data: [{ post_id: "p1", my_reaction: "LIKE", my_rating: null }],
+        error: null,
+      });
+    });
+
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("yes"));
+    expect(screen.getByTestId("reaction-p1").textContent).toBe("LIKE");
+  });
+
+  it("M2: a fresh hydration that reports no row clears a kept summary", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: [], error: null });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", like_count: 5, dislike_count: 0, my_reaction: "LIKE", reaction_counts: { LOVE: 5 } },
+      ],
+      error: null,
+    });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", my_reaction: null, my_rating: null },
+        { post_id: "p2", my_reaction: null, my_rating: null },
+      ],
+      error: null,
+    });
+    const view = render(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4 })]} patchItem={vi.fn()}>
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+    await waitFor(() => expect(screen.getByTestId("likes-p1").textContent).toBe("5"));
+
+    view.rerender(
+      <FeedLoveProvider items={[item({ id: "p1", likeCount: 4 }), item({ id: "p2" })]} patchItem={vi.fn()}>
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(clientMock.rpc).toHaveBeenCalledTimes(3));
+
+    // The kept per-kind summary is reused, but the caller's own row now comes
+    // from the read: heart empty, and their Like is no longer counted.
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("no"));
+    expect(screen.getByTestId("likes-p1").textContent).toBe("4");
+  });
+
+  it("M2: a snapshot's own row never wins over hydration, and the tap follows the heart", async () => {
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", my_reaction: null, my_rating: null }],
+      error: null,
+    });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", like_count: 5, dislike_count: 0, my_reaction: "LIKE", reaction_counts: { LOVE: 5 } },
+      ],
+      error: null,
+    });
+    render(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 5,
+            dislikeCount: 0,
+            // Snapshot taken while the caller held a row; the read says otherwise.
+            reactionSummary: { counts: { LOVE: 5 }, myReaction: "LIKE", total: 5 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("no"));
+    expect(screen.getByTestId("likes-p1").textContent).toBe("4");
+
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+
+    // Empty heart ⇒ the tap adds one (4 → 5). Un-liking a row the server says
+    // does not exist would have shown 5 → 6 against the snapshot's count.
+    expect(screen.getByTestId("likes-p1").textContent).toBe("5");
+    expect(clientMock.rpc).toHaveBeenLastCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: "LIKE",
+    });
+  });
+
+  it("M2: without hydration the heart and the tap still read the same row", async () => {
+    clientMock.rpc.mockRejectedValueOnce(new Error("offline"));
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", like_count: 4, dislike_count: 0, my_reaction: null }],
+      error: null,
+    });
+    render(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 5,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 5 }, myReaction: "LIKE", total: 5 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+
+    // Hydration failed, so the snapshot is all there is — the heart shows its
+    // own row...
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("yes"));
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+
+    // ...and the tap clears that same row instead of writing a second Like.
+    expect(clientMock.rpc).toHaveBeenLastCalledWith("findback_react_client", {
+      p_post_id: "p1",
+      p_type: null,
+    });
   });
 });
