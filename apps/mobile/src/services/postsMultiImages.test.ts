@@ -269,6 +269,36 @@ describe("uploadPhotos", () => {
     expect(stored[1]!.fileName).toBe("p2.jpg");
   });
 
+  it("stages each report photo's own normalized size (§19 / CF-060 M1)", async () => {
+    // Each photo in a report is normalized separately, so the pair staged with
+    // its row has to be that photo's own — not the first one's, not the source
+    // file's. An attachment row is what the feed lays out from, so a swapped or
+    // shared pair would mis-size a card in the masonry feed.
+    normalizeMock.mockImplementation(async (file: File) => {
+      const portrait = file.name === "portrait.jpg";
+      return {
+        blob: new Blob(["normalized"], { type: "image/jpeg" }),
+        mimeType: "image/jpeg",
+        width: portrait ? 1080 : 1600,
+        height: portrait ? 1440 : 900,
+      };
+    });
+
+    const stored = await uploadPhotos([photo("portrait.jpg"), photo("landscape.jpg")]);
+
+    const rows = insertMock.mock.calls.map(
+      (call) => call[0] as { file_name: string; width?: number; height?: number },
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({ file_name: "portrait.jpg", width: 1080, height: 1440 }),
+      expect.objectContaining({ file_name: "landscape.jpg", width: 1600, height: 900 }),
+    ]);
+    expect(stored.map((s) => [s.width, s.height])).toEqual([
+      [1080, 1440],
+      [1600, 900],
+    ]);
+  });
+
   it("cleans staged objects of the aborted attempt when a later upload fails", async () => {
     normalizeMock.mockImplementation(async (file: File) => {
       if (file.name === "late.jpg") throw new Error("late failure");

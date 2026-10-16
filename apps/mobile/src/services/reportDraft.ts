@@ -93,6 +93,40 @@ function untrackAccount(accountId?: string | null): void {
   }
 }
 
+/** A string from an untrusted draft, or the empty default. */
+function storedString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+/** A string id/URI from an untrusted draft, or nothing. */
+function storedStringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** A coordinate: a finite number, a numeric string, or nothing. */
+function storedCoordinate(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/**
+ * One stored draft, rebuilt into the current shape or rejected.
+ *
+ * Drafts outlive the app's own schema: a report started weeks ago is restored by
+ * whatever build is running now, so this reads a payload it did not write. Every
+ * field is therefore re-derived from an allow-list. Fields the current shape does
+ * not know — the retired AI metadata, anything a build in between added, anything
+ * hand-edited — are dropped rather than carried forward into state; a value of the
+ * wrong type becomes the empty default instead of reaching the form, where one
+ * `.trim()` on a number would turn "restore my draft" into a blank screen.
+ *
+ * Text and photos are what must survive a restore; every other field is
+ * best-effort, and a payload that is not a draft at all is no draft.
+ */
 function readStoredDraft(accountId?: string | null): ReportDraft | null {
   // The legacy device-default draft has no owner: never expose it to an
   // authenticated account merely because that account was first to sign in.
@@ -100,26 +134,29 @@ function readStoredDraft(accountId?: string | null): ReportDraft | null {
     const raw = storage.getItem(key);
     if (!raw) continue;
     try {
-      const parsed = JSON.parse(raw) as Partial<ReportDraft>;
-      if (!parsed || typeof parsed !== "object") continue;
+      const parsed = JSON.parse(raw) as Partial<ReportDraft> & { location?: unknown };
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      const location =
+        parsed.location && typeof parsed.location === "object" && !Array.isArray(parsed.location)
+          ? (parsed.location as Partial<LocationValue>)
+          : {};
       return {
         publishOutcome: parsed.publishOutcome === "uncertain" ? "uncertain" : undefined,
-        type: parsed.type ?? "LOST",
-        title: typeof parsed.title === "string" ? parsed.title : "",
-        description: typeof parsed.description === "string" ? parsed.description : "",
-        category: (parsed.category ?? "") as ReportDraft["category"],
-        eventDate: typeof parsed.eventDate === "string" ? parsed.eventDate : "",
+        type: parsed.type === "FOUND" ? "FOUND" : "LOST",
+        title: storedString(parsed.title),
+        description: storedString(parsed.description),
+        category: typeof parsed.category === "string" ? (parsed.category as Category) : "",
+        eventDate: storedString(parsed.eventDate),
         location: {
-          label: "",
-          latitude: null,
-          longitude: null,
-          ...((parsed.location ?? {}) as Partial<LocationValue>),
+          label: storedString(location.label),
+          latitude: storedCoordinate(location.latitude),
+          longitude: storedCoordinate(location.longitude),
         },
-        youtubeUrl: typeof parsed.youtubeUrl === "string" ? parsed.youtubeUrl : "",
-        photoId: parsed.photoId ?? null,
-        photoNativeUri: parsed.photoNativeUri ?? null,
-        photoWebPath: parsed.photoWebPath ?? null,
-        photoFormat: parsed.photoFormat ?? null,
+        youtubeUrl: storedString(parsed.youtubeUrl),
+        photoId: storedStringOrNull(parsed.photoId),
+        photoNativeUri: storedStringOrNull(parsed.photoNativeUri),
+        photoWebPath: storedStringOrNull(parsed.photoWebPath),
+        photoFormat: storedStringOrNull(parsed.photoFormat),
         photoIds: Array.isArray(parsed.photoIds)
           ? parsed.photoIds.filter((v): v is string => typeof v === "string")
           : undefined,
