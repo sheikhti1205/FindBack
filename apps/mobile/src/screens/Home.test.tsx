@@ -308,7 +308,7 @@ describe("Home realtime", () => {
     expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
   });
 
-  it("re-tapping the active Home tab scrolls smoothly and refreshes", async () => {
+  it("re-tapping the active Home tab at the top refreshes and scrolls smoothly", async () => {
     const scrollTo = vi.fn();
     const originalScrollTo = HTMLElement.prototype.scrollTo;
     HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
@@ -332,7 +332,7 @@ describe("Home realtime", () => {
     }
   });
 
-  it("re-tapping the active Home tab scrolls instantly under reduced motion", async () => {
+  it("re-tapping the active Home tab at the top scrolls instantly under reduced motion", async () => {
     const scrollTo = vi.fn();
     const originalScrollTo = HTMLElement.prototype.scrollTo;
     HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
@@ -427,6 +427,180 @@ describe("Home realtime", () => {
     fireEvent.scroll(scroller as HTMLElement);
 
     await waitFor(() => expect(screen.getByTestId("home-toolbar").className).toContain("shadow-sm"));
+  });
+});
+
+describe("Home scroll-reactive chrome (CF-010)", () => {
+  beforeEach(() => {
+    fetchFeedMock.mockReset();
+    onRealtimeMock.mockClear();
+    handlers.clear();
+    tabTapState.tapCount = 0;
+    clearFeedCaches();
+    fetchFeedMock.mockResolvedValue({
+      items: ["a", "b", "c"].map((id) => ({ id, title: id })),
+      nextCursor: null,
+      total: 3,
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    clearFeedCaches();
+    resetBackInterceptors();
+  });
+
+  function renderAndWait() {
+    const rendered = renderHome();
+    return waitFor(() => expect(screen.getByText("b")).toBeTruthy()).then(() => rendered);
+  }
+
+  it("collapses on a deliberate downward scroll and restores it on one upward move", async () => {
+    const { container } = await renderAndWait();
+    const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
+    expect(scroller).toBeTruthy();
+    const collapsed = () => screen.getByTestId("home-chrome").getAttribute("data-collapsed");
+
+    expect(collapsed()).toBe("false");
+
+    // A short move inside the top zone leaves the chrome alone.
+    scroller.scrollTop = 12;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(collapsed()).toBe("false"));
+
+    // A real move that has not banked enough travel yet: still visible.
+    scroller.scrollTop = 30;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(collapsed()).toBe("false"));
+
+    // Enough deliberate downward travel past the zone: collapsed.
+    scroller.scrollTop = 75;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(collapsed()).toBe("true"));
+
+    // Hysteresis: a short upward nudge below the reveal travel is not enough.
+    scroller.scrollTop = 70;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(collapsed()).toBe("true"));
+
+    // One real upward move brings it back — with less travel than hiding took.
+    scroller.scrollTop = 60;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(collapsed()).toBe("false"));
+  });
+
+  it("marks the collapsed chrome inert so an off-screen control cannot take focus", async () => {
+    const { container } = await renderAndWait();
+    const chrome = screen.getByTestId("home-chrome");
+    expect(chrome.hasAttribute("inert")).toBe(false);
+
+    const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
+    scroller.scrollTop = 140;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(chrome.hasAttribute("inert")).toBe(true));
+
+    // The reader gets it back the moment they scroll up.
+    scroller.scrollTop = 118;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(chrome.hasAttribute("inert")).toBe(false));
+  });
+
+  it("keeps the chrome open while the search field is active, whatever the scroll", async () => {
+    const { container } = await renderAndWait();
+    const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
+    scroller.scrollTop = 140;
+    fireEvent.scroll(scroller);
+    await waitFor(() =>
+      expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("true"),
+    );
+
+    // Focusing the search field pins the chrome open for the whole session.
+    fireEvent.focus(screen.getByLabelText("Search posts"));
+    await waitFor(() =>
+      expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("false"),
+    );
+
+    scroller.scrollTop = 400;
+    fireEvent.scroll(scroller);
+    expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("false");
+
+    // Blurring hands control back to the scroll direction.
+    fireEvent.blur(screen.getByLabelText("Search posts"));
+    scroller.scrollTop = 460;
+    fireEvent.scroll(scroller);
+    await waitFor(() =>
+      expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("true"),
+    );
+  });
+
+  it("scrolls to the top from the brand without spending a request", async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    try {
+      await renderAndWait();
+      expect(fetchFeedMock).toHaveBeenCalledTimes(1);
+
+      const brand = screen.getByTestId("home-brand");
+      // The visible label is in the accessible name (WCAG 2.5.3) and the action
+      // is announced, since the mark itself is not a control label.
+      expect(brand.getAttribute("aria-label")).toContain("FindBack");
+      fireEvent.click(brand);
+
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+      expect(fetchFeedMock).toHaveBeenCalledTimes(1);
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  it("scrolls the brand to the top instantly under reduced motion", async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      media: "(prefers-reduced-motion: reduce)",
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    }) as unknown as typeof window.matchMedia;
+    try {
+      await renderAndWait();
+      fireEvent.click(screen.getByTestId("home-brand"));
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" });
+    } finally {
+      window.matchMedia = originalMatchMedia;
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
+  it("returns a scrolled reader to the top on a tab tap without a network refresh", async () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    try {
+      const { container, rerender } = await renderAndWait();
+      const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
+      scroller.scrollTop = 400;
+      fetchFeedMock.mockClear();
+
+      tabTapState.tapCount = 1;
+      rerender(
+        <MemoryRouter initialEntries={["/"]}>
+          <Home />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" }));
+      // Getting back to the top is not a refresh request.
+      expect(fetchFeedMock).not.toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
   });
 });
 

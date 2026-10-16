@@ -8,6 +8,7 @@ import { READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, 
 import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
 import { BrandMark } from "../components/BrandMark";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
+import { CHROME_TOP_ZONE, useScrollChrome } from "../components/scrollChrome";
 import { NewPostsPill } from "../components/NewPostsPill";
 import { BottomSheet } from "../components/BottomSheet";
 import { MapPickerSheet } from "../components/MapPickerSheet";
@@ -245,6 +246,15 @@ export function Home() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const scrollRef = useRef<PullToRefreshHandle>(null);
 
+  // CF-010 §3: the chrome collapses on an intentional downward scroll and comes
+  // back on the first intentional upward move. A control the reader is actively
+  // using pins it open — a search field with the keyboard up, the filter sheet,
+  // the Nearby sheet, the map picker — so an open control is never hidden.
+  // A typed-but-unfocused query is deliberately NOT a pin: the reader is
+  // browsing results by then, and the value survives in the URL and in state.
+  const chromePinned = searchFocused || filtersOpen || nearbySheetOpen || mapPickerOpen;
+  const { hidden: chromeHidden, onScroll: onFeedScroll } = useScrollChrome(chromePinned);
+
   // Debounce the search box so each keystroke does not hit the API.
   useEffect(() => {
     const t = setTimeout(() => setAppliedQuery(query.trim()), 400);
@@ -261,13 +271,18 @@ export function Home() {
     { cacheKey: HOME_CACHE_KEY, scrollRef },
   );
 
-  // Active Home tab tap: refresh + scroll top. Smooth normally, instant
-  // under reduced motion. Scroll restore after Post Detail comes from the
-  // useFeed session cache (items + scrollTop survive unmount); mounting here
-  // never replays card entrances — no list animation is owned by this file.
+  // Active Home tab tap (CF-010 §5): a tap from partway down the feed returns
+  // the reader to the top; a tap already at the top is a refresh request. A tap
+  // must not cost a network round trip merely to get back to the top, and a
+  // tap at the top must not leave a stale feed.
+  // Smooth normally, instant under reduced motion. Scroll restore after Post
+  // Detail comes from the useFeed session cache (items + scrollTop survive
+  // unmount); mounting here never replays card entrances — no list animation is
+  // owned by this file.
   useEffect(() => {
     if (tapCount === 0) return;
-    void refresh();
+    const atTop = (scrollRef.current?.scrollTop ?? 0) <= CHROME_TOP_ZONE;
+    if (atTop) void refresh();
     scrollRef.current?.scrollToTop(reduceMotion ? "auto" : "smooth");
     setNewPostCount(0);
     setHasUpdates(false);
@@ -385,6 +400,12 @@ export function Home() {
     clearNewPostCount(scopedCacheKey);
   }
 
+  // CF-010 §4: the brand is the way back to the top — no separate floating
+  // button. Same reduced-motion rule as every other programmatic scroll here.
+  function onBrandTap() {
+    scrollRef.current?.scrollToTop(reduceMotion ? "auto" : "smooth");
+  }
+
   // Scroll events from the PullToRefresh container do not bubble, but React
   // listens in the capture phase — one guarded setState per crossing, never
   // per pixel, so the toolbar toggle cannot rerender the feed on scroll.
@@ -395,6 +416,7 @@ export function Home() {
       toolbarSeparatedRef.current = next;
       setToolbarSeparated(next);
     }
+    onFeedScroll(top);
   }
 
   function collapseSearch() {
@@ -405,6 +427,28 @@ export function Home() {
 
   return (
     <div className="flex h-full flex-col gap-4" onScrollCapture={handleFeedScroll}>
+      {/* CF-010 §3: the chrome collapses on an intentional downward scroll so
+          the feed gains real vertical room. It is `inert` while collapsed, so a
+          keyboard or switch user can never land on a control that is not on
+          screen. The sheets live outside this wrapper (BottomSheet mounts in
+          the tree, not a portal), so an open sheet is never clipped. */}
+      <motion.div
+        data-testid="home-chrome"
+        data-collapsed={chromeHidden ? "true" : "false"}
+        inert={chromeHidden ? true : undefined}
+        initial={false}
+        animate={{ height: chromeHidden ? 0 : "auto", opacity: chromeHidden ? 0 : 1 }}
+        transition={
+          reduceMotion ? { duration: 0 } : { duration: motionDurations.standard, ease: motionEasings.out }
+        }
+        style={{
+          overflow: chromeHidden ? "hidden" : "visible",
+          // Cancels the parent's gap while collapsed, so no stray band of empty
+          // space is left where the chrome used to be.
+          marginBottom: chromeHidden ? "-1rem" : 0,
+        }}
+        className="flex shrink-0 flex-col gap-4"
+      >
       <header
         data-testid="home-toolbar"
         style={{ transitionDuration: reduceMotion ? "0s" : `${motionDurations.fast}s` }}
@@ -414,8 +458,18 @@ export function Home() {
       >
         <div className={`${canvasClass} px-4`}>
         <div className="flex items-center gap-2">
-          <BrandMark size={24} />
-          <h1 className="text-xl font-semibold tracking-tight">FindBack</h1>
+          <h1 className="text-xl font-semibold tracking-tight">
+            <button
+              type="button"
+              data-testid="home-brand"
+              aria-label="FindBack — scroll the feed to the top"
+              onClick={onBrandTap}
+              className="-mx-1 flex min-h-[44px] items-center gap-2 rounded-m3-sm px-1"
+            >
+              <BrandMark size={24} />
+              <span>FindBack</span>
+            </button>
+          </h1>
         </div>
         <AnimatePresence initial={false} mode="wait">
           <motion.p
@@ -492,65 +546,67 @@ export function Home() {
             </button>
           </div>
         )}
-        <AdvancedSearchFilters
-          filters={advanced}
-          open={filtersOpen}
-          onOpenChange={setFiltersOpen}
-          hideTrigger
-        />
-        <BottomSheet
-          open={nearbySheetOpen}
-          onClose={() => setNearbySheetOpen(false)}
-          title="Nearby"
-          description="Search radius around your area."
-          height="medium"
-        >
-          <div className="flex flex-col gap-3 pb-2">
-            <p className="text-sm text-on-surface-variant">{NEARBY_SHEET_NOTICE}</p>
-            <div role="radiogroup" aria-label="Radius" className="flex flex-wrap gap-2">
-              {NEARBY_RADIUS_OPTIONS_KM.map((km) => (
-                <button
-                  key={km}
-                  type="button"
-                  role="radio"
-                  aria-checked={km === nearbyRadiusKm}
-                  onClick={() => onRadiusChange(km)}
-                  className={`min-h-[44px] rounded-full border px-4 text-sm font-medium ${
-                    km === nearbyRadiusKm
-                      ? "border-transparent bg-on-surface text-surface"
-                      : "border-outline-variant text-on-surface-variant"
-                  }`}
-                >
-                  {km} km
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setNearbySheetOpen(false);
-                setMapPickerOpen(true);
-              }}
-              className="inline-flex min-h-[48px] items-center justify-center rounded-m3-sm border border-outline-variant px-4 text-sm font-medium"
-            >
-              Choose area on map
-            </button>
-            <button
-              type="button"
-              onClick={disableNearby}
-              className="inline-flex min-h-[48px] items-center justify-center rounded-m3-sm px-4 text-sm font-medium underline"
-            >
-              Turn off Nearby
-            </button>
-          </div>
-        </BottomSheet>
-        <MapPickerSheet
-          open={mapPickerOpen}
-          onClose={() => setMapPickerOpen(false)}
-          value={mapPickerValue}
-          onConfirm={onMapConfirm}
-        />
       </div>
+      </motion.div>
+
+      <AdvancedSearchFilters
+        filters={advanced}
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
+        hideTrigger
+      />
+      <BottomSheet
+        open={nearbySheetOpen}
+        onClose={() => setNearbySheetOpen(false)}
+        title="Nearby"
+        description="Search radius around your area."
+        height="medium"
+      >
+        <div className="flex flex-col gap-3 pb-2">
+          <p className="text-sm text-on-surface-variant">{NEARBY_SHEET_NOTICE}</p>
+          <div role="radiogroup" aria-label="Radius" className="flex flex-wrap gap-2">
+            {NEARBY_RADIUS_OPTIONS_KM.map((km) => (
+              <button
+                key={km}
+                type="button"
+                role="radio"
+                aria-checked={km === nearbyRadiusKm}
+                onClick={() => onRadiusChange(km)}
+                className={`min-h-[44px] rounded-full border px-4 text-sm font-medium ${
+                  km === nearbyRadiusKm
+                    ? "border-transparent bg-on-surface text-surface"
+                    : "border-outline-variant text-on-surface-variant"
+                }`}
+              >
+                {km} km
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setNearbySheetOpen(false);
+              setMapPickerOpen(true);
+            }}
+            className="inline-flex min-h-[48px] items-center justify-center rounded-m3-sm border border-outline-variant px-4 text-sm font-medium"
+          >
+            Choose area on map
+          </button>
+          <button
+            type="button"
+            onClick={disableNearby}
+            className="inline-flex min-h-[48px] items-center justify-center rounded-m3-sm px-4 text-sm font-medium underline"
+          >
+            Turn off Nearby
+          </button>
+        </div>
+      </BottomSheet>
+      <MapPickerSheet
+        open={mapPickerOpen}
+        onClose={() => setMapPickerOpen(false)}
+        value={mapPickerValue}
+        onConfirm={onMapConfirm}
+      />
 
       <NewPostsPill count={newPostCount} hasUpdates={hasUpdates} onTap={onNewPostsTap} />
 
