@@ -241,12 +241,26 @@ describe("fixture frames are trustworthy evidence", () => {
     let checked = 0;
     for (const frame of frames) {
       const width = Number(frame.getAttribute("data-frame-width"));
-      // The frame's own header is one `p`; the BandFrame caption is another.
+      // The frame states its own width in its header; every other `px` number it
+      // prints is a card measurement, whatever form it takes (the old detector
+      // only recognised two decimals, so `999px` slipped through).
       const caption = [...frame.querySelectorAll("p")]
         .map((paragraph) => paragraph.textContent ?? "")
-        .join(" ");
-      const published = caption.match(/\d+\.\d{2}px/g) ?? [];
+        .join(" ")
+        .replaceAll(`at ${width}px`, "");
+      const published = [...caption.matchAll(/\d+(?:\.\d+)?px/g)].map((match) => match[0]);
       if (published.length === 0) continue;
+      // A published number is only worth pinning if the frame it came from really
+      // has `width` as its content box: a border or padding here shrinks every
+      // card while the caption keeps its old figure (mine at 40px inset was the
+      // same class of lie, one layer up).
+      expect(frame.className, `the ${width}px frame is no longer a geometry frame`).not.toMatch(
+        /\bborder\b|\brounded-/,
+      );
+      expect(
+        frame.lastElementChild?.className ?? "",
+        `the ${width}px frame pads its content box, so its cards are narrower than its caption`,
+      ).not.toMatch(/\bp[trblxy]?-[\d.]+/);
       const expected = golden[width];
       expect(
         expected,

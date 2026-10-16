@@ -91,9 +91,14 @@ describe("masonry list gutter readers", () => {
   });
 
   it("refuses a declaration it cannot read instead of grading the fallback", () => {
+    // No `listClass` at all — and the multiplicity rule is what reports it.
     expect(() => resolveMasonryPaddingRem("const other = 1;\n")).toThrow(
-      /no listClass declaration found/,
+      /exactly one listClass declaration/,
     );
+    // A declaration with no statement terminator is not the declaration.
+    expect(() =>
+      resolveMasonryPaddingRem('  const listClass = density === "compact" ? "flex px-3" : "flex px-4";'),
+    ).toThrow(/no listClass declaration found/);
     expect(() =>
       resolveMasonryPaddingRem(
         '  const listClass = density === "compact" ? "flex px-3" : "flex flex-col gap-3";\n',
@@ -113,6 +118,18 @@ describe("masonry list gutter readers", () => {
       "",
     ].join("\n");
     expect(() => resolveMasonryPaddingRem(duplicated)).toThrow(/names the same density twice/);
+  });
+
+  it("refuses a source with more than one listClass declaration", () => {
+    // A sibling component above `PostList` (a skeleton, a preview) with its own
+    // `listClass` would be read in the lane's place: the reader would answer with
+    // that chain's gutter while the lane renders another one.
+    const sibling = [chain(), "  const listClass =", '    density === "masonry" ? "flex px-6" : "flex px-4";', ""].join(
+      "\n",
+    );
+    expect(() => resolveMasonryPaddingRem(sibling)).toThrow(
+      /exactly one listClass declaration/,
+    );
   });
 
   it("stops at the declaration's own semicolon, however it is commented", () => {

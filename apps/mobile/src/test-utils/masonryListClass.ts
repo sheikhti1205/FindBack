@@ -35,6 +35,13 @@ import { readFileSync } from "node:fs";
  * `listClass` declarations rather than only against the product.
  */
 export function resolveMasonryPaddingRem(source: string): number {
+  // One declaration, and it has to be the lane's own. A file with a second
+  // `listClass` above this one (a skeleton, a preview) would otherwise be read in
+  // the lane's place — the reader would answer with whatever that chain resolves
+  // to while the lane renders a different gutter.
+  if ([...source.matchAll(/const listClass =/g)].length !== 1) {
+    throw new Error("expected exactly one listClass declaration in the source");
+  }
   const declaration =
     /const listClass =([\s\S]*?);(?:\s*(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/))?\s*\n/.exec(source)?.[1];
   if (!declaration) throw new Error("no listClass declaration found");
