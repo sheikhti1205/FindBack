@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { FixtureRoute } from "./FixtureRoute";
+import { cardWidthAt } from "./sections/FeedLayoutFixtures";
 import { ALL_VARIANTS, LARGE_TEXT_PERCENT, STANDARD_TEXT_PERCENT } from "./FixtureSection";
 import {
   APPEARANCE_EVENT,
@@ -193,7 +194,7 @@ describe("fixture frames are trustworthy evidence", () => {
     expect([...seen].sort()).toEqual([1, 2, 3, 4]);
   });
 
-  it("keeps every band frame's cards at or above the minimum card width", () => {
+  it("measures each band frame's cards against the container the frame really gets", () => {
     renderRoute();
     const section = screen.getByTestId("fixture-section-feed-layouts");
     for (const frame of [...section.querySelectorAll("[data-frame-width]")] as HTMLElement[]) {
@@ -201,14 +202,60 @@ describe("fixture frames are trustworthy evidence", () => {
       const columns = Number(frame.getAttribute("data-columns"));
       // The container the frame really gives the grid: the frame IS the width
       // (geometry frames have no border or padding), minus the list's own
-      // `px-4` gutter. This is the relationship the browser measurement checks
-      // too — 836px / 3 columns renders 260px cards, not 256.7px.
+      // `px-4` gutter. This is a relationship check between a frame's declared
+      // width and the column count it declares — not a re-derivation of the
+      // formula, which is why it uses the column count the frame publishes
+      // rather than the one `masonryColumns` would recompute.
       const card =
         (width - MASONRY_CONTAINER_INSET_PX - (columns - 1) * MASONRY_GUTTER_PX) / columns;
       expect(card, `cards at ${width}px / ${columns} columns`).toBeGreaterThanOrEqual(
         MASONRY_MIN_CARD_PX,
       );
     }
+  });
+
+  it("states each boundary frame's card width from that frame's own width", () => {
+    // The captions used to paste one number next to two different widths: the
+    // 4-column frame claimed 262.7px and measures 262.00px. A caption is
+    // evidence, so it is derived and then checked against the derivation.
+    renderRoute();
+    const section = screen.getByTestId("fixture-section-feed-layouts");
+    const frames = [...section.querySelectorAll("[data-frame-width]")].filter((frame) => {
+      const caption = [...frame.querySelectorAll("p")]
+        .map((paragraph) => paragraph.textContent ?? "")
+        .join(" ");
+      return caption.includes("boundary");
+    });
+    expect(frames.length).toBeGreaterThanOrEqual(2);
+    for (const frame of frames) {
+      const width = Number(frame.getAttribute("data-frame-width"));
+      // The frame's own header is one `p`; the BandFrame caption is another.
+      const caption = [...frame.querySelectorAll("p")]
+        .map((paragraph) => paragraph.textContent ?? "")
+        .join(" ");
+      expect(caption).toContain(`${cardWidthAt(width, 20).toFixed(2)}px`);
+      expect(caption).toContain(`${cardWidthAt(width, 16).toFixed(2)}px`);
+    }
+  });
+
+  it("places every band frame on the boundary its own constants define", () => {
+    // The frames must not carry hand-typed widths: they are the same constants
+    // the product's column maths uses, so moving a constant moves the frames.
+    // The floor itself is proven in `responsive.test.ts` against the capped
+    // canvas, the real list gutter and every text scale — restating the formula
+    // here is what let a bad inset stay green in this file (a frame width and
+    // the inset it was derived from move together).
+    renderRoute();
+    const section = screen.getByTestId("fixture-section-feed-layouts");
+    const widths = [...section.querySelectorAll("[data-frame-width]")].map((frame) =>
+      Number(frame.getAttribute("data-frame-width")),
+    );
+    expect(widths).toContain(
+      3 * MASONRY_MIN_CARD_PX + 2 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX,
+    );
+    expect(widths).toContain(
+      4 * MASONRY_MIN_CARD_PX + 3 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX,
+    );
   });
 
   it("uses the real theme class on dark and AMOLED frames, not inline paint", () => {

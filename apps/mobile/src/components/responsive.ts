@@ -109,6 +109,12 @@ export const MASONRY_CONTAINER_INSET_PX = 40;
  * 12px that makes the last column's right edge land inside the container). The
  * cap being >= the 4-column boundary is what keeps that true for viewports
  * wider than the cap.
+ *
+ * The width BAND and this column count are separate decisions, and for four
+ * pixels they disagree: `widthBand(840)` is already "expanded" while three
+ * 260px cards still need 844 of container, so 840-843 renders an expanded canvas
+ * with two columns. Deliberate (the band decides the canvas, the floor decides
+ * the count) and pinned by a test rather than papered over.
  */
 export function masonryColumns(widthPx: number): number {
   const step = MASONRY_MIN_CARD_PX + MASONRY_GUTTER_PX;

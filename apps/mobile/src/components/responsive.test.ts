@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -19,6 +20,23 @@ import {
 } from "./responsive";
 import { TEXT_SCALE_OPTIONS } from "../appearance";
 
+/**
+ * The masonry list's own horizontal padding, in `rem`, read from the component
+ * that applies it (`PostList`'s `listClass`). The masonry density resolves to the
+ * final branch, so that branch is the one the feed maths has to budget for.
+ *
+ * Read, not assumed: a test that hardcodes the same `px-4` the product applies is
+ * a test that cannot notice the product changing it.
+ */
+function masonryListPaddingRem(): number {
+  const source = readFileSync("src/components/PostList.tsx", "utf8");
+  const branches = [...source.matchAll(/:\s*"(?:flex flex-col gap-\d+ )?px-(\d+)"/g)];
+  expect(branches.length, "no px-* list class found in PostList").toBeGreaterThan(0);
+  const last = branches[branches.length - 1];
+  // Tailwind's spacing unit is 0.25rem.
+  return Number((last as RegExpMatchArray)[1]) / 4;
+}
+
 describe("widthBand", () => {
   it("names the platform bands at their boundaries", () => {
     expect(widthBand(320)).toBe("compact");
@@ -30,8 +48,7 @@ describe("widthBand", () => {
   });
 });
 
-describe("masonryColumns", () => {
-  it("never goes below one column on a phone", () => {
+describe("masonryColumns", () => {  it("never goes below one column on a phone", () => {
     expect(masonryColumns(320)).toBe(1);
     expect(masonryColumns(428)).toBe(1);
   });
@@ -52,16 +69,19 @@ describe("masonryColumns", () => {
     // below the minimum, so the cap must resist it.
     //
     // This asserts against the CONTAINER the feed really gets — the capped
-    // canvas minus the list's own `px-4` at the app's own text scales — not
-    // against a restatement of the formula's own budget. The restatement is what
-    // let the formula claim 260px cards while the rendered card at the
-    // 3-column boundary was 256.7px.
+    // canvas minus the list's own horizontal padding at the app's own text
+    // scales — not against a restatement of the formula's own budget. The
+    // restatement is what let the formula claim 260px cards while the rendered
+    // card at the 3-column boundary was 256.7px, and the padding is READ from
+    // the component that applies it rather than assumed here (mutating
+    // `PostList`'s masonry `px-4` to `px-6` used to leave this green).
+    const listPaddingRem = masonryListPaddingRem();
     for (const scale of TEXT_SCALE_OPTIONS) {
       const rootFontSizePx = (16 * scale.percent) / 100;
       for (let width = 320; width <= 1600; width += 1) {
         const columns = masonryColumns(width);
         const canvas = Math.min(width, MASONRY_CANVAS_MAX_PX);
-        const container = canvas - 2 * rootFontSizePx;
+        const container = canvas - 2 * listPaddingRem * rootFontSizePx;
         const card = (container - (columns - 1) * MASONRY_GUTTER_PX) / columns;
         expect(
           card,

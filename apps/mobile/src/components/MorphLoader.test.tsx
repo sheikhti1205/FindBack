@@ -103,8 +103,7 @@ describe("Morph loader CSS contract (index.css)", () => {
    * the sibling blocks into the assertion — which is exactly how a half-pinned
    * dual kill switch passed review the first time.
    */
-  function blockContents(source: string, header: RegExp): string[] {
-    const out: string[] = [];
+  function blockContents(source: string, header: RegExp): string[] {    const out: string[] = [];
     const re = new RegExp(header.source, "g");
     for (let m = re.exec(source); m; m = re.exec(source)) {
       const open = m.index + m[0].length - 1;
@@ -137,7 +136,13 @@ describe("Morph loader CSS contract (index.css)", () => {
     // so one `.fb-morph-bar { … }` match there satisfied the media assertion
     // too — emptying the media block, or deleting only its `animation: none`,
     // both left this test green while the OS half of the switch was gone.
-    const mediaBlocks = blockContents(css, /@media \(prefers-reduced-motion: reduce\) \{/);
+    // The header patterns tolerate whitespace inside the query: a reformat is a
+    // false failure, not a hole, and a false failure here would be spent
+    // re-reading the CSS rather than reviewing it.
+    const mediaBlocks = blockContents(
+      css,
+      /@media\s*\(\s*prefers-reduced-motion:\s*reduce\s*\)\s*\{/,
+    );
     const morphBlocks = mediaBlocks.filter((block) => /\.fb-morph-bar\s*\{/.test(block));
     expect(morphBlocks).toHaveLength(1);
     expect(morphBlocks[0]).toMatch(/\.fb-morph-bar\s*\{[^}]*animation:\s*none/);

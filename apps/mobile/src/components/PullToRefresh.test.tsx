@@ -84,34 +84,56 @@ describe("PullToRefresh — scroll ownership", () => {
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
-  it("clears the capsule when the window loses focus mid-pull", () => {
+  it("clears the capsule when the window loses focus mid-pull, and drops its listener", () => {
     // The task switcher takes focus without a visibility change on some
     // platforms, and the touch stream then has no end event at all.
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const removeSpy = vi.spyOn(window, "removeEventListener");
     const onRefresh = vi.fn(() => Promise.resolve());
-    const { container } = render(
-      <PullToRefresh onRefresh={onRefresh}>
-        <div>feed</div>
-      </PullToRefresh>,
-    );
-    const el = container.firstElementChild!;
+    try {
+      const { container } = render(
+        <PullToRefresh onRefresh={onRefresh}>
+          <div>feed</div>
+        </PullToRefresh>,
+      );
+      const el = container.firstElementChild!;
 
-    act(() => {
-      pull(el);
-    });
-    expect(screen.getByTestId("refresh-pill-slot")).toBeTruthy();
+      act(() => {
+        pull(el);
+      });
+      expect(screen.getByTestId("refresh-pill-slot")).toBeTruthy();
 
-    act(() => {
-      window.dispatchEvent(new Event("blur"));
-    });
+      const added = addSpy.mock.calls
+        .filter(([type]) => type === "blur")
+        .map(([, listener]) => listener);
+      expect(added.length).toBeGreaterThan(0);
 
-    expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
-    expect(onRefresh).not.toHaveBeenCalled();
+      act(() => {
+        window.dispatchEvent(new Event("blur"));
+      });
 
-    // The listener is gone once the pull is over: a later blur is a no-op.
-    act(() => {
-      window.dispatchEvent(new Event("blur"));
-    });
-    expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
+      expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
+      expect(onRefresh).not.toHaveBeenCalled();
+
+      // A leaked listener cannot be caught by dispatching more events once the
+      // pull is over — every handler is a no-op by then — so assert the symmetry
+      // the effect promises instead.
+      const removed = removeSpy.mock.calls
+        .filter(([type]) => type === "blur")
+        .map(([, listener]) => listener);
+      for (const listener of added) {
+        expect(removed, "the blur listener must be removed when the pull ends").toContain(listener);
+      }
+
+      // A later blur is a no-op.
+      act(() => {
+        window.dispatchEvent(new Event("blur"));
+      });
+      expect(screen.queryByTestId("refresh-pill-slot")).toBeNull();
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
   });
 });
 
@@ -148,6 +170,46 @@ describe("PullToRefresh scroll handle", () => {
 
     expect(ref.current).toBeNull();
     expect(handle.scrollTop).toBe(420);
+  });
+
+  it("records the destination of scrollToTop, so a later detach answers 0", () => {
+    // `scrollToTop` moves the container itself with a smooth scroll, so no
+    // scroll event is guaranteed before the unmount that reads the value. The
+    // destination has to be recorded at the call site, or the feed would put the
+    // reader back where they just left (the reviewer's mutation showed this
+    // recording was load-bearing while nothing pinned it).
+    // jsdom has no `Element.scrollTo` at all, so it is stubbed here the same way
+    // the Home tests stub it.
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as unknown as typeof HTMLElement.prototype.scrollTo;
+    try {
+      const ref = createRef<PullToRefreshHandle>();
+      const { container, unmount } = render(
+        <PullToRefresh ref={ref} onRefresh={vi.fn()}>
+          <div style={{ height: 2000 }}>tall</div>
+        </PullToRefresh>,
+      );
+      const el = container.firstElementChild as HTMLElement;
+      el.scrollTop = 640;
+      fireEvent.scroll(el);
+      const handle = ref.current!;
+      expect(handle.scrollTop).toBe(640);
+
+      act(() => {
+        handle.scrollToTop();
+      });
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+      // While the container is alive its own value wins, and a smooth scroll has
+      // not moved it yet. The recorded destination is what answers once the
+      // container is gone — which is exactly when a consumer reads it.
+      expect(handle.scrollTop).toBe(640);
+
+      unmount();
+      expect(handle.scrollTop).toBe(0);
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
   });
 });
 
