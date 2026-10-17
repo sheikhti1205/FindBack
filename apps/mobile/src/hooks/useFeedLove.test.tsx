@@ -851,4 +851,192 @@ describe("FeedLoveProvider summary reconciliation (REVIEW-CF030-CODE I1 M1/M2)",
       p_type: null,
     });
   });
+
+  // M-B: the two count sources are ordered, and a commit re-stamps the row the
+  // card holds *when it lands*. Both were unprotected: swapping the order of
+  // `base` in either branch of `resolveOwnRow`, or stamping the commit with the
+  // pre-write stamp, passed the whole suite while showing a count the server
+  // had already contradicted. These three cases pin each choice.
+
+  it("M-B: a write the snapshot still agrees with keeps the counts the server returned", async () => {
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", my_reaction: "LIKE", my_rating: null }],
+      error: null,
+    });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", like_count: 4, dislike_count: 0, my_reaction: null, reaction_counts: { LOVE: 4 } },
+      ],
+      error: null,
+    });
+    const view = render(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 5,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 5 }, myReaction: "LIKE", total: 5 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("yes"));
+
+    // Clearing the row commits server truth: LOVE 4 is now the newest count.
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+    expect(screen.getByTestId("likes-p1").textContent).toBe("4");
+
+    // The card is refreshed with the *same* own row the write was stamped
+    // against, so the snapshot has not moved and cannot outrank the write —
+    // its count must not replace the one the RPC confirmed. (A snapshot whose
+    // own row had changed would be newer than the write and would win, which is
+    // the case the test below pins.)
+    view.rerender(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 9,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 9 }, myReaction: "LIKE", total: 9 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+
+    expect(screen.getByTestId("likes-p1").textContent).toBe("4");
+    expect(screen.getByTestId("mine-p1").textContent).toBe("no");
+  });
+
+  it("M-B: a snapshot that moved past the write takes its count over, not the write's", async () => {
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", my_reaction: null, my_rating: null }],
+      error: null,
+    });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [
+        { post_id: "p1", like_count: 5, dislike_count: 0, my_reaction: "LIKE", reaction_counts: { LOVE: 5 } },
+      ],
+      error: null,
+    });
+    const view = render(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 4,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 4 }, myReaction: null, total: 4 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("no"));
+
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+    expect(screen.getByTestId("likes-p1").textContent).toBe("5");
+
+    // The write was stamped against an empty own row, and the card now carries
+    // a row another client created: that snapshot is newer than the read, so
+    // the count follows the snapshot rather than the summary the RPC returned.
+    view.rerender(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 6,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 6 }, myReaction: "LIKE", total: 6 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+
+    expect(screen.getByTestId("mine-p1").textContent).toBe("yes");
+    expect(screen.getByTestId("likes-p1").textContent).toBe("6");
+  });
+
+  it("M-B: a write that lands after the snapshot moved keeps its own server counts", async () => {
+    const react = deferred<{ data: unknown; error: null }>();
+    clientMock.rpc.mockResolvedValueOnce({
+      data: [{ post_id: "p1", my_reaction: null, my_rating: null }],
+      error: null,
+    });
+    clientMock.rpc.mockImplementationOnce(() => react.promise);
+    const view = render(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 4,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 4 }, myReaction: null, total: 4 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("mine-p1").textContent).toBe("no"));
+
+    await act(async () => {
+      screen.getByTestId("toggle-p1").click();
+    });
+
+    // Someone else's row arrives on the card while this write is still open.
+    view.rerender(
+      <FeedLoveProvider
+        items={[
+          item({
+            id: "p1",
+            likeCount: 9,
+            dislikeCount: 0,
+            reactionSummary: { counts: { LOVE: 9 }, myReaction: "LIKE", total: 9 },
+          }),
+        ]}
+        patchItem={vi.fn()}
+      >
+        <LikeProbe postId="p1" />
+      </FeedLoveProvider>,
+    );
+
+    // The write lands *after* that move, so it is the newer truth: it is stamped
+    // against the row the card holds now (LIKE), which leaves the moved snapshot
+    // agreeing with it instead of overriding the counts the RPC just confirmed.
+    await act(async () => {
+      react.resolve({
+        data: [
+          {
+            post_id: "p1",
+            like_count: 5,
+            dislike_count: 0,
+            my_reaction: "LIKE",
+            reaction_counts: { LOVE: 5 },
+          },
+        ],
+        error: null,
+      });
+    });
+
+    expect(screen.getByTestId("mine-p1").textContent).toBe("yes");
+    expect(screen.getByTestId("likes-p1").textContent).toBe("5");
+  });
 });
