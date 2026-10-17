@@ -160,6 +160,27 @@ describe("Help M2 chat UI", () => {
     expect(screen.getByTestId("chat-retry")).toBeTruthy();
   });
 
+  it("a general question that is not app help keeps the draft instead of substituting a built-in answer", async () => {
+    renderHelp({ createAdapter: () => failingAdapter(), getKey: async () => "test-key" });
+    const question = "Explain why the moon changes shape";
+    send(question);
+    await screen.findByTestId("chat-error");
+    // Only genuine app-help intent earns the labelled built-in answer; a
+    // general question that nothing in the FAQ answers must keep its draft.
+    expect(screen.queryByText("Built-in answer")).toBeNull();
+    expect(screen.getByTestId("chat-retry")).toBeTruthy();
+    expect(composer().value).toBe(question);
+  });
+
+  it("a general question the FAQ would only answer with the default scope note keeps the draft", async () => {
+    renderHelp({ createAdapter: () => failingAdapter(), getKey: async () => "test-key" });
+    const question = "Tell me about the history of cheese";
+    send(question);
+    await screen.findByTestId("chat-error");
+    expect(screen.queryByText("Built-in answer")).toBeNull();
+    expect(composer().value).toBe(question);
+  });
+
   it("passes the full handoff prompt without slice(0,500) truncation", () => {
     const longPrompt = `Report context: ${"lost keys detail ".repeat(40)}`;
     expect(longPrompt.length).toBeGreaterThan(500);

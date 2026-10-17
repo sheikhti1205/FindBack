@@ -27,6 +27,18 @@ const DEFAULT_SCOPE_ANSWER =
 const OTP_ANSWER =
   "Confirm your email with the one-time code sent at signup. Phone verification is not available in this build.";
 
+/**
+ * True only when the built-in FAQ has something specific to say about FindBack
+ * — i.e. the question really is app help. A general question the FAQ can only
+ * deflect with the default scope note is NOT app help, so the failure path must
+ * keep that person's draft instead of replacing a failed attempt with an
+ * unrelated built-in answer (CF-070 R2 finding 2).
+ */
+export function isAppHelpQuestion(question: string): boolean {
+  const answer = builtInHelp(question);
+  return answer !== DEFAULT_SCOPE_ANSWER && answer !== GENERAL_SCOPE_ANSWER;
+}
+
 /** Deterministic, offline FindBack help; no provider or user credential required. */
 export function builtInHelp(question: string): string {
   const q = question.trim().toLowerCase();

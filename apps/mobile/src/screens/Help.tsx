@@ -33,7 +33,7 @@ import {
   type AssistantModePreference,
 } from "../services/ai/aiPreferences";
 import { createOpenRouterAdapter } from "../services/ai/providers/openrouter";
-import { builtInHelp } from "../services/helpFaq";
+import { builtInHelp, isAppHelpQuestion } from "../services/helpFaq";
 import {
   addChatSelection,
   buildChatSendPlan,
@@ -1098,9 +1098,11 @@ function AccountHelp({ accountId, store, prefillConsumed, deps }: { accountId: s
       const safeMessage = sanitizeControllerError(message, [question]);
       clearStreamingPartial();
       setAttempts((prev) => [...prev, { n: attemptN, status: "failed" }]);
-      if (hasImages || sendProvider === "offline" || loadEffectiveAssistantMode(accountId) === "offline-only" || !isProviderEnabled(accountId, sendProvider) || isGeneralNonAppQuestion(question)) {
-        // Privacy refusals and general-chat failures never get an FAQ
-        // substitution — the draft and tray photos are preserved for Retry.
+      if (hasImages || sendProvider === "offline" || loadEffectiveAssistantMode(accountId) === "offline-only" || !isProviderEnabled(accountId, sendProvider) || !isAppHelpQuestion(question)) {
+        // Privacy refusals, general questions and any non-app-help failure
+        // never get a FAQ substitution — the draft and tray photos are
+        // preserved for Retry. Only a question the FAQ actually answers about
+        // FindBack earns the labelled built-in answer below.
         setInput(question);
         setFailedSend({ text: question });
         setSendError(safeMessage);

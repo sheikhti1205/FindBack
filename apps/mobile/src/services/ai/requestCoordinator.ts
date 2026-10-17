@@ -88,10 +88,15 @@ function defaultRetryDelayMs(
 
 type TimeoutKind = "timeout-overall" | "timeout-first-token" | "timeout-idle";
 
+/**
+ * Consumer copy. The message reaches the transcript, so it explains what
+ * happened in plain words — never the internal timing vocabulary
+ * ("first-token bound", "provider") that describes how the guard is built.
+ */
 function timeoutMessage(kind: TimeoutKind): string {
-  if (kind === "timeout-overall") return "The request exceeded its overall bound.";
-  if (kind === "timeout-first-token") return "The provider sent no token before the first-token bound.";
-  return "The provider stream stalled past the idle bound.";
+  if (kind === "timeout-overall") return "That answer took too long, so it was stopped. Try again.";
+  if (kind === "timeout-first-token") return "The assistant didn't start replying in time. Try again.";
+  return "The assistant stopped replying partway through. Try again.";
 }
 
 /** Orchestrator call-site: report terminal provenance context, if wired. */

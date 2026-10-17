@@ -205,6 +205,11 @@ describe("requestCoordinator orchestration", () => {
     const errors = events.filter((event) => event.kind === "error");
     expect(errors.length).toBeGreaterThan(0);
     expect(errors[0]).toMatchObject({ code: "timeout-first-token" });
+    // The message is shown to a consumer, so it must not leak internal timing
+    // vocabulary ("first-token bound", "provider") to explain the failure.
+    const message = (errors[0] as { message: string }).message;
+    expect(message).not.toMatch(/bound|token|provider/i);
+    expect(message.toLowerCase()).toContain("try again");
   });
 
   it("accounts usage separately per attempt", async () => {
