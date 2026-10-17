@@ -239,6 +239,52 @@ describe("Help M2 chat UI", () => {
     expect(error.textContent).toMatch(/try again/i);
   });
 
+  // CF-070 R2 finding 1-retry: a grammatical request about the world is not app
+  // help, even when a topic word is nearby ("photos", "bell", "find").
+  for (const question of [
+    "How do I bake sourdough bread?",
+    "Can I freeze leftover soup?",
+    "How can I take better landscape photos?",
+    "What is the function of a bicycle bell?",
+    "How do I find the square root of 144?",
+  ]) {
+    it(`keeps the draft for "${question}", which is a request about the world`, async () => {
+      renderHelp({ createAdapter: () => failingAdapter(), getKey: async () => "test-key" });
+      send(question);
+      await screen.findByTestId("chat-error");
+      expect(screen.queryByText("Built-in answer")).toBeNull();
+      expect(screen.getByTestId("chat-retry")).toBeTruthy();
+      expect(composer().value).toBe(question);
+    });
+  }
+
+  // CF-070 R2 finding 2-retry: an adapter can claim a first-party timeout code
+  // with arbitrary text, so the code alone is not proof that the message was
+  // written here. Every rendered line must come from the code's fixed copy.
+  for (const [code, copy] of [
+    ["timeout-overall", /took too long/i],
+    ["timeout-first-token", /didn't start replying/i],
+    ["timeout-idle", /stopped replying partway/i],
+  ] as const) {
+    it(`renders fixed copy for an adapter-reported ${code}, never its message`, async () => {
+      const junk = "max_tokens exceeds context_length (upstream body)";
+      const adapter: ProviderAdapter = {
+        ...failingAdapter(),
+        complete: async function* (): AsyncIterable<StreamEvent> {
+          yield { kind: "error", attempt: 1, code, message: junk, retryable: false };
+          yield { kind: "done", attempt: 1, stopReason: "error" };
+        },
+      };
+      renderHelp({ createAdapter: () => adapter, getKey: async () => "test-key" });
+      const question = "Explain why the moon changes shape";
+      send(question);
+      const error = await screen.findByTestId("chat-error");
+      expect(error.textContent).toMatch(copy);
+      expect(error.textContent).not.toMatch(/max_tokens|context_length/);
+      expect(composer().value).toBe(question);
+    });
+  }
+
   it("passes the full handoff prompt without slice(0,500) truncation", () => {
     const longPrompt = `Report context: ${"lost keys detail ".repeat(40)}`;
     expect(longPrompt.length).toBeGreaterThan(500);

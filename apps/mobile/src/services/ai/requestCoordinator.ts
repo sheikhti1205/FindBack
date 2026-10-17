@@ -86,17 +86,23 @@ function defaultRetryDelayMs(
   return parseRetryAfterMs(error.message) ?? Math.min(1000 * 2 ** (attempt - 1), 10_000);
 }
 
-type TimeoutKind = "timeout-overall" | "timeout-first-token" | "timeout-idle";
+export type TimeoutKind = "timeout-overall" | "timeout-first-token" | "timeout-idle";
 
 /**
- * Consumer copy. The message reaches the transcript, so it explains what
- * happened in plain words — never the internal timing vocabulary
- * ("first-token bound", "provider") that describes how the guard is built.
+ * Consumer copy, one line per guard. The message reaches the transcript, so it
+ * explains what happened in plain words — never the internal timing vocabulary
+ * ("first-token bound", "provider") that describes how the guard is built. The
+ * controller resolves the same map by code for the failure banner, so this
+ * stays the single source of that copy.
  */
+export const TIMEOUT_ERROR_COPY: Readonly<Record<TimeoutKind, string>> = {
+  "timeout-overall": "That answer took too long, so it was stopped. Try again.",
+  "timeout-first-token": "The assistant didn't start replying in time. Try again.",
+  "timeout-idle": "The assistant stopped replying partway through. Try again.",
+};
+
 function timeoutMessage(kind: TimeoutKind): string {
-  if (kind === "timeout-overall") return "That answer took too long, so it was stopped. Try again.";
-  if (kind === "timeout-first-token") return "The assistant didn't start replying in time. Try again.";
-  return "The assistant stopped replying partway through. Try again.";
+  return TIMEOUT_ERROR_COPY[kind];
 }
 
 /** Orchestrator call-site: report terminal provenance context, if wired. */

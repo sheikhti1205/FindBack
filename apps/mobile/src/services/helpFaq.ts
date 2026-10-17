@@ -27,17 +27,28 @@ const OTP_ANSWER =
   "Confirm your email with the one-time code sent at signup. Phone verification is not available in this build.";
 
 /**
- * A question shows app intent when it names FindBack (or the app), asks how or
- * where the person can do something, or names an object the app owns ("my
- * report"). A lone feature keyword is not intent: `photo` sits inside
- * "photosynthesis" and `map` inside "map projections", so answering those with
- * FindBack advice replaces a failed attempt with instructions for a different
- * question (CF-070 R2 finding 1 — the substitution also cleared the draft).
- * The ambiguous topics below therefore require this signal; answers that only
- * exist as app guidance (notification behaviour) declare `appSpecific`.
+ * Evidence that a question is about THIS app, in the only two forms the FAQ
+ * accepts.
+ *
+ * 1. Ownership — the question names FindBack (or "the app"), or an object the
+ *    app owns ("my report", "another user"). Ownership alone is enough.
+ * 2. An app-activity request — the bounded topic phrase below, and only when
+ *    the question is actually asking to do something.
+ *
+ * Request grammar alone ("how do I", "can I") is NOT evidence. It is how the
+ * world asks about the world: "How do I bake sourdough bread?" and "Can I
+ * freeze leftover soup?" are grammatical requests with no app subject, and
+ * answering them with FindBack copy — and clearing the draft to do it — is the
+ * defect the R2 reviews found (CF-070 R2 findings 1 and 1-retry). For the same
+ * reason no topic is "app-specific" by its own vocabulary: a bicycle bell is
+ * not a notification, and "photos" is not photo upload.
  */
-const APP_HELP_CONTEXT =
-  /\bfindback\b|\bthe app\b|\bhow (?:do|can|should) i\b|\bwhere (?:do|can|should) i\b|\bcan i\b|\bi can'?t\b|\bhow to\b|\bturn (?:on|off)\b|\bis there a way\b|\bmy (?:accounts?|reports?|listings?|posts?|profile|drafts?|notifications?)\b/i;
+const APP_OWNERSHIP_RE =
+  /\bfindback\b|\bthe app\b|\bthis app\b|\bmy (?:accounts?|reports?|listings?|posts?|profile|drafts?|notifications?)\b|\banother (?:user|person|member|account)\b|\bother users?\b/i;
+
+/** A request to do something — necessary, never sufficient, for a topic. */
+const APP_ACTIVITY_REQUEST_RE =
+  /\bhow (?:do|can|could|should) i\b|\bhow do you\b|\bwhere (?:do|can|should) i\b|\bcan i\b|\bi can'?t\b|\bi (?:want|need) to\b|\bhelp me\b|\bhow to\b|\bis there a way\b|\bturn (?:on|off)\b/i;
 
 export type HelpTopicId =
   | "unavailable-feature"
@@ -67,73 +78,68 @@ export interface HelpClassification {
 
 interface HelpTopic {
   readonly id: HelpTopicId;
+  /**
+   * Bounded app-activity phrasing. Never a bare common noun: `photo` matches
+   * photosynthesis, `map` matches map projections, `find` matches arithmetic,
+   * and `bell` matches bicycles.
+   */
   readonly pattern: RegExp;
   readonly answer: string;
-  /**
-   * The answer is app behaviour whichever question carried the keyword (the
-   * notification inbox, for example). Everything else answers only when the
-   * question itself shows app intent.
-   */
-  readonly appSpecific: boolean;
 }
 
 /** Ordered like the FAQ always was: the first topic whose pattern matches wins. */
 const HELP_TOPICS: readonly HelpTopic[] = [
   {
     id: "report",
-    pattern: /\breports?\b|\blost\b|\bfound\b/,
+    pattern:
+      /\breports?\b[^?]{0,40}\b(?:lost|found)\b|\b(?:lost|found)\b[^?]{0,40}\breports?\b|\b(?:file|create|make|submit|publish|write)\s+(?:a|an|my|the)?\s*reports?\b|\bmy\s+reports?\b/,
     answer:
       "To report an item, open the Report tab, choose Lost or Found, add a title, description, category, date and approximate location, then review and tap Publish. A photo is optional.",
-    appSpecific: false,
   },
   {
     id: "search",
-    pattern: /\bsearch\b|\bfilters?\b|\bfind\b/,
+    pattern: /\bsearch\b|\bfilters?\b/,
     answer:
       "Open Search to search reports and filter by category, status, Lost or Found. Results come from FindBack listings, not from AI.",
-    appSpecific: false,
   },
   {
     id: "status",
     pattern: /\brecover(?:y|ed|ies)?\b|\bstatus\b|\bclosed?\b|\bmatched?\b/,
     answer:
       "Open your report and use its status control to mark the item Matched, Recovered or Closed when appropriate.",
-    appSpecific: false,
   },
   {
     id: "photo",
-    pattern: /\bphotos?\b|\bimages?\b|\buploads?\b|\buploading\b/,
+    pattern:
+      /\b(?:attach|add|upload)\s+(?:an?\s+)?(?:photos?|images?)\b|\bphotos?\s+(?:to|in|on|with)\s+(?:a|an|my|the)\s+reports?\b|\b(?:photo|image)\s+(?:upload|attachment)s?\b/,
     answer:
       "You can attach a photo while preparing a report. It is uploaded when you publish. AI photo analysis is optional and sends the selected image to your connected AI provider only with your consent.",
-    appSpecific: false,
   },
   {
     id: "notifications",
-    pattern: /\bnotifications?\b|\bpush\b|\bbell\b|\binbox\b|\bunread\b|\bmark all read\b|\bswipe\b/,
+    pattern:
+      /\bturn\s+(?:on|off)\s+(?:push\s+)?notifications?\b|\bpush\s+notifications?\b|\bnotifications?\s+(?:settings|inbox|bell)\b|\bmark\s+all\s+(?:as\s+)?read\b|\bmy\s+notifications?\b/,
     answer:
       "Open the bell to see notifications for reactions, comments, mentions and status changes. Opening it does not mark everything read; swipe right to toggle read, swipe left to delete, or use the row buttons. On Android you can also get a system notification, and comment notifications can be answered directly.",
-    appSpecific: true,
   },
   {
     id: "reactions",
-    pattern: /\bcomments?\b|\brat(?:e|es|ing|ings)\b|\blikes?\b/,
+    pattern:
+      /\bleave\s+(?:a\s+)?comments?\b|\b(?:write|post|add|delete|edit)\s+(?:a\s+)?comments?\b|\bcomments?\s+on\b|\brat(?:e|es|ing|ings)\b|\bmy\s+comments?\b/,
     answer:
       "Open a post to comment, react or rate it. Comments and counts update while the post is open.",
-    appSpecific: false,
   },
   {
     id: "location",
     pattern: /\blocations?\b|\bmaps?\b|\bgps\b/,
     answer:
       "Choose an approximate location from the map when reporting an item. FindBack does not track you in the background.",
-    appSpecific: false,
   },
   {
     id: "account-deletion",
     pattern: /\bdelet(?:e|ed|ing|ion)\b[^?]{0,20}\baccounts?\b|\baccounts?\b[^?]{0,20}\bdelet(?:e|ed|ing|ion)\b/,
     answer:
       "To delete your account, open Settings, then Account, then Delete account, and type your email to confirm. Deletion permanently removes your account, its reports and photos, and its data on our servers.",
-    appSpecific: false,
   },
 ];
 
@@ -143,8 +149,8 @@ const HELP_TOPICS: readonly HelpTopic[] = [
  */
 export function classifyHelpQuestion(question: string): HelpClassification {
   const q = question.trim().toLowerCase();
-  const showsAppContext = APP_HELP_CONTEXT.test(q);
-  /** A gated topic: without app intent the answer is the honest scope note. */
+  const owned = APP_OWNERSHIP_RE.test(q);
+  const activityRequest = APP_ACTIVITY_REQUEST_RE.test(q);
   const scope = (topic: HelpTopicId, appHelp: boolean, answer: string): HelpClassification => ({
     topic,
     answer: appHelp ? answer : DEFAULT_SCOPE_ANSWER,
@@ -156,13 +162,13 @@ export function classifyHelpQuestion(question: string): HelpClassification {
     appHelp: false,
   });
 
-  // 1. A feature this build does not ship gets an honest negative claim — but
-  // only for a question that is actually about this app.
+  // 1. A feature this build does not ship gets an honest negative claim — for a
+  // question that names the app or an object the app owns.
   const unavailable = matchUnavailableFeature(q);
   if (unavailable !== null) {
     return scope(
       "unavailable-feature",
-      showsAppContext,
+      owned,
       `FindBack does not have ${unavailable} in this build. It ships reports, search, status changes, comments, ratings, photos and email verification — see the Help tab for the list.`,
     );
   }
@@ -181,15 +187,17 @@ export function classifyHelpQuestion(question: string): HelpClassification {
   // 5. Model identity is never guessed; the question is about the assistant.
   if (isModelIdentityQuestion(question)) return scope("model-identity", true, MODEL_IDENTITY_ANSWER);
 
-  // 6. Feature topics answer only when the question shows app intent.
+  // 6. Feature topics: the bounded app-activity phrasing plus either ownership
+  // or an actual request. Grammar on its own never reaches the FAQ.
   const topic = HELP_TOPICS.find((candidate) => candidate.pattern.test(q));
   if (topic !== undefined) {
-    return scope(topic.id, topic.appSpecific || showsAppContext, topic.answer);
+    return scope(topic.id, owned || activityRequest, topic.answer);
   }
 
-  // 7. A claim about the app that the knowledge does not cover: do not invent it.
-  if (checkAppClaim(question).status === "unknown") {
-    return scope("unknown-feature", showsAppContext, UNKNOWN_FEATURE_ANSWER);
+  // 7. A claim about the app that the knowledge does not cover: do not invent
+  // it, and only claim it when the question names the app.
+  if (owned && checkAppClaim(question).status === "unknown") {
+    return scope("unknown-feature", true, UNKNOWN_FEATURE_ANSWER);
   }
 
   return exact("default-scope", DEFAULT_SCOPE_ANSWER);
@@ -204,8 +212,9 @@ export function builtInHelp(question: string): string {
 
 /**
  * True only when the question really is app help, so a failed send may be
- * replaced by the built-in answer. Anything else (a general question a keyword
- * merely collides with) keeps the person's draft instead (CF-070 R2 finding 1).
+ * replaced by the built-in answer. Anything else (a general question that only
+ * shares grammar or vocabulary with one) keeps the person's draft instead
+ * (CF-070 R2 finding 1).
  */
 export function isAppHelpQuestion(question: string): boolean {
   return classifyHelpQuestion(question).appHelp;

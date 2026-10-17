@@ -67,10 +67,16 @@ describe("builtInHelp", () => {
   });
 
   it("describes inbox activity as reactions, not legacy likes/dislikes (W1-A FBX-035)", () => {
-    const push = builtInHelp("What notifications will I get?");
+    const push = builtInHelp("How do I view my notifications?");
     expect(push).toMatch(/reactions, comments, mentions/i);
     expect(push).not.toMatch(/likes, dislikes/i);
     expect(push).not.toMatch(/like or dislike/i);
+
+    // "What notifications will I get?" names no app object and asks for
+    // nothing, so it is ambiguous ("How do I bake sourdough bread?" has the
+    // same shape). The FAQ prefers the scope note over a guessed answer
+    // (CF-070 R2 finding 1-retry).
+    expect(builtInHelp("What notifications will I get?")).toContain("I can help with FindBack");
   });
 
   it("answers the shipped account-deletion flow and keeps negatives for the rest", () => {
@@ -111,7 +117,7 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I report a lost wallet?",
     "How do I add a photo to my report?",
     "How do I turn off notifications?",
-    "What notifications will I get?",
+    "How do I view my notifications?",
     "How do I comment on a post?",
     "Where is my verification code?",
     "How do I delete my account?",
@@ -119,6 +125,15 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "Can I message another user privately?",
     "Search for the email address of user amir",
     "Which AI model are you?",
+    // The retry review's positive classes, verbatim.
+    "How can I report my lost backpack?",
+    "How do I search FindBack listings?",
+    "Can I attach a photo to my report?",
+    "How do I turn on notifications?",
+    "How do I leave a comment?",
+    "How do I delete my FindBack account?",
+    "Does FindBack offer teleportation?",
+    "Can I send a direct message to another user?",
   ];
 
   const NOT_APP_HELP = [
@@ -129,6 +144,14 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How does face recognition work?",
     "Why do onions make people cry?",
     "Explain the causes of the tides",
+    // CF-070 R2 finding 1-retry: grammatical requests about the world.
+    "How do I bake sourdough bread?",
+    "Can I freeze leftover soup?",
+    "How can I take better landscape photos?",
+    "What is the function of a bicycle bell?",
+    "How do I find the square root of 144?",
+    // Ambiguous and request-shaped, but names nothing the app owns.
+    "What notifications will I get?",
   ];
 
   it("recognises concise app-help prompts", () => {
@@ -153,6 +176,22 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     );
     expect(builtInHelp("What does a solar eclipse look like?")).toContain("I can help with FindBack");
     expect(builtInHelp("How does face recognition work?")).toContain("I can help with FindBack");
+
+    // CF-070 R2 finding 1-retry: a grammatical request about the world gets the
+    // scope note, never FindBack FAQ copy.
+    for (const question of [
+      "How do I bake sourdough bread?",
+      "Can I freeze leftover soup?",
+      "How can I take better landscape photos?",
+      "What is the function of a bicycle bell?",
+      "How do I find the square root of 144?",
+    ]) {
+      const reply = builtInHelp(question);
+      expect(reply, question).toContain("I can help with FindBack");
+      expect(reply, question).not.toContain("attach a photo");
+      expect(reply, question).not.toContain("bell");
+      expect(reply, question).not.toContain("Search to search reports");
+    }
   });
 
   it("reports the topic it answered with, so callers never re-derive intent", () => {

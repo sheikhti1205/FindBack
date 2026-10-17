@@ -473,14 +473,24 @@ describe("consumerSendErrorCopy", () => {
     );
   });
 
-  it("keeps the coordinator's own timeout copy", () => {
+  it("resolves the timeout codes to fixed copy, not to whatever text carries them", () => {
+    // CF-070 R2 finding 2-retry: the coordinator forwards adapter error events
+    // unchanged, so an adapter can claim a timeout code with arbitrary text.
+    // The code is the only trusted part.
     const timeouts = [
-      ["timeout-overall", "That answer took too long, so it was stopped. Try again."],
-      ["timeout-first-token", "The assistant didn't start replying in time. Try again."],
-      ["timeout-idle", "The assistant stopped replying partway through. Try again."],
+      ["timeout-overall", /took too long/i],
+      ["timeout-first-token", /didn't start replying/i],
+      ["timeout-idle", /stopped replying partway/i],
     ] as const;
     for (const [code, copy] of timeouts) {
-      expect(consumerSendErrorCopy(new ControllerError("send-failed", copy, code)), code).toBe(copy);
+      const adapterClaim = new ControllerError(
+        "send-failed",
+        "max_tokens exceeds context_length (upstream body)",
+        code,
+      );
+      const resolved = consumerSendErrorCopy(adapterClaim);
+      expect(resolved, code).toMatch(copy);
+      expect(resolved, code).not.toMatch(/max_tokens|context_length/);
     }
   });
 
@@ -493,6 +503,21 @@ describe("consumerSendErrorCopy", () => {
     expect(consumerSendErrorCopy(plain)).toMatch(/try again/i);
     expect(consumerSendErrorCopy(plain)).not.toContain("ECONNRESET");
     expect(consumerSendErrorCopy(undefined)).toMatch(/try again/i);
+  });
+
+  it("returns a string for codes that name Object.prototype members (CF-070 R2 finding 3)", () => {
+    // A plain object literal lookup returns a function or object for these
+    // keys, and `??` cannot catch it because a function is not nullish.
+    for (const code of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+      const resolved = consumerSendErrorCopy(new ControllerError("send-failed", "body", code));
+      expect(typeof resolved, code).toBe("string");
+      expect(resolved, code).toMatch(/try again/i);
+    }
+    for (const code of ["constructor", "toString", "__proto__"]) {
+      const resolved = consumerSendErrorCopy(new ControllerError(code as never, "body"));
+      expect(typeof resolved, code).toBe("string");
+      expect(resolved, code).toMatch(/try again/i);
+    }
   });
 
   it("keeps the controller-level distinctions the banner needs", () => {

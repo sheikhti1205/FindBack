@@ -22,7 +22,7 @@
  */
 import { assembleRequest, buildWireLayers } from "./requestAssembler";
 import type { AssemblerInput, VersionedText, WireLayer } from "./requestAssembler";
-import { coordinate } from "./requestCoordinator";
+import { TIMEOUT_ERROR_COPY, coordinate } from "./requestCoordinator";
 import { isChatCheckpoint, isSelectionAuthorized } from "./providerContract";
 import type {
   AiSelection,
@@ -73,11 +73,18 @@ export class ControllerError extends Error {
   }
 }
 
-/** Codes raised by the coordinator itself: their message is already our copy. */
-const FIRST_PARTY_CODES = new Set(["timeout-overall", "timeout-first-token", "timeout-idle"]);
+/** Generic line for a failure whose code names nothing actionable. */
+const SEND_FAILED_COPY = "The assistant could not answer just now. Try again.";
 
-/** Consumer copy for a failure whose upstream text is diagnostic, not readable. */
-const TRANSPORT_ERROR_COPY: Record<string, string> = {
+/**
+ * Consumer copy for a failure whose upstream text is diagnostic, not readable.
+ *
+ * Null-prototype dictionaries on purpose: a plain object literal inherits
+ * `Object.prototype`, so `map[code]` returns a function/object for reserved
+ * keys (`constructor`, `toString`, `__proto__`) and `??` cannot catch that,
+ * because a function is not nullish (CF-070 R2 finding 3).
+ */
+const TRANSPORT_ERROR_COPY: Record<string, string> = Object.assign(Object.create(null), {
   "auth-invalid": "The saved AI key was rejected. Check it under Manage AI models, then try again.",
   "auth-forbidden": "The AI provider refused that key for this model. Check it under Manage AI models.",
   "auth-missing": "No AI key is saved for this account yet. Add one under Manage AI models.",
@@ -88,35 +95,45 @@ const TRANSPORT_ERROR_COPY: Record<string, string> = {
   "request-failed": "The assistant could not reach the AI service. Try again.",
   "bad-request": "The assistant could not send that request. Pick another model and try again.",
   "not-found": "That AI model is no longer available. Choose another under Manage AI models.",
-};
+} as Record<string, string>);
 
-const CONTROLLER_FAILURE_COPY: Record<string, string> = {
+const CONTROLLER_FAILURE_COPY: Record<string, string> = Object.assign(Object.create(null), {
   "missing-chat": "Open a chat first, then send again.",
   "account-mismatch": "The active account changed. Open Help again and send again.",
   "needs-user-action": "The assistant needs something from you first. Check the prompt and try again.",
   cancelled: "Send stopped. Your message was kept.",
-  "send-failed": "The assistant could not answer just now. Try again.",
-};
+} as Record<string, string>);
+
+/** Own-property, string-valued lookup; never an inherited member. */
+function ownCopy(map: Record<string, string>, key: string | undefined): string | null {
+  if (key === undefined || !Object.hasOwn(map, key)) return null;
+  const copy = map[key];
+  return typeof copy === "string" ? copy : null;
+}
 
 /**
- * Consumer copy for a failed send. Provider and network failures carry text
- * written by the remote service ("max_tokens exceeds context_length"); that
- * text stays on the controller's scrubbed `lastError` for diagnostics and is
- * never rendered. Everything the person sees here is derived from the
- * normalized code, so an unknown failure degrades to a safe line instead of
- * leaking jargon (CF-070 R2 finding 2).
+ * Consumer copy for a failed send.
+ *
+ * Provider and network failures carry text written by the remote service
+ * ("max_tokens exceeds context_length"); that text stays on the controller's
+ * scrubbed `lastError` for diagnostics and is never rendered. Every rendered
+ * line is resolved from the normalized CODE, including the timeout codes: the
+ * coordinator forwards adapter error events unchanged, so an adapter can claim
+ * a timeout code with arbitrary text, and code alone is not proof that a
+ * message was written here (CF-070 R2 findings 2 and 2-retry). The timeout
+ * codes resolve to the same lines the coordinator emits.
  */
 export function consumerSendErrorCopy(error: unknown): string {
-  if (!(error instanceof ControllerError)) {
-    return CONTROLLER_FAILURE_COPY["send-failed"]!;
-  }
+  if (!(error instanceof ControllerError)) return SEND_FAILED_COPY;
   if (error.code !== "send-failed") {
-    return CONTROLLER_FAILURE_COPY[error.code] ?? CONTROLLER_FAILURE_COPY["send-failed"]!;
+    return ownCopy(CONTROLLER_FAILURE_COPY, error.code) ?? SEND_FAILED_COPY;
   }
   const code = error.streamCode;
-  if (code === undefined) return CONTROLLER_FAILURE_COPY["send-failed"]!;
-  if (FIRST_PARTY_CODES.has(code)) return error.message;
-  return TRANSPORT_ERROR_COPY[code] ?? CONTROLLER_FAILURE_COPY["send-failed"]!;
+  return (
+    ownCopy(TIMEOUT_ERROR_COPY as Record<string, string>, code) ??
+    ownCopy(TRANSPORT_ERROR_COPY, code) ??
+    SEND_FAILED_COPY
+  );
 }
 
 /**
