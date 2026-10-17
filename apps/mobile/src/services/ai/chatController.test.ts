@@ -8,7 +8,7 @@ import type {
 } from "./providerContract";
 import { ChatStore } from "./chatStore";
 import type { ChatPersistenceAdapter, StoredChat } from "./chatStore";
-import { ChatController, proposeIntentAction } from "./chatController";
+import { ChatController, consumerSendErrorCopy, ControllerError, proposeIntentAction } from "./chatController";
 import type { VersionedText } from "./requestAssembler";
 
 function makeAdapter() {
@@ -444,5 +444,62 @@ describe("intent-routing seam (Lane B)", () => {
     const before = controller.getState();
     proposeIntentAction("I lost my keys");
     expect(controller.getState()).toEqual(before);
+  });
+});
+
+/**
+ * CF-070 R2 finding 2: the Help banner used to render whatever the upstream
+ * service said (a real OpenRouter 400 surfaced "max_tokens exceeds
+ * context_length" verbatim). Consumer copy is now derived from the normalized
+ * code; only the coordinator's own timeout messages pass through, because those
+ * are written for the person to begin with.
+ */
+describe("consumerSendErrorCopy", () => {
+  it("replaces a raw provider body with actionable copy for its code", () => {
+    const raw = new ControllerError("send-failed", "max_tokens exceeds context_length", "bad-request");
+    const copy = consumerSendErrorCopy(raw);
+    expect(copy).not.toContain("max_tokens");
+    expect(copy).not.toContain("context_length");
+    expect(copy).toMatch(/another model/i);
+
+    expect(consumerSendErrorCopy(new ControllerError("send-failed", "boom", "rate-limited"))).toMatch(
+      /too many requests/i,
+    );
+    expect(consumerSendErrorCopy(new ControllerError("send-failed", "401", "auth-invalid"))).toMatch(
+      /key was rejected/i,
+    );
+    expect(consumerSendErrorCopy(new ControllerError("send-failed", "500", "provider-error"))).toMatch(
+      /try again/i,
+    );
+  });
+
+  it("keeps the coordinator's own timeout copy", () => {
+    const timeouts = [
+      ["timeout-overall", "That answer took too long, so it was stopped. Try again."],
+      ["timeout-first-token", "The assistant didn't start replying in time. Try again."],
+      ["timeout-idle", "The assistant stopped replying partway through. Try again."],
+    ] as const;
+    for (const [code, copy] of timeouts) {
+      expect(consumerSendErrorCopy(new ControllerError("send-failed", copy, code)), code).toBe(copy);
+    }
+  });
+
+  it("falls back to safe copy for an unknown code or an unknown error", () => {
+    const unknownCode = new ControllerError("send-failed", "upstream shard 7 exploded", "brand-new-code");
+    expect(consumerSendErrorCopy(unknownCode)).toMatch(/try again/i);
+    expect(consumerSendErrorCopy(unknownCode)).not.toContain("shard");
+
+    const plain = new Error("socket hang up ECONNRESET");
+    expect(consumerSendErrorCopy(plain)).toMatch(/try again/i);
+    expect(consumerSendErrorCopy(plain)).not.toContain("ECONNRESET");
+    expect(consumerSendErrorCopy(undefined)).toMatch(/try again/i);
+  });
+
+  it("keeps the controller-level distinctions the banner needs", () => {
+    expect(consumerSendErrorCopy(new ControllerError("missing-chat", "no chat"))).toMatch(/open a chat/i);
+    expect(consumerSendErrorCopy(new ControllerError("account-mismatch", "other account"))).toMatch(
+      /account changed/i,
+    );
+    expect(consumerSendErrorCopy(new ControllerError("cancelled", "stopped"))).toMatch(/kept/i);
   });
 });

@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { Help } from "./Help";
 import { resetBackInterceptors } from "../components/backNavigation";
 import type { NormalizedRequest, ProviderAdapter, StreamEvent } from "../services/ai/providerContract";
+import { createOpenRouterAdapter } from "../services/ai/providers/openrouter";
 import { buildPng } from "../services/media/__fixtures__/synthetic";
 
 vi.mock("../auth", () => ({
@@ -179,6 +180,63 @@ describe("Help M2 chat UI", () => {
     await screen.findByTestId("chat-error");
     expect(screen.queryByText("Built-in answer")).toBeNull();
     expect(composer().value).toBe(question);
+  });
+
+  // CF-070 R2 finding 1: the predicate used to treat any FAQ keyword as app
+  // help, so these questions lost their draft to an unrelated built-in answer.
+  for (const question of [
+    "What is photosynthesis?",
+    "How do map projections distort Greenland?",
+    "What does a solar eclipse look like?",
+  ]) {
+    it(`keeps the draft for "${question}", which only collides with a keyword`, async () => {
+      renderHelp({ createAdapter: () => failingAdapter(), getKey: async () => "test-key" });
+      send(question);
+      await screen.findByTestId("chat-error");
+      expect(screen.queryByText("Built-in answer")).toBeNull();
+      expect(screen.getByTestId("chat-retry")).toBeTruthy();
+      expect(composer().value).toBe(question);
+    });
+  }
+
+  // CF-070 R2 finding 2: the banner used to render the upstream body verbatim
+  // (a real OpenRouter 400 showed "max_tokens exceeds context_length").
+  it("renders consumer copy for a raw provider error body, never the diagnostic text", async () => {
+    const providerErrorBody = JSON.stringify({ error: { message: "max_tokens exceeds context_length" } });
+    const fetchImpl = (async () => ({
+      ok: false,
+      status: 400,
+      text: async () => providerErrorBody,
+    })) as unknown as typeof fetch;
+    const adapter = createOpenRouterAdapter({
+      getApiKey: async () => "test-key",
+      fetchImpl,
+    });
+    renderHelp({ createAdapter: () => adapter, getKey: async () => "test-key" });
+    const question = "Explain why the moon changes shape";
+    send(question);
+    const error = await screen.findByTestId("chat-error");
+    expect(error.textContent).not.toMatch(/max_tokens|context_length/);
+    expect(error.textContent).toMatch(/another model|try again/i);
+    expect(composer().value).toBe(question);
+  });
+
+  it("falls back to safe copy when an adapter fails with an unreadable error", async () => {
+    const adapter: ProviderAdapter = {
+      ...failingAdapter(),
+      // An adapter that throws instead of yielding an error event: whatever it
+      // says is upstream text, so the banner must not repeat it.
+      complete: () => ({
+        [Symbol.asyncIterator]() {
+          return { next: () => Promise.reject(new Error("socket hang up ECONNRESET")) };
+        },
+      }),
+    };
+    renderHelp({ createAdapter: () => adapter, getKey: async () => "test-key" });
+    send("Explain why the moon changes shape");
+    const error = await screen.findByTestId("chat-error");
+    expect(error.textContent).not.toContain("ECONNRESET");
+    expect(error.textContent).toMatch(/try again/i);
   });
 
   it("passes the full handoff prompt without slice(0,500) truncation", () => {

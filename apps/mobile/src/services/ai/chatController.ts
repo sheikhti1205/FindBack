@@ -60,10 +60,63 @@ export class ControllerError extends Error {
       | "cancelled"
       | "send-failed",
     message: string,
+    /**
+     * The normalized stream code the failure came from, when one exists
+     * ("rate-limited", "timeout-first-token", an adapter's own code). The
+     * message may carry upstream text; this code is what the UI keys consumer
+     * copy on, so no provider string is ever rendered (CF-070 R2 finding 2).
+     */
+    readonly streamCode?: string,
   ) {
     super(message);
     this.name = "ControllerError";
   }
+}
+
+/** Codes raised by the coordinator itself: their message is already our copy. */
+const FIRST_PARTY_CODES = new Set(["timeout-overall", "timeout-first-token", "timeout-idle"]);
+
+/** Consumer copy for a failure whose upstream text is diagnostic, not readable. */
+const TRANSPORT_ERROR_COPY: Record<string, string> = {
+  "auth-invalid": "The saved AI key was rejected. Check it under Manage AI models, then try again.",
+  "auth-forbidden": "The AI provider refused that key for this model. Check it under Manage AI models.",
+  "auth-missing": "No AI key is saved for this account yet. Add one under Manage AI models.",
+  "payment-required": "The AI provider reports no remaining credit for this key.",
+  "rate-limited": "Too many requests right now. Try again in a moment.",
+  "network-error": "The assistant could not reach the network. Check your connection and try again.",
+  "provider-error": "The AI service is having trouble. Try again in a moment.",
+  "request-failed": "The assistant could not reach the AI service. Try again.",
+  "bad-request": "The assistant could not send that request. Pick another model and try again.",
+  "not-found": "That AI model is no longer available. Choose another under Manage AI models.",
+};
+
+const CONTROLLER_FAILURE_COPY: Record<string, string> = {
+  "missing-chat": "Open a chat first, then send again.",
+  "account-mismatch": "The active account changed. Open Help again and send again.",
+  "needs-user-action": "The assistant needs something from you first. Check the prompt and try again.",
+  cancelled: "Send stopped. Your message was kept.",
+  "send-failed": "The assistant could not answer just now. Try again.",
+};
+
+/**
+ * Consumer copy for a failed send. Provider and network failures carry text
+ * written by the remote service ("max_tokens exceeds context_length"); that
+ * text stays on the controller's scrubbed `lastError` for diagnostics and is
+ * never rendered. Everything the person sees here is derived from the
+ * normalized code, so an unknown failure degrades to a safe line instead of
+ * leaking jargon (CF-070 R2 finding 2).
+ */
+export function consumerSendErrorCopy(error: unknown): string {
+  if (!(error instanceof ControllerError)) {
+    return CONTROLLER_FAILURE_COPY["send-failed"]!;
+  }
+  if (error.code !== "send-failed") {
+    return CONTROLLER_FAILURE_COPY[error.code] ?? CONTROLLER_FAILURE_COPY["send-failed"]!;
+  }
+  const code = error.streamCode;
+  if (code === undefined) return CONTROLLER_FAILURE_COPY["send-failed"]!;
+  if (FIRST_PARTY_CODES.has(code)) return error.message;
+  return TRANSPORT_ERROR_COPY[code] ?? CONTROLLER_FAILURE_COPY["send-failed"]!;
 }
 
 /**
@@ -604,6 +657,7 @@ export class ChatController {
     let activeAttempt = 0;
     let stopReason: "complete" | "cancelled" | "error" = "complete";
     let lastErrorMessage = "";
+    let lastErrorCode = "";
     try {
       for await (const event of coordinate(built.request, { adapter: effective.adapter })) {
         // Stale turn or abort: ignore everything late, including text that
@@ -638,6 +692,7 @@ export class ChatController {
           });
         } else if (event.kind === "error") {
           lastErrorMessage = event.message;
+          lastErrorCode = event.code;
           attempt = activeAttempt;
         } else if (event.kind === "done") {
           stopReason = event.stopReason;
@@ -664,7 +719,11 @@ export class ChatController {
     if (stopReason === "error") {
       const message = lastErrorMessage || "Provider reported an error.";
       this.update({ phase: "failed", partialText: "", lastError: sanitizeControllerError(message, [text]) });
-      throw new ControllerError("send-failed", sanitizeControllerError(message, [text]));
+      throw new ControllerError(
+        "send-failed",
+        sanitizeControllerError(message, [text]),
+        lastErrorCode === "" ? undefined : lastErrorCode,
+      );
     }
 
     if (!built.transient) {

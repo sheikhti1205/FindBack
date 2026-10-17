@@ -11,7 +11,7 @@ import { HistorySheet, type HistoryChatSummary } from "../components/HistoryShee
 import { ModelCatalogSheet, assistantRowTitle } from "../components/ModelCatalogSheet";
 import { AssistantConfigureSheet } from "../components/assistant/AssistantConfigureSheet";
 import { announce } from "../components/LiveRegion";
-import { ChatController, ControllerError, sanitizeControllerError, type ControllerState } from "../services/ai/chatController";
+import { ChatController, ControllerError, consumerSendErrorCopy, type ControllerState } from "../services/ai/chatController";
 import { createStreamingPaint } from "../services/ai/streamingPaint";
 import { ChatStore } from "../services/ai/chatStore";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER, defaultSelection } from "../services/ai/modelPolicy";
@@ -1092,10 +1092,10 @@ function AccountHelp({ accountId, store, prefillConsumed, deps }: { accountId: s
       if (generation.current !== gen) return;
       if (controllerAbort.signal.aborted || (e instanceof Error && e.name === "AbortError")) return;
       if (e instanceof ControllerError && e.code === "cancelled") return;
-      const message = e instanceof Error ? e.message : "Sorry, I could not answer right now.";
-      // Sanitized (C-owned scrubber): provider text may echo input or
-      // key-like material, so it is scrubbed against the question and clipped.
-      const safeMessage = sanitizeControllerError(message, [question]);
+      // Consumer copy is derived from the normalized failure code, never from
+      // provider text: a raw body like "max_tokens exceeds context_length" is
+      // diagnostic, and stays on the controller's scrubbed `lastError`.
+      const safeMessage = consumerSendErrorCopy(e);
       clearStreamingPartial();
       setAttempts((prev) => [...prev, { n: attemptN, status: "failed" }]);
       if (hasImages || sendProvider === "offline" || loadEffectiveAssistantMode(accountId) === "offline-only" || !isProviderEnabled(accountId, sendProvider) || !isAppHelpQuestion(question)) {

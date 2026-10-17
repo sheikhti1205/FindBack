@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { builtInHelp } from "./helpFaq";
+import { builtInHelp, classifyHelpQuestion, isAppHelpQuestion } from "./helpFaq";
 
 describe("builtInHelp", () => {
   it("keeps answering the shipped FindBack FAQ topics", () => {
@@ -94,5 +94,70 @@ describe("builtInHelp", () => {
   it("keeps the generic app-scope default for an unrelated question", () => {
     expect(builtInHelp("what is the capital of France?")).toContain("I can help with FindBack");
     expect(builtInHelp("how do I change my password?")).toContain("I can help with FindBack");
+  });
+});
+
+/**
+ * The app-help predicate decides whether a failed send may be replaced by the
+ * built-in answer (Help clears the composer when it does), so a keyword
+ * collision here costs the person their draft. It used to be derived by
+ * comparing rendered answers, which made every broad FAQ keyword a false
+ * positive (CF-070 R2 finding 1: "photo" inside photosynthesis, "map" inside
+ * map projections, "like" inside "look like").
+ */
+describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
+  const APP_HELP_POSITIVES = [
+    "How do I search?",
+    "How do I report a lost wallet?",
+    "How do I add a photo to my report?",
+    "How do I turn off notifications?",
+    "What notifications will I get?",
+    "How do I comment on a post?",
+    "Where is my verification code?",
+    "How do I delete my account?",
+    "Does FindBack have a Pets category?",
+    "Can I message another user privately?",
+    "Search for the email address of user amir",
+    "Which AI model are you?",
+  ];
+
+  const NOT_APP_HELP = [
+    "What is photosynthesis?",
+    "How do map projections distort Greenland?",
+    "What does a solar eclipse look like?",
+    "What is the road map for this project?",
+    "How does face recognition work?",
+    "Why do onions make people cry?",
+    "Explain the causes of the tides",
+  ];
+
+  it("recognises concise app-help prompts", () => {
+    for (const question of APP_HELP_POSITIVES) {
+      expect(isAppHelpQuestion(question), question).toBe(true);
+      expect(classifyHelpQuestion(question).appHelp, question).toBe(true);
+    }
+  });
+
+  it("refuses FAQ keyword collisions that are not about the app", () => {
+    for (const question of NOT_APP_HELP) {
+      expect(isAppHelpQuestion(question), question).toBe(false);
+      expect(classifyHelpQuestion(question).appHelp, question).toBe(false);
+    }
+  });
+
+  it("answers a colliding question with the scope note instead of the collided copy", () => {
+    expect(builtInHelp("What is photosynthesis?")).toContain("I can help with FindBack");
+    expect(builtInHelp("What is photosynthesis?")).not.toContain("attach a photo");
+    expect(builtInHelp("How do map projections distort Greenland?")).toContain(
+      "I can help with FindBack",
+    );
+    expect(builtInHelp("What does a solar eclipse look like?")).toContain("I can help with FindBack");
+    expect(builtInHelp("How does face recognition work?")).toContain("I can help with FindBack");
+  });
+
+  it("reports the topic it answered with, so callers never re-derive intent", () => {
+    expect(classifyHelpQuestion("How do I search?").topic).toBe("search");
+    expect(classifyHelpQuestion("Which AI model are you?").topic).toBe("model-identity");
+    expect(classifyHelpQuestion("What is photosynthesis?").topic).not.toBe("photo");
   });
 });
