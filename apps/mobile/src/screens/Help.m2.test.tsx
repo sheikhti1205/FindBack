@@ -247,6 +247,16 @@ describe("Help M2 chat UI", () => {
     "How can I take better landscape photos?",
     "What is the function of a bicycle bell?",
     "How do I find the square root of 144?",
+    // CF-070 R2 retry-2: app-shaped words over a world-shaped subject. Each is
+    // reproduced through the real screen because the defect is composite: the
+    // predicate classifies, and Help clears the composer when it says app help.
+    "How do I search for peer-reviewed papers?",
+    "How do I use a map to navigate a forest?",
+    "How do I rate a restaurant?",
+    "How do I delete my Gmail account?",
+    "How does face recognition identify another person?",
+    "How do I turn off Gmail notifications?",
+    "How do I check my order status?",
   ]) {
     it(`keeps the draft for "${question}", which is a request about the world`, async () => {
       renderHelp({ createAdapter: () => failingAdapter(), getKey: async () => "test-key" });

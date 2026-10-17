@@ -739,14 +739,100 @@ export const RETIRED_REPORT_PHOTO_AI_FILES = [
 ];
 
 /**
- * Import, JSX-mount and call syntax only. A comment that explains the removal
- * (several do) is documentation, not a regression.
+ * Retired-module detection, parsed rather than pattern-matched (CF-070 R2
+ * retry-2 finding 3).
+ *
+ * The previous regexes missed a dynamic `import(...)`, a side-effect
+ * `import "..."` and a default-imported component, while flagging a call that
+ * only appeared in a comment. The TypeScript parser is already a dependency, so
+ * the scan reads module specifiers, JSX tags and call expressions from the AST:
+ * every import form is seen, and comments are not code.
  */
-const RETIRED_AI_IMPORT_RE =
-  /from\s+["'][^"']*(?:analyzeReportPhoto|photoGrounding|livePhotoGrounding|searchFilterMapping|ops\/groundObjects)[^"']*["']/;
-const RETIRED_AI_MOUNT_RE = /<VlmSuggestions\b|<PhotoGrounding\b/;
-const RETIRED_AI_CALL_RE =
-  /\bmapAssistantSearchFilters\s*\(|\banalyzeReportPhoto(?:Local)?\s*\(|\bgroundReportPhoto\s*\(/;
+const RETIRED_AI_MODULE_BASENAMES = new Set([
+  "analyzeReportPhoto",
+  "analyzeReportPhotoLocal",
+  "VlmSuggestions",
+  "PhotoGrounding",
+  "photoGrounding",
+  "livePhotoGrounding",
+  "searchFilterMapping",
+  "groundObjects",
+]);
+
+/** Retired export names: a mount or a call proves the module came back. */
+const RETIRED_AI_SURFACE_NAMES = new Set(["VlmSuggestions", "PhotoGrounding"]);
+const RETIRED_AI_FUNCTION_NAMES = new Set([
+  "mapAssistantSearchFilters",
+  "navigateToAssistantSearch",
+  "analyzeReportPhoto",
+  "analyzeReportPhotoLocally",
+  "groundReportPhoto",
+  "groundObjects",
+]);
+
+function specifierBasename(specifier) {
+  const cleaned = specifier.split("?")[0].replace(/\/+$/, "");
+  const last = cleaned.split("/").pop() ?? "";
+  return last.replace(/\.(tsx?|jsx?|json)$/, "");
+}
+
+/**
+ * Every way a source can reach a retired module: static import/export, dynamic
+ * `import()`, `require()`, a JSX mount, or a call to a retired entry point.
+ */
+export function retiredAiReferences(file, source) {
+  const findings = [];
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+
+  const moduleSpecifierOf = (node) => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const specifier = node.moduleSpecifier;
+      if (specifier !== undefined && ts.isStringLiteral(specifier)) return specifier.text;
+      return null;
+    }
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const expression = node.moduleReference.expression;
+      if (ts.isStringLiteral(expression)) return expression.text;
+    }
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const isDynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire = ts.isIdentifier(callee) && callee.text === "require";
+      if ((isDynamicImport || isRequire) && node.arguments.length > 0) {
+        const [first] = node.arguments;
+        if (ts.isStringLiteral(first)) return first.text;
+      }
+    }
+    return null;
+  };
+
+  const visit = (node) => {
+    const specifier = moduleSpecifierOf(node);
+    if (specifier !== null && RETIRED_AI_MODULE_BASENAMES.has(specifierBasename(specifier))) {
+      findings.push({ kind: "import", detail: specifier });
+      return;
+    }
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const tag = node.tagName.getText(sourceFile);
+      if (RETIRED_AI_SURFACE_NAMES.has(tag)) findings.push({ kind: "mount", detail: tag });
+    }
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (ts.isIdentifier(callee) && RETIRED_AI_FUNCTION_NAMES.has(callee.text)) {
+        findings.push({ kind: "call", detail: callee.text });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return findings;
+}
 
 /**
  * Every shipped (non-test) mobile source under a directory, so a new importer of
@@ -779,15 +865,16 @@ export function validateRetiredReportPhotoAi({ missingFiles = [], shippedSources
       errors.push(`retired-report-photo-ai: ${file} is back in the tree (CF-020 §12 removal regressed)`);
     }
   }
+  const messages = {
+    import: "imports a retired report-photo AI module",
+    mount: "mounts a retired report-photo AI surface",
+    call: "calls a retired report-photo AI entry point",
+  };
   for (const { file, source } of shippedSources) {
-    if (RETIRED_AI_IMPORT_RE.test(source)) {
-      errors.push(`retired-report-photo-ai: ${file} imports a retired report-photo AI module`);
-    }
-    if (RETIRED_AI_MOUNT_RE.test(source)) {
-      errors.push(`retired-report-photo-ai: ${file} mounts a retired report-photo AI surface`);
-    }
-    if (RETIRED_AI_CALL_RE.test(source)) {
-      errors.push(`retired-report-photo-ai: ${file} calls a retired report-photo AI entry point`);
+    for (const finding of retiredAiReferences(file, source)) {
+      errors.push(
+        `retired-report-photo-ai: ${file} ${messages[finding.kind]} (${finding.detail})`,
+      );
     }
   }
   return errors;
@@ -814,11 +901,56 @@ export function validateReportFieldHelperWired(sources) {
     ["helper", helper, /export async function suggestReportFields/, "report-field helper must expose the reviewed field suggester"],
     ["helper", helper, /export function isReleasedCategoryPatch/, "report-field helper must keep the released-category guard"],
     ["helper", helper, /REPORT_FIELD_SOURCE\s*=\s*"extract-report-fields"/, "report-field helper must stay bound to its reviewed narrow task"],
+    // The call itself, not the label: renaming an export or keeping a source
+    // string beside a disconnected stub must not satisfy the gate (CF-070 R2
+    // retry-2 finding 2).
+    [
+      "helper",
+      helper,
+      /extractReportFields\(\s*generate\s*,\s*userMessage\s*,\s*profile\s*\)/,
+      "report-field helper must actually invoke the reviewed narrow task",
+    ],
     ["createReport", createReport, /suggestReportFields\(/, "CreateReport must reach the reviewed field suggester"],
     ["createReport", createReport, /suggestCategoryForText\(/, "CreateReport must reach the reviewed category suggester"],
+    // One requirement per field, because each field has its own apply branch and
+    // its own confirmation. A single "some confirmation exists" pattern was
+    // satisfied by the three fields the review did not touch.
+    ["createReport", createReport, /patch\.field === "title"/, "the title suggestion must have its own apply branch"],
+    ["createReport", createReport, /patch\.field === "description"/, "the description suggestion must have its own apply branch"],
+    ["createReport", createReport, /patch\.field === "date"/, "the date suggestion must have its own apply branch"],
+    ["createReport", createReport, /patch\.field === "category"/, "the category suggestion must have its own apply branch"],
+    [
+      "createReport",
+      createReport,
+      /window\.confirm\("Replace the existing title/,
+      "replacing an existing title must be confirmed",
+    ],
+    [
+      "createReport",
+      createReport,
+      /window\.confirm\("Replace the existing description/,
+      "replacing an existing description must be confirmed",
+    ],
+    [
+      "createReport",
+      createReport,
+      /window\.confirm\("Replace the existing date/,
+      "replacing an existing date must be confirmed",
+    ],
+    [
+      "createReport",
+      createReport,
+      /window\.confirm\("Replace the existing category/,
+      "replacing an existing category must be confirmed",
+    ],
     ["createReport", createReport, /aiSuggestApplyField\(patch\)/, "report-field suggestions must apply only from an explicit per-suggestion tap"],
+    [
+      "createReport",
+      createReport,
+      /aiSuggestApplyCategory\(aiCatSuggestion\)/,
+      "the category suggestion must apply only from its own explicit tap",
+    ],
     ["createReport", createReport, /Keep mine/, "report-field suggestions must offer Keep (review, never auto-apply)"],
-    ["createReport", createReport, /window\.confirm\("Replace the existing/, "report-field suggestions must confirm before replacing existing values"],
     ["createReport", createReport, /isReleasedCategory\(/, "report-field suggestions must respect the released-category guard"],
   ];
   for (const [, source, pattern, message] of required) {

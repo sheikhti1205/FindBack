@@ -151,11 +151,50 @@ describe("validateReportFieldHelperWired", () => {
       ...s,
       createReportSource: s.createReportSource.replace(/Keep mine/g, "Discard mine"),
     })],
-    ["suggestions overwrite existing values without confirmation", (s) => ({
+    ["suggestions overwrite the existing title without confirmation", (s) => ({
+      // Only the title's guard: the other fields' confirmations must not be
+      // able to cover for it (CF-070 R2 retry-2 finding 2).
+      ...s,
+      createReportSource: s.createReportSource.replace(
+        'if (!window.confirm("Replace the existing title with this suggestion?")) return;',
+        "void 0;",
+      ),
+    })],
+    ["suggestions overwrite the existing date without confirmation", (s) => ({
+      ...s,
+      createReportSource: s.createReportSource.replace(
+        'if (!window.confirm("Replace the existing date with this suggestion?")) return;',
+        "void 0;",
+      ),
+    })],
+    ["suggestions overwrite existing values without any confirmation", (s) => ({
       ...s,
       createReportSource: s.createReportSource.replace(
         /window\.confirm\("Replace the existing/g,
         'window.confirm("OK',
+      ),
+    })],
+    ["the reviewed narrow task is never invoked", (s) => ({
+      // Keeps the export, the source label and the caller: only the executable
+      // reviewed-op call is gone (CF-070 R2 retry-2 finding 2).
+      ...s,
+      reportFieldSuggestionsSource: s.reportFieldSuggestionsSource.replace(
+        "const opTask = extractReportFields(generate, userMessage, profile);",
+        "const opTask = Promise.resolve<ReturnType<typeof extractReportFields>>({\n  ok: false,\n  error: makeAiError(\"CANCELLED\", \"ABORT_BEFORE_START\"),\n});",
+      ),
+    })],
+    ["one field loses its apply branch", (s) => ({
+      ...s,
+      createReportSource: s.createReportSource.replace(
+        'patch.field === "date"',
+        'patch.field === "dropped"',
+      ),
+    })],
+    ["the category suggestion applies from a shared tap", (s) => ({
+      ...s,
+      createReportSource: s.createReportSource.replace(
+        /aiSuggestApplyCategory\(aiCatSuggestion\)/g,
+        "aiSuggestApplyField(aiCatSuggestion)",
       ),
     })],
     ["suggestions drop the released-category guard at the call site", (s) => ({
@@ -205,33 +244,52 @@ describe("validateRetiredReportPhotoAi", () => {
   });
 
   for (const [label, source] of [
-    ["a new import of a retired module", 'import { analyzeReportPhoto } from "../services/analyzeReportPhoto";'],
+    ["a static named import", 'import { analyzeReportPhoto } from "../services/analyzeReportPhoto";'],
+    ["a side-effect import", 'import "../services/analyzeReportPhoto";'],
+    ["a default import of a retired component", 'import Retired from "../components/VlmSuggestions";'],
+    ["a dynamic import", 'const old = await import("../services/assistant/searchFilterMapping");'],
+    ["a require call", 'const mod = require("../services/livePhotoGrounding");'],
+    ["a re-export", 'export { groundObjects } from "../services/ai/ops/groundObjects";'],
     ["a JSX mount of a retired surface", "export const X = () => <PhotoGrounding file={f} onPick={p} />;"],
+    ["a JSX mount through a renamed local import", 'import Retired from "../components/VlmSuggestions";\nexport const X = () => <Retired />;'],
     ["a call to a retired entry point", "const target = mapAssistantSearchFilters(fields);"],
-    ["a grounding transport call", "await groundReportPhoto({ imageUri });"],
+    ["a grounding transport call", "const go = async () => { await groundReportPhoto({ imageUri }); };"],
   ]) {
     it(`catches ${label}`, () => {
       const errors = validateRetiredReportPhotoAi({
         missingFiles: realMissingFiles(),
         shippedSources: [{ file: "apps/mobile/src/screens/Somewhere.tsx", source }],
       });
-      ok(errors.length > 0, label);
+      ok(errors.length > 0, `${label} -> ${JSON.stringify(errors)}`);
     });
   }
 
-  it("does not flag a comment that documents the removal", () => {
-    const errors = validateRetiredReportPhotoAi({
-      missingFiles: realMissingFiles(),
-      shippedSources: [
-        {
-          file: "apps/mobile/src/services/reportFieldSuggestions.ts",
-          source:
-            "// Stale-drop is the caller's job (generation token, like VlmSuggestions):\n// the photo path (analyzeReportPhoto / VlmAnalysis) was removed in CF-020 §12.",
-        },
-      ],
+  for (const [label, source] of [
+    [
+      "a comment that names the removal",
+      "// Stale-drop is the caller's job (generation token, like VlmSuggestions):\n// the photo path (analyzeReportPhoto / VlmAnalysis) was removed in CF-020 §12.",
+    ],
+    [
+      "a commented-out retired call",
+      "// Old code was: mapAssistantSearchFilters(fields);\nconst unchanged = 1;",
+    ],
+    [
+      "a doc comment naming a retired module path",
+      '/* see services/assistant/searchFilterMapping.ts before restoring this */\nexport const unchanged = 1;',
+    ],
+    [
+      "a string that merely names a retired module",
+      'const note = "analyzeReportPhoto was removed";\nexport const unchanged = note;',
+    ],
+  ]) {
+    it(`does not flag ${label}`, () => {
+      const errors = validateRetiredReportPhotoAi({
+        missingFiles: realMissingFiles(),
+        shippedSources: [{ file: "apps/mobile/src/screens/Somewhere.tsx", source }],
+      });
+      deepStrictEqual(errors, [], JSON.stringify(errors));
     });
-    deepStrictEqual(errors, []);
-  });
+  }
 });
 
 describe("validateRuntimeWiring", () => {

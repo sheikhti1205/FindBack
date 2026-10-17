@@ -134,6 +134,15 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I delete my FindBack account?",
     "Does FindBack offer teleportation?",
     "Can I send a direct message to another user?",
+    // The bare FAQ questions the app still owns by shape alone, so tightening
+    // the topic phrases does not cost the person the answer they asked for.
+    "How do I change status?",
+    "How do I choose a location?",
+    "How do I upload a photo?",
+    "How do I rate a post?",
+    "How do I react to a comment?",
+    "How do I mark an item recovered?",
+    "Are you ChatGPT?",
   ];
 
   const NOT_APP_HELP = [
@@ -152,6 +161,16 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I find the square root of 144?",
     // Ambiguous and request-shaped, but names nothing the app owns.
     "What notifications will I get?",
+    // CF-070 R2 retry-2: app-shaped words, world-shaped subject.
+    "How do I search for peer-reviewed papers?",
+    "How do I use a map to navigate a forest?",
+    "How do I rate a restaurant?",
+    "How do I delete my Gmail account?",
+    "How does face recognition identify another person?",
+    "How do I turn off Gmail notifications?",
+    "How do I check my order status?",
+    "How do I filter water at home?",
+    "How do I add a card to my Apple Wallet?",
   ];
 
   it("recognises concise app-help prompts", () => {
@@ -177,20 +196,27 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     expect(builtInHelp("What does a solar eclipse look like?")).toContain("I can help with FindBack");
     expect(builtInHelp("How does face recognition work?")).toContain("I can help with FindBack");
 
-    // CF-070 R2 finding 1-retry: a grammatical request about the world gets the
-    // scope note, never FindBack FAQ copy.
+    // CF-070 R2 finding 1-retry and retry-2: a grammatical request about the
+    // world gets the scope note, never FindBack FAQ copy.
     for (const question of [
       "How do I bake sourdough bread?",
       "Can I freeze leftover soup?",
       "How can I take better landscape photos?",
       "What is the function of a bicycle bell?",
       "How do I find the square root of 144?",
+      "How do I search for peer-reviewed papers?",
+      "How do I use a map to navigate a forest?",
+      "How do I rate a restaurant?",
+      "How do I delete my Gmail account?",
+      "How does face recognition identify another person?",
     ]) {
       const reply = builtInHelp(question);
       expect(reply, question).toContain("I can help with FindBack");
       expect(reply, question).not.toContain("attach a photo");
       expect(reply, question).not.toContain("bell");
       expect(reply, question).not.toContain("Search to search reports");
+      expect(reply, question).not.toContain("approximate location");
+      expect(reply, question).not.toContain("delete your account");
     }
   });
 
