@@ -2306,3 +2306,584 @@ describe("client-read grant closure (20261015174749)", () => {
     assert.ok(/changes nothing in production/i.test(sql), "the live evidence is in the file");
   });
 });
+
+describe("typed report reference on comments (20261017052000)", () => {
+  const M2 = "20261017052000_comment_report_reference.sql";
+  // Statements, not prose: comments are what the file says about itself.
+  const stmt = () => mig(M2).toLowerCase().replace(/--[^\n]*/g, " ");
+  // Whitespace-collapsed, comment-free, lower-cased source text. Exact
+  // comparisons below run on this, because a substring match cannot see a
+  // widened expression: `... or kind = 'report'` is satisfied by a qual that
+  // also carries `or true`, and `user_id = ...` by one that dropped the owner
+  // bind. An added clause always changes the collapsed text, so equality is the
+  // only assertion that fails when the author's expression is widened.
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  const code = () => norm(mig(M2).toLowerCase().replace(/--[^\n]*/g, " "));
+  const statementWith = (needle) => {
+    const hits = stmt()
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.includes(needle));
+    assert.equal(hits.length, 1, `exactly one statement mentions ${needle}`);
+    return hits[0];
+  };
+  // Exactly one statement mentions the needle AND it is byte-for-byte (after
+  // normalisation) the authored statement — nothing appended, nothing removed.
+  const exactStatement = (needle, expected) => {
+    const hits = code()
+      .split(";")
+      .map(norm)
+      .filter((s) => s.includes(needle));
+    assert.equal(hits.length, 1, `exactly one statement mentions ${needle}`);
+    assert.equal(
+      hits[0],
+      norm(expected).toLowerCase(),
+      `${needle} is exactly the authored statement — no clause may be added to it`,
+    );
+  };
+
+  it("follows the migration hygiene contract", () => {
+    const sql = mig(M2);
+    assert.ok(sql.includes("LIVE-PENDING"), "LIVE-PENDING note");
+    assert.ok(
+      sql.includes("supabase/tests/verify_20261017052000_comment_report_reference.sql"),
+      "verify pointer",
+    );
+    assert.ok(sql.includes("ADDITIVE ONLY"), "additive header");
+  });
+
+  it("is additive only: nothing removed, no row touched, and no check left NOT VALID", () => {
+    const sql = stmt();
+    assert.ok(!sql.includes("drop table"), "no table dropped");
+    assert.ok(!sql.includes("drop column"), "no column dropped");
+    assert.ok(!sql.includes("truncate"), "no table truncated");
+    assert.ok(!/delete\s+from/.test(sql), "no row deleted");
+    assert.ok(!/update\s+public\./.test(sql), "no row rewritten");
+    assert.ok(!/alter table public\.item_posts/.test(sql), "the referenced table is untouched");
+    // Both re-added checks are VALID: every existing row satisfies the new
+    // expression (no row has kind = 'report' yet), so nothing is rescanned to
+    // a failure and nothing is deferred.
+    assert.equal((sql.match(/not valid/g) ?? []).length, 0, "no NOT VALID check is added");
+    assert.equal((sql.match(/add constraint/g) ?? []).length, 3, "the two re-adds plus the pointer's FK");
+  });
+
+  it("admits the report kind and lets a URL-less row exist", () => {
+    const sql = stmt();
+    assert.match(
+      sql,
+      /check\s*\(\s*kind in \('photo', 'video', 'gif', 'sticker', 'report'\)\s*\)/,
+      "the vocabulary covers a report reference",
+    );
+    assert.match(
+      sql,
+      /alter table public\.comment_attachments\s+alter column remote_url drop not null/,
+      "a report row has no URL",
+    );
+    exactStatement(
+      "remote_url drop not null",
+      "alter table public.comment_attachments alter column remote_url drop not null",
+    );
+    assert.ok(!/remote_url text not null/.test(sql), "the old NOT NULL is not restated");
+    assert.ok(
+      !/remote_url\s+set\s+not\s+null/.test(code()),
+      "nullability is never re-imposed afterwards — a report row would become impossible to insert",
+    );
+  });
+
+  it("makes source exclusivity kind-aware instead of exactly-one for every row", () => {
+    exactStatement(
+      "add constraint comment_attachments_source_xor",
+      `alter table public.comment_attachments
+         add constraint comment_attachments_source_xor
+         check (
+           case
+             when kind = 'report' then storage_path is null and klipy_slug is null
+             else ((case when storage_path is not null then 1 else 0 end) +
+                   (case when klipy_slug is not null then 1 else 0 end)) = 1
+           end
+         )`,
+    );
+    const body = statementWith("add constraint comment_attachments_source_xor");
+    assert.match(body, /when kind = 'report' then storage_path is null and klipy_slug is null/, "a report row keeps neither source");
+    assert.match(body, /else \(\(case when storage_path is not null then 1 else 0 end\)/, "every other kind still keeps exactly one");
+  });
+
+  it("adds the pointer with ON DELETE SET NULL and an index, and never forces it non-null", () => {
+    const sql = stmt();
+    assert.match(sql, /add column if not exists report_post_id text/, "the column is added additively");
+    assert.match(
+      sql,
+      /foreign key \(report_post_id\) references public\.item_posts \(id\) on delete set null/,
+      "deleting a referenced report must not fail and leaves a tombstone",
+    );
+    assert.match(
+      sql,
+      /create index if not exists idx_comment_attachments_report_post\s+on public\.comment_attachments \(report_post_id\)/,
+      "the pointer is indexed",
+    );
+    assert.ok(
+      !/report_post_id is not null/.test(sql),
+      "no CHECK forces the pointer non-null — it would make SET NULL fail and block report deletion",
+    );
+    assert.ok(
+      !/report_post_id\s+set\s+not\s+null/.test(code()),
+      "the pointer is never made NOT NULL after the ADD COLUMN — SET NULL would fail and deleting a referenced report would error",
+    );
+  });
+
+  it("lets a viewer read the content-free pointer and refuses every client write of a report row", () => {
+    // The full expression, not a substring: this is the only assertion that
+    // fails when the select policy is widened (e.g. `or true`, which would make
+    // every attachment row — including every media row — world-readable).
+    exactStatement(
+      "create policy comment_attachments_select_own",
+      `create policy comment_attachments_select_own
+         on public.comment_attachments for select to authenticated
+         using (
+           user_id = (select auth.uid())::text
+           or kind = 'report'
+         )`,
+    );
+    exactStatement(
+      "create policy comment_attachments_insert_own",
+      `create policy comment_attachments_insert_own
+         on public.comment_attachments for insert to authenticated
+         with check (
+           kind <> 'report'
+           and user_id = (select auth.uid())::text
+           and exists (select 1 from public.comments c where c.id = comment_attachments.comment_id and c.user_id = (select auth.uid())::text)
+         )`,
+    );
+    exactStatement(
+      "create policy comment_attachments_update_own",
+      `create policy comment_attachments_update_own
+         on public.comment_attachments for update to authenticated
+         using (
+           kind <> 'report'
+           and user_id = (select auth.uid())::text
+           and exists (select 1 from public.comments c where c.id = comment_attachments.comment_id and c.user_id = (select auth.uid())::text)
+         )
+         with check (
+           kind <> 'report'
+           and user_id = (select auth.uid())::text
+           and exists (select 1 from public.comments c where c.id = comment_attachments.comment_id and c.user_id = (select auth.uid())::text)
+         )`,
+    );
+
+    const select = statementWith("create policy comment_attachments_select_own");
+    assert.match(select, /or kind = 'report'/, "the pointer row is readable to a viewer of the comment");
+    assert.match(select, /user_id = \(select auth\.uid\(\)\)::text/, "the owner branch is preserved");
+    assert.equal(
+      (select.match(/\bor\b/g) ?? []).length,
+      1,
+      "the qual is the owner branch OR the report branch — no third disjunct",
+    );
+
+    const insert = statementWith("create policy comment_attachments_insert_own");
+    assert.match(insert, /kind <> 'report'/, "a client cannot insert a report row");
+    assert.match(
+      insert,
+      /exists \(select 1 from public\.comments c where c\.id = comment_attachments\.comment_id and c\.user_id = \(select auth\.uid\(\)\)::text\)/,
+      "the comment-ownership bind is preserved",
+    );
+
+    const update = statementWith("create policy comment_attachments_update_own");
+    assert.equal((update.match(/kind <> 'report'/g) ?? []).length, 2, "both USING and WITH CHECK refuse report rows");
+    assert.equal(
+      (update.match(/exists \(select 1 from public\.comments c where c\.id = comment_attachments\.comment_id and c\.user_id = \(select auth\.uid\(\)\)::text\)/g) ?? []).length,
+      2,
+      "both clauses keep the ownership bind",
+    );
+
+    assert.ok(!stmt().includes("create policy comment_attachments_delete_own"), "the delete policy is untouched");
+  });
+
+  it("branches the atomic create RPC on a report descriptor and validates its target", () => {
+    const sql = mig(M2);
+    assert.match(sql, /if v_kind = 'report' then/, "the report descriptor has its own branch");
+    assert.match(sql, /raise exception 'report reference needs a report id'/, "the pointer is mandatory");
+    assert.match(sql, /v_storage_key is not null or v_slug is not null/, "no storage key rides along");
+    assert.match(sql, /or v_remote is not null or v_preview is not null/, "no URL rides along");
+    assert.match(sql, /if not exists \(select 1 from public\.item_posts p where p\.id = v_report\) then/, "the target must exist");
+    assert.match(sql, /raise exception 'Report not found' using errcode = 'P0002'/, "an unknown report is a not-found, not a silent accept");
+    assert.match(sql, /v_kind not in \('photo', 'video', 'gif', 'sticker', 'report'\)/, "the descriptor vocabulary matches the check");
+    assert.match(sql, /continue;/, "the report branch returns to the loop without running media validation");
+
+    // The whole branch, exactly: its guard list, its target check, its insert
+    // column list and its early exit. The substring matches above cannot see a
+    // guard that silently dropped three media columns, a branch moved below
+    // media validation, or a commented-out `continue;`.
+    const src = code();
+    const branchStart = src.indexOf("if v_kind = 'report' then");
+    assert.ok(branchStart > 0, "the report branch is present");
+    const continued = src.indexOf("continue;", branchStart);
+    assert.ok(continued > branchStart, "the report branch exits its loop iteration (continue;)");
+    const branchEnd = src.indexOf("end if;", continued) + "end if;".length;
+    assert.equal(
+      src.slice(branchStart, branchEnd),
+      norm(`if v_kind = 'report' then
+        if v_report is null then
+          raise exception 'report reference needs a report id' using errcode = '22023';
+        end if;
+        if v_storage_key is not null or v_slug is not null
+           or v_remote is not null or v_preview is not null
+           or v_mime is not null or v_fname is not null
+           or v_fsize is not null or v_width is not null or v_height is not null then
+          raise exception 'report reference carries no media fields' using errcode = '22023';
+        end if;
+        if not exists (select 1 from public.item_posts p where p.id = v_report) then
+          raise exception 'Report not found' using errcode = 'P0002';
+        end if;
+        insert into public.comment_attachments
+          (id, comment_id, user_id, kind, display_order, report_post_id, created_at)
+        values
+          (gen_random_uuid()::text, v_id, v_uid, 'report', v_order, v_report, v_now);
+        continue;
+      end if;`).toLowerCase(),
+      "the report branch is exactly the authored text — no guard column dropped, no media field admitted, and it still exits early",
+    );
+    // Order is contract: the report branch must run before media validation, or
+    // a report descriptor meets rules written for media rows.
+    assert.ok(
+      branchStart < src.indexOf("raise exception 'attachment must be storage or klipy, not both'"),
+      "the report branch precedes media validation",
+    );
+
+    const insertColumns = [...sql.matchAll(/insert into public\.comment_attachments\n\s*\(([^)]*)\)/g)].map((m) => m[1]);
+    assert.equal(insertColumns.length, 2, "two attachment insert paths");
+    assert.equal(
+      insertColumns.filter((cols) => cols.includes("report_post_id")).length,
+      1,
+      "only the report path writes the pointer",
+    );
+    assert.ok(
+      insertColumns.some((cols) => cols.includes("storage_path") && !cols.includes("report_post_id")),
+      "the media path never writes the pointer",
+    );
+  });
+
+  it("relaxes the content rule exactly as far as a descriptor justifies", () => {
+    const sql = mig(M2);
+    assert.match(sql, /if p_body is null then/, "a NULL body stays refused");
+    assert.match(sql, /if char_length\(btrim\(p_body\)\) > 1000 then/, "the ceiling is unchanged");
+    assert.match(sql, /if char_length\(btrim\(p_body\)\) < 1 and v_count = 0 then/, "a blank body needs a descriptor");
+  });
+
+  it("projects the pointer from the invoker reader and keeps every security attribute as applied", () => {
+    const sql = mig(M2);
+    const code = stmt();
+    assert.match(sql, /'report_post_id', a\.report_post_id,/, "the projection carries the pointer");
+    assert.ok(!code.includes("drop function"), "no function is dropped, so no grant is silently lost");
+    const readerAt = code.indexOf("create or replace function public.findback_list_comments_client");
+    const writerAt = code.indexOf("create or replace function public.findback_add_comment_with_attachments");
+    assert.ok(readerAt > 0, "the list reader is re-created in place");
+    assert.ok(writerAt > readerAt, "the atomic create RPC is re-created after it");
+    const readerBody = code.slice(readerAt, writerAt);
+    const writerBody = code.slice(writerAt);
+    assert.ok(readerBody.includes("security invoker"), "the list reader stays an invoker");
+    assert.ok(!readerBody.includes("security definer"), "the list reader is never converted to a definer");
+    assert.ok(writerBody.includes("security definer"), "the atomic create RPC stays the definer writer");
+    assert.ok(!writerBody.includes("security invoker"), "and stays a definer");
+    assert.equal(
+      (code.match(/set search_path = public, pg_temp/g) ?? []).length,
+      2,
+      "both re-created functions lock search_path",
+    );
+    assert.match(sql, /comment on function public\.findback_list_comments_client\(text\)/, "the reader's contract comment is updated");
+  });
+
+  it("re-creates both RPCs with their applied signatures", () => {
+    const sql = mig(M2);
+    assert.match(sql, /create or replace function public\.findback_list_comments_client\(p_post_id text\)/);
+    assert.match(
+      sql,
+      /create or replace function public\.findback_add_comment_with_attachments\(\n\s*p_post_id text,\n\s*p_body text,\n\s*p_parent_id text default null,\n\s*p_attachments jsonb default '\[\]'::jsonb\n\)/,
+      "the atomic create signature is untouched (packet §4)",
+    );
+  });
+
+  it("adds no grant and no revoke beyond re-asserting the two existing RPC grants", () => {
+    const sql = stmt();
+    assert.ok(!/on public\.comment_attachments to /.test(sql), "no table or column grant is added or removed");
+    assert.equal((sql.match(/grant execute on function/g) ?? []).length, 2, "both RPC grants re-asserted");
+    assert.equal((sql.match(/revoke all on function/g) ?? []).length, 2, "and both RPC revokes");
+    assert.ok(!/to anon/.test(sql), "nothing is granted to anon");
+    assert.ok(!/\bcreate table\b/.test(sql), "no second relation is introduced");
+  });
+
+  it("is re-runnable, adds exactly one column, and names no role but authenticated", () => {
+    const src = code();
+
+    // Idempotency: every drop is guarded, so a retried apply is a no-op rather
+    // than an abort. (A failed apply is re-run from the ledger; an unguarded
+    // drop would make the retry fail on the object it already removed.)
+    const drops = src.match(/drop (constraint|policy|function|index)[^;]*/g) ?? [];
+    assert.equal(
+      drops.length,
+      6,
+      "exactly its own three constraints and three policies are dropped before re-creation",
+    );
+    drops.forEach((s) =>
+      assert.match(s, /^drop (constraint|policy|function|index) if exists /, `guarded drop: ${s}`),
+    );
+
+    // Exactly one column is added: nothing may ride along with the pointer.
+    const added = [...src.matchAll(/add column (?:if not exists )?([a-z_]+)/g)].map((m) => m[1]);
+    assert.deepEqual(added, ["report_post_id"], "exactly the pointer column is added");
+
+    // Exactly the two re-asserted RPC executes, exactly to authenticated.
+    const grants = (src.match(/grant execute on function[^;]*/g) ?? []).map((s) => s.trim());
+    assert.deepEqual(
+      grants,
+      [
+        "grant execute on function public.findback_list_comments_client(text) to authenticated",
+        "grant execute on function public.findback_add_comment_with_attachments(text, text, text, jsonb) to authenticated",
+      ],
+      "no role beyond authenticated gains execute, on either RPC",
+    );
+    assert.ok(!/service_role/.test(src), "no service-role grant is introduced");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Review R2 (REVIEW-CF060-M2-TRANCHE-R2.md, MAJOR-R2-1). The re-created
+  // function bodies are pinned as *whole bodies* against the applied text, not
+  // as the substrings an author happened to think of. R2 measured two live leaks
+  // that passed every layer-1 substring assertion:
+  //   * `... where a.comment_id = c.id or a.kind = 'report'` — a pointer from
+  //     another comment appeared inside this comment's card; and
+  //   * `... where c.post_id = p_post_id or true` — the whole comment list
+  //     leaked across posts.
+  // Both are single added lines, and a substring assertion cannot see an added
+  // line. This is the same defect class as MAJOR-2 (a SELECT policy widened with
+  // `or true` survived 103/103), so the instrument has to be equality, not
+  // containment.
+  // ---------------------------------------------------------------------------
+  const APPLIED = NEW_ATTACH; // the applied text M2 re-creates both RPCs from
+
+  // Body lines: comment-free, lower-cased, whitespace-collapsed, blanks dropped.
+  const normalizedBodyLines = (source, name) => {
+    const at = source.indexOf(`create or replace function public.${name}(`);
+    assert.ok(at > 0, `${name} is created or replaced in the file under test`);
+    const open = source.indexOf("$$", source.indexOf(")", at));
+    const close = source.indexOf("$$", open + 2);
+    assert.ok(open > 0 && close > open, `${name} has a dollar-quoted body`);
+    return source
+      .slice(open + 2, close)
+      .toLowerCase()
+      .replace(/--[^\n]*/g, " ")
+      .split("\n")
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter((line) => line.length > 0);
+  };
+
+  const multisetDelta = (from, to) => {
+    const count = (lines) => {
+      const m = new Map();
+      for (const line of lines) m.set(line, (m.get(line) ?? 0) + 1);
+      return m;
+    };
+    const a = count(from);
+    const b = count(to);
+    const only = (x, y) => {
+      const out = [];
+      for (const [line, n] of x) for (let i = y.get(line) ?? 0; i < n; i += 1) out.push(line);
+      return out.sort();
+    };
+    return { removed: only(a, b), added: only(b, a) };
+  };
+
+  it("re-creates the list reader as the applied text plus exactly the pointer projection", () => {
+    const applied = normalizedBodyLines(mig(APPLIED), "findback_list_comments_client");
+    const authored = normalizedBodyLines(mig(M2), "findback_list_comments_client");
+    const POINTER = "'report_post_id', a.report_post_id,";
+
+    // The baseline is the applied body, so the properties the app depends on are
+    // asserted *in it* rather than assumed: the attachment bind, the
+    // deterministic attachment order, the comment order and the cap.
+    for (const invariant of [
+      "where a.comment_id = c.id",
+      "order by a.display_order asc, a.created_at asc, a.id asc",
+      "order by c.created_at asc",
+      "limit 500;",
+    ]) {
+      assert.ok(
+        applied.some((line) => line.includes(invariant)),
+        `the applied reader still binds: ${invariant}`,
+      );
+    }
+
+    assert.equal(
+      authored.filter((line) => line === POINTER).length,
+      1,
+      "the pointer is projected exactly once",
+    );
+    // Positional equality after removing that one line: every other line of the
+    // reader an ordinary user calls must be identical (whitespace-collapsed,
+    // comments stripped) to the applied text, in the applied order. A dropped
+    // guard, a widened WHERE, a changed limit, a changed attachment bind and a
+    // reordered projection all fail here.
+    assert.deepEqual(
+      authored.filter((line) => line !== POINTER),
+      applied,
+      "the reader body is the applied body plus exactly the pointer projection",
+    );
+
+    // The rev-1-era no-leak guards (migration_parity.test.mjs, NEW_ATTACH) scan
+    // the file M2 supersedes and so no longer describe the function that lands.
+    // Re-targeted at the newest definer:
+    const readerText = authored.join("\n");
+    assert.ok(
+      !readerText.includes("'storage_path', a.storage_path"),
+      "the read never projects storage_path",
+    );
+    assert.ok(
+      !readerText.includes("'user_id', a.user_id"),
+      "the read never projects the attachment owner",
+    );
+    assert.ok(!readerText.includes("'klipy_slug'"), "nor the provider slug");
+  });
+
+  it("re-creates the writer as the applied text plus exactly the authored report delta", () => {
+    const applied = normalizedBodyLines(mig(APPLIED), "findback_add_comment_with_attachments");
+    const authored = normalizedBodyLines(mig(M2), "findback_add_comment_with_attachments");
+    const { removed, added } = multisetDelta(applied, authored);
+
+    // Generated from the authored file and frozen. A multiset (not positional)
+    // assertion is the right shape here: the report branch necessarily moves
+    // lines around, and its *position* relative to media validation is pinned
+    // separately above. What this kills is drift in the delta itself — a guard
+    // column dropped, a vocabulary widened, an error code or message edited, an
+    // insert column added, or `continue;` removed so the report row falls
+    // through into media validation.
+    assert.deepEqual(
+      removed,
+      [
+        "if p_body is null or char_length(btrim(p_body)) < 1",
+        "or char_length(btrim(p_body)) > 1000 then",
+        "if v_kind not in ('photo', 'video', 'gif', 'sticker') then",
+      ].sort(),
+      "only the three superseded lines were replaced",
+    );
+    assert.deepEqual(
+      added,
+      [
+        "v_report text;",
+        "end if;",
+        "end if;",
+        "end if;",
+        "end if;",
+        "end if;",
+        "end if;",
+        "if p_body is null then",
+        "raise exception 'comment must be 1-1000 characters' using errcode = '22023';",
+        "if char_length(btrim(p_body)) > 1000 then",
+        "raise exception 'comment must be 0-1000 characters' using errcode = '22023';",
+        "if char_length(btrim(p_body)) < 1 and v_count = 0 then",
+        "v_report := nullif(btrim(coalesce(d ->> 'report_post_id', '')), '');",
+        "if v_kind not in ('photo', 'video', 'gif', 'sticker', 'report') then",
+        "if v_kind = 'report' then",
+        "if v_report is null then",
+        "raise exception 'report reference needs a report id' using errcode = '22023';",
+        "if v_storage_key is not null or v_slug is not null",
+        "or v_remote is not null or v_preview is not null",
+        "or v_mime is not null or v_fname is not null",
+        "or v_fsize is not null or v_width is not null or v_height is not null then",
+        "raise exception 'report reference carries no media fields' using errcode = '22023';",
+        "if not exists (select 1 from public.item_posts p where p.id = v_report) then",
+        "raise exception 'report not found' using errcode = 'p0002';",
+        "insert into public.comment_attachments",
+        "(id, comment_id, user_id, kind, display_order, report_post_id, created_at)",
+        "values",
+        "(gen_random_uuid()::text, v_id, v_uid, 'report', v_order, v_report, v_now);",
+        "continue;",
+      ].sort(),
+      "the writer's whole delta is the authored report branch and the D7 body rule",
+    );
+
+    // The positional complement to the delta above (review R3 MAJOR-R3-1). A
+    // pure *permutation* of the body leaves the multiset delta identical, so it
+    // passed every assertion in revision 3. The measured survivor moved the
+    // media insert above the provider-selection block: `v_provider` is then
+    // still NULL at insert time and every RPC-created media row is stored with
+    // `provider = NULL` — silently, because `provider_check` is written
+    // `provider is null or …` and no probe binds `provider`. These anchors must
+    // therefore appear in this order; crossing any pair fails.
+    const anchors = [
+      "for d in select * from jsonb_array_elements(coalesce(p_attachments, '[]'::jsonb)) loop",
+      "v_report := nullif(btrim(coalesce(d ->> 'report_post_id', '')), '');",
+      "if v_kind = 'report' then",
+      "(id, comment_id, user_id, kind, display_order, report_post_id, created_at)",
+      "continue;",
+      "raise exception 'attachment must be storage or klipy, not both'",
+      "raise exception 'attachment needs a storage key or provider slug'",
+      "v_provider := 'storage';",
+      "v_provider := 'klipy';",
+      "provider, mime_type, file_name, file_size, width, height, created_at)",
+      "end loop;",
+    ];
+    const joined = authored.join("\n");
+    let cursor = -1;
+    for (const anchor of anchors) {
+      const at = joined.indexOf(anchor, cursor + 1);
+      assert.ok(
+        at > cursor,
+        `the writer's \`${anchor}\` must follow the anchor before it — a permutation is a semantic change here`,
+      );
+      cursor = at;
+    }
+  });
+
+  it("contains exactly the authored statement inventory, and nothing rides along", () => {
+    const src = code();
+    const inventory = [
+      ...src.matchAll(
+        /(alter column [a-z_]+ (?:drop not null|set not null|set default [^;,]*)|add column if not exists [a-z_]+|drop constraint if exists [a-z_]+|add constraint [a-z_]+|drop policy if exists [a-z_]+|create policy [a-z_]+|create index if not exists [a-z_]+|create or replace function public\.[a-z_]+|grant execute on function public\.[a-z_]+|revoke all on function public\.[a-z_]+|comment on function public\.[a-z_]+)/g,
+      ),
+    ].map((m) => m[1]);
+
+    // Review R2 MINOR-R2-1: the file's *inventory* is pinned, so an unauthored
+    // statement cannot ride along. `alter column report_post_id set default 'x'`
+    // would break every media-attachment insert (the RPC's media path does not
+    // name the column) and was invisible to every previous assertion.
+    assert.deepEqual(
+      inventory,
+      [
+        "drop constraint if exists comment_attachments_kind_check",
+        "add constraint comment_attachments_kind_check",
+        "alter column remote_url drop not null",
+        "drop constraint if exists comment_attachments_source_xor",
+        "add constraint comment_attachments_source_xor",
+        "add column if not exists report_post_id",
+        "drop constraint if exists comment_attachments_report_post_id_fkey",
+        "add constraint comment_attachments_report_post_id_fkey",
+        "create index if not exists idx_comment_attachments_report_post",
+        "drop policy if exists comment_attachments_select_own",
+        "create policy comment_attachments_select_own",
+        "drop policy if exists comment_attachments_insert_own",
+        "create policy comment_attachments_insert_own",
+        "drop policy if exists comment_attachments_update_own",
+        "create policy comment_attachments_update_own",
+        "create or replace function public.findback_list_comments_client",
+        "revoke all on function public.findback_list_comments_client",
+        "grant execute on function public.findback_list_comments_client",
+        "comment on function public.findback_list_comments_client",
+        "create or replace function public.findback_add_comment_with_attachments",
+        "revoke all on function public.findback_add_comment_with_attachments",
+        "grant execute on function public.findback_add_comment_with_attachments",
+        "comment on function public.findback_add_comment_with_attachments",
+      ],
+      "exactly the authored statements, in the authored order",
+    );
+
+    // Readable invariants that the inventory cannot name for themselves.
+    assert.ok(!/\bset\s+default\b/.test(src), "no column default is introduced");
+    assert.ok(!/\bdeferrable\b/.test(src), "the pointer FK stays immediate");
+    assert.ok(!/\bset\s+not\s+null\b/.test(src), "no column is forced non-null (SET NULL must survive)");
+    assert.equal((src.match(/create policy/g) ?? []).length, 3, "three policies re-created, not four");
+
+    // A scalar length pin: any added or removed character changes it. It is a
+    // backstop for an addition this file's patterns do not anticipate (the
+    // deltas above catch any *substitution* of equal length).
+    assert.equal(src.length, 12809, "the normalised file text is exactly the authored length");
+  });
+});
