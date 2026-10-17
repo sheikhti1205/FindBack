@@ -6,7 +6,6 @@ import {
   render,
   screen,
   waitFor,
-  waitForElementToBeRemoved,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Help } from "./Help";
@@ -193,42 +192,6 @@ describe("Help full-screen assistant", () => {
     expect(screen.getByText("first question")).toBeTruthy();
   });
 
-  it("routes a ready guided search to ordinary search only after an explicit tap", async () => {
-    renderHelp({ guidedGenerate: async () => '{"query":"keys","status":"LOST"}' });
-    fireEvent.click(screen.getByTestId("guided-shortcut-search"));
-    await screen.findByTestId("guided-panel");
-    send("find lost keys");
-    // Ready snapshot must NOT navigate by itself: an explicit CTA appears.
-    await screen.findByTestId("guided-open-search");
-    expect(screen.queryByText("Search screen")).toBeNull();
-    fireEvent.click(screen.getByTestId("guided-open-search"));
-    await screen.findByText("Search screen");
-  });
-
-  it("completes a guided report without staging or routing into the form (§12)", async () => {
-    renderHelp({ guidedGenerate: async (prompt: string) => prompt });
-    fireEvent.click(screen.getByTestId("guided-shortcut-lost"));
-    await screen.findByTestId("guided-panel");
-    send("Keys");
-    await screen.findAllByText(/when was the item/i);
-    send("2026-09-01");
-    await screen.findAllByText(/where was the item/i);
-    send("Central library");
-    await screen.findByTestId("guided-photo-step");
-    fireEvent.click(screen.getByTestId("guided-photo-none"));
-    await screen.findByTestId("guided-location-step");
-    fireEvent.click(screen.getByTestId("guided-location-skip"));
-
-    // Ready: the guide stops asking. Packet §12 removed the assistant report
-    // handoff, so there is no report control and no route into the form — the
-    // answers stay in this transcript and nothing is claimed about the form.
-    await waitFor(() => expect(screen.queryByTestId("guided-question")).toBeNull());
-    expect(screen.queryByTestId("guided-review-report")).toBeNull();
-    expect(screen.queryByText(/continue to the report form/i)).toBeNull();
-    expect(screen.queryByText("Report screen")).toBeNull();
-    expect(screen.queryByRole("button", { name: /review report/i })).toBeNull();
-  });
-
   it("selects up to ten chat images with previews and sends their ids", async () => {
     const seen: string[][] = [];
     const spyAdapter: ProviderAdapter = {
@@ -340,18 +303,6 @@ describe("Help U2 header/layout", () => {
     // Ongoing chat: still no privacy block consuming chat height.
     expect(screen.queryByText(/Photos are never attached automatically/)).toBeNull();
     expect(screen.queryByRole("button", { name: /how your data is used/i })).toBeNull();
-  });
-
-  it("brings the guided panel in and out instead of snapping it", async () => {
-    renderHelp({ guidedGenerate: async () => '{"query":"keys","status":"LOST"}' });
-    fireEvent.click(screen.getByTestId("guided-shortcut-search"));
-    const panel = await screen.findByTestId("guided-panel");
-    expect(panel.getAttribute("aria-label")).toBe("Guided help");
-    fireEvent.click(screen.getByRole("button", { name: /end guided help/i }));
-    await waitForElementToBeRemoved(() => screen.queryByTestId("guided-panel"));
-    // Empty again, so the landing owns the space (not an empty transcript).
-    expect(screen.getByTestId("assistant-landing")).toBeTruthy();
-    expect(screen.getByTestId("chat-composer")).toBeTruthy();
   });
 
   it("P2 red: app-help fail-then-retry does not duplicate persisted fallback turns", async () => {

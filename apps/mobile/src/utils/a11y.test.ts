@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../services/session";
 import { draftIsMeaningful, saveDraft, loadDraft, clearDraft } from "../services/reportDraft";
 import { friendlyError } from "./friendlyErrors";
-import { parseHelpResponse } from "../screens/Help";
 
 describe("friendlyError", () => {
   it("maps auth/permission/not-found codes without jargon", () => {
@@ -40,23 +39,5 @@ describe("reportDraft", () => {
     expect(draftIsMeaningful(loadDraft())).toBe(true);
     clearDraft();
     expect(loadDraft()).toBeNull();
-  });
-});
-
-describe("parseHelpResponse", () => {
-  it("passes plain answers through", () => {
-    expect(parseHelpResponse("Just tap Report.")).toEqual({ markdown: "Just tap Report.", actions: [] });
-  });
-
-  it("extracts allowlisted actions and drops unknown ones", () => {
-    const raw =
-      '```json\n{"markdown":"Go file it.","actions":[{"id":"OPEN_REPORT","label":"Create a report"},{"id":"DELETE_ALL","label":"Nuke"}]}\n```';
-    const out = parseHelpResponse(raw);
-    expect(out.markdown).toBe("Go file it.");
-    expect(out.actions).toEqual([{ id: "OPEN_REPORT", label: "Create a report" }]);
-  });
-
-  it("ignores malformed json blocks", () => {
-    expect(parseHelpResponse("```json\n{nope}\n```").actions).toEqual([]);
   });
 });

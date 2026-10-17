@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { AnimatePresence, motion } from "framer-motion";
 import { History, MoreVertical } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
-import { AssistantLanding, type LandingQuickAction } from "../components/assistant/AssistantLanding";
+import { AssistantLanding } from "../components/assistant/AssistantLanding";
 import { BottomSheet } from "../components/BottomSheet";
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatTranscript, type TranscriptMessage, type TranscriptSource } from "../components/ChatTranscript";
@@ -12,7 +11,6 @@ import { HistorySheet, type HistoryChatSummary } from "../components/HistoryShee
 import { ModelCatalogSheet, assistantRowTitle } from "../components/ModelCatalogSheet";
 import { AssistantConfigureSheet } from "../components/assistant/AssistantConfigureSheet";
 import { announce } from "../components/LiveRegion";
-import { fadeUpVariants, motionDurations, motionEasings } from "../components/uiMotion";
 import { ChatController, ControllerError, sanitizeControllerError, type ControllerState } from "../services/ai/chatController";
 import { createStreamingPaint } from "../services/ai/streamingPaint";
 import { ChatStore } from "../services/ai/chatStore";
@@ -26,7 +24,6 @@ import { loadAuthorizedCatalog } from "../services/ai/modelCatalog";
 import { automaticLocalModel, displayNameForCatalogRecord, isAssistantSelectableOfflineRecord, supportsAssistantMessage } from "../services/ai/uiModelRoles";
 import { createProviderAdapter } from "../services/ai/providerRegistry";
 import { isProviderEnabled } from "../services/ai/providerStatus";
-import { generateCloudForAccount, generateLocalFirst } from "../services/liveNarrowTasks";
 import { getApplicationAi } from "../services/ai/applicationAi";
 import { honestOfflineDetail, OFFLINE_NOT_AVAILABLE, type AssistantMode } from "./AiModels";
 import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
@@ -51,27 +48,7 @@ import { importImage, MediaError, type ImportDeps, type ImportedImage } from "..
 import { readSourceForImport } from "../services/photo";
 import { chooseNativeImage, isNativeMediaIntakeAvailable } from "../services/media/nativeMedia";
 import { transcodeImageForWeb } from "../services/media/webTranscode";
-import {
-  LOCATION_CHOICES,
-  PHOTO_CHOICES,
-  chooseLocation,
-  choosePhoto,
-  nextMissingQuestion,
-  retryAfterRecovery,
-  startFlow,
-  type GuidedFlow,
-  type GuidedSnapshot,
-  type LocationChoice,
-  type PhotoChoice,
-} from "../services/assistant/guidedAssistantController";
-import { executeCloudAssistantMessage, type CloudGenerate } from "../services/assistant/cloudAssistant";
-import {
-  getAssistantDefault,
-  resolveAssistantIntent,
-} from "../services/ai/ops/intentRouter";
-import { RECOVERY_COPY, type RecoveryAction } from "../services/ai/errors";
-import type { AiErrorClass } from "../services/ai/types";
-import { mapAssistantSearchFilters } from "../services/assistant/searchFilterMapping";
+import { getAssistantDefault } from "../services/ai/ops/intentRouter";
 
 /**
  * Photo-only sends still need exactly one current message (the assembler's
@@ -85,11 +62,6 @@ const PHOTO_ONLY_PROMPT =
 interface AttemptEntry {
   n: number;
   status: "sending" | "retrying" | "complete" | "failed";
-}
-
-interface ActionChip {
-  id: string;
-  label: string;
 }
 
 const SUGGESTIONS = [
@@ -134,49 +106,6 @@ const HELP_MODEL_CATALOG: readonly ModelRecord[] = [
     entitlement: "untested",
   },
 ];
-
-/** Routes the Help Assistant may deep-link to. Anything else is ignored. */
-const ACTION_ROUTES: Record<string, string> = {
-  OPEN_HOME: "/",
-  OPEN_SEARCH: "/search",
-  OPEN_REPORT: "/report",
-  OPEN_PROFILE: "/profile",
-  OPEN_AI_CONNECTION: "/ai-connection",
-  // Legacy id from before the OpenRouter pivot; now lands on the on-device area.
-  OPEN_OFFLINE_AI: "/settings/ai/models",
-  OPEN_VERIFY: "/verify",
-};
-
-/**
- * Optional structured cloud response: a fenced json block carrying markdown
- * plus action chips. Unknown action ids are dropped; arbitrary routes/URLs
- * from the model are never trusted.
- */
-export function parseHelpResponse(raw: string): { markdown: string; actions: ActionChip[] } {
-  const match = raw.match(/```json\s*([\s\S]*?)\s*```/);
-  if (!match) return { markdown: raw, actions: [] };
-  try {
-    const parsed = JSON.parse(match[1]!) as { markdown?: unknown; actions?: unknown };
-    if (typeof parsed.markdown !== "string" || !Array.isArray(parsed.actions)) {
-      return { markdown: raw, actions: [] };
-    }
-    const actions = (parsed.actions as unknown[]).flatMap((a): ActionChip[] => {
-      if (
-        typeof a !== "object" ||
-        a === null ||
-        typeof (a as ActionChip).id !== "string" ||
-        typeof (a as ActionChip).label !== "string" ||
-        !((a as ActionChip).id in ACTION_ROUTES)
-      ) {
-        return [];
-      }
-      return [{ id: (a as ActionChip).id, label: (a as ActionChip).label }];
-    });
-    return { markdown: parsed.markdown, actions };
-  } catch {
-    return { markdown: raw, actions: [] };
-  }
-}
 
 /**
  * Picker catalogue binder (AI-024b, picker-owned): vault presence per
@@ -286,8 +215,6 @@ export interface HelpAssistantDeps {
   getKey?: () => Promise<string | null>;
   /** Test seam for the picker catalogue; production loads via vault + registry below. */
   listCatalog?: () => Promise<readonly ModelRecord[]>;
-  /** Test seam for the guided cloud path (mirrors the old sheet's generate prop). */
-  guidedGenerate?: CloudGenerate;
   /** Intake deps for photo selection; production uses a canvas transcode. */
   importDeps?: ImportDeps;
 }
@@ -310,9 +237,6 @@ function readPersistedAssistantDefault(accountId: string): string | null {
     return null;
   }
 }
-
-/** In-app targets an intent CTA may propose. Model output never navigates. */
-const INTENT_CTA_TARGETS: ReadonlySet<string> = new Set([...Object.values(ACTION_ROUTES), "/help"]);
 
 function webpSupported(): boolean {
   try {
@@ -379,37 +303,6 @@ export function createChatTrayImageResolver(
   };
 }
 
-const SHORTCUT_LABELS: Record<GuidedFlow, string> = {
-  lost: "Report a lost item",
-  found: "Report a found item",
-  search: "Search listings",
-  ask: "Ask a question",
-};
-
-/**
- * Empty-state quick actions on the Assistant landing. They reuse the same
- * guided router (`beginGuided`) and keep the historical `guided-shortcut-*`
- * test ids so the guided behavior assertions stay valid.
- */
-const LANDING_QUICK_ACTIONS: readonly LandingQuickAction[] = [
-  { flow: "lost", label: SHORTCUT_LABELS.lost, testId: "guided-shortcut-lost" },
-  { flow: "found", label: SHORTCUT_LABELS.found, testId: "guided-shortcut-found" },
-  { flow: "search", label: SHORTCUT_LABELS.search, testId: "guided-shortcut-search" },
-];
-
-const PHOTO_LABELS: Record<PhotoChoice, string> = {
-  take: "Take a photo",
-  choose: "Choose a photo",
-  none: "No photo",
-};
-
-const LOCATION_LABELS: Record<LocationChoice, string> = {
-  map: "Pick on a map",
-  current: "Use current location",
-  typed: "Type a place name",
-  skip: "Skip location",
-};
-
 interface PendingPhoto {
   key: string;
   source: "camera" | "gallery";
@@ -417,17 +310,20 @@ interface PendingPhoto {
   message: string | null;
 }
 
-interface GuidedEntry {
-  role: "user" | "assistant";
-  text: string;
-  source?: "model" | "grounded";
-}
-
 export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const { user } = useAuth();
+  // Keep history in its canonical account-scoped store while giving every
+  // authenticated identity a distinct lifetime for drafts, media and sends.
+  const store = useMemo(() => deps?.createStore?.() ?? new ChatStore(), [deps]);
+  // Route state is a one-shot handoff to this screen, not something a new
+  // identity may replay when its account-owned subtree mounts.
+  const prefillConsumed = useRef(false);
+  return <AccountHelp key={user ? `user:${user.id}` : "anonymous"} accountId={user?.id ?? "local"} store={store} prefillConsumed={prefillConsumed} deps={deps} />;
+}
+
+function AccountHelp({ accountId, store, prefillConsumed, deps }: { accountId: string; store: ChatStore; prefillConsumed: { current: boolean }; deps?: HelpAssistantDeps }) {
   const { state } = useLocation();
   const navigate = useNavigate();
-  const accountId = user?.id ?? "local";
 
   // P4b origin, AI-024b unpinned: the chosen catalogue row drives the
   // send-time selection below (provider follows the row, defaulting to the
@@ -453,9 +349,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     },
     [accountId, selectedModelId, catalog],
   );
-  // G22: volatile loopback until the platform protected adapter (H2/C) lands —
-  // then pass it here (new ChatStore(adapter)). No persistence is invented here.
-  const store = useMemo(() => deps?.createStore?.() ?? new ChatStore(), [deps]);
   const controller = useMemo(
     () =>
       new ChatController({
@@ -492,12 +385,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyTick, setHistoryTick] = useState(0);
-  const [guided, setGuided] = useState<GuidedSnapshot | null>(null);
-  const [guidedTranscript, setGuidedTranscript] = useState<readonly GuidedEntry[]>([]);
-  const [guidedBusy, setGuidedBusy] = useState(false);
-  // P0-3 tap gate: a ready guided search never navigates by itself. The
-  // validated target waits here until the explicit CTA below is tapped.
-  const [pendingSearchTarget, setPendingSearchTarget] = useState<string | null>(null);
   // M2 request-state UI: controller phase (subscribe/getState), throttled
   // partial text, and per-question attempt history. No fabricated steps.
   const [controllerPhase, setControllerPhase] = useState<ControllerState["phase"]>("idle");
@@ -538,9 +425,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuConfirmClear, setMenuConfirmClear] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
-  // FBX-020: Chat | Guide mode tabs. Chat is the free conversation; Guide is
-  // the structured wizard entry (report/search flows with compact chips).
-  const [assistantTab, setAssistantTab] = useState<"chat" | "guide">("chat");
   // FBX-020: separate Configure sheet (policy + conversational choice +
   // management links). Mirrors the persisted store AiSettings writes.
   const [configureOpen, setConfigureOpen] = useState(false);
@@ -573,7 +457,21 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   const abortRef = useRef<AbortController | null>(null);
   const inflightRef = useRef("");
   const sourceByTurn = useRef(new Map<string, TranscriptSource>());
-  const prefillConsumed = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+      sendGenRef.current = null;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      streamPaint.current?.scheduler.cancel();
+      streamPaint.current = null;
+    };
+  }, []);
+  useEffect(() => () => controller.cancel(), [controller]);
 
   // Single owner for streaming-partial teardown (U1): every terminal
   // transition (complete, failed, cancelled, stopped, chat/account switch)
@@ -613,9 +511,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     setSendError(null);
     setCancelled(false);
     setNotice(null);
-    setGuided(null);
-    setGuidedTranscript([]);
-    setPendingSearchTarget(null);
     void store.restore(accountId).then(() => {
       if (!alive) return;
       const chats = store.listChats(accountId);
@@ -743,7 +638,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   }
 
   async function addFiles(files: File[]) {
-    if (busy || guidedBusy) return;
+    if (busy) return;
     const intake: ImportDeps = deps?.importDeps ?? {
       transcode: transcodeImageForWeb,
       webpEncodeSupported: webpSupported(),
@@ -754,6 +649,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         // source-sized allocation; a whole-source materialization is forbidden
         // here (see the static guard in Help.photo.test.tsx).
         const bytes = await readSourceForImport(file, file.name);
+        if (!mounted.current) return;
         const item = await importImage(
           {
             bytes,
@@ -763,6 +659,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           },
           intake,
         );
+        if (!mounted.current) return;
         let added = true;
         setTray((prev) => {
           try {
@@ -778,6 +675,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           setTrayNotice(null);
         }
       } catch (e) {
+        if (!mounted.current) return;
         setTrayNotice(e instanceof Error ? e.message : "That photo was not added.");
       }
     }
@@ -811,6 +709,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
         highQuality: loadAppearance().highQualityPhoto,
         text: input,
       });
+      if (!mounted.current) return;
       if (item === null) {
         removePending(key);
         return;
@@ -831,6 +730,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       }
       removePending(key);
     } catch (e) {
+      if (!mounted.current) return;
       const message =
         e instanceof MediaError ? e.message : "Couldn't prepare this photo. Try a different photo or re-save it as JPEG.";
       setPendingPhotos((prev) => prev.map((row) => (row.key === key ? { ...row, status: "failed", message } : row)));
@@ -838,7 +738,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   }
 
   function pickNative(source: "camera" | "gallery") {
-    if (busy || guidedBusy) return;
+    if (busy) return;
     const key = `pending_${crypto.randomUUID().replaceAll("-", "_")}`;
     setPendingPhotos((prev) => [...prev, { key, source, status: "preparing", message: null }]);
     void runNativePick(key, source);
@@ -1294,119 +1194,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     announce("Chat view cleared.");
   }
 
-  // ---- Guided help (Report/Search flows with handoffs) ----
-
-  function beginGuided(flow: GuidedFlow) {
-    if (flow === "ask") {
-      document.getElementById("help-composer-input")?.focus();
-      return;
-    }
-    generation.current += 1;
-    setPendingSearchTarget(null);
-    setGuided(startFlow(flow));
-    setGuidedTranscript([]);
-    announce(`${SHORTCUT_LABELS[flow]}. Answer the questions to continue.`);
-  }
-
-  function endGuided() {
-    generation.current += 1;
-    abortRef.current?.abort();
-    setPendingSearchTarget(null);
-    setGuided(null);
-    setGuidedTranscript([]);
-    setGuidedBusy(false);
-  }
-
-  // P0-3 tap gate: the pending guided-search target is followed only here,
-  // through the validated ACTION_ROUTES allowlist. Typing or completing the
-  // guided flow never calls this by itself.
-  function openPendingSearch() {
-    if (pendingSearchTarget === null) return;
-    let pathname = pendingSearchTarget;
-    try {
-      pathname = new URL(pendingSearchTarget, "http://localhost").pathname;
-    } catch {
-      return;
-    }
-    const allowed = new Set(Object.values(ACTION_ROUTES));
-    if (!allowed.has(pathname)) return;
-    const target = pendingSearchTarget;
-    announce("Opening search with these filters.");
-    endGuided();
-    navigate(target);
-  }
-
-  async function submitGuided(text: string) {
-    const trimmed = text.trim();
-    if (trimmed === "" || guidedBusy) return;
-    if (guided !== null && guided.state === "recovering") return;
-    const gen = ++generation.current;
-    const abort = new AbortController();
-    abortRef.current?.abort();
-    abortRef.current = abort;
-    setGuidedTranscript((prev) => [...prev, { role: "user", text: trimmed }]);
-    setGuidedBusy(true);
-    try {
-      const mode = loadEffectiveAssistantMode(accountId);
-      const task = guided?.flow === "search" ? "extract-search-filters" : "extract-report-fields";
-      const generate: CloudGenerate = async (prompt) => {
-        if (mode !== "cloud-only") {
-          try {
-            return await generateLocalFirst(task, prompt, { signal: abort.signal });
-          } catch (error) {
-            if (mode === "offline-only" || abort.signal.aborted || generation.current !== gen || (error instanceof Error && /abort|cancel/i.test(`${error.name} ${error.message}`))) throw error;
-          }
-        }
-        if (abort.signal.aborted || generation.current !== gen || loadEffectiveAssistantMode(accountId) === "offline-only") throw new Error("AI request cancelled; cloud was not contacted.");
-        return deps?.guidedGenerate ? deps.guidedGenerate(prompt) : generateCloudForAccount(accountId, prompt, abort.signal);
-      };
-      const result = await executeCloudAssistantMessage(guided, trimmed, generate);
-      if (generation.current !== gen) return; // closed/superseded: drop the stale reply
-      setGuided(result.snapshot);
-      setGuidedTranscript((prev) => [
-        ...prev,
-        { role: "assistant", text: result.reply, source: result.replySource },
-      ]);
-      if (
-        result.snapshot.flow === "search" &&
-        result.snapshot.state === "ready" &&
-        result.snapshot.searchFilters !== undefined
-      ) {
-        // P0-3 tap gate: hold the validated target for the explicit CTA.
-        // Never auto-navigate — completing the flow only stages the button.
-        const target = mapAssistantSearchFilters(result.snapshot.searchFilters).path;
-        setPendingSearchTarget(target);
-      }
-    } finally {
-      if (generation.current === gen) setGuidedBusy(false);
-    }
-  }
-
-  function pickGuidedPhoto(choice: PhotoChoice) {
-    if (guided === null) return;
-    setGuided(choosePhoto(guided, choice));
-  }
-
-  function pickGuidedLocation(choice: LocationChoice) {
-    if (guided === null || guided.state === "recovering") return;
-    if (choice === "typed") return;
-    setGuided(chooseLocation(guided, choice));
-  }
-
-  function recoverGuided(action: RecoveryAction) {
-    if (guided !== null && action === "Retry") {
-      setGuided(retryAfterRecovery(guided));
-    }
-  }
-
   function handleSend() {
-    if (guided !== null) {
-      const text = input;
-      setInput("");
-      void submitGuided(text);
-    } else {
-      void sendFreeChat(input);
-    }
+    void sendFreeChat(input);
   }
 
   // ---- History popup wiring (chatStore contract) ----
@@ -1518,13 +1307,11 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
 
   const freeMessages: TranscriptMessage[] = (() => {
     const stored: TranscriptMessage[] = turns.map((t) => {
-      const parsed = t.role === "assistant" ? parseHelpResponse(t.text) : null;
       return {
         id: t.id,
         role: t.role,
-        text: parsed?.markdown ?? t.text,
+        text: t.text,
         source: t.role === "assistant" ? sourceByTurn.current.get(t.id) : undefined,
-        actions: parsed?.actions,
         attachments: t.attachmentIds.length > 0 ? t.attachmentIds.length : undefined,
       };
     });
@@ -1548,30 +1335,12 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
     return [...stored, ...ephemeral];
   })();
 
-  // P1: starter suggestions and guided shortcuts only start an EMPTY
-  // conversation — once chatting the transcript owns the space. The landing
-  // shows only when there is genuinely nothing to show: no real turns, no
-  // active guided flow, no live stream/partial and no un-retried send error.
+  // Suggestions only start an empty conversation; actual turns and errors
+  // keep the transcript visible. Chat never offers application actions.
   const isEmptyConversation = turns.length === 0 && ephemeral.length === 0;
   const showLanding =
-    guided === null && isEmptyConversation && !busy && partial === null && sendError === null && failedSend === null;
-  // Lane B intent proposal: classify-intent → route-intent → validated CTA.
-  // Advisory only — rendered as a visible chip, followed solely through the
-  // validated allowlist on tap. Never auto-navigates, never sends.
-  const intentProposal = useMemo(
-    () =>
-      guided !== null || input.trim() === "" ? null : resolveAssistantIntent(input.trim()),
-    [guided, input],
-  );
-  function followIntentCta() {
-    const cta = intentProposal?.cta;
-    if (cta === null || cta === undefined) return;
-    if (!INTENT_CTA_TARGETS.has(cta.target)) return;
-    announce(`${cta.label}.`);
-    navigate(cta.target);
-  }
-  const guidedQuestion = guided === null ? null : nextMissingQuestion(guided);
-  const composerBusy = busy || guidedBusy;
+    isEmptyConversation && !busy && partial === null && sendError === null && failedSend === null;
+  const composerBusy = busy;
   // P1-2 honest fallback: the persisted default is raw and may name a paid
   // row absent from this catalogue (free seed + authorized load). Never crash
   // and never silently drop it — sends already fall back to the free route.
@@ -1641,7 +1410,7 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   // unchanged). A failed send keeps its own Retry; this never fires while
   // a send is in flight.
   function retryResponse(messageId: string) {
-    if (busy || guidedBusy) return;
+    if (busy) return;
     const index = freeMessages.findIndex((m) => m.id === messageId && m.role === "assistant");
     if (index < 0) return;
     for (let i = index - 1; i >= 0; i -= 1) {
@@ -1684,12 +1453,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
   }
 
   function stopComposer() {
-    if (guidedBusy) {
-      generation.current += 1;
-      setGuidedBusy(false);
-      announce("Guided answer stopped.");
-      return;
-    }
     stopFreeChat();
   }
 
@@ -1735,110 +1498,10 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
       </header>
 
       <main aria-label="Help conversation" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {/* FBX-020 mode tabs: at most Chat and Guide. Guide owns structured
-            FindBack assistance; the attach menu never duplicates it. */}
-        <div
-          data-testid="assistant-mode"
-          role="tablist"
-          aria-label="Assistant mode"
-          className="flex shrink-0 gap-1 border-b border-outline-variant bg-surface px-3"
-        >
-          {(
-            [
-              { value: "chat", label: "Chat" },
-              { value: "guide", label: "Guide" },
-            ] as const
-          ).map((tab, index, tabs) => (
-            <button
-              key={tab.value}
-              type="button"
-              role="tab"
-              aria-selected={assistantTab === tab.value}
-              tabIndex={assistantTab === tab.value ? 0 : -1}
-              data-testid={`assistant-tab-${tab.value}`}
-              onClick={() => setAssistantTab(tab.value)}
-              onKeyDown={(event) => {
-                // Roving-tabindex tablist: arrows move between Chat/Guide.
-                if (
-                  event.key !== "ArrowRight" &&
-                  event.key !== "ArrowLeft" &&
-                  event.key !== "Home" &&
-                  event.key !== "End"
-                ) {
-                  return;
-                }
-                event.preventDefault();
-                const order = tabs.map((t) => t.value);
-                let next = order.indexOf(tab.value);
-                if (event.key === "ArrowRight") next = (next + 1) % order.length;
-                else if (event.key === "ArrowLeft") next = (next - 1 + order.length) % order.length;
-                else if (event.key === "Home") next = 0;
-                else next = order.length - 1;
-                setAssistantTab(order[next]!);
-                // Focus follows selection so keyboard users stay on the tab.
-                requestAnimationFrame(() => {
-                  document
-                    .querySelector<HTMLElement>(
-                      `[data-testid="assistant-tab-${order[next]}"]`,
-                    )
-                    ?.focus();
-                });
-              }}
-              className={`min-h-[48px] border-b-2 px-3 text-sm font-medium ${
-                assistantTab === tab.value
-                  ? "border-on-surface text-on-surface"
-                  : "border-transparent text-on-surface-variant"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        {assistantTab === "guide" ? (
-          <section
-            data-testid="assistant-guide"
-            aria-label="Guide"
-            className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-surface px-4 py-4"
-          >
-            <h2 className="text-base font-semibold text-on-surface">Guide</h2>
-            <p className="text-sm leading-relaxed text-on-surface-variant">
-              Answer a few short questions. Nothing is published automatically.
-            </p>
-            <div className="flex flex-col gap-2">
-              {(
-                [
-                  { flow: "lost", label: SHORTCUT_LABELS.lost, hint: "Walk through a lost-item report." },
-                  { flow: "found", label: SHORTCUT_LABELS.found, hint: "Walk through a found-item report." },
-                  { flow: "search", label: SHORTCUT_LABELS.search, hint: "Build search filters step by step." },
-                  { flow: "ask", label: "Ask a question", hint: "Back to free chat for anything else." },
-                ] as const
-              ).map((option) => (
-                <button
-                  key={option.flow}
-                  type="button"
-                  data-testid={`guide-option-${option.flow}`}
-                  onClick={() => {
-                    if (option.flow === "ask") {
-                      setAssistantTab("chat");
-                      document.getElementById("help-composer-input")?.focus();
-                      return;
-                    }
-                    beginGuided(option.flow);
-                  }}
-                  className="flex min-h-[48px] flex-col justify-center gap-0.5 rounded-m3-sm border border-outline-variant bg-surface-container-low px-3 py-2 text-left hover:bg-surface-container"
-                >
-                  <span className="text-sm font-medium text-on-surface">{option.label}</span>
-                  <span className="text-xs text-on-surface-variant">{option.hint}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : showLanding ? (
+        {showLanding ? (
           <AssistantLanding
             suggestions={SUGGESTIONS}
-            quickActions={LANDING_QUICK_ACTIONS}
             onSuggestion={(text) => void sendFreeChat(text)}
-            onQuickAction={(flow) => beginGuided(flow)}
             compact={keyboardOpen}
           />
         ) : (
@@ -1846,143 +1509,8 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
             messages={freeMessages}
             partialText={busy && controllerPhase === "streaming" ? (partial?.text ?? null) : null}
             partialLabel={busy && controllerPhase === "streaming" ? (partial?.label ?? null) : null}
-            onAction={(id) => {
-              const target = ACTION_ROUTES[id];
-              if (target !== undefined) navigate(target);
-            }}
             onRetryMessage={retryResponse}
           />
-        )}
-
-        {/* The guided panel is a transient state of this screen: it rises in
-            from below the transcript and leaves the same way, so switching
-            between guided and free chat never snaps. */}
-        <AnimatePresence initial={false}>
-          {guided !== null && (
-            <motion.section
-              key="guided-panel"
-              data-testid="guided-panel"
-              aria-label="Guided help"
-              variants={fadeUpVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              transition={{ duration: motionDurations.sheet, ease: motionEasings.out }}
-              className="flex shrink-0 flex-col gap-3 border-t border-outline-variant bg-surface-container-low px-4 py-4"
-            >
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-on-surface">{SHORTCUT_LABELS[guided.flow]}</p>
-              <button
-                type="button"
-                onClick={endGuided}
-                className="min-h-[48px] rounded-m3-xs px-3 text-xs font-medium text-on-surface-variant underline"
-              >
-                End guided help
-              </button>
-            </div>
-            {guidedTranscript.length > 0 && (
-              <div
-                role="log"
-                aria-live="polite"
-                aria-label="Guided help conversation"
-                className="flex max-h-64 flex-col gap-2 overflow-y-auto"
-              >
-                {guidedTranscript.map((entry, index) => (
-                  <div
-                    key={`${entry.role}-${index}`}
-                    className="flex flex-col gap-0.5 rounded-m3-sm border border-outline-variant bg-surface px-3 py-2"
-                  >
-                    <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
-                      {entry.role === "user"
-                        ? "You"
-                        : entry.source === "model"
-                          ? "AI-generated"
-                          : "Built-in guidance"}
-                    </span>
-                    <p className="text-sm text-on-surface">{entry.text}</p>
-                  </div>
-                ))}
-                {guidedBusy && <p className="text-xs text-on-surface-variant">Thinking…</p>}
-              </div>
-            )}
-            {guided.state !== "recovering" && guidedQuestion !== null && (
-              <p data-testid="guided-question" className="text-sm font-medium text-on-surface">
-                {guidedQuestion.question}
-              </p>
-            )}
-            {guided.state === "awaitingPhoto" && guided.photoRequest !== undefined && (
-              <div data-testid="guided-photo-step" className="flex flex-col gap-2">
-                <p className="text-sm text-on-surface">Would you like to add a photo?</p>
-                <div className="flex flex-wrap gap-2">
-                  {PHOTO_CHOICES.map((choice) => (
-                    <button
-                      key={choice}
-                      type="button"
-                      data-testid={`guided-photo-${choice}`}
-                      onClick={() => pickGuidedPhoto(choice)}
-                      className="min-h-[48px] rounded-full border border-outline-variant bg-surface px-3 text-xs font-medium text-on-surface-variant hover:bg-surface-container"
-                    >
-                      {PHOTO_LABELS[choice]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {guided.state === "awaitingLocation" && guided.locationRequest !== undefined && (
-              <div data-testid="guided-location-step" className="flex flex-col gap-2">
-                <p className="text-sm text-on-surface">How should the location be added?</p>
-                <div className="flex flex-wrap gap-2">
-                  {LOCATION_CHOICES.map((choice) => (
-                    <button
-                      key={choice}
-                      type="button"
-                      data-testid={`guided-location-${choice}`}
-                      onClick={() => pickGuidedLocation(choice)}
-                      className="min-h-[48px] rounded-full border border-outline-variant bg-surface px-3 text-xs font-medium text-on-surface-variant hover:bg-surface-container"
-                    >
-                      {LOCATION_LABELS[choice]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {guided.state === "recovering" && guided.recovery !== undefined && (
-              <GuidedRecovery errorClass={guided.recovery.errorClass} onAction={recoverGuided} />
-            )}
-            {pendingSearchTarget !== null &&
-              guided.flow === "search" &&
-              guided.state === "ready" && (
-                <div className="flex flex-col gap-1">
-                  <button
-                    type="button"
-                    data-testid="guided-open-search"
-                    onClick={openPendingSearch}
-                    className="min-h-[48px] rounded-full bg-on-surface px-3 text-xs font-medium text-surface"
-                  >
-                    Open search with these filters
-                  </button>
-                  <p className="text-xs text-on-surface-variant">
-                    Review the filters above, then open search. Nothing navigates until you tap.
-                  </p>
-                </div>
-              )}
-            </motion.section>
-          )}
-        </AnimatePresence>
-
-        {/* Lane B intent CTA: the proposed destination renders visibly and is
-            followed only on tap through validated application actions. */}
-        {guided === null && intentProposal?.cta !== null && intentProposal?.cta !== undefined && (
-          <div className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pb-2">
-            <button
-              type="button"
-              data-testid={`intent-cta-${intentProposal.cta.id}`}
-              onClick={followIntentCta}
-              className="min-h-[48px] rounded-full border border-outline bg-surface-container px-3 text-xs font-medium text-on-surface hover:bg-surface-container-high"
-            >
-              {intentProposal.cta.label}
-            </button>
-          </div>
         )}
 
         {/* U2: the permanent privacy block is gone from the conversation.
@@ -2250,36 +1778,6 @@ export function Help({ deps }: { deps?: HelpAssistantDeps }) {
           }}
         />
       </BottomSheet>
-    </div>
-  );
-}
-
-function GuidedRecovery({
-  errorClass,
-  onAction,
-}: {
-  errorClass: AiErrorClass;
-  onAction?: (action: RecoveryAction) => void;
-}) {
-  const plan = RECOVERY_COPY[errorClass];
-  return (
-    <div data-testid="guided-recovery" className="flex flex-col gap-2">
-      <p data-testid="guided-recovery-message" className="text-sm text-on-surface">
-        {plan.message}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {plan.actions.map((action) => (
-          <button
-            key={action}
-            type="button"
-            data-testid={`guided-recovery-action-${action}`}
-            onClick={() => onAction?.(action)}
-            className="min-h-[48px] rounded-full border border-outline-variant bg-surface px-3 text-xs font-medium text-on-surface-variant hover:bg-surface-container"
-          >
-            {action}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

@@ -54,11 +54,7 @@ function renderHelp(deps: Record<string, unknown> = {}) {
   );
 }
 
-function typeInput(text: string) {
-  fireEvent.change(screen.getByLabelText("Ask the Help & FAQ"), { target: { value: text } });
-}
-
-describe("Help intent convergence (Lane B): input → intent → CTA → visible UI", () => {
+describe("Help stored default", () => {
   it("reads the persisted Assistant default (null = Automatic, never a faked choice)", () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
     // No stored choice in this environment → the session seeds to Automatic,
@@ -67,68 +63,6 @@ describe("Help intent convergence (Lane B): input → intent → CTA → visible
     expect(screen.getByRole("button", { name: /choose model/i }).textContent).toMatch(/automatic/i);
   });
 
-  it("proposes Start lost report for a lost input and follows it only on tap", () => {
-    renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    typeInput("I lost my keys");
-    const cta = screen.getByTestId("intent-cta-OPEN_REPORT_LOST");
-    expect(cta.textContent).toMatch(/Start lost report/);
-    // Never silently navigates: typing alone stays on Help.
-    expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
-    expect(screen.queryByText("Report screen")).toBeNull();
-    fireEvent.click(cta);
-    expect(screen.getByText("Report screen")).toBeTruthy();
-  });
-
-  it("proposes Open search for a search input and follows it only on tap", () => {
-    renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    typeInput("search red backpack");
-    const cta = screen.getByTestId("intent-cta-OPEN_SEARCH");
-    expect(cta.textContent).toMatch(/Open search/);
-    expect(screen.queryByText("Search screen")).toBeNull();
-    fireEvent.click(cta);
-    expect(screen.getByText("Search screen")).toBeTruthy();
-  });
-
-  it("proposes found-report and help CTAs for their intents without navigating", () => {
-    renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    typeInput("I found a wallet");
-    expect(screen.getByTestId("intent-cta-OPEN_REPORT_FOUND").textContent).toMatch(/Start found report/);
-    expect(screen.queryByText("Report screen")).toBeNull();
-  });
-
-  it("shows no CTA for ambiguous input (clarify, never navigate)", () => {
-    renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    typeInput("I lost something.");
-    expect(screen.queryByTestId(/^intent-cta-/)).toBeNull();
-    expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
-  });
-
-  it("shows no CTA for empty input", () => {
-    renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    expect(screen.queryByTestId(/^intent-cta-/)).toBeNull();
-  });
-});
-
-describe("Help guided-search tap gate (P0-3): ready stages a CTA, never auto-navigates", () => {
-  function send(text: string) {
-    fireEvent.change(screen.getByLabelText("Ask the Help & FAQ"), { target: { value: text } });
-    fireEvent.submit(screen.getByTestId("chat-composer"));
-  }
-
-  it("completing guided search does NOT navigate; tapping the CTA does", async () => {
-    renderHelp({ guidedGenerate: async () => '{"query":"keys","status":"LOST"}' });
-    fireEvent.click(screen.getByTestId("guided-shortcut-search"));
-    await screen.findByTestId("guided-panel");
-    send("find lost keys");
-    // Ready stages the explicit CTA instead of leaving Help.
-    const cta = await screen.findByTestId("guided-open-search");
-    expect(cta.textContent).toMatch(/open search with these filters/i);
-    expect(screen.queryByText("Search screen")).toBeNull();
-    expect(screen.queryByText("Report screen")).toBeNull();
-    expect(screen.getByRole("heading", { name: "Assistant" })).toBeTruthy();
-    fireEvent.click(cta);
-    await screen.findByText("Search screen");
-  });
 });
 
 describe("Help unavailable manual pin: persisted default absent from catalogue", () => {

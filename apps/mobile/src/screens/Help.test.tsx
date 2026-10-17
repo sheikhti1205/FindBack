@@ -36,7 +36,7 @@ describe("Help product naming", () => {
     // U2: a conversation-first landing replaces the old card stack; the hero
     // is "What can I help with?", never the removed "Help Assistant" name.
     expect(screen.getByTestId("assistant-landing")).toBeTruthy();
-    expect(screen.getByText(/report, search, or understand something you found/i)).toBeTruthy();
+    expect(screen.getByText(/ask a question or talk something through/i)).toBeTruthy();
     expect(screen.queryByText(/Help Assistant/)).toBeNull();
     expect(screen.queryByText(/I am the FindBack Help & FAQ/)).toBeNull();
     // U2/P2: no permanent privacy wall in the conversation — a concise sheet

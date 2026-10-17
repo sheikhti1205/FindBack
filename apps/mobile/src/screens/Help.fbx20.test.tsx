@@ -66,41 +66,12 @@ function send(text: string) {
   fireEvent.submit(screen.getByTestId("chat-composer"));
 }
 
-describe("Help FBX-020 (mode tabs, composer chip, configure, retry)", () => {
-  it("shows at most Chat and Guide modes, starting on Chat", () => {
+describe("Help composer chip, configure and retry", () => {
+  it("opens conversation directly with no retired Guide modes", () => {
     renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    expect(screen.getByTestId("assistant-mode").getAttribute("role")).toBe("tablist");
-    expect(screen.getByTestId("assistant-tab-chat").getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByTestId("assistant-tab-guide").getAttribute("aria-selected")).toBe("false");
+    expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.getByTestId("assistant-landing")).toBeTruthy();
     expect(screen.queryByTestId("assistant-guide")).toBeNull();
-  });
-
-  it("moves between Chat and Guide with arrow keys (roving tabindex)", () => {
-    renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    const chat = screen.getByTestId("assistant-tab-chat");
-    const guide = screen.getByTestId("assistant-tab-guide");
-    expect(chat.tabIndex).toBe(0);
-    expect(guide.tabIndex).toBe(-1);
-    fireEvent.keyDown(chat, { key: "ArrowRight" });
-    expect(screen.getByTestId("assistant-tab-guide").getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByTestId("assistant-guide")).toBeTruthy();
-    fireEvent.keyDown(guide, { key: "ArrowLeft" });
-    expect(screen.getByTestId("assistant-tab-chat").getAttribute("aria-selected")).toBe("true");
-  });
-
-  it("opens the Guide wizard with compact structured options, never fake prose", () => {
-    renderHelp({ createAdapter: () => cannedAdapter("ok") });
-    fireEvent.click(screen.getByTestId("assistant-tab-guide"));
-    expect(screen.getByTestId("assistant-tab-guide").getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByTestId("assistant-guide")).toBeTruthy();
-    expect(screen.queryByTestId("assistant-landing")).toBeNull();
-    for (const flow of ["lost", "found", "search", "ask"] as const) {
-      expect(screen.getByTestId(`guide-option-${flow}`)).toBeTruthy();
-    }
-    // Starting a structured flow raises the guided panel, not an LLM paragraph.
-    fireEvent.click(screen.getByTestId("guide-option-search"));
-    expect(screen.getByTestId("guided-panel")).toBeTruthy();
   });
 
   it("keeps at most three starter suggestions on the empty chat", () => {

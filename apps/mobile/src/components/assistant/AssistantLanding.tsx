@@ -1,43 +1,29 @@
 import { motion } from "framer-motion";
-import { MessageCircleQuestion, PackageOpen, PackageSearch, Search, Sparkles } from "lucide-react";
+import { MessageCircleQuestion, Sparkles } from "lucide-react";
 import { motionDurations, pressFeedback } from "../uiMotion";
-
-/** Guided flows a landing quick action may start — all reuse Help's router. */
-export type LandingFlow = "lost" | "found" | "search";
-
-export interface LandingQuickAction {
-  flow: LandingFlow;
-  label: string;
-  /** Reuses the existing guided shortcut test ids so behavior stays asserted. */
-  testId: string;
-}
 
 export interface AssistantLandingProps {
   suggestions: readonly string[];
-  quickActions: readonly LandingQuickAction[];
   onSuggestion: (text: string) => void;
-  onQuickAction: (flow: LandingFlow) => void;
   /**
    * Keyboard-collapsed mode (FBX-020): the on-screen keyboard owns the
-   * viewport, so the greeting shrinks and the suggestion list hides — quick
-   * actions and the composer stay reachable without scrolling.
+   * viewport, so the greeting shrinks and the suggestion list hides,
+   * keeping the composer reachable without scrolling.
    */
   compact?: boolean;
 }
 
 /**
  * Conversation-first empty Assistant landing (U2). The transcript and composer
- * own the screen: a compact hero, at most three primary quick actions, and up
- * to four suggestion rows — then a flexible spacer so the composer stays
+ * own the screen: a compact greeting and up to four suggestion rows,
+ * then a flexible spacer so the composer stays
  * reachable without scrolling on ordinary phones. No product-information
  * sections, no privacy essay, no model internals: those live in the overflow
  * menu (Privacy & AI), the model picker, and the Help guide.
  */
 export function AssistantLanding({
   suggestions,
-  quickActions,
   onSuggestion,
-  onQuickAction,
   compact = false,
 }: AssistantLandingProps) {
   return (
@@ -53,34 +39,9 @@ export function AssistantLanding({
         </h2>
         {!compact && (
           <p className="text-sm leading-relaxed text-on-surface-variant">
-            Report, search, or understand something you found.
+            Ask a question or talk something through.
           </p>
         )}
-      </section>
-
-      <section aria-label="Quick actions" className="flex flex-col items-center gap-2">
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          {quickActions.slice(0, 3).map((action) => (
-            <motion.button
-              key={action.flow}
-              type="button"
-              data-testid={action.testId}
-              onClick={() => onQuickAction(action.flow)}
-              whileTap={pressFeedback.button}
-              transition={{ duration: motionDurations.instant }}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-full border border-outline bg-surface-container-low px-4 text-sm font-medium text-on-surface hover:bg-surface-container"
-            >
-              {action.flow === "lost" ? (
-                <PackageSearch size={16} aria-hidden />
-              ) : action.flow === "found" ? (
-                <PackageOpen size={16} aria-hidden />
-              ) : (
-                <Search size={16} aria-hidden />
-              )}
-              {action.label}
-            </motion.button>
-          ))}
-        </div>
       </section>
 
       {!compact && (
