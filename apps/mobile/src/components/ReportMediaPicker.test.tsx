@@ -115,6 +115,31 @@ describe("ReportMediaPicker", () => {
     expect(screen.getByTestId("report-photo-position").textContent).toBe("1 / 3");
   });
 
+  it("keeps every page marker visible when another photo becomes active", () => {
+    render(<ReportMediaPicker {...getDefaultProps({
+      photos: [createMockPhoto("p1"), createMockPhoto("p2"), createMockPhoto("p3")],
+    })} />);
+
+    function markerWidths() {
+      return screen.getAllByTestId("report-photo-dot").map((button) => {
+        // jsdom cannot lay out Tailwind. Assert the size declaration here;
+        // the rendered browser regression measures the resulting real bounds.
+        const marker = button.firstElementChild as HTMLElement;
+        expect(parseFloat(marker.style.width)).toBeGreaterThan(0);
+        expect(parseFloat(marker.style.height)).toBeGreaterThan(0);
+        expect(parseFloat(button.style.width)).toBeGreaterThanOrEqual(24);
+        return parseFloat(marker.style.width);
+      });
+    }
+
+    const before = markerWidths();
+    expect(before[0]).toBeGreaterThan(before[1]!);
+    goToPhoto(2);
+    const after = markerWidths();
+    expect(after[1]).toBeGreaterThan(after[0]!);
+    expect(after[0]).toBe(after[2]);
+  });
+
   it("never crops a photo: the slide box takes the photo's own ratio and contains it", () => {
     const props = getDefaultProps({ photos: [createMockPhoto("p1"), createMockPhoto("p2")] });
     render(<ReportMediaPicker {...props} />);

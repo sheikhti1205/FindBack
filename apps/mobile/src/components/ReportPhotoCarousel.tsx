@@ -215,9 +215,12 @@ export function ReportPhotoCarousel({
               <span
                 aria-hidden
                 className={`block rounded-full transition-all ${
-                  index === activeIndex ? "w-4 bg-on-surface" : "bg-on-surface-variant/50"
+                  index === activeIndex ? "bg-on-surface" : "bg-on-surface-variant/50"
                 }`}
-                style={{ height: DOT_VISUAL_PX }}
+                style={{
+                  width: index === activeIndex ? DOT_VISUAL_PX * 2 : DOT_VISUAL_PX,
+                  height: DOT_VISUAL_PX,
+                }}
               />
             </button>
           ))}
