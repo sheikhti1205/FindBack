@@ -115,32 +115,58 @@ describe("ReportMediaPicker", () => {
     expect(screen.getByTestId("report-photo-position").textContent).toBe("1 / 3");
   });
 
-  it("keeps every page marker visible when another photo becomes active", () => {
-    render(<ReportMediaPicker {...getDefaultProps({
-      photos: [createMockPhoto("p1"), createMockPhoto("p2"), createMockPhoto("p3")],
-    })} />);
+  it("keeps every page marker sized through the pager's tap, removal and reorder paths", () => {
+    const photos = [createMockPhoto("p1"), createMockPhoto("p2"), createMockPhoto("p3")];
+    const props = getDefaultProps({ photos });
+    const { rerender } = render(<ReportMediaPicker {...props} />);
+
+    // Mirrors DOT_VISUAL_PX in ReportPhotoCarousel: this asserts the size
+    // declaration, and the rendered browser regression measures real bounds.
+    const DOT_VISUAL_PX = 8;
 
     function markerWidths() {
       return screen.getAllByTestId("report-photo-dot").map((button) => {
         // jsdom cannot lay out Tailwind. Assert the size declaration here;
         // the rendered browser regression measures the resulting real bounds.
         const marker = button.firstElementChild as HTMLElement;
-        expect(parseFloat(marker.style.width)).toBeGreaterThan(0);
-        expect(parseFloat(marker.style.height)).toBeGreaterThan(0);
+        const width = parseFloat(marker.style.width);
+        // Pin the two legal sizes (DOT_VISUAL_PX idle, double it when active)
+        // rather than "greater than zero": the original defect was width 0, and
+        // any other arbitrary width must fail this too.
+        expect([DOT_VISUAL_PX, DOT_VISUAL_PX * 2]).toContain(width);
+        expect(parseFloat(marker.style.height)).toBe(DOT_VISUAL_PX);
         expect(parseFloat(button.style.width)).toBeGreaterThanOrEqual(24);
         // A marker must never animate layout: a blanket transition would
         // animate the active marker's width change (uiMotion: never layout).
         expect(marker.className).not.toContain("transition-all");
-        return parseFloat(marker.style.width);
+        return width;
       });
     }
+    const wideCount = (widths: number[]) =>
+      widths.filter((width) => width === DOT_VISUAL_PX * 2).length;
 
     const before = markerWidths();
     expect(before[0]).toBeGreaterThan(before[1]!);
+    expect(wideCount(before)).toBe(1);
+
     goToPhoto(2);
     const after = markerWidths();
     expect(after[1]).toBeGreaterThan(after[0]!);
     expect(after[0]).toBe(after[2]);
+    expect(wideCount(after)).toBe(1);
+
+    // The parent removes the active photo and the pager clamps: the row must
+    // keep exactly one correctly sized active marker over the survivors.
+    rerender(<ReportMediaPicker {...props} photos={[photos[0]!, photos[2]!]} />);
+    const afterRemoval = markerWidths();
+    expect(afterRemoval).toHaveLength(2);
+    expect(wideCount(afterRemoval)).toBe(1);
+
+    // And a reorder (identity re-pinning) must leave the same invariant.
+    rerender(<ReportMediaPicker {...props} photos={[photos[2]!, photos[0]!, photos[1]!]} />);
+    const afterReorder = markerWidths();
+    expect(afterReorder).toHaveLength(3);
+    expect(wideCount(afterReorder)).toBe(1);
   });
 
   it("never crops a photo: the slide box takes the photo's own ratio and contains it", () => {
