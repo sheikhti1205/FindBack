@@ -46,6 +46,14 @@
  *                        user-facing surfaces (About + Help privacy copy),
  *                        which must not carry cloud-only photo phrasing
  *   10. secrets        — delegates to scripts/scan-secrets.mjs (non-zero fails)
+ *   12. application-integration — a shipped AI seam is disconnected (startup,
+ *                        provider registry, model routes, matching, timing,
+ *                        native bridge), the retained §11 text→fields helper
+ *                        loses its reviewable Apply/Keep/confirm/released-
+ *                        category behaviour, or the report-photo AI and
+ *                        assistant→search handoff removed by CF-020 §12 and
+ *                        CF-070 R1 come back in any form (module file, import,
+ *                        JSX mount or call) anywhere under apps/mobile/src
  *
  * Lab/challenger/test skeletons (needle bench, testing fakes,
  * generationGuard rewire note) are deliberately OUTSIDE the
@@ -64,8 +72,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { parseModelProfiles, validateProfiles } from "./check-ai-manifest.mjs";
@@ -698,67 +706,132 @@ export const APPLICATION_INTEGRATION_FILES = {
   probeSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt",
   timingSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt",
   pluginSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt",
-  analyzePhotoSource: "apps/mobile/src/services/analyzeReportPhoto.ts",
-  localAnalyzeSource: "apps/mobile/src/services/analyzeReportPhotoLocal.ts",
-  suggestionsSource: "apps/mobile/src/components/VlmSuggestions.tsx",
   aiConnectionSource: "apps/mobile/src/screens/AiConnection.tsx",
   aiPreferencesSource: "apps/mobile/src/services/ai/aiPreferences.ts",
   searchScreenSource: "apps/mobile/src/screens/SearchScreen.tsx",
   nlFiltersSource: "apps/mobile/src/services/search/nlFilters.ts",
-  searchMappingSource: "apps/mobile/src/services/assistant/searchFilterMapping.ts",
   createReportSource: "apps/mobile/src/screens/CreateReport.tsx",
+  reportFieldSuggestionsSource: "apps/mobile/src/services/reportFieldSuggestions.ts",
   categorySuggestionSource: "apps/mobile/src/services/categorySuggestion.ts",
   actionGateSource: "apps/mobile/src/services/ai/orchestrator/actionGate.ts",
   routeIntentSource: "apps/mobile/src/services/ai/ops/routeIntent.ts",
   intentRouterSource: "apps/mobile/src/services/ai/ops/intentRouter.ts",
   chatControllerSource: "apps/mobile/src/services/ai/chatController.ts",
   chatStoreSource: "apps/mobile/src/services/ai/chatStore.ts",
-  photoGroundingSource: "apps/mobile/src/services/photoGrounding.ts",
-  photoGroundingComponentSource: "apps/mobile/src/components/PhotoGrounding.tsx",
-  livePhotoGroundingSource: "apps/mobile/src/services/livePhotoGrounding.ts",
-  groundObjectsSource: "apps/mobile/src/services/ai/ops/groundObjects.ts",
 };
 
 /**
- * Photo-grounding product-integration invariant (audit FBA-001).
- *
- * Grounding is now a real, reviewed user-facing flow: CreateReport mounts
- * <PhotoGrounding>, which runs a consented item search over the validated
- * ground-objects op through the live local-first transport, then requires
- * explicit selection and separate Apply/Keep review. These tripwires match
- * shipped CALL SITES, not bare imports, so an unwired stub cannot satisfy
- * them. They prove the CODE seam only — device/runtime proof is tracked
- * separately in completion-ledger.json (this gate is not device evidence).
+ * Report-photo AI and the assistant→search handoff were removed on purpose
+ * (CF-020 §12 removed the consumer-facing report-photo analysis flow and the
+ * assistant handoff; CF-070 R1 removed the guided report/search workflow and
+ * chat app actions). Their modules are gone, so a tripwire that reads them can
+ * only throw — which is what it did, for weeks, while the gate stayed red and
+ * unread. The removal is instead asserted as an invariant.
  */
-export function validatePhotoGroundingWired(sources) {
+export const RETIRED_REPORT_PHOTO_AI_FILES = [
+  "apps/mobile/src/services/analyzeReportPhoto.ts",
+  "apps/mobile/src/services/analyzeReportPhotoLocal.ts",
+  "apps/mobile/src/components/VlmSuggestions.tsx",
+  "apps/mobile/src/services/photoGrounding.ts",
+  "apps/mobile/src/components/PhotoGrounding.tsx",
+  "apps/mobile/src/services/livePhotoGrounding.ts",
+  "apps/mobile/src/services/assistant/searchFilterMapping.ts",
+];
+
+/**
+ * Import, JSX-mount and call syntax only. A comment that explains the removal
+ * (several do) is documentation, not a regression.
+ */
+const RETIRED_AI_IMPORT_RE =
+  /from\s+["'][^"']*(?:analyzeReportPhoto|photoGrounding|livePhotoGrounding|searchFilterMapping|ops\/groundObjects)[^"']*["']/;
+const RETIRED_AI_MOUNT_RE = /<VlmSuggestions\b|<PhotoGrounding\b/;
+const RETIRED_AI_CALL_RE =
+  /\bmapAssistantSearchFilters\s*\(|\banalyzeReportPhoto(?:Local)?\s*\(|\bgroundReportPhoto\s*\(/;
+
+/**
+ * Every shipped (non-test) mobile source under a directory, so a new importer of
+ * a retired module is caught wherever it is added.
+ */
+export function collectShippedSources(rootDir, baseDir = rootDir) {
+  const out = [];
+  for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
+    const absolute = join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...collectShippedSources(absolute, baseDir));
+      continue;
+    }
+    if (!/\.tsx?$/.test(entry.name)) continue;
+    if (/\.test\.tsx?$/.test(entry.name)) continue;
+    out.push({ file: relative(baseDir, absolute), source: readFileSync(absolute, "utf8") });
+  }
+  return out;
+}
+
+/**
+ * Fails closed when the retired report-photo AI or assistant→search handoff
+ * comes back, in any form: the module file reappearing, a new import of it, a
+ * JSX mount, or a call to a retired entry point.
+ */
+export function validateRetiredReportPhotoAi({ missingFiles = [], shippedSources = [] } = {}) {
   const errors = [];
-  const service = sources?.photoGroundingSource ?? "";
-  const component = sources?.photoGroundingComponentSource ?? "";
-  const transport = sources?.livePhotoGroundingSource ?? "";
-  const op = sources?.groundObjectsSource ?? "";
+  for (const { file, present } of missingFiles) {
+    if (present) {
+      errors.push(`retired-report-photo-ai: ${file} is back in the tree (CF-020 §12 removal regressed)`);
+    }
+  }
+  for (const { file, source } of shippedSources) {
+    if (RETIRED_AI_IMPORT_RE.test(source)) {
+      errors.push(`retired-report-photo-ai: ${file} imports a retired report-photo AI module`);
+    }
+    if (RETIRED_AI_MOUNT_RE.test(source)) {
+      errors.push(`retired-report-photo-ai: ${file} mounts a retired report-photo AI surface`);
+    }
+    if (RETIRED_AI_CALL_RE.test(source)) {
+      errors.push(`retired-report-photo-ai: ${file} calls a retired report-photo AI entry point`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Report-field helper invariant (§11 retained narrow assistance).
+ *
+ * CF-020 §12 removed the consumer-facing report-photo analysis flow and the
+ * assistant handoff; what remains is the text→fields helper in CreateReport:
+ * two reviewed narrow tasks (fields, category) applied only from an explicit
+ * per-suggestion tap, with Keep, confirm-before-overwrite and the
+ * released-category guard. These tripwires match shipped CALL SITES, so a stub
+ * or a disconnected helper cannot satisfy them, and they are paired with
+ * validateRetiredReportPhotoAi, which fails closed if the removed photo flow
+ * comes back anywhere under apps/mobile/src.
+ */
+export function validateReportFieldHelperWired(sources) {
+  const errors = [];
+  const helper = sources?.reportFieldSuggestionsSource ?? "";
   const createReport = sources?.createReportSource ?? "";
 
   const required = [
-    ["service", service, /from "\.\/ai\/ops\/groundObjects"/, "grounding service must use the validated ground-objects op"],
-    ["service", service, /await groundObjects\(/, "grounding service must call the validated op (invented boxes risk)"],
-    ["service", service, /input\.imageConsent !== true/, "grounding service must keep its image-consent gate"],
-    ["op", op, /CONSENT_REQUIRED:image/, "ground-objects op must refuse without image consent"],
-    ["component", component, /groundReportPhoto\(/, "PhotoGrounding must call the live grounding transport"],
-    ["component", component, /toCssPercentRect\(/, "PhotoGrounding must render validated boxes as percentage overlays"],
-    ["component", component, /Which item are you reporting\?/, "PhotoGrounding must show the disambiguation question"],
-    ["component", component, /Apply item title/, "PhotoGrounding must require explicit Apply review"],
-    ["component", component, /Keep my title/, "PhotoGrounding must offer Keep (review, never auto-apply)"],
-    ["transport", transport, /normalizeImage\(/, "live grounding must normalize the approved image"],
-    ["transport", transport, /requestGroundedOptions\(/, "live grounding must route through the validated selector service"],
-    ["transport", transport, /transport\.imageUri !== imageUrl/, "live grounding must bind the exact approved image (no URI swap)"],
-    ["transport", transport, /resolveAccountOpenRouterKey/, "live grounding must resolve its cloud key through the fail-closed account-bound resolver"],
-    ["createReport", createReport, /<PhotoGrounding/, "CreateReport must mount the reviewed grounding component"],
+    ["helper", helper, /export async function suggestReportFields/, "report-field helper must expose the reviewed field suggester"],
+    ["helper", helper, /export function isReleasedCategoryPatch/, "report-field helper must keep the released-category guard"],
+    ["helper", helper, /REPORT_FIELD_SOURCE\s*=\s*"extract-report-fields"/, "report-field helper must stay bound to its reviewed narrow task"],
+    ["createReport", createReport, /suggestReportFields\(/, "CreateReport must reach the reviewed field suggester"],
+    ["createReport", createReport, /suggestCategoryForText\(/, "CreateReport must reach the reviewed category suggester"],
+    ["createReport", createReport, /aiSuggestApplyField\(patch\)/, "report-field suggestions must apply only from an explicit per-suggestion tap"],
+    ["createReport", createReport, /Keep mine/, "report-field suggestions must offer Keep (review, never auto-apply)"],
+    ["createReport", createReport, /window\.confirm\("Replace the existing/, "report-field suggestions must confirm before replacing existing values"],
+    ["createReport", createReport, /isReleasedCategory\(/, "report-field suggestions must respect the released-category guard"],
   ];
   for (const [, source, pattern, message] of required) {
     if (!pattern.test(source)) errors.push(`application-integration: ${message}`);
   }
-  if (/void\s+input\.imageUri/.test(op)) {
-    errors.push("application-integration: ground-objects op discards the image (imageUri voided)");
+  // The retained helper takes TEXT. Photo bytes in this path would reintroduce
+  // the removed photo analysis under another name.
+  for (const [label, source] of [["helper", helper], ["createReport", createReport]]) {
+    if (/imageBase64|data:image\//.test(source)) {
+      errors.push(
+        `application-integration: ${label} passes image bytes into report-field suggestions (report-photo analysis was removed in CF-020 §12)`,
+      );
+    }
   }
   return errors;
 }
@@ -787,30 +860,13 @@ export function validateApplicationIntegration(sources) {
     ["timingSource", /conversation\.getBenchmarkInfo\(\)/, "timing must use runtime counters, not synthetic token estimates"],
     ["timingSource", /correctnessPass\s*=\s*correctness/, "timing must report tested correctness"],
     ["pluginSource", /fun measureBackend\([\s\S]+DeviceProbe\.collect(Detailed)?\(/, "native plugin must expose measurement runner"],
-    // On-device-first report-photo wiring (owner decision): the local SmolVLM2
-    // analyzer is the DEFAULT engine; cloud is the fallback. These tripwires
-    // fail closed if the local attempt, its image transport, or its UI caller
-    // is ever disconnected.
-    [
-      "analyzePhotoSource",
-      /analyzeLocally\s*=\s*options\?\.deps\?\.analyzeLocally\s*\?\?\s*analyzeReportPhotoLocally/,
-      "photo analyzer must default to the real on-device analyzer",
-    ],
-    [
-      "analyzePhotoSource",
-      /await\s+analyzeLocally\([\s\S]{0,2000}runCloud\(\)/,
-      "photo analyzer must attempt the on-device analyzer before the cloud path",
-    ],
-    [
-      "localAnalyzeSource",
-      /route\(\s*"analyze-image",\s*\{[^}]*imageBase64/,
-      "on-device analyzer must route analyze-image with imageBase64",
-    ],
-    [
-      "suggestionsSource",
-      /await\s+analyzeReportPhoto\(/,
-      "VlmSuggestions must use the local-first analyzeReportPhoto analyzer",
-    ],
+    // CF-020 §12 removed the consumer-facing report-photo analysis flow and the
+    // assistant→search handoff; CF-070 R1 removed the guided report/search
+    // workflow. Their modules are gone (see RETIRED_REPORT_PHOTO_AI_FILES and
+    // validateRetiredReportPhotoAi), so the requirements that referenced them
+    // were stale assertions about deleted files, not product invariants. What
+    // survives is the retained §11 text→fields helper, asserted by
+    // validateReportFieldHelperWired.
     // Feature-truth tripwires (v0.6): each fails closed if its product seam
     // is ever disconnected. Patterns match the shipped call sites, not bare
     // imports a stub could satisfy.
@@ -845,21 +901,6 @@ export function validateApplicationIntegration(sources) {
       "Help must read the persisted default-selection seam (ignoring the default is a regression)",
     ],
     [
-      "analyzePhotoSource",
-      /CONSENT_REQUIRED/,
-      "photo analyzer must require explicit consent before either engine",
-    ],
-    [
-      "analyzePhotoSource",
-      /export function getPhotoEngine/,
-      "photo analyzer must keep the engine-preference seam (automatic local-first default)",
-    ],
-    [
-      "analyzePhotoSource",
-      /resolveAccountOpenRouterKey/,
-      "photo analyzer must resolve its cloud key through the fail-closed account-bound resolver (a session lookup at send time retargets on account switch)",
-    ],
-    [
       "searchScreenSource",
       /from "\.\.\/services\/search\/nlFilters"/,
       "SearchScreen must import the validated nlFilters seam",
@@ -875,59 +916,9 @@ export function validateApplicationIntegration(sources) {
       "nlFilters must expose the validated-patch composer",
     ],
     [
-      "helpSource",
-      /mapAssistantSearchFilters\(/,
-      "Help NL search must consume validated assistant filters (unvalidated search is a regression)",
-    ],
-    [
-      "searchMappingSource",
-      /export function mapAssistantSearchFilters/,
-      "validated-filter mapper must exist for NL search",
-    ],
-    [
-      "searchMappingSource",
-      /export function navigateToAssistantSearch/,
-      "validated-filter navigation must exist for NL search",
-    ],
-    [
       "searchScreenSource",
       /useUrlParam\("q"\)/,
       "SearchScreen must consume validated query filters from the URL",
-    ],
-    [
-      "suggestionsSource",
-      /handleApplyTitle/,
-      "report-field AI must apply only through reviewed Apply handlers (bypass is a regression)",
-    ],
-    [
-      "suggestionsSource",
-      /handleKeepTitle/,
-      "report-field AI must offer Keep (review, never auto-apply)",
-    ],
-    [
-      "suggestionsSource",
-      /VLM_CONSENT_COPY/,
-      "draft-from-photo consent copy must be mode-derived (static local-first wording lies under pinned modes)",
-    ],
-    [
-      "suggestionsSource",
-      /never sent to OpenRouter/,
-      "draft-from-photo must carry the on-device-only no-send consent promise",
-    ],
-    [
-      "suggestionsSource",
-      /Send this photo to OpenRouter/,
-      "draft-from-photo must carry the cloud-only send consent promise",
-    ],
-    [
-      "createReportSource",
-      /window\.confirm\("Replace the existing title, description or category/,
-      "category suggestions must confirm before overwriting manual fields",
-    ],
-    [
-      "createReportSource",
-      /isReleasedCategory\(patch\.suggestedCategory\)/,
-      "category suggestions must respect the released-category guard",
     ],
     [
       "categorySuggestionSource",
@@ -978,9 +969,18 @@ function checkApplicationIntegration() {
   const sources = Object.fromEntries(
     Object.entries(APPLICATION_INTEGRATION_FILES).map(([key, file]) => [key, read(file)]),
   );
+  const missingFiles = RETIRED_REPORT_PHOTO_AI_FILES.map((file) => ({
+    file,
+    present: existsSync(resolve(REPO_ROOT, file)),
+  }));
+  const shippedSources = collectShippedSources(resolve(REPO_ROOT, "apps/mobile/src")).map((entry) => ({
+    file: `apps/mobile/src/${entry.file}`,
+    source: entry.source,
+  }));
   return [
     ...validateApplicationIntegration(sources),
-    ...validatePhotoGroundingWired(sources),
+    ...validateReportFieldHelperWired(sources),
+    ...validateRetiredReportPhotoAi({ missingFiles, shippedSources }),
   ];
 }
 
@@ -1093,7 +1093,7 @@ checks (any failure exits 1):
    photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim (capabilities + About/Help)
   runtime-wiring    every spec runtime has a production adapter, no lab routes
   descriptor-registry  named descriptors, approved runtimes/formats/ABIs, curated catalogue, fail-closed removal, coordinated residency, enforced ABIs, role-gated selection, raw text boundary, exhaustive interpreters, explicit default
-  application-integration  real boot, provider, controls, matching, timing and reviewed grounding path
+  application-integration  real boot, provider, controls, matching, timing, retained report-field helper, retired photo AI stays removed
   endpoint-pin      generic endpoint pinned (no invented default)
   needle-telemetry  Needle telemetry default-OFF behind the diag gate
   promotion-policy  lab-only runtimes never promotable/routable

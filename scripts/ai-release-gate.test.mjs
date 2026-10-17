@@ -13,10 +13,13 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkAiReleaseGate,
+  collectShippedSources,
+  RETIRED_REPORT_PHOTO_AI_FILES,
   validateDescriptorRegistry,
   validatePhotoAnalysisTruth,
+  validateRetiredReportPhotoAi,
+  validateReportFieldHelperWired,
   validateUserFacingPhotoTruth,
-  validatePhotoGroundingWired,
   validateRuntimeWiring,
   validateVisionTruth,
   validateApplicationIntegration,
@@ -50,25 +53,18 @@ const REAL = {
   probeSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt"),
   timingSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt"),
   pluginSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt"),
-  analyzePhotoSource: read("apps/mobile/src/services/analyzeReportPhoto.ts"),
-  localAnalyzeSource: read("apps/mobile/src/services/analyzeReportPhotoLocal.ts"),
-  suggestionsSource: read("apps/mobile/src/components/VlmSuggestions.tsx"),
   aiConnectionSource: read("apps/mobile/src/screens/AiConnection.tsx"),
   aiPreferencesSource: read("apps/mobile/src/services/ai/aiPreferences.ts"),
   searchScreenSource: read("apps/mobile/src/screens/SearchScreen.tsx"),
   nlFiltersSource: read("apps/mobile/src/services/search/nlFilters.ts"),
-  searchMappingSource: read("apps/mobile/src/services/assistant/searchFilterMapping.ts"),
   createReportSource: read("apps/mobile/src/screens/CreateReport.tsx"),
+  reportFieldSuggestionsSource: read("apps/mobile/src/services/reportFieldSuggestions.ts"),
   categorySuggestionSource: read("apps/mobile/src/services/categorySuggestion.ts"),
   actionGateSource: read("apps/mobile/src/services/ai/orchestrator/actionGate.ts"),
   routeIntentSource: read("apps/mobile/src/services/ai/ops/routeIntent.ts"),
   intentRouterSource: read("apps/mobile/src/services/ai/ops/intentRouter.ts"),
   chatControllerSource: read("apps/mobile/src/services/ai/chatController.ts"),
   chatStoreSource: read("apps/mobile/src/services/ai/chatStore.ts"),
-  photoGroundingSource: read("apps/mobile/src/services/photoGrounding.ts"),
-  photoGroundingComponentSource: read("apps/mobile/src/components/PhotoGrounding.tsx"),
-  livePhotoGroundingSource: read("apps/mobile/src/services/livePhotoGrounding.ts"),
-  groundObjectsSource: read("apps/mobile/src/services/ai/ops/groundObjects.ts"),
 };
 
 describe("validateApplicationIntegration", () => {
@@ -92,28 +88,12 @@ describe("validateApplicationIntegration", () => {
     ["null production timing runner", "probeSource", (source) => source.replace(/RuntimeTimingRunner\.forInstalledSmol\(appContext\)/g, "null")],
     ["synthetic token estimates", "timingSource", (source) => source.replace(/conversation\.getBenchmarkInfo\(\)/g, "wordEstimates()")],
     ["no native timing endpoint", "pluginSource", (source) => source.replace(/fun measureBackend\(/g, "fun disconnectedMeasurement(")],
-    ["photo analyzer stops trying local first", "analyzePhotoSource", (source) => source.replace(/await analyzeLocally\(file/g, "await cloudFirst(file")],
-    ["local analyzer stops routing analyze-image", "localAnalyzeSource", (source) => source.replace(/"analyze-image"/g, '"describe-image"')],
-    ["local analyzer drops imageBase64", "localAnalyzeSource", (source) => source.replace("PHOTO_INSTRUCTION, imageBase64 }", "PHOTO_INSTRUCTION, imageData }")],
-    ["photo suggestions stop using the local-first analyzer", "suggestionsSource", (source) => source.replace(/analyzeReportPhoto\(file/g, "cloudAnalyze(file")],
     ["settings model preference display-only (binding removed)", "aiPreferencesSource", (source) => source.replace(/export function createAssistantModelBinding/g, "export function droppedBinding")],
     ["settings model preference display-only (sheet not forwarded)", "aiConnectionSource", (source) => source.replace(/selectedId=\{effectiveSelectedId\}/g, "selectedId={null}")],
     ["settings model preference display-only (selection never persisted)", "aiConnectionSource", (source) => source.replace(/onSelectModel\?\.\(record\.id\)/g, "void record.id")],
     ["Help ignores persisted default selection", "helpSource", (source) => source.replace(/defaultSelection\(accountId\)/g, "null")],
-    ["photo analyzer drops explicit consent", "analyzePhotoSource", (source) => source.replace(/CONSENT_REQUIRED/g, "CONSENT_OPTIONAL")],
-    ["photo analyzer drops engine-preference seam", "analyzePhotoSource", (source) => source.replace(/export function getPhotoEngine/g, "export function droppedEngine")],
-    ["photo analyzer drops cloud fallback", "analyzePhotoSource", (source) => source.replace(/resolveAccountOpenRouterKey/g, "fakeCloud")],
-    ["photo analyzer retargets cloud key to session lookup", "analyzePhotoSource", (source) => source.replace(/resolveAccountOpenRouterKey/g, "getConnectedOpenRouterKey")],
     ["NL search stops importing the validated seam", "searchScreenSource", (source) => source.replace(/services\/search\/nlFilters/g, "services/search/missing")],
-    ["NL search stops consuming validated filters", "helpSource", (source) => source.replace(/mapAssistantSearchFilters\(/g, "unvalidatedSearch(")],
-    ["validated-filter mapper removed", "searchMappingSource", (source) => source.replace(/export function mapAssistantSearchFilters/g, "export function droppedMapper")],
     ["SearchScreen stops consuming validated URL query", "searchScreenSource", (source) => source.replace(/useUrlParam\("q"\)/g, 'useUrlParam("zzz")')],
-    ["report-field AI bypasses Apply review", "suggestionsSource", (source) => source.replace(/handleApplyTitle/g, "handleAutoApplyTitle")],
-    ["report-field AI drops Keep review", "suggestionsSource", (source) => source.replace(/handleKeepTitle/g, "handleDropTitle")],
-    ["draft-from-photo consent stops being mode-derived", "suggestionsSource", (source) => source.replace(/VLM_CONSENT_COPY/g, "STATIC_COPY")],
-    ["draft-from-photo drops the on-device-only no-send promise", "suggestionsSource", (source) => source.replace(/never sent to OpenRouter/g, "sometimes sent")],
-    ["draft-from-photo drops the cloud-only send promise", "suggestionsSource", (source) => source.replace(/Send this photo to OpenRouter/g, "Maybe send this photo")],
-    ["category suggestions overwrite manual selection", "createReportSource", (source) => source.replace(/window\.confirm\("Replace the existing title, description or category/g, 'window.confirm("OK')],
     ["category confirm-or-override module removed", "categorySuggestionSource", (source) => source.replace(/export function resolveCategorySuggestion/g, "export function droppedResolver")],
     ["route-intent navigates without validation", "actionGateSource", (source) => source.replace(/function validateRouteIntent/g, "function droppedValidator")],
     ["route-intent CTA no longer validated", "intentRouterSource", (source) => source.replace(/export function ctaForRoute/g, "export function droppedCta")],
@@ -128,58 +108,130 @@ describe("validateApplicationIntegration", () => {
   }
 });
 
-describe("validatePhotoGroundingWired", () => {
-  it("passes on the real reviewed grounding flow", () => {
-    deepStrictEqual(validatePhotoGroundingWired(REAL), []);
+describe("validateReportFieldHelperWired", () => {
+  it("passes on the retained §11 text→fields helper", () => {
+    deepStrictEqual(validateReportFieldHelperWired(REAL), []);
   });
 
   for (const [label, mutate] of [
-    ["service drops the op import", (s) => ({
+    ["helper no longer exposes the field suggester", (s) => ({
       ...s,
-      photoGroundingSource: s.photoGroundingSource.replace(/from "\.\/ai\/ops\/groundObjects"/g, 'from "./ai/ops/missing"'),
+      reportFieldSuggestionsSource: s.reportFieldSuggestionsSource.replace(
+        /export async function suggestReportFields/g,
+        "export async function droppedSuggester",
+      ),
     })],
-    ["service drops the op call", (s) => ({
+    ["helper drops the released-category guard", (s) => ({
       ...s,
-      photoGroundingSource: s.photoGroundingSource.replace(/await groundObjects\(/g, "await missingOp("),
+      reportFieldSuggestionsSource: s.reportFieldSuggestionsSource.replace(
+        /export function isReleasedCategoryPatch/g,
+        "export function droppedGuard",
+      ),
     })],
-    ["service drops the consent gate", (s) => ({
+    ["helper is unbound from its reviewed narrow task", (s) => ({
       ...s,
-      photoGroundingSource: s.photoGroundingSource.replace(/input\.imageConsent !== true/g, "input.imageConsent !== false"),
+      reportFieldSuggestionsSource: s.reportFieldSuggestionsSource.replace(
+        /REPORT_FIELD_SOURCE\s*=\s*"extract-report-fields"/,
+        'REPORT_FIELD_SOURCE = "something-else"',
+      ),
     })],
-    ["op voids the approved image", (s) => ({
+    ["CreateReport stops reaching the field suggester", (s) => ({
       ...s,
-      groundObjectsSource: `${s.groundObjectsSource}\nvoid input.imageUri;\n`,
+      createReportSource: s.createReportSource.replace(/suggestReportFields\(/g, "fakeSuggestFields("),
     })],
-    ["CreateReport unmounts the grounding component", (s) => ({
+    ["CreateReport stops reaching the category suggester", (s) => ({
       ...s,
-      createReportSource: s.createReportSource.replace(/<PhotoGrounding/g, "<RemovedGrounding"),
+      createReportSource: s.createReportSource.replace(/suggestCategoryForText\(/g, "fakeSuggestCategory("),
     })],
-    ["component stops calling the live transport", (s) => ({
+    ["suggestions auto-apply without a per-suggestion tap", (s) => ({
       ...s,
-      photoGroundingComponentSource: s.photoGroundingComponentSource.replace(/groundReportPhoto\(/g, "fakeGround("),
+      createReportSource: s.createReportSource.replace(/aiSuggestApplyField\(patch\)/g, "autoApply(patch)"),
     })],
-    ["component drops percentage overlays", (s) => ({
+    ["suggestions drop Keep review", (s) => ({
       ...s,
-      photoGroundingComponentSource: s.photoGroundingComponentSource.replace(/toCssPercentRect\(/g, "toRawRect("),
+      createReportSource: s.createReportSource.replace(/Keep mine/g, "Discard mine"),
     })],
-    ["component drops Keep review", (s) => ({
+    ["suggestions overwrite existing values without confirmation", (s) => ({
       ...s,
-      photoGroundingComponentSource: s.photoGroundingComponentSource.replace(/Keep my title/g, "Drop my title"),
+      createReportSource: s.createReportSource.replace(
+        /window\.confirm\("Replace the existing/g,
+        'window.confirm("OK',
+      ),
     })],
-    ["transport stops binding the approved image", (s) => ({
+    ["suggestions drop the released-category guard at the call site", (s) => ({
       ...s,
-      livePhotoGroundingSource: s.livePhotoGroundingSource.replace(/transport\.imageUri !== imageUrl/g, "false"),
+      createReportSource: s.createReportSource.replace(/isReleasedCategory\(/g, "fakeReleasedCategory("),
     })],
-    ["transport drops the account-bound key resolver", (s) => ({
+    ["photo bytes are routed back into the text helper", (s) => ({
       ...s,
-      livePhotoGroundingSource: s.livePhotoGroundingSource.replace(/resolveAccountOpenRouterKey/g, "getConnectedOpenRouterKey"),
+      createReportSource: `${s.createReportSource}\nconst sneaky = { imageBase64 };\n`,
     })],
   ]) {
     it(`fails on ${label}`, () => {
       const broken = mutate(REAL);
-      ok(validatePhotoGroundingWired(broken).length > 0, label);
+      ok(validateReportFieldHelperWired(broken).length > 0, label);
     });
   }
+});
+
+describe("validateRetiredReportPhotoAi", () => {
+  const realMissingFiles = () =>
+    RETIRED_REPORT_PHOTO_AI_FILES.map((file) => ({ file, present: false }));
+  const realShippedSources = () =>
+    collectShippedSources(resolve(REPO_ROOT, "apps/mobile/src")).map((entry) => ({
+      file: `apps/mobile/src/${entry.file}`,
+      source: entry.source,
+    }));
+
+  it("passes on the real tree (removed files stay removed, nothing imports them)", () => {
+    deepStrictEqual(
+      validateRetiredReportPhotoAi({
+        missingFiles: realMissingFiles(),
+        shippedSources: realShippedSources(),
+      }),
+      [],
+    );
+  });
+
+  it("catches a retired module reappearing in the tree", () => {
+    const errors = validateRetiredReportPhotoAi({
+      missingFiles: RETIRED_REPORT_PHOTO_AI_FILES.map((file) => ({
+        file,
+        present: file.endsWith("photoGrounding.ts"),
+      })),
+      shippedSources: [],
+    });
+    ok(errors.some((e) => e.includes("photoGrounding.ts")), `expected file complaint, got: ${errors}`);
+  });
+
+  for (const [label, source] of [
+    ["a new import of a retired module", 'import { analyzeReportPhoto } from "../services/analyzeReportPhoto";'],
+    ["a JSX mount of a retired surface", "export const X = () => <PhotoGrounding file={f} onPick={p} />;"],
+    ["a call to a retired entry point", "const target = mapAssistantSearchFilters(fields);"],
+    ["a grounding transport call", "await groundReportPhoto({ imageUri });"],
+  ]) {
+    it(`catches ${label}`, () => {
+      const errors = validateRetiredReportPhotoAi({
+        missingFiles: realMissingFiles(),
+        shippedSources: [{ file: "apps/mobile/src/screens/Somewhere.tsx", source }],
+      });
+      ok(errors.length > 0, label);
+    });
+  }
+
+  it("does not flag a comment that documents the removal", () => {
+    const errors = validateRetiredReportPhotoAi({
+      missingFiles: realMissingFiles(),
+      shippedSources: [
+        {
+          file: "apps/mobile/src/services/reportFieldSuggestions.ts",
+          source:
+            "// Stale-drop is the caller's job (generation token, like VlmSuggestions):\n// the photo path (analyzeReportPhoto / VlmAnalysis) was removed in CF-020 §12.",
+        },
+      ],
+    });
+    deepStrictEqual(errors, []);
+  });
 });
 
 describe("validateRuntimeWiring", () => {
