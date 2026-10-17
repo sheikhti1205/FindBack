@@ -19,6 +19,27 @@ describe("builtInHelp", () => {
     expect(reply.toLowerCase()).toContain("signup");
   });
 
+  it("answers one's own verification-code questions from the OTP FAQ, never the lookup refusal", () => {
+    // CF-070 R2 retry-3 finding 2: lookup used to run first, so a question with
+    // a lookup verb ("where is my") and the word "email" was answered with the
+    // contact-details refusal instead of the signup instructions.
+    for (const question of [
+      "Where is my email verification code?",
+      "Where is my FindBack email verification code?",
+      "How do I get my email verification code?",
+      "Where is my Gmail verification email for this app?",
+    ]) {
+      const classification = classifyHelpQuestion(question);
+      expect(classification.topic, question).toBe("verification");
+      expect(classification.appHelp, question).toBe(true);
+      expect(classification.answer.toLowerCase(), question).toContain("one-time code");
+      expect(classification.answer, question).not.toMatch(/can't look up|cannot look up/i);
+    }
+
+    // The refusal still belongs to a real contact lookup.
+    expect(classifyHelpQuestion("Find the email address of user Alice").topic).toBe("lookup");
+  });
+
   it("never answers a general coding request with the OTP FAQ (AI-03)", () => {
     const reply = builtInHelp("Write code for a 9x9 tic-tac-toe app");
     expect(reply.toLowerCase()).not.toContain("one-time code");
@@ -143,6 +164,13 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I react to a comment?",
     "How do I mark an item recovered?",
     "Are you ChatGPT?",
+    // CF-070 R2 retry-3: the natural FAQ forms the subject binding must not
+    // cost, including the verification row that had regressed.
+    "Where is my email verification code?",
+    "How do I upload my photo?",
+    "How do I upload photos here?",
+    "Where can I see notifications?",
+    "How do I comment on another user's report?",
   ];
 
   const NOT_APP_HELP = [
@@ -171,6 +199,28 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I check my order status?",
     "How do I filter water at home?",
     "How do I add a card to my Apple Wallet?",
+    // CF-070 R2 retry-3 finding 1: a phrase match is not subject binding. Each
+    // of these matches a topic phrase word for word and is still about the
+    // world, so the subject is what decides.
+    "How do I search stock market reports?",
+    "How do I write a report for school?",
+    "How do I upload a photo to my passport application?",
+    "How do I change the location of a meeting?",
+    "How do I rate items on an employee performance review?",
+    "How do I set my shop status to closed?",
+    "How do I leave a comment in a PDF?",
+    "How do I edit my draft for a school essay?",
+    "How do I delete my account with my bank?",
+    "How do I upload a photo to Instagram, not FindBack?",
+    // Same classes, nouns the review never used.
+    "How do I search for a job report?",
+    "How do I write a book report?",
+    "How do I add a photo to my CV?",
+    "How do I comment on a news article?",
+    "How do I find my package status?",
+    "How do I react to a bad review at work?",
+    "How do I set my status on Slack?",
+    "How do I use FindBack to search Google for medical reports?",
   ];
 
   it("recognises concise app-help prompts", () => {
@@ -196,8 +246,8 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     expect(builtInHelp("What does a solar eclipse look like?")).toContain("I can help with FindBack");
     expect(builtInHelp("How does face recognition work?")).toContain("I can help with FindBack");
 
-    // CF-070 R2 finding 1-retry and retry-2: a grammatical request about the
-    // world gets the scope note, never FindBack FAQ copy.
+    // CF-070 R2 finding 1-retry, retry-2 and retry-3: a grammatical request
+    // about the world gets the scope note, never FindBack FAQ copy.
     for (const question of [
       "How do I bake sourdough bread?",
       "Can I freeze leftover soup?",
@@ -209,6 +259,16 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
       "How do I rate a restaurant?",
       "How do I delete my Gmail account?",
       "How does face recognition identify another person?",
+      "How do I search stock market reports?",
+      "How do I write a report for school?",
+      "How do I upload a photo to my passport application?",
+      "How do I change the location of a meeting?",
+      "How do I rate items on an employee performance review?",
+      "How do I set my shop status to closed?",
+      "How do I leave a comment in a PDF?",
+      "How do I edit my draft for a school essay?",
+      "How do I delete my account with my bank?",
+      "How do I upload a photo to Instagram, not FindBack?",
     ]) {
       const reply = builtInHelp(question);
       expect(reply, question).toContain("I can help with FindBack");

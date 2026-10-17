@@ -161,6 +161,19 @@ describe("Help M2 chat UI", () => {
     expect(screen.getByTestId("chat-retry")).toBeTruthy();
   });
 
+  it("answers a verification-code question with the OTP help, never the lookup refusal", async () => {
+    // CF-070 R2 retry-3 finding 2, through the real screen: the contact-lookup
+    // branch used to run first and answer the app's own signup question with a
+    // refusal to look up accounts.
+    renderHelp({ createAdapter: () => failingAdapter(), getKey: async () => "test-key" });
+    const question = "Where is my email verification code?";
+    send(question);
+    await screen.findByTestId("chat-error");
+    expect(screen.getByText("Built-in answer")).toBeTruthy();
+    expect(screen.getByText(/one-time code/i)).toBeTruthy();
+    expect(screen.queryByText(/can't look up accounts/i)).toBeNull();
+  });
+
   it("a general question that is not app help keeps the draft instead of substituting a built-in answer", async () => {
     renderHelp({ createAdapter: () => failingAdapter(), getKey: async () => "test-key" });
     const question = "Explain why the moon changes shape";
@@ -257,6 +270,20 @@ describe("Help M2 chat UI", () => {
     "How does face recognition identify another person?",
     "How do I turn off Gmail notifications?",
     "How do I check my order status?",
+    // CF-070 R2 retry-3: the phrase matches a topic word for word and the
+    // subject is still the world, so the draft must survive the failure.
+    "How do I search stock market reports?",
+    "How do I write a report for school?",
+    "How do I upload a photo to my passport application?",
+    "How do I change the location of a meeting?",
+    "How do I rate items on an employee performance review?",
+    "How do I set my shop status to closed?",
+    "How do I leave a comment in a PDF?",
+    "How do I edit my draft for a school essay?",
+    "How do I delete my account with my bank?",
+    "How do I upload a photo to Instagram, not FindBack?",
+    "How do I write a book report?",
+    "How do I comment on a news article?",
   ]) {
     it(`keeps the draft for "${question}", which is a request about the world`, async () => {
       renderHelp({ createAdapter: () => failingAdapter(), getKey: async () => "test-key" });

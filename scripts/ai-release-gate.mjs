@@ -777,8 +777,22 @@ function specifierBasename(specifier) {
 }
 
 /**
- * Every way a source can reach a retired module: static import/export, dynamic
- * `import()`, `require()`, a JSX mount, or a call to a retired entry point.
+ * The literal forms of a retired reference this scan reads.
+ *
+ * In scope: a plain or non-interpolated-template module specifier on a static
+ * import/export, `import()`, `require()` or import-equals; a bare identifier,
+ * `object.member` or `object["member"]` callee; a JSX mount or `<Namespace.X/>`
+ * mount naming a retired surface; and a local binding that reuses a retired
+ * entry-point name. Direct forms (aliased, namespace, type-only, side-effect,
+ * re-export) are caught at the specifier even when the later use is not
+ * understood.
+ *
+ * Out of scope, and not claimed: a name computed at runtime (`obj[name]`, a
+ * concatenated or interpolated specifier, `eval`), aliasing through several
+ * local reassignments, and re-export chains buried behind another module. The
+ * independent backstop for those is `validateRetiredReportPhotoAi`'s
+ * file-existence check: restoring the retired file itself cannot be hidden by
+ * how a caller refers to it.
  */
 export function retiredAiReferences(file, source) {
   const findings = [];
@@ -790,25 +804,36 @@ export function retiredAiReferences(file, source) {
     file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
 
+  /** A string literal or a template literal with no interpolation. */
+  const literalText = (node) => {
+    if (node === undefined) return null;
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    return null;
+  };
+
   const moduleSpecifierOf = (node) => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      const specifier = node.moduleSpecifier;
-      if (specifier !== undefined && ts.isStringLiteral(specifier)) return specifier.text;
-      return null;
+      return literalText(node.moduleSpecifier);
     }
     if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
-      const expression = node.moduleReference.expression;
-      if (ts.isStringLiteral(expression)) return expression.text;
+      return literalText(node.moduleReference.expression);
     }
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
       const isDynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
       const isRequire = ts.isIdentifier(callee) && callee.text === "require";
       if ((isDynamicImport || isRequire) && node.arguments.length > 0) {
-        const [first] = node.arguments;
-        if (ts.isStringLiteral(first)) return first.text;
+        return literalText(node.arguments[0]);
       }
     }
+    return null;
+  };
+
+  /** The retired name a member or element access is spelled with, if any. */
+  const accessedName = (node) => {
+    if (node === undefined) return null;
+    if (ts.isPropertyAccessExpression(node)) return node.name.text;
+    if (ts.isElementAccessExpression(node)) return literalText(node.argumentExpression);
     return null;
   };
 
@@ -821,11 +846,25 @@ export function retiredAiReferences(file, source) {
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = node.tagName.getText(sourceFile);
       if (RETIRED_AI_SURFACE_NAMES.has(tag)) findings.push({ kind: "mount", detail: tag });
+      else {
+        const member = accessedName(node.tagName);
+        if (member !== null && RETIRED_AI_SURFACE_NAMES.has(member)) {
+          findings.push({ kind: "mount", detail: member });
+        }
+      }
     }
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
-      if (ts.isIdentifier(callee) && RETIRED_AI_FUNCTION_NAMES.has(callee.text)) {
-        findings.push({ kind: "call", detail: callee.text });
+      const name = ts.isIdentifier(callee) ? callee.text : accessedName(callee);
+      if (name !== null && RETIRED_AI_FUNCTION_NAMES.has(name)) {
+        findings.push({ kind: "call", detail: name });
+      }
+    }
+    // A local that reuses a retired entry-point name is the alias form
+    // (`const analyzeReportPhoto = async () => []; const run = analyzeReportPhoto;`).
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      if (RETIRED_AI_FUNCTION_NAMES.has(node.name.text)) {
+        findings.push({ kind: "call", detail: `${node.name.text} (rebound locally)` });
       }
     }
     ts.forEachChild(node, visit);
@@ -880,6 +919,434 @@ export function validateRetiredReportPhotoAi({ missingFiles = [], shippedSources
   return errors;
 }
 
+/** The field each reviewed patch applies to, and the state setter that owns it. */
+const REPORT_FIELD_SETTERS = {
+  title: "setTitle",
+  description: "setDescription",
+  date: "setEventDate",
+  category: "setCategory",
+};
+
+function parseGatedSource(file, source) {
+  return ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+}
+
+/** Every node in the subtree, the root included. */
+function walkTree(node, visit) {
+  visit(node);
+  ts.forEachChild(node, (child) => walkTree(child, visit));
+}
+
+/** Nodes the picker returns for, collected over the whole subtree. */
+function collectNodes(node, pick) {
+  const out = [];
+  walkTree(node, (candidate) => {
+    const hit = pick(candidate);
+    if (hit !== undefined && hit !== null) out.push(hit);
+  });
+  return out;
+}
+
+function findNamedFunction(sourceFile, name) {
+  let found = null;
+  walkTree(sourceFile, (node) => {
+    if (found === null && ts.isFunctionDeclaration(node) && node.name !== undefined && node.name.text === name) {
+      found = node;
+    }
+  });
+  return found;
+}
+
+function callsNamed(scope, name) {
+  return collectNodes(scope, (node) =>
+    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name ? node : null,
+  );
+}
+
+function containsReturn(node) {
+  let found = false;
+  walkTree(node, (candidate) => {
+    if (ts.isReturnStatement(candidate)) found = true;
+  });
+  return found;
+}
+
+function propertyAccessNamed(node, objectName, propertyName) {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === objectName &&
+    node.name.text === propertyName
+  );
+}
+
+/**
+ * `if (patch.field === "<field>") { … }`, wherever the comparison sits in the
+ * else-if chain. The test must BE the comparison: `false && patch.field === …`
+ * is a different shape and is not a reachable branch.
+ */
+function fieldBranch(handler, field) {
+  return collectNodes(handler, (node) => {
+    if (!ts.isIfStatement(node)) return null;
+    const test = node.expression;
+    if (!ts.isBinaryExpression(test)) return null;
+    if (test.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken) return null;
+    if (!propertyAccessNamed(test.left, "patch", "field")) return null;
+    if (!ts.isStringLiteral(test.right) || test.right.text !== field) return null;
+    return node;
+  })[0] ?? null;
+}
+
+/**
+ * `if (!window.confirm("<label> …")) return;` — a reachable guard whose refusal
+ * stops the apply. A bare `window.confirm(…)` call, or a `false &&` wrapper,
+ * is not this shape, so neither counts as confirmation.
+ */
+function confirmGuard(scope, label) {
+  return collectNodes(scope, (node) => {
+    if (!ts.isIfStatement(node)) return null;
+    const test = node.expression;
+    if (!ts.isPrefixUnaryExpression(test) || test.operator !== ts.SyntaxKind.ExclamationToken) return null;
+    const call = test.operand;
+    if (!ts.isCallExpression(call) || call.arguments.length === 0) return null;
+    if (!propertyAccessNamed(call.expression, "window", "confirm")) return null;
+    const text = call.arguments[0];
+    if (!ts.isStringLiteral(text) || !text.text.includes(label)) return null;
+    if (!containsReturn(node.thenStatement)) return null;
+    return node;
+  })[0] ?? null;
+}
+
+/**
+ * `if (!isReleasedCategory(<argument>)) return;` — the guard that keeps an
+ * unreleased value out of the form. `argumentText` pins the argument when the
+ * call site's value is known, and is null when any argument will do.
+ */
+function releasedCategoryGuard(scope, argumentText) {
+  return collectNodes(scope, (node) => {
+    if (!ts.isIfStatement(node)) return null;
+    const test = node.expression;
+    if (!ts.isPrefixUnaryExpression(test) || test.operator !== ts.SyntaxKind.ExclamationToken) return null;
+    const call = test.operand;
+    if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return null;
+    if (call.expression.text !== "isReleasedCategory") return null;
+    if (argumentText !== null && call.arguments[0]?.getText() !== argumentText) return null;
+    if (!containsReturn(node.thenStatement)) return null;
+    return node;
+  })[0] ?? null;
+}
+
+/**
+ * Every `onClick` in the file whose arrow body actually performs a call, with
+ * the callee name, the argument texts, and the arrow's declared parameters.
+ *
+ * A disconnected tap (`() => false && apply(…)`), a tap that returns a function
+ * (`() => () => apply(…)`) and an emptied tap (`() => {}`) each produce no
+ * entry, which is what makes a tap requirement mean "tapping this applies it".
+ */
+function tapCalls(sourceFile) {
+  const taps = [];
+  walkTree(sourceFile, (node) => {
+    if (!ts.isJsxAttribute(node) || node.name.getText() !== "onClick") return;
+    const initializer = node.initializer;
+    if (initializer === undefined || !ts.isJsxExpression(initializer)) return;
+    const arrow = initializer.expression;
+    if (arrow === undefined || !ts.isArrowFunction(arrow)) return;
+    const params = arrow.parameters.map((parameter) => parameter.name.getText());
+    const statements = ts.isBlock(arrow.body) ? arrow.body.statements : [arrow.body];
+    const calls = [];
+    for (const statement of statements) {
+      const expression = ts.isExpressionStatement(statement) ? statement.expression : statement;
+      if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
+        calls.push({
+          callee: expression.expression.text,
+          args: expression.arguments.map((argument) => argument.getText()),
+          argNodes: expression.arguments,
+        });
+      }
+    }
+    if (calls.length > 0) taps.push({ params, calls });
+  });
+  return taps;
+}
+
+/**
+ * True when `name` is bound by a function the node sits inside — the tap for a
+ * field suggestion passes the `patch` its list is rendering, not a fresh value.
+ */
+function isBoundInEnclosingScope(node, name) {
+  let current = node.parent;
+  while (current !== undefined) {
+    if (
+      ts.isArrowFunction(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isFunctionDeclaration(current)
+    ) {
+      if (current.parameters.some((parameter) => parameter.name.getText() === name)) return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+/** The visible "Keep mine" controls, with the calls their own `onClick` makes. */
+function keepControls(sourceFile) {
+  const controls = [];
+  walkTree(sourceFile, (node) => {
+    if (!ts.isJsxElement(node)) return;
+    const labelled = node.children.some(
+      (child) => ts.isJsxText(child) && child.text.trim() === "Keep mine",
+    );
+    if (!labelled) return;
+    const onClick = node.openingElement.attributes.properties
+      .filter(ts.isJsxAttribute)
+      .find((attribute) => attribute.name.getText() === "onClick");
+    const calls = [];
+    if (onClick !== undefined && onClick.initializer !== undefined && ts.isJsxExpression(onClick.initializer)) {
+      const arrow = onClick.initializer.expression;
+      if (arrow !== undefined && ts.isArrowFunction(arrow)) {
+        const statements = ts.isBlock(arrow.body) ? arrow.body.statements : [arrow.body];
+        for (const statement of statements) {
+          const expression = ts.isExpressionStatement(statement) ? statement.expression : statement;
+          if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
+            calls.push(expression.expression.text);
+          }
+        }
+      }
+    }
+    controls.push({ calls });
+  });
+  return controls;
+}
+
+/**
+ * The name a reviewed suggester's result is bound to, read off the
+ * `Promise.all([suggestX(…), …])` array literal it is awaited in, so a mention
+ * in a comment, a stub or a dead branch cannot satisfy the requirement.
+ */
+function promiseAllBinding(sourceFile, calleeName) {
+  let binding = null;
+  walkTree(sourceFile, (node) => {
+    if (binding !== null) return;
+    if (!ts.isCallExpression(node)) return;
+    if (!propertyAccessNamed(node.expression, "Promise", "all") || node.arguments.length !== 1) return;
+    const array = node.arguments[0];
+    if (!ts.isArrayLiteralExpression(array)) return;
+    const index = array.elements.findIndex(
+      (element) =>
+        ts.isCallExpression(element) && ts.isIdentifier(element.expression) && element.expression.text === calleeName,
+    );
+    if (index === -1) return;
+    let current = node;
+    while (current !== undefined && !ts.isVariableDeclaration(current)) current = current.parent;
+    if (current === undefined || !ts.isArrayBindingPattern(current.name)) return;
+    const element = current.name.elements[index];
+    if (element === undefined || !ts.isBindingElement(element) || !ts.isIdentifier(element.name)) return;
+    binding = element.name.text;
+  });
+  return binding;
+}
+
+/**
+ * True when `setterName(…)` is called with a property path rooted at `prefix`
+ * (`setAiFieldPatches([...fieldsResult.value.suggestions])`), which is what
+ * makes the operation's result reach the rendered state instead of dying in a
+ * local.
+ */
+function feedsSetter(sourceFile, setterName, prefix) {
+  return callsNamed(sourceFile, setterName).some((call) =>
+    call.arguments.some((argument) => {
+      let hit = false;
+      walkTree(argument, (node) => {
+        if (!ts.isPropertyAccessExpression(node)) return;
+        let root = node;
+        while (ts.isPropertyAccessExpression(root)) root = root.expression;
+        if (ts.isIdentifier(root) && root.text === prefix) hit = true;
+      });
+      return hit;
+    }),
+  );
+}
+
+/** True when the identifier sits in a type (`Awaited<typeof opTask>`). */
+function isInTypePosition(node) {
+  let current = node.parent;
+  while (current !== undefined) {
+    if (ts.isExpressionStatement(current) || ts.isBlock(current) || ts.isSourceFile(current)) return false;
+    if (ts.isTypeNode(current)) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
+ * The reviewed narrow task must be invoked AND its result used: a call whose
+ * value is dropped (`void extractReportFields(…)`), nested in a conditional the
+ * compiler can fold away, or left in a comment, does not count. Returns the
+ * message to report, or null when the call is consumed.
+ */
+function extractorConsumptionError(helper) {
+  const calls = callsNamed(helper, "extractReportFields");
+  if (calls.length === 0) {
+    return "report-field helper must actually invoke the reviewed narrow task";
+  }
+  const consumed = calls.some((call) => {
+    const declaration = call.parent;
+    if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return false;
+    if (declaration.initializer !== call) return false;
+    if (!ts.isIdentifier(declaration.name)) return false;
+    const name = declaration.name.text;
+    return collectNodes(helper, (node) =>
+      ts.isIdentifier(node) && node.text === name && node !== declaration.name && !isInTypePosition(node)
+        ? node
+        : null,
+    ).length > 0;
+  });
+  return consumed
+    ? null
+    : "report-field helper must use the reviewed narrow task's result, not merely mention the call";
+}
+
+/**
+ * Report-field apply wiring, read as syntax rather than as text (CF-070 R2
+ * retry-3 finding 3).
+ *
+ * The retry-2 requirements were token presence: `patch.field === "title"` and
+ * `window.confirm("Replace the existing title` appearing anywhere in the file
+ * satisfied them. The retry-3 review then ran the full gate against 29 source
+ * mutations and 23 stayed green — an unreachable branch (`false && …`), a
+ * deleted setter, an ignored Cancel, a title that writes to `setDescription`,
+ * a disconnected Apply tap, a Keep that resolves nothing, a category path that
+ * lost its own confirmation, and a reviewed op whose result is discarded or
+ * made unreachable. None of that changes the tokens.
+ *
+ * These checks read the shipped syntax instead: each field's branch must be the
+ * reachable comparison, it must call the setter that owns that field, its
+ * confirmation must be a guard whose refusal returns before any setter runs,
+ * the released-category guard must precede the category write, each Apply tap
+ * must be a call that passes the suggestion it renders, each visible Keep must
+ * resolve its own suggestion, and the reviewed ops' results must reach the
+ * state the suggestions render from. This is a bounded structural binding, not
+ * a proof of runtime behaviour: the behavioural seam it stands for lives in the
+ * focused CreateReport tests.
+ */
+export function reportFieldWiringFindings(sources) {
+  const prefix = "application-integration: ";
+  const errors = [];
+  const createReport = parseGatedSource("CreateReport.tsx", sources?.createReportSource ?? "");
+  const helper = parseGatedSource("reportFieldSuggestions.ts", sources?.reportFieldSuggestionsSource ?? "");
+
+  const applyField = findNamedFunction(createReport, "aiSuggestApplyField");
+  if (applyField === null) {
+    errors.push(`${prefix}CreateReport must keep the reviewed per-field apply handler`);
+  } else {
+    for (const [field, setter] of Object.entries(REPORT_FIELD_SETTERS)) {
+      const branch = fieldBranch(applyField, field);
+      if (branch === null) {
+        errors.push(`${prefix}the ${field} suggestion must have its own reachable apply branch`);
+        continue;
+      }
+      const body = branch.thenStatement;
+      const guard = confirmGuard(body, `Replace the existing ${field}`);
+      if (guard === null) {
+        errors.push(`${prefix}replacing an existing ${field} must be confirmed by a reachable guard that refuses`);
+      }
+      const setters = callsNamed(body, setter);
+      if (setters.length === 0) {
+        errors.push(`${prefix}the ${field} suggestion must apply through ${setter}`);
+      } else if (guard !== null && setters.some((call) => call.getStart() < guard.getEnd())) {
+        errors.push(`${prefix}the ${field} suggestion must not write ${field} before its confirmation guard`);
+      }
+      if (field === "category") {
+        const released = releasedCategoryGuard(body, "patch.suggestedValue");
+        if (released === null) {
+          errors.push(`${prefix}the category patch must respect the released-category guard before applying`);
+        } else if (setters.some((call) => call.getStart() < released.getEnd())) {
+          errors.push(`${prefix}the category patch must not write the category before the released-category guard`);
+        }
+      }
+    }
+  }
+
+  const applyCategory = findNamedFunction(createReport, "aiSuggestApplyCategory");
+  if (applyCategory === null) {
+    errors.push(`${prefix}CreateReport must keep the reviewed separate category apply handler`);
+  } else {
+    const released = releasedCategoryGuard(applyCategory, null);
+    if (released === null) {
+      errors.push(`${prefix}the category suggestion must respect the released-category guard before applying`);
+    }
+    const guard = confirmGuard(applyCategory, "Replace the existing category");
+    if (guard === null) {
+      errors.push(
+        `${prefix}replacing an existing category from its own suggestion must be confirmed by a reachable guard that refuses`,
+      );
+    }
+    const setters = callsNamed(applyCategory, "setCategory");
+    if (setters.length === 0) {
+      errors.push(`${prefix}the category suggestion must apply through setCategory`);
+    } else {
+      const latestGuardEnd = Math.max(guard?.getEnd() ?? 0, released?.getEnd() ?? 0);
+      if (latestGuardEnd > 0 && setters.some((call) => call.getStart() < latestGuardEnd)) {
+        errors.push(`${prefix}the category suggestion must not write the category before its guards`);
+      }
+    }
+  }
+
+  const taps = tapCalls(createReport);
+  const fieldTapBound = taps.some((tap) =>
+    tap.calls.some(
+      (call) =>
+        call.callee === "aiSuggestApplyField" &&
+        call.argNodes.length === 1 &&
+        ts.isIdentifier(call.argNodes[0]) &&
+        isBoundInEnclosingScope(call.argNodes[0], call.argNodes[0].text),
+    ),
+  );
+  if (!fieldTapBound) {
+    errors.push(
+      `${prefix}report-field suggestions must apply only from an explicit per-suggestion tap that passes the suggestion it renders`,
+    );
+  }
+  const categoryTapBound = taps.some((tap) =>
+    tap.calls.some((call) => call.callee === "aiSuggestApplyCategory" && call.args.length === 1),
+  );
+  if (!categoryTapBound) {
+    errors.push(`${prefix}the category suggestion must apply only from its own explicit tap`);
+  }
+
+  const keeps = keepControls(createReport);
+  if (keeps.length < 2) {
+    errors.push(`${prefix}report-field suggestions must offer Keep (review, never auto-apply)`);
+  } else if (keeps.some((control) => !control.calls.includes("aiSuggestResolve"))) {
+    errors.push(`${prefix}each Keep control must resolve its own suggestion`);
+  }
+
+  const fieldBinding = promiseAllBinding(createReport, "suggestReportFields");
+  if (fieldBinding === null) {
+    errors.push(`${prefix}CreateReport must reach the reviewed field suggester`);
+  } else if (!feedsSetter(createReport, "setAiFieldPatches", fieldBinding)) {
+    errors.push(`${prefix}the reviewed field suggester's result must reach the rendered patch state`);
+  }
+  const categoryBinding = promiseAllBinding(createReport, "suggestCategoryForText");
+  if (categoryBinding === null) {
+    errors.push(`${prefix}CreateReport must reach the reviewed category suggester`);
+  } else if (!feedsSetter(createReport, "setAiCatSuggestion", categoryBinding)) {
+    errors.push(`${prefix}the reviewed category suggester's result must reach the rendered suggestion state`);
+  }
+
+  const extractorError = extractorConsumptionError(helper);
+  if (extractorError !== null) errors.push(`${prefix}${extractorError}`);
+
+  return errors;
+}
+
 /**
  * Report-field helper invariant (§11 retained narrow assistance).
  *
@@ -887,9 +1354,10 @@ export function validateRetiredReportPhotoAi({ missingFiles = [], shippedSources
  * assistant handoff; what remains is the text→fields helper in CreateReport:
  * two reviewed narrow tasks (fields, category) applied only from an explicit
  * per-suggestion tap, with Keep, confirm-before-overwrite and the
- * released-category guard. These tripwires match shipped CALL SITES, so a stub
- * or a disconnected helper cannot satisfy them, and they are paired with
- * validateRetiredReportPhotoAi, which fails closed if the removed photo flow
+ * released-category guard. The wiring itself is checked on the syntax tree by
+ * `reportFieldWiringFindings`, so a stub, a dead branch or a disconnected
+ * helper cannot satisfy it, and the pair is closed by
+ * `validateRetiredReportPhotoAi`, which fails closed if the removed photo flow
  * comes back anywhere under apps/mobile/src.
  */
 export function validateReportFieldHelperWired(sources) {
@@ -901,61 +1369,12 @@ export function validateReportFieldHelperWired(sources) {
     ["helper", helper, /export async function suggestReportFields/, "report-field helper must expose the reviewed field suggester"],
     ["helper", helper, /export function isReleasedCategoryPatch/, "report-field helper must keep the released-category guard"],
     ["helper", helper, /REPORT_FIELD_SOURCE\s*=\s*"extract-report-fields"/, "report-field helper must stay bound to its reviewed narrow task"],
-    // The call itself, not the label: renaming an export or keeping a source
-    // string beside a disconnected stub must not satisfy the gate (CF-070 R2
-    // retry-2 finding 2).
-    [
-      "helper",
-      helper,
-      /extractReportFields\(\s*generate\s*,\s*userMessage\s*,\s*profile\s*\)/,
-      "report-field helper must actually invoke the reviewed narrow task",
-    ],
-    ["createReport", createReport, /suggestReportFields\(/, "CreateReport must reach the reviewed field suggester"],
-    ["createReport", createReport, /suggestCategoryForText\(/, "CreateReport must reach the reviewed category suggester"],
-    // One requirement per field, because each field has its own apply branch and
-    // its own confirmation. A single "some confirmation exists" pattern was
-    // satisfied by the three fields the review did not touch.
-    ["createReport", createReport, /patch\.field === "title"/, "the title suggestion must have its own apply branch"],
-    ["createReport", createReport, /patch\.field === "description"/, "the description suggestion must have its own apply branch"],
-    ["createReport", createReport, /patch\.field === "date"/, "the date suggestion must have its own apply branch"],
-    ["createReport", createReport, /patch\.field === "category"/, "the category suggestion must have its own apply branch"],
-    [
-      "createReport",
-      createReport,
-      /window\.confirm\("Replace the existing title/,
-      "replacing an existing title must be confirmed",
-    ],
-    [
-      "createReport",
-      createReport,
-      /window\.confirm\("Replace the existing description/,
-      "replacing an existing description must be confirmed",
-    ],
-    [
-      "createReport",
-      createReport,
-      /window\.confirm\("Replace the existing date/,
-      "replacing an existing date must be confirmed",
-    ],
-    [
-      "createReport",
-      createReport,
-      /window\.confirm\("Replace the existing category/,
-      "replacing an existing category must be confirmed",
-    ],
-    ["createReport", createReport, /aiSuggestApplyField\(patch\)/, "report-field suggestions must apply only from an explicit per-suggestion tap"],
-    [
-      "createReport",
-      createReport,
-      /aiSuggestApplyCategory\(aiCatSuggestion\)/,
-      "the category suggestion must apply only from its own explicit tap",
-    ],
-    ["createReport", createReport, /Keep mine/, "report-field suggestions must offer Keep (review, never auto-apply)"],
-    ["createReport", createReport, /isReleasedCategory\(/, "report-field suggestions must respect the released-category guard"],
   ];
   for (const [, source, pattern, message] of required) {
     if (!pattern.test(source)) errors.push(`application-integration: ${message}`);
   }
+  errors.push(...reportFieldWiringFindings(sources));
+
   // The retained helper takes TEXT. Photo bytes in this path would reintroduce
   // the removed photo analysis under another name.
   for (const [label, source] of [["helper", helper], ["createReport", createReport]]) {

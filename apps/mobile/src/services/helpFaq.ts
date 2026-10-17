@@ -29,6 +29,16 @@ const OTP_ANSWER =
 /** The app named outright. Enough on its own, and it lifts the veto below. */
 const APP_NAME_RE = /\bfindback\b|\b(?:the|this)\s+app\b/i;
 
+/** The same names, stripped out of the subject before it is judged. */
+const APP_NAME_STRIP_RE = /\bfindback\b|\b(?:the|this|our)\s+app\b/g;
+
+/**
+ * A question that puts this app outside itself is not about it, whatever else
+ * it says: "How do I upload a photo to Instagram, not FindBack?" (CF-070 R2
+ * retry-3 finding 1).
+ */
+const NEGATED_APP_RE = /\bnot\s+findback\b|\bnot\s+(?:the|this)\s+app\b/i;
+
 /**
  * Other named platforms. The R2 retry review's counterexample is the reason
  * this exists: "How do I delete my Gmail account?" is grammatical and names an
@@ -41,26 +51,25 @@ const FOREIGN_SERVICE_RE =
   /\b(?:gmail|google|outlook|hotmail|yahoo|icloud|apple|facebook|instagram|twitter|tiktok|snapchat|whatsapp|telegram|messenger|youtube|reddit|linkedin|discord|slack|zoom|netflix|spotify|amazon|ebay|paypal|dropbox|onedrive|notion|wordpress|wikipedia|chatgpt|openai|bing)\b/i;
 
 /**
- * Evidence that a question is about THIS app, in the only two forms the FAQ
- * accepts.
+ * Evidence that a question is about THIS app.
  *
- * 1. Ownership — the question names FindBack (or "the app"), or an object the
- *    app owns, next to the possessive: "my report", "another user". Ownership
- *    alone is enough. It is adjacency-anchored, because "my Gmail account"
- *    owns an account and "another person" owns nothing here (both are the R2
- *    retry review's counterexamples).
- * 2. A request phrased in the app's own vocabulary — either a bounded topic
- *    phrase, or a question made of nothing but one app action (see
- *    `significantWords`). The topic words that the whole world also uses for
- *    the same task ("search", "map", "rate", "status") only count inside one
- *    of those two shapes.
+ * Ownership: the question names FindBack (or "the app"), or an object the app
+ * owns, next to the possessive: "my report", "another user". It is
+ * adjacency-anchored, because "my Gmail account" owns an account and "another
+ * person" owns nothing here (both are the R2 retry review's counterexamples).
+ * Ownership decides the negative-claim branches (a feature this build does not
+ * ship, a claim the knowledge does not cover).
  *
- * Request grammar alone ("how do I", "can I") is NOT evidence. It is how the
- * world asks about the world: "How do I bake sourdough bread?", "Can I freeze
- * leftover soup?" and "How do I search for peer-reviewed papers?" are
- * grammatical requests with no app subject, and answering them with FindBack
- * copy — and clearing the draft to do it — is the defect the R2 reviews found
- * (CF-070 R2 findings 1, 1-retry and retry-2).
+ * Ownership alone is NOT enough for a feature topic, and request grammar alone
+ * is never evidence. The retry-3 review showed why: "How can I report my lost
+ * backpack?" and "How do I write a report for school?" have the same grammar
+ * and the same shared task noun, and only the first is about this app. So a
+ * topic answers only when its subject is BOUND to the app — either by the
+ * topic's own self-binding shape (reporting a lost or found thing, whatever
+ * the thing is) or by a question that uses no word outside the app's closed
+ * vocabulary (`APP_VOCAB`). Everything else keeps the person's draft, which is
+ * the cheap failure: a missed answer costs a retype, a wrong answer costs the
+ * draft and teaches the wrong thing.
  */
 const APP_OWNERSHIP_RE =
   /\bfindback\b|\bthe app\b|\bthis app\b|\b(?:my|your)\s+(?:findback\s+)?(?:accounts?|reports?|items?|listings?|posts?|profile|drafts?|notifications?|comments?|photos?|matches?)\b|\banother (?:user|member)\b|\bother users?\b/i;
@@ -69,23 +78,179 @@ const APP_OWNERSHIP_RE =
 const APP_ACTIVITY_REQUEST_RE =
   /\bhow (?:do|can|could|should) i\b|\bhow do you\b|\bwhere (?:do|can|should) i\b|\bcan i\b|\bi can'?t\b|\bi (?:want|need) to\b|\bhelp me\b|\bhow to\b|\bis there a way\b|\bturn (?:on|off)\b/i;
 
-/** Articles, politeness and question grammar: never part of the subject. */
+/** Articles, politeness, request verbs and question grammar: never the subject. */
 const SCAFFOLD_RE =
-  /\b(?:please|the|a|an|my|your|our|their|its|it|them|this|that|these|those|to|for|on|in|into|at|of|with|from|me|us|i|you|we|do|does|did|is|are|was|be|being|been|get|got|some|any|again|properly|correctly|here|there|now|then)\b/g;
+  /\b(?:please|the|a|an|my|your|our|their|its|it|them|this|that|these|those|to|for|on|in|into|at|of|with|from|me|us|i|you|we|can|could|would|should|explain|tell|show|help|do|does|did|is|are|was|be|being|been|get|got|have|has|some|any|again|properly|correctly|here|there|now|then|about)\b/g;
 
 /**
- * What is left of the question once its grammar, articles and possessives are
- * gone. "How do I search?" leaves `["search"]`; "How do I search for
- * peer-reviewed papers?" leaves four words and is therefore not a request the
- * app can own by itself.
+ * The closed vocabulary of this app: every word a question about FindBack's
+ * features can be made of, on top of its own topic's words.
+ *
+ * Closed on purpose, and closed at the level of ordinary words rather than of
+ * named services, because the services are not the problem. The retry-3
+ * review's ten counterexamples are "stock market", "school", "essay",
+ * "passport application", "bank", "meeting", "employee performance review",
+ * "PDF", "shop" and "Instagram" — no list of named platforms could have
+ * covered school, bank, meeting, passport or PDF, and this set does not need
+ * to name any of them. A question that uses a word outside it is asking about
+ * something this app does not own, so the FAQ keeps the draft instead.
+ */
+const APP_VOCAB: ReadonlySet<string> = new Set([
+  // What the app owns.
+  "findback",
+  "app",
+  "report",
+  "reports",
+  "reporting",
+  "item",
+  "items",
+  "listing",
+  "listings",
+  "post",
+  "posts",
+  "comment",
+  "comments",
+  "notification",
+  "notifications",
+  "status",
+  "statuses",
+  "location",
+  "locations",
+  "map",
+  "maps",
+  "pin",
+  "pins",
+  "photo",
+  "photos",
+  "image",
+  "images",
+  "attachment",
+  "attachments",
+  "profile",
+  "account",
+  "accounts",
+  "category",
+  "categories",
+  "draft",
+  "drafts",
+  "match",
+  "matches",
+  "possible",
+  "search",
+  "searches",
+  "filter",
+  "filters",
+  "filtering",
+  "result",
+  "results",
+  "feed",
+  "nearby",
+  "bell",
+  "inbox",
+  "unread",
+  "settings",
+  "user",
+  "users",
+  "member",
+  "members",
+  "another",
+  "other",
+  // Fields a report carries.
+  "title",
+  "description",
+  "date",
+  "youtube",
+  "link",
+  "links",
+  // States and words the app defines.
+  "lost",
+  "found",
+  "open",
+  "closed",
+  "matched",
+  "recovered",
+  "recover",
+  "publish",
+  "published",
+  "approximate",
+  "gps",
+  // The actions the app owns.
+  "browse",
+  "sort",
+  "turn",
+  "enable",
+  "disable",
+  "upload",
+  "uploads",
+  "attach",
+  "add",
+  "create",
+  "make",
+  "file",
+  "submit",
+  "write",
+  "edit",
+  "update",
+  "change",
+  "set",
+  "mark",
+  "remove",
+  "delete",
+  "deleted",
+  "deleting",
+  "deletion",
+  "close",
+  "closing",
+  "find",
+  "finding",
+  "see",
+  "view",
+  "check",
+  "share",
+  "choose",
+  "pick",
+  "select",
+  "react",
+  "reaction",
+  "reactions",
+  "rate",
+  "rating",
+  "ratings",
+  "stars",
+  "leave",
+  "verify",
+  "verification",
+  "code",
+  "otp",
+  "confirm",
+  "consent",
+  "optional",
+]);
+
+/**
+ * What is left of the question once its request grammar, articles,
+ * possessives and any mention of the app itself are gone. "How do I search?"
+ * leaves `["search"]`; "How do I upload a photo to my passport application?"
+ * leaves `passport` and `application`, which no topic owns.
  */
 function significantWords(question: string): string[] {
   return question
+    .replace(APP_NAME_STRIP_RE, " ")
     .replace(APP_ACTIVITY_REQUEST_RE, " ")
     .replace(SCAFFOLD_RE, " ")
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((token) => token.length > 0);
+    .filter((token) => token.length > 1);
+}
+
+/**
+ * True when the question uses a word that belongs to neither this topic nor
+ * this app — the subject of the request is something FindBack does not own.
+ */
+function hasForeignSubject(question: string, topic: HelpTopic): boolean {
+  return significantWords(question).some(
+    (word) => !topic.ownWords.test(word) && !APP_VOCAB.has(word),
+  );
 }
 
 /** A question made only of this topic's own words is a request for this topic. */
@@ -136,6 +301,14 @@ interface HelpTopic {
    * "how do I change status?") and is app help by that shape alone.
    */
   readonly ownWords: RegExp;
+  /**
+   * A shape in which the topic's object is unambiguously this app's, so the
+   * subject needs no vocabulary check. Only the report topic has one: the app
+   * exists to report lost and found things, and the thing itself belongs to
+   * the person ("my lost backpack"), so no item noun can be foreign — unlike
+   * "a report for school", which the same grammar produces.
+   */
+  readonly selfBinding?: RegExp;
   readonly answer: string;
 }
 
@@ -146,6 +319,8 @@ const HELP_TOPICS: readonly HelpTopic[] = [
     pattern:
       /\breports?\b[^?]{0,40}\b(?:lost|found)\b|\b(?:lost|found)\b[^?]{0,40}\breports?\b|\b(?:file|create|make|submit|publish|write|add)\s+(?:a|an|my|the)?\s*reports?\b|\bmy\s+reports?\b|\bdrafts?\b/,
     ownWords: /^(?:report|reports|reporting|lost|found|draft|drafts|create|add|publish)$/,
+    selfBinding:
+      /\breport(?:s|ed|ing)?\b[^?]{0,30}\b(?:lost|found)\b|\b(?:lost|found)\b[^?]{0,30}\breport(?:s|ed|ing)?\b/,
     answer:
       "To report an item, open the Report tab, choose Lost or Found, add a title, description, category, date and approximate location, then review and tap Publish. A photo is optional.",
   },
@@ -210,11 +385,17 @@ const HELP_TOPICS: readonly HelpTopic[] = [
 /**
  * Single, deterministic classification shared by the FAQ answer and the
  * app-help predicate, so the two can never disagree about the same question.
+ *
+ * Two different questions are decided here and they must not be conflated:
+ * which FAQ topic a question is closest to, and whether this app may answer it
+ * at all. The second one is what costs the person their draft when it is
+ * wrong. The order of the branches is part of the contract — verification
+ * before lookup is a repaired regression, not a preference (CF-070 R2 retry-3
+ * finding 2).
  */
 export function classifyHelpQuestion(question: string): HelpClassification {
   const q = question.trim().toLowerCase();
   const owned = APP_OWNERSHIP_RE.test(q);
-  const activityRequest = APP_ACTIVITY_REQUEST_RE.test(q);
   const scope = (topic: HelpTopicId, appHelp: boolean, answer: string): HelpClassification => ({
     topic,
     answer: appHelp ? answer : DEFAULT_SCOPE_ANSWER,
@@ -230,9 +411,9 @@ export function classifyHelpQuestion(question: string): HelpClassification {
   // even when it names another assistant.
   if (isModelIdentityQuestion(question)) return scope("model-identity", true, MODEL_IDENTITY_ANSWER);
 
-  // 2. Account and contact lookup is refused (AI-01). Asking FindBack to look
-  // someone up is a request to the app, whatever it names.
-  if (isAccountLookupRequest(question)) return scope("lookup", true, LOOKUP_REFUSAL);
+  // 2. A question that excludes this app is not about it, even when it also
+  // names it: "How do I upload a photo to Instagram, not FindBack?"
+  if (NEGATED_APP_RE.test(q)) return exact("default-scope", DEFAULT_SCOPE_ANSWER);
 
   // 3. A named other platform is never this app — unless the question also
   // says "FindBack" (CF-070 R2 retry-2: "How do I delete my Gmail account?"
@@ -255,21 +436,35 @@ export function classifyHelpQuestion(question: string): HelpClassification {
   // 5. Coding or other general tasks never reach the FAQ branches (AI-03).
   if (isGeneralNonAppQuestion(question)) return exact("general-scope", GENERAL_SCOPE_ANSWER);
 
-  // 6. Verification stays the answer for real one-time-code questions (AI-03
-  // pair). Asking about a signup code is app help by itself.
+  // 6. A one-time-code question is the verification FAQ, and it is checked
+  // BEFORE lookup: "Where is my email verification code?" has a lookup verb and
+  // an email word, and running lookup first turned the app's own signup answer
+  // into a contact-details refusal (CF-070 R2 retry-3 finding 2).
   if (isVerificationQuestion(question)) return scope("verification", true, OTP_ANSWER);
 
-  // 7. Feature topics: a bounded app-activity phrase, or a question made of
-  // nothing but the topic's own words ("how do I search?"). Either way the
-  // question must still be a request, and ownership alone is enough.
+  // 7. Account and contact lookup is refused (AI-01). Asking FindBack to look
+  // someone up is a request to the app, whatever it names — but a question
+  // about one's own verification code was already answered above.
+  if (isAccountLookupRequest(question)) return scope("lookup", true, LOOKUP_REFUSAL);
+
+  // 8. Feature topics. A phrase match is necessary and not sufficient: "How do
+  // I search stock market reports?", "How do I write a report for school?" and
+  // "How do I upload a photo to my passport application?" match the search,
+  // report and photo phrases word for word. The topic therefore answers only
+  // when its subject is bound to this app — by the topic's self-binding shape,
+  // or by a question made only of the app's vocabulary (CF-070 R2 retry-3
+  // finding 1). A question that binds neither keeps the person's draft.
   const byPhrase = HELP_TOPICS.find((candidate) => candidate.pattern.test(q));
   const byShape = HELP_TOPICS.find((candidate) => isMinimalTopicRequest(q, candidate));
   const topic = byPhrase ?? byShape;
   if (topic !== undefined) {
-    return scope(topic.id, owned || activityRequest, topic.answer);
+    const selfBound = topic.selfBinding?.test(q) === true;
+    if (selfBound || !hasForeignSubject(q, topic)) {
+      return scope(topic.id, true, topic.answer);
+    }
   }
 
-  // 8. A claim about the app that the knowledge does not cover: do not invent
+  // 9. A claim about the app that the knowledge does not cover: do not invent
   // it, and only claim it when the question names the app.
   if (owned && checkAppClaim(question).status === "unknown") {
     return scope("unknown-feature", true, UNKNOWN_FEATURE_ANSWER);

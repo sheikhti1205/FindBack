@@ -211,6 +211,181 @@ describe("validateReportFieldHelperWired", () => {
       ok(validateReportFieldHelperWired(broken).length > 0, label);
     });
   }
+
+  /**
+   * CF-070 R2 retry-3 finding 3: the exact 23 mutations the review ran against
+   * the full gate while all 14 checks stayed green. Each must now fail, and the
+   * requirement that fails must be the binding that owns that mutation rather
+   * than a neighbouring string, so a regression to token presence shows up
+   * here instead of at release.
+   */
+  const RETRY_3_SURVIVING_MUTATIONS = [
+    ...["title", "description", "date", "category"].map((field) => [
+      `the ${field} branch is made unreachable`,
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          `if (patch.field === "${field}") {`,
+          `if (false && patch.field === "${field}") {`,
+        ),
+      }),
+      `the ${field} suggestion must have its own reachable apply branch`,
+    ]),
+    ...[
+      ["title", "setTitle(patch.suggestedValue);"],
+      ["description", "setDescription(patch.suggestedValue);"],
+      ["date", "setEventDate(patch.suggestedValue);"],
+      ["category", "setCategory(patch.suggestedValue as Category);"],
+    ].map(([field, call]) => [
+      `the ${field} setter is deleted from its branch`,
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(call, "void patch.suggestedValue;"),
+      }),
+      `the ${field} suggestion must apply through`,
+    ]),
+    ...["title", "description", "date", "category"].map((field) => [
+      `the ${field} confirmation is made unreachable`,
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          `if (!window.confirm("Replace the existing ${field} with this suggestion?")) return;`,
+          `if (false && !window.confirm("Replace the existing ${field} with this suggestion?")) return;`,
+        ),
+      }),
+      `replacing an existing ${field} must be confirmed by a reachable guard`,
+    ]),
+    [
+      "the title confirmation call is kept but its refusal is dropped",
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          'if (!window.confirm("Replace the existing title with this suggestion?")) return;',
+          'window.confirm("Replace the existing title with this suggestion?");',
+        ),
+      }),
+      "replacing an existing title must be confirmed by a reachable guard",
+    ],
+    [
+      "the title branch writes the description setter",
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource
+          .replace("setTitle(patch.suggestedValue);", "setDescription(patch.suggestedValue);"),
+      }),
+      "the title suggestion must apply through setTitle",
+    ],
+    [
+      "only the separate category path loses its replacement confirmation",
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          '    if (category && suggestion.suggestedCategory !== category) {\n      if (!window.confirm("Replace the existing category with this suggestion?")) return;\n    }\n',
+          "    void 0;\n",
+        ),
+      }),
+      "replacing an existing category from its own suggestion must be confirmed",
+    ],
+    [
+      "the per-field Apply tap is disconnected",
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          "onClick={() => aiSuggestApplyField(patch)}",
+          "onClick={() => false && aiSuggestApplyField(patch)}",
+        ),
+      }),
+      "must apply only from an explicit per-suggestion tap",
+    ],
+    [
+      "the category Apply tap returns a function instead of applying",
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          "onClick={() => aiSuggestApplyCategory(aiCatSuggestion)}",
+          "onClick={() => () => aiSuggestApplyCategory(aiCatSuggestion)}",
+        ),
+      }),
+      "the category suggestion must apply only from its own explicit tap",
+    ],
+    [
+      "the per-field Keep control resolves nothing",
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          "onClick={() => aiSuggestResolve(`field:${patch.field}`)}",
+          "onClick={() => {}}",
+        ),
+      }),
+      "each Keep control must resolve its own suggestion",
+    ],
+    [
+      "the category Keep control resolves nothing",
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          'onClick={() => aiSuggestResolve("categorySuggestion")}',
+          "onClick={() => {}}",
+        ),
+      }),
+      "each Keep control must resolve its own suggestion",
+    ],
+    [
+      "the released-category guard in the category patch never rejects",
+      (s) => ({
+        ...s,
+        createReportSource: s.createReportSource.replace(
+          "if (!isReleasedCategory(patch.suggestedValue)) return;",
+          "if (false && !isReleasedCategory(patch.suggestedValue)) return;",
+        ),
+      }),
+      "the category patch must respect the released-category guard",
+    ],
+    [
+      "the reviewed op runs but its result is discarded",
+      (s) => ({
+        ...s,
+        reportFieldSuggestionsSource: s.reportFieldSuggestionsSource.replace(
+          "const opTask = extractReportFields(generate, userMessage, profile);",
+          'void extractReportFields(generate, userMessage, profile);\n  const opTask: ReturnType<typeof extractReportFields> = Promise.resolve({\n    ok: false,\n    error: makeAiError("CANCELLED", "DISCONNECTED"),\n  });',
+        ),
+      }),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "the reviewed op is invoked inside a branch the compiler can fold away",
+      (s) => ({
+        ...s,
+        reportFieldSuggestionsSource: s.reportFieldSuggestionsSource.replace(
+          "const opTask = extractReportFields(generate, userMessage, profile);",
+          'const opTask = false\n    ? extractReportFields(generate, userMessage, profile)\n    : Promise.resolve({ ok: false as const, error: makeAiError("CANCELLED", "DISCONNECTED") });',
+        ),
+      }),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "the reviewed op survives only as a comment",
+      (s) => ({
+        ...s,
+        reportFieldSuggestionsSource: s.reportFieldSuggestionsSource.replace(
+          "const opTask = extractReportFields(generate, userMessage, profile);",
+          '// extractReportFields(generate, userMessage, profile)\n  const opTask: ReturnType<typeof extractReportFields> = Promise.resolve({\n    ok: false,\n    error: makeAiError("CANCELLED", "DISCONNECTED"),\n  });',
+        ),
+      }),
+      "must actually invoke the reviewed narrow task",
+    ],
+  ];
+
+  for (const [label, mutate, expected] of RETRY_3_SURVIVING_MUTATIONS) {
+    it(`fails on ${label} (CF-070 R2 retry-3 finding 3)`, () => {
+      const errors = validateReportFieldHelperWired(mutate(REAL));
+      ok(errors.length > 0, label);
+      ok(
+        errors.some((error) => error.includes(expected)),
+        `${label}: expected ${expected} among ${JSON.stringify(errors)}`,
+      );
+    });
+  }
 });
 
 describe("validateRetiredReportPhotoAi", () => {
@@ -254,6 +429,25 @@ describe("validateRetiredReportPhotoAi", () => {
     ["a JSX mount through a renamed local import", 'import Retired from "../components/VlmSuggestions";\nexport const X = () => <Retired />;'],
     ["a call to a retired entry point", "const target = mapAssistantSearchFilters(fields);"],
     ["a grounding transport call", "const go = async () => { await groundReportPhoto({ imageUri }); };"],
+    // CF-070 R2 retry-3 finding 4: the literal and member forms the scan missed.
+    ["a template-literal dynamic import", "const p = import(`../services/analyzeReportPhoto`);"],
+    ["a template-literal require", "const p = require(`../services/analyzeReportPhoto`);"],
+    [
+      "a member mount of a retired surface",
+      "const Legacy = { VlmSuggestions: () => null };\nexport const X = () => <Legacy.VlmSuggestions/>;",
+    ],
+    [
+      "a member call of a retired entry point",
+      "const Legacy = { analyzeReportPhoto: async () => [] };\nvoid Legacy.analyzeReportPhoto();",
+    ],
+    [
+      "an element-access call of a retired entry point",
+      'const Legacy = { analyzeReportPhoto: async () => [] };\nvoid Legacy["analyzeReportPhoto"]();',
+    ],
+    [
+      "a retired entry-point name rebound to a local",
+      "const analyzeReportPhoto = async () => [];\nconst run = analyzeReportPhoto; void run();",
+    ],
   ]) {
     it(`catches ${label}`, () => {
       const errors = validateRetiredReportPhotoAi({
@@ -280,6 +474,14 @@ describe("validateRetiredReportPhotoAi", () => {
     [
       "a string that merely names a retired module",
       'const note = "analyzeReportPhoto was removed";\nexport const unchanged = note;',
+    ],
+    [
+      "a template literal that merely names a retired module",
+      "const note = `analyzeReportPhoto was removed`;\nexport const unchanged = note;",
+    ],
+    [
+      "a member call on an unrelated object",
+      "const tools = { analyze: async () => [] };\nvoid tools.analyze();",
     ],
   ]) {
     it(`does not flag ${label}`, () => {
