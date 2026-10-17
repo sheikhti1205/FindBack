@@ -128,6 +128,9 @@ describe("ReportMediaPicker", () => {
         expect(parseFloat(marker.style.width)).toBeGreaterThan(0);
         expect(parseFloat(marker.style.height)).toBeGreaterThan(0);
         expect(parseFloat(button.style.width)).toBeGreaterThanOrEqual(24);
+        // A marker must never animate layout: a blanket transition would
+        // animate the active marker's width change (uiMotion: never layout).
+        expect(marker.className).not.toContain("transition-all");
         return parseFloat(marker.style.width);
       });
     }

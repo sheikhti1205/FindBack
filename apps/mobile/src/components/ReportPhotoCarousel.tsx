@@ -214,7 +214,7 @@ export function ReportPhotoCarousel({
             >
               <span
                 aria-hidden
-                className={`block rounded-full transition-all ${
+                className={`block rounded-full ${
                   index === activeIndex ? "bg-on-surface" : "bg-on-surface-variant/50"
                 }`}
                 style={{
