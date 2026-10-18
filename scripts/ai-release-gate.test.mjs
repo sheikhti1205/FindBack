@@ -7,8 +7,9 @@
  * CI: `node --test scripts/ai-release-gate.test.mjs`).
  */
 import { deepStrictEqual, equal, ok } from "node:assert";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -388,6 +389,1124 @@ describe("validateReportFieldHelperWired", () => {
   }
 });
 
+/**
+ * CF-070 R2 retry-4 finding 3: the 16 mutations that survived the retry-3
+ * binding, plus the six behaviour-preserving rewrites the earlier token checks
+ * wrongly rejected. Must-fail cases pin the requirement that owns them;
+ * accepted cases must keep the gate green, so a future tightening cannot
+ * quietly turn a legitimate spelling into a release blocker.
+ */
+describe("reportFieldWiring (CF-070 R2 retry-4)", () => {
+  const FORM = REAL.createReportSource;
+  const HELPER = REAL.reportFieldSuggestionsSource;
+  const TITLE_GUARD =
+    'if (!window.confirm("Replace the existing title with this suggestion?")) return;';
+  const TITLE_BLOCK =
+    '      if (title.trim() && patch.suggestedValue !== title) {\n' +
+    '        if (!window.confirm("Replace the existing title with this suggestion?")) return;\n' +
+    '      }';
+  const SETTER = "setTitle(patch.suggestedValue);";
+  const TAP = "onClick={() => aiSuggestApplyField(patch)}";
+  const FIELD_KEEP = "onClick={() => aiSuggestResolve(`field:${patch.field}`)}";
+  const RELGUARD = "if (!isReleasedCategory(patch.suggestedValue)) return;";
+  const CAT_TAP = "onClick={() => aiSuggestApplyCategory(aiCatSuggestion)}";
+  const FIELD_CMP = 'patch.field === "title"';
+  const OP = "const opTask = extractReportFields(generate, userMessage, profile);";
+  const OPRESULT_DECL = "let opResult: Awaited<typeof opTask>;";
+  const AWAIT_OP = "opResult = await opTask;";
+
+  const replace = (source, from, to, label) => {
+    if (!source.includes(from)) throw new Error(`${label}: anchor missing: ${JSON.stringify(from)}`);
+    return source.replace(from, to);
+  };
+  const onForm = (label, from, to) => (s) => ({
+    ...s,
+    createReportSource: replace(s.createReportSource, from, to, label),
+  });
+  const onHelper = (label, from, to) => (s) => ({
+    ...s,
+    reportFieldSuggestionsSource: replace(s.reportFieldSuggestionsSource, from, to, label),
+  });
+
+  for (const [label, mutate, expected] of [
+    [
+      "the confirm guard refuses by returning from a nested IIFE",
+      onForm(
+        "nested IIFE",
+        TITLE_GUARD,
+        'if (!window.confirm("Replace the existing title with this suggestion?")) { (function () { return; })(); }',
+      ),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "the field Keep control resolves a literal key that is not its own suggestion",
+      onForm("Keep literal", FIELD_KEEP, 'onClick={() => aiSuggestResolve("field:title")}'),
+      "each Keep control must resolve its own suggestion",
+    ],
+    [
+      "the date patch drops its calendar validation",
+      onForm(
+        "date validation",
+        "if (!isValidCalendarDate(patch.suggestedValue) || isFutureDate(patch.suggestedValue)) return;",
+        "void 0;",
+      ),
+      "the date suggestion must keep its calendar validation before applying",
+    ],
+    [
+      "the op result is stored then only mentioned while a fabricated result is returned",
+      onHelper(
+        "void opTask",
+        OP,
+        `${OP}\n  void opTask;\n  return {\n    ok: true,\n    value: { suggestions: [], droppedCategory: false, action: opResultActionPlaceholder() },\n  };`,
+      ),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "the op result is overwritten before use",
+      onHelper(
+        "overwritten",
+        OPRESULT_DECL,
+        `${OPRESULT_DECL}\n  opResult = { ok: false as const, error: makeAiError("CANCELLED", "OVERWRITTEN_BEFORE_USE") };`,
+      ),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "the op promise is touched with catch before it is awaited",
+      onHelper(
+        "catch before await",
+        AWAIT_OP,
+        'opTask.catch(() => undefined);\n    opResult = await Promise.resolve({ ok: false as const, error: makeAiError("CANCELLED", "ABORT_BEFORE_START") });',
+      ),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "the field patches pass through a transform that returns an empty list",
+      onForm(
+        "substitutePatches",
+        "setAiFieldPatches([...fieldsResult.value.suggestions]);",
+        "setAiFieldPatches(substitutePatches(fieldsResult.value.suggestions));",
+      ),
+      "the reviewed field suggester's result must reach the rendered patch state",
+    ],
+    [
+      "the category suggestion passes through a picker that returns null",
+      onForm(
+        "pickSuggestion",
+        "setAiCatSuggestion(categoryResult.value.suggestion);",
+        "setAiCatSuggestion(pickSuggestion(categoryResult.value.suggestion));",
+      ),
+      "the reviewed category suggester's result must reach the rendered suggestion state",
+    ],
+    [
+      "window.confirm is hijacked to always return true",
+      onForm("confirm hijack", TITLE_GUARD, `window.confirm = () => true;\n        ${TITLE_GUARD}`),
+      "confirmation must come from the platform dialog",
+    ],
+    [
+      "the whole title confirmation is wrapped in a dead block",
+      onForm(
+        "dead title block",
+        TITLE_BLOCK,
+        `      if (false) {\n${TITLE_BLOCK}\n      }`,
+      ),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "the released-category guard is wrapped in a dead block",
+      onForm("dead category guard", RELGUARD, `if (false) {\n        ${RELGUARD}\n      }`),
+      "the category patch must respect the released-category guard before applying",
+    ],
+    [
+      "the released-category guard is moved into a never-taken else branch",
+      onForm(
+        "never-taken else",
+        `      ${RELGUARD}`,
+        `      if (patch.field === "category") { /* no-op */ } else if (false) { ${RELGUARD} }`,
+      ),
+      "the category patch must respect the released-category guard before applying",
+    ],
+    [
+      "the title branch writes an unrelated value through setTitle",
+      onForm("wrong title value", SETTER, "setTitle(aiSuggestInput);"),
+      "the title suggestion must apply the suggested value, not another one",
+    ],
+    [
+      "the field Keep control resolves an unrelated key",
+      onForm("unrelated key", FIELD_KEEP, 'onClick={() => aiSuggestResolve("nope")}'),
+      "each Keep control must resolve its own suggestion",
+    ],
+    [
+      "the card renders the suggested value but the tap applies another suggestion",
+      onForm(
+        "rendered vs applied",
+        '<p className="text-sm">{patch.suggestedValue}</p>',
+        '<p className="text-sm">{aiCatSuggestion?.suggestedCategory}</p>',
+      ),
+      "report-field suggestions must render the suggestion they apply",
+    ],
+    [
+      "the category Apply tap passes a different suggestion variable",
+      onForm(
+        "different category variable",
+        CAT_TAP,
+        "onClick={() => aiSuggestApplyCategory(aiCatSuggestionForAnotherReport)}",
+      ),
+      "the category suggestion must apply the category it renders",
+    ],
+  ]) {
+    it(`rejects ${label}`, () => {
+      const broken = mutate(REAL);
+      ok(broken.createReportSource !== FORM || broken.reportFieldSuggestionsSource !== HELPER, label);
+      const errors = validateReportFieldHelperWired(broken);
+      ok(errors.length > 0, label);
+      ok(
+        errors.some((error) => error.includes(expected)),
+        `${label}: expected ${expected} among ${JSON.stringify(errors)}`,
+      );
+    });
+  }
+
+  for (const [label, mutate] of [
+    [
+      "the field id comparison reads a typed const instead of an inline literal",
+      (s) => ({
+        ...s,
+        createReportSource: (() => {
+          const renamed = replace(s.createReportSource, FIELD_CMP, "patch.field === TITLE_FIELD", "typed const");
+          return replace(
+            renamed,
+            "export function CreateReport",
+            'const TITLE_FIELD = "title" as const;\n\nexport function CreateReport',
+            "typed const declaration",
+          );
+        })(),
+      }),
+    ],
+    [
+      "the field id comparison uses `as const`",
+      onForm("as const", FIELD_CMP, 'patch.field === ("title" as const)'),
+    ],
+    [
+      "the Keep label is rendered through a JSX expression container",
+      onForm(
+        "Keep expression container",
+        ">\n                    Keep mine\n                  </Button>",
+        '>\n                    {"Keep mine"}\n                  </Button>',
+      ),
+    ],
+    [
+      "the Keep text is translated but its resolve call is kept",
+      onForm(
+        "translated Keep",
+        ">\n                    Keep mine\n                  </Button>",
+        ">\n                    Keep\n                  </Button>",
+      ),
+    ],
+    [
+      "the confirm label is built by template literal from the field id",
+      onForm(
+        "template confirm label",
+        TITLE_GUARD,
+        "if (!window.confirm(`Replace the existing ${patch.field} with this suggestion?`)) return;",
+      ),
+    ],
+    [
+      "the Apply tap is written with a void prefix",
+      onForm("void tap", TAP, "onClick={() => void aiSuggestApplyField(patch)}"),
+    ],
+  ]) {
+    it(`accepts the behaviour-preserving rewrite: ${label}`, () => {
+      const rewritten = mutate(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+    });
+  }
+});
+
+describe("reportFieldWiring (CF-070 R2 retry-6: the retry-5 survivors N1-N10)", () => {
+  const FORM = REAL.createReportSource;
+  const HELPER = REAL.reportFieldSuggestionsSource;
+  const TITLE_GUARD =
+    'if (!window.confirm("Replace the existing title with this suggestion?")) return;';
+  const DATE_GUARD =
+    "if (!isValidCalendarDate(patch.suggestedValue) || isFutureDate(patch.suggestedValue)) return;";
+  const DATE_SET = "setEventDate(patch.suggestedValue);";
+  const FIELD_KEEP = "onClick={() => aiSuggestResolve(`field:${patch.field}`)}";
+  const CAT_KEEP = 'onClick={() => aiSuggestResolve("categorySuggestion")}';
+  const OP_AWAIT = "  if (!opResult.ok) return opResult;";
+  const AWAIT_OP = "opResult = await opTask;";
+
+  const replace = (source, from, to, label) => {
+    if (!source.includes(from)) throw new Error(`${label}: anchor missing: ${JSON.stringify(from)}`);
+    return source.replace(from, to);
+  };
+  const onForm = (label, from, to) => (s) => ({
+    ...s,
+    createReportSource: replace(s.createReportSource, from, to, label),
+  });
+  const onHelper = (label, from, to) => (s) => ({
+    ...s,
+    reportFieldSuggestionsSource: replace(s.reportFieldSuggestionsSource, from, to, label),
+  });
+
+  for (const [label, mutate, expected] of [
+    [
+      "N1 the date guard keeps both names but inverts its sense (future dates now apply)",
+      onForm(
+        "N1 inverted date guard",
+        DATE_GUARD,
+        "if (!(isValidCalendarDate(patch.suggestedValue) || isFutureDate(patch.suggestedValue))) return;",
+      ),
+      "the date suggestion must keep its calendar validation before applying",
+    ],
+    [
+      "N1b both operands are negated, so a valid non-future date is refused",
+      onForm(
+        "N1b double negation",
+        DATE_GUARD,
+        "if (!isValidCalendarDate(patch.suggestedValue) || !isFutureDate(patch.suggestedValue)) return;",
+      ),
+      "the date suggestion must keep its calendar validation before applying",
+    ],
+    [
+      "N2 the title confirmation sits inside `if (1 === 2) { … }`",
+      onForm("N2 folded comparison", TITLE_GUARD, `if (1 === 2) { ${TITLE_GUARD} }`),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "N2b the dead branch is spelled with two string literals",
+      onForm("N2b folded string comparison", TITLE_GUARD, `if ("a" === "b") { ${TITLE_GUARD} }`),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "N3 the awaited result is void-ed, a fabricated result is returned, and the real use is left after it",
+      onHelper(
+        "N3 unreachable use",
+        OP_AWAIT,
+        "  void opResult;\n  return {\n    ok: true,\n    value: { suggestions: [], droppedCategory: false, action: opResultActionPlaceholder() },\n  };\n" +
+          OP_AWAIT,
+      ),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "N4 the calendar validation is moved below the date write",
+      (s) => {
+        const withoutGuard = replace(
+          s.createReportSource,
+          DATE_GUARD,
+          "// validation moved below the write",
+          "N4 guard removal",
+        );
+        return {
+          ...s,
+          createReportSource: replace(withoutGuard, DATE_SET, `${DATE_SET}\n      ${DATE_GUARD}`, "N4 guard move"),
+        };
+      },
+      "the date suggestion must not write the date before its calendar validation",
+    ],
+    [
+      "N4b a second validation runs after the write has already happened",
+      onForm("N4b trailing validation", DATE_SET, `${DATE_SET}\n      ${DATE_GUARD}`),
+      "the date suggestion must not write the date before its calendar validation",
+    ],
+    [
+      "N5 window.confirm is replaced through element access",
+      onForm("N5 element-access hijack", TITLE_GUARD, `window["confirm"] = () => true;\n        ${TITLE_GUARD}`),
+      "confirmation must come from the platform dialog",
+    ],
+    [
+      "the refusal keeps working after the return, which is not a refusal at once",
+      onForm(
+        "work after return",
+        TITLE_GUARD,
+        'if (!window.confirm("Replace the existing title with this suggestion?")) { return; setTitle(patch.suggestedValue); }',
+      ),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+  ]) {
+    it(`rejects ${label}`, () => {
+      const broken = mutate(REAL);
+      ok(broken.createReportSource !== FORM || broken.reportFieldSuggestionsSource !== HELPER, label);
+      const errors = validateReportFieldHelperWired(broken);
+      ok(errors.length > 0, label);
+      ok(
+        errors.some((error) => error.includes(expected)),
+        `${label}: expected ${expected} among ${JSON.stringify(errors)}`,
+      );
+    });
+  }
+
+  for (const [label, mutate] of [
+    [
+      "N6 the refusal block carries a no-op statement before the return",
+      onForm(
+        "N6 no-op before return",
+        TITLE_GUARD,
+        'if (!window.confirm("Replace the existing title with this suggestion?")) { void 0; return; }',
+      ),
+    ],
+    [
+      "N6b the no-op is a discarded literal",
+      onForm(
+        "N6b literal before return",
+        TITLE_GUARD,
+        'if (!window.confirm("Replace the existing title with this suggestion?")) { 0; return; }',
+      ),
+    ],
+    [
+      "N5 the confirmation is read through element access",
+      onForm(
+        "N5b element-access guard",
+        TITLE_GUARD,
+        'if (!window["confirm"]("Replace the existing title with this suggestion?")) return;',
+      ),
+    ],
+    [
+      "N1 the date disjunction is written in the other order",
+      onForm(
+        "N1c reversed operands",
+        DATE_GUARD,
+        "if (isFutureDate(patch.suggestedValue) || !isValidCalendarDate(patch.suggestedValue)) return;",
+      ),
+    ],
+    [
+      "F3 the confirm label is templated from the patch field",
+      onForm(
+        "F3 templated confirm label",
+        TITLE_GUARD,
+        'if (!window.confirm(`Replace the existing ${patch.field} with this suggestion?`)) return;',
+      ),
+    ],
+    [
+      "F3b the template reads the field through element access",
+      onForm(
+        "F3b templated confirm label, element access",
+        TITLE_GUARD,
+        'if (!window.confirm(`Replace the existing ${patch["field"]} with this suggestion?`)) return;',
+      ),
+    ],
+    [
+      "N8 the field Keep binds the same field through element access",
+      onForm("N8 element access", FIELD_KEEP, 'onClick={() => aiSuggestResolve(`field:${patch["field"]}`)}'),
+    ],
+    [
+      "N9 the field Keep builds its key by string concatenation",
+      onForm("N9 concatenation", FIELD_KEEP, 'onClick={() => aiSuggestResolve("field:" + patch.field)}'),
+    ],
+    [
+      "N10 the awaited result is parenthesised",
+      onHelper("N10 parenthesised await", AWAIT_OP, "opResult = (await opTask);"),
+    ],
+    [
+      "the category Keep key is written as a typed const cast",
+      onForm("category keep cast", CAT_KEEP, 'onClick={() => aiSuggestResolve("categorySuggestion" as const)}'),
+    ],
+  ]) {
+    it(`accepts the behaviour-preserving rewrite: ${label}`, () => {
+      const rewritten = mutate(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+    });
+  }
+
+  it("still rejects a Keep that resolves a key the card does not own, in either spelling", () => {
+    for (const key of ['aiSuggestResolve("field:nope")', 'aiSuggestResolve("field:" + other.field)']) {
+      const broken = onForm("unowned keep", FIELD_KEEP, `onClick={() => ${key}}`)(REAL);
+      const errors = validateReportFieldHelperWired(broken);
+      ok(
+        errors.includes("application-integration: each Keep control must resolve its own suggestion"),
+        `${key}: ${JSON.stringify(errors)}`,
+      );
+    }
+  });
+
+  it("still rejects a category Keep that resolves a literal other than its own key", () => {
+    for (const key of ['aiSuggestResolve("categorySuggestionOther")', 'aiSuggestResolve("field:" + patch.field)']) {
+      const broken = onForm("unowned category keep", CAT_KEEP, `onClick={() => ${key}}`)(REAL);
+      const errors = validateReportFieldHelperWired(broken);
+      ok(
+        errors.includes("application-integration: each Keep control must resolve its own suggestion"),
+        `${key}: ${JSON.stringify(errors)}`,
+      );
+    }
+  });
+});
+
+/**
+ * CF-070 R2 retry-7. The retry-6 review authored six mutants that the gate
+ * accepted (K1-K6) and two behaviour-preserving rewrites it wrongly rejected
+ * (P1, P2). Every fixture below carries its anchor: `replace` throws when the
+ * text it rewrites is not in the real source, so a fixture that stops meaning
+ * anything fails loudly instead of passing on an unmatchable string.
+ */
+describe("reportFieldWiring (CF-070 R2 retry-7: the retry-6 survivors K1-K6 and the R6-3 false positives)", () => {
+  const FORM = REAL.createReportSource;
+  const HELPER = REAL.reportFieldSuggestionsSource;
+  const TITLE_GUARD =
+    'if (!window.confirm("Replace the existing title with this suggestion?")) return;';
+  const FIELD_KEEP = "onClick={() => aiSuggestResolve(`field:${patch.field}`)}";
+  const CAT_KEEP = 'onClick={() => aiSuggestResolve("categorySuggestion")}';
+  const OP_AWAIT = "  if (!opResult.ok) return opResult;";
+  const FINAL_SUGGESTIONS = "      suggestions: built.suggestions,";
+  const EXPORT_FORM = "export function CreateReport";
+
+  const replace = (source, from, to, label) => {
+    if (!source.includes(from)) throw new Error(`${label}: anchor missing: ${JSON.stringify(from)}`);
+    return source.replace(from, to);
+  };
+  const onForm = (label, from, to) => (s) => ({
+    ...s,
+    createReportSource: replace(s.createReportSource, from, to, label),
+  });
+  const onHelper = (label, from, to) => (s) => ({
+    ...s,
+    reportFieldSuggestionsSource: replace(s.reportFieldSuggestionsSource, from, to, label),
+  });
+  const declared = (label, from, to, declaration) => (s) => {
+    const rewritten = onForm(label, from, to)(s);
+    return {
+      ...rewritten,
+      createReportSource: replace(rewritten.createReportSource, EXPORT_FORM, `${declaration}\n${EXPORT_FORM}`, label),
+    };
+  };
+  /** A "successful" payload that mentions the reviewed result but does not carry it. */
+  const fabricated = (before) =>
+    `${before}  return {\n    ok: true,\n    value: { suggestions: [], droppedCategory: false, action: opResult.value.action },\n  };\n${OP_AWAIT}`;
+
+  for (const [label, mutate, expected] of [
+    [
+      "K1 the whole confirmation is inside an IIFE, so Cancel returns from the IIFE",
+      onForm("K1 IIFE guard", TITLE_GUARD, `(() => { ${TITLE_GUARD} })();`),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "K2 the confirmation sits in `while (1 === 2) { … }`",
+      onForm("K2 folded while", TITLE_GUARD, `while (1 === 2) { ${TITLE_GUARD} }`),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "K2b the same folded loop spelled as a `for`",
+      onForm("K2b folded for", TITLE_GUARD, `for (; 1 === 2;) { ${TITLE_GUARD} }`),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "K3 the guard lives in a helper, so Cancel returns from askConfirm()",
+      onForm(
+        "K3 guard helper",
+        TITLE_GUARD,
+        `const askConfirm = () => { ${TITLE_GUARD} };\n        askConfirm();`,
+      ),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "K4 the helper reads opResult only for .action and returns fabricated suggestions",
+      onHelper("K4 fabricated early return", OP_AWAIT, fabricated("")),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "K5 the only read of opResult is inside `if (1 === 2)`, then a fabricated result is returned",
+      onHelper(
+        "K5 folded read",
+        OP_AWAIT,
+        fabricated("  if (1 === 2) { void opResult.value.fields; }\n"),
+      ),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "K6 the title refusal voids an unrelated field's write before returning",
+      onForm(
+        "K6 unrelated write",
+        TITLE_GUARD,
+        'if (!window.confirm("Replace the existing title with this suggestion?")) { void setDescription(""); return; }',
+      ),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "K6b the title refusal voids the SAME setter's write before returning",
+      onForm(
+        "K6b same write",
+        TITLE_GUARD,
+        "if (!window.confirm(\"Replace the existing title with this suggestion?\")) { void setTitle(patch.suggestedValue); return; }",
+      ),
+      "replacing an existing title must be confirmed by a reachable guard that refuses",
+    ],
+    [
+      "K4b the success payload replaces the built suggestions with an empty array, with no dead code",
+      onHelper("K4b empty payload", FINAL_SUGGESTIONS, "      suggestions: [],"),
+      "must use the reviewed narrow task's result",
+    ],
+    [
+      "K4c the success payload drops the suggestions field entirely",
+      onHelper(
+        "K4c dropped payload",
+        FINAL_SUGGESTIONS,
+        "      droppedCategory: built.droppedCategory,",
+      ),
+      "must use the reviewed narrow task's result",
+    ],
+  ]) {
+    it(`rejects ${label}`, () => {
+      const broken = mutate(REAL);
+      ok(broken.createReportSource !== FORM || broken.reportFieldSuggestionsSource !== HELPER, label);
+      const errors = validateReportFieldHelperWired(broken);
+      ok(errors.length > 0, label);
+      ok(
+        errors.some((error) => error.includes(expected)),
+        `${label}: expected ${expected} among ${JSON.stringify(errors)}`,
+      );
+    });
+  }
+
+  for (const [label, mutate] of [
+    [
+      "P1 the confirm label is a const-bound string",
+      declared(
+        "P1 const confirm label",
+        TITLE_GUARD,
+        "if (!window.confirm(TITLE_CONFIRM_LABEL)) return;",
+        'const TITLE_CONFIRM_LABEL = "Replace the existing title with this suggestion?";',
+      ),
+    ],
+    [
+      "P1b the const-bound confirm label is written `as const`",
+      declared(
+        "P1b const confirm label as const",
+        TITLE_GUARD,
+        "if (!window.confirm(TITLE_CONFIRM_LABEL)) return;",
+        'const TITLE_CONFIRM_LABEL = "Replace the existing title with this suggestion?" as const;',
+      ),
+    ],
+    [
+      "P2 the category Keep key is a const-bound string",
+      declared(
+        "P2 const category key",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'const CAT_KEEP_KEY = "categorySuggestion";',
+      ),
+    ],
+    [
+      "P2b the const-bound category Keep key is written `as const`",
+      declared(
+        "P2b const category key as const",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'const CAT_KEEP_KEY = "categorySuggestion" as const;',
+      ),
+    ],
+    [
+      "N6 the refusal block keeps a side-effect-free `void` read in front of the return",
+      onForm(
+        "N6c void read before return",
+        TITLE_GUARD,
+        'if (!window.confirm("Replace the existing title with this suggestion?")) { void patch.suggestedValue; return; }',
+      ),
+    ],
+    [
+      "N7 the refusal block keeps its single bare return",
+      onForm(
+        "N7b bare return block",
+        TITLE_GUARD,
+        'if (!window.confirm("Replace the existing title with this suggestion?")) { return; }',
+      ),
+    ],
+    [
+      "P3 the field Keep key stays templated from the patch field",
+      onForm("P3 field key template", FIELD_KEEP, FIELD_KEEP),
+    ],
+  ]) {
+    it(`accepts the behaviour-preserving rewrite: ${label}`, () => {
+      const rewritten = mutate(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+    });
+  }
+
+  it("still rejects a confirmation whose label names no field", () => {
+    const broken = onForm(
+      "unrelated confirm label",
+      TITLE_GUARD,
+      'if (!window.confirm("Are you sure?")) return;',
+    )(REAL);
+    const errors = validateReportFieldHelperWired(broken);
+    ok(
+      errors.includes("application-integration: replacing an existing title must be confirmed by a reachable guard that refuses"),
+      JSON.stringify(errors),
+    );
+  });
+});
+
+describe("reportFieldWiring (CF-070 R2 retry-8: the seven retry-7 survivors and the P-4 label import)", () => {
+  const FORM = REAL.createReportSource;
+  const TITLE_GUARD =
+    'if (!window.confirm("Replace the existing title with this suggestion?")) return;';
+  const CAT_KEEP = 'onClick={() => aiSuggestResolve("categorySuggestion")}';
+  const EXPORT_FORM = "export function CreateReport";
+  const REPORT_FORM = "function ReportForm() {";
+  const SUCCESS_PAYLOAD = [
+    "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+    "  return {",
+    "    ok: true,",
+    "    value: {",
+    "      suggestions: built.suggestions,",
+    "      droppedCategory: built.droppedCategory,",
+    "      action: opResult.value.action,",
+    "    },",
+    "  };",
+  ].join("\n");
+
+  const replace = (source, from, to, label) => {
+    if (!source.includes(from)) throw new Error(`${label}: anchor missing: ${JSON.stringify(from)}`);
+    return source.replace(from, to);
+  };
+  const onForm = (label, from, to) => (s) => ({
+    ...s,
+    createReportSource: replace(s.createReportSource, from, to, label),
+  });
+  const onHelper = (label, from, to) => (s) => ({
+    ...s,
+    reportFieldSuggestionsSource: replace(s.reportFieldSuggestionsSource, from, to, label),
+  });
+  const declared = (label, from, to, declaration) => (s) => {
+    const rewritten = onForm(label, from, to)(s);
+    return {
+      ...rewritten,
+      createReportSource: replace(rewritten.createReportSource, EXPORT_FORM, `${declaration}\n${EXPORT_FORM}`, label),
+    };
+  };
+  /** The same const, declared in the component that renders the cards. */
+  const declaredInForm = (label, from, to, declaration) => (s) => {
+    const rewritten = onForm(label, from, to)(s);
+    return {
+      ...rewritten,
+      createReportSource: replace(
+        rewritten.createReportSource,
+        REPORT_FORM,
+        `${REPORT_FORM}\n  ${declaration}`,
+        label,
+      ),
+    };
+  };
+
+  const WRITE_BEFORE_GUARD =
+    "the title suggestion must not write a reviewed field before its confirmation guard";
+  const UNREACHABLE_GUARD =
+    "replacing an existing title must be confirmed by a reachable guard that refuses";
+  const DISCARDED = "report-field helper must use the reviewed narrow task's result, not merely mention the call";
+  const KEEP_RESOLVES = "each Keep control must resolve its own suggestion";
+
+  for (const [label, mutate, expected] of [
+    [
+      "A the title branch writes another reviewed field before its still-valid guard",
+      onForm("A stray description write", TITLE_GUARD, `setDescription("");\n        ${TITLE_GUARD}`),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "B the confirmation sits after a `break` inside `while (true) { … }`",
+      onForm("B while-true break", TITLE_GUARD, `while (true) { break; ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B2 the same after a `break` inside `for (;;) { … }`",
+      onForm("B2 for-empty break", TITLE_GUARD, `for (;;) { break; ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "C the payload slices the reviewed suggestions to nothing",
+      onHelper(
+        "C suggestions sliced",
+        "      suggestions: built.suggestions,",
+        "            suggestions: built.suggestions.slice(0, 0),",
+      ),
+      DISCARDED,
+    ],
+    [
+      "C2 the payload filters the reviewed suggestions to nothing",
+      onHelper(
+        "C2 suggestions filtered",
+        "      suggestions: built.suggestions,",
+        "            suggestions: built.suggestions.filter(() => false),",
+      ),
+      DISCARDED,
+    ],
+    [
+      "D the fabricated payload is handed back through a `const`",
+      onHelper(
+        "D payload via const",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  const manufactured = { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } };",
+          "  return manufactured;",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "E the Keep key is a `let` bound to the reviewed string, then reassigned",
+      declared(
+        "E keep key reassigned",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'let CAT_KEEP_KEY = "categorySuggestion";\nCAT_KEEP_KEY = "nope";',
+      ),
+      KEEP_RESOLVES,
+    ],
+  ]) {
+    it(`refuses the retry-7 survivor: ${label}`, () => {
+      const rewritten = mutate(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.includes(`application-integration: ${expected}`), JSON.stringify(errors));
+    });
+  }
+
+  for (const [label, mutate] of [
+    [
+      "P-1 the confirm label is a const bound to the literal",
+      declared(
+        "P1 confirm label const",
+        TITLE_GUARD,
+        "if (!window.confirm(TITLE_CONFIRM_LABEL)) return;",
+        'const TITLE_CONFIRM_LABEL = "Replace the existing title with this suggestion?";',
+      ),
+    ],
+    [
+      "P-2 the category Keep key is a const bound with `as const`",
+      declared(
+        "P2 keep key const",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CATEGORY_KEEP_KEY)}",
+        'const CATEGORY_KEEP_KEY = "categorySuggestion" as const;',
+      ),
+    ],
+    [
+      "P-3 the category Keep key is a const declared in the card's own component",
+      declaredInForm(
+        "P3 keep key component const",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(LOCAL_KEEP_KEY)}",
+        'const LOCAL_KEEP_KEY = "categorySuggestion";',
+      ),
+    ],
+  ]) {
+    it(`accepts the behaviour-preserving rewrite: ${label}`, () => {
+      const rewritten = mutate(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+    });
+  }
+
+  /**
+   * The P-4 class: the confirm label is imported from a sibling copy module.
+   * A readable relative module is resolved and the rewrite is accepted; a
+   * specifier whose target the gate cannot read stays refused, which is the
+   * recorded residual (refusing a behaviour-preserving spelling is a nit,
+   * accepting an unread one would be a hole).
+   */
+  const importedLabel = (dir) => ({
+    ...REAL,
+    createReportPath: join(dir, "CreateReport.tsx"),
+    createReportSource: replace(
+      replace(FORM, TITLE_GUARD, "if (!window.confirm(TITLE_REPLACE_LABEL)) return;", "P4 guard"),
+      "import {",
+      'import { TITLE_REPLACE_LABEL } from "./aiSuggestCopy";\nimport {',
+      "P4 import",
+    ),
+  });
+
+  it("accepts 'the confirm label is imported from a readable sibling module' (R6-3/P-4)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cf070-r8-import-"));
+    writeFileSync(
+      join(dir, "aiSuggestCopy.ts"),
+      'export const TITLE_REPLACE_LABEL = "Replace the existing title with this suggestion?";\n',
+    );
+    deepStrictEqual(validateReportFieldHelperWired(importedLabel(dir)), [], "P4 readable sibling");
+  });
+
+  it("still refuses the same import when the module it names cannot be read", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cf070-r8-missing-"));
+    const errors = validateReportFieldHelperWired(importedLabel(dir));
+    ok(errors.includes(`application-integration: ${UNREACHABLE_GUARD}`), JSON.stringify(errors));
+  });
+
+  it("still refuses a Keep key bound to a string the card does not own, however it is bound", () => {
+    const broken = declared(
+      "mismatched keep const",
+      CAT_KEEP,
+      "onClick={() => aiSuggestResolve(WRONG_KEEP_KEY)}",
+      'const WRONG_KEEP_KEY = "categorySuggestionElsewhere";',
+    )(REAL);
+    const errors = validateReportFieldHelperWired(broken);
+    ok(errors.includes(`application-integration: ${KEEP_RESOLVES}`), JSON.stringify(errors));
+  });
+});
+
+/**
+ * CF-070 R2 retry-9. The retry-8 review authored nine fresh spellings of the
+ * same four harm classes the retry-8 tightenings target (A4 aliased setter;
+ * B4-B7 statically-empty / statically-false loops; C6 spread-overwrite of the
+ * reviewed payload; D2-D4 `let`/`var`/spread fabricated payloads) and seven
+ * behaviour-preserving rewrites the retry-8 tightenings wrongly refused
+ * (P5/P8 `let`-bound key never written; P9/P10 defensive payload copies;
+ * Q1-Q3 binding-resolution shapes). Every fixture below carries its anchor:
+ * `replace` throws when the text it rewrites is not in the real source, so a
+ * fixture that stops meaning anything fails loudly instead of passing on an
+ * unmatchable string.
+ */
+describe("reportFieldWiring (CF-070 R2 retry-9: the nine fresh survivors and the P5-P10/Q1-Q3 rewrites)", () => {
+  const TITLE_GUARD =
+    'if (!window.confirm("Replace the existing title with this suggestion?")) return;';
+  const CAT_KEEP = 'onClick={() => aiSuggestResolve("categorySuggestion")}';
+  const EXPORT_FORM = "export function CreateReport";
+  const REPORT_FORM = "function ReportForm() {";
+  const SUCCESS_ANCHOR = "      suggestions: built.suggestions,";
+  const SUCCESS_PAYLOAD = [
+    "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+    "  return {",
+    "    ok: true,",
+    "    value: {",
+    "      suggestions: built.suggestions,",
+    "      droppedCategory: built.droppedCategory,",
+    "      action: opResult.value.action,",
+    "    },",
+    "  };",
+  ].join("\n");
+
+  const replace = (source, from, to, label) => {
+    if (!source.includes(from)) throw new Error(`${label}: anchor missing: ${JSON.stringify(from)}`);
+    return source.replace(from, to);
+  };
+  const onForm = (label, from, to) => (s) => ({
+    ...s,
+    createReportSource: replace(s.createReportSource, from, to, label),
+  });
+  const onHelper = (label, from, to) => (s) => ({
+    ...s,
+    reportFieldSuggestionsSource: replace(s.reportFieldSuggestionsSource, from, to, label),
+  });
+  const declared = (label, from, to, declaration) => (s) => {
+    const rewritten = onForm(label, from, to)(s);
+    return {
+      ...rewritten,
+      createReportSource: replace(rewritten.createReportSource, EXPORT_FORM, `${declaration}\n${EXPORT_FORM}`, label),
+    };
+  };
+  const declaredInForm = (label, from, to, declaration) => (s) => {
+    const rewritten = onForm(label, from, to)(s);
+    return {
+      ...rewritten,
+      createReportSource: replace(
+        rewritten.createReportSource,
+        REPORT_FORM,
+        `${REPORT_FORM}\n  ${declaration}`,
+        label,
+      ),
+    };
+  };
+
+  const WRITE_BEFORE_GUARD =
+    "the title suggestion must not write a reviewed field before its confirmation guard";
+  const UNREACHABLE_GUARD =
+    "replacing an existing title must be confirmed by a reachable guard that refuses";
+  const DISCARDED = "report-field helper must use the reviewed narrow task's result, not merely mention the call";
+
+  for (const [label, mutate, expected] of [
+    [
+      "A4 the title branch writes through a local alias of a reviewed setter before its guard",
+      onForm(
+        "A4 aliased setter before guard",
+        TITLE_GUARD,
+        `const wipe = setDescription;\n        wipe("");\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "B4 the confirmation sits in a loop over an empty array literal",
+      onForm("B4 for-of empty array", TITLE_GUARD, `for (const _skip of []) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B5 the confirmation sits in a `for` whose condition counts from zero to zero",
+      onForm("B5 for count zero", TITLE_GUARD, `for (let i = 0; i < 0; i += 1) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B6 the confirmation sits in `while (1 - 1)`",
+      onForm("B6 folded while arithmetic", TITLE_GUARD, `while (1 - 1) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B7 the confirmation sits in `while (Boolean(false))`",
+      onForm("B7 folded while boolean", TITLE_GUARD, `while (Boolean(false)) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "C6 the payload spreads the reviewed result then overwrites its suggestions with an empty list",
+      onHelper(
+        "C6 spread then empty",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  const shipped = { ...built, suggestions: [] };",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: shipped.suggestions,",
+          "      droppedCategory: shipped.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "D2 the fabricated payload is handed back through a `let`",
+      onHelper(
+        "D2 fabricated let",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  let manufactured = { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } };",
+          "  return manufactured;",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "D3 the fabricated payload is handed back through a `var`",
+      onHelper(
+        "D3 fabricated var",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  var manufactured = { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } };",
+          "  return manufactured;",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "D4 the fabricated payload is spread into the returned object",
+      onHelper(
+        "D4 fabricated spread return",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  const manufactured = { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } };",
+          "  return { ...manufactured };",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "B5b the confirmation sits in a nested `for` whose condition counts from zero to zero",
+      onForm(
+        "B5b nested for count zero",
+        TITLE_GUARD,
+        `for (let i = 0; i < 0; i += 1) { if (i > 0) ${TITLE_GUARD} }`,
+      ),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B8 the confirmation sits in a loop over an empty string literal",
+      onForm("B8 for-of empty string", TITLE_GUARD, `for (const _c of "") { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      'B9 the confirmation sits in `while ("")`',
+      onForm("B9 while empty string", TITLE_GUARD, `while ("") { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "C3 the payload concatenates the reviewed suggestions onto an empty array",
+      onHelper("C3 concat empty", SUCCESS_ANCHOR, "            suggestions: [].concat(built.suggestions as never),"),
+      DISCARDED,
+    ],
+    [
+      "D5 the fabricated payload is returned from a branch while the reviewed result is only echoed",
+      onHelper(
+        "D5 fabricated conditional return",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  if (opResult.ok) { return { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } }; }",
+          "  return built;",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+  ]) {
+    it(`refuses the fresh survivor: ${label}`, () => {
+      const rewritten = mutate(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.includes(`application-integration: ${expected}`), JSON.stringify(errors));
+    });
+  }
+
+  for (const [label, mutate] of [
+    [
+      "P5 the Keep key is a module `let` bound to the reviewed string and never written",
+      declared(
+        "P5 module let keep key",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'let CAT_KEEP_KEY = "categorySuggestion";',
+      ),
+    ],
+    [
+      "P8 the Keep key is a `let` declared in the card's own component and never written",
+      declaredInForm(
+        "P8 component let keep key",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(LOCAL_KEEP_KEY)}",
+        'let LOCAL_KEEP_KEY = "categorySuggestion";',
+      ),
+    ],
+    [
+      "P9 the payload is a defensive spread copy of the reviewed list",
+      onHelper("P9 defensive spread copy", SUCCESS_ANCHOR, "      ...built,\n      suggestions: [ ...built.suggestions ],"),
+    ],
+    [
+      "P10 the payload maps the reviewed list into a fresh copy of each item",
+      onHelper("P10 map copy", SUCCESS_ANCHOR, "      suggestions: built.suggestions.map((s) => ({ ...s })),"),
+    ],
+    [
+      "Q1 the Keep key is declared once at module scope and shadowed by an unrelated local",
+      declared(
+        "Q1 shadowed duplicate const",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'const CAT_KEEP_KEY = "categorySuggestion";\nfunction shadow() { const CAT_KEEP_KEY = "categorySuggestion"; return CAT_KEEP_KEY; }\nvoid shadow;',
+      ),
+    ],
+    [
+      "Q2 the Keep key resolves the literal through one alias `const`",
+      declared(
+        "Q2 alias const",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_ALIAS)}",
+        'const CAT_KEEP_KEY = "categorySuggestion";\nconst CAT_KEEP_ALIAS = CAT_KEEP_KEY;',
+      ),
+    ],
+    [
+      "Q3 a same-named parameter is written in an unrelated function",
+      declared(
+        "Q3 param written elsewhere",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'const CAT_KEEP_KEY = "categorySuggestion";\nfunction unrelated(CAT_KEEP_KEY: string) { CAT_KEEP_KEY = "x"; }\nvoid unrelated;',
+      ),
+    ],
+  ]) {
+    it(`accepts the behaviour-preserving rewrite: ${label}`, () => {
+      const rewritten = mutate(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+    });
+  }
+});
+
 describe("validateRetiredReportPhotoAi", () => {
   const realMissingFiles = () =>
     RETIRED_REPORT_PHOTO_AI_FILES.map((file) => ({ file, present: false }));
@@ -448,6 +1567,16 @@ describe("validateRetiredReportPhotoAi", () => {
       "a retired entry-point name rebound to a local",
       "const analyzeReportPhoto = async () => [];\nconst run = analyzeReportPhoto; void run();",
     ],
+    // CF-070 R2 retry-4: the element-access JSX mount the parser rejects, so the
+    // token scan has to catch it.
+    [
+      "an element-access JSX mount of a retired surface",
+      'const Legacy = { VlmSuggestions: () => null };\nexport const X = () => <Legacy["VlmSuggestions"]/>;',
+    ],
+    [
+      "an element-access JSX mount with a single-quoted member",
+      "const Legacy = { PhotoGrounding: () => null };\nexport const X = () => <Legacy['PhotoGrounding']/>;",
+    ],
   ]) {
     it(`catches ${label}`, () => {
       const errors = validateRetiredReportPhotoAi({
@@ -461,7 +1590,7 @@ describe("validateRetiredReportPhotoAi", () => {
   for (const [label, source] of [
     [
       "a comment that names the removal",
-      "// Stale-drop is the caller's job (generation token, like VlmSuggestions):\n// the photo path (analyzeReportPhoto / VlmAnalysis) was removed in CF-020 §12.",
+      "// Stale-drop is the caller's job (generation token, like other async seams):\n// the photo path (analyzeReportPhoto / photoGrounding) was removed in CF-020 §12.",
     ],
     [
       "a commented-out retired call",
@@ -482,6 +1611,14 @@ describe("validateRetiredReportPhotoAi", () => {
     [
       "a member call on an unrelated object",
       "const tools = { analyze: async () => [] };\nvoid tools.analyze();",
+    ],
+    [
+      "a generic type argument that names a retired surface",
+      'type Views = Partial<Record["VlmSuggestions"]>;\nexport const unchanged: Views = {};',
+    ],
+    [
+      "a computed element access on a local",
+      'const row: Record<string, number> = { VlmSuggestions: 1 };\nexport const hit = row["VlmSuggestions"];',
     ],
   ]) {
     it(`does not flag ${label}`, () => {

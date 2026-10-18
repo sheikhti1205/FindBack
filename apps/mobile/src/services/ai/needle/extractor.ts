@@ -2,10 +2,9 @@
  * WS2 Needle TEXT challenger seam — local structured-field extractor.
  *
  * Isolated scope: pure local parsing only. No network, no model download, no
- * bridge calls. Returns the same structured field shape as `vlmParser`'s
- * `VlmAnalysis` so the challenger can be compared field-for-field against the
- * incumbent without touching `possibleMatches.ts`, `orchestrator/`, or any
- * LiteRT/llama/probe/UI code.
+ * bridge calls. Returns the nine fields below so the challenger can be compared
+ * field-for-field against the incumbent report-field suggester without touching
+ * `possibleMatches.ts`, `orchestrator/`, or any LiteRT/llama/probe/UI code.
  */
 
 export const NEEDLE_EXTRACTION_KEYS = [
@@ -22,7 +21,7 @@ export const NEEDLE_EXTRACTION_KEYS = [
 
 export type NeedleExtractionKey = (typeof NEEDLE_EXTRACTION_KEYS)[number];
 
-/** Structured fields mirroring the `VlmAnalysis` schema shape. */
+/** Structured fields this seam defines; the report-field suggester consumes the same keys. */
 export interface NeedleExtraction {
   objectName: string | null;
   suggestedCategory: string | null;

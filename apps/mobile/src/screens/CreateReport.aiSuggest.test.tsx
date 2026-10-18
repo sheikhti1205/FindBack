@@ -8,7 +8,7 @@
  * dropped, unreleased categories downgrade with a notice, and nothing ever
  * publishes without the explicit form submit.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { publishReportMock, suggestFieldsMock, suggestCategoryMock, nlHelperStateMock, photo, nativeMedia } =
@@ -178,6 +178,32 @@ describe("CreateReport field suggestions from description", () => {
     expect(publishReportMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * The category card's own Keep is bound to the reviewed `"categorySuggestion"`
+   * key. Clicking it must resolve *that* card away while the field chips stay
+   * reviewable, and send nothing. A Keep rebound to a binding whose run-time
+   * value is another string (`let CAT_KEEP_KEY = "categorySuggestion";
+   * CAT_KEEP_KEY = "nope";`) resolves nothing, so the card stays standing and
+   * this fails (CF-070 R2 retry-8 F-1/E — the class had no behavioural cover).
+   */
+  it("the category Keep resolves its own suggestion and sends nothing", async () => {
+    await requestSuggestions("Black umbrella lost yesterday near the central market.");
+    expect(screen.getByText("Suggested category")).toBeTruthy();
+    const callsBefore = suggestFieldsMock.mock.calls.length;
+
+    const categoryCard = screen.getByRole("button", { name: "Use this category" }).parentElement;
+    expect(categoryCard).not.toBeNull();
+    fireEvent.click(within(categoryCard as HTMLElement).getByRole("button", { name: "Keep mine" }));
+
+    await waitFor(() => expect(screen.queryByText("Suggested category")).toBeNull());
+    // The field suggestions are untouched by the category Keep, and no
+    // suggestion ever sends anything.
+    expect(screen.getByText("Suggested title")).toBeTruthy();
+    expect(suggestFieldsMock.mock.calls.length).toBe(callsBefore);
+    expect(suggestCategoryMock.mock.calls.length).toBe(1);
+    expect(publishReportMock).not.toHaveBeenCalled();
+  });
+
   it("a declined replace keeps the suggestion visible instead of resolving it away", async () => {
     render(<CreateReport />);
     await screen.findByRole("toolbar", { name: /description formatting/i });
@@ -188,10 +214,21 @@ describe("CreateReport field suggestions from description", () => {
     fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
     await screen.findByText("Black umbrella");
 
+    // Land the description suggestion first, so the description field holds
+    // content that a stray write during the title cancel would destroy.
+    fireEvent.click(screen.getByRole("button", { name: "Use this description" }));
+    const descriptionText = () =>
+      document.querySelector('[contenteditable="true"]')?.textContent ?? "";
+    expect(descriptionText()).toContain("Lost near the market");
+
     vi.mocked(window.confirm).mockReturnValue(false);
     fireEvent.click(screen.getByRole("button", { name: "Use this title" }));
     expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("My own title");
     expect(screen.getByText("Suggested title")).toBeTruthy();
+    // A refusal is a cancel, not a partial apply: the retry-6 K6 class was a
+    // title cancel that also wrote an unrelated field, so the description must
+    // be exactly what it was.
+    expect(descriptionText()).toContain("Lost near the market");
 
     vi.mocked(window.confirm).mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "Use this title" }));

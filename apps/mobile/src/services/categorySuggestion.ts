@@ -3,10 +3,9 @@
  *
  * Consumer of the `classify-category` op. The op classifies short item text
  * into its own lowercase vocabulary (documents, electronics, keys, …); this
- * module resolves that vocabulary — plus the shared canonical labels coming
- * from the photo path (`analyzeReportPhoto` / `VlmAnalysis`) — into a
- * released form category. The user always confirms or overrides: the result
- * is a suggestion, never an applied value.
+ * module resolves that vocabulary, and any already-canonical label a caller
+ * hands it, into a released form category. A suggestion is never applied: the
+ * user always confirms or overrides.
  *
  * Frozen-report contract:
  * - Unreleased/unknown-category downgrade: anything that does not resolve to
@@ -68,10 +67,12 @@ export interface ResolvedCategorySuggestion {
 
 /**
  * Pure resolver shared by the text path (classify-category) and the photo
- * path (VlmAnalysis.suggestedCategory). Released canonicals pass straight
- * through; lowercase op vocabulary maps via ITEM_CATEGORY_TO_RELEASED;
- * anything else (null, empty, unknown) downgrades to null. A resolved value
- * is always released — an unreleased mapping target would downgrade too.
+ * path (a validated photo-analysis category string, e.g. from the vision
+ * runtime's `buildCategorySuggestionFromPhoto` caller). Released canonicals
+ * pass straight through; lowercase op vocabulary maps via
+ * ITEM_CATEGORY_TO_RELEASED; anything else (null, empty, unknown) downgrades to
+ * null. A resolved value is always released — an unreleased mapping target
+ * would downgrade too.
  */
 export function resolveCategorySuggestion(
   raw: string | null | undefined,

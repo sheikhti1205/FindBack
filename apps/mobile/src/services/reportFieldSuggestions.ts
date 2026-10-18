@@ -16,7 +16,8 @@
  *   a mid-flight abort returns CANCELLED and never triggers fallback side
  *   effects (no retry, no second op, no apply). A late op resolution is
  *   dropped, never rendered.
- * - Stale-drop is the caller's job (generation token, like VlmSuggestions):
+ * - Stale-drop is the caller's job (generation token, like the report form's
+ *   `renderGeneration`):
  *   a result that resolves after a newer request started must be discarded
  *   by the UI, never rendered into another request's panel.
  */
