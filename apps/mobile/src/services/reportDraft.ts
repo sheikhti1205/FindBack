@@ -30,6 +30,9 @@ export interface ReportDraft {
   eventDate: string;
   location: LocationValue;
   youtubeUrl: string;
+  /** The "Fill missing details" sentence, kept across navigation and process
+   *  death so the install round-trip its copy prescribes does not lose it. */
+  aiSuggestInput?: string;
   /** In-session key for the picked File (see services/photoStore). */
   photoId?: string | null;
   photoNativeUri?: string | null;
@@ -165,6 +168,12 @@ function readStoredDraft(accountId?: string | null): ReportDraft | null {
         parsed.location && typeof parsed.location === "object" && !Array.isArray(parsed.location)
           ? (parsed.location as Partial<LocationValue>)
           : {};
+      // MINOR-2: only materialise the key when the stored payload actually has a
+      // sentence. `Object.keys()` counts a key whose value is `undefined`, and
+      // `reportDraftLegacy.test.ts` pins the restored shape to exactly what the
+      // form reads — defaulting the key would hand the form an extra field and
+      // break that existing, unrelated test.
+      const aiSuggestInput = storedString(parsed.aiSuggestInput);
       return {
         publishOutcome: parsed.publishOutcome === "uncertain" ? "uncertain" : undefined,
         type: parsed.type === "FOUND" ? "FOUND" : "LOST",
@@ -178,6 +187,7 @@ function readStoredDraft(accountId?: string | null): ReportDraft | null {
           longitude: storedCoordinate(location.longitude),
         },
         youtubeUrl: storedString(parsed.youtubeUrl),
+        ...(aiSuggestInput ? { aiSuggestInput } : {}),
         photoId: storedStringOrNull(parsed.photoId),
         photoNativeUri: storedStringOrNull(parsed.photoNativeUri),
         photoWebPath: storedStringOrNull(parsed.photoWebPath),
@@ -266,6 +276,11 @@ export function clearAllStoredDrafts(): void {
 export function draftIsMeaningful(d: ReportDraft | null): boolean {
   if (!d) return false;
   return Boolean(
-    d.title.trim() || d.description.trim() || d.category || d.location.label.trim() || d.youtubeUrl.trim(),
+    d.title.trim() ||
+      d.description.trim() ||
+      d.category ||
+      d.location.label.trim() ||
+      d.youtubeUrl.trim() ||
+      (d.aiSuggestInput ?? "").trim(),
   );
 }

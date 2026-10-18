@@ -452,13 +452,16 @@ function ReportForm() {
   // (no setter, no network). Nothing here publishes, auto-applies, or touches
   // draft/photo lifecycle, and nothing here names a model, a provider or a
   // confidence score — those are diagnostics, not consumer copy.
-  const [aiSuggestInput, setAiSuggestInput] = useState("");
+  const [aiSuggestInput, setAiSuggestInput] = useState(initialDraft?.aiSuggestInput ?? "");
   const [aiFieldPatches, setAiFieldPatches] = useState<ReportFieldSuggestion[]>([]);
   const [aiFieldDroppedCategory, setAiFieldDroppedCategory] = useState(false);
   const [aiCatSuggestion, setAiCatSuggestion] = useState<CategorySuggestion | null>(null);
   const [aiCatDropped, setAiCatDropped] = useState(false);
   const [aiSuggestBusy, setAiSuggestBusy] = useState(false);
   const [aiSuggestError, setAiSuggestError] = useState<string | null>(null);
+  // MINOR-2: the not-set-up sentence tells the person to open Manage AI models,
+  // so this surface owes them that control — this screen has no other way there.
+  const [aiSuggestManageModels, setAiSuggestManageModels] = useState(false);
   const [aiSuggestResolved, setAiSuggestResolved] = useState<Record<string, boolean>>({});
   // Generation token: a response that resolves after
   // a newer request started — or after unmount — is stale and dropped, never
@@ -527,13 +530,31 @@ function ReportForm() {
    * answer is dropped if the request went stale while the state was read.
    */
   async function aiSuggestFailureNote(gen: number): Promise<string | null> {
-    const note = NL_SUGGESTION_FAILURE_NOTE[await nlHelperState()];
-    return aiSuggestGen.current === gen ? note : null;
+    const state = await nlHelperState();
+    if (aiSuggestGen.current !== gen) return null;
+    // Only `not-set-up` can be changed by the person, and only that state's copy
+    // names an action — so only there does the control appear.
+    setAiSuggestManageModels(state === "not-set-up");
+    return NL_SUGGESTION_FAILURE_NOTE[state];
   }
 
   async function aiSuggestRequest(): Promise<void> {
+    // Round-3 review NIT-1: a NEW attempt invalidates the older one BEFORE any
+    // of the early returns, not only on the path that reaches the model. Both
+    // synchronous paths below write a message of their own, and an older attempt
+    // whose device probe is still pending must not be able to overwrite it (nor,
+    // later, decorate a discarded form).
+    aiSuggestAbort.current?.abort();
+    const gen = ++aiSuggestGen.current;
+    const controller = new AbortController();
+    aiSuggestAbort.current = controller;
+    setAiSuggestManageModels(false);
     const text = aiSuggestInput.trim() || `${title} ${description}`.trim();
     if (!text) {
+      // This attempt never reaches the model, so it is not busy: the older
+      // attempt's `finally` is stale by generation and will not clear the flag.
+      aiSuggestAbort.current = null;
+      setAiSuggestBusy(false);
       setAiSuggestError("Describe the item first — in the box above or in your title and description.");
       return;
     }
@@ -546,13 +567,11 @@ function ReportForm() {
       // Unreachable with today's catalogue (the narrow-task profile always
       // resolves), kept deliberately: a build that narrows the catalogue must
       // say so rather than send an undefined profile into the op.
+      aiSuggestAbort.current = null;
+      setAiSuggestBusy(false);
       setAiSuggestError("Suggestions aren't available here. Keep writing — nothing is blocked.");
       return;
     }
-    aiSuggestAbort.current?.abort();
-    const gen = ++aiSuggestGen.current;
-    const controller = new AbortController();
-    aiSuggestAbort.current = controller;
     setAiSuggestBusy(true);
     setAiSuggestError(null);
     setAiFieldPatches([]);
@@ -574,6 +593,8 @@ function ReportForm() {
         setAiFieldPatches([...fieldsResult.value.suggestions]);
         setAiFieldDroppedCategory(fieldsResult.value.droppedCategory);
       } else if (fieldsResult.error.errorClass === "CANCELLED") {
+        // No affordance to clear here: the flag is reset at the top of every
+        // attempt, so a cancelled field op cannot be observing a live one.
         setAiSuggestError("Suggestion stopped.");
       } else {
         const note = await aiSuggestFailureNote(gen);
@@ -583,6 +604,7 @@ function ReportForm() {
         setAiCatSuggestion(categoryResult.value.suggestion);
         setAiCatDropped(categoryResult.value.dropped);
       } else if (categoryResult.error.errorClass === "CANCELLED") {
+        setAiSuggestManageModels(false);
         setAiSuggestError("Suggestion stopped.");
       } else if (fieldsResult.ok) {
         // A failed category op never blocks field patches; the failure shows
@@ -789,6 +811,13 @@ function ReportForm() {
         eventDate,
         location,
         youtubeUrl,
+        // MINOR-2: the install copy prescribes leaving this screen and coming
+        // back, so the sentence the person typed into the helper must survive
+        // the same draft round-trip as the title and description do. The key is
+        // materialised only when it holds something: the restored shape must be
+        // exactly what the form reads, nothing extra (round-3 review NIT-2 —
+        // the loader's fix alone left this own-key in the in-memory draft).
+        ...(aiSuggestInput.trim() ? { aiSuggestInput } : {}),
         photoId: first?.id ?? null,
         photoNativeUri: first?.picked?.nativeUri ?? null,
         photoWebPath: first?.picked?.webPath ?? first?.previewUrl ?? null,
@@ -808,7 +837,7 @@ function ReportForm() {
       accountId,
       renderGeneration,
     );
-  }, [type, title, description, category, eventDate, location, youtubeUrl, photos, accountId, renderGeneration, uncertain, photoRecoveryReady]);
+  }, [type, title, description, category, eventDate, location, youtubeUrl, aiSuggestInput, photos, accountId, renderGeneration, uncertain, photoRecoveryReady]);
 
   // Photo bytes follow the photo set only (not every keystroke): the registry
   // mirrors memory authoritatively, so removals are pruned on write.
@@ -879,7 +908,7 @@ function ReportForm() {
   }, []);
 
   function discardDraft() {
-    const current = { type, title, description, category, eventDate, location, youtubeUrl };
+    const current = { type, title, description, category, eventDate, location, youtubeUrl, aiSuggestInput };
     // draftIsMeaningful only inspects text: a photo-only draft (including one
     // whose photos failed recovery) is still a draft the user must be able to
     // discard, or the failed-recovery screen wedges with no way out. The live
@@ -891,6 +920,16 @@ function ReportForm() {
     if (!draftIsMeaningful(current) && !hasPhotos) return;
     if (!window.confirm("Discard this report and clear the selected photo?")) return;
     clearDraft(accountId);
+    // Round-3 review MINOR-1: the discard is authoritative for in-flight work
+    // too. A suggestion still awaiting the device probe is invalidated here, so
+    // its note cannot be written back onto the emptied form — which, on
+    // `not-set-up`, would re-render the install link on a draft that no longer
+    // exists. The older attempt's `finally` is stale by generation, so this is
+    // also where its busy flag is cleared.
+    aiSuggestAbort.current?.abort();
+    aiSuggestGen.current++;
+    aiSuggestAbort.current = null;
+    setAiSuggestBusy(false);
     setType("LOST");
     setTitle("");
     descriptionLiveRef.current = "";
@@ -899,6 +938,14 @@ function ReportForm() {
     setEventDate(todayInputValue());
     setLocation({ label: "", latitude: null, longitude: null });
     setYoutubeUrl("");
+    // MINOR-2: the persisted helper sentence is part of the draft, so it is part
+    // of the reset. Leaving it behind re-persists the previous report's sentence
+    // (the autosave effect depends on it) and makes the discard a no-op for a
+    // draft that holds nothing else. The helper's note travels with that
+    // sentence, so the affordance and its error clear together with it.
+    setAiSuggestInput("");
+    setAiSuggestManageModels(false);
+    setAiSuggestError(null);
     clearPhotos();
     // A failed recovery must never wedge the screen: discarding resolves the
     // recovery gate so a completely new report can be started immediately.
@@ -1400,6 +1447,20 @@ function ReportForm() {
       setEventDate(todayInputValue());
       setLocation({ label: "", latitude: null, longitude: null });
       setYoutubeUrl("");
+      // MINOR-2: the helper sentence is persisted with the draft, so a published
+      // report must not leave it behind for the next one (the autosave effect
+      // would re-persist it against the fresh, empty form). The helper's own
+      // affordance and error state travel with that sentence for the same
+      // reason, and any in-flight suggestion is invalidated so it cannot write
+      // them back (round-3 review MINOR-1; defensive here, since success
+      // navigates away).
+      aiSuggestAbort.current?.abort();
+      aiSuggestGen.current++;
+      aiSuggestAbort.current = null;
+      setAiSuggestBusy(false);
+      setAiSuggestInput("");
+      setAiSuggestManageModels(false);
+      setAiSuggestError(null);
       setFieldErrors({});
       setUncertain(false);
       setEditorResetKey((key) => key + 1);
@@ -1730,9 +1791,38 @@ function ReportForm() {
           )}
         </div>
         {aiSuggestError && (
-          <p role="alert" className="text-sm text-error">
-            {aiSuggestError}
-          </p>
+          <div
+            role="alert"
+            className="flex flex-wrap items-center gap-2 text-sm text-error"
+            data-testid="report-suggestion-note-row"
+          >
+            <span>{aiSuggestError}</span>
+            {aiSuggestManageModels && (
+              // A real link, not a button: the models screen is a destination, so
+              // it keeps link semantics and keyboard activation while navigation
+              // still happens in-app. The href must be the HashRouter-canonical
+              // form (`#/…`) because a hash-less literal does not match any route
+              // this app can serve. Modifier clicks and non-primary buttons are
+              // left alone so the browser's own new-tab/new-window handling wins,
+              // exactly as a router <Link> would do — a <Link> itself is not
+              // usable here because the frozen retry-7 suite mocks `react-router`
+              // with `useNavigate` only.
+              <a
+                href="#/settings/ai/models"
+                data-testid="report-suggestion-manage-models"
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+                    return;
+                  }
+                  event.preventDefault();
+                  navigate("/settings/ai/models");
+                }}
+                className="inline-flex min-h-[48px] items-center justify-center rounded-m3-md border border-outline px-5 text-sm font-medium text-on-surface transition-colors hover:bg-surface-container"
+              >
+                Manage AI models
+              </a>
+            )}
+          </div>
         )}
         {aiFieldDroppedCategory && (
           <p role="status" className="text-sm text-on-surface-variant">
