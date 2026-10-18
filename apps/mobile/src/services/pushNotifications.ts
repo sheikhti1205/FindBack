@@ -160,6 +160,9 @@ export function createPushController(options: PushControllerOptions): PushContro
   };
 }
 
+/** The dynamically-imported plugin handle. Type-only, so it adds no bundle weight. */
+type PushPlugin = (typeof import("@capacitor/push-notifications"))["PushNotifications"];
+
 /** Default Capacitor-backed adapter. Loaded lazily so web/tests stay inert. */
 export function createCapacitorPushAdapter(): PushAdapter {
   const native = () =>
@@ -169,8 +172,23 @@ export function createCapacitorPushAdapter(): PushAdapter {
     const p = (window as { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.();
     return p === "ios" || p === "android" ? (p as PushPlatform) : "web";
   };
-  // Deferred import keeps the plugin out of the web bundle graph at load time.
-  const plugin = async () => (await import("@capacitor/push-notifications")).PushNotifications;
+  /**
+   * Deferred import keeps the plugin out of the web bundle graph at load time.
+   *
+   * The plain-object wrapper is load-bearing, not ceremony. Capacitor's
+   * `registerPlugin` proxy answers *every* property access with a callable that
+   * is forwarded to the native bridge — `then` included. Promise resolution
+   * invokes `.then` on any thenable, so an async loader that resolves *with the
+   * proxy itself* calls `PushNotifications.then()` on native and rejects with
+   * `"PushNotifications.then()" is not implemented on android` before any real
+   * call is made — which is exactly what shipped: push never registered on
+   * Android for any user, and every authenticated session logged an uncaught
+   * rejection. Resolving with an object that merely *holds* the proxy keeps the
+   * lookup off `then`. Regression net: `pushNotifications.adapter.test.ts`.
+   */
+  const plugin = async (): Promise<{ p: PushPlugin }> => ({
+    p: (await import("@capacitor/push-notifications")).PushNotifications,
+  });
   const settingsPlugin = () =>
     registerPlugin<{ openSettings(): Promise<void> }>("FindbackNotifications");
 
@@ -178,40 +196,40 @@ export function createCapacitorPushAdapter(): PushAdapter {
     isNative: native,
     platform,
     async requestPermission() {
-      const result = await (await plugin()).requestPermissions();
+      const result = await (await plugin()).p.requestPermissions();
       return result.receive === "granted" ? "granted" : result.receive === "denied" ? "denied" : "prompt";
     },
     async checkPermission() {
-      const result = await (await plugin()).checkPermissions();
+      const result = await (await plugin()).p.checkPermissions();
       return result.receive === "granted" ? "granted" : result.receive === "denied" ? "denied" : "prompt";
     },
     async openSettings() {
       await settingsPlugin().openSettings();
     },
     async register() {
-      await (await plugin()).register();
+      await (await plugin()).p.register();
     },
     async deleteToken() {
-      await (await plugin()).unregister();
+      await (await plugin()).p.unregister();
     },
     async onRegistration(cb) {
-      const handle = await (await plugin()).addListener("registration", (token) => cb(token.value));
+      const handle = await (await plugin()).p.addListener("registration", (token) => cb(token.value));
       return () => void handle.remove();
     },
     async onRegistrationError(cb) {
-      const handle = await (await plugin()).addListener("registrationError", (error) =>
+      const handle = await (await plugin()).p.addListener("registrationError", (error) =>
         cb(typeof error?.error === "string" ? error.error : "registration error"),
       );
       return () => void handle.remove();
     },
     async onReceived(cb) {
-      const handle = await (await plugin()).addListener("pushNotificationReceived", (notification) =>
+      const handle = await (await plugin()).p.addListener("pushNotificationReceived", (notification) =>
         cb((notification.data ?? {}) as Record<string, string>),
       );
       return () => void handle.remove();
     },
     async onAction(cb) {
-      const handle = await (await plugin()).addListener("pushNotificationActionPerformed", (action) =>
+      const handle = await (await plugin()).p.addListener("pushNotificationActionPerformed", (action) =>
         cb((action.notification.data ?? {}) as Record<string, string>),
       );
       return () => void handle.remove();
