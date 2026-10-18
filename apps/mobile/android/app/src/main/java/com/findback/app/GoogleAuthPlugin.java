@@ -131,12 +131,20 @@ public final class GoogleAuthPlugin extends Plugin {
         // `kind` MUST travel in the top-level `code` slot. Capacitor's two-arg
         // reject(String, JSObject) overload delegates to
         // reject(msg, null, null, data), so it sends
-        // `{message, code: null, data: {code, message}}` — the JS facade reads
-        // `code`, would see null, and would collapse EVERY native failure onto
-        // "unknown": a dismissed prompt rendered an error banner, and "no
-        // Google account on this device" rendered an unactionable retry copy
-        // instead of the "Add a Google account and try again" guidance. The
-        // three-arg overload keeps `code` top-level.
+        // `{message, data: {code, message}}` — note there is NO top-level `code`
+        // KEY at all, because `JSONObject.put(name, null)` removes the key
+        // rather than storing a null. The JS facade reads `code`, would find
+        // nothing, and would collapse every native rejection raised inside
+        // `signIn` onto "unknown": a dismissed prompt rendered an error banner,
+        // and "no Google account on this device" rendered an unactionable retry
+        // copy instead of the "Add a Google account and try again" guidance.
+        // Use the three-arg overload, which keeps `code` top-level and still
+        // carries the detail object in `data`.
+        //
+        // Scope note: failures raised by the availability probe do NOT pass
+        // through here — `isAvailable` resolves {available:false,
+        // reason:"misconfigured"} and the JS facade classifies that separately,
+        // so that path was always correct.
         call.reject(message, kind, error);
     }
 

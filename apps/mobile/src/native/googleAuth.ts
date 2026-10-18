@@ -117,14 +117,18 @@ function isFailureKind(value: unknown): value is GoogleAuthFailureKind {
  */
 function extractKind(reason: unknown): GoogleAuthFailureKind {
   const record = asRecord(reason);
-  // Capacitor has two relevant reject overloads, and they pack differently:
-  //   reject(msg, code)            → { message, code }
-  //   reject(msg, JSObject data)   → { message, code: null, data: { … } }
-  // The native plugin must use the first (kind as the code). Read the nested
-  // slot as well, so a future edit that regresses to the two-arg form cannot
-  // silently collapse every failure onto "unknown" again — that regression is
-  // exactly what shipped: it turned a dismissed prompt into an error banner and
-  // reported "no Google account" as an unactionable "try again".
+  // Capacitor has three relevant reject overloads, and they pack differently:
+  //   reject(msg, code)                → { message, code }
+  //   reject(msg, JSObject data)       → { message, data: { … } }
+  //                                      (no `code` KEY: put(name, null) removes it)
+  //   reject(msg, code, JSObject data) → { message, code, data: { … } }
+  // The native plugin must use the THIRD form (kind in `code`, detail in `data`).
+  // Read the nested slot as well, so a future edit that regresses to the two-arg
+  // JSObject form cannot silently collapse every signIn-stage rejection onto
+  // "unknown" again — that regression is exactly what shipped: it turned a
+  // dismissed prompt into an error banner and reported "no Google account" as an
+  // unactionable "try again". (The availability probe's `misconfigured` result
+  // never reaches this function; it is classified via `availabilityKind`.)
   const topLevel = record["code"];
   const raw = typeof topLevel === "string" ? topLevel : asRecord(record["data"])["code"];
   if (typeof raw !== "string") return "unknown";
