@@ -74,7 +74,7 @@ export function ReportPhotoCarousel({
   disabled,
   maxHeightPx,
 }: ReportPhotoCarouselProps) {
-  const { trackRef, active, onScroll, goTo } = useSnapPager(photos.length);
+  const { trackRef, active, onScroll, goTo, cancelJump } = useSnapPager(photos.length);
   const { pressStart, isTap } = usePagerTap();
   const [ratios, setRatios] = useState<Record<string, number>>({});
 
@@ -136,6 +136,9 @@ export function ReportPhotoCarousel({
           role="list"
           aria-label="Selected photos"
           onScroll={onScroll}
+          onPointerDown={cancelJump}
+          onTouchStart={cancelJump}
+          onWheel={cancelJump}
           className="flex w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden"
           style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}
         >

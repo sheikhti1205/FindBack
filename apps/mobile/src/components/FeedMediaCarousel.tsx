@@ -42,7 +42,7 @@ const imageFade = { duration: motionDurations.fast, ease: motionEasings.inOut } 
 export function FeedMediaCarousel({ images, sharedMediaId, onOpenImage }: FeedMediaCarouselProps) {
   // Canonical continuous paging: native scroll-snap track; the active index
   // is derived from scroll position and survives ordinary parent rerenders.
-  const { trackRef, active, onScroll, goTo } = useSnapPager(images.length);
+  const { trackRef, active, onScroll, goTo, cancelJump } = useSnapPager(images.length);
   const { pressStart, isTap } = usePagerTap();
 
   const onSlideClick = (index: number, event: MouseEvent<HTMLButtonElement>) => {
@@ -62,6 +62,9 @@ export function FeedMediaCarousel({ images, sharedMediaId, onOpenImage }: FeedMe
         role="group"
         aria-label="Report photos"
         onScroll={onScroll}
+        onPointerDown={cancelJump}
+        onTouchStart={cancelJump}
+        onWheel={cancelJump}
         className="flex h-full w-full snap-x snap-mandatory overflow-x-auto"
         style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}
       >

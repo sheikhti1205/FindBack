@@ -32,7 +32,7 @@ interface DetailHeroGalleryProps {
  * opens the lightbox at that photo's index.
  */
 export function DetailHeroGallery({ postId, title, images, onOpenLightbox }: DetailHeroGalleryProps) {
-  const { trackRef, active, onScroll, goTo } = useSnapPager(images.length);
+  const { trackRef, active, onScroll, goTo, cancelJump } = useSnapPager(images.length);
   const { pressStart, isTap } = usePagerTap();
   const mediaId = sharedMediaLayoutId(postId);
 
@@ -59,6 +59,9 @@ export function DetailHeroGallery({ postId, title, images, onOpenLightbox }: Det
           role="group"
           aria-label="Report photos"
           onScroll={onScroll}
+          onPointerDown={cancelJump}
+          onTouchStart={cancelJump}
+          onWheel={cancelJump}
           className="flex h-full w-full snap-x snap-mandatory overflow-x-auto"
           style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}
         >
