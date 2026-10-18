@@ -17,19 +17,26 @@ interface BackButtonProps {
 export function BackButton({ fallbackTo, label }: BackButtonProps) {
   const navigate = useNavigate();
 
-  function goBack() {
+  const goBack = () => {
     if (historyDepth() > 0) {
       navigate(-1);
     } else {
       navigate(fallbackTo, { replace: true });
     }
-  }
+  };
+
+  // The label must describe where this button actually goes. `label` names a
+  // *destination*, which is only what happens when the app stack is empty; with
+  // history to walk, the destination is "wherever you came from". A static
+  // destination label therefore lied in the common case — on "My reports" it
+  // announced "Back to profile" while landing on the feed.
+  const goBackLabel = historyDepth() > 0 ? "Back" : label;
 
   return (
     <button
       type="button"
       onClick={goBack}
-      aria-label={label}
+      aria-label={goBackLabel}
       className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs text-on-surface hover:bg-surface-container"
     >
       <ArrowLeft size={20} aria-hidden />
