@@ -2887,3 +2887,1055 @@ describe("typed report reference on comments (20261017052000)", () => {
     assert.equal(src.length, 12809, "the normalised file text is exactly the authored length");
   });
 });
+
+// ===========================================================================
+// CF-060 B1 — the visibility kernel, blocking, and the D21 readers
+// (20261017070000_visibility_kernel_and_blocks.sql).
+//
+// Authority: MODERATION-CONTRACT-DECISION.md §3 D8–D11, §4 D16–D24, §9 C8,
+// §10 C9 fixtures M1–M17 and §13.8 D12 amended (the two-function split plus the
+// O5 rule that blocking is SURFACED, never applied as a row filter). Layer-1b
+// (engine behaviour + inertness) measurements are in inertness-selfcheck.mjs;
+// this block is the static instrument.
+//
+// The defect classes this block exists for, all measured in earlier tranches:
+//   * MAJOR-2 (M2): a SELECT policy widened with `or true` survived 103/103
+//     substring assertions. A substring cannot see an added disjunct, so every
+//     expression that decides visibility is compared as a COMPLETE expression
+//     here, not as a fragment of one.
+//   * MAJOR-R3-1 (M2): a permutation of a function body left a multiset delta
+//     identical. Ordered anchors below catch that.
+//   * the M2 review's other leak: a re-created reader whose body was retyped by
+//     hand rather than sliced from the applied file. Every re-created body here
+//     is asserted EQUAL to the applied text it was cut from, with exactly the
+//     authored delta applied to it.
+//
+// The client-reachable definer set gains the self-subject block surface and the
+// owner-scoped block reader. It deliberately does NOT gain
+// findback_is_blocked_pair: that two-party form is revoked from every client
+// role, and the A4 gate below would fail if the split were undone. The extension
+// runs at load time, before the gates that read the set.
+// ---------------------------------------------------------------------------
+CLIENT_REACHABLE_DEFINERS.push("findback_is_blocked_with_me", "findback_my_blocks");
+CLIENT_REACHABLE_DEFINERS.sort();
+
+describe("visibility kernel, blocking and the O5/D21 readers (20261017070000)", () => {
+  const B1 = "20261017070000_visibility_kernel_and_blocks.sql";
+  // The tranche B1 depends on (the comment reader's projection that the O5 flag
+  // is appended to), and the three applied files its four re-created readers and
+  // its trigger are sliced from.
+  const M2 = "20261017052000_comment_report_reference.sql";
+  const DIMS = "20261015154642_attachment_dimensions.sql";
+  const FEED = "20261011000000_reaction_notification_feed.sql";
+  const TRIGGER = "20261002030000_nested_comments.sql";
+
+  // This block is appended as its own `describe`, so it cannot see the helper
+  // `norm` that the earlier blocks scope to their own closure.
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+
+  // Statements, not prose, and split the way Postgres does: a naive split on ';'
+  // would cut a plpgsql body into fragments, and a fragment is exactly where a
+  // widened guard hides. '--' comments are dropped, '$$' regions are opaque, and
+  // a ';' inside a literal or a quoted identifier does not separate statements.
+  const splitStatements = (sql) => {
+    const out = [];
+    let current = "";
+    let i = 0;
+    while (i < sql.length) {
+      const ch = sql[i];
+      if (ch === "-" && sql[i + 1] === "-") {
+        const nl = sql.indexOf("\n", i);
+        i = nl < 0 ? sql.length : nl;
+        current += " ";
+        continue;
+      }
+      if (sql.startsWith("$$", i)) {
+        const end = sql.indexOf("$$", i + 2);
+        const stop = end < 0 ? sql.length : end + 2;
+        current += sql.slice(i, stop);
+        i = stop;
+        continue;
+      }
+      if (ch === "'" || ch === '"') {
+        const quote = ch;
+        let j = i + 1;
+        while (j < sql.length) {
+          if (sql[j] === quote && sql[j + 1] === quote) {
+            j += 2;
+            continue;
+          }
+          if (sql[j] === quote) {
+            j += 1;
+            break;
+          }
+          j += 1;
+        }
+        current += sql.slice(i, j);
+        i = j;
+        continue;
+      }
+      if (ch === ";") {
+        out.push(norm(current));
+        current = "";
+        i += 1;
+        continue;
+      }
+      current += ch;
+      i += 1;
+    }
+    if (norm(current)) out.push(norm(current));
+    return out.filter(Boolean);
+  };
+
+  const statements = () => splitStatements(mig(B1).toLowerCase());
+  const code = () => norm(mig(B1).toLowerCase().replace(/--[^\n]*/g, " "));
+  const statementWith = (needle) => {
+    const hits = statements().filter((s) => s.includes(needle));
+    assert.equal(hits.length, 1, `exactly one statement mentions ${needle}`);
+    return hits[0];
+  };
+  const exactStatement = (needle, expected) => {
+    const hits = statements().filter((s) => s.includes(needle));
+    assert.equal(hits.length, 1, `exactly one statement mentions ${needle}`);
+    assert.equal(hits[0], norm(expected).toLowerCase(), `${needle} is exactly the authored statement`);
+  };
+
+  // Body lines: comment-free, lower-cased, whitespace-collapsed, blanks dropped.
+  const bodyLines = (source, name) => {
+    const at = source.indexOf(`create or replace function public.${name}(`);
+    assert.ok(at > 0, `${name} is created or replaced in the file under test`);
+    const open = source.indexOf("$$", source.indexOf(")", at));
+    const close = source.indexOf("$$", open + 2);
+    assert.ok(open > 0 && close > open, `${name} has a dollar-quoted body`);
+    return source
+      .slice(open + 2, close)
+      .toLowerCase()
+      .replace(/--[^\n]*/g, " ")
+      .split("\n")
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter((line) => line.length > 0);
+  };
+  const bodyText = (source, name) => norm(bodyLines(source, name).join(" "));
+
+  const multisetDelta = (from, to) => {
+    const count = (lines) => {
+      const m = new Map();
+      for (const line of lines) m.set(line, (m.get(line) ?? 0) + 1);
+      return m;
+    };
+    const a = count(from);
+    const b = count(to);
+    const only = (x, y) => {
+      const out = [];
+      for (const [line, n] of x) for (let i = y.get(line) ?? 0; i < n; i += 1) out.push(line);
+      return out.sort();
+    };
+    return { removed: only(a, b), added: only(b, a) };
+  };
+  const skeleton = (s) => s.replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+
+  it("follows the migration hygiene contract and lands after the tranche it depends on", () => {
+    const sql = mig(B1);
+    assert.ok(sql.includes("LIVE-PENDING"), "the layer-3 status is stated, not implied");
+    assert.ok(
+      sql.includes(`supabase/tests/verify_${B1.slice(0, 14)}_visibility_kernel_and_blocks.sql`),
+      "the owner's probe file is named",
+    );
+    assert.ok(sql.includes("ADDITIVE ONLY"), "additive header");
+    assert.ok(!/ADDITIVE ONLY[\s\S]*\n\s*drop column/m.test(sql), "the ADDITIVE ONLY claim is not contradicted below it");
+    // Version, not decoration: the tranche must apply after the M2 revision it
+    // re-creates a body from, or the slice it depends on does not exist yet.
+    assert.ok(ls().includes(B1), "the file is in the migration directory");
+    assert.ok(B1 > M2, "B1 sorts after the M2 revision it builds on");
+  });
+
+  it("is additive only: no row, column or table is removed, and every drop is guarded", () => {
+    const src = code();
+    assert.ok(!src.includes("drop table"), "no table dropped");
+    assert.ok(!src.includes("drop column"), "no column dropped");
+    assert.ok(!src.includes("truncate"), "no table truncated");
+    assert.ok(!/\bdelete from\b/.test(src), "no row deleted");
+    assert.ok(!/\bupdate public\./.test(src), "no row rewritten");
+
+    // Idempotency: a retried apply must be a no-op, never an abort. Every drop
+    // in the file is `drop OBJECT if exists`, and the complete inventory is
+    // pinned, so an unguarded drop cannot ride along.
+    const drops = statements()
+      .flatMap((s) => s.match(/(?:^|\s)drop (?:view|constraint|function|policy|index|trigger)[^;]*/g) ?? [])
+      .map((s) => norm(s));
+    assert.deepEqual(
+      drops,
+      [
+        "drop constraint if exists item_posts_moderation_visibility_check",
+        "drop view if exists public.findback_visible_posts",
+        "drop function if exists public.findback_list_comments_client(text)",
+        "drop function if exists public.findback_list_notifications_client(boolean)",
+      ],
+      "exactly the four guarded drops the header declares",
+    );
+    drops.forEach((s) => assert.match(s, /^drop (view|constraint|function|policy|index|trigger) if exists /, `guarded: ${s}`));
+
+    // Re-runnability of the creates: a CREATE that is not `or replace` must be
+    // either `if not exists` or preceded by the guarded drop of its own object.
+    for (const statement of statements()) {
+      if (/^create table/.test(statement)) assert.match(statement, /^create table if not exists /, "table create is guarded");
+      if (/^create view/.test(statement)) {
+        const index = statements().indexOf(statement);
+        assert.match(statements()[index - 1], /^drop view if exists public\.findback_visible_posts$/, "the view is dropped before it is created");
+      }
+      if (/^create (or replace )?function/.test(statement)) {
+        assert.match(statement, /^create or replace function /, "function creates replace");
+      }
+    }
+  });
+
+  it("adds exactly one column, in the additive form, with no writer and no index", () => {
+    const src = code();
+    const added = [...src.matchAll(/add column (?:if not exists )?([a-z_]+)/g)].map((m) => m[1]);
+    assert.deepEqual(added, ["moderation_visibility"], "exactly the moderation column is added");
+    exactStatement(
+      "add column if not exists moderation_visibility",
+      "alter table public.item_posts add column if not exists moderation_visibility text not null default 'PUBLISHED'",
+    );
+    // The vocabulary check is replaced, not duplicated: one guarded drop, one
+    // add, and the add is the complete authored constraint.
+    exactStatement(
+      "add constraint item_posts_moderation_visibility_check",
+      `alter table public.item_posts
+         add constraint item_posts_moderation_visibility_check
+         check (moderation_visibility in ('PUBLISHED', 'PENDING_REVIEW', 'HIDDEN', 'REMOVED'))`,
+    );
+    assert.equal((src.match(/add constraint/g) ?? []).length, 1, "one constraint is added, and it is guarded by its drop");
+    assert.ok(
+      statements().indexOf(statementWith("drop constraint if exists item_posts_moderation_visibility_check")) <
+        statements().indexOf(statementWith("add constraint item_posts_moderation_visibility_check")),
+      "the drop precedes the add, so the apply is re-runnable",
+    );
+    // No writer, no index: nothing in this file writes the column, and nothing
+    // filters on it yet (R9).
+    assert.equal((src.match(/create index/g) ?? []).length, 0, "no index is introduced");
+    assert.ok(!/grant insert[^;]*moderation_visibility/.test(src), "no insert grant names the column");
+    assert.ok(!/grant update/.test(src), "no update grant is introduced (M4)");
+    assert.ok(!/\balter column moderation_visibility/.test(src), "the column is never re-typed after the add");
+    assert.ok(!/\bset not null\b/.test(src), "no separate SET NOT NULL follows the add");
+  });
+
+  it("makes the view the single predicate: security_invoker, no block filter, and the O5 flag", () => {
+    // The full expression. `... or true` (which makes every moderated post
+    // world-readable), a dropped owner clause (which would blind an owner to
+    // their own report in review), and a re-introduced block term (which would
+    // hide content the owner ruled must stay visible) all change this text; no
+    // substring test can see the first of those.
+    exactStatement(
+      "create view public.findback_visible_posts",
+      `create view public.findback_visible_posts with (security_invoker = true) as
+         select p.*,
+                public.findback_is_blocked_with_me(p.user_id) as blocked_author
+         from public.item_posts p
+         where p.user_id = (select auth.uid())::text
+            or p.moderation_visibility = 'PUBLISHED'`,
+    );
+    const view = statementWith("create view public.findback_visible_posts");
+    assert.ok(view.includes("with (security_invoker = true)"), "the invoker reloption is present (M3)");
+    assert.ok(!view.includes("security_barrier = true"), "no second reloption rides along");
+    // O5 (§13.8 item 3): the WHERE carries NO block term. The block relationship
+    // is surfaced as a projected column, so a blocked author's PUBLISHED rows are
+    // returned to every viewer and the client can blur them.
+    const viewWhere = view.slice(view.indexOf(" where ") + " where ".length);
+    assert.ok(
+      !viewWhere.includes("findback_is_blocked"),
+      "O5: no block predicate in the view's WHERE — blocking is surfaced, never applied as a filter",
+    );
+    assert.equal(
+      (view.match(/findback_is_blocked_with_me\(p\.user_id\) as blocked_author/g) ?? []).length,
+      1,
+      "the block bit is projected once, from the caller-scoped self-subject surface",
+    );
+    // The only WHERE term that removes a row is the MODERATION atom, and it is
+    // reached only through the non-owner branch.
+    assert.equal(
+      (viewWhere.match(/or /g) ?? []).length,
+      1,
+      "the WHERE is exactly two disjuncts: the owner clause and the moderation atom",
+    );
+    exactStatement(
+      "revoke all on public.findback_visible_posts",
+      "revoke all on public.findback_visible_posts from public, anon, authenticated",
+    );
+    exactStatement(
+      "grant select on public.findback_visible_posts",
+      "grant select on public.findback_visible_posts to authenticated",
+    );
+    assert.equal(
+      statements().filter((s) =>
+        /^(drop view if exists public\.findback_visible_posts|create view public\.findback_visible_posts|revoke all on public\.findback_visible_posts|grant select on public\.findback_visible_posts|comment on view public\.findback_visible_posts)/.test(
+          s,
+        ),
+      ).length,
+      5,
+      "the view carries exactly its own five statements: drop, create, revoke, grant, comment",
+    );
+  });
+
+  it("admits no second visibility term: no re-created reader carries the atom", () => {
+    // D9: the predicate exists once. The atom is named by exactly the statements
+    // that define it (the column and its vocabulary), the grant that makes the
+    // invoker view usable, the view itself, and the one flag the D21 trigger
+    // reads — never by a reader, and never by a second policy or qual.
+    const atomSite = (s) => {
+      if (/^alter table public\.item_posts add column if not exists moderation_visibility/.test(s)) return "the column is added";
+      if (/^alter table public\.item_posts drop constraint if exists item_posts_moderation_visibility_check/.test(s)) return "the vocabulary check is dropped";
+      if (/^alter table public\.item_posts add constraint item_posts_moderation_visibility_check/.test(s)) return "the vocabulary check is added";
+      if (/^grant select \(moderation_visibility\) on public\.item_posts/.test(s)) return "the column privilege is granted";
+      if (/^create view public\.findback_visible_posts/.test(s)) return "the view reads it";
+      if (/^create or replace function public\.findback_notify_comment\(\)/.test(s)) return "the trigger reads it";
+      return `UNEXPECTED SITE: ${s.slice(0, 60)}`;
+    };
+    assert.deepEqual(
+      statements().filter((s) => s.includes("moderation_visibility")).map(atomSite),
+      [
+        "the column is added",
+        "the vocabulary check is dropped",
+        "the vocabulary check is added",
+        "the column privilege is granted",
+        "the view reads it",
+        "the trigger reads it",
+      ],
+      "the visibility atom is named only where it is defined, granted, read by the view and read by the trigger",
+    );
+    // The two POST readers inherit the whole predicate from the view: they must
+    // name neither the atom, nor the block table, nor the helper.
+    for (const name of ["findback_query_posts_client", "findback_query_posts_nearby_client"]) {
+      const body = bodyText(mig(B1), name);
+      assert.ok(!body.includes("moderation_visibility"), `${name} carries no moderation term of its own`);
+      assert.ok(!body.includes("user_blocks"), `${name} carries no block table read of its own`);
+      assert.ok(!body.includes("findback_is_blocked"), `${name} inherits the predicate from the view`);
+    }
+    // The comment reader is O5: it must NOT drop a blocked author's comments
+    // (D19's drop is superseded — see §13.8 item 3), so it never reads the
+    // block table and never carries the moderation atom. Its single block
+    // reference is the caller-scoped flag appended to the projection.
+    {
+      const body = bodyText(mig(B1), "findback_list_comments_client");
+      assert.ok(!body.includes("moderation_visibility"), "the comment reader carries no moderation term");
+      assert.ok(!body.includes("user_blocks"), "the comment reader carries no block table read");
+      assert.equal(
+        (body.match(/public\.findback_is_blocked_with_me\(c\.user_id\) as blocked_author/g) ?? []).length,
+        1,
+        "the comment reader surfaces the block bit exactly once, as a projected flag",
+      );
+      assert.equal(
+        (body.match(/findback_is_blocked/g) ?? []).length,
+        1,
+        "and it asks the block question nowhere else — in particular never in a WHERE (O5)",
+      );
+      assert.ok(
+        !body.slice(body.indexOf("from public.comments c")).includes("findback_is_blocked"),
+        "the comment reader applies no block filter: its only block reference is the projected flag above the FROM",
+      );
+    }
+    // The inbox reader keeps the MODERATION half of D21 (a stored-then-hidden row
+    // is not rendered) but surfaces the block half: it never reads the block
+    // table, never carries the moderation ATOM (it asks the view for the
+    // target-post term instead of re-implementing the post predicate), and its
+    // single block reference is the flag about the ACTOR.
+    {
+      const body = bodyText(mig(B1), "findback_list_notifications_client");
+      assert.ok(!body.includes("moderation_visibility"), "the inbox reader carries no moderation term");
+      assert.ok(!body.includes("user_blocks"), "the inbox reader carries no block table read");
+      assert.equal(
+        (body.match(/public\.findback_is_blocked_with_me\(n\.actor_id\) as blocked_actor/g) ?? []).length,
+        1,
+        "the inbox reader surfaces the block bit exactly once, about the actor",
+      );
+      assert.equal((body.match(/findback_is_blocked/g) ?? []).length, 1, "and nowhere else (O5)");
+      assert.ok(
+        !body.slice(body.indexOf("where n.user_id = v_uid")).includes("findback_is_blocked"),
+        "the inbox reader applies no block filter: its only block reference is the projected flag",
+      );
+      assert.ok(body.includes("from public.findback_visible_posts v"), "and it reads the view for the target-post term");
+    }
+    // The predicate IS called from inside three function bodies, and exactly the
+    // three the contract names: the O5 comment flag, the D21 trigger guard
+    // (which answers for a THIRD PARTY an invoker view cannot speak for, and is
+    // the one place the two-party INTERNAL form is used for a row that is not
+    // the caller's), and the O5 inbox flag. Any fourth call site is a new
+    // predicate. The two helper definitions themselves are excluded, and the
+    // wrapper's own call of the pair form is not a reader.
+    const blockCallers = statements()
+      .filter((s) => /^create or replace function/.test(s) && /findback_is_blocked_(pair|with_me)\(/.test(s))
+      .map((s) => /^create or replace function public\.([a-z_]+)\(/.exec(s)[1])
+      .filter((name) => name !== "findback_is_blocked_pair" && name !== "findback_is_blocked_with_me");
+    assert.deepEqual(
+      blockCallers,
+      ["findback_list_comments_client", "findback_notify_comment", "findback_list_notifications_client"],
+      "the predicate is called from a function body only at the three contract-named sites (O5 comment flag, D21 trigger, O5 inbox flag)",
+    );
+    // §13.8 item 4: the only place the INTERNAL pair form is called from a body
+    // is the trigger, and only because a third-party recipient's visibility
+    // cannot be asked through the self-subject surface.
+    const pairCallers = statements()
+      .filter((s) => /^create or replace function/.test(s) && /findback_is_blocked_pair\(/.test(s))
+      .map((s) => /^create or replace function public\.([a-z_]+)\(/.exec(s)[1])
+      .filter((name) => name !== "findback_is_blocked_pair");
+    assert.deepEqual(
+      pairCallers,
+      ["findback_is_blocked_with_me", "findback_notify_comment"],
+      "the two-party form is reached only by its own wrapper and by the D21 trigger (never by a reader)",
+    );
+    // No policy is created anywhere in this file: D18 is enforced by absence of
+    // grant, not by a qual that could be widened.
+    assert.equal((code().match(/create policy/g) ?? []).length, 0, "no policy is created");
+  });
+
+  it("derives the trigger's recipient guard from the view's predicate plus the D21 interaction term", () => {
+    // The recurrence (the one interpretation B1 makes) is not taken on trust.
+    // Under O5 the view's WHERE is only the owner clause and the moderation atom
+    // — no block term — so the trigger's guard can no longer be the view's WHERE
+    // verbatim. What is asserted instead is the decomposition: the guard is
+    // EXACTLY the view's predicate for that recipient AND the D21 interaction
+    // term, with nothing else, so neither half can drift and neither can grow a
+    // third disjunct.
+    const viewWhere = (() => {
+      const view = statementWith("create view public.findback_visible_posts");
+      const at = view.indexOf(" where ");
+      assert.ok(at > 0, "the view has a WHERE");
+      return view.slice(at + " where ".length);
+    })();
+    const viewOwnerClause = "p.user_id = (select auth.uid())::text";
+    const viewModeration = "p.moderation_visibility = 'published'";
+    assert.equal(
+      skeleton(viewWhere),
+      skeleton(`${viewOwnerClause} or ${viewModeration}`),
+      "the view's predicate is exactly the owner clause and the moderation atom (O5: no block term)",
+    );
+    // The view's predicate with the viewer substituted for a THIRD-PARTY
+    // recipient: the owner clause becomes `v_owner = <recipient>` and the
+    // moderation atom becomes the boolean the trigger read once.
+    const viewPredicateFor = (recipient) => skeleton(`( v_owner = ${recipient} or ( v_post_visible ) )`);
+    // The D21 interaction term, pinned as its own expression: binding under
+    // §13.8 item 4, and the ONE place the two-party INTERNAL form is used for a
+    // row that is not the caller's own.
+    const d21Term = (recipient) => `and not public.findback_is_blocked_pair(${recipient}, v_owner)`;
+    const notify = bodyText(mig(B1), "findback_notify_comment");
+
+    for (const recipient of ["v_parent_author", "v_mentioned_id"]) {
+      const guard = new RegExp(
+        `\\(\\s*v_owner = ${recipient}\\s+or\\s+\\(\\s*v_post_visible\\s+and\\s+not public\\.findback_is_blocked_pair\\(${recipient}, v_owner\\)\\s*\\)\\s*\\)`,
+      );
+      const hit = guard.exec(notify);
+      assert.ok(hit, `${recipient}: the guard is the view predicate plus the D21 interaction term`);
+      assert.equal(
+        skeleton(hit[0]),
+        skeleton(`( v_owner = ${recipient} or ( v_post_visible ${d21Term(recipient)} ) )`),
+        `${recipient}: the guard IS the view predicate for that recipient AND the D21 term, in that order`,
+      );
+      // Strip the interaction term: what is left must be the view's own
+      // predicate with the viewer substituted — no extra disjunct, no dropped
+      // conjunct.
+      assert.equal(
+        skeleton(hit[0].replace(/\s+and\s+not public\.findback_is_blocked_pair\([^)]*\)/, "")),
+        viewPredicateFor(recipient),
+        `${recipient}: removing the D21 term leaves EXACTLY the view's predicate for that recipient`,
+      );
+    }
+
+    // 2. The moderation atom is read ONCE, into a boolean, from the same table
+    //    the view reads, with a NULL-safe default (a post-less row is impossible
+    //    while the comments FK cascades, and is fenced anyway). The atom inside
+    //    the read is the view's own atom, character for character.
+    assert.ok(
+      notify.includes(
+        `select p.user_id, p.title, coalesce(${viewModeration}, false) into v_owner, v_title, v_post_visible from public.item_posts p where p.id = new.post_id`,
+      ),
+      "the moderation atom is read once, into a boolean, with a NULL-safe default",
+    );
+
+    // 3. The post-owner branch is the D17 term ALONE, and that is not a shortcut:
+    //    the recipient IS the author, so the view's owner clause
+    //    (p.user_id = viewer) is trivially true for them and the visibility
+    //    conjunct cannot bite. The arguments are the view's own two arguments;
+    //    their order is immaterial because the pair body is symmetric and pinned
+    //    (test below).
+    assert.ok(
+      notify.includes("and not public.findback_is_blocked_pair(v_owner, new.user_id) then"),
+      "the post-owner branch carries the block term",
+    );
+    const ownerClauseArgs = /public\.findback_is_blocked_pair\(([^)]*)\)/g;
+    const ownerArgs = [...notify.matchAll(ownerClauseArgs)]
+      .map((m) => m[1].split(",").map((s) => s.trim()).sort().join(","))
+      .filter((args) => args === ["new.user_id", "v_owner"].sort().join(","));
+    assert.equal(ownerArgs.length, 1, "the owner branch asks the block question once, about the actor");
+    const view = statementWith("create view public.findback_visible_posts");
+    assert.ok(
+      view.includes("public.findback_is_blocked_with_me(p.user_id) as blocked_author"),
+      "the view asks the self-subject surface with its own viewer as the subject, as a projected flag",
+    );
+    assert.ok(
+      !viewWhere.includes("findback_is_blocked"),
+      "and the trigger's interaction term is an ADDITION to the view's predicate, never a copy of a filter the view still applies",
+    );
+    // The owner branch names no moderation flag: the conjunct is provably true.
+    const ownerBranch = notify.slice(
+      notify.indexOf("if v_owner is not null"),
+      notify.indexOf("if new.parent_id is not null"),
+    );
+    assert.ok(!ownerBranch.includes("v_post_visible"), "the post-owner branch needs no visibility term");
+  });
+
+  it("re-creates both feed readers as the applied text plus exactly one slice", () => {
+    for (const name of ["findback_query_posts_client", "findback_query_posts_nearby_client"]) {
+      const applied = bodyLines(mig(DIMS), name);
+      const authored = bodyLines(mig(B1), name);
+      // The applied body, so the properties the app depends on are asserted in
+      // it rather than assumed.
+      for (const invariant of ["from item_posts p", "order by", "limit least(greatest(p_limit, 0), 20);"]) {
+        assert.ok(applied.some((line) => line.includes(invariant)), `${name}: the applied body still has ${invariant}`);
+      }
+      assert.equal(
+        applied.filter((line) => line === "from item_posts p").length,
+        1,
+        `${name}: the applied body reads the table exactly once`,
+      );
+      // Positional equality after the one slice: a dropped guard, a widened
+      // WHERE, a changed ORDER BY or a changed cap all fail here.
+      assert.deepEqual(
+        authored,
+        applied.map((line) => (line === "from item_posts p" ? "from public.findback_visible_posts p" : line)),
+        `${name} is the applied body plus exactly the one-slice visibility switch`,
+      );
+      assert.ok(
+        authored.some((line) => line === "from public.findback_visible_posts p"),
+        `${name} reads the view`,
+      );
+    }
+  });
+
+  it("re-creates the comment reader as the applied projection plus exactly the O5 flag", () => {
+    const applied = bodyLines(mig(M2), "findback_list_comments_client");
+    const authored = bodyLines(mig(B1), "findback_list_comments_client");
+    const { removed, added } = multisetDelta(applied, authored);
+    assert.deepEqual(
+      removed,
+      ["), '[]'::jsonb) as attachments"],
+      "exactly one applied line is replaced: the last projection line, which gains a comma",
+    );
+    assert.deepEqual(
+      added,
+      [
+        "), '[]'::jsonb) as attachments,",
+        "public.findback_is_blocked_with_me(c.user_id) as blocked_author",
+      ].sort(),
+      "the comment reader's whole delta is the O5 flag appended to the projection",
+    );
+
+    // Position, not just membership: every applied line is unchanged and in
+    // order up to the attachments line, the flag is inserted immediately after
+    // it, and every applied line after it follows unchanged.
+    const k = applied.indexOf("), '[]'::jsonb) as attachments");
+    assert.ok(k > 0, "the applied projection still ends with the attachments aggregate");
+    assert.deepEqual(authored.slice(0, k), applied.slice(0, k), "every applied line before the flag is unchanged, in order");
+    assert.equal(authored[k], "), '[]'::jsonb) as attachments,", "the attachments line gains the trailing comma");
+    assert.equal(authored[k + 1], "public.findback_is_blocked_with_me(c.user_id) as blocked_author", "the O5 flag is the next line");
+    assert.deepEqual(authored.slice(k + 2), applied.slice(k + 1), "every applied line after the flag follows unchanged");
+    assert.equal(authored.length, applied.length + 1, "exactly one line is added, and nothing is retyped");
+
+    // D19's drop is superseded by O5 (§13.8 item 3), so the promotion walk is
+    // NOT shipped: nothing is dropped, so there is nothing to promote, and the
+    // stored parent_id/depth are returned as stored.
+    const joined = authored.join("\n");
+    for (const gone of ["with recursive", "chain as (", "visible_chain", "nearest as (", "promoted as (", "cross join", "coalesce(d.kept"]) {
+      assert.ok(!joined.includes(gone), `D19's drop is superseded, so \`${gone}\` is not shipped`);
+    }
+    assert.equal((joined.match(/c\.parent_id/g) ?? []).length, 1, "parent_id is read from the stored row exactly once");
+    assert.ok(
+      joined.includes("c.id, c.post_id, c.parent_id, c.depth, c.body, c.created_at, c.updated_at,"),
+      "the stored parent_id and depth are projected untouched",
+    );
+    // The reader is still an invoker: O5's flag is a predicate call, not a
+    // privilege.
+    const marker = "create or replace function public.findback_list_comments_client";
+    const declaration = mig(B1).slice(mig(B1).indexOf(marker), mig(B1).indexOf("as $$", mig(B1).indexOf(marker)));
+    assert.ok(declaration.includes("security invoker"), "the comment reader stays an invoker");
+    assert.ok(!declaration.includes("security definer"), "and is never converted to a definer");
+    // The one OUT column is appended LAST, so a positional consumer is unaffected.
+    assert.match(
+      declaration.replace(/\s+/g, " "),
+      /attachments jsonb, blocked_author boolean \)/,
+      "blocked_author is the LAST OUT column",
+    );
+  });
+
+  it("re-creates the trigger as the applied body plus exactly the D21 guards", () => {
+    const applied = bodyLines(mig(TRIGGER), "findback_notify_comment");
+    const authored = bodyLines(mig(B1), "findback_notify_comment");
+    const { removed, added } = multisetDelta(applied, authored);
+    assert.deepEqual(
+      removed,
+      [
+        "and v_parent_author is distinct from v_owner then",
+        "if v_owner is not null and v_owner <> new.user_id then",
+        "select p.user_id, p.title into v_owner, v_title",
+      ].sort(),
+      "only the three superseded lines were replaced",
+    );
+    assert.deepEqual(
+      added,
+      [
+        "and ( v_owner = v_parent_author",
+        "and not public.findback_is_blocked_pair(v_mentioned_id, v_owner) ) ) then",
+        "and not public.findback_is_blocked_pair(v_owner, new.user_id) then",
+        "and not public.findback_is_blocked_pair(v_parent_author, new.user_id)",
+        "and not public.findback_is_blocked_pair(v_parent_author, v_owner) ) ) then",
+        "and v_parent_author is distinct from v_owner",
+        "coalesce(p.moderation_visibility = 'published', false)",
+        "continue;",
+        "continue;",
+        "end if;",
+        "end if;",
+        "if not ( v_owner = v_mentioned_id",
+        "if public.findback_is_blocked_pair(v_mentioned_id, new.user_id) then",
+        "if v_owner is not null and v_owner <> new.user_id",
+        "into v_owner, v_title, v_post_visible",
+        "or ( v_post_visible",
+        "or ( v_post_visible",
+        "p.title,",
+        "select p.user_id,",
+        "v_post_visible boolean;",
+      ].sort(),
+      "the trigger's whole delta is the D21 guard program",
+    );
+
+    // Order is contract: the notification is written only after every guard has
+    // spoken. These anchors must appear in this order; crossing a pair fails.
+    // The mention-dedupe guard (`if exists (`) is anchored immediately before the
+    // mention write, because relocating it after its own insert is
+    // length-preserving and produces a duplicate MENTION notification
+    // (REVIEW-CF060-B1 MINOR-3).
+    const joined = authored.join("\n");
+    const anchors = [
+      "select p.user_id,",
+      "coalesce(p.moderation_visibility = 'published', false)",
+      "into v_owner, v_title, v_post_visible",
+      "if v_owner is not null and v_owner <> new.user_id",
+      "and not public.findback_is_blocked_pair(v_owner, new.user_id) then",
+      "perform public.findback_insert_notification(",
+      "if public.findback_is_blocked_pair(v_mentioned_id, new.user_id) then",
+      "continue;",
+      "if not ( v_owner = v_mentioned_id",
+      "if exists (",
+      "perform public.findback_insert_notification(",
+      "return new;",
+    ];
+    let cursor = -1;
+    for (const anchor of anchors) {
+      const at = joined.indexOf(anchor, cursor + 1);
+      assert.ok(at > cursor, `the trigger's \`${anchor}\` must follow the anchor before it`);
+      cursor = at;
+    }
+    // The trigger stays a definer with a locked search_path, and gains no grant.
+    const declaration = mig(B1).slice(
+      mig(B1).indexOf("create or replace function public.findback_notify_comment"),
+      mig(B1).indexOf("as $$", mig(B1).indexOf("create or replace function public.findback_notify_comment")),
+    );
+    assert.ok(declaration.includes("security definer"), "the trigger stays a definer");
+    assert.ok(declaration.includes("set search_path = public, pg_temp"), "and keeps its locked search_path");
+    exactStatement(
+      "revoke all on function public.findback_notify_comment",
+      "revoke all on function public.findback_notify_comment() from public, anon, authenticated",
+    );
+    assert.ok(
+      !statements().some((s) => s.includes("grant execute on function public.findback_notify_comment")),
+      "the trigger function stays unreachable from a client",
+    );
+  });
+
+  it("re-creates the inbox reader as the applied body plus exactly the D21 moderation term and the O5 flag", () => {
+    const applied = bodyLines(mig(FEED), "findback_list_notifications_client");
+    const authored = bodyLines(mig(B1), "findback_list_notifications_client");
+    const { removed, added } = multisetDelta(applied, authored);
+    assert.deepEqual(
+      removed,
+      ["n.comment_id, n.reaction_kind"],
+      "the one replaced line is the last projection line, which gains a comma",
+    );
+    assert.deepEqual(
+      added,
+      [
+        "n.comment_id, n.reaction_kind,",
+        "public.findback_is_blocked_with_me(n.actor_id) as blocked_actor",
+        "and (",
+        "n.post_id is null",
+        "or exists (",
+        "select 1 from public.findback_visible_posts v where v.id = n.post_id",
+        ")",
+        ")",
+      ].sort(),
+      "the inbox gains exactly the D21 moderation term and the O5 flag",
+    );
+    // O5: the BLOCK term is no longer a filter anywhere in the WHERE; only the
+    // MODERATION half of D21 removes a row. §13.8 item 4's interaction refusal is
+    // the trigger's, not the reader's.
+    const joined = authored.join("\n");
+    assert.ok(
+      !joined.includes("and not public.findback_is_blocked"),
+      "O5: the inbox no longer filters the caller's rows by the actor's block state",
+    );
+    assert.equal(
+      (joined.match(/findback_is_blocked/g) ?? []).length,
+      1,
+      "the inbox's only block reference is the projected flag",
+    );
+    // Position: the moderation term sits in the WHERE after the caller scope, so
+    // the caller can never read another user's rows even if the term is bypassed,
+    // and the soft-delete selector is still last.
+    const callerScope = joined.indexOf("where n.user_id = v_uid");
+    const viewTerm = joined.indexOf("select 1 from public.findback_visible_posts v where v.id = n.post_id");
+    const deletedTerm = joined.indexOf("n.deleted_at is not null");
+    assert.ok(callerScope > 0 && viewTerm > callerScope, "the target-post term is inside the caller-scoped WHERE");
+    assert.ok(deletedTerm > viewTerm, "the soft-delete selector is still last, so it still picks the view");
+    // The reader stays the caller-scoped definer it was, with its grant re-asserted.
+    assert.ok(
+      /create or replace function public\.findback_list_notifications_client\(\s*p_deleted boolean default false\s*\)/.test(
+        mig(B1),
+      ),
+      "the signature is untouched",
+    );
+    const declaration = mig(B1).slice(
+      mig(B1).indexOf("create or replace function public.findback_list_notifications_client"),
+      mig(B1).indexOf("as $$", mig(B1).indexOf("create or replace function public.findback_list_notifications_client")),
+    );
+    assert.match(
+      declaration.replace(/\s+/g, " "),
+      /reaction_kind text, blocked_actor boolean \)/,
+      "blocked_actor is the LAST OUT column",
+    );
+    assert.ok(declaration.includes("security definer"), "the inbox reader stays a definer");
+    exactStatement(
+      "drop function if exists public.findback_list_notifications_client(boolean)",
+      "drop function if exists public.findback_list_notifications_client(boolean)",
+    );
+    exactStatement(
+      "grant execute on function public.findback_list_notifications_client",
+      "grant execute on function public.findback_list_notifications_client(boolean) to authenticated",
+    );
+  });
+
+  it("keeps user_blocks unreadable: no grant, no policy, a self-check and cascading FKs", () => {
+    exactStatement(
+      "create table if not exists public.user_blocks",
+      `create table if not exists public.user_blocks (
+         blocker_user_id text not null references public.users(id) on delete cascade,
+         blocked_user_id text not null references public.users(id) on delete cascade,
+         created_at text not null,
+         primary key (blocker_user_id, blocked_user_id),
+         constraint user_blocks_self_check check (blocker_user_id <> blocked_user_id)
+       )`,
+    );
+    const table = statementWith("create table if not exists public.user_blocks");
+    assert.equal(
+      (table.match(/on delete cascade/g) ?? []).length,
+      2,
+      "both ends of a block cascade, so a deleted account leaves no dangling block",
+    );
+    assert.match(table, /primary key \(blocker_user_id, blocked_user_id\)/, "one row per act, so an unblock can be per-direction");
+    assert.ok(
+      table.includes("constraint user_blocks_self_check check (blocker_user_id <> blocked_user_id)"),
+      "the self-block is refused inline (never by a separate, unguarded ADD CONSTRAINT)",
+    );
+    assert.equal(
+      (statements().filter((s) => s.includes("user_blocks")).filter((s) => /add constraint/.test(s)).length),
+      0,
+      "no constraint is added to the table after its create",
+    );
+    exactStatement("alter table public.user_blocks enable row level security", "alter table public.user_blocks enable row level security");
+    exactStatement(
+      "revoke all on public.user_blocks",
+      "revoke all on public.user_blocks from public, anon, authenticated",
+    );
+    // Nobody can read it, and nobody can write it: no grant at all, and no
+    // policy — because Supabase's default ACL grants new tables to
+    // authenticated, "no policy" alone would not be "no access" (D18).
+    assert.ok(
+      !statements().some((s) => /^(grant|revoke [^;]*from [^;]*authenticated)/.test(s) && s.includes("on public.user_blocks") && s.startsWith("grant")),
+      "authenticated gains nothing on the block table",
+    );
+    assert.equal((code().match(/create policy/g) ?? []).length, 0, "no policy, so nothing can be widened");
+  });
+
+  it("closes the ACL: anon gains nothing and the grant set is exactly the authored one", () => {
+    const grants = statements().filter((s) => s.startsWith("grant"));
+    assert.deepEqual(
+      grants,
+      [
+        "grant execute on function public.findback_is_blocked_with_me(text) to authenticated",
+        "grant select (moderation_visibility) on public.item_posts to authenticated",
+        "grant select on public.findback_visible_posts to authenticated",
+        "grant execute on function public.findback_my_blocks() to authenticated",
+        "grant execute on function public.findback_query_posts_client( text, text, text, text, text, text, text, text, text, text, integer, text ) to authenticated",
+        "grant execute on function public.findback_query_posts_nearby_client( text, text, text, text, text, text, text, text, text, text, integer, double precision, double precision, double precision ) to authenticated",
+        "grant execute on function public.findback_list_comments_client(text) to authenticated",
+        "grant execute on function public.findback_list_notifications_client(boolean) to authenticated",
+      ],
+      "the complete grant set: eight statements, every one to authenticated",
+    );
+    assert.ok(
+      !statements().some((s) => /^grant\b/.test(s) && /\bto\b[^;]*\banon\b/.test(s)),
+      "anon gains nothing (D18/M1)",
+    );
+    assert.ok(!/\bservice_role\b/.test(code()), "no service-role grant is introduced");
+    // MAJOR-1: the two-party predicate is NOT a client surface. It is revoked
+    // from public, anon AND authenticated, and no grant names it. The only
+    // client-callable block question is the self-subject wrapper, whose first
+    // party is auth.uid() and therefore unparameterisable by the caller.
+    exactStatement(
+      "revoke all on function public.findback_is_blocked_pair",
+      "revoke all on function public.findback_is_blocked_pair(text, text) from public, anon, authenticated",
+    );
+    assert.ok(
+      !statements().some((s) => /^grant\b/.test(s) && s.includes("findback_is_blocked_pair")),
+      "the internal pair predicate is granted to nobody: no inverse reader (MAJOR-1)",
+    );
+    assert.ok(
+      grants.some((s) => s === "grant execute on function public.findback_is_blocked_with_me(text) to authenticated"),
+      "the self-subject wrapper is the only granted block surface",
+    );
+
+    // The column grant is REQUIRED, not decoration: a security_invoker view whose
+    // body names a column is unusable for a caller who does not hold that
+    // column's privilege. Without it every authenticated read of the view — and
+    // therefore both feed readers — fails 42501 (measured in
+    // inertness-selfcheck.mjs). The residual the grant creates against the
+    // table's `using (true)` SELECT policy is an owner decision (README.md).
+    assert.ok(
+      grants.includes("grant select (moderation_visibility) on public.item_posts to authenticated"),
+      "the invoker view's column privilege is granted, or B1 ships a dead feed",
+    );
+    assert.equal(
+      (statements().filter((s) => s.startsWith("revoke")).length),
+      12,
+      "the revoke inventory is pinned, so a revoke cannot be quietly dropped",
+    );
+    // Every new object is revoked from public/anon/authenticated before its grant.
+    for (const object of ["public.user_blocks", "public.findback_visible_posts"]) {
+      const revoke = statements().indexOf(statementWith(`revoke all on ${object} from public, anon, authenticated`));
+      assert.ok(revoke >= 0, `${object} is revoked from every role`);
+    }
+    for (const fn of ["findback_is_blocked_with_me(text)", "findback_my_blocks()"]) {
+      exactStatement(`revoke all on function public.${fn} from public, anon`, `revoke all on function public.${fn} from public, anon`);
+    }
+  });
+
+  it("pins both helpers' signature, volatility, security model and body", () => {
+    // The predicate is INTERNAL and two-party: one boolean, symmetric, definer,
+    // stable. The return type is part of the contract (a row-returning helper
+    // would let a caller enumerate who blocked whom). Its body is pinned as a
+    // COMPLETE normalised expression — not as regexes — so a length-preserving
+    // token swap cannot slip through (REVIEW-CF060-B1 MINOR-1 class).
+    const pair = mig(B1).slice(
+      mig(B1).indexOf("create or replace function public.findback_is_blocked_pair"),
+      mig(B1).indexOf("revoke all on function public.findback_is_blocked_pair"),
+    );
+    assert.match(pair, /returns boolean/, "the internal predicate returns a boolean, never rows (M5)");
+    assert.match(pair, /language sql\nstable/, "it is stable");
+    assert.match(pair, /security definer/, "it is a definer: user_blocks is granted to nobody");
+    assert.match(pair, /set search_path = public, pg_temp/, "and it locks search_path");
+    assert.equal(
+      bodyText(mig(B1), "findback_is_blocked_pair"),
+      "select exists (select 1 from public.user_blocks b where (b.blocker_user_id = p_a and b.blocked_user_id = p_b) or (b.blocker_user_id = p_b and b.blocked_user_id = p_a));",
+      "the internal predicate body is exactly the authored symmetric existence probe, with no third disjunct",
+    );
+
+    // The client surface is ONE argument and its subject is auth.uid(), never a
+    // parameter. This is the whole point of the split (MAJOR-1): the caller
+    // cannot supply the first party, so it cannot ask about a pair it is not in.
+    const withMe = mig(B1).slice(
+      mig(B1).indexOf("create or replace function public.findback_is_blocked_with_me"),
+      mig(B1).indexOf("revoke all on function public.findback_is_blocked_with_me"),
+    );
+    assert.match(withMe, /returns boolean/, "the client surface returns a boolean");
+    assert.match(withMe, /language sql\nstable/, "it is stable");
+    assert.match(withMe, /security definer/, "it is a definer");
+    assert.match(withMe, /set search_path = public, pg_temp/, "and it locks search_path");
+    assert.equal(
+      bodyText(mig(B1), "findback_is_blocked_with_me"),
+      "select public.findback_is_blocked_pair(auth.uid()::text, p_other);",
+      "the client surface delegates with auth.uid() as the first party — self-subject, one parameter (MAJOR-1)",
+    );
+    assert.equal(
+      (bodyText(mig(B1), "findback_is_blocked_with_me").match(/auth\.uid\(\)/g) ?? []).length,
+      1,
+      "auth.uid() is the subject of the only client-parameterisable argument",
+    );
+    exactStatement(
+      "grant execute on function public.findback_is_blocked_with_me",
+      "grant execute on function public.findback_is_blocked_with_me(text) to authenticated",
+    );
+
+    // findback_my_blocks: exactly two columns (blocked_user_id, created_at),
+    // plpgsql, stable, definer, and the caller identity is the whole
+    // authorization model. Its body is pinned as a COMPLETE normalised
+    // expression, so returning the wrong party (blocker_user_id) or inverting
+    // the order by — both length-preserving — fail here (REVIEW-CF060-B1
+    // MINOR-1/MINOR-2).
+    const mine = mig(B1).slice(
+      mig(B1).indexOf("create or replace function public.findback_my_blocks"),
+      mig(B1).indexOf("revoke all on function public.findback_my_blocks"),
+    );
+    const returns = mine.slice(mine.indexOf("returns table ("), mine.indexOf("language plpgsql"));
+    assert.equal(
+      norm(returns),
+      norm(`returns table (
+        blocked_user_id text,
+        created_at text
+      )`),
+      "exactly the two authored columns: no blocker column, no actor column (D18)",
+    );
+    assert.match(mine, /security definer/, "definer: the block table is granted to nobody");
+    assert.match(mine, /stable/, "stable");
+    assert.match(mine, /set search_path = public, pg_temp/, "and it locks search_path");
+    assert.equal(
+      bodyText(mig(B1), "findback_my_blocks"),
+      norm(`
+        declare
+          v_uid text := auth.uid()::text;
+        begin
+          if v_uid is null then
+            raise exception 'not authenticated' using errcode = '28000';
+          end if;
+          return query
+            select b.blocked_user_id, b.created_at
+            from public.user_blocks b
+            where b.blocker_user_id = v_uid
+            order by b.created_at desc, b.blocked_user_id asc;
+        end;
+      `),
+      "the reader returns the caller's own OUTGOING blocked_user_id rows, newest first, and nothing else",
+    );
+    exactStatement(
+      "grant execute on function public.findback_my_blocks",
+      "grant execute on function public.findback_my_blocks() to authenticated",
+    );
+  });
+
+  it("pins the UPDATE grant list (M4) and the unrun probe stanzas (M13/M15/M17)", () => {
+    // M4: no client may write the moderation state. Nothing in the chain grants
+    // UPDATE on item_posts(moderation_visibility) — the list is read from every
+    // migration, so a grant added anywhere in the chain fails here.
+    const updateGrants = ls()
+      .flatMap((file) => [...mig(file).matchAll(/grant update \(([^)]*)\) on public\.item_posts/gi)])
+      .map((m) => norm(m[1]));
+    assert.ok(updateGrants.length > 0, "the owner-writable update grant exists (the column could have ridden along on it)");
+    updateGrants.forEach((columns) =>
+      assert.ok(!columns.includes("moderation_visibility"), `M4: no update grant names the column: ${columns}`),
+    );
+    assert.ok(!/grant update/.test(code()), "B1 adds no update grant of any kind");
+
+    // M13/M15/M17 are live probes: they cannot run here, and the verify file
+    // must still carry them so the owner's run can. They are marked unrun.
+    const verify = read(join(ROOT, "tests", "verify_20261017070000_visibility_kernel_and_blocks.sql"));
+    for (const fixture of ["M13", "M15", "M17"]) {
+      assert.ok(verify.includes(fixture), `${fixture} has a probe`);
+    }
+    assert.ok(verify.includes("UNRUN HERE"), "the verify header states which probes have not run");
+  });
+
+  it("contains exactly the authored statement inventory, and nothing rides along", () => {
+    const label = (s) => {
+      let m;
+      if ((m = s.match(/^create table if not exists (public\.[a-z_]+)/))) return `create table ${m[1]}`;
+      if ((m = s.match(/^alter table (public\.[a-z_]+) enable row level security/))) return `rls ${m[1]}`;
+      if ((m = s.match(/^alter table (public\.[a-z_]+) add column if not exists ([a-z_]+)/))) return `add column ${m[1]}.${m[2]}`;
+      if ((m = s.match(/^alter table (public\.[a-z_]+) drop constraint if exists ([a-z_]+)/))) return `drop constraint ${m[2]}`;
+      if ((m = s.match(/^alter table (public\.[a-z_]+) add constraint ([a-z_]+)/))) return `add constraint ${m[2]}`;
+      if ((m = s.match(/^revoke all on (public\.[a-z_]+|function public\.[a-z_]+)/))) return `revoke ${m[1]}`;
+      if ((m = s.match(/^grant select \(([a-z_]+)\) on (public\.[a-z_]+)/))) return `grant select (${m[1]}) ${m[2]}`;
+      if ((m = s.match(/^grant select on (public\.[a-z_]+)/))) return `grant select ${m[1]}`;
+      if ((m = s.match(/^grant execute on function (public\.[a-z_]+)/))) return `grant execute ${m[1]}`;
+      if ((m = s.match(/^drop view if exists (public\.[a-z_]+)/))) return `drop view ${m[1]}`;
+      if ((m = s.match(/^drop function if exists (public\.[a-z_]+)/))) return `drop function ${m[1]}`;
+      if ((m = s.match(/^create view (public\.[a-z_]+)/))) return `create view ${m[1]}`;
+      if ((m = s.match(/^create or replace function (public\.[a-z_]+)/))) return `create function ${m[1]}`;
+      if ((m = s.match(/^comment on (table|view|function) (public\.[a-z_]+)/))) return `comment ${m[1]} ${m[2]}`;
+      return s;
+    };
+    assert.deepEqual(
+      statements().map(label),
+      [
+        "create table public.user_blocks",
+        "rls public.user_blocks",
+        "revoke public.user_blocks",
+        "comment table public.user_blocks",
+        "create function public.findback_is_blocked_pair",
+        "revoke function public.findback_is_blocked_pair",
+        "comment function public.findback_is_blocked_pair",
+        "create function public.findback_is_blocked_with_me",
+        "revoke function public.findback_is_blocked_with_me",
+        "grant execute public.findback_is_blocked_with_me",
+        "comment function public.findback_is_blocked_with_me",
+        "add column public.item_posts.moderation_visibility",
+        "drop constraint item_posts_moderation_visibility_check",
+        "add constraint item_posts_moderation_visibility_check",
+        "grant select (moderation_visibility) public.item_posts",
+        "drop view public.findback_visible_posts",
+        "create view public.findback_visible_posts",
+        "revoke public.findback_visible_posts",
+        "grant select public.findback_visible_posts",
+        "comment view public.findback_visible_posts",
+        "create function public.findback_my_blocks",
+        "revoke function public.findback_my_blocks",
+        "grant execute public.findback_my_blocks",
+        "comment function public.findback_my_blocks",
+        "create function public.findback_query_posts_client",
+        "revoke function public.findback_query_posts_client",
+        "revoke function public.findback_query_posts_client",
+        "grant execute public.findback_query_posts_client",
+        "comment function public.findback_query_posts_client",
+        "create function public.findback_query_posts_nearby_client",
+        "revoke function public.findback_query_posts_nearby_client",
+        "revoke function public.findback_query_posts_nearby_client",
+        "grant execute public.findback_query_posts_nearby_client",
+        "comment function public.findback_query_posts_nearby_client",
+        "drop function public.findback_list_comments_client",
+        "create function public.findback_list_comments_client",
+        "revoke function public.findback_list_comments_client",
+        "grant execute public.findback_list_comments_client",
+        "comment function public.findback_list_comments_client",
+        "create function public.findback_notify_comment",
+        "revoke function public.findback_notify_comment",
+        "drop function public.findback_list_notifications_client",
+        "create function public.findback_list_notifications_client",
+        "revoke function public.findback_list_notifications_client",
+        "grant execute public.findback_list_notifications_client",
+        "comment function public.findback_list_notifications_client",
+      ],
+      "exactly the authored statements, in the authored order",
+    );
+    assert.equal(statements().length, 46, "46 statements, no rider");
+    // A scalar length backstop for an addition these patterns do not anticipate.
+    assert.equal(code().length, 22704, "the normalised file text is exactly the authored length");
+  });
+
+  it("keeps the client-reachable definer set pinned with the new helpers", () => {
+    // The extension above runs at load time; if someone removes it, the chain's
+    // derived definer set still contains both helpers and the A4 gate fails.
+    assert.ok(
+      CLIENT_REACHABLE_DEFINERS.includes("findback_is_blocked_with_me"),
+      "the self-subject predicate is the client-reachable definer",
+    );
+    assert.ok(
+      !CLIENT_REACHABLE_DEFINERS.includes("findback_is_blocked_pair"),
+      "the two-argument pair oracle stays internal and off the client-reachable set",
+    );
+    assert.ok(CLIENT_REACHABLE_DEFINERS.includes("findback_my_blocks"), "the owner-scoped block reader too");
+    assert.deepEqual(
+      [...CLIENT_REACHABLE_DEFINERS],
+      [...CLIENT_REACHABLE_DEFINERS].sort(),
+      "the pinned set stays sorted, so the A4 comparison is a set comparison",
+    );
+    assert.ok(
+      !CLIENT_REACHABLE_DEFINERS.includes("findback_notify_comment"),
+      "the trigger function stays unreachable from a client",
+    );
+  });
+});
