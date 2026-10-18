@@ -275,6 +275,68 @@ describe("GoogleAuthError taxonomy", () => {
   });
 });
 
+/**
+ * The suite above fabricates rejections as `{ code, message }` — the shape the
+ * taxonomy *wants*. Capacitor does not send that shape for this plugin.
+ *
+ * `PluginCall.reject(String msg, JSObject data)` (the two-arg overload the
+ * native side used) delegates to `reject(msg, null, null, data)`, which puts
+ * `code = null` at the top level and nests the JSObject under `data`:
+ *
+ *   { message: "…", code: null, data: { code: "unavailable", message: "…" } }
+ *
+ * That is the object logcat shows being sent to JS on device, and it made
+ * `extractKind` return "unknown" for EVERY native failure — so a dismissed
+ * prompt rendered an error banner and "no Google account" rendered the generic
+ * retry copy instead of the actionable one. These cases pin the real wire shape
+ * so the two packings can never silently diverge again.
+ */
+describe("native rejection packing (real Capacitor shape)", () => {
+  const packed = (code: string) => ({
+    message: "platform detail",
+    code: null,
+    data: { code, message: "platform detail" },
+  });
+
+  it.each([
+    ["cancelled", "cancelled"],
+    ["unavailable", "unavailable"],
+    ["misconfigured", "misconfigured"],
+    ["network", "network"],
+    ["no_credential", "unavailable"],
+    ["user_cancelled", "cancelled"],
+  ])("reads kind %s from the nested data.code slot", async (code, kind) => {
+    fakeBridge.signIn.mockRejectedValue(packed(code));
+    const err = await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GoogleAuthError);
+    expect((err as GoogleAuthError).kind).toBe(kind);
+  });
+
+  it("leaves an unrecognized nested code as unknown", async () => {
+    fakeBridge.signIn.mockRejectedValue(packed("something_new"));
+    const err = await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e);
+    expect((err as GoogleAuthError).kind).toBe("unknown");
+  });
+
+  it("prefers a top-level code when both slots carry one", async () => {
+    fakeBridge.signIn.mockRejectedValue({ code: "cancelled", data: { code: "network" } });
+    const err = await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e);
+    expect((err as GoogleAuthError).kind).toBe("cancelled");
+  });
+
+  it("ignores a non-string nested code", async () => {
+    fakeBridge.signIn.mockRejectedValue({ code: null, data: { code: 42 } });
+    const err = await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e);
+    expect((err as GoogleAuthError).kind).toBe("unknown");
+  });
+
+  it("tolerates a non-object data slot", async () => {
+    fakeBridge.signIn.mockRejectedValue({ code: null, data: "not-an-object" });
+    const err = await startGoogleSignIn({ mode: "signin" }).catch((e: unknown) => e);
+    expect((err as GoogleAuthError).kind).toBe("unknown");
+  });
+});
+
 describe("token privacy", () => {
   it("never logs the idToken on success", async () => {
     const consoleCapture = captureConsole();

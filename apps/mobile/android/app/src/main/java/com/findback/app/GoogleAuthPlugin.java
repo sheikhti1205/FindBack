@@ -128,7 +128,16 @@ public final class GoogleAuthPlugin extends Plugin {
         // Message is informational only; the JS facade replaces it with its
         // own stable copy, so no credential material can leak this way.
         error.put("message", message);
-        call.reject(message, error);
+        // `kind` MUST travel in the top-level `code` slot. Capacitor's two-arg
+        // reject(String, JSObject) overload delegates to
+        // reject(msg, null, null, data), so it sends
+        // `{message, code: null, data: {code, message}}` — the JS facade reads
+        // `code`, would see null, and would collapse EVERY native failure onto
+        // "unknown": a dismissed prompt rendered an error banner, and "no
+        // Google account on this device" rendered an unactionable retry copy
+        // instead of the "Add a Google account and try again" guidance. The
+        // three-arg overload keeps `code` top-level.
+        call.reject(message, kind, error);
     }
 
     private void resolvePending(PluginCall call, JSObject result) {

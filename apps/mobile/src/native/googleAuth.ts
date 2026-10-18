@@ -116,7 +116,17 @@ function isFailureKind(value: unknown): value is GoogleAuthFailureKind {
  * is discarded — the message always comes from `MESSAGES`.
  */
 function extractKind(reason: unknown): GoogleAuthFailureKind {
-  const raw = asRecord(reason)["code"];
+  const record = asRecord(reason);
+  // Capacitor has two relevant reject overloads, and they pack differently:
+  //   reject(msg, code)            → { message, code }
+  //   reject(msg, JSObject data)   → { message, code: null, data: { … } }
+  // The native plugin must use the first (kind as the code). Read the nested
+  // slot as well, so a future edit that regresses to the two-arg form cannot
+  // silently collapse every failure onto "unknown" again — that regression is
+  // exactly what shipped: it turned a dismissed prompt into an error banner and
+  // reported "no Google account" as an unactionable "try again".
+  const topLevel = record["code"];
+  const raw = typeof topLevel === "string" ? topLevel : asRecord(record["data"])["code"];
   if (typeof raw !== "string") return "unknown";
   if (isFailureKind(raw)) return raw;
   switch (raw) {
