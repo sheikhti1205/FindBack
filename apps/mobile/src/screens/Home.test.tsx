@@ -54,6 +54,17 @@ function renderHome(entry = "/") {
   );
 }
 
+/**
+ * The search field is not resident (owner redesign, 2026-10-19): it mounts only
+ * after the trailing search affordance is activated. Every test that types has
+ * to activate it first — that IS the behaviour under test, so it is not hidden
+ * inside a fake.
+ */
+function openSearch() {
+  fireEvent.click(screen.getByTestId("home-search-open"));
+  return screen.getByLabelText("Search posts") as HTMLInputElement;
+}
+
 describe("Home realtime", () => {
   beforeEach(() => {
     fetchFeedMock.mockReset();
@@ -139,7 +150,7 @@ describe("Home realtime", () => {
     const { container } = renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
-    fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
+    fireEvent.change(openSearch(), { target: { value: "wallet" } });
     await waitFor(
       () => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ q: "wallet" }), undefined),
       { timeout: 3000 },
@@ -187,7 +198,7 @@ describe("Home realtime", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Lost" }));
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/?type=LOST"));
 
-    fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
+    fireEvent.change(openSearch(), { target: { value: "wallet" } });
     await waitFor(
       () => expect(screen.getByTestId("location").textContent).toBe("/?type=LOST&q=wallet"),
       { timeout: 3000 },
@@ -268,20 +279,24 @@ describe("Home realtime", () => {
     renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
-    // Compact at rest: no clear affordance, no cancel.
+    // Compact at rest: no field, no clear, no close — the row is title + actions.
+    expect(screen.queryByLabelText("Search posts")).toBeNull();
     expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close search" })).toBeNull();
+    expect(screen.getByTestId("home-search-open").getAttribute("aria-label")).toBe("Open search");
 
-    fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
+    fireEvent.change(openSearch(), { target: { value: "wallet" } });
     await waitFor(
       () => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ q: "wallet" }), undefined),
       { timeout: 3000 },
     );
     await waitFor(() => expect(screen.getByTestId("location").textContent).toContain("q=wallet"));
 
-    // Active field: clear + cancel affordances present.
+    // Active field: clear + close affordances present.
     expect(screen.getByRole("button", { name: "Clear search" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close search" })).toBeTruthy();
+    // ...and the trigger is gone, so there is never a second search control.
+    expect(screen.queryByTestId("home-search-open")).toBeNull();
 
     fetchFeedMock.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
@@ -295,17 +310,18 @@ describe("Home realtime", () => {
     expect(fetchFeedMock).not.toHaveBeenCalled();
   });
 
-  it("cancel collapses the active field back to its compact state", async () => {
+  it("closing the field collapses it back to the compact row and drops the query", async () => {
     renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
 
-    fireEvent.change(screen.getByLabelText("Search posts"), { target: { value: "wallet" } });
-    expect(await screen.findByRole("button", { name: "Cancel" })).toBeTruthy();
+    fireEvent.change(openSearch(), { target: { value: "wallet" } });
+    expect(await screen.findByRole("button", { name: "Close search" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect((screen.getByLabelText("Search posts") as HTMLInputElement).value).toBe("");
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    await waitFor(() => expect(screen.queryByLabelText("Search posts")).toBeNull());
     expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+    // Reopening starts empty: closing cleared the query rather than hiding it.
+    expect(openSearch().value).toBe("");
   });
 
   it("re-tapping the active Home tab at the top refreshes and scrolls smoothly", async () => {
@@ -534,8 +550,9 @@ describe("Home scroll-reactive chrome (CF-010)", () => {
       expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("true"),
     );
 
-    // Focusing the search field pins the chrome open for the whole session.
-    fireEvent.focus(screen.getByLabelText("Search posts"));
+    // Activating the search affordance pins the chrome open for the whole session.
+    const field = openSearch();
+    fireEvent.focus(field);
     await waitFor(() =>
       expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("false"),
     );
@@ -545,7 +562,7 @@ describe("Home scroll-reactive chrome (CF-010)", () => {
     expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("false");
 
     // Blurring hands control back to the scroll direction.
-    fireEvent.blur(screen.getByLabelText("Search posts"));
+    fireEvent.blur(field);
     scroller.scrollTop = 460;
     fireEvent.scroll(scroller);
     await waitFor(() =>
@@ -714,11 +731,112 @@ describe("Home feed redesign (reference-inspired)", () => {
     expect(screen.queryByRole("radio", { name: "Recent" })).toBeNull();
   });
 
-  it("renders the prominent search with the filter affordance on the right", async () => {
+  it("keeps one compact row: brand and wordmark, with the actions trailing", async () => {
     renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
-    const input = screen.getByLabelText("Search posts") as HTMLInputElement;
-    expect(input.placeholder).toBe("Search lost or found items…");
+
+    // The owner's requirement: an idle Home has no resident search field and no
+    // second line of chrome, so the feed keeps the space.
+    expect(screen.queryByLabelText("Search posts")).toBeNull();
+    expect(screen.getByTestId("home-toolbar").textContent).not.toMatch(/signed in as/);
+    expect(screen.getByTestId("home-brand").textContent).toContain("FindBack");
+
+    // The actions trail the title unit, and the field reuses the same copy.
     expect(screen.getByRole("button", { name: /^filters/i })).toBeTruthy();
+    expect(openSearch().placeholder).toBe("Search posts…");
+  });
+
+  it("moves focus into the field on an intentional activation", async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("home-search-open"));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Search posts")));
+  });
+
+  it("keeps the open state the same height as the title row", async () => {
+    // Regression: the pill's border used to be added on top of a 48px child, so
+    // opening search grew the row 48 -> 50 and pushed the chips and the feed.
+    // jsdom cannot measure, so this pins the contract the geometry depends on:
+    // the pill owns the 48px minimum and every child stays under its 46px inner
+    // box. The rendered numbers are in the harness `matrix.json`.
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("home-search-open"));
+
+    const pill = await screen.findByTestId("home-search-field");
+    expect(pill.className).toContain("min-h-[48px]");
+    for (const child of Array.from(pill.querySelectorAll("[class]"))) {
+      expect(child.className).not.toContain("min-h-[48px]");
+    }
+  });
+
+  it("draws the field's focus ring on the pill, not inside it", async () => {
+    // `index.css` `.fb-home-search-field` owns the ring because the app-wide
+    // `:focus-visible` rule is unlayered and a utility cannot suppress it. The
+    // input must therefore not pretend to opt out with a utility that loses.
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("home-search-open"));
+
+    const pill = await screen.findByTestId("home-search-field");
+    expect(pill.className).toContain("fb-home-search-field");
+    expect(screen.getByLabelText("Search posts").className).not.toContain("focus:outline-none");
+  });
+
+  it("keeps a top-level heading while the field replaces the wordmark", async () => {
+    // The field branch replaces the brand branch, so without a heading of its
+    // own the Home screen would lose heading navigation while searching. The
+    // crossfade keeps the outgoing branch mounted briefly, so this asserts the
+    // settled state rather than the overlap.
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getAllByRole("heading", { level: 1 }).length).toBe(1),
+    );
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("FindBack");
+
+    fireEvent.click(screen.getByTestId("home-search-open"));
+    await waitFor(() => expect(screen.getByLabelText("Search posts")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getAllByRole("heading", { level: 1 }).length).toBe(1),
+    );
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("FindBack");
+  });
+
+  it("restores a query from the URL without raising the keyboard", async () => {
+    // The field is present because it holds a value — but nothing is focused, so
+    // a shared link never opens the keyboard on the reader.
+    renderHome("/?q=wallet");
+    const restored = screen.getByLabelText("Search posts") as HTMLInputElement;
+    expect(restored.value).toBe("wallet");
+    expect(document.activeElement).not.toBe(restored);
+  });
+
+  it("returns focus to the search affordance when the field closes", async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+
+    fireEvent.change(openSearch(), { target: { value: "wallet" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Close search" }));
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("home-search-open")));
+  });
+
+  it("lets Android Back close a focused field instead of leaving Home", async () => {
+    renderHome("/?q=wallet");
+    fireEvent.focus(screen.getByLabelText("Search posts"));
+
+    act(() => expect(consumeBackIntercept()).toBe(true));
+    await waitFor(() => expect(screen.queryByLabelText("Search posts")).toBeNull());
+    await waitFor(() => expect(screen.getByTestId("location").textContent).not.toContain("q="));
+  });
+
+  it("keeps Back as navigation while the query is only a browsing filter", async () => {
+    // A typed-but-unfocused query is how the reader browses results; Back must
+    // still navigate rather than silently discard the filter.
+    renderHome("/?q=wallet");
+    expect(screen.getByLabelText("Search posts")).toBeTruthy();
+    expect(consumeBackIntercept()).toBe(false);
   });
 });

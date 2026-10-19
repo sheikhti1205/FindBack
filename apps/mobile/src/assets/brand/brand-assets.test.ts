@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -26,8 +27,23 @@ describe("brand assets (LOGO2 derived rasters)", () => {
   it.each([
     ["brand-mark-dark.png", 512],
     ["brand-mark-light.png", 512],
+    ["brand-tile-dark.png", 512],
+    ["brand-tile-light.png", 512],
   ])("%s is %ix%i", (name, size) => {
     expect(pngSize(brandPng(name))).toEqual({ width: size, height: size });
+  });
+
+  // The tile is a DERIVED asset: geometry and glyph come from the owner's
+  // master via `sessions/home-chrome/harness/derive-brand-tile.py`, and the
+  // polarity is what makes it legible in each theme. Size alone would not
+  // notice a wrong derivation or a re-export with the wrong polarity, so the
+  // derived bytes are pinned. Re-derive and update these deliberately.
+  it.each([
+    ["brand-tile-dark.png", "b9ec78609b98a3697732d2dff43dea1fb899c51b8693df5659f489f4e60073b4"],
+    ["brand-tile-light.png", "17a5370d16875e589c52317f95457ae1b39ee81c55717adcc481ebc62624af79"],
+  ])("%s matches the pinned derived bytes", (name, hash) => {
+    const digest = createHash("sha256").update(readFileSync(brandPng(name))).digest("hex");
+    expect(digest).toBe(hash);
   });
 
   it.each([

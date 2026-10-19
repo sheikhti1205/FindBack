@@ -1,7 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ScrollChrome } from "../../components/ScrollChrome";
-import { BrandMark } from "../../components/BrandMark";
-import { HomeSearchBar } from "../../screens/HomeSearchBar";
+import { HomeTopBar } from "../../screens/HomeTopBar";
 import { HomeFilterChips, HomeScopeChips } from "../../screens/HomeFilterChips";
 import { FiltersIconButton } from "../../screens/AdvancedSearchFilters";
 import { FixtureFrame, FixtureSection } from "../FixtureSection";
@@ -23,8 +22,18 @@ import { FixtureFrame, FixtureSection } from "../FixtureSection";
 
 function ChromeContent({ initialQuery = "" }: { initialQuery?: string }) {
   const [query, setQuery] = useState(initialQuery);
+  const [searchFocused, setSearchFocused] = useState(false);
+  // Mirrors Home: a live query keeps the field in place, an idle Home shows the
+  // title row. The fixture only supplies the state; the bar is production code.
+  const expanded = searchFocused || query.length > 0;
   const [type, setType] = useState<"ALL" | "LOST" | "FOUND">("ALL");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Focus must move on the state change here too, exactly as Home.tsx does it;
+  // otherwise this preflight surface renders the opened field *unfocused* and
+  // cannot show the production open state (no caret, no focus ring).
+  useEffect(() => {
+    if (searchFocused) inputRef.current?.focus();
+  }, [searchFocused]);
   return (
     <>
       <header
@@ -32,34 +41,27 @@ function ChromeContent({ initialQuery = "" }: { initialQuery?: string }) {
         className="border-b border-outline-variant pt-5 shadow-sm"
       >
         <div className="px-4">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight">
-              <span
-                data-testid="fixture-chrome-brand"
-                className="-mx-1 flex min-h-[44px] items-center gap-2 rounded-m3-sm px-1"
-              >
-                <BrandMark size={24} />
-                <span>FindBack</span>
-              </span>
-            </h1>
-          </div>
-          <p className="text-xs uppercase tracking-wide text-on-surface-variant">128 reports</p>
+          <HomeTopBar
+            expanded={expanded}
+            query={query}
+            onQueryChange={setQuery}
+            onOpen={() => setSearchFocused(true)}
+            onClear={() => setQuery("")}
+            onClose={() => {
+              setQuery("");
+              setSearchFocused(false);
+            }}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            onBrandTap={() => undefined}
+            inputRef={inputRef}
+            filterButton={
+              <FiltersIconButton activeCount={2} open={false} onClick={() => undefined} />
+            }
+          />
         </div>
       </header>
       <div className="flex flex-col gap-3 px-4">
-        <HomeSearchBar
-          query={query}
-          onQueryChange={setQuery}
-          searchActive={query.length > 0}
-          onClear={() => setQuery("")}
-          onCancel={() => setQuery("")}
-          onFocus={() => undefined}
-          onBlur={() => undefined}
-          inputRef={inputRef}
-          filterButton={
-            <FiltersIconButton activeCount={2} open={false} onClick={() => undefined} />
-          }
-        />
         <div className="fb-scroll-fade">
           <div className="fb-scroll-row flex items-center gap-3" aria-label="Feed filters">
             <HomeFilterChips value={type} onChange={setType} />

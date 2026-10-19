@@ -63,4 +63,31 @@ describe("BrandMark (LOGO2 canonical mark)", () => {
     expect(lightSrc).toBeTruthy();
     expect(darkSrc).not.toBe(lightSrc);
   });
+
+  it("uses the tile assets (not the bare glyph) when asked, per theme", () => {
+    document.documentElement.classList.add("light");
+    const { unmount } = render(<BrandMark size={28} shape="tile" />);
+    expect(screen.getByRole("img", { name: "FindBack" }).getAttribute("src")).toContain("brand-tile-dark");
+    unmount();
+    cleanup();
+    document.documentElement.classList.remove("light");
+    document.documentElement.classList.add("dark");
+    render(<BrandMark size={28} shape="tile" />);
+    expect(screen.getByRole("img", { name: "FindBack" }).getAttribute("src")).toContain("brand-tile-light");
+  });
+
+  it("defaults to the bare glyph so existing surfaces are unchanged", () => {
+    document.documentElement.classList.add("light");
+    render(<BrandMark size={32} />);
+    expect(screen.getByRole("img", { name: "FindBack" }).getAttribute("src")).toContain("brand-mark-dark");
+  });
+
+  it("can be decorative when a visible wordmark already carries the name", () => {
+    // Beside the Home wordmark the mark must not be announced as a second
+    // "FindBack" image: the button is already labelled.
+    document.documentElement.classList.add("light");
+    render(<BrandMark size={28} shape="tile" alt="" />);
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(document.querySelector("img")?.getAttribute("alt")).toBe("");
+  });
 });

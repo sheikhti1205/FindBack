@@ -1,0 +1,206 @@
+import type { ReactNode, RefObject } from "react";
+import { useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowLeft, Search, X } from "lucide-react";
+import { BrandMark } from "../components/BrandMark";
+import { motionDurations, motionEasings, pressFeedback, scaleInVariants } from "../components/uiMotion";
+
+/** Shared swap timing for the one-row state change. */
+const swap = { duration: motionDurations.fast, ease: motionEasings.out } as const;
+
+/**
+ * Home's app bar (owner redesign, 2026-10-19): ONE compact row — brand mark plus
+ * wordmark as the title unit, with the essential actions trailing.
+ *
+ * The search field is deliberately not resident. The row holds either the title
+ * unit or the field, never both, so an idle Home spends its vertical space on
+ * the feed; the field appears only on an explicit activation and returns focus
+ * to its trigger on close. The permanent result/account line that used to sit
+ * under the title is gone: account identity lives in the profile surface, and a
+ * result count was duplicate chrome on every visit.
+ *
+ * Motion: a crossfade of the same slot at `motionDurations.fast` (150ms) — the
+ * app's existing state-acknowledgement token, which matches Material's
+ * fast-effects Web conversion. It is intentionally NOT a container transform:
+ * Material's published 300/250ms pair belongs to a *linked* SearchBar→SearchView
+ * expansion, which this is not, and no first-party source requires a wordmark to
+ * morph into the field. Reduced motion keeps the crossfade and drops the
+ * x-offset — the app-root MotionConfig degrades transform travel while keeping
+ * opacity, so nothing here needs a second reduced-motion branch. Focus is moved
+ * on the state change, never after the animation.
+ *
+ * Geometry: both states are exactly 48px tall, so the state change swaps the row
+ * rather than resizing it and the chips row below never moves. The pill's 1px
+ * border sits inside that 48px (border-box) and every child stays under it. The
+ * focus ring is drawn on the pill, not on the input — see
+ * `index.css` `.fb-home-search-field`.
+ */
+export function HomeTopBar({
+  expanded,
+  query,
+  onQueryChange,
+  onOpen,
+  onClear,
+  onClose,
+  onFocus,
+  onBlur,
+  onBrandTap,
+  inputRef,
+  filterButton,
+}: {
+  expanded: boolean;
+  query: string;
+  onQueryChange: (value: string) => void;
+  onOpen: () => void;
+  onClear: () => void;
+  onClose: () => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  onBrandTap: () => void;
+  inputRef: RefObject<HTMLInputElement | null>;
+  /** The advanced-filter trigger; stays mounted in both states so it never moves. */
+  filterButton: ReactNode;
+}) {
+  // Closing unmounts the control that held focus, so focus is handed back to the
+  // affordance that opened it instead of being dropped on <body> (WCAG 2.4.3).
+  // A query restored from the URL mounts already expanded and must not steal
+  // focus, so the first paint is never a transition.
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const wasExpanded = useRef(expanded);
+  useEffect(() => {
+    if (wasExpanded.current && !expanded) triggerRef.current?.focus();
+    wasExpanded.current = expanded;
+  }, [expanded]);
+
+  return (
+    <div className="flex min-h-[48px] items-center gap-1">
+      <AnimatePresence initial={false} mode="popLayout">
+        {expanded ? (
+          <motion.div
+            key="field"
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -6 }}
+            transition={swap}
+            // Height parity with the title row is the point: the pill's border
+            // is inside its 48px min-height (box-border) and every child stays
+            // at or below 46px, so opening search never moves the chips row or
+            // the feed. The focus ring belongs to the pill — see
+            // `index.css` `.fb-home-search-field`, because the app-wide
+            // `:focus-visible` rule is unlayered and a utility cannot win.
+            className="fb-home-search-field flex min-h-[48px] min-w-0 flex-1 items-center rounded-full border border-outline-variant bg-surface-container-low pr-1 focus-within:border-on-surface"
+            data-testid="home-search-field"
+          >
+            {/* The field replaces the wordmark, so the screen would otherwise
+                lose its only heading while searching. */}
+            <h1 className="sr-only">FindBack</h1>
+            <button
+              type="button"
+              data-testid="home-search-close"
+              aria-label="Close search"
+              onClick={onClose}
+              className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full text-on-surface-variant"
+            >
+              {/* An arrow, not a second ✕: "leave the field" and "clear the query"
+                  are separate semantics, so they must not look alike. It also
+                  matches the Android Back behaviour wired in Home. */}
+              <ArrowLeft size={18} aria-hidden />
+            </button>
+            <input
+              ref={inputRef}
+              type="search"
+              value={query}
+              onChange={(e) => onQueryChange(e.target.value)}
+              onFocus={onFocus}
+              onBlur={onBlur}
+              // Short enough to survive the field's 320dp + Extra-large-text
+              // width measured in the render harness; the accessible name
+              // ("Search posts") carries the same meaning for assistive tech.
+              placeholder="Search posts…"
+              aria-label="Search posts"
+              // Relative font size so the field tracks the app's text-size
+              // setting (an absolute px size would stay put at Extra-large).
+              //
+              // px, not rem: the row's height must not depend on the root font
+              // size, or opening search resizes the bar at Extra-large text
+              // (rem padding on an 18.75px line pushed the pill to 50.1 of a
+              // 48px row). A fixed 44px control inside the pill's 48px keeps
+              // rest and open identical at every text size.
+              className="h-[44px] min-w-0 flex-1 bg-transparent px-0.5 text-[0.9375rem] placeholder:text-on-surface-variant [&::-webkit-search-cancel-button]:hidden"
+            />
+            <AnimatePresence initial={false}>
+              {query.length > 0 && (
+                <motion.button
+                  key="home-search-clear"
+                  type="button"
+                  onClick={onClear}
+                  aria-label="Clear search"
+                  whileTap={pressFeedback.iconButton}
+                  variants={scaleInVariants}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  transition={swap}
+                  className="flex min-h-[44px] min-w-[48px] shrink-0 items-center justify-center rounded-full text-on-surface-variant"
+                >
+                  <X size={16} aria-hidden />
+                </motion.button>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="brand"
+            initial={{ opacity: 0, x: 6 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 6 }}
+            transition={swap}
+            className="flex min-w-0 flex-1 items-center"
+          >
+            <h1 className="min-w-0 text-base font-semibold tracking-tight">
+              <button
+                type="button"
+                data-testid="home-brand"
+                aria-label="FindBack — scroll the feed to the top"
+                onClick={onBrandTap}
+                className="-ml-1 flex min-h-[48px] min-w-0 items-center gap-2 rounded-m3-sm px-1"
+              >
+                {/* Decorative beside the wordmark, and the button already
+                    carries the accessible name. */}
+                <BrandMark size={28} shape="tile" alt="" />
+                <span className="truncate">FindBack</span>
+              </button>
+            </h1>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* The 48px hit areas carry their own padding, so the cluster is pulled
+          10px toward the edge to align the trailing icon's optical edge with
+          the brand tile instead of reading inset-left / padded-right. */}
+      <div className="-mr-2.5 flex shrink-0 items-center">
+        {filterButton}
+        <AnimatePresence initial={false}>
+          {!expanded && (
+            <motion.button
+              key="home-search-open"
+              type="button"
+              ref={triggerRef}
+              data-testid="home-search-open"
+              aria-label="Open search"
+              onClick={onOpen}
+              whileTap={pressFeedback.iconButton}
+              variants={scaleInVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              transition={swap}
+              className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full text-on-surface"
+            >
+              <Search size={20} aria-hidden />
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}

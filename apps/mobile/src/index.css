@@ -310,6 +310,22 @@ body {
   outline-offset: 2px;
 }
 
+/* This rule is unlayered, so a `focus:outline-none` utility cannot suppress it
+ * (Tailwind utilities live in @layer utilities, which unlayered rules beat).
+ * Home's app-bar search field fills a pill: an input-level ring paints a
+ * divider between the back button and the text, thickens the top/bottom edges
+ * and squares the pill's right cap. The ring is therefore drawn on the pill
+ * itself and the inner one is suppressed. Scoped to that field, so the
+ * app-wide indicator is unchanged everywhere else. */
+.fb-home-search-field:focus-within {
+  outline: 2px solid var(--fb-focus);
+  outline-offset: 2px;
+}
+
+.fb-home-search-field input:focus-visible {
+  outline: none;
+}
+
 ::selection {
   background: var(--fb-selection);
   color: var(--fb-on-selection);

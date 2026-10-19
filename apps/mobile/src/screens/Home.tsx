@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import type { PostType } from "@findback/shared";
 import { HomeFilterChips, HomeScopeChips } from "./HomeFilterChips";
-import { HomeSearchBar } from "./HomeSearchBar";
+import { HomeTopBar } from "./HomeTopBar";
 import { PostList } from "../components/PostList";
 import { MASONRY_CANVAS_CLASS, READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, useViewportWidth } from "../components/responsive";
 import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
-import { BrandMark } from "../components/BrandMark";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { CHROME_TOP_ZONE, useScrollChrome } from "../components/scrollChrome";
 import { ScrollChrome } from "../components/ScrollChrome";
@@ -43,12 +41,8 @@ import { useTabTap } from "../components/TabTap";
 import { buildFeedCacheKey, clearNewPostCount, getNewPostCount, incrementNewPostCount } from "../hooks/feedCache";
 import { AdvancedSearchFilters, FiltersIconButton, getActiveFilterCount, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
 import type { FeedFilters } from "../services/posts";
-import {
-  fadeVariants,
-  motionDurations,
-  motionEasings,
-  useShouldReduceMotion,
-} from "../components/uiMotion";
+import { motionDurations, useShouldReduceMotion } from "../components/uiMotion";
+import { registerBackInterceptor } from "../components/backNavigation";
 
 type TypeFilter = PostType | "ALL";
 
@@ -268,7 +262,7 @@ export function Home() {
     setQParam(appliedQuery);
   }, [appliedQuery, setQParam]);
 
-  const { items, total, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore, removeItem, patchItem } = useFeed(
+  const { items, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore, removeItem, patchItem } = useFeed(
     feedFilters,
     { cacheKey: HOME_CACHE_KEY, scrollRef },
   );
@@ -437,6 +431,32 @@ export function Home() {
     searchInputRef.current?.blur();
   }
 
+  /**
+   * The field is not resident, so opening it is a deliberate act. Focus moves
+   * on the state change (the field mounts on it), never after the crossfade.
+   */
+  function openSearch() {
+    setSearchFocused(true);
+  }
+
+  useEffect(() => {
+    if (searchFocused) searchInputRef.current?.focus();
+  }, [searchFocused]);
+
+  // Android Back closes an open, focused field instead of navigating. The
+  // interceptor is only armed while the field has focus: a typed-but-unfocused
+  // query is a browsing filter by then, and Back must keep its navigation
+  // meaning rather than silently discard it.
+  useEffect(() => {
+    if (!searchFocused) return;
+    return registerBackInterceptor(() => {
+      setQuery("");
+      setSearchFocused(false);
+      searchInputRef.current?.blur();
+      return true;
+    });
+  }, [searchFocused]);
+
   return (
     <div className="flex h-full flex-col gap-4" onScrollCapture={handleFeedScroll}>
       {/* CF-010 §3: the chrome collapses on an intentional downward scroll so
@@ -452,45 +472,16 @@ export function Home() {
         }`}
       >
         <div className={`${canvasClass} px-4`}>
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold tracking-tight">
-            <button
-              type="button"
-              data-testid="home-brand"
-              aria-label="FindBack — scroll the feed to the top"
-              onClick={onBrandTap}
-              className="-mx-1 flex min-h-[44px] items-center gap-2 rounded-m3-sm px-1"
-            >
-              <BrandMark size={24} />
-              <span>FindBack</span>
-            </button>
-          </h1>
-        </div>
-        <AnimatePresence initial={false} mode="wait">
-          <motion.p
-            key={total}
-            variants={fadeVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
-            className="text-xs text-on-surface-variant"
-          >
-            {total} item{total === 1 ? "" : "s"} · signed in as @{user?.username}
-          </motion.p>
-        </AnimatePresence>
-        </div>
-      </header>
-
-      <div className={`${canvasClass} flex flex-col gap-3 px-4`}>
-        <HomeSearchBar
+        <HomeTopBar
+          expanded={searchActive}
           query={query}
           onQueryChange={setQuery}
-          searchActive={searchActive}
+          onOpen={openSearch}
           onClear={() => setQuery("")}
-          onCancel={collapseSearch}
+          onClose={collapseSearch}
           onFocus={() => setSearchFocused(true)}
           onBlur={() => setSearchFocused(false)}
+          onBrandTap={onBrandTap}
           inputRef={searchInputRef}
           filterButton={
             <FiltersIconButton
@@ -500,6 +491,10 @@ export function Home() {
             />
           }
         />
+        </div>
+      </header>
+
+      <div className={`${canvasClass} flex flex-col gap-3 px-4`}>
         <div className="fb-scroll-fade">
           <div className="fb-scroll-row flex items-center gap-3" aria-label="Feed filters">
             <HomeFilterChips value={type} onChange={setType} />
