@@ -52,13 +52,16 @@
 -- already satisfies the new expression (no row has kind = 'report' yet), so
 -- the re-add cannot fail on live data, unlike the parity file's coherence
 -- checks.
--- LIVE-PENDING (owner-gated, 2026-10-17): pushing this file to `main` is the
--- apply — the Supabase GitHub integration auto-applies migrations on push — so
--- it was authored and independently reviewed outside the shipping path and the
--- commit is the apply. Verify with
+-- LIVE-PENDING — the *behavioural* check is what remains live-pending; the apply
+-- is not. Pushing this file to `main` WAS the apply: a Supabase GitHub
+-- integration connected to the repository auto-applies migrations on push
+-- (owner-confirmed 2026-10-18; GOVERNANCE-B1-APPLY-PROVENANCE.md §5), which is why
+-- this ledger row carries no `created_by`, no `idempotency_key` and no
+-- accompanying Actions run. Hosted readback on 2026-10-17 found migration head
+-- `20261017052000` with all 17 original catalogue conditions true and the
+-- four-policy parity intact (M2-HOSTED-READBACK-2026-10-17.md). Re-verify with
 -- supabase/tests/verify_20261017052000_comment_report_reference.sql plus the
 -- read-only pg_constraint / pg_policies / pg_proc probe in the decision doc.
--- No live run ships in this change.
 
 -- ---------------------------------------------------------------------------
 -- 1. Vocabulary: a comment attachment may now be a report reference.
