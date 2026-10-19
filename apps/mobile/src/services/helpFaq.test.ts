@@ -694,8 +694,10 @@ describe("CF-070 R2 retry-8 — F-2: the probe band's boundary is pinned on both
       const classification = classifyHelpQuestion(question);
       expect(classification.appHelp, `${question} (${why})`).toBe(true);
       expect(classification.topic, question).toBe("unknown-feature");
-      // The copy names the term it could not place and asserts nothing about
-      // the app's feature set.
+      // The copy says it could not place the term and asserts nothing about the
+      // app's feature set. It does *not* name the term (helpFaq.ts:30-31) — this
+      // comment claimed it did, which is the same overstatement NIT-2 records
+      // against helpFaq.ts, corrected in the same pass.
       expect(classification.answer, question).toMatch(/I can't place that term/i);
       expect(classification.answer, question).not.toMatch(
         /does not have|not in this build|no such|don't know of that feature/i,

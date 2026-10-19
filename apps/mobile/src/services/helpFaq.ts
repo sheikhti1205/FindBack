@@ -416,11 +416,22 @@ function unrecognisedTerms(question: string): readonly string[] {
  *
  * The bound is *exactly* one, not at most one: with **zero** unreadable terms
  * the question is fully written in this app's vocabulary, so the
- * unknown-feature answer — whose first sentence names a term it could not
- * place — would assert something about a term that does not exist.
+ * unknown-feature answer — whose first sentence says it could not place the
+ * term — would assert something about a term that does not exist.
  * `Does FindBack have a list?` is such a question (`list` is a vocabulary
  * word), and it now keeps the draft and falls back to ordinary Chat
  * (CF-070 R2 retry-8 F-2).
+ *
+ * Deliberate, and pinned: a question whose single unreadable term is a *real*
+ * word in another language ("Does FindBack have cuenta?") also consumes the
+ * draft, so the app answers with this copy instead of the model's. That is a
+ * product choice rather than a defect — the copy says it cannot place the term
+ * and declines to guess, instead of denying a shipped feature — and it is pinned
+ * on both sides of the band by `helpFaq.test.ts` ("keeps the one-unreadable
+ * probe a non-asserting claim about the named term"). Recorded as NIT-3 in
+ * ACCEPTANCE-CF070-RETRY9-RESIDUALS.md. Tightening the bound to zero unreadable
+ * terms would refuse those questions instead; that is a different product
+ * choice, and it is not the one taken here.
  */
 function namesOneUnknownTerm(question: string): boolean {
   return unrecognisedTerms(question).length === 1;
