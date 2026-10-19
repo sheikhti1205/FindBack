@@ -176,15 +176,13 @@ export function createCapacitorPushAdapter(): PushAdapter {
    * Deferred import keeps the plugin out of the web bundle graph at load time.
    *
    * The plain-object wrapper is load-bearing, not ceremony. Capacitor's
-   * `registerPlugin` proxy answers *every* property access with a callable that
-   * is forwarded to the native bridge — `then` included. Promise resolution
-   * invokes `.then` on any thenable, so an async loader that resolves *with the
-   * proxy itself* calls `PushNotifications.then()` on native and rejects with
-   * `"PushNotifications.then()" is not implemented on android` before any real
-   * call is made — which is exactly what shipped: push never registered on
-   * Android for any user, and every authenticated session logged an uncaught
-   * rejection. Resolving with an object that merely *holds* the proxy keeps the
-   * lookup off `then`. Regression net: `pushNotifications.adapter.test.ts`.
+   * `registerPlugin` proxy turns unknown properties, including `then`, into
+   * method wrappers. Promise resolution invokes `.then` on any thenable: an
+   * async loader returning the proxy therefore invokes its unsupported `then`.
+   * Capacitor's discarded inner promise rejects, while the awaited loader never
+   * settles, so a surrounding try/catch cannot recover. Resolving with an object
+   * that merely holds the proxy avoids that lookup. The adapter regression tests
+   * exercise the installed Capacitor runtime, replacing only the OS bridge.
    */
   const plugin = async (): Promise<{ p: PushPlugin }> => ({
     p: (await import("@capacitor/push-notifications")).PushNotifications,
