@@ -37,6 +37,7 @@ const swap = { duration: motionDurations.fast, ease: motionEasings.out } as cons
  */
 export function HomeTopBar({
   expanded,
+  compact,
   query,
   onQueryChange,
   onOpen,
@@ -49,6 +50,14 @@ export function HomeTopBar({
   filterButton,
 }: {
   expanded: boolean;
+  /**
+   * The reader has scrolled the feed away: the brand row shows the mark alone.
+   * Owner ruling 2026-10-19 — the Threads behaviour, where the word leaves and
+   * comes back. It is the first stage of the chrome collapse (`scrollChrome.ts`)
+   * and never applies while the search field is open, because that state pins
+   * the chrome open.
+   */
+  compact: boolean;
   query: string;
   onQueryChange: (value: string) => void;
   onOpen: () => void;
@@ -168,7 +177,23 @@ export function HomeTopBar({
                 {/* Decorative beside the wordmark, and the button already
                     carries the accessible name. */}
                 <BrandMark size={28} shape="tile" alt="" />
-                <span className="truncate">FindBack</span>
+                {/* The wordmark leaves on scroll and returns on the way back
+                    (owner ruling 2026-10-19). Only opacity and a small x-shift
+                    animate — the span keeps its box, so nothing in the row or
+                    the feed reflows, the mark never moves, and the reduced-motion
+                    path (which the app root degrades to opacity) needs no branch
+                    of its own. It is NOT `aria-hidden` while collapsed: the text
+                    is the row's visible name and the heading stays non-empty. */}
+                <motion.span
+                  data-testid="home-brand-wordmark"
+                  data-compact={compact ? "true" : "false"}
+                  initial={false}
+                  animate={{ opacity: compact ? 0 : 1, x: compact ? -6 : 0 }}
+                  transition={swap}
+                  className="truncate"
+                >
+                  FindBack
+                </motion.span>
               </button>
             </h1>
           </motion.div>

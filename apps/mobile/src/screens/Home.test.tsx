@@ -175,6 +175,54 @@ describe("Home realtime", () => {
     expect(screen.queryByText(/new post/i)).toBeNull();
   });
 
+  it("collapses the brand wordmark on scroll and restores it at the top", async () => {
+    const { container } = renderHome();
+    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
+    const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
+    const wordmark = () =>
+      container.querySelector('[data-testid="home-brand-wordmark"]') as HTMLElement;
+    const chrome = () => container.querySelector('[data-testid="home-chrome"]') as HTMLElement;
+
+    expect(wordmark().getAttribute("data-compact")).toBe("false");
+
+    // Deliberate downward travel, not yet enough to take the bar: the word goes
+    // first, the bar follows (owner ruling 2026-10-19).
+    scroller.scrollTop = 30;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(wordmark().getAttribute("data-compact")).toBe("true"));
+
+    // The bar itself is still on screen — this stage is not the chrome collapse,
+    // and the wordmark keeps its box so nothing in the row reflows.
+    expect(chrome().getAttribute("data-collapsed")).toBe("false");
+    expect(wordmark().textContent).toBe("FindBack");
+    // The control keeps its name and its mark: only the word's ink is gone.
+    expect(screen.getByRole("button", { name: /scroll the feed to the top/i })).toBeTruthy();
+
+    // Far enough down and the whole chrome still leaves, as it always did.
+    // (Small steps: one 370px delta would be a programmatic jump, which the
+    // tracker deliberately ignores.)
+    scroller.scrollTop = 100;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(chrome().getAttribute("data-collapsed")).toBe("true"));
+
+    // A controlled pull back mid-feed restores both — not only a return to the
+    // top. Independent review BLOCKER-1: the wordmark restore used to be
+    // unreachable for every uniform drag step, and the old assertions could not
+    // see it (they restored via the top zone). This loop is the regression guard.
+    for (let top = 92; top > 24; top -= 8) {
+      scroller.scrollTop = top;
+      fireEvent.scroll(scroller);
+    }
+    await waitFor(() => expect(chrome().getAttribute("data-collapsed")).toBe("false"));
+    expect(scroller.scrollTop).toBeGreaterThan(24); // mid-feed, not the top zone
+    await waitFor(() => expect(wordmark().getAttribute("data-compact")).toBe("false"));
+
+    // Back at the top the name returns.
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    await waitFor(() => expect(wordmark().getAttribute("data-compact")).toBe("false"));
+  });
+
   it("restores the type filter from the URL on mount", async () => {
     renderHome("/?type=LOST");
     await waitFor(() =>

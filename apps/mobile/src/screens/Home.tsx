@@ -249,7 +249,7 @@ export function Home() {
   // A typed-but-unfocused query is deliberately NOT a pin: the reader is
   // browsing results by then, and the value survives in the URL and in state.
   const chromePinned = searchFocused || filtersOpen || nearbySheetOpen || mapPickerOpen;
-  const { hidden: chromeHidden, onScroll: onFeedScroll } = useScrollChrome(chromePinned);
+  const { hidden: chromeHidden, compact: brandCompact, onScroll: onFeedScroll } = useScrollChrome(chromePinned);
 
   // Debounce the search box so each keystroke does not hit the API.
   useEffect(() => {
@@ -474,6 +474,7 @@ export function Home() {
         <div className={`${canvasClass} px-4`}>
         <HomeTopBar
           expanded={searchActive}
+          compact={brandCompact}
           query={query}
           onQueryChange={setQuery}
           onOpen={openSearch}

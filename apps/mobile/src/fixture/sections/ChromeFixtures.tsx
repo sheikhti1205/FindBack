@@ -20,7 +20,13 @@ import { FixtureFrame, FixtureSection } from "../FixtureSection";
  * actually sees, not a CSS approximation of them.
  */
 
-function ChromeContent({ initialQuery = "" }: { initialQuery?: string }) {
+function ChromeContent({
+  initialQuery = "",
+  compact = false,
+}: {
+  initialQuery?: string;
+  compact?: boolean;
+}) {
   const [query, setQuery] = useState(initialQuery);
   const [searchFocused, setSearchFocused] = useState(false);
   // Mirrors Home: a live query keeps the field in place, an idle Home shows the
@@ -43,6 +49,7 @@ function ChromeContent({ initialQuery = "" }: { initialQuery?: string }) {
         <div className="px-4">
           <HomeTopBar
             expanded={expanded}
+            compact={compact}
             query={query}
             onQueryChange={setQuery}
             onOpen={() => setSearchFocused(true)}
@@ -81,11 +88,19 @@ function ChromeContent({ initialQuery = "" }: { initialQuery?: string }) {
 }
 
 /** The frame body: a short page so the collapsed/expanded difference is visible. */
-function ChromePage({ hidden, initialQuery = "" }: { hidden: boolean; initialQuery?: string }) {
+function ChromePage({
+  hidden,
+  compact = false,
+  initialQuery = "",
+}: {
+  hidden: boolean;
+  compact?: boolean;
+  initialQuery?: string;
+}) {
   return (
     <div className="flex h-64 flex-col gap-4 overflow-hidden">
       <ScrollChrome hidden={hidden} testId="fixture-chrome">
-        <ChromeContent initialQuery={initialQuery} />
+        <ChromeContent initialQuery={initialQuery} compact={compact} />
       </ScrollChrome>
       <div className="flex flex-1 items-start justify-center px-4 text-sm text-on-surface-variant">
         <span data-testid="fixture-chrome-feed-body">Feed content starts here</span>
@@ -99,21 +114,39 @@ function ChromePage({ hidden, initialQuery = "" }: { hidden: boolean; initialQue
  * prove it. This frame lets a reviewer toggle it and watch, and lets the review
  * script sample the height mid-animation (motion allowed) versus instantly
  * (reduced motion).
+ *
+ * The second control drives the *first stage* of the same collapse — the brand
+ * row's wordmark (owner ruling 2026-10-19). It is the same production prop Home
+ * passes from `nextScrollChrome`, so what a reviewer toggles here is the state
+ * the reader actually gets, not a CSS lookalike. The two controls are separate
+ * because the stages are: the word leaves before the bar does, and on the way
+ * back the bar arrives with the mark alone before the name returns.
  */
 function ChromeTogglePage() {
   const [hidden, setHidden] = useState(false);
+  const [compact, setCompact] = useState(false);
   return (
     <div className="flex h-72 flex-col gap-4 overflow-hidden">
-      <button
-        type="button"
-        data-testid="fixture-chrome-toggle"
-        onClick={() => setHidden((value) => !value)}
-        className="mx-3 self-start rounded-m3-sm border border-outline-variant px-3 py-1 text-xs font-medium"
-      >
-        Toggle chrome
-      </button>
+      <div className="mx-3 flex self-start gap-2">
+        <button
+          type="button"
+          data-testid="fixture-chrome-toggle"
+          onClick={() => setHidden((value) => !value)}
+          className="rounded-m3-sm border border-outline-variant px-3 py-1 text-xs font-medium"
+        >
+          Toggle chrome
+        </button>
+        <button
+          type="button"
+          data-testid="fixture-compact-toggle"
+          onClick={() => setCompact((value) => !value)}
+          className="rounded-m3-sm border border-outline-variant px-3 py-1 text-xs font-medium"
+        >
+          Toggle wordmark
+        </button>
+      </div>
       <ScrollChrome hidden={hidden} testId="fixture-chrome-toggle-shell">
-        <ChromeContent />
+        <ChromeContent compact={compact} />
       </ScrollChrome>
       <div className="flex flex-1 items-start justify-center px-4 text-sm text-on-surface-variant">
         <span>Feed content starts here</span>
