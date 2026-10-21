@@ -5,6 +5,8 @@ import {
   isNlPatchEmpty,
   resolveNlCategory,
   resolveNlDateRange,
+  resolveNlPlace,
+  resolveNlPostType,
   resolveNlStatus,
   toValidatedPatch,
 } from "./nlFilters";
@@ -44,8 +46,40 @@ describe("resolveNlStatus", () => {
   });
 });
 
-describe("resolveNlDateRange", () => {
-  it("maps last week to a bounded 7-day range ending today", () => {
+describe("resolveNlPostType", () => {
+  it("resolves the words that mean the LOST/FOUND type", () => {
+    expect(resolveNlPostType("lost")).toBe("LOST");
+    expect(resolveNlPostType("Lost")).toBe("LOST");
+    expect(resolveNlPostType(" missing ")).toBe("LOST");
+    expect(resolveNlPostType("stolen")).toBe("LOST");
+    expect(resolveNlPostType("FOUND")).toBe("FOUND");
+  });
+
+  it("leaves anything that is not a type empty instead of guessing", () => {
+    expect(resolveNlPostType("open")).toBeUndefined();
+    expect(resolveNlPostType("urgent")).toBeUndefined();
+    expect(resolveNlPostType("")).toBeUndefined();
+    expect(resolveNlPostType(undefined)).toBeUndefined();
+  });
+});
+
+describe("resolveNlPlace", () => {
+  it("keeps a place name", () => {
+    expect(resolveNlPlace("Dhaka")).toBe("Dhaka");
+    expect(resolveNlPlace("  Gulshan  ")).toBe("Gulshan");
+  });
+
+  it("refuses a coordinate, a number and a time phrase", () => {
+    // A coordinate is never a place: the app has no geo filter.
+    expect(resolveNlPlace("23.8103, 90.4125")).toBeUndefined();
+    expect(resolveNlPlace("221")).toBeUndefined();
+    expect(resolveNlPlace("last week")).toBeUndefined();
+    expect(resolveNlPlace("")).toBeUndefined();
+    expect(resolveNlPlace(undefined)).toBeUndefined();
+  });
+});
+
+describe("resolveNlDateRange", () => {  it("maps last week to a bounded 7-day range ending today", () => {
     expect(resolveNlDateRange("last week", NOW)).toEqual({
       dateFrom: "2026-09-18",
       dateTo: "2026-09-25",
@@ -93,6 +127,55 @@ describe("toValidatedPatch", () => {
     expect(patch.query).toBeUndefined();
     expect(isNlPatchEmpty(patch)).toBe(true);
   });
+
+  it("reads the LOST/FOUND type from its own slot", () => {
+    const patch = toValidatedPatch({ query: "black wallet", postType: "LOST" }, NOW);
+    expect(patch.postType).toBe("LOST");
+    // The type is not a status: the status filter stays empty.
+    expect(patch.status).toBeUndefined();
+  });
+
+  it("reads a type that arrives in the legacy status slot", () => {
+    // The old schema said the type went in `status`, where the status enum
+    // has no "lost" — so a type there was a filter the reader could never
+    // set. It is read as the type.
+    const patch = toValidatedPatch({ query: "keys", status: "lost" }, NOW);
+    expect(patch.postType).toBe("LOST");
+    expect(patch.status).toBeUndefined();
+  });
+
+  it("keeps a place a name and never a coordinate", () => {
+    const named = toValidatedPatch({ query: "umbrella", place: "Gulshan" }, NOW);
+    expect(named.place).toBe("Gulshan");
+    const coordinates = toValidatedPatch({ query: "umbrella", place: "23.8103, 90.4125" }, NOW);
+    expect(coordinates.place).toBeUndefined();
+  });
+
+  it("carries a refused place out of the patch instead of dropping it in silence", () => {
+    // The reader must be able to be told that a place was refused, so the
+    // refusal travels with the patch — while the place itself stays out of
+    // it, so it can never become a filter.
+    const refused = toValidatedPatch({ query: "umbrella", place: "42" }, NOW);
+    expect(refused.place).toBeUndefined();
+    expect(refused.placeRefused).toBe(true);
+    // A refusal is not a filter: a patch that carries nothing but a refusal
+    // is still empty of filters.
+    expect(isNlPatchEmpty(toValidatedPatch({ place: "42" }, NOW))).toBe(true);
+
+    const timePhrase = toValidatedPatch({ query: "umbrella", place: "last week" }, NOW);
+    expect(timePhrase.place).toBeUndefined();
+    expect(timePhrase.placeRefused).toBe(true);
+
+    // Nothing offered, nothing refused.
+    const nothing = toValidatedPatch({ query: "umbrella" }, NOW);
+    expect(nothing.placeRefused).toBeUndefined();
+  });
+
+  it("never guesses a type or a place it was not given", () => {
+    const patch = toValidatedPatch({ query: "umbrella" }, NOW);
+    expect(patch.postType).toBeUndefined();
+    expect(patch.place).toBeUndefined();
+  });
 });
 
 describe("extractNlFilters (op consumer)", () => {
@@ -122,6 +205,51 @@ describe("extractNlFilters (op consumer)", () => {
   it("fails closed to an empty patch when the op fails", async () => {
     const patch = await extractNlFilters(stubGenerate("not json at all {{{"), "xyz", mustProfile(PROFILE));
     expect(isNlPatchEmpty(patch)).toBe(true);
+  });
+
+  it("maps a typed phrase to the type and the place the reader named", async () => {
+    const patch = await extractNlFilters(
+      stubGenerate(
+        JSON.stringify({ query: "black wallet", postType: "LOST", place: "Gulshan" }),
+      ),
+      "black wallet lost in Gulshan",
+      mustProfile(PROFILE),
+      { now: NOW },
+    );
+    expect(patch).toEqual({
+      query: "black wallet",
+      postType: "LOST",
+      place: "Gulshan",
+    });
+  });
+
+  it("fails closed when the place is really a coordinate", async () => {
+    // The op contract refuses a coordinate in ANY slot, so the whole
+    // extraction is refused rather than half-applied — and the ordinary
+    // search runs on the reader's words.
+    const patch = await extractNlFilters(
+      stubGenerate(
+        JSON.stringify({ query: "umbrella", postType: "FOUND", place: "23.8103, 90.4125" }),
+      ),
+      "umbrella found at 23.8103, 90.4125",
+      mustProfile(PROFILE),
+      { now: NOW },
+    );
+    expect(isNlPatchEmpty(patch)).toBe(true);
+  });
+
+  it("carries a refused place out of the real path", async () => {
+    // A bare number passes the op contract (it is not a coordinate) and is
+    // refused by the place resolver — and the refusal travels with the
+    // patch, so the screen can tell the reader.
+    const patch = await extractNlFilters(
+      stubGenerate(JSON.stringify({ query: "umbrella", place: "42" })),
+      "umbrella near 42",
+      mustProfile(PROFILE),
+      { now: NOW },
+    );
+    expect(patch.place).toBeUndefined();
+    expect(patch.placeRefused).toBe(true);
   });
 
   it("fails closed to an empty patch on empty input without calling generate", async () => {

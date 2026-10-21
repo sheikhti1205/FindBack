@@ -237,3 +237,35 @@ describe("fetchNotifications REACTION kind (W1-A FBX-009)", () => {
     ]);
   });
 });
+
+describe("fetchNotifications blocked_actor (O5 / CF-060 B1)", () => {
+  it("carries the caller's blocked_actor bit from the wire", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [row({ id: "n1", blocked_actor: true }), row({ id: "n2", blocked_actor: false })],
+      error: null,
+    });
+
+    const items = await fetchNotifications();
+
+    expect(items[0]).toEqual(expect.objectContaining({ id: "n1", blockedActor: true }));
+    expect(items[1]).toEqual(expect.objectContaining({ id: "n2", blockedActor: false }));
+  });
+
+  it("leaves the bit absent when the backend does not project it, and never reads a non-boolean as true", async () => {
+    // The canonical absent-preserving bit (the same one `services/posts.ts`
+    // carries): "the backend does not project this bit" stays
+    // distinguishable from "the bit is false". The rendering is identical
+    // for absent and for false.
+    clientMock.rpc.mockResolvedValue({
+      data: [row({ id: "n1" }), row({ id: "n2", blocked_actor: "true" })],
+      error: null,
+    });
+
+    const items = await fetchNotifications();
+
+    expect(items[0]!.blockedActor).toBeUndefined();
+    expect("blockedActor" in items[0]!).toBe(false);
+    expect(items[1]!.blockedActor).toBeUndefined();
+    expect("blockedActor" in items[1]!).toBe(false);
+  });
+});

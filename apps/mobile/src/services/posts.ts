@@ -737,15 +737,25 @@ export async function fetchMyPosts(): Promise<FeedPage> {
 
 /**
  * Candidate pool for on-device possible-matches: the most recent OPEN
- * opposite-type reports, capped at MATCH_CANDIDATE_LIMIT.
+ * opposite-type reports.
+ *
+ * The limit is a parameter because the caller may need a WIDER raw window
+ * than the pool it will finally keep: the client-side O5 exclusion (see
+ * `services/possibleMatches.ts`) drops the rows whose author the reader is
+ * blocked with, and a pool that is capped BEFORE the exclusion would be
+ * silently smaller than the server-side end state. The default is the pool
+ * size, so every other caller keeps exactly the rows it had.
  */
-export async function fetchMatchCandidates(oppositeType: PostType): Promise<PostItem[]> {
+export async function fetchMatchCandidates(
+  oppositeType: PostType,
+  limit: number = MATCH_CANDIDATE_LIMIT,
+): Promise<PostItem[]> {
   const { data, error } = await getSupabase().rpc(
     CLIENT_FEED_RPC,
-    feedArgs({ type: oppositeType, status: "OPEN" }, MATCH_CANDIDATE_LIMIT, null),
+    feedArgs({ type: oppositeType, status: "OPEN" }, limit, null),
   );
   if (error) throw new ApiError(error.message, 400);
-  return ((data ?? []) as ClientPostRow[]).slice(0, MATCH_CANDIDATE_LIMIT).map(mapClientPost);
+  return ((data ?? []) as ClientPostRow[]).slice(0, limit).map(mapClientPost);
 }
 
 export async function publishReport(input: CreatePostInput, photo: File | null, traceId?: string): Promise<string> {

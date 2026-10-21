@@ -4,14 +4,25 @@ import { Search, X } from "lucide-react";
 import { useSearchParams } from "react-router";
 import type { PostType } from "@findback/shared";
 import { Segmented } from "../components/Segmented";
+import { EmptyState } from "../components/PostCard";
 import { PostList } from "../components/PostList";
 import { useFeed } from "../hooks/useFeed";
 import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 import { AdvancedSearchFilters, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
 import type { NlFilterPatch } from "../services/search/nlFilters";
+import { cleanPlace, matchesPlace } from "../services/search/placeScope";
 import { nlExtractLive, nlHelperState } from "../services/liveNarrowTasks";
-import { NL_EMPTY_PATCH_NOTE, NL_SEARCH_FAILED_NOTE, NL_SEARCH_FILTERS_CHANGED_NOTE, NL_SEARCH_INVALID_DATE_NOTE, nlSearchAppliedNote } from "./nlHelperCopy";
+import {
+  NL_EMPTY_PATCH_NOTE,
+  NL_SEARCH_FAILED_NOTE,
+  NL_SEARCH_FILTERS_CHANGED_NOTE,
+  NL_SEARCH_FILTERS_KEPT_NOTE,
+  nlSearchAppliedAndKeptNote,
+  nlSearchAppliedNote,
+  nlSearchRefusedNote,
+  type NlRefusal,
+} from "./nlHelperCopy";
 import { getApplicationAi } from "../services/ai/applicationAi";
 import { useLocalIntelligenceService, type LocalIntelligenceService } from "../services/ai/localIntelligenceView";
 import { LocalSearchHelperRow } from "./DownloadedModels";
@@ -128,6 +139,12 @@ export function SearchScreen(props: {
   const [qParam, setQParam] = useUrlParam("q");
   const [query, setQuery] = useState(qParam);
   const [appliedQuery, setAppliedQuery] = useState(qParam.trim());
+  // The place scope. A place is a NAME the reader typed, matched on the
+  // device against the place field of a report — the feed RPC has no place
+  // filter, and the app must never invent a coordinate for one. The URL
+  // carries what the reader typed; only a usable name is ever in force.
+  const [placeParam, setPlaceParam] = useUrlParam("place");
+  const place = cleanPlace(placeParam);
   // Ordinary and extracted dates share controls and the same URL contract.
   const [dateFromParam, setDateFromParam] = useUrlParam("dateFrom");
   const [dateToParam, setDateToParam] = useUrlParam("dateTo");
@@ -151,6 +168,11 @@ export function SearchScreen(props: {
     advanced.clearAll();
     setDateFromParam("");
     setDateToParam("");
+    setPlaceParam("");
+    // The TYPE is a chip in the same row as "Clear all filters", so clearing
+    // every filter clears it too. A control that sits next to a filter it
+    // does not clear is a lie about what it does.
+    setType("ALL");
     setClearingFilters(true);
   }
   // Finish a combined clear atomically; independent URL effects must not
@@ -160,7 +182,7 @@ export function SearchScreen(props: {
     setClearingFilters(false);
     setSearchParams(previous => {
       const next = new URLSearchParams(previous);
-      for (const key of ["category", "status", "sort", "dateFrom", "dateTo"]) next.delete(key);
+      for (const key of ["category", "status", "sort", "dateFrom", "dateTo", "place", "type"]) next.delete(key);
       return next;
     }, { replace: true });
   }, [clearingFilters, setSearchParams]);
@@ -193,7 +215,7 @@ export function SearchScreen(props: {
   // reader changed in the meantime.
   const ordinaryQueryRef = useRef(query);
   ordinaryQueryRef.current = query;
-  const filterContext = JSON.stringify([type, advanced.category, advanced.status, advanced.sort, dateFrom, dateTo]);
+  const filterContext = JSON.stringify([type, place, advanced.category, advanced.status, advanced.sort, dateFrom, dateTo]);
   const filterContextRef = useRef(filterContext);
   filterContextRef.current = filterContext;
   const nlRequest = useRef(0);
@@ -217,7 +239,10 @@ export function SearchScreen(props: {
     try {
       const patch = await nlExtract(text);
       if (!alive()) return;
-      const hasFilters = Object.values(patch).some(value => value !== undefined && value !== "");
+      // A refused place is not a filter: it never counts as one, and it never
+      // makes an empty patch look like a patch with filters in it.
+      const hasFilters = Object.entries(patch).some(([key, value]) =>
+        key !== "placeRefused" && value !== undefined && value !== "");
       const helperState = hasFilters ? "ready" : await nlHelperState();
       if (!alive()) return;
       // The reader changed the filters while this answer was coming: its
@@ -227,18 +252,69 @@ export function SearchScreen(props: {
       // Search always has a useful text query even when extraction is silent.
       setQuery(patch.query?.trim() || text);
       let applied = 0;
-      let rejected = 0;
+      // The filters applied BESIDE the reader's words. The words are
+      // always searched, so "only your words were used" is true exactly
+      // when this count is zero.
+      let appliedBesidesWords = 0;
+      let kept = 0;
+      // What the extractor offered that could not become a filter. The
+      // reader is told about it; none of it is counted as applied.
+      const refusals: NlRefusal[] = [];
+      // A place the extractor offered but that is not a place NAME is
+      // refused. The refusal is CARRIED by the patch (`placeRefused`), so it
+      // reaches the reader instead of vanishing: the patch itself never
+      // holds an unusable place.
+      if (patch.placeRefused === true) refusals.push("place");
       if (patch.query?.trim()) {
         applied += 1;
       }
       if (!filtersChanged) {
+        // THE READER'S OWN CHOICE WINS. A filter the reader has already
+        // chosen is their answer: Smart Search may not overrule it. It is
+        // applied only where the reader has not chosen one, and a filter
+        // that is already in force is not counted as newly applied.
+        if (patch.postType !== undefined) {
+          if (type === "ALL") {
+            setType(patch.postType);
+            applied += 1;
+            appliedBesidesWords += 1;
+          } else if (type !== patch.postType) {
+            kept += 1;
+          }
+        }
+        if (patch.place !== undefined) {
+          // A place is a NAME. A value that is not one (a coordinate, a bare
+          // number) is refused here, before it can reach the URL, and it is
+          // not counted as applied — the count of applied filters stays
+          // true.
+          const extractedPlace = cleanPlace(patch.place);
+          if (extractedPlace === "") {
+            if (!refusals.includes("place")) refusals.push("place");
+          } else if (place === "") {
+            setPlaceParam(extractedPlace);
+            applied += 1;
+            appliedBesidesWords += 1;
+          } else if (place !== extractedPlace) {
+            kept += 1;
+          }
+        }
         if (patch.category !== undefined) {
-          advanced.setCategory(patch.category);
-          applied += 1;
+          if (advanced.category === "") {
+            advanced.setCategory(patch.category);
+            applied += 1;
+            appliedBesidesWords += 1;
+          } else if (advanced.category !== patch.category) {
+            kept += 1;
+          }
         }
         if (patch.status !== undefined) {
-          advanced.setStatus(patch.status);
-          applied += 1;
+          if (advanced.status === "") {
+            advanced.setStatus(patch.status);
+            applied += 1;
+            appliedBesidesWords += 1;
+          } else if (advanced.status !== patch.status) {
+            kept += 1;
+          }
         }
         // A date that is not a real day is not a filter. It is refused here,
         // before it can reach the URL, and it is not counted as applied.
@@ -247,20 +323,30 @@ export function SearchScreen(props: {
         const reversed =
           patch.dateFrom !== undefined && patch.dateTo !== undefined &&
           fromReal && toReal && patch.dateFrom > patch.dateTo;
-        if (patch.dateFrom !== undefined) {
-          if (fromReal && !reversed) {
-            setDateFromParam(patch.dateFrom);
-            applied += 1;
+        const rangeInvalid =
+          (patch.dateFrom !== undefined && !fromReal) ||
+          (patch.dateTo !== undefined && !toReal) ||
+          reversed;
+        if (rangeInvalid) {
+          refusals.push("date");
+        } else if (patch.dateFrom !== undefined || patch.dateTo !== undefined) {
+          // A range is judged as a WHOLE: half a range is not a range, and a
+          // range the reader already set is their range — Smart Search does
+          // not overrule it. The two bounds are still counted separately,
+          // exactly as the date chips below are two filters.
+          if (dateFrom !== "" || dateTo !== "") {
+            kept += 1;
           } else {
-            rejected += 1;
-          }
-        }
-        if (patch.dateTo !== undefined) {
-          if (toReal && !reversed) {
-            setDateToParam(patch.dateTo);
-            applied += 1;
-          } else {
-            rejected += 1;
+            if (patch.dateFrom !== undefined) {
+              setDateFromParam(patch.dateFrom);
+              applied += 1;
+              appliedBesidesWords += 1;
+            }
+            if (patch.dateTo !== undefined) {
+              setDateToParam(patch.dateTo);
+              applied += 1;
+              appliedBesidesWords += 1;
+            }
           }
         }
       }
@@ -271,14 +357,19 @@ export function SearchScreen(props: {
       }
       if (filtersChanged) {
         setNlNote(NL_SEARCH_FILTERS_CHANGED_NOTE);
-      } else if (rejected > 0) {
-        setNlNote(NL_SEARCH_INVALID_DATE_NOTE);
+      } else if (refusals.length > 0) {
+        // The refusal says what was refused AND what was applied: "only your
+        // words were used" is only true when no filter besides the words
+        // was applied.
+        setNlNote(nlSearchRefusedNote(refusals, applied, appliedBesidesWords));
+      } else if (applied > 0 && kept > 0) {
+        setNlNote(nlSearchAppliedAndKeptNote(applied));
+      } else if (applied > 0) {
+        setNlNote(nlSearchAppliedNote(applied));
+      } else if (kept > 0) {
+        setNlNote(NL_SEARCH_FILTERS_KEPT_NOTE);
       } else {
-        setNlNote(
-          applied === 0
-            ? NL_EMPTY_PATCH_NOTE[helperState]
-            : nlSearchAppliedNote(applied),
-        );
+        setNlNote(NL_EMPTY_PATCH_NOTE[helperState]);
       }
     } catch {
       if (!alive()) return;
@@ -322,6 +413,23 @@ export function SearchScreen(props: {
     { cacheKey: "search:feed", scrollRef },
   );
 
+  // The place scope is applied ON THE DEVICE: the feed RPC matches the
+  // title and the description and has no place filter, so the loaded
+  // reports are kept by the place field they carry. The count in the
+  // toolbar says how many of the LOADED reports the place kept — it is
+  // never paired with the feed's own total, because the place cannot
+  // narrow that total and the pair would claim more than the reader can
+  // see. More pages may hold more reports in the place; the count grows
+  // with them, so the line says "loaded", never a total.
+  const placeInForce = place !== "";
+  const visibleItems = placeInForce
+    ? items.filter(item => matchesPlace(item.locationLabel, place))
+    : items;
+  // The feed itself found nothing: no report matches the words and filters.
+  const feedEmpty = items.length === 0 && !loading && !error;
+  // The feed found reports, but none of them carries the place.
+  const placeEmpty = !feedEmpty && placeInForce && visibleItems.length === 0 && !loading && !error;
+
   // Active Search tab tap: rerun current filters + scroll top, preserve filters.
   // Smooth normally, instant when the OS prefers reduced motion.
   useEffect(() => {
@@ -359,7 +467,7 @@ export function SearchScreen(props: {
         <h1 className="text-lg font-semibold tracking-tight">Search &amp; filter</h1>
         <AnimatePresence initial={false} mode="wait">
           <motion.p
-            key={total}
+            key={`${total}:${visibleItems.length}`}
             variants={fadeVariants}
             initial="hidden"
             animate="visible"
@@ -368,7 +476,9 @@ export function SearchScreen(props: {
             className="text-xs text-on-surface-variant"
             role="status"
           >
-            {total} result{total === 1 ? "" : "s"}
+            {placeInForce
+              ? `${visibleItems.length} matching report${visibleItems.length === 1 ? "" : "s"} loaded for ${place}`
+              : `${total} result${total === 1 ? "" : "s"}`}
           </motion.p>
         </AnimatePresence>
       </header>
@@ -523,6 +633,20 @@ export function SearchScreen(props: {
             onFromChange: setDateFromParam,
             onToChange: setDateToParam,
           }}
+          // The type is a chip here and a segmented control on the screen:
+          // the chip is the state summary and the way out, exactly like the
+          // date chips.
+          postType={{
+            value: type === "ALL" ? "" : type,
+            onChange: next => setType(next === "" ? "ALL" : next),
+          }}
+          place={{
+            // The field shows what the reader typed; only a usable name is
+            // ever in force, so a coordinate can never become a filter.
+            value: placeParam,
+            applied: place,
+            onChange: setPlaceParam,
+          }}
         />
       </section>
 
@@ -532,18 +656,38 @@ export function SearchScreen(props: {
           way to tell an empty search from a broken one. The floor holds the
           list at a usable height, and the column gives up the difference. */}
       <div ref={scrollRef} data-testid="search-results-scroller" onScroll={handleResultsScroll} className="min-h-[4rem] flex-1 overflow-y-auto">
-        <PostList
-          items={items}
-          loading={loading}
-          loadingMore={loadingMore}
-          error={error}
-          hasMore={hasMore}
-          onLoadMore={loadMore}
-          onRetry={refresh}
-          density="compact"
-          emptyTitle="No matches"
-          emptySubtitle="Try different filters or a broader search."
-        />
+        {feedEmpty || placeEmpty ? (
+          <EmptyState
+            compact
+            icon={<Search size={16} aria-hidden />}
+            title={placeEmpty ? `No report in ${place} yet` : "No matches"}
+            subtitle={
+              placeEmpty
+                ? hasMore
+                  ? "Try another place, or load more reports."
+                  : "Try another place."
+                : "Try different filters or a broader search."
+            }
+            action={
+              placeEmpty && hasMore
+                ? { label: "Show more reports", onPress: () => void loadMore() }
+                : undefined
+            }
+          />
+        ) : (
+          <PostList
+            items={visibleItems}
+            loading={loading}
+            loadingMore={loadingMore}
+            error={error}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            onRetry={refresh}
+            density="compact"
+            emptyTitle="No matches"
+            emptySubtitle="Try different filters or a broader search."
+          />
+        )}
       </div>
     </div>
   );

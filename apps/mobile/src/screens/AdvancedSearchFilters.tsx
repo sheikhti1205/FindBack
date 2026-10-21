@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { CATEGORIES, POST_STATUSES, type Category, type PostStatus } from "@findback/shared";
+import { CATEGORIES, POST_STATUSES, type Category, type PostStatus, type PostType } from "@findback/shared";
 import { SlidersHorizontal, X } from "lucide-react";
 import { BottomSheet } from "../components/BottomSheet";
 import { CategoryField } from "../components/CategoryField";
 import { SelectField, TextField } from "../components/Fields";
 import { STATUS_OPTIONS, statusLabel } from "../components/Segmented";
 import { useUrlParam } from "../hooks/useUrlParam";
+import { MAX_PLACE_CHARS, placeRejection, type PlaceRejection } from "../services/search/placeScope";
 import {
   fadeVariants,
   motionDurations,
@@ -22,6 +23,19 @@ function firstPresent(...values: (string | undefined)[]): string {
   for (const value of values) if (value) return value;
   return "";
 }
+
+/**
+ * Why the reader's text is not a place — one sentence per reason.
+ *
+ * A single sentence that named the wrong reason would be a sentence about
+ * something else: a coordinate, a bare number and an over-long name are
+ * three different mistakes, and the reader is told which one they made.
+ */
+export const PLACE_REJECTION_COPY: Record<PlaceRejection, string> = {
+  coordinate: "A map coordinate is not a place — type the place's name.",
+  number: "Type the name of a place, not a number.",
+  "too-long": `That place name is too long — keep it under ${MAX_PLACE_CHARS} characters.`,
+};
 
 /** Keep the legacy /search and Home filter URL contract identical. */
 export function useAdvancedSearchFilters() {
@@ -125,6 +139,8 @@ export function AdvancedSearchFilters({
   onOpenChange,
   hideTrigger = false,
   dateRange,
+  postType,
+  place,
 }: {
   filters: AdvancedFilters;
   /** Controlled sheet state (Home embeds its own trigger inside the search bar). */
@@ -146,6 +162,29 @@ export function AdvancedSearchFilters({
     onFromChange: (value: string) => void;
     onToChange: (value: string) => void;
   };
+  /**
+   * The LOST/FOUND type, shown as a chip next to the other active filters.
+   *
+   * The type CONTROL lives on the screen (the segmented control), so this
+   * is a state summary and a way out — the same shape as the date chips.
+   * Omitted (Home) leaves the type out of the sheet and the chips.
+   */
+  postType?: {
+    value: PostType | "";
+    onChange: (value: PostType | "") => void;
+  };
+  /**
+   * The place filter: a place NAME, matched against the place field of a
+   * report on the device. Omitted (Home) leaves the place out of the sheet
+   * and the chips.
+   */
+  place?: {
+    /** What the field shows: the reader's own text. */
+    value: string;
+    /** The place that is IN FORCE. Empty when the text is not a place. */
+    applied: string;
+    onChange: (value: string) => void;
+  };
 }) {
   const { category, status, sort, setCategory, setStatus, setSort, clearAll } = filters;
   const [internalOpen, setInternalOpen] = useState(false);
@@ -164,7 +203,13 @@ export function AdvancedSearchFilters({
     sort !== "newest" ? { key: "sort", label: "Sort: Oldest first", clear: () => setSort("newest") } : null,
     dateRange?.from ? { key: "start date", label: `From: ${dateRange.from}`, clear: () => dateRange.onFromChange("") } : null,
     dateRange?.to ? { key: "end date", label: `To: ${dateRange.to}`, clear: () => dateRange.onToChange("") } : null,
+    place?.applied ? { key: "place", label: `Place: ${place.applied}`, clear: () => place.onChange("") } : null,
   ].filter((item): item is { key: string; label: string; clear: () => void } => item !== null);
+  // The TYPE is a filter too, and it is a chip in the same row as the others:
+  // the badge counts it, so a reader with only a type filter never sees a
+  // chip on screen and no count beside it.
+  const typeActive = Boolean(postType?.value);
+  const activeCount = active.length + (typeActive ? 1 : 0);
 
   return (
     <>
@@ -177,11 +222,18 @@ export function AdvancedSearchFilters({
           className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-m3-sm border border-outline-variant bg-surface px-4 text-sm font-medium text-on-surface"
         >
           <SlidersHorizontal size={16} aria-hidden />
-          Filters{active.length > 0 ? ` (${active.length})` : ""}
+          Filters{activeCount > 0 ? ` (${activeCount})` : ""}
         </button>
       )}
 
-      {active.length > 0 && (
+      {/* The chips row.
+          The TYPE chip lives OUTSIDE the animated group, and the group is
+          mounted only while an advanced filter is on. Two reasons:
+          clearing every advanced filter must take the cleared chips off the
+          screen at once — they must not keep the cleared chips on screen
+          while they fade out — and the type chip is its own summary, so it
+          fades in and out on its own. */}
+      {(active.length > 0 || typeActive) && (
         <motion.div
           layout
           transition={motionSprings.snappy}
@@ -189,13 +241,13 @@ export function AdvancedSearchFilters({
           aria-label="Active filters"
         >
           <AnimatePresence initial={false}>
-            {active.map(item => (
+            {typeActive && (
               <motion.button
-                key={item.key}
+                key="type"
                 layout
                 type="button"
-                onClick={item.clear}
-                aria-label={`Remove ${item.key} filter`}
+                onClick={() => postType?.onChange("")}
+                aria-label="Remove type filter"
                 whileTap={pressFeedback.button}
                 variants={fadeVariants}
                 initial="hidden"
@@ -204,13 +256,37 @@ export function AdvancedSearchFilters({
                 transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
                 className="inline-flex min-h-[48px] items-center gap-1.5 rounded-full border border-outline-variant bg-surface-container px-3 text-sm text-on-surface"
               >
-                {item.label}<X size={14} aria-hidden />
+                Type: {postType?.value === "LOST" ? "Lost" : "Found"}<X size={14} aria-hidden />
               </motion.button>
-            ))}
+            )}
           </AnimatePresence>
-          <button type="button" onClick={clearAll} className="inline-flex min-h-[48px] items-center rounded-full px-3 text-sm font-medium text-on-surface underline">
-            Clear all filters
-          </button>
+          {active.length > 0 && (
+            <AnimatePresence initial={false}>
+              {active.map(item => (
+                <motion.button
+                  key={item.key}
+                  layout
+                  type="button"
+                  onClick={item.clear}
+                  aria-label={`Remove ${item.key} filter`}
+                  whileTap={pressFeedback.button}
+                  variants={fadeVariants}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
+                  className="inline-flex min-h-[48px] items-center gap-1.5 rounded-full border border-outline-variant bg-surface-container px-3 text-sm text-on-surface"
+                >
+                  {item.label}<X size={14} aria-hidden />
+                </motion.button>
+              ))}
+            </AnimatePresence>
+          )}
+          {activeCount > 0 && (
+            <button type="button" onClick={clearAll} className="inline-flex min-h-[48px] items-center rounded-full px-3 text-sm font-medium text-on-surface underline">
+              Clear all filters
+            </button>
+          )}
         </motion.div>
       )}
 
@@ -228,11 +304,29 @@ export function AdvancedSearchFilters({
             <TextField label="From date" type="date" style={{ paddingInline: 12 }} value={dateFromField} max={dateToField || undefined} onChange={e => dateRange.onFromChange(e.target.value)} />
             <TextField label="To date" type="date" style={{ paddingInline: 12 }} value={dateToField} min={dateFromField || undefined} onChange={e => dateRange.onToChange(e.target.value)} />
           </>}
+          {place && (
+            <TextField
+              label="Place"
+              placeholder="e.g. Gulshan"
+              value={place.value}
+              hint="Keeps the loaded reports whose place name matches — the place is matched on this device, so more reports may match as you load them. A report with only a map pin and no place name is not included."
+              // A value that is not a place name (a coordinate, a bare
+              // number, a name that is too long) is not a filter. The reader
+              // is told WHICH reason it is, instead of watching a filter
+              // that never applies.
+              error={
+                placeRejection(place.value)
+                  ? PLACE_REJECTION_COPY[placeRejection(place.value)!]
+                  : undefined
+              }
+              onChange={e => place.onChange(e.target.value)}
+            />
+          )}
           <SelectField label="Sort" value={sort} onChange={e => setSort(e.target.value as "newest" | "oldest")} options={[
             { value: "newest", label: "Newest first" },
             { value: "oldest", label: "Oldest first" },
           ]} />
-          {active.length > 0 && (
+          {activeCount > 0 && (
             <button type="button" onClick={clearAll} className="inline-flex min-h-[48px] items-center justify-center rounded-m3-sm border border-outline-variant px-4 text-sm font-medium">
               Clear all filters
             </button>

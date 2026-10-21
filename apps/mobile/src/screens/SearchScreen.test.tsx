@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fetchFeedMock, tabTapState, nlExtractLiveMock, nlHelperStateMock } = vi.hoisted(() => ({
   fetchFeedMock: vi.fn(),
@@ -20,9 +20,29 @@ vi.mock("../services/liveNarrowTasks", () => ({
 
 import { SearchScreen } from "./SearchScreen";
 import { clearFeedCaches } from "../hooks/feedCache";
+import { makePost } from "../fixture/posts";
 import { NEEDLE_DESCRIPTOR } from "../services/ai/modelDescriptors";
+import { mustProfile, stubGenerate } from "../services/ai/ops/testSupport";
+import { extractNlFilters, toValidatedPatch, type NlFilterPatch } from "../services/search/nlFilters";
 import type { LocalIntelligenceService } from "../services/ai/localIntelligenceView";
 import type { OfflineModelStatus } from "../services/ai/offlineModelManager";
+
+/** The profile the op tests use: the real validator chain, a fake model. */
+const PROFILE = "qwen3-0.6b-dynamic-int4";
+
+// The results list watches for its pagination sentinel. jsdom has no
+// IntersectionObserver, so the boundary is faked here — the list's own
+// behaviour is not what this suite is about.
+beforeAll(() => {
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
 
 function helperService() {
   // Only the platform boundary is faked. The shared lifecycle row, readiness
@@ -730,5 +750,362 @@ describe("SearchScreen URL filters", () => {
     fireEvent.scroll(scroller as HTMLElement);
 
     await waitFor(() => expect(screen.getByTestId("search-toolbar").className).toContain("shadow-sm"));
+  });
+
+  describe("Search S2: the explicit type and the place", () => {
+    function renderWithNl(
+      nlExtract: (input: string) => Promise<NlFilterPatch>,
+      entry = "/search",
+    ) {
+      return render(
+        <MemoryRouter initialEntries={[entry]}>
+          <SearchScreen nlExtract={nlExtract as never} />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+    }
+
+    const dhakaReport = makePost("s2-dhaka", {
+      title: "Umbrella in Gulshan",
+      locationLabel: "Gulshan, Dhaka",
+    });
+    const chattogramReport = makePost("s2-chattogram", {
+      title: "Umbrella in Agrabad",
+      locationLabel: "Agrabad, Chattogram",
+    });
+
+    function twoReports() {
+      fetchFeedMock.mockResolvedValue({
+        items: [dhakaReport, chattogramReport],
+        nextCursor: null,
+        total: 2,
+      });
+    }
+
+    it("applies an extracted LOST/FOUND type to the ordinary control", async () => {
+      renderWithNl(async () => ({ query: "black wallet", postType: "LOST" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "black wallet lost" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      // The type lands in the ordinary control the reader already knows, and
+      // it is summarised as a chip that can be removed.
+      await waitFor(() =>
+        expect(screen.getByRole("radio", { name: "Lost" }).getAttribute("aria-checked")).toBe("true"),
+      );
+      expect(await screen.findByText("Type: Lost")).toBeTruthy();
+      await waitFor(() =>
+        expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ type: "LOST" }), undefined),
+      );
+    });
+
+    it("keeps the reader's own type when the extraction disagrees", async () => {
+      // The reader's own choice is their answer: Smart Search does not
+      // overrule it, and it says so.
+      renderWithNl(async () => ({ postType: "LOST" }), "/search?type=FOUND");
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "black wallet lost" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(
+        await screen.findByText(
+          "Your own filter choice was kept, so only your words were used.",
+        ),
+      ).toBeTruthy();
+      expect(screen.getByRole("radio", { name: "Found" }).getAttribute("aria-checked")).toBe("true");
+      expect(screen.queryByText("Type: Lost")).toBeNull();
+      expect(screen.getByText("Type: Found")).toBeTruthy();
+      await waitFor(() =>
+        expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ type: "FOUND" }), undefined),
+      );
+    });
+
+    it("does not count a type the reader already had as newly applied", async () => {
+      renderWithNl(async () => ({ postType: "LOST" }), "/search?type=LOST");
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "black wallet lost" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      await waitFor(() => expect(screen.queryByTestId("smart-search-note-row")).not.toBeNull());
+      expect(screen.queryByText(/Applied \d+ smart filter/)).toBeNull();
+      // The reader's own type is still in force.
+      expect(screen.getByRole("radio", { name: "Lost" }).getAttribute("aria-checked")).toBe("true");
+    });
+
+    it("applies an extracted place and narrows the results to it", async () => {
+      twoReports();
+      renderWithNl(async () => ({ query: "umbrella", place: "Gulshan" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "umbrella lost in Gulshan" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(await screen.findByText("Place: Gulshan")).toBeTruthy();
+      // The place is applied ON THE DEVICE: the report that names it is
+      // kept, the one that does not is out.
+      await waitFor(() => expect(screen.getByText("Umbrella in Gulshan")).toBeTruthy());
+      expect(screen.queryByText("Umbrella in Agrabad")).toBeNull();
+      // The count never claims more than the reader can see: it counts the
+      // LOADED reports the place kept, never a total.
+      expect(await screen.findByText("1 matching report loaded for Gulshan")).toBeTruthy();
+    });
+
+    it("keeps the reader's own place when the extraction disagrees", async () => {
+      twoReports();
+      renderWithNl(async () => ({ place: "Gulshan" }), "/search?place=Chattogram");
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "umbrella lost in Gulshan" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(
+        await screen.findByText(
+          "Your own filter choice was kept, so only your words were used.",
+        ),
+      ).toBeTruthy();
+      expect(screen.getByText("Place: Chattogram")).toBeTruthy();
+      expect(screen.queryByText("Place: Gulshan")).toBeNull();
+      // The reader's place still decides the results.
+      await waitFor(() => expect(screen.getByText("Umbrella in Agrabad")).toBeTruthy());
+      expect(screen.queryByText("Umbrella in Gulshan")).toBeNull();
+    });
+
+    it("removes the place like any other filter", async () => {
+      twoReports();
+      renderWithNl(async () => ({ query: "umbrella", place: "Gulshan" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "umbrella lost in Gulshan" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+      expect(await screen.findByText("Place: Gulshan")).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: "Remove place filter" }));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("location").textContent).not.toContain("place="),
+      );
+      await waitFor(() => expect(screen.queryByText("Place: Gulshan")).toBeNull());
+      // Without the place every loaded report is in scope again.
+      expect(screen.getByText("Umbrella in Agrabad")).toBeTruthy();
+    });
+
+    it("filters by a place the reader types, without Smart Search", async () => {
+      twoReports();
+      renderSearch("/search");
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+      fireEvent.change(await screen.findByLabelText("Place"), {
+        target: { value: "Gulshan" },
+      });
+
+      await waitFor(() => expect(screen.getByTestId("location").textContent).toContain("place=Gulshan"));
+      await waitFor(() => expect(screen.getByText("Umbrella in Gulshan")).toBeTruthy());
+      expect(screen.queryByText("Umbrella in Agrabad")).toBeNull();
+      expect(await screen.findByText("1 matching report loaded for Gulshan")).toBeTruthy();
+      expect(nlExtractLiveMock).not.toHaveBeenCalled();
+    });
+
+    it("tells the reader when a place was refused, and never applies it", async () => {
+      // The REAL path: the patch is built by the validator, so the refusal
+      // is carried by the patch itself instead of vanishing inside it.
+      // A bare number is not a place name, and the reader is told.
+      twoReports();
+      renderWithNl(async () => toValidatedPatch({ query: "umbrella", place: "42" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "umbrella near 42" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(
+        await screen.findByText(
+          "Smart Search had a place that isn't a place name, so only your words were used.",
+        ),
+      ).toBeTruthy();
+      // The refused place is never a filter: no chip, no URL param, and no
+      // report dropped.
+      expect(screen.queryByText(/^Place:/)).toBeNull();
+      expect(screen.getByTestId("location").textContent).not.toContain("place=");
+      expect(screen.getByText("Umbrella in Gulshan")).toBeTruthy();
+      expect(screen.getByText("Umbrella in Agrabad")).toBeTruthy();
+      expect(screen.queryByText(/loaded for /)).toBeNull();
+      // It is not counted as a filter the reader has on.
+      expect(screen.queryByText(/Applied \d+ smart filter/)).toBeNull();
+    });
+
+    it("says what was applied when a place was refused beside another filter", async () => {
+      // "Only your words were used" would be a lie here: the category WAS
+      // applied. The note says both facts.
+      twoReports();
+      renderWithNl(async () => toValidatedPatch({ query: "umbrella", category: "Bags & Wallets", place: "42" }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "umbrella in a bag near 42" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(
+        await screen.findByText(
+          "Smart Search had a place that isn't a place name, so it was not used. Applied 2 smart filters — review or remove them below.",
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByText(/only your words were used/i)).toBeNull();
+      expect(screen.getByText("Category: Bags & Wallets")).toBeTruthy();
+      expect(screen.queryByText(/^Place:/)).toBeNull();
+    });
+
+    it("fails the whole extraction closed on a coordinate, so the reader gets the ordinary note", async () => {
+      // The op contract refuses a coordinate in ANY slot (R5), so the whole
+      // extraction is refused rather than half-applied — the ordinary search
+      // runs on the reader's words. The place-refusal note is NOT the path a
+      // coordinate takes.
+      twoReports();
+      renderWithNl(async (input: string) =>
+        extractNlFilters(
+          stubGenerate(JSON.stringify({ query: "umbrella", place: "23.8103, 90.4125" })),
+          input,
+          mustProfile(PROFILE),
+        ),
+      );
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "umbrella at 23.8103, 90.4125" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(
+        await screen.findByText("No extra filters found — searching your words."),
+      ).toBeTruthy();
+      expect(screen.queryByText(/isn't a place name/)).toBeNull();
+      expect(screen.queryByText(/^Place:/)).toBeNull();
+      expect(screen.getByTestId("location").textContent).not.toContain("place=");
+    });
+
+    it("never applies a coordinate the reader typed either", async () => {
+      // The reader's own text stays in the field so it can be fixed — the
+      // same shape as an impossible date. It is still not a filter.
+      twoReports();
+      renderSearch("/search");
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+      fireEvent.change(await screen.findByLabelText("Place"), {
+        target: { value: "23.8103, 90.4125" },
+      });
+
+      expect(
+        await screen.findByText(/a map coordinate is not a place/i),
+      ).toBeTruthy();
+      expect(screen.getByText("Umbrella in Gulshan")).toBeTruthy();
+      expect(screen.getByText("Umbrella in Agrabad")).toBeTruthy();
+      expect(screen.queryByText(/^Place:/)).toBeNull();
+      expect(screen.queryByText(/loaded for /)).toBeNull();
+    });
+
+    it("shows the canonical empty state, in its compact variant, with a real heading", async () => {
+      // T3: the results area is a strip. The canonical tall empty state
+      // (48px of padding, the icon on its own line) pushes the WORDS below
+      // the fold at 320dp / 125% text — and the words are the message. So
+      // the screen uses the canonical EmptyState's COMPACT variant: one
+      // empty state, not a second one.
+      //
+      // What jsdom can prove: the canonical component is the one rendered,
+      // the heading is still an h2 (the heading level is not lost), and the
+      // words are there. What jsdom CANNOT prove: that the words are above
+      // the fold — that needs a rendered check at 320dp / 125% text, which
+      // does not exist yet and is not claimed.
+      renderSearch("/search");
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      const empty = await screen.findByTestId("empty-state");
+      expect(empty.className).toContain("py-2");
+      expect(empty.className).not.toContain("py-12");
+      const heading = screen.getByRole("heading", { name: "No matches" });
+      expect(heading.tagName).toBe("H2");
+      expect(heading.className).toContain("text-sm");
+      expect(screen.getByText("Try different filters or a broader search.")).toBeTruthy();
+    });
+
+    it("says so when the place keeps none of the loaded reports, and offers more", async () => {
+      fetchFeedMock.mockResolvedValue({
+        items: [chattogramReport],
+        nextCursor: "page-2",
+        total: 1,
+      });
+      renderSearch("/search?place=Gulshan");
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      expect(await screen.findByText("No report in Gulshan yet")).toBeTruthy();
+      expect(screen.getByText("Try another place, or load more reports.")).toBeTruthy();
+      // The reader can widen the search themselves: the place is applied on
+      // the device, so more reports may carry the place.
+      fireEvent.click(screen.getByRole("button", { name: "Show more reports" }));
+      await waitFor(() =>
+        expect(fetchFeedMock).toHaveBeenCalledWith(expect.anything(), "page-2"),
+      );
+    });
+
+    it("does not offer to load more reports when there is nothing more to load", async () => {
+      fetchFeedMock.mockResolvedValue({
+        items: [chattogramReport],
+        nextCursor: null,
+        total: 1,
+      });
+      renderSearch("/search?place=Gulshan");
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      expect(await screen.findByText("No report in Gulshan yet")).toBeTruthy();
+      // The sentence follows the truth: there is nothing more to load.
+      expect(screen.getByText("Try another place.")).toBeTruthy();
+      expect(screen.queryByText(/load more reports/i)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Show more reports" })).toBeNull();
+    });
+
+    it("disables the Download button while the device is busy with the request", async () => {
+      // T4: the device claims the model before its first await, so the row
+      // can disable the button instead of letting a second tap start a
+      // second transfer.
+      nlHelperStateMock.mockResolvedValue("not-set-up");
+      const service = helperService();
+      service.busy = () => true;
+      render(
+        <MemoryRouter initialEntries={["/search"]}>
+          <SearchScreen
+            nlExtract={async () => ({})}
+            helperService={service as unknown as LocalIntelligenceService}
+          />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), {
+        target: { value: "wallet" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      const download = await screen.findByRole("button", { name: "Download · 35.3 MB" });
+      expect(download.getAttribute("disabled")).not.toBeNull();
+      fireEvent.click(download);
+      expect(service.download).not.toHaveBeenCalled();
+    });
   });
 });

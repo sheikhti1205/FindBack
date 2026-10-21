@@ -111,20 +111,65 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
   );
 }
 
+/**
+ * The one empty state.
+ *
+ * `compact` is the SAME state for a STRIP of results: at 320 dp with large
+ * text the results area is short, and the tall variant (48 px of padding, the
+ * icon on a line of its own) pushes the WORDS below the fold — and the words
+ * are the whole message. The compact variant keeps the same heading element
+ * and the same level (`h2`), the same words and the same way out; only the
+ * spacing and the icon's place change.
+ */
 export function EmptyState({
   icon,
   title,
   subtitle,
+  compact = false,
+  action,
 }: {
   icon?: ReactNode;
   title: string;
   subtitle?: string;
+  /** Compact variant, for a results strip. */
+  compact?: boolean;
+  /** An optional way out (e.g. "Show more reports"). */
+  action?: { label: string; onPress: () => void };
 }) {
   return (
-    <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
-      {icon && <div className="text-on-surface-variant">{icon}</div>}
-      <h2 className="text-base font-semibold text-on-surface">{title}</h2>
-      {subtitle && <p className="max-w-xs text-sm text-on-surface-variant">{subtitle}</p>}
+    <div
+      data-testid="empty-state"
+      className={
+        compact
+          ? "flex flex-col items-center gap-1 px-6 py-2 text-center"
+          : "flex flex-col items-center gap-2 px-6 py-12 text-center"
+      }
+    >
+      {compact ? (
+        <div className="flex items-center gap-1.5">
+          {icon && <span className="shrink-0 text-on-surface-variant">{icon}</span>}
+          <h2 className="text-sm font-semibold text-on-surface">{title}</h2>
+        </div>
+      ) : (
+        <>
+          {icon && <div className="text-on-surface-variant">{icon}</div>}
+          <h2 className="text-base font-semibold text-on-surface">{title}</h2>
+        </>
+      )}
+      {subtitle && (
+        <p className={compact ? "text-xs text-on-surface-variant" : "max-w-xs text-sm text-on-surface-variant"}>
+          {subtitle}
+        </p>
+      )}
+      {action && (
+        <button
+          type="button"
+          onClick={action.onPress}
+          className="mt-1 min-h-[44px] shrink-0 px-2 text-sm font-medium text-on-surface underline"
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }

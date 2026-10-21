@@ -123,4 +123,34 @@ describe("PossibleMatches", () => {
     expect(count.style.opacity).toBe("");
     expect(count.style.transform).toBe("");
   });
+
+  // -------------------------------------------------------------------------
+  // O5 / CF-050: a candidate whose author the viewer has blocked is EXCLUDED
+  // from the pool by the service (the WHERE-style exclusion), so the surface
+  // has nothing to show about it. The candidate surface discloses NOTHING
+  // about blocks: the gate fixed the exclusion in the reader's WHERE clause
+  // with no client-visible column, and the interim client-side filter (see
+  // `services/possibleMatches.ts`) carries no count to the UI either.
+  // -------------------------------------------------------------------------
+  it("never mentions a block on the candidate surface", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+
+    // The plain empty state — not a second one that explains a block.
+    expect(await screen.findByText(/no reports to compare/i)).toBeTruthy();
+    expect(
+      screen.getByText("There are no open reports of the opposite type yet. Check back later as new reports are added."),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/block/i);
+  });
+
+  it("says nothing about blocks next to the compared count", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 2, matches: [
+      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+
+    expect(await screen.findByText(/compared 2 recent reports/i)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/block/i);
+  });
 });

@@ -63,15 +63,62 @@ export const NL_SEARCH_FILTERS_CHANGED_NOTE =
   "Your filter choices changed while Smart Search worked, so only your words were used.";
 
 /**
- * The extractor offered a date that is not a real day. A filter that cannot be
- * a real date is not applied, and the count of applied filters stays true.
+ * What the extractor offered that could not become a filter.
+ *
+ * A date that is not a real day is not a filter, and a place that is not a
+ * place NAME (a bare number, a time phrase) is not a filter either: both are
+ * refused before they reach the URL, and neither is counted as applied.
  */
-export const NL_SEARCH_INVALID_DATE_NOTE =
-  "Smart Search had a date that isn't a real date, so only your words were used.";
+export type NlRefusal = "date" | "place";
+
+const REFUSAL_COPY: Record<NlRefusal, string> = {
+  date: "a date that isn't a real date",
+  place: "a place that isn't a place name",
+};
+
+/**
+ * The sentence for a refused value.
+ *
+ * It says what was refused and what was applied. "Only your words were
+ * used" appears ONLY when no filter besides the reader's words was applied —
+ * otherwise it would be a lie about the filters the reader now has on.
+ *
+ * `applied` is the count the other notes use (the words count as one);
+ * `appliedBesidesWords` is what decides the "only your words" wording.
+ */
+export function nlSearchRefusedNote(
+  refusals: readonly NlRefusal[],
+  applied: number,
+  appliedBesidesWords: number,
+): string {
+  const what = refusals.map((refusal) => REFUSAL_COPY[refusal]).join(" and ");
+  if (appliedBesidesWords <= 0) return `Smart Search had ${what}, so only your words were used.`;
+  const many = refusals.length > 1;
+  return `Smart Search had ${what}, so ${many ? "they were" : "it was"} not used. ${nlSearchAppliedNote(applied)}`;
+}
+
+/**
+ * The reader had already chosen the filter Smart Search wanted to set, so the
+ * reader's own choice was kept and only the words were used.
+ *
+ * A filter the reader chose is their answer: Smart Search may not overrule
+ * it, and it says so instead of quietly changing the search behind them.
+ */
+export const NL_SEARCH_FILTERS_KEPT_NOTE =
+  "Your own filter choice was kept, so only your words were used.";
 
 /** The number of filters Smart Search actually applied. */
 export function nlSearchAppliedNote(count: number): string {
   return `Applied ${count} smart filter${count === 1 ? "" : "s"} — review or remove them below.`;
+}
+
+/**
+ * Some filters were applied and the reader's own choice was kept for another
+ * one. Both facts are in the sentence: the count of what was applied, and the
+ * fact that nothing of the reader's was overruled.
+ */
+export function nlSearchAppliedAndKeptNote(count: number): string {
+  return `Applied ${count} smart filter${count === 1 ? "" : "s"} and kept your own choice for the rest — review or remove them below.`;
 }
 
 /** Smart Search: an empty patch, per helper state. */

@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { motion, type PanInfo } from "framer-motion";
 import { Bell, Check, Mail, MoreVertical, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
+import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { UserAvatar } from "../components/UserAvatar";
 import { announce } from "../components/LiveRegion";
 import { ErrorView, InboxSkeleton, StateSwap } from "../components/uiPrimitives";
@@ -79,6 +80,28 @@ export function typeLabel(type: NotificationType): string {
 }
 
 type InboxView = "inbox" | "deleted";
+
+/**
+ * A gesture that starts on a shielded row's reveal control must NEVER become
+ * a swipe.
+ *
+ * The row is a swipe-to-delete surface, and the shield's "Show content" button
+ * sits inside it: a horizontal drag that starts on that button would commit
+ * the swipe action (delete / mark-read) instead of revealing the content. The
+ * reveal wins.
+ *
+ * The guard is a CAPTURE-phase listener on the list: it runs before the row's
+ * own pointer handling, so the gesture never reaches the drag surface when it
+ * starts inside a shield. Every other part of the row still swipes. The
+ * listener is native (not React's delegated handler) because React's own
+ * handler for a bubbled event runs after the row's listener has already
+ * seen it.
+ */
+function startsInsideShield(event: Event): boolean {
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  return target.closest("[data-testid=\"blocked-shield\"]") !== null;
+}
 
 export function Notifications() {
   const [view, setView] = useState<InboxView>("inbox");
@@ -229,6 +252,21 @@ export function Notifications() {
   );
 
   const unreadCount = items?.filter((item) => !item.read).length ?? 0;
+  // The list owns the gesture guard: a pointer-down that starts inside a
+  // shield never reaches the row's drag surface, so it can never commit a
+  // swipe. The list is mounted only when there is something to show, so the
+  // listener is bound to the list element itself.
+  const listRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const onPointerDown = (event: Event) => {
+      if (!startsInsideShield(event)) return;
+      event.stopPropagation();
+    };
+    list.addEventListener("pointerdown", onPointerDown, true);
+    return () => list.removeEventListener("pointerdown", onPointerDown, true);
+  }, [items]);
 
   return (
     <div className="flex min-h-full flex-col px-4 py-5">
@@ -295,59 +333,94 @@ export function Notifications() {
           </p>
         </section>
       ) : (
-        <ul className="flex flex-col gap-2 py-4" aria-label="Notifications">
-          {items.map((item) => (
-            <li key={item.id}>
-              <motion.div
-                drag={view === "inbox" ? "x" : false}
-                dragDirectionLock
-                dragConstraints={{ left: 0, right: 0 }}
-                dragElastic={0.25}
-                onDragEnd={(_event, info: PanInfo) => {
-                  if (view !== "inbox") return;
-                  const action = swipeActionFor(info.offset.x);
-                  if (action === "delete") void handleDelete([item.id]);
-                  else if (action === "toggle-read") {
-                    if (item.read) void handleMarkUnread(item.id);
-                    else void handleMarkRead(item.id);
-                  }
+        <ul ref={listRef} className="flex flex-col gap-2 py-4" aria-label="Notifications">
+          {items.map((item) => {
+            // O5 (CF-060 B1): the DB returns the row either way and projects
+            // the caller-scoped, direction-free `blocked_actor` bit. A blocked
+            // row is screened IN PLACE with the canonical shield — never
+            // dropped, and never a different row: the row's normal content
+            // (including its link) sits INSIDE the shield, exactly like the
+            // profile reports row does.
+            const blocked = item.blockedActor === true;
+            const route = notificationRoute(item);
+            const body = item.postId ? (
+              <Link
+                to={route ?? `/posts/${item.postId}`}
+                onClick={() => {
+                  if (!item.read) void handleMarkRead(item.id);
                 }}
-                className={`flex items-start gap-1 rounded-m3-md border py-1 pl-1 pr-1 ${
-                  !item.read && view === "inbox"
-                    ? "border-primary bg-surface-container"
-                    : "border-outline-variant"
-                }`}
+                aria-label={`${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}: ${item.postTitle ?? "your report"}`}
+                className="flex min-w-0 flex-1 flex-col gap-1 rounded-m3-sm p-2.5"
               >
-                {item.postId ? (
-                  <Link
-                    to={notificationRoute(item) ?? `/posts/${item.postId}`}
-                    onClick={() => {
-                      if (!item.read) void handleMarkRead(item.id);
-                    }}
-                    aria-label={`${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}: ${item.postTitle ?? "your report"}`}
-                    className="flex min-w-0 flex-1 flex-col gap-1 rounded-m3-sm p-2.5"
-                  >
-                    <NotificationBody item={item} />
-                  </Link>
-                ) : (
-                  <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
-                    <NotificationBody item={item} />
-                  </div>
-                )}
-                {/* Packet `08` §17: swipe is a shortcut, never the only route —
-                    the row keeps one compact overflow trigger instead of a
-                    permanent action bar. */}
-                <NotificationOverflow
-                  item={item}
-                  view={view}
-                  onMarkRead={handleMarkRead}
-                  onMarkUnread={handleMarkUnread}
-                  onDelete={handleDelete}
-                  onRestore={handleRestore}
-                />
-              </motion.div>
-            </li>
-          ))}
+                <NotificationBody item={item} />
+              </Link>
+            ) : (
+              <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
+                <NotificationBody item={item} />
+              </div>
+            );
+            return (
+              <li key={item.id}>
+                <motion.div
+                  drag={view === "inbox" ? "x" : false}
+                  dragDirectionLock
+                  dragConstraints={{ left: 0, right: 0 }}
+                  dragElastic={0.25}
+                  data-testid="notification-row"
+                  onDragEnd={(_event, info: PanInfo) => {
+                    if (view !== "inbox") return;
+                    const action = swipeActionFor(info.offset.x);
+                    if (action === "delete") void handleDelete([item.id]);
+                    else if (action === "toggle-read") {
+                      if (item.read) void handleMarkUnread(item.id);
+                      else void handleMarkRead(item.id);
+                    }
+                  }}
+                  className={`flex items-start gap-1 rounded-m3-md border py-1 pl-1 pr-1 ${
+                    !item.read && view === "inbox"
+                      ? "border-primary bg-surface-container"
+                      : "border-outline-variant"
+                  }`}
+                >
+                  {blocked ? (
+                    // The shield wraps the row's content region from OUTSIDE, so
+                    // the reveal control is a sibling of the content — never a
+                    // button inside the row's own link. `mode="row"` because the
+                    // row is a short, fixed-rhythm list row: the warning shares
+                    // one grid cell with the content, so it can never paint
+                    // over the NEXT row.
+                    //
+                    // While locked, the shield makes the content wrapper
+                    // `inert` + `aria-hidden`, so the row's link is neither
+                    // focusable nor reachable by pointer. After the user taps
+                    // "Show content" the same link works again — the same
+                    // two-state rule the profile reports row and the detail
+                    // report region already follow. Reading is preserved; only
+                    // the hidden state is refused.
+                    <BlockedByViewerShield
+                      rowId={item.id}
+                      blocked
+                      mode="row"
+                      className="min-w-0 flex-1"
+                    >
+                      {body}
+                    </BlockedByViewerShield>
+                  ) : body}
+                  {/* Packet `08` §17: swipe is a shortcut, never the only route —
+                      the row keeps one compact overflow trigger instead of a
+                      permanent action bar. */}
+                  <NotificationOverflow
+                    item={item}
+                    view={view}
+                    onMarkRead={handleMarkRead}
+                    onMarkUnread={handleMarkUnread}
+                    onDelete={handleDelete}
+                    onRestore={handleRestore}
+                  />
+                </motion.div>
+              </li>
+            );
+          })}
         </ul>
       )}
       </StateSwap>
@@ -400,7 +473,12 @@ function NotificationOverflow({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const summary = `${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}`;
+  // A shielded row must not name its actor: the row's content is hidden until
+  // the user asks for it, so the trigger's label stays neutral for a blocked
+  // actor (the block bit is direction-free — it never says who blocked whom).
+  const summary = item.blockedActor === true
+    ? "a hidden notification"
+    : `${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}`;
 
   // Focus moves into the menu on open, Escape/outside tap closes it, and focus
   // returns to the trigger so a keyboard user never loses their place.

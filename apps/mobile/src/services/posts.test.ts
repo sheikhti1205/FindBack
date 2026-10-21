@@ -12,7 +12,9 @@ import {
   fetchPost,
   fetchSocialState,
   reactToPost,
+  updatePost,
   updatePostStatus,
+  type UpdatePostInput,
 } from "./posts";
 
 const { clientMock } = vi.hoisted(() => ({
@@ -324,6 +326,90 @@ function commentRow(overrides: Record<string, unknown> = {}): Record<string, unk
     ...overrides,
   };
 }
+
+describe("updatePost", () => {
+  /** The update RPC answers, then the read-back answers. */
+  function mockUpdate(): void {
+    clientMock.rpc.mockResolvedValueOnce({ data: true, error: null });
+    clientMock.rpc.mockResolvedValueOnce({ data: [row()], error: null });
+  }
+
+  function updateArgs(): Record<string, unknown> {
+    const call = clientMock.rpc.mock.calls.find(
+      (entry) => entry[0] === "findback_update_post_client",
+    );
+    expect(call, "the update RPC was called").toBeTruthy();
+    return call![1] as Record<string, unknown>;
+  }
+
+  it("sends NO p_clear_fields argument for an ordinary update — the deployed ten-argument RPC refuses an argument it does not have", async () => {
+    mockUpdate();
+
+    await updatePost("p1", { title: "A new title" });
+
+    const args = updateArgs();
+    expect(args).not.toHaveProperty("p_clear_fields");
+    expect(Object.keys(args).sort()).toEqual([
+      "p_category",
+      "p_description",
+      "p_event_date",
+      "p_latitude",
+      "p_location_label",
+      "p_longitude",
+      "p_post_id",
+      "p_title",
+      "p_type",
+      "p_youtube_url",
+    ]);
+  });
+
+  it("sends p_clear_fields naming the emptied fields when the owner really cleared something", async () => {
+    mockUpdate();
+
+    await updatePost("p1", { title: "A new title", clearFields: ["location_label"] });
+
+    expect(updateArgs().p_clear_fields).toEqual(["location_label"]);
+  });
+
+  it("never sends p_clear_fields for a clear list that is empty or unknown", async () => {
+    mockUpdate();
+
+    await updatePost("p1", { title: "A new title", clearFields: [] });
+    expect(updateArgs()).not.toHaveProperty("p_clear_fields");
+
+    clientMock.rpc.mockClear();
+    mockUpdate();
+    await updatePost("p1", {
+      title: "Another title",
+      clearFields: ["title"] as unknown as UpdatePostInput["clearFields"],
+    });
+    expect(updateArgs()).not.toHaveProperty("p_clear_fields");
+  });
+
+  it("a partial update of an unrelated field on a row whose STORED values are not valid still succeeds — the client sends only what the owner changed, never the stored row", async () => {
+    mockUpdate();
+
+    // A legacy row can hold an empty event date, description or category.
+    // The stored values are NOT re-sent, so the server validator (which
+    // checks only the incoming arguments) never sees them and the edit is
+    // not refused.
+    await updatePost("p1", { title: "A new title" });
+
+    const args = updateArgs();
+    expect(args.p_title).toBe("A new title");
+    for (const untouched of [
+      "p_description",
+      "p_category",
+      "p_event_date",
+      "p_location_label",
+      "p_latitude",
+      "p_longitude",
+      "p_youtube_url",
+    ]) {
+      expect(args[untouched], `${untouched} is left to the server's keep-old merge`).toBeNull();
+    }
+  });
+});
 
 describe("fetchComments", () => {
   it("reads comments via the client RPC with a public-only author", async () => {

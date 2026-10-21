@@ -17,9 +17,11 @@ import {
   NL_EMPTY_PATCH_NOTE,
   NL_SEARCH_FAILED_NOTE,
   NL_SEARCH_FILTERS_CHANGED_NOTE,
-  NL_SEARCH_INVALID_DATE_NOTE,
+  NL_SEARCH_FILTERS_KEPT_NOTE,
   NL_SUGGESTION_FAILURE_NOTE,
+  nlSearchAppliedAndKeptNote,
   nlSearchAppliedNote,
+  nlSearchRefusedNote,
 } from "./nlHelperCopy";
 import { OFFLINE_NEEDS_ANDROID } from "./AiModels";
 
@@ -80,22 +82,71 @@ describe("local-helper copy", () => {
     expect(NL_EMPTY_PATCH_NOTE["not-set-up"]).toMatch(/searching your words/i);
     expect(NL_SEARCH_FAILED_NOTE).toMatch(/searching your words/i);
     expect(NL_SEARCH_FILTERS_CHANGED_NOTE).toMatch(/only your words were used/i);
-    expect(NL_SEARCH_INVALID_DATE_NOTE).toMatch(/only your words were used/i);
+    // A refused date or place, with no other filter applied: the words were
+    // the only thing used.
+    expect(nlSearchRefusedNote(["date"], 1, 0)).toMatch(/only your words were used/i);
+    expect(nlSearchRefusedNote(["place"], 1, 0)).toMatch(/only your words were used/i);
     // The old wording ("nothing changed") is exactly the lie this guards.
     for (const sentence of [
       NL_EMPTY_PATCH_NOTE.ready,
       NL_EMPTY_PATCH_NOTE.unknown,
       NL_SEARCH_FAILED_NOTE,
       NL_SEARCH_FILTERS_CHANGED_NOTE,
-      NL_SEARCH_INVALID_DATE_NOTE,
+      nlSearchRefusedNote(["date"], 1, 0),
+      nlSearchRefusedNote(["place"], 1, 0),
     ]) {
       expect(sentence).not.toMatch(/nothing changed/i);
     }
+  });
+
+  it("never claims only the words were used when another filter was applied", () => {
+    // The refusal note must be true of the whole outcome: with another
+    // filter applied, "only your words were used" would be a lie.
+    const note = nlSearchRefusedNote(["place"], 2, 1);
+    expect(note).not.toMatch(/only your words were used/i);
+    expect(note).toMatch(/isn't a place name/i);
+    expect(note).toMatch(/not used/i);
+    // The count says what was applied.
+    expect(note).toMatch(/applied 2 smart filters\b/i);
+  });
+
+  it("names every refused value when more than one was refused", () => {
+    const note = nlSearchRefusedNote(["date", "place"], 3, 2);
+    expect(note).toMatch(/a date that isn't a real date/i);
+    expect(note).toMatch(/a place that isn't a place name/i);
+    expect(note).not.toMatch(/only your words were used/i);
   });
 
   it("counts the filters it actually applied", () => {
     expect(nlSearchAppliedNote(1)).toMatch(/applied 1 smart filter\b/i);
     expect(nlSearchAppliedNote(2)).toMatch(/applied 2 smart filters\b/i);
     expect(nlSearchAppliedNote(0)).toMatch(/applied 0 smart filters\b/i);
+  });
+
+  it("says the reader's own filter was kept, and that the words were still searched", () => {
+    // The reader's own choice wins over an extracted filter. The sentence
+    // says so — and it still says the words were searched, because ordinary
+    // search never depends on the helper.
+    expect(NL_SEARCH_FILTERS_KEPT_NOTE).toMatch(/your own filter choice was kept/i);
+    expect(NL_SEARCH_FILTERS_KEPT_NOTE).toMatch(/only your words were used/i);
+    expect(NL_SEARCH_FILTERS_KEPT_NOTE).not.toMatch(/nothing changed/i);
+  });
+
+  it("counts the applied filters and the kept choice in one sentence", () => {
+    const note = nlSearchAppliedAndKeptNote(2);
+    expect(note).toMatch(/applied 2 smart filters\b/i);
+    expect(note).toMatch(/kept your own choice/i);
+    expect(note).not.toMatch(/nothing changed/i);
+  });
+
+  it("never lets a kept-choice sentence imply the search did nothing", () => {
+    // The kept-only sentence has to account for the reader's words: it
+    // applied nothing, so the words are the only thing that was searched.
+    expect(NL_SEARCH_FILTERS_KEPT_NOTE).toMatch(/your words/i);
+    // The applied-and-kept sentence says what was applied — it never claims
+    // that nothing happened.
+    const both = nlSearchAppliedAndKeptNote(1);
+    expect(both).toMatch(/applied 1 smart filter\b/i);
+    expect(both).not.toMatch(/nothing changed|nothing found|no filters/i);
   });
 });

@@ -95,12 +95,17 @@ describe("SearchScreen filter sheet (G14)", () => {
     expect(screen.getByRole("button", { name: /remove sort filter/i })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /clear all filters/i }));
+    // The type is a CHIP in the same row as "Clear all filters" now, so
+    // clearing every filter clears the type too. (This expectation changed
+    // from "/search?type=FOUND&q=phone" when the type became a chip: the
+    // control's meaning changed, so the pinned contract changed with it.)
     await waitFor(() =>
-      expect(screen.getByTestId("location").textContent).toBe("/search?type=FOUND&q=phone"),
+      expect(screen.getByTestId("location").textContent).toBe("/search?q=phone"),
     );
     expect(screen.queryByRole("button", { name: /remove category filter/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /remove status filter/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /remove sort filter/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /remove type filter/i })).toBeNull();
   });
 
   it("deep-linked advanced filters restore chips without opening the sheet", async () => {

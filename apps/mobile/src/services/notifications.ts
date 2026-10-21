@@ -24,6 +24,23 @@ export interface NotificationItem {
    * generic reaction copy, never a wrong kind.
    */
   reactionKind: ReactionKind | null;
+  /**
+   * O5 block signal (CF-060 B1): true when the caller is blocked with this
+   * row's actor. Caller-scoped and direction-free — it never says who blocked
+   * whom, and it never says whether the block exists at all on the actor's
+   * side. The row is returned either way (the block half of D21 is superseded
+   * by O5: a notification is a pointer to content the caller can still see,
+   * so it is screened in place, never dropped).
+   *
+   * ABSENT when the backend does not project the bit (a backend older than
+   * the notification reader that projects it) or when the column is not a
+   * real boolean: absence is the pre-R10 rendering — no shield, no warning,
+   * no crash — and it is exactly the canonical absent-preserving bit of
+   * `services/posts.ts`. Absent and `false` render identically; the
+   * difference between them is only that "the backend does not project this
+   * bit" stays distinguishable from "the bit is false".
+   */
+  blockedActor?: boolean;
 }
 
 interface NotificationRow {
@@ -38,6 +55,19 @@ interface NotificationRow {
   post_title: string | null;
   comment_id: string | null;
   reaction_kind?: unknown;
+  /** O5 signal; absent on a backend older than the column. */
+  blocked_actor?: unknown;
+}
+
+/**
+ * O5 block bit (CF-060 B1). Only a real boolean is accepted: an older backend
+ * omits the key, and a stringly-typed value must never be read as `true`.
+ * Returns a spreadable fragment so an absent key stays absent — exactly the
+ * canonical bit of `services/posts.ts` — and the shield treats absent exactly
+ * as `false` (the pre-R10 rendering).
+ */
+function blockedActorFromRow(row: { blocked_actor?: unknown }): { blockedActor?: boolean } {
+  return typeof row.blocked_actor === "boolean" ? { blockedActor: row.blocked_actor } : {};
 }
 
 function isNotificationType(value: unknown): value is NotificationType {
@@ -66,6 +96,9 @@ function mapNotification(row: NotificationRow): NotificationItem {
     postTitle: row.post_title ?? null,
     commentId: row.comment_id ?? null,
     reactionKind: isReactionKind(row.reaction_kind) ? row.reaction_kind : null,
+    // Only a real boolean counts: a stringly-typed value must never be read
+    // as `true`, and an absent column (older backend) stays absent.
+    ...blockedActorFromRow(row),
   };
 }
 
