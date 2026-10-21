@@ -49,9 +49,11 @@
   font-size: 1.125rem;
   line-height: 1.4;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* The title is never cut off: at large text a long title wraps to a second
+     line instead of ending in an ellipsis. `break-word` (not `anywhere`) keeps
+     the sticky bar's intrinsic width from shrinking to one word. */
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 /* Legacy header class kept for compat (no layout effect). */
 .fb-settings-page-header { margin-bottom: 1rem; }
@@ -86,7 +88,10 @@
   color: var(--fb-on-surface);
   text-align: start;
   text-decoration: none;
-  overflow-wrap: anywhere;
+  /* `break-word` breaks a word only when it cannot fit on a line of its own.
+     `anywhere` also shrinks the min-content width, which split ordinary
+     words ("Advanc ed") in the narrow nested-group rows. */
+  overflow-wrap: break-word;
 }
 .fb-settings-row:first-child { border-start-start-radius: 0; border-start-end-radius: 0; }
 .fb-settings-row:last-child { border-end-start-radius: 0; border-end-end-radius: 0; }
@@ -154,7 +159,7 @@ a.fb-settings-row:hover, button.fb-settings-row:hover:not(:disabled) { backgroun
 .fb-choice[data-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
 .fb-choice-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: inherit; }
 .fb-choice:has(input:focus-visible) { outline: 2px solid var(--fb-focus); outline-offset: 2px; }
-.fb-choice-title { display: flex; align-items: center; justify-content: space-between; gap: 0.25rem; font-size: 0.9375rem; font-weight: 500; overflow-wrap: anywhere; }
+.fb-choice-title { display: flex; align-items: center; justify-content: space-between; gap: 0.25rem; font-size: 0.9375rem; font-weight: 500; overflow-wrap: break-word; }
 .fb-choice-description { font-size: 0.8125rem; line-height: 1.35; color: var(--fb-on-surface-variant); }
 .fb-choice[data-checked="true"] .fb-choice-description { color: var(--fb-on-surface-variant); }
 /* Theme preview strip: compact inline swatch for the list row. */

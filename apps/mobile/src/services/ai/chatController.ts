@@ -282,7 +282,7 @@ function fallbackNotice(): CompactionNotice {
     fallbackRecentOnly: true,
     message:
       "Summary unavailable — showing recent messages only. " +
-      "Full history stays on this device; nothing was fabricated.",
+      "The earlier messages were not sent anywhere; nothing was fabricated.",
   };
 }
 

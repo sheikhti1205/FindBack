@@ -339,7 +339,7 @@ function AccountHelp({ accountId, store, deps }: { accountId: string; store: Cha
       <div className="shrink-0"><ChatComposer value={input} onChange={setInput} onSend={() => void sendChat(input)} busy={busy} onStop={stopChat} inputId="help-composer-input" inputLabel="Message" placeholder="Message…" modelTitle={modelChipTitle} onOpenModels={() => setModelOpen(true)} modelDisabled={busy} /></div>
     </main>
     <HistorySheet open={historyOpen} onClose={() => setHistoryOpen(false)} chats={visibleChats} activeChatId={activeChatId} searchQuery={historyQuery} onSearchQueryChange={setHistoryQuery} onNew={newChat} onContinue={continueChat} onRename={renameChat} onDelete={deleteChat} onClear={clearAllChats} historyEnabled={store.isHistoryEnabled(accountId)} onToggleHistory={toggleHistory} />
-    <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Chat options" description="Saved chats stay in Chat history.">
+    <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Chat options" description="Chats you keep stay in Chat history while the app is open.">
       <div className="flex flex-col gap-1">
         <button type="button" className={rowClass} onClick={() => { newChat(); setMenuOpen(false); }}>New chat</button>
         <button type="button" className={rowClass} onClick={() => { setMenuOpen(false); setHistoryOpen(true); }}>History</button>
@@ -351,7 +351,7 @@ function AccountHelp({ accountId, store, deps }: { accountId: string; store: Cha
     <BottomSheet open={privacyOpen} onClose={() => setPrivacyOpen(false)} title="Privacy & AI" description="How Chat handles your messages.">
       <div className="flex flex-col gap-3 text-sm">
         <p>Your selected provider receives your messages and conversation context when you send. Chat does not run on this device.</p>
-        <p>Saved chat history stays on this device, separate for each account. Turn history off to keep new messages only on this screen.</p>
+        <p>Saved chat history is held in the app&apos;s memory while the app is open, separate for each account, and it is gone when you close the app. Turn history off to keep new messages only on this screen.</p>
         <p>{CLOUD_COST_COPY}</p>
         <button type="button" className={`${rowClass} underline`} onClick={() => { setPrivacyOpen(false); navigate("/settings/privacy"); }}>Open Privacy settings</button>
       </div>

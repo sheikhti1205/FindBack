@@ -16,7 +16,7 @@ export function AiPrivacy() {
       <p className="text-sm leading-relaxed">Search and report-field suggestions can run on this phone. Those requests stay on the device and are never sent to a provider.</p>
     </SettingsGroup>
     <SettingsGroup title="Your choices">
-      <p className="text-sm leading-relaxed">You choose which provider and model Chat uses, and you can change it at any time. Saved chat history stays on this device, separate for each account.</p>
+      <p className="text-sm leading-relaxed">You choose which provider and model Chat uses, and you can change it at any time. Chat history is held in the app&apos;s memory while the app is open, separate for each account, and it is gone when you close the app.</p>
       <Link to="/settings/ai/connections" className="inline-flex min-h-[48px] items-center text-sm underline">Providers</Link>
     </SettingsGroup>
     <AdvancedDisclosure title="Technical details">

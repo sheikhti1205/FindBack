@@ -159,8 +159,8 @@ export function PrivacyPolicy() {
       <SettingsGroup title="Deleting your data">
         <Paragraph>
           You can delete your account from Settings → Account. That removes your account, your
-          reports and their photos, and your comments — and the reactions and past ratings you left
-          on other people's reports. You can also delete your own comments; the person who
+          reports and their photos, and your comments — and the reactions and past ratings you left.
+          You can also delete your own comments; the person who
           published a report can delete comments on it.
         </Paragraph>
         <Paragraph>

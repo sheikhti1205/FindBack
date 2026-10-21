@@ -109,7 +109,7 @@ export function HistorySheet({
             onClick={() => onToggleHistory(!historyEnabled)}
             className="flex min-h-[48px] items-center justify-between rounded-m3-sm border border-outline-variant px-3 text-sm text-on-surface"
           >
-            <span>Save chat history on this device</span>
+            <span>Keep chat history while the app is open</span>
             <span
               aria-hidden
               className={`relative h-6 w-11 rounded-full transition-colors ${
@@ -134,7 +134,7 @@ export function HistorySheet({
               : "No chats match this search."}
           </p>
         ) : (
-          <ul className="flex flex-col gap-2" aria-label="Saved chats">
+          <ul className="flex flex-col gap-2" aria-label="Chats kept in this session">
             {chats.map((chat) => (
               <li
                 key={chat.id}
@@ -222,7 +222,7 @@ export function HistorySheet({
           (confirmClear ? (
             <div className="flex items-center gap-2">
               <p className="flex-1 text-xs text-on-surface-variant">
-                Delete every saved chat on this device? This cannot be undone.
+                Delete every chat kept in this session? This cannot be undone.
               </p>
               <button
                 type="button"
