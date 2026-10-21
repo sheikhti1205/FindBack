@@ -1,0 +1,56 @@
+/* Compact flat action row (owner reference: one row of icon-only actions).
+ *
+ * The slotted controls keep the house `.fb-report-action` token — the 44px
+ * hit area, the focus-visible ring, the disabled state — but lose the button
+ * CARD look: no border, no fill, no pill, and the count sits inline with the
+ * icon instead of stacked under it.
+ *
+ * WHY A DEDICATED FILE AND NOT UTILITIES: `.fb-report-action` is unlayered
+ * plain CSS in `index.css`, and an unlayered rule beats every Tailwind utility
+ * regardless of specificity (utilities live in `@layer utilities`). The flat
+ * look therefore cannot be reached with utilities on the slotted controls; it
+ * needs one scoped, higher-specificity rule (`0,2,0` beats `0,1,0`) instead of
+ * the `!important` utility pile the grid used to carry.
+ */
+.fb-post-action-row .fb-report-action {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  width: auto;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  /* Anchors the visually hidden caption below to its own control. */
+  position: relative;
+  border: 0;
+  /* The hover/press tint is a circle, not a card. */
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fb-on-surface-variant);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+.fb-post-action-row .fb-report-action:hover,
+.fb-post-action-row .fb-report-action:active {
+  background: var(--fb-surface-container);
+}
+/* A pressed (liked) control reads as pressed through the icon itself; the
+ * house token's own colour utility is layered, so the pressed colour is set
+ * here where it can actually win. */
+.fb-post-action-row .fb-report-action[aria-pressed="true"] {
+  color: var(--fb-on-surface);
+}
+/* Slotted controls may carry a redundant visible label (the share control
+ * ships a "Share" caption). The flat row is icon-only: the caption is kept
+ * for assistive tech but taken out of the visual flow. Counts carry the
+ * `.tabular-nums` class and stay visible. */
+.fb-post-action-row .fb-report-action > span:not(.tabular-nums) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

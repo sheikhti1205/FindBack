@@ -87,6 +87,12 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof CommentCompose
   };
 }
 
+it("uses short guidance without losing the reply target's accessible name", () => {
+  render(<CommentComposer {...baseProps({ replyToUsername: "a_very_long_reply_username" })} />);
+  const input = screen.getByRole("combobox", { name: "Reply to a_very_long_reply_username" });
+  expect(input.getAttribute("placeholder")).toBe("Reply…");
+});
+
 beforeEach(() => {
   attachMock.upload.mockReset();
   attachMock.remove.mockReset();

@@ -1,4 +1,4 @@
-import { FileStack, Settings as SettingsIcon, ShieldQuestion, UserRound } from "lucide-react";
+import { Bookmark, FileStack, Settings as SettingsIcon, ShieldQuestion, UserRound } from "lucide-react";
 import { Link } from "react-router";
 import { useAuth } from "../auth";
 import { UserAvatar } from "../components/UserAvatar";
@@ -54,6 +54,7 @@ export function Profile() {
             route={`/u/${user.username}`}
           />
           <SettingsRow title="My reports" icon={FileStack} route="/my" />
+          <SettingsRow title="Saved reports" icon={Bookmark} route="/saved" />
           <SettingsRow title="Settings" icon={SettingsIcon} route="/settings" />
           <SettingsRow title="Help & guide" icon={ShieldQuestion} iconTone="sky" route="/settings/help" />
         </SettingsGroup>

@@ -64,7 +64,11 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
   // variant; home-feed ignores it because PostCardContent links itself.
   const body =
     variant === "home-feed" ? (
-      <div className="flex flex-col border-b border-outline-variant bg-transparent pb-5">
+      // Density: the block's trailing space is the whitespace that separates
+      // two reports, and the hairline is the separator. `pb-3` (12px) keeps
+      // that separation legible while giving the space back — the card used
+      // to spend `pb-5` (20px) plus the text block's own bottom padding.
+      <div className="flex flex-col border-b border-outline-variant bg-transparent pb-3">
         {children}
       </div>
     ) : variant === "masonry" ? (

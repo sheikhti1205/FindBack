@@ -21,11 +21,14 @@ import { getSupabase } from "./supabaseClient";
  *
  * The RPCs are the existing `findback_react_client` (post) and the new
  * `findback_react_comment_client` (comment); both return per-kind counts plus
- * the caller's own reaction. There is deliberately no exported writer that
- * accepts an arbitrary kind: the post path goes through
- * `reactToPost(id, nextLikeReaction(current))` and the comment path through
- * `setCommentReaction`, so "new writes are LIKE or null only" is structural
- * rather than a convention callers have to remember.
+ * the caller's own reaction. The writers accept the canonical kinds the
+ * widened RPC still understands (LOVE / HELPFUL / SUPPORT / WOW) and null for
+ * removal, but they REFUSE the legacy negative kind DISLIKE
+ * (`assertWritableReactionKind`): a DISLIKE row is readable history, never a
+ * write. The post path goes through `reactToPost(id, nextLikeReaction(current))`
+ * and the comment path through `setCommentReaction`, so "new writes are LIKE or
+ * null only" (packet `08` §2) is structural at the call site rather than a
+ * convention callers have to remember.
  */
 
 export type { ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";

@@ -90,19 +90,21 @@ describe("Profile landing", () => {
     );
   });
 
-  it("links Public profile, My reports, Settings and Help to their canonical routes", () => {
+  it("links Public profile, My reports, Saved reports, Settings and Help to their canonical routes", () => {
     renderProfile();
     const nav = screen.getByRole("navigation", { name: "Profile actions" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/u/tester",
       "/my",
+      "/saved",
       "/settings",
       "/settings/help",
     ]);
     for (const link of links) expect(link.tagName).toBe("A");
     expect(within(nav).getByText("Public profile")).toBeTruthy();
     expect(within(nav).getByText("My reports")).toBeTruthy();
+    expect(within(nav).getByText("Saved reports")).toBeTruthy();
     expect(within(nav).getByText("Settings")).toBeTruthy();
     expect(within(nav).getByText("Help & guide")).toBeTruthy();
   });

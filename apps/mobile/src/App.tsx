@@ -26,6 +26,7 @@ import { ProfileEdit } from "./screens/ProfileEdit";
 import { PublicProfile } from "./screens/PublicProfile";
 import { About } from "./screens/About";
 import { MyPosts } from "./screens/MyPosts";
+import { SavedReports } from "./screens/SavedReports";
 import { Help } from "./screens/Help";
 import { AiConnection } from "./screens/AiConnection";
 import { CloudModels } from "./screens/CloudModels";
@@ -55,6 +56,7 @@ import { SharedReport } from "./screens/SharedReport";
 // network-free). No guards changed; the route mounts no data-bound screens.
 import { FixtureRoute } from "./fixture/FixtureRoute";
 import { useAuth } from "./auth";
+import { SavedReportsProvider } from "./hooks/useSavedReports";
 
 function StartScreen() {
   const { user } = useAuth();
@@ -81,6 +83,11 @@ export function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
+        {/* The ONE owner of saved-report state. It lives inside the auth
+            provider because a save belongs to an ACCOUNT, and it wraps the
+            router so the feed, the detail screen and the saved-reports screen
+            all read the same truth. */}
+        <SavedReportsProvider>
         <AppMotionConfig>
         <HashRouter>
           <AuthLinkBootstrap />
@@ -144,6 +151,7 @@ export function App() {
               <Route path="/report" element={<CreateReport />} />
               <Route path="/posts/:id" element={<PostDetail />} />
               <Route path="/my" element={<MyPosts />} />
+              <Route path="/saved" element={<SavedReports />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/profile/edit" element={<ProfileEdit />} />
               <Route path="/u/:username" element={<PublicProfile />} />
@@ -178,6 +186,7 @@ export function App() {
           </ErrorBoundary>
         </HashRouter>
         </AppMotionConfig>
+        </SavedReportsProvider>
       </AuthProvider>
     </ThemeProvider>
   );

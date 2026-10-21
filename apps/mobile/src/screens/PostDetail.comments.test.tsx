@@ -238,7 +238,7 @@ describe("PostDetail inline comment threads", () => {
     // The Reply control lives in the flat deep row itself.
     const scope = document.getElementById("detail-comment-cc") as HTMLElement;
     fireEvent.click(within(scope).getByRole("button", { name: "Reply to cU" }));
-    const input = screen.getByPlaceholderText("Reply to @cU…");
+    const input = screen.getByRole("combobox", { name: "Reply to cU" });
     fireEvent.change(input, { target: { value: "deep answer" } });
     // Submit through the composer: the write carries the true parent id.
     fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
@@ -260,7 +260,7 @@ describe("PostDetail inline comment threads", () => {
     expect(linked).toBeTruthy();
     expect(screen.queryByRole("button", { name: /view \d+ more repl/i })).toBeNull();
     // Highlighted as the link target.
-    expect(document.getElementById(`detail-comment-${target}`)?.className).toContain("border-on-surface");
+    expect(document.getElementById(`detail-comment-${target}`)?.className).toContain("bg-surface-container/60");
   });
 
   it("deleting a parent drops its expanded thread state", async () => {
@@ -340,7 +340,7 @@ describe("PostDetail inline comment threads", () => {
     // Replying from the deepest flat row still writes the true parent id.
     const scope = document.getElementById("detail-comment-ce") as HTMLElement;
     fireEvent.click(within(scope).getByRole("button", { name: "Reply to eU" }));
-    fireEvent.change(screen.getByPlaceholderText("Reply to @eU…"), { target: { value: "deepest answer" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Reply to eU" }), { target: { value: "deepest answer" } });
     fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
     await waitFor(() => expect(postsMock.addComment).toHaveBeenCalledWith("p1", "deepest answer", "ce"));
   });
@@ -362,7 +362,7 @@ describe("PostDetail inline comment threads", () => {
     expect(linked).toBeTruthy();
     expect(screen.queryByRole("button", { name: /view \d+ more repl/i })).toBeNull();
     // Highlighted as the link target and flat past the visual cap.
-    expect(document.getElementById(`detail-comment-${target}`)?.className).toContain("border-on-surface");
+    expect(document.getElementById(`detail-comment-${target}`)?.className).toContain("bg-surface-container/60");
     expect(linked.closest("ul")?.className).not.toContain("border-l");
   });
 });

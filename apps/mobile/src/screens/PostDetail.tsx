@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, MessageCircle, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
+import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -28,6 +28,8 @@ import { CommentComposer } from "../components/CommentComposer";
 import { commentMediaProvenance, parseCommentBody } from "../services/commentBodyMedia";
 import { mapCommentAttachmentRefs } from "../services/commentAttachments";
 import { ReportShareButton } from "../components/ReportShareButton";
+import { PostActionRow } from "../components/PostActionRow";
+import { SavePostButton } from "../components/SavePostButton";
 import { PossibleMatches } from "../components/PossibleMatches";
 import { announce } from "../components/LiveRegion";
 import { listItemVariants, motionDurations, shouldReduceMotion } from "../components/uiMotion";
@@ -468,6 +470,23 @@ export function PostDetail() {
     });
   }, [comments]);
 
+  /**
+   * The composer lives at the END of the thread, so a reply tap has to bring
+   * it into view — otherwise the reader taps "Reply" on a comment near the top
+   * and the write bar stays off-screen below the fold.
+   *
+   * Above the `if (!post)` guard: hooks must stay unconditional.
+   */
+  const composerAnchorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!replyTo) return;
+    const el = composerAnchorRef.current;
+    if (!el) return;
+    if (typeof el.scrollIntoView !== "function") return;
+    const reduced = shouldReduceMotion();
+    el.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "end" });
+  }, [replyTo]);
+
   // Stable skeleton holds the hero/body shape so resolving content never
   // reflows; the sticky escape bar stays mounted underneath via the shell.
   if (loading) return <DetailSkeleton />;
@@ -805,7 +824,7 @@ export function PostDetail() {
     const parentName =
       showTarget && c.parentId ? (commentsById.get(c.parentId)?.author.username ?? null) : null;
     const threadControls = children.length > 0 && (
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      <div className="mt-1 flex flex-wrap items-center gap-2">
         {remaining > 0 && (
           <button
             type="button"
@@ -839,7 +858,7 @@ export function PostDetail() {
         animate="visible"
         variants={listItemVariants}
         transition={{ duration: motionDurations.fast }}
-        className={`scroll-mt-4 rounded-m3-md border p-3 focus:outline-2 focus:outline-offset-2 focus:outline-on-surface ${highlighted ? "border-on-surface" : "border-outline-variant"}`}
+        className={`scroll-mt-4 focus:outline-2 focus:outline-offset-2 focus:outline-on-surface ${highlighted ? "rounded-m3-sm bg-surface-container/60" : ""}`}
       >
         {showTarget && parentName && c.parentId && (
           <button
@@ -856,14 +875,21 @@ export function PostDetail() {
             so an unblocked reply (or a blocked reply's own reveal control) is
             never inert beneath this shield. */}
         <BlockedByViewerShield rowId={c.id} blocked={c.blockedAuthor} mode="row" contentClassName="flex flex-col">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <UserAvatar avatarUrl={c.author.avatarUrl} username={c.author.username} size={28} />
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
+          <span className="min-w-[6em] flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
+          <span className="flex shrink-0 items-center gap-2">
+          {c.author.id === post.userId && (
+            <span className="shrink-0 rounded-full border border-outline px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-on-surface-variant">
+              Author
+            </span>
+          )}
           <span className="shrink-0 text-[11px] text-on-surface-variant">
             {formatTimestamp(c.createdAt)}
           </span>
+          </span>
         </div>
-        <div className="mt-1 text-sm leading-relaxed">
+        <div className="mt-0.5 text-sm leading-relaxed">
           <MarkdownView text={bodyParts.text || c.body} linkMentions unfurlReports />
         </div>
         {bodyParts.media.length > 0 && (
@@ -925,13 +951,13 @@ export function PostDetail() {
           </div>
         )}
         </BlockedByViewerShield>
-        <div className="mt-2 flex items-center gap-1">
+        <div className="mt-1 flex items-center gap-1">
           <button
             type="button"
             onClick={() => setReplyTo(isReplyTarget ? null : c)}
             aria-pressed={isReplyTarget}
             aria-label={`Reply to ${c.author.username}`}
-            className="inline-flex min-h-[48px] items-center gap-1 rounded-full px-2 text-xs font-medium text-on-surface-variant"
+            className="inline-flex min-h-[44px] items-center gap-1 rounded-full px-1.5 text-xs font-medium text-on-surface-variant"
           >
             <CornerDownRight size={13} aria-hidden /> Reply
           </button>
@@ -940,7 +966,7 @@ export function PostDetail() {
               type="button"
               onClick={() => void onDeleteComment(c.id)}
               aria-label={`Delete comment by ${c.author.username}`}
-              className="inline-flex min-h-[48px] items-center gap-1 px-2 text-xs text-on-surface-variant hover:text-error"
+              className="inline-flex min-h-[44px] items-center gap-1 rounded-full px-1.5 text-xs text-on-surface-variant hover:text-error"
             >
               <Trash2 size={13} aria-hidden /> Delete
             </button>
@@ -953,12 +979,12 @@ export function PostDetail() {
           />
         </div>
         {children.length > 0 && nestChildren && (
-          <ul className="mt-3 flex flex-col gap-3 border-l border-outline-variant pl-3">
+          <ul className="mt-2 flex flex-col gap-2 border-l border-outline-variant pl-2">
             {visible.map((ch) => renderComment(ch, level + 1))}
           </ul>
         )}
         {children.length > 0 && !nestChildren && (
-          <ul className="mt-2 flex flex-col gap-3">
+          <ul className="mt-2 flex flex-col gap-2">
             {visible.map((ch) => renderComment(ch, level + 1))}
           </ul>
         )}
@@ -1020,27 +1046,35 @@ export function PostDetail() {
           onOpenLightbox={(index, origin) => setLightbox({ index, origin })}
         />
 
-        <div id="detail-activity" tabIndex={-1} className="grid scroll-mt-4 grid-cols-3 gap-2" role="group" aria-label="Report actions">
-          {/* Post Like cell (packet `08` §2 — Like-only): one tap toggles the
-              caller's Like (LIKE/null) and the heart fills when it is theirs. */}
-          <button
-            type="button"
-            id="detail-love"
-            data-testid="detail-like"
-            className={`fb-report-action min-h-[44px] flex-1 gap-1 ${postLike.mine ? "bg-surface-container text-on-surface" : "text-on-surface-variant"}`}
-            onClick={toggleLike}
-            disabled={reactionPending}
-            aria-busy={reactionPending}
-            aria-label={postLikeLabel}
-            aria-pressed={postLike.mine}
-          >
-            <Heart size={20} aria-hidden fill={postLike.mine ? "currentColor" : "none"} />
-            <span aria-hidden className="tabular-nums">{postLike.count}</span>
-          </button>
-          <button type="button" className="fb-report-action" onClick={() => scrollToSection("detail-comments")} aria-label={`Comments, ${comments.length}`}>
-            <MessageCircle size={20} aria-hidden /> {comments.length}
-          </button>
-          <ReportShareButton postId={post.id} title={post.title} />
+        {/* The compact flat action row (owner reference): like + count, comment
+            + count, share, save — one row, no button cards. The row owns no
+            reaction state: the Like control keeps this screen's own state
+            owner, and Share/Save keep theirs. */}
+        <div id="detail-activity" tabIndex={-1} className="scroll-mt-4 border-t border-outline-variant pt-1">
+        <PostActionRow
+          commentCount={comments.length}
+          slots={{
+            onComments: () => scrollToSection("detail-comments"),
+            like: (
+              <button
+                type="button"
+                id="detail-love"
+                data-testid="detail-like"
+                className={`fb-report-action gap-1 ${postLike.mine ? "bg-surface-container text-on-surface" : "text-on-surface-variant"}`}
+                onClick={toggleLike}
+                disabled={reactionPending}
+                aria-busy={reactionPending}
+                aria-label={postLikeLabel}
+                aria-pressed={postLike.mine}
+              >
+                <Heart size={20} aria-hidden fill={postLike.mine ? "currentColor" : "none"} />
+                <span aria-hidden className="tabular-nums">{postLike.count}</span>
+              </button>
+            ),
+            share: <ReportShareButton postId={post.id} title={post.title} />,
+            save: <SavePostButton postId={post.id} title={post.title} />,
+          }}
+        />
         </div>
 
         <section aria-label="Description" className="rounded-m3-lg border border-outline-variant bg-surface-container-low p-4">
@@ -1239,40 +1273,6 @@ export function PostDetail() {
             Comments <span className="text-on-surface-variant">({comments.length})</span>
           </h2>
 
-          {replyTo ? (
-            <div
-              role="status"
-              className="flex items-center gap-2 rounded-m3-sm border border-outline-variant bg-surface-container/50 px-3 py-2 text-xs text-on-surface-variant"
-            >
-              <span className="flex-1 truncate">
-                Replying to <span className="font-semibold text-on-surface">@{replyTo.author.username}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => setReplyTo(null)}
-                aria-label="Cancel reply"
-                className="inline-flex min-h-[44px] items-center gap-1 rounded-full px-2 font-medium"
-              >
-                <X size={13} aria-hidden /> Cancel
-              </button>
-            </div>
-          ) : null}
-
-          <CommentComposer
-            postId={current.id}
-            replyToUsername={replyTo?.author.username ?? null}
-            currentUser={user}
-            participants={mentionParticipants}
-            owner={{
-              username: current.author.username,
-              displayName: current.author.displayName ?? null,
-              avatarUrl: current.author.avatarUrl ?? null,
-            }}
-            onSubmit={(body, attachments) => postCommentBody(body, attachments)}
-            onError={commentFailed}
-            onSent={() => setReplyTo(null)}
-          />
-
           {commentsLoading ? (
             <CommentSkeleton />
           ) : commentsError ? (
@@ -1301,7 +1301,7 @@ export function PostDetail() {
                   type="button"
                   onClick={() => setCommentsExpanded(true)}
                   aria-expanded="false"
-                  className="min-h-[48px] rounded-m3-sm border border-outline-variant px-3 text-sm font-medium"
+                  className="min-h-[44px] self-start px-1 text-sm font-medium underline"
                 >
                   View all {comments.length} comments
                 </button>
@@ -1311,13 +1311,51 @@ export function PostDetail() {
                   type="button"
                   onClick={() => setCommentsExpanded(false)}
                   aria-expanded="true"
-                  className="min-h-[48px] rounded-m3-sm border border-outline-variant px-3 text-sm font-medium"
+                  className="min-h-[44px] self-start px-1 text-sm font-medium underline"
                 >
                   Show fewer comments
                 </button>
               )}
             </>
           )}
+
+          {/* The composer sits at the END of the thread (owner reference: the
+              write bar is the last thing in a comment section) and stays put
+              at the bottom of the scroller while the thread is in view. The
+              screen's scroll container is the shell's `main`, and the bottom
+              nav is an in-flow sibling of it, so this bar rests directly above
+              the nav instead of under it. */}
+          <div ref={composerAnchorRef} className="sticky bottom-0 z-10 bg-surface pt-2">
+            {replyTo ? (
+              <div role="status" className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-on-surface-variant">
+                <span className="min-w-0 flex-1 basis-[160px] [overflow-wrap:anywhere]">
+                  Replying to <span className="font-semibold text-on-surface">@{replyTo.author.username}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setReplyTo(null)}
+                  aria-label="Cancel reply"
+                  className="inline-flex min-h-[44px] shrink-0 items-center gap-1 rounded-full px-2 font-medium"
+                >
+                  <X size={13} aria-hidden /> Cancel
+                </button>
+              </div>
+            ) : null}
+            <CommentComposer
+              postId={current.id}
+              replyToUsername={replyTo?.author.username ?? null}
+              currentUser={user}
+              participants={mentionParticipants}
+              owner={{
+                username: current.author.username,
+                displayName: current.author.displayName ?? null,
+                avatarUrl: current.author.avatarUrl ?? null,
+              }}
+              onSubmit={(body, attachments) => postCommentBody(body, attachments)}
+              onError={commentFailed}
+              onSent={() => setReplyTo(null)}
+            />
+          </div>
         </section>
       </article>
 

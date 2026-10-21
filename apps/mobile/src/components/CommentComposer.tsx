@@ -283,6 +283,11 @@ export function CommentComposer({
     const el = fieldRef.current;
     if (!el) return;
     el.style.height = "auto";
+    // Short guidance fits one row at large text; only real drafts auto-grow.
+    if (!text) {
+      el.style.overflowY = "hidden";
+      return;
+    }
     if (el.scrollHeight <= 0) return;
     const style = window.getComputedStyle(el);
     const line = Number.parseFloat(style.lineHeight) || 24;
@@ -579,7 +584,9 @@ export function CommentComposer({
     }
   }
 
-  const placeholder = replyToUsername ? `Reply to @${replyToUsername}…` : "Write a helpful comment…";
+  // The adjacent reply context names the target. Keep the field guidance short
+  // enough to remain readable at large text; its accessible name stays full.
+  const placeholder = replyToUsername ? "Reply…" : "Write…";
 
   return (
     <div data-testid="comment-composer" className="flex items-start gap-2">
@@ -612,7 +619,7 @@ export function CommentComposer({
             onClick={() => void onSend()}
             disabled={sendDisabled}
             aria-label={replyToUsername ? "Send reply" : "Send comment"}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-on-surface text-surface disabled:opacity-40"
+            className="flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-full bg-on-surface text-surface disabled:opacity-40"
           >
             <SendHorizonal size={18} aria-hidden />
           </button>

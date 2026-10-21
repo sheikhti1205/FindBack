@@ -188,6 +188,26 @@ describe("PostList home-feed density (reference-inspired Home redesign)", () => 
       "fb-post-media-p1",
     );
   });
+
+  it("home-feed is one compact column: a flat action row, no category-only footer", () => {
+    render(
+      <MemoryRouter>
+        <PostList items={[imagePost()]} {...base} density="home-feed" />
+      </MemoryRouter>,
+    );
+    // ONE row of actions, never a three-column grid of button cards.
+    const row = screen.getByTestId("post-action-row");
+    expect(row.className).toMatch(/flex-nowrap/);
+    expect(row.className).not.toMatch(/grid/);
+    // The category chip rides in the meta line (status · time · category)
+    // instead of spending a footer row of its own.
+    const meta = screen.getByTestId("post-status-chip").parentElement as HTMLElement;
+    expect(meta.contains(screen.getByTestId("post-time"))).toBe(true);
+    expect(meta.contains(screen.getByTestId("post-category"))).toBe(true);
+    const footer = screen.getByTestId("post-footer") as HTMLElement;
+    expect(footer.contains(screen.getByTestId("post-category"))).toBe(false);
+    expect(footer.contains(screen.getByTestId("home-feed-actions"))).toBe(true);
+  });
 });
 
 describe("PostList state transitions (Wave A)", () => {

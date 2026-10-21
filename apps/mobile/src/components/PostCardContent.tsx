@@ -8,7 +8,9 @@ import { stripMarkdown } from "../utils/stripMarkdown";
 import { displaySizeOrNull } from "../services/media/displayDimensions";
 import { MASONRY_FALLBACK_RATIO, masonryAspectRatio } from "./masonryLayout";
 import { HomeFeedLoveButton } from "./HomeFeedLoveButton";
+import { PostActionRow } from "./PostActionRow";
 import { ReportShareButton } from "./ReportShareButton";
+import { SavePostButton } from "./SavePostButton";
 import { StatusChip } from "./StatusChip";
 import { PhotoLightbox } from "./PhotoLightbox";
 import { FeedMediaCarousel } from "./FeedMediaCarousel";
@@ -390,6 +392,11 @@ function useTruncatedDescription(text: string) {
  * inset flat action row. The report block itself carries no container chrome
  * (see PostCard `home-feed`); separation is whitespace + hairline.
  *
+ * Density contract: the card is a compact column — ONE meta line (status ·
+ * time · category), the text block, and ONE flat action row. The category
+ * chip used to live in a footer row of its own, which cost a whole block of
+ * vertical space for one word; it now rides in the meta line.
+ *
  * Navigation contract: the media region is a SIBLING of the detail link, never
  * inside it — tapping a photo opens the canonical PhotoLightbox at that index,
  * a horizontal swipe only changes the visible photo, and neither can navigate
@@ -424,11 +431,17 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
           />
         </div>
       )}
-      <div className="flex min-w-0 flex-col gap-2 px-4 pb-2 pt-3">
-        <div className="flex items-start justify-between gap-2">
+      <div className="flex min-w-0 flex-col gap-1.5 px-4 pb-1 pt-2">
+        {/* One meta line: status · time · category. The category used to have
+            a footer row of its own (a whole block of space for one word). */}
+        <div className="flex min-w-0 flex-nowrap items-center gap-2">
           <StatusChip post={post} />
           <span data-testid="post-time" className="shrink-0 whitespace-nowrap text-xs text-on-surface-variant">
             {timeAgo(post.createdAt)}
+          </span>
+          <span data-testid="post-category" className="fb-category-chip min-w-0">
+            <Tag size={12} aria-hidden className="shrink-0" />
+            <span>{post.category}</span>
           </span>
         </div>
         <Link
@@ -470,32 +483,21 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
             </p>
           )}
         </Link>
-        <div data-testid="post-footer" className="flex flex-wrap items-center gap-2">
-          <span data-testid="post-category" className="fb-category-chip">
-            <Tag size={12} aria-hidden className="shrink-0" />
-            <span>{post.category}</span>
-          </span>
-        </div>
-        {/* Flat action row (no bordered button cards): the existing Love
-            toggle, the comments shortcut, and the existing share button share
-            one row. The internal `.fb-report-action` border/background are
-            neutralized visually via wrapper utilities — the controls themselves
-            are reused untouched. */}
-        <div
-          data-testid="home-feed-actions"
-          role="group"
-          aria-label="Report actions"
-          className="grid grid-cols-3 items-center gap-1 [&_a]:rounded-full! [&_a]:border-0! [&_a]:bg-transparent! [&_button]:rounded-full! [&_button]:border-0! [&_button]:bg-transparent!"
-        >
-          <HomeFeedLoveButton postId={post.id} likeCount={post.likeCount} />
-          <Link
-            to={`/posts/${post.id}#detail-comments`}
-            aria-label={`Comments, ${post.commentCount}`}
-            className="fb-report-action"
-          >
-            <MessageSquare size={18} aria-hidden /><span>{post.commentCount}</span>
-          </Link>
-          <ReportShareButton postId={post.id} title={post.title} />
+        {/* The card footer: ONE flat row of icon-only actions (like · comment ·
+            share · save). The controls keep their own state owners — the row
+            owns no reaction logic at all. */}
+        <div data-testid="post-footer" className="flex min-w-0 flex-col">
+          <div data-testid="home-feed-actions" className="min-w-0">
+            <PostActionRow
+              commentCount={post.commentCount}
+              commentsHref={`/posts/${post.id}#detail-comments`}
+              slots={{
+                like: <HomeFeedLoveButton postId={post.id} likeCount={post.likeCount} />,
+                share: <ReportShareButton postId={post.id} title={post.title} />,
+                save: <SavePostButton postId={post.id} title={post.title} />,
+              }}
+            />
+          </div>
         </div>
       </div>
       {lightboxIndex !== null && lightboxPhotos.length > 0 && (

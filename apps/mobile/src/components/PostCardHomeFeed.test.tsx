@@ -598,23 +598,50 @@ describe("home-feed content-first interactions", () => {
     expect(screen.queryByTestId("post-description-more")).toBeNull();
   });
 
-  it("renders a flat action row reusing the existing love/comment/share controls", () => {
+  it("renders ONE flat action row of icon-only actions", () => {
     renderHomeFeed(imagePost());
-    const row = screen.getByTestId("home-feed-actions");
-    expect(row.className).toMatch(/grid-cols-3/);
-    // Flat: the reused controls' internal borders/backgrounds are neutralized
-    // for both the button controls (love/share) and the comments link. The
-    // trailing `!` (important) is REQUIRED — `.fb-report-action` is unlayered
-    // plain CSS and otherwise beats Tailwind's @layer utilities regardless of
-    // specificity (verified in Chromium against the compiled index.css).
-    expect(row.className).toMatch(/\[&_button\]:border-0!/);
-    expect(row.className).toMatch(/\[&_button\]:bg-transparent!/);
-    expect(row.className).toMatch(/\[&_a\]:border-0!/);
-    expect(row.className).toMatch(/\[&_a\]:bg-transparent!/);
+    const row = screen.getByTestId("post-action-row");
+    // One row, not a three-column grid of button cards.
+    expect(row.className).toMatch(/flex/);
+    expect(row.className).toMatch(/flex-nowrap/);
+    expect(row.className).not.toMatch(/grid/);
+    // The group semantics live on the row itself.
+    expect(row.getAttribute("role")).toBe("group");
+    expect(row.getAttribute("aria-label")).toBe("Report actions");
+    // The old `!important` utility pile is gone: the flat look now comes from
+    // one scoped rule in the row's own stylesheet.
+    const actions = screen.getByTestId("home-feed-actions");
+    expect(actions.className).not.toMatch(/!/);
+    expect(actions.className).not.toMatch(/grid/);
     expect(screen.getByTestId("home-feed-love")).toBeTruthy();
     expect(screen.getByRole("link", { name: /comments, 3/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /share report/i })).toBeTruthy();
-    // No giant bordered button cards: the old 3-column bordered grid is gone.
-    expect(row.className).not.toMatch(/fb-report-actions/);
+  });
+
+  it("keeps the category chip in the meta line instead of a footer row of its own", () => {
+    renderHomeFeed(imagePost());
+    const chip = screen.getByTestId("post-status-chip");
+    const time = screen.getByTestId("post-time");
+    const category = screen.getByTestId("post-category");
+    // Status · time · category share ONE line.
+    const meta = chip.parentElement as HTMLElement;
+    expect(meta.contains(time)).toBe(true);
+    expect(meta.contains(category)).toBe(true);
+    expect(meta.className).toMatch(/flex-nowrap/);
+    // The separate category-only row is gone: the card footer now holds the
+    // action row, and the category chip is not in it.
+    const footer = screen.getByTestId("post-footer");
+    expect(footer.contains(category)).toBe(false);
+    expect(footer.contains(screen.getByTestId("home-feed-actions"))).toBe(true);
+  });
+
+  it("keeps the card's vertical rhythm tight", () => {
+    renderHomeFeed(post());
+    const text = screen.getByTestId("post-title").closest("div.flex") as HTMLElement;
+    // The text block: px-4 insets, a small top padding and a small bottom
+    // padding — the old `pt-3 pb-2` and `gap-2` spent the space.
+    expect(text.className).toMatch(/gap-1\.5/);
+    expect(text.className).toMatch(/pt-2/);
+    expect(text.className).toMatch(/pb-1/);
   });
 });

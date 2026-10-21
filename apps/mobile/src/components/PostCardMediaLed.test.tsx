@@ -105,7 +105,10 @@ describe("W7B-HOME home-feed shell (separators over chrome)", () => {
     const shell = card.firstElementChild as HTMLElement;
     expect(shell.className).toMatch(/border-b/);
     expect(shell.className).toMatch(/border-outline-variant/);
-    expect(shell.className).toMatch(/pb-5/);
+    // Density: the trailing whitespace is tight (`pb-3`, was `pb-5`) — the
+    // hairline is the separator, the padding is only breathing room.
+    expect(shell.className).toMatch(/pb-3/);
+    expect(shell.className).not.toMatch(/pb-5/);
   });
 });
 
@@ -142,12 +145,16 @@ describe("W7B-HOME home-feed content (media-led block)", () => {
       "post-footer",
       "post-category",
       "home-feed-actions",
+      "post-action-row",
     ]) {
       expect(screen.getByTestId(id)).toBeTruthy();
     }
+    // The group semantics live on the action row itself now (the card's
+    // `home-feed-actions` hook stays as the stable wrapper around it).
     expect(
-      screen.getByTestId("home-feed-actions").getAttribute("aria-label"),
+      screen.getByTestId("post-action-row").getAttribute("aria-label"),
     ).toBe("Report actions");
+    expect(screen.getByTestId("post-action-row").getAttribute("role")).toBe("group");
   });
 
   it("stays text-first with no media region when there is no photo", () => {

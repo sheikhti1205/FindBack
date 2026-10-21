@@ -113,12 +113,13 @@ describe("PostDetail overflow", () => {
     expect(locationValue?.className).toContain("break-words");
   });
 
-  it("truncates long comment authors without pushing the timestamp out", async () => {
+  it("keeps a readable author width while metadata can wrap at large text", async () => {
     renderDetail();
     await waitFor(() => expect(screen.getByText(/plain comment/)).toBeTruthy());
     const author = screen.getByText(`@${LONG}`);
     expect(author.className).toContain("truncate");
-    expect(author.className).toContain("min-w-0");
+    expect(author.className).toContain("min-w-[6em]");
+    expect(author.parentElement?.className).toContain("flex-wrap");
   });
 });
 
@@ -142,7 +143,7 @@ describe("PostDetail comments", () => {
 
   it("comment composer enforces the 1000-char budget on send (hint + disabled, never truncated)", async () => {
     renderDetail();
-    const input = await screen.findByPlaceholderText("Write a helpful comment…");
+    const input = await screen.findByLabelText("Comment");
     // Deliberately no maxlength: IME composition and media-aware budgeting
     // stay intact; the budget is enforced at send time instead.
     expect(input.getAttribute("maxlength")).toBeNull();
@@ -153,7 +154,7 @@ describe("PostDetail comments", () => {
 
   it("rejects submit when comment exceeds 1000 chars (defensive client-side)", async () => {
     renderDetail();
-    const input = await screen.findByPlaceholderText("Write a helpful comment…");
+    const input = await screen.findByLabelText("Comment");
     const longText = "x".repeat(1001);
     fireEvent.change(input, { target: { value: longText } });
     const submitButton = screen.getByTestId("comment-send");
@@ -165,7 +166,7 @@ describe("PostDetail comments", () => {
 
   it("allows submit when comment is exactly 1000 chars", async () => {
     renderDetail();
-    const input = await screen.findByPlaceholderText("Write a helpful comment…");
+    const input = await screen.findByLabelText("Comment");
     const exactText = "x".repeat(1000);
     fireEvent.change(input, { target: { value: exactText } });
     const submitButton = screen.getByRole("button", { name: "Send comment" });
@@ -175,7 +176,7 @@ describe("PostDetail comments", () => {
 
   it("allows submit when comment is under 1000 chars", async () => {
     renderDetail();
-    const input = await screen.findByPlaceholderText("Write a helpful comment…");
+    const input = await screen.findByLabelText("Comment");
     fireEvent.change(input, { target: { value: "valid comment" } });
     const submitButton = screen.getByRole("button", { name: "Send comment" });
     fireEvent.click(submitButton);
@@ -709,7 +710,7 @@ describe("PostDetail threaded replies", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Reply to commenter" }));
     expect(screen.getByText(/replying to/i)).toBeTruthy();
 
-    const input = screen.getByPlaceholderText("Reply to @commenter…");
+    const input = screen.getByRole("combobox", { name: "Reply to commenter" });
     fireEvent.change(input, { target: { value: "me too" } });
     fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
 
