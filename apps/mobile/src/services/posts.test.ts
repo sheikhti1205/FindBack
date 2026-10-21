@@ -386,13 +386,14 @@ describe("updatePost", () => {
     expect(updateArgs()).not.toHaveProperty("p_clear_fields");
   });
 
-  it("a partial update of an unrelated field on a row whose STORED values are not valid still succeeds — the client sends only what the owner changed, never the stored row", async () => {
+  it("sends only what the owner changed — the untouched fields stay null and the server keeps the stored values", async () => {
     mockUpdate();
 
-    // A legacy row can hold an empty event date, description or category.
-    // The stored values are NOT re-sent, so the server validator (which
-    // checks only the incoming arguments) never sees them and the edit is
-    // not refused.
+    // The client sends NULL for every field the owner did not touch, and the
+    // server merges those with the stored row ("null means keep"). The
+    // server then validates the MERGED row — the values the row will have —
+    // so a legacy row whose stored values are invalid is the server's
+    // business, not the client's.
     await updatePost("p1", { title: "A new title" });
 
     const args = updateArgs();
@@ -408,6 +409,57 @@ describe("updatePost", () => {
     ]) {
       expect(args[untouched], `${untouched} is left to the server's keep-old merge`).toBeNull();
     }
+  });
+
+  it("shows a refusal about the report as it is, and a server fault as a server fault", async () => {
+    // 42501 and 22023 are real answers about the report: they are shown.
+    clientMock.rpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: "Post not found or you do not own it", code: "42501" },
+    });
+    await expect(updatePost("p1", { title: "A new title" })).rejects.toMatchObject({
+      status: 403,
+      message: "Post not found or you do not own it",
+    });
+
+    clientMock.rpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: "Invalid category", code: "22023" },
+    });
+    await expect(updatePost("p1", { title: "A new title" })).rejects.toMatchObject({
+      status: 400,
+      message: "Invalid category",
+    });
+
+    // Anything else is NOT an answer about the report — a missing function
+    // (PGRST202, before the clear-fields migration is applied) or a
+    // transport failure. It must never reach the owner as raw server text.
+    clientMock.rpc.mockResolvedValueOnce({
+      data: null,
+      error: {
+        message:
+          "Could not find the function public.findback_update_post_client in the schema cache",
+        code: "PGRST202",
+      },
+    });
+    await expect(updatePost("p1", { title: "A new title" })).rejects.toMatchObject({
+      status: 500,
+      code: "PGRST202",
+    });
+  });
+
+  it("never reports a landed write as a failed save when only the read-back fails", async () => {
+    clientMock.rpc.mockResolvedValueOnce({ data: true, error: null });
+    clientMock.rpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: "network", code: "PGRST000" },
+    });
+
+    await expect(updatePost("p1", { title: "A new title" })).rejects.toMatchObject({
+      status: 500,
+      code: "READ_BACK_FAILED",
+      message: expect.stringMatching(/was saved/i),
+    });
   });
 });
 

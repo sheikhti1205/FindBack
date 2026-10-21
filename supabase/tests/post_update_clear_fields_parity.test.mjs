@@ -276,6 +276,29 @@ describe("the client only names the clear argument when there is something to cl
 });
 
 describe("the migration touches nothing but that one function", () => {
+  it("runs as ONE transaction, and nothing happens outside it", () => {
+    // The drop and the re-create must be atomic: a failure between them
+    // would leave the report-update path with NO function at all.
+    const statements = code
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("--"));
+    assert.equal(
+      statements[0].toLowerCase(),
+      "begin;",
+      "the transaction opens with the first statement in the file",
+    );
+    assert.equal(
+      statements[statements.length - 1].toLowerCase(),
+      "commit;",
+      "the transaction commits with the last statement in the file",
+    );
+    const beginCount = (code.match(/^\s*begin;/gim) ?? []).length;
+    const commitCount = (code.match(/^\s*commit;/gim) ?? []).length;
+    assert.equal(beginCount, 1, "there is exactly one begin");
+    assert.equal(commitCount, 1, "there is exactly one commit");
+  });
+
   it("deletes no row, drops no table or column, and edits no applied file", () => {
     const lower = sql.toLowerCase();
     assert.doesNotMatch(lower, /drop table/);
@@ -351,5 +374,27 @@ describe("the verification file carries the readback", () => {
     assert.match(verify, /proargnames/);
     assert.match(verify, /HAVE NOT BEEN EXECUTED/);
     assert.match(verify, /LIVE-PENDING/);
+  });
+
+  it("states the DEPLOYED validation rule, not the older weaker one", () => {
+    // The verifier is the designated post-apply proof. If it states the
+    // round-1 rule (the incoming arguments only), running it produces a
+    // FALSE NEGATIVE on a probe that the deployed function actually
+    // refuses.
+    assert.match(
+      verify,
+      /MERGED row is validated|validates the MERGED row|MERGED row/i,
+      "the verifier states the merged-row rule",
+    );
+    assert.doesNotMatch(
+      verify,
+      /validates the INCOMING arguments only|never on the merged\/stored row/i,
+      "the verifier does not claim the incoming-arguments rule",
+    );
+    assert.doesNotMatch(
+      verify,
+      /can STILL be edited/i,
+      "the verifier does not claim that an invalid stored row can be edited",
+    );
   });
 });

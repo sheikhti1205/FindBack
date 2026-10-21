@@ -18,6 +18,7 @@ vi.mock("./MapPickerSheet", () => ({ MapPickerSheet: () => null }));
 
 import {
   ReportEditor,
+  keepPublishedPin,
   reportEditorIsDirty,
   reportEditorValuesFromPost,
   validateReportEditorValues,
@@ -123,5 +124,48 @@ describe("ReportEditor", () => {
     expect(errors.title).toBeTruthy();
     expect(errors.category).toBeTruthy();
     expect(errors.eventDate).toBeTruthy();
+  });
+});
+
+describe("keepPublishedPin", () => {
+  const published = { label: "Dhaka", latitude: 23.81, longitude: 90.41 };
+
+  it("keeps the published pin when the place name is retyped", () => {
+    const next = keepPublishedPin(published, {
+      label: "Dhaka Cantonment",
+      latitude: null,
+      longitude: null,
+    });
+    expect(next).toEqual({
+      label: "Dhaka Cantonment",
+      latitude: 23.81,
+      longitude: 90.41,
+    });
+  });
+
+  it("lets a newly picked pin win", () => {
+    const next = keepPublishedPin(published, {
+      label: "Dhaka Cantonment",
+      latitude: 23.8,
+      longitude: 90.4,
+    });
+    expect(next.latitude).toBe(23.8);
+    expect(next.longitude).toBe(90.4);
+  });
+
+  it("removes the pin with the place when the owner clears it", () => {
+    const next = keepPublishedPin(published, { label: "", latitude: null, longitude: null });
+    expect(next.label).toBe("");
+    expect(next.latitude).toBeNull();
+    expect(next.longitude).toBeNull();
+  });
+
+  it("has no pin to keep when there never was one", () => {
+    const next = keepPublishedPin(
+      { label: "Dhaka", latitude: null, longitude: null },
+      { label: "Dhaka Cantonment", latitude: null, longitude: null },
+    );
+    expect(next.latitude).toBeNull();
+    expect(next.longitude).toBeNull();
   });
 });

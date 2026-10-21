@@ -162,7 +162,10 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
           onKeyDown={onMenuKeyDown}
           className="absolute right-0 z-20 mt-1 flex w-56 flex-col gap-0.5 rounded-m3-md border border-outline-variant bg-surface p-1 shadow-lg"
         >
-          <p className="px-3 pt-1 text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
+          <p
+            role="presentation"
+            className="px-3 pt-1 text-xs font-semibold uppercase tracking-wide text-on-surface-variant"
+          >
             Status
           </p>
           {POST_STATUSES.map((status) => (
@@ -178,7 +181,7 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
               {status === post.status && <span className="text-xs text-on-surface-variant">Current</span>}
             </button>
           ))}
-          <hr className="my-1 border-outline-variant" />
+          <hr role="separator" className="my-1 border-outline-variant" />
           <button
             type="button"
             role="menuitem"
@@ -191,7 +194,7 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
           </button>
           {resolved && (
             <p className="px-3 pb-1 text-xs text-on-surface-variant">
-              A recovered or closed report keeps the details it was saved with.
+              A recovered or closed report is no longer edited in the app.
             </p>
           )}
           <button

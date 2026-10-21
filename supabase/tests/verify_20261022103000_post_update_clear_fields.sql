@@ -26,10 +26,10 @@
 --   5. required fields and unknown names are refused (22023);
 --   6. the coordinates are one field;
 --   7. an explicit value beats a clear request for the same field;
---   8. the values the CALLER SENDS are still validated, exactly as the
---      shipped function validates them (only when a type is supplied), never
---      the stored row, and the row is still written under the caller's own
---      id.
+--   8. the MERGED row is validated — the values the row will have after the
+--      caller's arguments are coalesced with the stored ones — exactly as
+--      the deployed function validates it, and the row is still written under
+--      the caller's own id.
 
 -- ---------------------------------------------------------------------------
 -- 1. Read-only catalog probes.
@@ -186,12 +186,13 @@ where exists (
 
 -- (m) AS A: a report whose STORED values do not satisfy the shared validator
 --     (a legacy row with an empty event_date, an empty description or an
---     empty category) can STILL be edited — a partial update of an unrelated
---     field succeeds.
--- EXPECT: true; the edited field changed; the other stored values are
--- untouched. This is the shipped rule: the validator only ever sees the
--- incoming arguments, so a stored row that the validator would refuse can
--- never lock its owner out of editing it.
+--     empty category) is REFUSED when its owner tries to edit it, and the
+--     stored row is left untouched.
+-- EXPECT: 22023 (or whatever the shared validator raises for that row); the
+-- stored values are unchanged. This is the DEPLOYED rule: the validator sees
+-- the MERGED row, so a stored row the validator would refuse cannot be
+-- edited — not even in an unrelated field. The migrated function keeps that
+-- rule; it does not weaken it.
 
 -- ---------------------------------------------------------------------------
 -- 3. POST-APPLY READBACK (hosted project, after the migration is applied).
@@ -236,5 +237,7 @@ where n.nspname = 'public' and p.proname = 'findback_update_post_client';
 -- EXPECT: the body refuses an unknown clear name, refuses a required field,
 -- refuses clearing and setting the coordinates together, keeps the
 -- ownership guard (`where id = p_post_id and user_id = v_uid`) and still
--- calls findback_validate_post_fields on the INCOMING arguments only
--- (guarded by `if p_type is not null`), never on the merged/stored row.
+-- calls findback_validate_post_fields on the MERGED row — the values the row
+-- will have after the clear request is honoured — and it does so BEFORE the
+-- update. It must NOT contain the old weaker form (a validation of the
+-- incoming arguments only, guarded by `if p_type is not null`).

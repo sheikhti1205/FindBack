@@ -397,13 +397,12 @@ export interface UpdatePostInput {
  * Update one of the caller's own reports and return the stored row.
  *
  * The write goes through `findback_update_post_client`, the ONE update path
- * the backend offers: it validates the values you send, as the shipped
- * function always has — it never validates the stored row, so a report whose
- * stored values are not valid can still be edited — it is scoped to the
- * caller's own post, and it refuses a report the caller does not own. A
- * clear request is expressed through `p_clear_fields` — the array is only
- * sent when the owner actually emptied something, so an ordinary partial
- * update keeps the shipped "null means keep" behaviour.
+ * the backend offers: it validates the MERGED row — the values the row will
+ * have once the arguments you send are coalesced with the stored ones — it
+ * is scoped to the caller's own post, and it refuses a report the caller
+ * does not own. A clear request is expressed through `p_clear_fields` — the
+ * array is only sent when the owner actually emptied something, so an
+ * ordinary partial update keeps the shipped "null means keep" behaviour.
  *
  * `p_clear_fields` is added to the RPC arguments ONLY when there is
  * something to clear. PostgREST resolves a function by its NAMED arguments,
@@ -434,10 +433,26 @@ export async function updatePost(id: string, input: UpdatePostInput): Promise<Po
   if (error) {
     // 42501 is the server's "not your report" refusal; 22023 is a validation
     // refusal. Both are real answers and both are shown as they are.
-    const status = error.code === "42501" ? 403 : error.code === "22023" ? 400 : 400;
+    // Everything else is NOT an answer about the report: a missing function
+    // (PGRST202, before the clear-fields migration is applied) or a
+    // transport failure. Those are server troubles, and they must never
+    // reach the owner as raw server text.
+    const status =
+      error.code === "42501" ? 403 : error.code === "22023" ? 400 : 500;
     throw new ApiError(error.message, status, error.code);
   }
-  return fetchPost(id);
+  // The write landed. The read-back is a separate call, and it can fail for
+  // its own reasons — the report is saved either way, so a failed read-back
+  // is never reported as a failed save.
+  try {
+    return await fetchPost(id);
+  } catch {
+    throw new ApiError(
+      "Your report was saved, but the app could not read it back. Refresh to see it.",
+      500,
+      "READ_BACK_FAILED",
+    );
+  }
 }
 
 /**

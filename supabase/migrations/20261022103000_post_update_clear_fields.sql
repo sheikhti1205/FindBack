@@ -68,8 +68,11 @@
 -- exact ten-argument signature it replaces, and is followed in the same
 -- transaction by the re-create. No table, column, row, grant or policy
 -- outside that one function is touched: this file deletes no data and
--- rewrites no data. Every statement is idempotent, so re-running it changes
--- nothing.
+-- rewrites no data. Re-running it FAILS LOUDLY — the drop names the
+-- ten-argument signature, which no longer exists after the first run, so
+-- the create finds the eleven-argument function already there and aborts
+-- with 42723 — and it changes nothing, because the whole file is one
+-- transaction and the failure rolls it back.
 --
 -- SECURITY IS UNCHANGED. The function stays SECURITY INVOKER: the caller
 -- keeps writing through their own column grants and the owner-scoped RLS

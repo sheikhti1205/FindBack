@@ -37,6 +37,13 @@ export function friendlyError(err: unknown): FriendlyError {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const lower = raw.toLowerCase();
 
+  // A write that landed but could not be read back keeps its own wording:
+  // the generic "the server is having trouble" would tell the owner their
+  // save failed when it did not.
+  if (err instanceof ApiError && err.code === "READ_BACK_FAILED") {
+    return { code: "SERVER", message: err.message };
+  }
+
   if (status === 401) return { code: "AUTH", message: "Your session expired. Please sign in again." };
   if (status === 403)
     return { code: "PERMISSION", message: "You do not have permission to do that." };

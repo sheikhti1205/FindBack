@@ -50,6 +50,12 @@ export const UNSAVED_CHANGES_MESSAGE =
  * The ONLY thing that decides a clear is the BASELINE: a field is emptied
  * because the owner emptied it, never because a value happens to be empty.
  * That is what makes the server's explicit clear request safe to send.
+ *
+ * THE MAP PIN IS NOT A CLEAR ON A TEXT EDIT. The picker cannot turn free
+ * text into coordinates, so retyping the place name arrives with no
+ * coordinates at all. A report that already carries a published pin must not
+ * lose it because the owner changed the wording: the pin goes only when the
+ * owner CLEARS the place, which removes the name and the pin together.
  */
 export function buildUpdateInput(
   values: ReportEditorValues,
@@ -58,11 +64,15 @@ export function buildUpdateInput(
   const clearFields: ClearablePostField[] = [];
   const baselineLabel = (baseline.location.label ?? "").trim();
   const nextLabel = (values.location.label ?? "").trim();
-  const hadCoords = baseline.location.latitude != null && baseline.location.longitude != null;
-  const hasCoords = values.location.latitude != null && values.location.longitude != null;
+  // A half-pin (a legacy row with only one coordinate) is a pin too.
+  const hadPin = baseline.location.latitude != null || baseline.location.longitude != null;
+  // The place is removed when the owner empties the place text.
+  const placeRemoved = nextLabel === "" && (baselineLabel !== "" || hadPin);
 
-  if (baselineLabel !== "" && nextLabel === "") clearFields.push("location_label");
-  if (hadCoords && !hasCoords) clearFields.push("latitude", "longitude");
+  if (placeRemoved) {
+    clearFields.push("location_label");
+    if (hadPin) clearFields.push("latitude", "longitude");
+  }
 
   return {
     type: values.type,
@@ -107,6 +117,7 @@ export function EditReport({ postId }: EditReportProps) {
   const [values, setValues] = useState<ReportEditorValues | null>(null);
   const [fieldErrors, setFieldErrors] = useState<ReportEditorErrors>({});
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveHint, setSaveHint] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -193,6 +204,7 @@ export function EditReport({ postId }: EditReportProps) {
     }
     setSaving(true);
     setSaveError(null);
+    setSaveHint(null);
     try {
       await updatePost(post.id, buildUpdateInput(values, baselineRef.current));
       setSaved(true);
@@ -203,6 +215,13 @@ export function EditReport({ postId }: EditReportProps) {
       // a failed save never discards what the owner typed.
       const friendly = friendlyError(err);
       setSaveError(friendly.message);
+      // The server validates the MERGED row, so a refusal can be about a
+      // value that was already saved rather than about what was just typed.
+      setSaveHint(
+        friendly.code === "VALIDATION"
+          ? "If you did not change that field, the value already saved on the report may be what the server refused."
+          : null,
+      );
       announce(friendly.message);
     } finally {
       setSaving(false);
@@ -265,15 +284,16 @@ export function EditReport({ postId }: EditReportProps) {
         <div role="status" className="rounded-m3-sm border border-outline-variant px-3 py-2 text-sm">
           <p className="font-medium">This report is {post.status === "RECOVERED" ? "recovered" : "closed"}.</p>
           <p className="mt-1 text-on-surface-variant">
-            Its details are locked. Set it back to Open on My Reports to change them.
+            A resolved report cannot be edited here. Set it back to Open on My Reports to change the details.
           </p>
         </div>
       )}
 
       {saveError && (
-        <p role="alert" className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
-          {saveError}
-        </p>
+        <div role="alert" className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
+          <p>{saveError}</p>
+          {saveHint && <p className="mt-1 text-on-surface-variant">{saveHint}</p>}
+        </div>
       )}
 
       {isOwner && !isResolved && (
@@ -291,6 +311,7 @@ export function EditReport({ postId }: EditReportProps) {
             errors={fieldErrors}
             photos={post.attachments}
             disabled={saving}
+            keepPinOnLabelEdit
           />
           {post.youtubeUrl && <ReadOnlyField label="YouTube link (not editable here)" value={post.youtubeUrl} />}
           <div className="flex flex-wrap items-center gap-2">

@@ -163,6 +163,55 @@ describe("EditReport", () => {
     expect(input.clearFields).toEqual(["location_label", "latitude", "longitude"]);
   });
 
+  it("KEEPS the published pin when the owner retypes the place name", async () => {
+    // The picker cannot turn free text into coordinates, so a retype arrives
+    // with none. The published pin must survive that: only clearing the
+    // place removes it.
+    renderEditor({ postId: "p1" });
+    await waitFor(() => expect(screen.getByLabelText("What did you lose?")).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText("Place, decimal coords, or a Google Maps link"), {
+      target: { value: "Dhaka Cantonment" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(updatePostMock).toHaveBeenCalled());
+    const [, input] = updatePostMock.mock.calls[0]!;
+    expect(input.locationLabel).toBe("Dhaka Cantonment");
+    expect(input.latitude).toBe(23.81);
+    expect(input.longitude).toBe(90.41);
+    expect(input.clearFields).toEqual([]);
+  });
+
+  it("clears a HALF pin (a legacy row with only one coordinate) when the place is emptied", async () => {
+    fetchPostMock.mockResolvedValue(post({ longitude: null }));
+    renderEditor({ postId: "p1" });
+    await waitFor(() => expect(screen.getByLabelText("What did you lose?")).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText("Place, decimal coords, or a Google Maps link"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(updatePostMock).toHaveBeenCalled());
+    const [, input] = updatePostMock.mock.calls[0]!;
+    expect(input.clearFields).toEqual(["location_label", "latitude", "longitude"]);
+  });
+
+  it("says that editing the place name keeps the published pin", async () => {
+    renderEditor({ postId: "p1" });
+    await waitFor(() => expect(screen.getByLabelText("What did you lose?")).toBeTruthy());
+    expect(
+      screen.getByText(/keeps the map pin that is already published/i).textContent,
+    ).toMatch(/clearing the place removes the name and the pin/i);
+  });
+
+  it("explains that a refusal may be about the value already saved", async () => {
+    updatePostMock.mockRejectedValue(new ApiError("Invalid category", 400, "22023"));
+    renderEditor({ postId: "p1" });
+    await waitFor(() => expect(screen.getByLabelText("What did you lose?")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("What did you lose?"), { target: { value: "Another title" } });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/invalid category/i));
+    expect(screen.getByRole("alert").textContent).toMatch(/already saved on the report/i);
+  });
+
   it("shows the server's refusal and keeps what the owner typed", async () => {
     updatePostMock.mockRejectedValue(new ApiError("Post not found or you do not own it", 403));
     renderEditor({ postId: "p1" });

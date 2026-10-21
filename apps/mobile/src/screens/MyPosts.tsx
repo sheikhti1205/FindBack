@@ -57,6 +57,10 @@ export function MyPosts() {
   const [ownerStatus, setOwnerStatus] = useState<OwnerStatusFilter>("ALL");
   const filterRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  // The pending delete, readable from the unmount cleanup without making
+  // that cleanup depend on the state.
+  const pendingDeleteRef = useRef<PendingDelete | null>(null);
+  pendingDeleteRef.current = pendingDelete;
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -84,7 +88,22 @@ export function MyPosts() {
     }
   }, []);
 
-  useEffect(() => () => clearUndoTimer(), [clearUndoTimer]);
+  // Leaving the screen does NOT abandon a delete the owner asked for. The
+  // undo window exists so the owner can take it back; once the screen is
+  // gone there is nothing left to undo with, so the delete the owner
+  // confirmed is sent. It is never dropped without a word.
+  useEffect(
+    () => () => {
+      clearUndoTimer();
+      const pending = pendingDeleteRef.current;
+      if (pending && pending.phase === "pending") {
+        void deletePost(pending.id).catch(() => {
+          // The report stays: the owner sees it again when they come back.
+        });
+      }
+    },
+    [clearUndoTimer],
+  );
 
   /**
    * The delete is DELAYED, and the delay is the point.

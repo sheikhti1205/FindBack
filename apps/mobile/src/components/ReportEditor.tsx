@@ -51,6 +51,16 @@ export interface ReportEditorProps {
    * of pretending the photos are editable.
    */
   photos?: readonly Attachment[];
+  /**
+   * Keep a published map pin when the place text is edited.
+   *
+   * A report that already carries a map pin must not lose it because the
+   * owner retyped the place name: the picker cannot resolve free text to
+   * coordinates, so a text edit arrives with no coordinates at all. When
+   * this is on, the editor keeps the stored coordinates and the owner
+   * removes the pin by clearing the place.
+   */
+  keepPinOnLabelEdit?: boolean;
   /** Disable every control (a save is in flight). */
   disabled?: boolean;
 }
@@ -83,6 +93,29 @@ function sameLocation(a: LocationValue, b: LocationValue): boolean {
 }
 
 /**
+ * Keep the published pin when the place text is retyped.
+ *
+ * The picker cannot turn free text into coordinates, so typing a place name
+ * arrives with no coordinates. For a DRAFT that is right — the pin no longer
+ * matches the place. For a report that already carries a published pin it
+ * is wrong: the owner changed the wording of the place, not the place
+ * itself, and the published pin must survive.
+ *
+ * The owner removes the pin by CLEARING the place: an empty label means
+ * "no place", and the coordinates go with it.
+ */
+export function keepPublishedPin(current: LocationValue, next: LocationValue): LocationValue {
+  const nextLabel = (next.label ?? "").trim();
+  // The place was removed: the pin goes with it.
+  if (nextLabel === "") return next;
+  // The owner picked a new point: the new pin wins.
+  if (next.latitude != null && next.longitude != null) return next;
+  // There is no published pin to keep.
+  if (current.latitude == null || current.longitude == null) return next;
+  return { ...next, latitude: current.latitude, longitude: current.longitude };
+}
+
+/**
  * True when the values differ from the baseline the editor was hydrated
  * with. The baseline is a snapshot, never the live values, so a save that
  * writes the same values back is not "dirty".
@@ -100,8 +133,9 @@ export function reportEditorIsDirty(values: ReportEditorValues, baseline: Report
 
 /**
  * Client-side validation, mirroring the server validator's bounds on the
- * values you send. The server validates the incoming arguments, never the
- * stored row, so these are the same bounds it applies to what you type.
+ * values you send. The server validates the MERGED row — the values the row
+ * will have once your arguments are coalesced with the stored ones — so
+ * these are the same bounds it applies to what you type.
  */
 export function validateReportEditorValues(values: ReportEditorValues): ReportEditorErrors {
   const errors: ReportEditorErrors = {};
@@ -198,7 +232,14 @@ function ReadOnlyPhotos({ photos, title }: { photos: readonly Attachment[]; titl
  * same wherever it is written. The component is fully controlled: it owns
  * no state of its own beyond the photo viewer, which is a view concern.
  */
-export function ReportEditor({ values, onChange, errors = {}, photos = [], disabled = false }: ReportEditorProps) {
+export function ReportEditor({
+  values,
+  onChange,
+  errors = {},
+  photos = [],
+  disabled = false,
+  keepPinOnLabelEdit = false,
+}: ReportEditorProps) {
   const editorRef = useRef<Editor | null>(null);
 
   return (
@@ -261,12 +302,23 @@ export function ReportEditor({ values, onChange, errors = {}, photos = [], disab
 
       <LocationPicker
         value={values.location}
-        onChange={(location) => onChange({ location })}
+        onChange={(location) =>
+          onChange({
+            location: keepPinOnLabelEdit
+              ? keepPublishedPin(values.location, location)
+              : location,
+          })
+        }
         maxLength={REPORT_LOCATION_LABEL_MAX}
       />
       {errors.location && (
         <span className="mt-1 block text-xs text-error">{errors.location}</span>
       )}
+      <p className="mt-1 text-xs text-on-surface-variant">
+        {keepPinOnLabelEdit
+          ? "Editing the place name keeps the map pin that is already published. Clearing the place removes the name and the pin."
+          : "Clearing the place removes the place name and the map pin."}
+      </p>
     </div>
   );
 }
