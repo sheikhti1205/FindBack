@@ -27,7 +27,6 @@ import { ReportPreviewProvider } from "../components/CommentReportPreviews";
 import { CommentComposer } from "../components/CommentComposer";
 import { commentMediaProvenance, parseCommentBody } from "../services/commentBodyMedia";
 import { mapCommentAttachmentRefs } from "../services/commentAttachments";
-import { RatingStars } from "../components/RatingStars";
 import { ReportShareButton } from "../components/ReportShareButton";
 import { PossibleMatches } from "../components/PossibleMatches";
 import { announce } from "../components/LiveRegion";
@@ -43,7 +42,6 @@ import {
   fetchComments,
   fetchPost,
   fetchSocialState,
-  ratePost,
   reactToPost,
   updatePostStatus,
   type CommentAttachmentDescriptor,
@@ -155,6 +153,7 @@ export function PostDetail() {
   // W3.3: the caller's reaction is any valid kind (LIKE/DISLIKE-era wire plus
   // canonical LOVE/HELPFUL/SUPPORT/WOW). LIKE reads as LOVE for display.
   const [myReaction, setMyReaction] = useState<ReactionKind | null>(null);
+  // The viewer's own report rating is read-only (D1): no new score is written.
   const [myRating, setMyRating] = useState<number | null>(null);
   /**
    * Mention sources (W3.2): unique comment authors on this post rank first,
@@ -222,7 +221,6 @@ export function PostDetail() {
 
   // Sequence tokens for latest-request-wins mutation sequencing
   const reactionSeq = useRef(0);
-  const ratingSeq = useRef(0);
   const statusSeq = useRef(0);
   // Mutation identity: this instance is reused across in-place post
   // navigation (the route carries no key) and across account switches, so a
@@ -235,9 +233,7 @@ export function PostDetail() {
   // Sequence guards only protect response application. Synchronous locks
   // also prevent competing server writes before React flushes disabled UI.
   const reactionPendingRef = useRef(false);
-  const ratingPendingRef = useRef(false);
   const [reactionPending, setReactionPending] = useState(false);
-  const [ratingPending, setRatingPending] = useState(false);
   // Generation guard: only the current post id / reload may apply results.
   const loadGen = useRef(0);
   // Per-section retry tokens: retries reuse the same generation, so each
@@ -562,47 +558,11 @@ export function PostDetail() {
 
   /**
    * Like/Unlike (packet `08` §2 — new writes are Like/null only). A caller
-   * holding any positive reaction un-likes; everyone else likes.
+   * holding any positive reaction un-likes; everyone else likes. A legacy
+   * "not helpful" reaction is replaced by Like, never re-written as one.
    */
   function toggleLike() {
     void applyReaction(nextLikeReaction(myReaction));
-  }
-
-  /** Secondary "Not helpful" control (lives in the Community card). */
-  function toggleDislike() {
-    void applyReaction(myReaction === "DISLIKE" ? null : "DISLIKE");
-  }
-
-  async function onRate(score: number) {
-    if (ratingPendingRef.current) return;
-    ratingPendingRef.current = true;
-    setRatingPending(true);
-    const prev = myRating;
-    const snap = { postId: current.id, viewer: user?.id };
-    // Optimistic update
-    setMyRating(score);
-    // Increment sequence token - only the latest request's response will be applied
-    const seq = ++ratingSeq.current;
-    try {
-      const res = await ratePost(current.id, score);
-      // Only apply if this is still the latest request for the same post/account
-      if (ratingSeq.current === seq && !isStaleMutation(snap)) {
-        setPost((prevPost) =>
-          prevPost ? { ...prevPost, ratingAvg: res.ratingAvg, ratingCount: res.ratingCount } : prevPost,
-        );
-      }
-    } catch (e) {
-      // Only rollback if this is still the latest request
-      if (ratingSeq.current === seq && !isStaleMutation(snap)) {
-        setMyRating(prev);
-        const message = friendlyError(e).message;
-        setActionError(message);
-        announce(message);
-      }
-    } finally {
-      ratingPendingRef.current = false;
-      setRatingPending(false);
-    }
   }
 
   /**
@@ -755,7 +715,7 @@ export function PostDetail() {
   const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
 
   // Owner status control is disabled while any mutation is active
-  const ownerControlsDisabled = reactionPending || ratingPending || statusPending;
+  const ownerControlsDisabled = reactionPending || statusPending;
 
   const strippedDescription = stripMarkdown(current.description ?? "");
   const descriptionIsLong = strippedDescription.length > DESCRIPTION_PREVIEW_LIMIT;
@@ -1149,8 +1109,11 @@ export function PostDetail() {
         <section aria-label="Community Rating" className="flex flex-col gap-3 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4">
           <h2 className="text-sm font-medium text-on-surface-variant">Community Rating</h2>
           <div aria-live="polite">
+            {/* Read-only truth (D1): the client no longer writes a rating, so
+                the empty-state copy must not invite one either. "Be the first
+                to rate" contradicted "Report ratings are read-only." */}
             <p className="sr-only">
-              {post.ratingCount > 0 ? `Community rating: ${post.ratingAvg?.toFixed(1) ?? "—"} / 5 from ${post.ratingCount} rating${post.ratingCount === 1 ? "" : "s"}` : "No community ratings yet — be the first to rate."}
+              {post.ratingCount > 0 ? `Community rating: ${post.ratingAvg?.toFixed(1) ?? "—"} / 5 from ${post.ratingCount} rating${post.ratingCount === 1 ? "" : "s"}` : "No community ratings yet."}
             </p>
             <div className="flex flex-wrap items-center gap-3" aria-hidden="true">
               <span className="text-4xl font-semibold tabular-nums tracking-tight">{post.ratingCount > 0 ? post.ratingAvg?.toFixed(1) ?? "—" : "—"}</span>
@@ -1172,14 +1135,25 @@ export function PostDetail() {
               <button type="button" onClick={retrySocial} className="min-h-[48px] shrink-0 px-3 font-medium underline">Retry</button>
             </div>
           )}
+          {/* Report ratings are read-only (packet O4 / D1): the client no
+              longer writes an arbitrary score onto a report, because that
+              score was never backed by a confirmed relationship. Historical
+              ratings stay readable — the community average above and the
+              viewer's own legacy score below. */}
           <div className="border-t border-outline-variant pt-3">
-            <p className="text-sm font-medium" id="your-rating-label">Your rating{myRating != null ? `: ${myRating} out of 5` : ""}</p>
-            <RatingStars value={myRating} onRate={(s) => void onRate(s)} labelId="your-rating-label" pending={ratingPending} />
-            <p className="text-xs text-on-surface-variant">Tap a star to rate this report.</p>
+            {myRating != null && <p className="text-sm font-medium">Your rating: {myRating} out of 5</p>}
+            <p className="text-xs text-on-surface-variant">Report ratings are read-only.</p>
           </div>
-          <Button variant="text" className="self-start" onClick={toggleDislike} disabled={reactionPending} aria-busy={reactionPending} aria-label={`Not helpful, ${post.dislikeCount} ${post.dislikeCount === 1 ? "reaction" : "reactions"}`} aria-pressed={myReaction === "DISLIKE"}>
-            <ThumbsDown size={16} aria-hidden /> Not helpful · {post.dislikeCount}
-          </Button>
+          {/* Historical "not helpful" reactions stay readable, but there is
+              no longer any way to write one. */}
+          {(post.dislikeCount > 0 || myReaction === "DISLIKE") && (
+            <p className="flex items-center gap-1 text-sm text-on-surface-variant">
+              <ThumbsDown size={16} aria-hidden /> Not helpful reactions · {post.dislikeCount}
+            </p>
+          )}
+          {myReaction === "DISLIKE" && (
+            <p className="text-xs text-on-surface-variant">Your earlier “Not helpful” reaction is still counted here.</p>
+          )}
         </section>
 
         {/* Overview: compact lazy heavy sections. */}

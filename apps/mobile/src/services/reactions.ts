@@ -95,11 +95,13 @@ export function reactionEmojiForWire(kind: ReactionKind | null): string | null {
  * A Like is a positive reaction, so a target's Like count is every
  * LOVE/HELPFUL/SUPPORT/WOW row it has; the SQL folds legacy LIKE rows into
  * LOVE, so history keeps counting. A legacy DISLIKE is **not** a like: it never
- * counts and never fills the control, and it keeps its own meaning for the
- * community-rating surface that still writes it. "Mine" is true when the caller
- * holds *any* positive reaction, so a reader who once reacted with Helpful sees
- * a filled Like and tapping it clears their row (one row per caller per target
- * is the RPC's contract — a legacy DISLIKE row is replaced by the LIKE).
+ * counts and never fills the control. It stays **readable** as history — the
+ * "not helpful" count and the reader's own old DISLIKE row are still shown —
+ * but the client has no writer for it any more (D1), so it can only come from
+ * rows that already exist. "Mine" is true when the caller holds *any* positive
+ * reaction, so a reader who once reacted with Helpful sees a filled Like and
+ * tapping it clears their row (one row per caller per target is the RPC's
+ * contract — a legacy DISLIKE row is replaced by the LIKE).
  *
  * New writes are `LIKE` or null only (packet §2). Everything here is derived
  * from the canonical counts, so no surface can show a Like total that disagrees
@@ -264,6 +266,21 @@ function assertKind(kind: ReactionKind | null): void {
   }
 }
 
+/**
+ * Guard for the client reaction WRITERS (D1).
+ *
+ * A legacy DISLIKE row stays readable as history, but the app has no surface
+ * that writes one — the "not helpful" control was removed and the rating
+ * writer is gone. The writers therefore reject the kind outright, so no
+ * caller can resurrect the negative write path by passing the token through.
+ */
+export function assertWritableReactionKind(kind: ReactionKind | null): void {
+  assertKind(kind);
+  if (kind === "DISLIKE") {
+    throw new ApiError("Unknown reaction", 400);
+  }
+}
+
 interface CommentReactionRow {
   comment_id?: unknown;
   my_reaction?: unknown;
@@ -279,7 +296,7 @@ export async function setCommentReaction(
   commentId: string,
   kind: ReactionKind | null,
 ): Promise<CommentReactionSummary> {
-  assertKind(kind);
+  assertWritableReactionKind(kind);
   const { data, error } = await getSupabase().rpc("findback_react_comment_client", {
     p_comment_id: commentId,
     p_type: kind,

@@ -19,7 +19,6 @@ const { postsMock, findMock, authState } = vi.hoisted(() => ({
     fetchSocialState: vi.fn(),
     addComment: vi.fn(),
     deleteComment: vi.fn(),
-    ratePost: vi.fn(),
     reactToPost: vi.fn(),
     updatePostStatus: vi.fn(),
   },
@@ -266,7 +265,6 @@ function deferred<T>() {
 
 describe("PostDetail mutation locks", () => {
   let reaction: ReturnType<typeof deferred<{ postId: string; likeCount: number; dislikeCount: number; myReaction: "LIKE" | "DISLIKE" | null }>>;
-  let rating: ReturnType<typeof deferred<{ postId: string; score: number; ratingAvg: number | null; ratingCount: number }>>;
 
   beforeEach(() => {
     postsMock.fetchPost.mockResolvedValue(basePost);
@@ -275,9 +273,7 @@ describe("PostDetail mutation locks", () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
 
     reaction = deferred();
-    rating = deferred();
     postsMock.reactToPost.mockImplementation(() => reaction.promise);
-    postsMock.ratePost.mockImplementation(() => rating.promise);
   });
 
   afterEach(cleanup);
@@ -298,43 +294,36 @@ describe("PostDetail mutation locks", () => {
     expect(likeButton.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("sends one Like RPC on a rapid double tap and shares the lock with Not helpful", async () => {
+  it("sends one Like RPC on a rapid double tap and locks the control until it settles", async () => {
     renderDetail();
     const likeButton = await screen.findByTestId("detail-like");
-    const dislikeButton = screen.getByRole("button", { name: /Not helpful/ });
     // Same React batch also exercises the synchronous ref guard.
     act(() => {
       fireEvent.click(likeButton);
       fireEvent.click(likeButton);
-      fireEvent.click(dislikeButton);
     });
     expect(postsMock.reactToPost).toHaveBeenCalledTimes(1);
     expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE");
     expect(likeButton.getAttribute("aria-pressed")).toBe("true");
-    for (const button of [likeButton, dislikeButton]) {
-      expect((button as HTMLButtonElement).disabled).toBe(true);
-      expect(button.getAttribute("aria-busy")).toBe("true");
-    }
+    expect((likeButton as HTMLButtonElement).disabled).toBe(true);
+    expect(likeButton.getAttribute("aria-busy")).toBe("true");
     await act(async () => reaction.resolve({ postId: "p1", likeCount: 1, dislikeCount: 0, myReaction: "LIKE" }));
     expect((likeButton as HTMLButtonElement).disabled).toBe(false);
     expect(likeButton.getAttribute("aria-busy")).toBe("false");
-    expect((dislikeButton as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(likeButton);
     expect(postsMock.reactToPost).toHaveBeenLastCalledWith("p1", null);
   });
 
-  it("Not helpful locks Like until the reaction settles", async () => {
+  it("offers no 'not helpful' write path: the legacy count stays readable (D1)", async () => {
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, dislikeCount: 3 });
     renderDetail();
-    const likeButton = await screen.findByTestId("detail-like");
-    const dislikeButton = screen.getByRole("button", { name: /Not helpful/ });
-    fireEvent.click(dislikeButton);
-    fireEvent.click(likeButton);
-    expect(postsMock.reactToPost).toHaveBeenCalledTimes(1);
-    expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "DISLIKE");
-    expect((likeButton as HTMLButtonElement).disabled).toBe(true);
-    await act(async () => reaction.resolve({ postId: "p1", likeCount: 0, dislikeCount: 1, myReaction: "DISLIKE" }));
-    expect((likeButton as HTMLButtonElement).disabled).toBe(false);
-    expect(dislikeButton.getAttribute("aria-pressed")).toBe("true");
+    await screen.findByTestId("detail-like");
+    // The control is gone: there is no way to write a DISLIKE reaction.
+    expect(screen.queryByRole("button", { name: /not helpful/i })).toBeNull();
+    // The historical count is still readable.
+    expect(screen.getByText(/Not helpful reactions · 3/)).toBeTruthy();
+    // And nothing was written.
+    expect(postsMock.reactToPost).not.toHaveBeenCalled();
   });
 
   it("rolls a failed reaction back, announces it and allows retry", async () => {
@@ -356,58 +345,59 @@ describe("PostDetail mutation locks", () => {
     await act(async () => reaction.resolve({ postId: "p1", likeCount: 0, dislikeCount: 0, myReaction: null }));
   });
 
-  it("locks every star during a rating request, then allows the next rating", async () => {
+  it("the report rating is read-only: no star control and no rating write (D1)", async () => {
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, ratingAvg: 4.5, ratingCount: 2 });
     renderDetail();
-    await screen.findByRole("radiogroup", { name: /Your rating/ });
-    const star3 = screen.getByRole("radio", { name: "3 stars" });
-    const star5 = screen.getByRole("radio", { name: "5 stars" });
-    act(() => {
-      fireEvent.click(star3);
-      fireEvent.click(star5);
-    });
-    expect(postsMock.ratePost).toHaveBeenCalledTimes(1);
-    expect(postsMock.ratePost).toHaveBeenCalledWith("p1", 3);
-    for (const radio of screen.getAllByRole("radio")) expect((radio as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByRole("radiogroup", { name: /Your rating/ }).getAttribute("aria-busy")).toBe("true");
-    await act(async () => rating.resolve({ postId: "p1", score: 3, ratingAvg: 3, ratingCount: 1 }));
-    expect(star3.getAttribute("aria-checked")).toBe("true");
-    expect((star5 as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByRole("radiogroup", { name: /Your rating/ }).getAttribute("aria-busy")).toBe("false");
-    rating = deferred();
-    fireEvent.click(star5);
-    expect(postsMock.ratePost).toHaveBeenLastCalledWith("p1", 5);
-    await act(async () => rating.resolve({ postId: "p1", score: 5, ratingAvg: 5, ratingCount: 1 }));
-    expect(star5.getAttribute("aria-checked")).toBe("true");
+    await screen.findByTestId("detail-like");
+    // The star control is gone: an arbitrary score on a report is never
+    // written by the client any more.
+    expect(screen.queryByRole("radiogroup", { name: /your rating/i })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /stars/i })).toBeNull();
+    expect(screen.queryByText(/tap a star/i)).toBeNull();
+    // The community average is still shown.
+    expect(screen.getByText("4.5")).toBeTruthy();
+    // Nothing in the screen offers a rating input (the writer is gone from
+    // the service too — see services/posts.test.ts "exports no rating writer").
   });
 
-  it("restores the previous rating and announces a real failure", async () => {
+  it("keeps the viewer's legacy rating readable without any write path (D1)", async () => {
     postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: 2 });
-    render(<LiveRegion />);
     renderDetail();
-    const star2 = await screen.findByRole("radio", { name: "2 stars" });
-    await waitFor(() => expect(star2.getAttribute("aria-checked")).toBe("true"));
-    const star5 = screen.getByRole("radio", { name: "5 stars" });
-    fireEvent.click(star5);
-    expect(star5.getAttribute("aria-checked")).toBe("true");
-    await act(async () => rating.reject(new Error("Rating could not be saved")));
-    expect(star2.getAttribute("aria-checked")).toBe("true");
-    expect(star5.getAttribute("aria-checked")).toBe("false");
-    expect((star5 as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByRole("alert").textContent).toBe("Rating could not be saved");
-    expect(screen.getByTestId("live-region-announcement").textContent).toBe("Rating could not be saved");
-    rating = deferred();
-    fireEvent.click(star5);
-    expect(postsMock.ratePost).toHaveBeenCalledTimes(2);
-    await act(async () => rating.resolve({ postId: "p1", score: 5, ratingAvg: 5, ratingCount: 1 }));
+    await screen.findByTestId("detail-like");
+    expect(screen.getByText("Your rating: 2 out of 5")).toBeTruthy();
+    expect(screen.getByText(/Report ratings are read-only\./)).toBeTruthy();
   });
 
-  it("keeps owner controls locked until both independent social requests settle", async () => {
+  it("never invites a rating the app can no longer write (D1)", async () => {
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, ratingAvg: null, ratingCount: 0 });
+    renderDetail();
+    await screen.findByTestId("detail-like");
+    // The empty state must not tell the reader to rate a report: the rating
+    // writer is gone, so "be the first to rate" would be a dead instruction
+    // contradicting "Report ratings are read-only."
+    expect(screen.getByText("No community ratings yet.")).toBeTruthy();
+    expect(screen.queryByText(/be the first to rate/i)).toBeNull();
+    expect(screen.getByText(/Report ratings are read-only\./)).toBeTruthy();
+  });
+
+  it("keeps the viewer's legacy 'not helpful' history readable (D1)", async () => {
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, dislikeCount: 2 });
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: "DISLIKE", myRating: null });
+    renderDetail();
+    await screen.findByTestId("detail-like");
+    // The historical count and the reader's own old DISLIKE row stay visible…
+    expect(screen.getByText(/Not helpful reactions · 2/)).toBeTruthy();
+    expect(screen.getByText(/Your earlier .Not helpful. reaction is still counted here\./)).toBeTruthy();
+    // …but there is still no way to write one.
+    expect(screen.queryByRole("button", { name: /not helpful/i })).toBeNull();
+    expect(postsMock.reactToPost).not.toHaveBeenCalled();
+  });
+
+  it("keeps owner controls locked until the reaction settles", async () => {
     authState.user = { id: "u2", username: "owner" };
     renderDetail();
     const likeButton = await screen.findByTestId("detail-like");
     fireEvent.click(likeButton);
-    fireEvent.click(screen.getByRole("radio", { name: "3 stars" }));
-    await act(async () => rating.resolve({ postId: "p1", score: 3, ratingAvg: 3, ratingCount: 1 }));
     const status = screen.getByRole("radio", { name: "Matched" });
     expect(status.getAttribute("aria-disabled")).toBe("true");
     await act(async () => reaction.resolve({ postId: "p1", likeCount: 1, dislikeCount: 0, myReaction: "LIKE" }));
@@ -561,7 +551,6 @@ describe("PostDetail progressive loading", () => {
   beforeEach(() => {
     postsMock.addComment.mockReset();
     postsMock.deleteComment.mockReset();
-    postsMock.ratePost.mockReset();
     postsMock.reactToPost.mockReset();
     postsMock.updatePostStatus.mockReset();
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });

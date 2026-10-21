@@ -278,12 +278,19 @@ describe("reactionSummaryFromCounts (the one aggregator)", () => {
 /**
  * There is no `setPostReaction` any more: a post Like goes through
  * `reactToPost(postId, nextLikeReaction(current))` / `toggleLikeReaction`, so
- * "new writes are LIKE or null only" (packet `08` §2) is structural — no
- * exported writer accepts a canonical kind or DISLIKE.
+ * "new writes are LIKE or null only" (packet `08` §2) is structural at the
+ * call site. The canonical kinds the server still understands (LOVE,
+ * HELPFUL, SUPPORT, WOW) remain writable for the widened RPC, but the legacy
+ * negative kind DISLIKE is refused (D1): it is readable history, never a write.
  */
 describe("setCommentReaction", () => {
   it("rejects an unknown kind before calling the RPC", async () => {
     await expect(setCommentReaction("c1", "BOGUS" as never)).rejects.toMatchObject({ status: 400 });
+    expect(clientMock.rpc).not.toHaveBeenCalled();
+  });
+
+  it("refuses to write a legacy DISLIKE (D1)", async () => {
+    await expect(setCommentReaction("c1", "DISLIKE")).rejects.toMatchObject({ status: 400 });
     expect(clientMock.rpc).not.toHaveBeenCalled();
   });
 

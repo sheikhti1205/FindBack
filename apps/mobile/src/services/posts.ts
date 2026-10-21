@@ -9,7 +9,7 @@ import type {
   ReactionKind,
   ReactionSummary,
 } from "@findback/shared";
-import { reactionSummaryFromRow } from "./reactions";
+import { assertWritableReactionKind, reactionSummaryFromRow } from "./reactions";
 import { mapCommentAttachmentRefs } from "./commentAttachments";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
@@ -556,6 +556,8 @@ export async function reactToPost(
   // Seam inputs only: operation + status code + requested kind token.
   // `type` is the typed request kind (null = removal); no counts or text.
   const kind = type ?? "removed";
+  // D1: a legacy DISLIKE is readable history but is never written.
+  assertWritableReactionKind(type);
   const { data, error } = await getSupabase().rpc("findback_react_client", {
     p_post_id: postId,
     p_type: type,
@@ -589,33 +591,14 @@ export async function reactToPost(
   };
 }
 
-interface ClientRatingRow {
-  post_id: string;
-  score: number;
-  rating_avg: number | string | null;
-  rating_count: number | null;
-}
-
-export async function ratePost(postId: string, score: number): Promise<{
-  postId: string;
-  score: number;
-  ratingAvg: number | null;
-  ratingCount: number;
-}> {
-  const { data, error } = await getSupabase().rpc("findback_rate_client", {
-    p_post_id: postId,
-    p_score: score,
-  });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
-  const row = ((data ?? []) as ClientRatingRow[])[0];
-  if (!row) throw new ApiError("Rating was not saved", 400);
-  return {
-    postId: row.post_id,
-    score: Number(row.score),
-    ratingAvg: row.rating_avg == null ? null : Math.round(Number(row.rating_avg) * 100) / 100,
-    ratingCount: Number(row.rating_count ?? 0),
-  };
-}
+/*
+ * There is no client writer for a report rating (D1 / packet O4): an
+ * arbitrary score on a report was never backed by a confirmed relationship,
+ * so the app stopped writing one. The server-side `findback_rate_client` RPC
+ * still exists and is frozen by the backend phase; only the client writer is
+ * gone. Ratings that already exist stay readable through the post row and
+ * `fetchSocialState` (the caller's own historical score).
+ */
 
 /** The caller's own reaction/rating for a post (reload hydration). */
 export async function fetchSocialState(

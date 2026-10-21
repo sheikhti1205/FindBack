@@ -10,7 +10,6 @@ const { postsMock, findMock, authState } = vi.hoisted(() => ({
     fetchSocialState: vi.fn(),
     addComment: vi.fn(),
     deleteComment: vi.fn(),
-    ratePost: vi.fn(),
     reactToPost: vi.fn(),
     updatePostStatus: vi.fn(),
   },

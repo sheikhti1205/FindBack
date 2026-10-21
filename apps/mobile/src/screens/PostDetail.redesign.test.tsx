@@ -18,7 +18,6 @@ const { postsMock, findMock, authState } = vi.hoisted(() => ({
     fetchSocialState: vi.fn(),
     addComment: vi.fn(),
     deleteComment: vi.fn(),
-    ratePost: vi.fn(),
     reactToPost: vi.fn(),
     updatePostStatus: vi.fn(),
   },
@@ -257,13 +256,17 @@ describe("PostDetail redesign (UXN-3)", () => {
     expect(document.activeElement).toBe(comments);
   });
 
-  it("uses vertical sections, with a distinct average and personal rating", async () => {
+  it("uses vertical sections, with the community average and a read-only personal rating", async () => {
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: 3 });
     renderDetail();
     await screen.findByRole("heading", { level: 1 });
     expect(screen.queryByRole("navigation", { name: /report sections/i })).toBeNull();
     const rating = screen.getByRole("region", { name: /community rating/i });
     expect(rating.textContent).toContain("4.5");
-    expect(screen.getByRole("radiogroup", { name: /your rating/i })).toBeTruthy();
+    // The personal rating is still readable, but it is no longer a control:
+    // the client writes no arbitrary report score (D1).
+    expect(rating.textContent).toContain("Your rating: 3 out of 5");
+    expect(screen.queryByRole("radiogroup", { name: /your rating/i })).toBeNull();
     const summary = screen.getByRole("region", { name: /report summary/i });
     const hero = screen.getByTestId("detail-hero-track");
     expect(summary.compareDocumentPosition(hero) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

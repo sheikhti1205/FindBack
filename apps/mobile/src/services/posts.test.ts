@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./session";
+import * as postsModule from "./posts";
 import {
   addComment,
   createPost,
@@ -10,7 +11,6 @@ import {
   fetchMyPosts,
   fetchPost,
   fetchSocialState,
-  ratePost,
   reactToPost,
   updatePostStatus,
 } from "./posts";
@@ -84,7 +84,6 @@ describe("social SQLSTATE preservation", () => {
     ["fetchComments", () => fetchComments("p1")],
     ["deleteComment", () => deleteComment("p1", "c1")],
     ["reactToPost", () => reactToPost("p1", "LOVE")],
-    ["ratePost", () => ratePost("p1", 5)],
     ["fetchSocialState", () => fetchSocialState("p1")],
   ])("%s carries P0002 without changing the 404 mapping", async (_name, run) => {
     clientMock.rpc.mockResolvedValue({ data: null, error: { message: "Unavailable", code: "P0002" } });
@@ -541,22 +540,16 @@ describe("reactToPost", () => {
     expect(res.myReaction).toBeNull();
     expect(res.likeCount).toBe(0);
   });
-});
 
-describe("ratePost", () => {
-  it("returns the live average/count for the caller score", async () => {
-    clientMock.rpc.mockResolvedValue({
-      data: [{ post_id: "p1", score: 5, rating_avg: "4.33", rating_count: 3 }],
-      error: null,
-    });
+  it("refuses to write a legacy DISLIKE (D1)", async () => {
+    await expect(reactToPost("p1", "DISLIKE")).rejects.toMatchObject({ status: 400 });
+    expect(clientMock.rpc).not.toHaveBeenCalled();
+  });
 
-    const res = await ratePost("p1", 5);
-
-    expect(clientMock.rpc).toHaveBeenCalledWith("findback_rate_client", {
-      p_post_id: "p1",
-      p_score: 5,
-    });
-    expect(res).toEqual({ postId: "p1", score: 5, ratingAvg: 4.33, ratingCount: 3 });
+  it("exports no rating writer (D1)", () => {
+    // A report rating is read-only now: the service must not expose a writer
+    // for it at all, so nothing can resurrect one by importing it.
+    expect("ratePost" in postsModule).toBe(false);
   });
 });
 
