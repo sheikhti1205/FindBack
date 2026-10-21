@@ -65,6 +65,17 @@ describe("suggestReportFields (extract-report-fields consumer, fakes only)", () 
     if (result.ok) {
       expect(result.value.suggestions.map((s) => s.field)).toEqual(["title", "description", "date", "category"]);
       expect(result.value.suggestions.every((s) => s.source === "extract-report-fields")).toBe(true);
+      // The values the extraction produced, not merely the fields it named: a
+      // copy of the reviewed list that substitutes or fabricates a value renders
+      // and can be applied, so the reviewable patch is only reviewable if the
+      // value it carries is the one that was extracted (CF-070 gate review
+      // MAJOR-1).
+      expect(result.value.suggestions.map((s) => s.suggestedValue)).toEqual([
+        "Black umbrella",
+        "Lost yesterday",
+        "yesterday",
+        "Umbrellas & Bottles",
+      ]);
       expect(result.value.droppedCategory).toBe(false);
       expect(result.value.action).toEqual({ action: "NONE" });
     }
@@ -77,6 +88,7 @@ describe("suggestReportFields (extract-report-fields consumer, fakes only)", () 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.suggestions.map((s) => s.field)).toEqual(["title"]);
+      expect(result.value.suggestions.map((s) => s.suggestedValue)).toEqual(["Keys"]);
       expect(result.value.droppedCategory).toBe(true);
     }
   });

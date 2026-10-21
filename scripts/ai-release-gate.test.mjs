@@ -114,6 +114,1260 @@ describe("validateReportFieldHelperWired", () => {
     deepStrictEqual(validateReportFieldHelperWired(REAL), []);
   });
 
+  describe("R5 bounded callback effects and exits", () => {
+  const SUCCESS_ANCHOR = "      suggestions: built.suggestions,";
+  const DISCARDED = "report-field helper must use the reviewed narrow task's result, not merely mention the call";
+  const onHelper = (label, from, to) => (sources) => {
+    equal(sources.reportFieldSuggestionsSource.split(from).length - 1, 1, `${label}: unique anchor`);
+    return { ...sources, reportFieldSuggestionsSource: sources.reportFieldSuggestionsSource.replace(from, to) };
+  };
+  // R5: each refusal is a hole in R4's exit/value/effect reasoning, not a source-text pin.
+  for (const [label, callback] of [
+    ["R5-1 trailing empty switch clause", '(s) => { switch (s.field) { default: return s; case "title": } }'],
+    ["R5-2 sparse array has no for-in keys", '(s) => { for (const key in [,]) { return s; } }'],
+    ["R5-3 later for-of entry is fabricated", '(s) => { for (const x of [s, { ...s, suggestedValue: "REPLACED" }]) { if (x.suggestedValue === "REPLACED") return x; } return s; }'],
+    ["R5-4 aggregate argument aliases element", '(s) => { const alter = ({ row }) => { row.suggestedValue = "REPLACED"; }; alter({ row: s }); return s; }'],
+    ["R5-5 local aggregate aliases element", '(s) => { const box = { row: s }; box.row.suggestedValue = "REPLACED"; return s; }'],
+    ["R5-6 array destructuring aliases element", '(s) => { const [row] = [s]; row.suggestedValue = "REPLACED"; return s; }'],
+    ["R5-7 unread call in condition closes over element", '(s) => { const alter = () => { const box = [s]; box[0].suggestedValue = "REPLACED"; }; if (alter()) return s; return s; }'],
+    ["R5-8 new expression can mutate aggregate argument", '(s) => { new Alter({ row: s }); return s; }'],
+    ["R5-9 tagged template can mutate aggregate argument", '(s) => { alter`${{ row: s }}`; return s; }'],
+    ["R5-10 property increment through aggregate alias", '(s) => { const box = { row: s }; box.row.confidence++; return s; }'],
+    ["R5-11 property delete through aggregate alias", '(s) => { const box = { row: s }; delete box.row.suggestedValue; return s; }'],
+    ["R5-12 assign target hides alias", '(s) => { const box = { row: s }; Object.assign(box.row, { suggestedValue: "REPLACED" }); return s; }'],
+    ["R5-13 shadowed Object.assign is not the builtin", '(s) => { const Object = { assign: (_target, row) => { row.suggestedValue = "REPLACED"; } }; Object.assign({}, s); return s; }'],
+    ["R5-14 concise body also checks effects", '(s) => Object.assign({ ...s }, { suggestedValue: (mutate({ row: s }), s.suggestedValue) })'],
+    ["R5-15 for-of ordinary object is not iterable", '(s) => { for (const key of { row: s }) { return s; } }'],
+    ["R5-16 for-of writes an existing holder", '(s) => { for (s of [s, { ...s, suggestedValue: "REPLACED" }]) {} return s; }'],
+    ["R5-17 for-in writes an existing holder", '(s) => { for (s in { row: s }) {} return s; }'],
+    ["R5-18 async callback returns a promise not the record", 'async (s) => s'],
+    ["R5-19 generator callback returns an iterator not the record", 'function* (s) { return s; }'],
+    ["R5-20 destructured parameter write changes rebuilt record", '({ suggestedValue, ...rest }) => { suggestedValue = "REPLACED"; return { suggestedValue, ...rest }; }'],
+    ["R5-21 destructured part shadow is not the parameter", '({ suggestedValue, ...rest }) => { { const suggestedValue = "REPLACED"; return { suggestedValue, ...rest }; } }'],
+  ]) {
+    it(`refuses the fresh survivor: ${label}`, () => {
+      const rewritten = onHelper(label, SUCCESS_ANCHOR, `      suggestions: built.suggestions.map(${callback}),`)(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.includes(`application-integration: ${DISCARDED}`), JSON.stringify(errors));
+    });
+  }
+
+  for (const [label, callback] of [
+    ["R5-A1 direct identity", '(s) => s'],
+    ["R5-A2 one holder loop", '(s) => { for (const x of [s]) { return x; } }'],
+    ["R5-A3 all reachable loop entries preserve value", '(s) => { for (const x of [s, s]) { if (x.field === "title") return x; } return s; }'],
+    ["R5-A4 empty leading switch clause falls forward", '(s) => { switch (s.field) { case "title": default: return s; } }'],
+    ["R5-A5 dense for-in enters body", '(s) => { for (const key in [s]) { return s; } }'],
+    ["R5-A6 nonempty object for-in enters body", '(s) => { for (const key in { row: s }) { return s; } }'],
+    ["R5-A7 discarded fresh target copy", '(s) => { Object.assign({}, s, { suggestedValue: "REPLACED" }); return s; }'],
+    ["R5-A8 local primitive increment is not a property write", '(s) => { let count = 0; count++; return s; }'],
+    ["R5-A9 unchanged destructured parameter round trip", '({ suggestedValue, ...rest }) => ({ suggestedValue, ...rest })'],
+  ]) {
+    it(`accepts the behaviour-preserving rewrite: ${label}`, () => {
+      const rewritten = onHelper(label, SUCCESS_ANCHOR, `      suggestions: built.suggestions.map(${callback}),`)(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+    });
+  }
+
+  });
+
+  // R5 review fix-forward (REVIEW-CF070-GATE-REMEDIATION-R5): the effect contract
+  // read callback bodies only, so a write made in the helper around the callback
+  // could change the reviewed records and still ship. These cases hold the
+  // helper-level route to the same standard.
+  describe("R6 helper-level reviewed-record mutations and unreadable payloads", () => {
+    const SUCCESS_START = "  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {";
+    const SUCCESS_BLOCK = [
+      "  return {",
+      "    ok: true,",
+      "    value: {",
+      "      suggestions: built.suggestions,",
+      "      droppedCategory: built.droppedCategory,",
+      "      action: opResult.value.action,",
+      "    },",
+      "  };",
+    ].join("\n");
+    const MUTATED = "report-field helper must not modify the reviewed suggestions after computing them";
+    const onHelperWhere = (label, edits) => (sources) => {
+      let text = sources.reportFieldSuggestionsSource;
+      for (const [from, to] of edits) {
+        equal(text.split(from).length - 1, 1, `${label}: unique anchor`);
+        text = text.replace(from, to);
+      }
+      ok(text !== sources.reportFieldSuggestionsSource, `${label}: mutation must change its input`);
+      return { ...sources, reportFieldSuggestionsSource: text };
+    };
+    const withWrites = (label, writes) =>
+      onHelperWhere(label, [[SUCCESS_START, SUCCESS_START.replace("\n  return {", `\n${writes}\n  return {`)]]);
+
+    for (const [label, writes] of [
+      ["R6-1 zeroes the reviewed array length", "  built.suggestions.length = 0;"],
+      ["R6-2 replaces the array through a string-key write", '  built["suggestions"] = [];'],
+      ["R6-3 assigns onto the reviewed result", "  Object.assign(built, { suggestions: [] });"],
+      ["R6-4 element write into the reviewed array", '  built.suggestions[0] = { field: "title", suggestedValue: "REPLACED", source: REPORT_FIELD_SOURCE };'],
+      ["R6-5 element property write through for-of", '  for (const item of built.suggestions) {\n    if (item.suggestedValue.length > 30) item.suggestedValue = "REPLACED";\n  }'],
+      ["R6-6 element property write through forEach", '  built.suggestions.forEach((item) => { item.suggestedValue = "REPLACED"; });'],
+      ["R6-7 in-place sort of the reviewed array", "  built.suggestions.sort();"],
+      ["R6-8 in-place splice of a shipped copy", "  const list = built.suggestions.map((s) => s);\n  list.splice(0, list.length);"],
+    ]) {
+      it(`refuses the helper-level mutation: ${label}`, () => {
+        const rewritten = writes.includes("const list =")
+          ? onHelperWhere(label, [
+              [SUCCESS_START, SUCCESS_START.replace("\n  return {", `\n${writes}\n  return {`)],
+              ["      suggestions: built.suggestions,", "      suggestions: list,"],
+            ])(REAL)
+          : withWrites(label, writes)(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    it("refuses a success payload returned from a local helper", () => {
+      const rewritten = onHelperWhere("R6-9 payload helper", [
+        [
+          SUCCESS_BLOCK,
+          "  const okPayload = (suggestions: readonly ReportFieldSuggestion[]) => ({ ok: true as const, value: { suggestions, droppedCategory: false, action: opResult.value.action } });\n  return okPayload([]);",
+        ],
+      ])(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.length > 0, JSON.stringify(errors));
+    });
+
+    it("refuses a success payload whose ok is computed", () => {
+      const rewritten = onHelperWhere("R6-10 computed ok", [
+        ["    ok: true,", "    ok: opResult.value.fields.title !== undefined,"],
+      ])(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.length > 0, JSON.stringify(errors));
+    });
+
+    it("refuses a producer re-assigned through a shadowing catch parameter", () => {
+      const rewritten = onHelperWhere("R6-11 shadowed producer", [
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          '  let built = buildReportFieldSuggestions(opResult.value.fields);\n  try { throw (_f: never) => ({ suggestions: [] as never }); } catch (buildReportFieldSuggestions) {\n    built = buildReportFieldSuggestions(opResult.value.fields);\n  }',
+        ],
+      ])(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.length > 0, JSON.stringify(errors));
+    });
+
+    it("refuses a nested array instead of the reviewed list", () => {
+      const rewritten = onHelperWhere("R6-12 nested array", [
+        ["      suggestions: built.suggestions,", "      suggestions: [built.suggestions],"],
+      ])(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.length > 0, JSON.stringify(errors));
+    });
+
+    for (const [label, writes, edits] of [
+      ["R6-A1 mutates a discarded copy", "  const copy = [...built.suggestions];\n  copy.sort();", []],
+      ["R6-A2 reads and counts the reviewed list", "  const total = built.suggestions.length;\n  void total;", []],
+    ]) {
+      it(`accepts the preserving helper body: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, SUCCESS_START.replace("\n  return {", `\n${writes}\n  return {`)],
+          ...edits,
+        ])(REAL);
+        deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+      });
+    }
+
+    it("accepts a `map` whose arms both hand the element back", () => {
+      const rewritten = onHelperWhere("R6-A5 both arms", [
+        [
+          "      suggestions: built.suggestions,",
+          `      suggestions: built.suggestions.map((s) => ((s.suggestedValue ?? "") === "" ? s : s)),`,
+        ],
+      ])(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], "both arms");
+    });
+
+    it("accepts a copy spread beside a statically empty literal", () => {
+      const rewritten = onHelperWhere("R6-A6 empty spread beside holder", [
+        [
+          "      suggestions: built.suggestions,",
+          `      suggestions: built.suggestions.map((s) => ({ ...s, ...{} })),`,
+        ],
+      ])(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], "empty spread beside holder");
+    });
+
+    it("accepts a flatMap over a const-bound empty spread", () => {
+      const rewritten = onHelperWhere("R6-A3 const empty spread", [
+        [SUCCESS_START, "  const EMPTY: never[] = [];\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {"],
+        ["      suggestions: built.suggestions,", "      suggestions: built.suggestions.flatMap((s) => [s, ...EMPTY]),"],
+      ])(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], "flatMap const empty spread");
+    });
+
+    it("accepts a flatMap over a module-scoped const empty spread", () => {
+      const rewritten = onHelperWhere("R6-A4 module const empty spread", [
+        [
+          "export function buildReportFieldSuggestions",
+          "const EMPTY: never[] = [];\n\nexport function buildReportFieldSuggestions",
+        ],
+        ["      suggestions: built.suggestions,", "      suggestions: built.suggestions.flatMap((s) => [s, ...EMPTY]),"],
+      ])(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], "flatMap module const empty spread");
+    });
+
+    // R6 review fix-forward (REVIEW-CF070-GATE-REMEDIATION-R6 MAJOR-1, MINOR-2):
+    // the scan followed declaration aliases one hop and property accesses only,
+    // so a callee handed the chain, a destructured/assignment alias, a
+    // `Reflect.set`/`Object.defineProperty` call, an element-access method, a
+    // prototype method through `.call`, or a nested payload binding could still
+    // change what shipped. These hold those routes to the same standard.
+    for (const [label, writes] of [
+      ["R7-1 destructured alias truncates", "  const { suggestions } = built;\n  suggestions.length = 0;"],
+      ["R7-2 assignment alias truncates", "  let list: ReportFieldSuggestion[] = [];\n  list = built.suggestions;\n  list.length = 0;"],
+      ["R7-3 unknown callee is handed the chain", "  shrink(built.suggestions);"],
+      [
+        "R7-4 local callee mutates its parameter",
+        '  const shrink = (arr: ReportFieldSuggestion[]) => {\n    for (const item of arr) item.suggestedValue = "REPLACED";\n  };\n  shrink(built.suggestions);',
+      ],
+      ["R7-5 Reflect.set truncates the chain", '  Reflect.set(built.suggestions, "length", 0);'],
+      ["R7-6 Object.defineProperty rewrites an element", '  Object.defineProperty(built.suggestions, "0", { value: null });'],
+      ["R7-7 element-access method splices", '  built.suggestions["splice"](0);'],
+      ["R7-8 prototype method through call", "  Array.prototype.splice.call(built.suggestions, 0);"],
+    ]) {
+      it(`refuses the helper-level route: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, SUCCESS_START.replace("\n  return {", `\n${writes}\n  return {`)],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    it("refuses a write through the nested payload binding", () => {
+      const rewritten = onHelperWhere("R7-9 payload binding chain", [
+        [
+          SUCCESS_BLOCK,
+          [
+            "  const payload = {",
+            "    ok: true as const,",
+            "    value: {",
+            "      suggestions: built.suggestions,",
+            "      droppedCategory: built.droppedCategory,",
+            "      action: opResult.value.action,",
+            "    },",
+            "  };",
+            '  payload.value.suggestions.push({ field: "title", suggestedValue: "REPLACED", source: REPORT_FIELD_SOURCE });',
+            "  return payload;",
+          ].join("\n"),
+        ],
+      ])(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+    });
+
+    it("refuses an iteration callback passed by identifier", () => {
+      const rewritten = onHelperWhere("R7-10 callback by identifier", [
+        [
+          SUCCESS_START,
+          "  const clamp = (item: ReportFieldSuggestion) => { item.suggestedValue = \"REPLACED\"; };\n  built.suggestions.forEach(clamp);\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {",
+        ],
+      ])(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+    });
+
+    // R7 review fix-forward (REVIEW-CF070-GATE-REMEDIATION-R7 MAJOR-1): the scan was
+    // seeded from the shipped expression only, so a copied payload made it vacuous,
+    // and a spread/new argument, an element alias, an assignment destructuring and a
+    // nested destructuring were not followed. Each case below is one the reviewer
+    // measured as admitted on the R7 bytes.
+    for (const [label, edits] of [
+      [
+        "R8-1 copied payload with a truncated chain",
+        [
+          [SUCCESS_START, "  const built = buildReportFieldSuggestions(opResult.value.fields);\n  built.suggestions.length = 0;\n  return {"],
+          ["      suggestions: built.suggestions,", "      suggestions: [...built.suggestions],"],
+        ],
+      ],
+      [
+        "R8-2 identity-map payload with a clamped chain",
+        [
+          [SUCCESS_START, "  const built = buildReportFieldSuggestions(opResult.value.fields);\n  for (const item of built.suggestions) {\n    if (item.suggestedValue.length > 30) item.suggestedValue = \"REPLACED\";\n  }\n  return {"],
+          ["      suggestions: built.suggestions,", "      suggestions: built.suggestions.map((s) => s),"],
+        ],
+      ],
+      [
+        "R8-3 spread argument",
+        [
+          [SUCCESS_START, "  scrub(...built.suggestions);\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {"],
+        ],
+      ],
+      [
+        "R8-4 constructed argument",
+        [
+          [SUCCESS_START, "  new Holder(built.suggestions);\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {"],
+        ],
+      ],
+      [
+        "R8-5 element alias in a for-of",
+        [
+          [SUCCESS_START, "  for (const item of built.suggestions) {\n    const target = item;\n    if (target.suggestedValue.length > 30) target.suggestedValue = \"REPLACED\";\n  }\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {"],
+        ],
+      ],
+      [
+        "R8-6 destructuring assignment",
+        [
+          [SUCCESS_START, "  let list: ReportFieldSuggestion[] = [];\n  ({ suggestions: list } = built);\n  list.length = 0;\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {"],
+        ],
+      ],
+      [
+        "R8-7 nested destructuring",
+        [
+          [SUCCESS_START, "  const { suggestions: [first] } = built;\n  first.suggestedValue = \"REPLACED\";\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {"],
+        ],
+      ],
+    ]) {
+      it(`refuses the copied or aliased route: ${label}`, () => {
+        const rewritten = onHelperWhere(label, edits)(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    for (const [label, line] of [
+      ["R8-A1 slice payload", "      suggestions: built.suggestions.slice(),"],
+      ["R8-A2 Array.from payload", "      suggestions: Array.from(built.suggestions),"],
+    ]) {
+      it(`accepts the copying payload: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          ["      suggestions: built.suggestions,", line],
+        ])(REAL);
+        deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+      });
+    }
+
+    it("accepts a copy made with Object.assign that does not ship", () => {
+      const rewritten = onHelperWhere("R8-A3 assign copy", [
+        [SUCCESS_START, "  const box = Object.assign({}, { list: built.suggestions });\n  void box;\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {"],
+      ])(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], "assign copy");
+    });
+
+    // R8 review fix-forward (REVIEW-CF070-GATE-REMEDIATION-R8 MAJOR-1): a shallow
+    // copy shares its element objects; an element-wise iteration over the copy, an
+    // `Array.from` mapper, a property/element assignment target, and a tagged
+    // template, `await` or class expression carrying the chain were admitted. The
+    // red evidence for these routes is the reviewer's own r8c farm, not an author
+    // red run (the durable cases were written after the instrument measured them).
+    for (const [label, body] of [
+      [
+        "R9-1 spread copy element write",
+        '  const list = [...built.suggestions];\n  list.forEach((s) => { if (s.suggestedValue.length > 30) s.suggestedValue = "REPLACED"; });',
+      ],
+      [
+        "R9-2 Array.from mutating mapper",
+        '  const scratch = Array.from(built.suggestions, (s) => { s.suggestedValue = "REPLACED"; return s; });\n  void scratch;',
+      ],
+      [
+        "R9-3 property assignment holder",
+        '  const holder: { list: ReportFieldSuggestion[] } = { list: [] };\n  holder.list = built.suggestions;\n  holder.list.length = 0;',
+      ],
+      [
+        "R9-4 computed property holder",
+        '  const holder: { list: ReportFieldSuggestion[] } = { list: [] };\n  holder["list"] = built.suggestions;\n  holder.list.length = 0;',
+      ],
+      ["R9-5 tagged template", '  tag`${built.suggestions}`;'],
+      ["R9-6 await argument", "  take(await built.suggestions);"],
+      ["R9-7 class expression argument", "  take(class { list = built.suggestions; });"],
+      ["R9-8 custom receiver slice", "  parts.slice(built.suggestions);"],
+      ["R9-9 custom receiver concat", "  parts.concat(built.suggestions);"],
+    ]) {
+      it(`refuses the copied-element route: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    // R9 review fix-forward (REVIEW-CF070-GATE-REMEDIATION-R9 MAJOR-1/MINOR-1):
+    // element identity through iterators and copies, `reduce`'s element parameter,
+    // and copies stored on an assignment target or property. The red evidence is
+    // the reviewer's r9c farm; these cases were written after it measured them.
+    for (const [label, body] of [
+      [
+        "R10-1 entries iterator element write",
+        '  for (const [, s] of [...built.suggestions].entries()) { if (s.suggestedValue.length > 30) s.suggestedValue = "REPLACED"; }',
+      ],
+      [
+        "R10-2 index write through an Array.from copy",
+        '  const list = Array.from(built.suggestions);\n  list[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R10-3 reduce element parameter write",
+        '  built.suggestions.reduce((acc, s) => { if (s.suggestedValue.length > 30) s.suggestedValue = "REPLACED"; return acc; }, 0);',
+      ],
+      [
+        "R10-4 copy stored on a property then written",
+        '  const holder: { list: ReportFieldSuggestion[] } = { list: [] };\n  holder.list = [...built.suggestions];\n  holder.list[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R10-5 copy of a copy element write",
+        '  const list = [...built.suggestions];\n  const second = [...list];\n  second.forEach((s) => { s.suggestedValue = "REPLACED"; });',
+      ],
+      [
+        "R11-1 copy inside an object returned by a local function",
+        '  const make = () => ({ list: [...built.suggestions] });\n  const box = make();\n  box.list[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R11-2 copy returned by an IIFE",
+        '  const list = (() => { const inner = [...built.suggestions]; return inner; })();\n  list.forEach((s) => { s.suggestedValue = "REPLACED"; });',
+      ],
+      [
+        "R11-3 alias of a copy",
+        '  const list = [...built.suggestions];\n  const same = list;\n  same[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R11-4 copy reached through an object property alias",
+        '  const box = { list: [...built.suggestions] };\n  const l = box.list;\n  l[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R11-5 reduce accumulator rebound to the element",
+        '  built.suggestions.reduce((acc, s) => { acc = s; acc.suggestedValue = "REPLACED"; return acc; }, null);',
+      ],
+      [
+        "R11-6 sort comparator mutates its element",
+        '  const copy = built.suggestions.slice();\n  copy.sort((a, b) => { a.suggestedValue = "REPLACED"; return b.suggestedValue.length - a.suggestedValue.length; });\n  void copy;',
+      ],
+      [
+        "R10-7 copy returned from a local function",
+        '  const makeCopy = () => [...built.suggestions];\n  const list = makeCopy();\n  list.forEach((s) => { s.suggestedValue = "REPLACED"; });',
+      ],
+      [
+        "R10-6 shipped slice copy sorted",
+        '  const copy = built.suggestions.slice();\n  copy.sort();',
+      ],
+    ]) {
+      it(`refuses the element-identity route: ${label}`, () => {
+        const edits = [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+        ];
+        if (label === "R10-6 shipped slice copy sorted") {
+          edits.push(["      suggestions: built.suggestions,", "      suggestions: copy,"]);
+        }
+        const rewritten = onHelperWhere(label, edits)(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    for (const [label, body] of [
+      ["R10-A1 unshipped spread copy sorted", '  const copy = [...built.suggestions];\n  copy.sort();\n  void copy;'],
+      ["R10-A2 unshipped slice copy length reset", '  const copy = built.suggestions.slice();\n  copy.length = 0;\n  void copy;'],
+      ["R10-A3 reduce accumulator written", '  built.suggestions.reduce((acc, s) => { void s; acc.count += 1; return acc; }, { count: 0 });'],
+      ["R10-A4 read-only copy from a local function", '  const makeCopy = () => [...built.suggestions];\n  const list = makeCopy();\n  list.forEach((s) => { void s.suggestedValue; });'],
+      ["R11-A1 copy slot replaced immutably", '  const copy = built.suggestions.slice();\n  copy[0] = { ...copy[0], suggestedValue: "x" };\n  void copy;'],
+      ["R11-A2 comparator only reads its elements", '  const copy = built.suggestions.slice();\n  copy.sort((a, b) => a.suggestedValue.length - b.suggestedValue.length);\n  void copy;'],
+    ]) {
+      it(`accepts the copy-local write: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+        ])(REAL);
+        deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+      });
+    }
+
+    // R11 review fix-forward: an in-place call on a copy returns the same
+    // elements (`[...chain].sort(by).forEach(...)`), so it is a copy too; and a
+    // comparator that only reads a *property* of its elements must stay accepted.
+    for (const [label, body] of [
+      [
+        "R12-1 spread copy sorted then written",
+        '  const sorted = [...built.suggestions].sort((a, b) => a.suggestedValue.localeCompare(b.suggestedValue));\n  sorted[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R12-2 Array.from copy sorted then written",
+        '  const sorted = Array.from(built.suggestions).sort((a, b) => a.suggestedValue.localeCompare(b.suggestedValue));\n  sorted[0].suggestedValue = "REPLACED";',
+      ],
+    ]) {
+      it(`refuses the in-place-call copy route: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    it("refuses a copy stored in a container and written through it", () => {
+      const label = "R12-3 copy round-tripped through a Map";
+      const body = [
+        "  const store = new Map();",
+        "  const copy = [...built.suggestions];",
+        '  store.set("list", copy);',
+        '  const list = store.get("list");',
+        '  if (list) list[0].suggestedValue = "REPLACED";',
+      ].join("\n");
+      const rewritten = onHelperWhere(label, [
+        [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+      ])(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+    });
+
+    // R12 verdict routes: a fresh container over a copy, a container
+    // constructor, and values/entries projections.
+    for (const [label, body] of [
+      ["R13-8 object spread of a copy", "  const copy = built.suggestions.slice();\n  const box = { ...copy };\n  box[0].suggestedValue = \"REPLACED\";"],
+      ["R13-9 copy in a Map entry literal", "  const copy = built.suggestions.slice();\n  const m = new Map([[\"a\", copy]]);\n  void m;"],
+    ]) {
+      it(`refuses the container route: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    it("refuses an element write through Object.values", () => {
+      const label = "R13-10 element through Object.values";
+      const rewritten = onHelperWhere(label, [
+        [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n  const copy = built.suggestions.slice();\n  Object.values(copy)[0].suggestedValue = "REPLACED";\n  return {`],
+      ])(REAL);
+      const errors = validateReportFieldHelperWired(rewritten);
+      ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+    });
+
+    it("accepts a read-only Object.values projection", () => {
+      const label = "R13-A4 Object.values projection";
+      const rewritten = onHelperWhere(label, [
+        [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n  const copy = built.suggestions.slice();\n  const values = Object.values(copy);\n  void values;\n  return {`],
+      ])(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+    });
+
+    // R14c: accessor returns that are conditional, nullable or recursive.
+    for (const [label, tail] of [
+      [
+        "R15-1 conditional accessor",
+        '  const head = (useFirst: boolean) => (useFirst ? built.suggestions[0] : built.suggestions[1]);\n  const picked = head(true);\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R15-2 early return undefined",
+        '  const head = () => { if (built.suggestions.length === 0) return undefined; return built.suggestions[0]; };\n  const picked = head();\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R15-3 nullish accessor",
+        '  const head = () => built.suggestions[0] ?? undefined;\n  const picked = head();\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R15-4 recursive accessor",
+        '  const head = (n: number): (typeof built.suggestions)[0] | undefined => (n > 0 ? head(n - 1) : built.suggestions[0]);\n  const picked = head(1);\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R15-A1 nested block shadow keeps the outer holder live",
+        '  built.suggestions.forEach((elem) => {\n    { const elem = 5; void elem; }\n    elem.suggestedValue = "REPLACED";\n  });',
+      ],
+    ]) {
+      it(`classifies the accessor return: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${tail}\n  return {`],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    // R15 verdict: three routes survived the R15 tests themselves, so these
+    // cases are the durable form of the reviewer's own instruments
+    // (`r15c-shadow-forhead2`, `r15c-mixed-branches`, `r15c-neutral-void`,
+    // `r14c-ordinary`). A green suite that does not contain the measured shapes
+    // is exactly what allowed the R15 PARTIAL.
+    for (const [label, tail] of [
+      [
+        "R16-1 loop-head let cannot shadow a live holder",
+        '  const copy = built.suggestions.slice();\n  const s = copy.at(0);\n  for (let s = 0; s < 1; s += 1) { void s; }\n  if (s) s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-2 loop-head let cannot shadow an accessor holder",
+        '  const first = () => built.suggestions.at(0);\n  const s = first();\n  for (let s = 0; s < 1; s += 1) { void s; }\n  if (s) s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-3 nested block cannot shadow a live holder",
+        '  const copy = built.suggestions.slice();\n  const s = copy.at(0);\n  { const s = 5; void s; }\n  if (s) s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-4 mixed-branch conditional accessor",
+        '  const pick = (f: boolean) => (f ? built.suggestions[0] : "none");\n  const picked = pick(true);\n  if (typeof picked !== "string") picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-5 mixed-branch nullish accessor",
+        '  const pick = (f: string | undefined) => (f ?? built.suggestions[0]);\n  const picked = pick(undefined);\n  if (typeof picked !== "string") picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-6 mixed-branch or/and accessors",
+        '  const pickOr = (f: string | undefined) => (f || built.suggestions[0]);\n  const pickAnd = (f: string | undefined) => (f && built.suggestions[0]);\n  const a = pickOr(undefined);\n  const b = pickAnd("x");\n  if (typeof a !== "string") a.suggestedValue = "REPLACED";\n  if (typeof b !== "string") b.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-7 void 0 branch is the absent value",
+        '  const pick = (f: boolean) => (f ? built.suggestions[0] : void 0);\n  const picked = pick(true);\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-8 statement return void 0",
+        '  const pick = (f: boolean) => {\n    if (!f) return void 0;\n    return built.suggestions[0];\n  };\n  const picked = pick(true);\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-9 comma-expression undefined",
+        '  const pick = (f: boolean) => (f ? built.suggestions[0] : (0, undefined));\n  const picked = pick(true);\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-11 accessor returns a local name bound to an element",
+        '  const pick = () => { const first = built.suggestions[0]; return first; };\n  const s = pick();\n  s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-12 neutral name in one scope, element in another",
+        '  { const X = null; void X; }\n  const X = built.suggestions[0];\n  const pick = () => X;\n  const s = pick();\n  s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-13 an array literal boxes an element",
+        '  const first = built.suggestions[0];\n  const box = [first];\n  box[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-14 an array literal index is the element",
+        '  const first = built.suggestions[0];\n  const box = [first];\n  const s = box[0];\n  s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-15 a shorthand object boxes an element",
+        '  const first = built.suggestions[0];\n  const t = { first };\n  t.first.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16-16 a function that returns the chain is the chain",
+        '  const get = () => built.suggestions;\n  get().length = 0;',
+      ],
+      [
+        "R16-17 function expression returning the chain, spliced",
+        '  const get = function () { return built.suggestions; };\n  get().splice(0, 1);',
+      ],
+      [
+        "R16-18 alias of a chain-returning call is the chain",
+        '  const get = () => built.suggestions;\n  const alias = get();\n  alias.splice(0, 1);',
+      ],
+      [
+        "R16-19 chain-returning call sorted in place",
+        '  const get = () => built.suggestions;\n  get().sort((a, b) => 0);',
+      ],
+      [
+        "R16B-1 element reached through an assignment-form binding",
+        '  const copy = [...built.suggestions];\n  let picked: any = null;\n  picked = copy.at(0);\n  const get = () => picked;\n  const s = get();\n  s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16B-2 element reached through a container property",
+        '  const first = built.suggestions[0];\n  const t = { first };\n  const get = () => t.first;\n  const s = get();\n  s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16B-3 element reached through a parameter default",
+        '  const get = (x: any = built.suggestions[0]) => x;\n  const s = get();\n  s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16B-4 comma-return accessor is the chain",
+        '  const get = () => (0, built.suggestions);\n  get().length = 0;',
+      ],
+      [
+        "R16B-5 container-literal index is the chain",
+        '  const get = () => [built.suggestions][0];\n  get().splice(0, 1);',
+      ],
+      [
+        "R16B-6 container-literal property is the chain",
+        '  const get = () => ({ list: built.suggestions }).list;\n  get().length = 0;',
+      ],
+      [
+        "R16B-7 iteration callback hands the chain into the result array",
+        '  const get = () => built.suggestions;\n  const arr = [1].map(get);\n  arr[0].length = 0;',
+      ],
+      [
+        "R16B-8 comma-return accessor pushed into",
+        '  const get = () => (0, built.suggestions);\n  get().push({ field: "title", suggestedValue: "x" } as never);',
+      ],
+      [
+        "R16D-1 Array.from mapper returns the original chain",
+        '  const get = () => built.suggestions;\n  const arr = Array.from([1], get);\n  arr[0].length = 0;',
+      ],
+      [
+        "R16D-2 filter selects the original chain from a box",
+        '  const arr = [built.suggestions].filter(() => true);\n  arr[0].length = 0;',
+      ],
+      [
+        "R16D-3 find selects the original chain from a box",
+        '  const arr = [built.suggestions].find(() => true);\n  arr.length = 0;',
+      ],
+      [
+        "R16D-4 flatMap copies records, not their identities",
+        '  const get = () => built.suggestions;\n  const arr = [1].flatMap(get);\n  arr[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16D-5 findLast selects the original chain from a box",
+        '  const arr = [built.suggestions].findLast(() => true);\n  arr.length = 0;',
+      ],
+      [
+        "R16E-1 a chain passed to a mapper parameter is written in place",
+        '  [built.suggestions].map((list) => { list.length = 0; return 0; });',
+      ],
+      [
+        "R16E-2 a filter callback writes the chain it receives",
+        '  [built.suggestions].filter((list) => { list.length = 0; return true; });',
+      ],
+      [
+        "R16E-3 a flatMap callback writes the chain it receives",
+        '  [built.suggestions].flatMap((list) => { list.length = 0; return []; });',
+      ],
+      [
+        "R16E-4 a method of a literal object is the chain-returning callback",
+        '  const obj = { get: () => built.suggestions };\n  [1].map(obj.get)[0].length = 0;',
+      ],
+      [
+        "R16E-5 at() unwraps a mapper result to the chain",
+        '  const arr = [1].map(() => built.suggestions);\n  arr.at(0)!.length = 0;',
+      ],
+      [
+        "R16E-6 pop() unwraps a mapper result to the chain",
+        '  const arr = [1].map(() => built.suggestions);\n  arr.pop()!.length = 0;',
+      ],
+      [
+        "R16E-7 a mapper that returns an array container is two levels deep",
+        '  const arr = [1].map(() => [built.suggestions]);\n  arr[0][0].length = 0;',
+      ],
+      [
+        "R16E-8 a mapper that returns an object container exposes the chain by property",
+        '  const arr = [1].map(() => ({ list: built.suggestions }));\n  arr[0].list.length = 0;',
+      ],
+      [
+        "R16E-9 a reduce accumulator is its callback's return",
+        '  const out: any = [1].reduce((): any => built.suggestions, null);\n  out.length = 0;',
+      ],
+      [
+        "R16E-10 a reduce call is its callback's return, through a cast",
+        '  ([1].reduce((): any => built.suggestions, null) as any[]).length = 0;',
+      ],
+      [
+        "R16E-11 a function bound by assignment is the chain-returning accessor",
+        '  let g: any;\n  g = () => built.suggestions;\n  g().length = 0;',
+      ],
+      [
+        "R16E-12 a parameter default is the chain",
+        '  const get = (x: any = built.suggestions) => x;\n  get().length = 0;',
+      ],
+      [
+        "R16E-13 a destructured parameter default holds the chain",
+        '  const get = ({ list }: any = { list: built.suggestions }) => list;\n  get().length = 0;',
+      ],
+      [
+        "R16E-14 an alias of a mapper slot is the chain",
+        '  const arr = [1].map(() => built.suggestions);\n  const x = arr[0];\n  x.length = 0;',
+      ],
+      [
+        "R16F-1 a later non-function assignment does not disarm the accessor",
+        '  let g: any;\n  g = () => built.suggestions;\n  g().length = 0;\n  g = null;',
+      ],
+      [
+        "R16F-2 a nested-function assignment does not disarm the accessor",
+        '  let g: any;\n  const reset = (): void => { g = null; };\n  g = () => built.suggestions;\n  g().length = 0;\n  void reset;',
+      ],
+      [
+        "R16F-3 two function assignments still name one accessor",
+        '  let g: any;\n  g = () => built.suggestions;\n  g = () => built.suggestions;\n  g().length = 0;',
+      ],
+      [
+        "R16F-4 an assigned function identifier is the accessor",
+        '  const make = () => built.suggestions;\n  let g: any;\n  g = make;\n  g().length = 0;',
+      ],
+      [
+        "R16F-5 a binding-element default is the chain",
+        '  const get = ({ list = built.suggestions }: any = {}) => list;\n  get().length = 0;',
+      ],
+      [
+        "R16F-6 a renamed binding-element default is the chain",
+        '  const get = ({ list: l = built.suggestions }: any = {}) => l;\n  get().length = 0;',
+      ],
+      [
+        "R16F-7 an array-pattern default element is the chain",
+        '  const get = ([first]: any = [built.suggestions]) => first;\n  get().length = 0;',
+      ],
+      [
+        "R16F-8 five container levels inside a mapper are still the chain",
+        '  const arr = [1].map(() => [[[[[built.suggestions]]]]]);\n  arr[0][0][0][0][0][0].length = 0;',
+      ],
+      [
+        "R16F-9 seven container levels inside a mapper are still the chain",
+        '  const arr = [1].map(() => [[[[[[[built.suggestions]]]]]]]);\n  arr[0][0][0][0][0][0][0][0].length = 0;',
+      ],
+      // R16F verdict: every shape below emptied the shipped array or changed a
+      // shipped record when the reviewer executed it; each sat in a mechanism
+      // R16F itself added.
+      [
+        "R16G-1 a branch that may not run does not disarm the accessor",
+        '  let flag = false;\n  let g: any;\n  g = () => built.suggestions;\n  if (flag) { g = null; }\n  g().length = 0;',
+      ],
+      [
+        "R16G-2 a property-access assignment names its function",
+        '  const obj = { get: () => built.suggestions };\n  let g: any;\n  g = obj.get;\n  g().length = 0;',
+      ],
+      [
+        "R16G-3 a function-declaration assignment names its function",
+        '  function make() { return built.suggestions; }\n  let g: any;\n  g = make;\n  g().length = 0;',
+      ],
+      [
+        "R16G-4 a function-expression assignment names its function",
+        '  const make = function () { return built.suggestions; };\n  let g: any;\n  g = make;\n  g().length = 0;',
+      ],
+      [
+        "R16G-5 a nested binding-element default is the chain",
+        '  const get = ({ a: { list = built.suggestions } = {} }: any = {}) => list;\n  get().length = 0;',
+      ],
+      [
+        "R16G-6 a nested destructuring from the parameter default is the chain",
+        '  const get = ({ a: { list } }: any = { a: { list: built.suggestions } }) => list;\n  get().length = 0;',
+      ],
+      [
+        "R16G-7 a nested array pattern is the chain",
+        '  const get = ([[first]]: any = [[built.suggestions]]) => first;\n  get().length = 0;',
+      ],
+      [
+        "R16G-8 a conditional parameter rebind does not release the owner",
+        '  const flag = false;\n  [built.suggestions].map((list) => { if (flag) list = []; list.length = 0; return 0; });',
+      ],
+      [
+        "R16G-9 a parameter copy rebind still holds the shipped records (spread)",
+        '  [built.suggestions].map((list) => { list = [...list]; list[0].suggestedValue = "REPLACED"; return 0; });',
+      ],
+      [
+        "R16G-10 a parameter copy rebind still holds the shipped records (slice)",
+        '  [built.suggestions].map((list) => { list = list.slice(); list[0].suggestedValue = "REPLACED"; return 0; });',
+      ],
+      [
+        "R16G-11 an alias copy rebind still holds the shipped records (spread)",
+        '  let list: any = built.suggestions;\n  list = [...list];\n  list[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16G-12 an alias copy rebind still holds the shipped records (slice)",
+        '  let list: any = built.suggestions;\n  list = list.slice();\n  list[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16G-13 a write before the rebind is still a write",
+        '  [built.suggestions].map((list) => { list.length = 0; list = []; return 0; });',
+      ],
+      [
+        "R16G-14 a rebind does not disarm a second alias",
+        '  let alias: any = built.suggestions;\n  const alias2: any = alias;\n  alias = [];\n  alias2[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16G-15 a sibling block binding is still the chain",
+        '  { let g: any = () => built.suggestions; g().length = 0; }',
+      ],
+      [
+        "R16G-16 a use before the loop's later assignment still owns the chain",
+        '  let g: any;\n  for (let i = 0; i < 1; i += 1) {\n    g = () => built.suggestions;\n    g().length = 0;\n    g = null;\n  }',
+      ],
+      [
+        "R16G-17 twelve container levels are covered",
+        '  const arr = [1].map(() => [[[[[[[[[[[[built.suggestions]]]]]]]]]]]]);\n  arr[0][0][0][0][0][0][0][0][0][0][0][0][0].length = 0;',
+      ],
+      // R16G verdict: the resolver and the copy rule were each still only as wide
+      // as the forms they enumerated. These thirteen shapes were executed by the
+      // reviewer and each emptied the shipped array or changed a shipped record.
+      [
+        "R16H-1 a logical-or assignment names its function",
+        '  let g: any;\n  g ||= () => built.suggestions;\n  g().length = 0;',
+      ],
+      [
+        "R16H-2 a nullish assignment names its function",
+        '  let g: any;\n  g ??= () => built.suggestions;\n  g().length = 0;',
+      ],
+      [
+        "R16H-3 a conditional initializer names its function",
+        '  const flag = true;\n  const g: any = flag ? () => built.suggestions : null;\n  g().length = 0;',
+      ],
+      [
+        "R16H-4 a logical initializer names its function",
+        '  const flag = true;\n  const g: any = flag && (() => built.suggestions);\n  g().length = 0;',
+      ],
+      [
+        "R16H-5 an object built by assignment exposes its function",
+        '  let obj: any;\n  obj = { get: () => built.suggestions };\n  let g: any;\n  g = obj.get;\n  g().length = 0;',
+      ],
+      [
+        "R16H-6 a destructuring assignment binds the function",
+        '  let g: any;\n  ({ g } = { g: () => built.suggestions });\n  g().length = 0;',
+      ],
+      [
+        "R16H-7 a nested default reads an object built by assignment",
+        '  let obj: any;\n  obj = { a: { list: built.suggestions } };\n  const get = ({ a: { list } }: any = obj) => list;\n  get().length = 0;',
+      ],
+      [
+        "R16H-8 a local helper copy in a callback still shares the records",
+        '  [built.suggestions].map((list) => { const cp = (xs: any) => [...xs]; list = cp(list); list[0].suggestedValue = "REPLACED"; return 0; });',
+      ],
+      [
+        "R16H-9 a local helper copy at helper level still shares the records",
+        '  let list: any = built.suggestions;\n  const cp = (xs: any) => [...xs];\n  list = cp(list);\n  list[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16H-10 a nested spread in a callback still shares the records",
+        '  [built.suggestions].map((list) => { list = [...[...list]]; list[0].suggestedValue = "REPLACED"; return 0; });',
+      ],
+      [
+        "R16H-11 a nested spread at helper level still shares the records",
+        '  let list: any = built.suggestions;\n  list = [...[...list]];\n  list[0].suggestedValue = "REPLACED";',
+      ],
+      [
+        "R16H-12 a declaration alias names the function",
+        '  const make = () => built.suggestions;\n  const g: any = make;\n  g().length = 0;',
+      ],
+      [
+        "R16H-13 a double declaration alias names the function",
+        '  const make = () => built.suggestions;\n  const g = make;\n  const h = g;\n  h().length = 0;',
+      ],
+      [
+        "R16-10 null alias is the absent value",
+        '  const MISSING = null;\n  const pick = (f: boolean) => (f ? built.suggestions[0] : MISSING);\n  const picked = pick(true);\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+    ]) {
+      it(`classifies the R15 route: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${tail}\n  return {`],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    // R15 MAJOR-1: an in-place method on a *fresh container the chain flowed
+    // into* only reorders that container's own slots. Ordinary projection code
+    // must not be refused (`r14c-ordinary` O1/O3 measured the opposite).
+    for (const [label, tail] of [
+      [
+        "R16-A1 slice copy sorted",
+        '  const ordered = built.suggestions.slice().sort((a, b) => a.field.localeCompare(b.field));\n  void ordered;',
+      ],
+      [
+        "R16-A2 slice copy reversed",
+        '  const reversed = built.suggestions.slice().reverse();\n  void reversed;',
+      ],
+      [
+        "R16-A3 read-only mixed-branch accessor",
+        '  const pick = (f: string | undefined) => (f ?? built.suggestions[0]);\n  void pick(undefined)?.field;',
+      ],
+      [
+        "R16-A5 read-only accessor through a local name",
+        '  const pick = () => { const first = built.suggestions[0]; return first; };\n  void pick().field;',
+      ],
+      [
+        "R16-A6 read-only array box",
+        '  const first = built.suggestions[0];\n  const box = [first];\n  void box[0].field;',
+      ],
+      [
+        "R16-A7 read-only call of a chain-returning accessor",
+        '  const get = () => built.suggestions;\n  void get()[0]?.field;',
+      ],
+      [
+        "R16B-A1 read-only comma-return accessor element",
+        '  const get = () => (0, built.suggestions);\n  void get()[0]?.field;',
+      ],
+      [
+        "R16B-A2 read-only element through a container property",
+        '  const first = built.suggestions[0];\n  const t = { first };\n  void t.first.field;',
+      ],
+      [
+        "R16B-A3 read-only element through an iteration result",
+        '  const get = () => built.suggestions;\n  const arr = [1].map(get);\n  void arr[0][0]?.field;',
+      ],
+      [
+        "R16B-A4 read-only element through a parameter default",
+        '  const get = (x: any = built.suggestions[0]) => x;\n  void get()?.field;',
+      ],
+      [
+        "R16D-A1 filter predicate return is not an output value",
+        '  const get = () => built.suggestions;\n  const arr = [[1, 2]].filter(get);\n  arr[0].length = 0;',
+      ],
+      [
+        "R16D-A2 find predicate return is not an output value",
+        '  const get = () => built.suggestions;\n  const arr = [[1, 2]].find(get);\n  arr.length = 0;',
+      ],
+      [
+        "R16D-A3 findLast predicate return is not an output value",
+        '  const get = () => built.suggestions;\n  const arr = [[1, 2]].findLast(get);\n  arr.length = 0;',
+      ],
+      [
+        "R16D-A4 map fresh outer slots are not the shipped chain",
+        '  const get = () => built.suggestions;\n  const arr = [1].map(get);\n  arr.length = 0;',
+      ],
+      [
+        "R16D-A5 Array.from fresh outer slots are not the shipped chain",
+        '  const get = () => built.suggestions;\n  const arr = Array.from([1], get);\n  arr.length = 0;',
+      ],
+      [
+        "R16D-A6 filter fresh outer slots are not the shipped chain",
+        '  const arr = [built.suggestions].filter(() => true);\n  arr.length = 0;',
+      ],
+      [
+        "R16D-A7 flatMap fresh outer slots are not the shipped chain",
+        '  const get = () => built.suggestions;\n  const arr = [1].flatMap(get);\n  arr.length = 0;',
+      ],
+      [
+        "R16E-A1 reading a mapper slot is not a write",
+        '  const arr = [1].map(() => built.suggestions);\n  void arr[0]?.length;',
+      ],
+      [
+        "R16E-A2 at() read without a write is accepted",
+        '  const arr = [1].map(() => built.suggestions);\n  void arr.at(0)?.length;',
+      ],
+      [
+        "R16E-A3 a one-level container slot is cleared, not the chain",
+        '  const arr = [1].map(() => [built.suggestions]);\n  arr[0].length = 0;',
+      ],
+      [
+        "R16E-A4 a container property object is fresh",
+        '  const arr = [1].map(() => ({ list: built.suggestions }));\n  arr[0] = { list: [] };',
+      ],
+      [
+        "R16E-A5 a reducer that returns a count keeps its accumulator fresh",
+        '  const total = [1, 2].reduce((sum: number, n: number) => sum + n, 0);\n  void total;',
+      ],
+      [
+        "R16E-A6 a mapper parameter over a record copy is not the chain",
+        '  const arr = built.suggestions.map((s) => s.field);\n  void arr.length;',
+      ],
+      [
+        "R16F-A1 a reducer over an empty receiver returns its initial value",
+        '  const out: any = ([] as any[]).reduce((): any => built.suggestions, []);\n  out.length = 0;',
+      ],
+      [
+        "R16F-A2 a mapper parameter rebound to a fresh array is not the chain",
+        '  [built.suggestions].map((list) => { list = []; list.push("x"); return 0; });',
+      ],
+      [
+        "R16F-A3 a mapper parameter copied before writing is accepted",
+        '  [built.suggestions].map((list) => { const copy = [...list]; copy.length = 0; return 0; });',
+      ],
+      [
+        "R16F-A4 a slot alias rebound to a fresh array is not the chain",
+        '  let list: any = [built.suggestions][0];\n  list = [];\n  list.push("x");',
+      ],
+      [
+        "R16F-A5 an under-indexed mapper container is a fresh array, not the chain",
+        // The map result wraps the returned container once, so five brackets
+        // need six indexes; five indexes land on the fresh `[chain]` container.
+        '  const arr = [1].map(() => [[[[[built.suggestions]]]]]);\n  arr[0][0][0][0][0].length = 0;',
+      ],
+      // R16F verdict, release side: a release must be real before it is
+      // accepted, and a copy may be pruned as long as its records are not.
+      [
+        "R16G-A1 a parameter copy may clear its own array",
+        '  [built.suggestions].map((list) => { const copy = list.slice(); copy.length = 0; return 0; });',
+      ],
+      [
+        "R16G-A2 a rebind to a fresh array may be filled",
+        '  [built.suggestions].map((list) => { list = []; list.push("x"); return 0; });',
+      ],
+      [
+        "R16G-A3 a rebind and its write inside one branch are safe",
+        '  const flag = false;\n  [built.suggestions].map((list) => { if (flag) { list = []; list.length = 0; } return 0; });',
+      ],
+      [
+        "R16G-A4 a copy rebind may clear the copy's array",
+        '  [built.suggestions].map((list) => { list = [...list]; list.length = 0; return 0; });',
+      ],
+      [
+        "R16G-A5 a slot alias rebind may be filled with a fresh value",
+        '  let alias: any = built.suggestions;\n  alias = [];\n  alias.push("x");',
+      ],
+      [
+        "R16G-A6 a shallow-copied alias may be pruned as an array",
+        '  let list: any = built.suggestions;\n  list = list.slice();\n  list.length = 0;',
+      ],
+      // R16H over-refusal controls: the wider resolver and the wider copy rule
+      // must not refuse these, which were accepted before R16H.
+      [
+        "R16H-A1 a copy rebind may clear the copy's array",
+        '  [built.suggestions].map((list) => { list = [...list]; list.length = 0; return 0; });',
+      ],
+      [
+        "R16H-A2 a helper-level copy may clear its own array",
+        '  let list: any = built.suggestions;\n  list = [...list];\n  list.length = 0;',
+      ],
+      [
+        "R16H-A3 a copy then fresh rebind in a callback is safe",
+        '  [built.suggestions].map((list) => { list = [...list]; list = []; list.push("x"); return 0; });',
+      ],
+      [
+        "R16H-A4 a copy then fresh rebind at helper level is safe",
+        '  let list: any = built.suggestions;\n  list = [...list];\n  list = [];\n  list.push("x");',
+      ],
+      [
+        "R16-A4 read-only void 0 accessor",
+        '  const pick = (f: boolean) => (f ? built.suggestions[0] : void 0);\n  void pick(true)?.field;',
+      ],
+    ]) {
+      it(`accepts the ordinary read-only form: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${tail}\n  return {`],
+        ])(REAL);
+        deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+      });
+    }
+
+    // R13 verdict: element identity must be symmetric with copy identity.
+    for (const [label, tail] of [
+      [
+        "R14-1 local find accessor",
+        '  const findByField = (field: string) => built.suggestions.find((s) => s.field === field);\n  const found = findByField("title");\n  if (found) found.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R14-2 immediately-invoked accessor",
+        '  const found = (() => built.suggestions[0])();\n  found.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R14-3 element boxed in a fresh object",
+        '  const copy = built.suggestions.slice();\n  const box = { s: copy.at(0) };\n  if (box.s) box.s.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R14-4 reduce to one of its own parameters",
+        '  const copy = built.suggestions.slice();\n  const picked = copy.reduce<typeof copy[0] | undefined>((best, s) => (best === undefined ? s : best), undefined);\n  if (picked) picked.suggestedValue = "REPLACED";',
+      ],
+      [
+        "R14-5 object accessor",
+        '  const pick = () => ({ first: built.suggestions[0] });\n  const box = pick();\n  if (box.first) box.first.suggestedValue = "REPLACED";',
+      ],
+    ]) {
+      it(`refuses the accessor route: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${tail}\n  return {`],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    for (const [label, body] of [
+      ["R14-A1 substr", '  const any = built.suggestions.some((s) => s.suggestedValue.substr(0, 3) === "Bl");\n  void any;'],
+      ["R14-A2 toLocaleLowerCase", '  const any = built.suggestions.some((s) => s.suggestedValue.toLocaleLowerCase() === "x");\n  void any;'],
+      ["R14-A3 isWellFormed", '  const any = built.suggestions.some((s) => s.suggestedValue.isWellFormed());\n  void any;'],
+      ["R14-A4 nested array read-only copies", '  built.suggestions.forEach((s) => { void s.tags.toSorted(); void s.tags.flat(); });'],
+      [
+        "R14-A5 fresh local shadows a callback parameter",
+        '  built.suggestions.forEach((s) => { void s.field; });\n  const s: { field: string; suggestedValue: string; source: string } = { field: "title", suggestedValue: "x", source: "user" };\n  s.suggestedValue = "y";',
+      ],
+      ["R14-A6 Object.keys projection", '  const copy = built.suggestions.slice();\n  const keys = Object.keys(copy);\n  void keys;'],
+    ]) {
+      it(`accepts the read-only spelling: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+        ])(REAL);
+        deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+      });
+    }
+
+    // R12 review fix-forward: an element reached through a method result on a
+    // copy is still a shared record, and the comparator/iteration guards must
+    // run for a copy receiver too.
+    const COPY = "  const copy = built.suggestions.slice();\n";
+    for (const [label, tail] of [
+      ["R13-1 element through at()", '  copy.at(-1)!.suggestedValue = "REPLACED";'],
+      ["R13-2 element through slice()[]", '  copy.slice(1)[0].suggestedValue = "REPLACED";'],
+      ["R13-3 element through filter()[]", '  copy.filter((s) => s.suggestedValue.length > 0)[0].suggestedValue = "REPLACED";'],
+      ["R13-4 element through reverse()[]", '  copy.reverse()[0].suggestedValue = "REPLACED";'],
+      ["R13-7 element through an object-literal holder", '  ({ list: copy }).list[0].suggestedValue = "REPLACED";'],
+    ]) {
+      it(`refuses the method-result element write: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${COPY}${tail}\n  return {`],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    for (const [label, tail] of [
+      ["R13-5 copy sorted by an unreadable comparator", "  copy.sort(moduleComparator);"],
+      ["R13-6 copy handed an unreadable callback", "  copy.forEach(opaqueHandler);"],
+    ]) {
+      it(`refuses a copy receiver's unread callback: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${COPY}${tail}\n  return {`],
+        ])(REAL);
+        const errors = validateReportFieldHelperWired(rewritten);
+        ok(errors.includes(`application-integration: ${MUTATED}`), JSON.stringify(errors));
+      });
+    }
+
+    for (const [label, body] of [
+      ["R13-A1 element holder rebound to another element", "  let best = built.suggestions[0];\n  best = built.suggestions[1];\n  void best;"],
+      ["R13-A2 copy serialized", "  const copy = built.suggestions.slice();\n  JSON.stringify(copy);"],
+      ["R13-A3 element logged", "  console.log(built.suggestions[0]);"],
+    ]) {
+      it(`accepts the read-only spelling: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+        ])(REAL);
+        deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+      });
+    }
+
+    for (const [label, body] of [
+      [
+        "R12-A1 pure comparator calling a method on a property",
+        '  const sorted = [...built.suggestions].sort((a, b) => a.suggestedValue.localeCompare(b.suggestedValue));\n  void sorted;',
+      ],
+      [
+        "R12-A2 element predicate calling a method on a property",
+        '  built.suggestions.some((s) => s.suggestedValue.trim().length === 0);',
+      ],
+      [
+        "R12-A3 spread copy slot replaced",
+        '  const copy = [...built.suggestions];\n  copy[0] = { ...copy[0], suggestedValue: "x" };\n  void copy;',
+      ],
+      [
+        "R12-A4 index search handed an element",
+        '  built.suggestions.lastIndexOf(built.suggestions[0]);',
+      ],
+    ]) {
+      it(`accepts the read-only spelling: ${label}`, () => {
+        const rewritten = onHelperWhere(label, [
+          [SUCCESS_START, `  const built = buildReportFieldSuggestions(opResult.value.fields);\n${body}\n  return {`],
+        ])(REAL);
+        deepStrictEqual(validateReportFieldHelperWired(rewritten), [], label);
+      });
+    }
+
+    it("accepts a read-only iteration over a copy", () => {
+      const rewritten = onHelperWhere("R9-A1 copy read", [
+        [SUCCESS_START, '  const list = [...built.suggestions];\n  list.forEach((s) => { void s.suggestedValue; });\n  const built = buildReportFieldSuggestions(opResult.value.fields);\n  return {'],
+      ])(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], "copy read");
+    });
+
+    it("accepts a failure payload built by a local helper", () => {
+      const rewritten = onHelperWhere("R7-A1 failure helper", [
+        [
+          "  if (!opResult.ok) return opResult;",
+          "  const failure = (error: unknown) => ({ ok: false as const, error });\n  if (!opResult.ok) return failure(opResult.error);",
+        ],
+      ])(REAL);
+      deepStrictEqual(validateReportFieldHelperWired(rewritten), [], "failure helper");
+    });
+
+    it("keeps accepting a receiver-position call on the chain", () => {
+      for (const line of [
+        "      suggestions: built.suggestions.slice(),",
+        "      suggestions: [...built.suggestions],",
+        "      suggestions: built.suggestions.map((s) => s),",
+      ]) {
+        const rewritten = onHelperWhere(`R7-A2 receiver ${line.slice(20, 32)}`, [
+          ["      suggestions: built.suggestions,", line],
+        ])(REAL);
+        deepStrictEqual(validateReportFieldHelperWired(rewritten), [], line);
+      }
+    });
+  });
+
   for (const [label, mutate] of [
     ["helper no longer exposes the field suggester", (s) => ({
       ...s,
@@ -1306,6 +2560,7 @@ describe("reportFieldWiring (CF-070 R2 retry-9: the nine fresh survivors and the
   const UNREACHABLE_GUARD =
     "replacing an existing title must be confirmed by a reachable guard that refuses";
   const DISCARDED = "report-field helper must use the reviewed narrow task's result, not merely mention the call";
+  const KEEP_RESOLVES = "each Keep control must resolve its own suggestion";
 
   for (const [label, mutate, expected] of [
     [
@@ -1419,11 +2674,6 @@ describe("reportFieldWiring (CF-070 R2 retry-9: the nine fresh survivors and the
       UNREACHABLE_GUARD,
     ],
     [
-      "C3 the payload concatenates the reviewed suggestions onto an empty array",
-      onHelper("C3 concat empty", SUCCESS_ANCHOR, "            suggestions: [].concat(built.suggestions as never),"),
-      DISCARDED,
-    ],
-    [
       "D5 the fabricated payload is returned from a branch while the reviewed result is only echoed",
       onHelper(
         "D5 fabricated conditional return",
@@ -1434,6 +2684,597 @@ describe("reportFieldWiring (CF-070 R2 retry-9: the nine fresh survivors and the
           "  if (opResult.ok) { return { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } }; }",
           "  return built;",
         ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "A5 the title branch writes a reviewed field through a parenthesised callee before its guard",
+      onForm("A5 parenthesised callee", TITLE_GUARD, `(setDescription)("");\n        ${TITLE_GUARD}`),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "A6 the title branch writes a reviewed field through an array-destructured alias before its guard",
+      onForm(
+        "A6 array-destructured alias",
+        TITLE_GUARD,
+        `const [wipe] = [setDescription];\n        wipe("");\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "A7 the title branch writes a reviewed field through an iteration callback before its guard",
+      onForm(
+        "A7 iteration callback alias",
+        TITLE_GUARD,
+        `[setDescription].forEach((wipe) => { wipe(""); });\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "A8 the title branch writes a reviewed field through a two-hop alias before its guard",
+      onForm(
+        "A8 two-hop alias",
+        TITLE_GUARD,
+        `const w1 = setDescription;\n        const w2 = w1;\n        w2("");\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "A9 the title branch writes a reviewed field held on a local object key before its guard",
+      onForm(
+        "A9 object-key alias",
+        TITLE_GUARD,
+        `const wipe = { run: setDescription };\n        wipe.run("");\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "B10 the confirmation sits in `while (NaN)`",
+      onForm("B10 while NaN", TITLE_GUARD, `while (NaN) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B11 the confirmation sits in `while (void 0)`",
+      onForm("B11 while void", TITLE_GUARD, `while (void 0) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B12 the confirmation sits in a `for … of` over `new Array(0)`",
+      onForm("B12 for-of new Array(0)", TITLE_GUARD, `for (const _s of new Array(0)) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B13 the confirmation sits in a `for … of` over a concatenation of empty arrays",
+      onForm("B13 for-of empty concat", TITLE_GUARD, `for (const _s of [].concat([])) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "C7 the payload maps the reviewed suggestions onto fabricated elements",
+      onHelper(
+        "C7 map fabricate",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map(() => ({} as never)),",
+      ),
+      DISCARDED,
+    ],
+    [
+      "C8 the payload maps the reviewed suggestions, substituting a value",
+      onHelper(
+        "C8 map substitute",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => ({ field: s.field, suggestedValue: "REPLACED", source: s.source })),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "D6 the fabricated payload is one arm of a conditional return",
+      onHelper(
+        "D6 conditional fabricated return",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  return opResult.ok",
+          "    ? { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } }",
+          "    : built;",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "D7 the fabricated payload is returned through `Object.assign`",
+      onHelper(
+        "D7 object assign fabricated",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  const manufactured = { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } };",
+          "  return Object.assign({}, manufactured);",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "D8 the payload's suggestion element only reads a reviewed field",
+      onHelper(
+        "D8 element embeds reviewed",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          '  const manufactured = { ok: true as const, value: { suggestions: [{ field: "title", suggestedValue: "hacked", source: opResult.value.action }], droppedCategory: false, action: opResult.value.action } };',
+          "  void built;",
+          "  return manufactured;",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "D9 the fabricated payload is returned through a comma expression",
+      onHelper(
+        "D9 comma fabricated return",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  const manufactured = { ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } };",
+          "  return (void 0, manufactured);",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "E3 the Keep key is written by an array destructuring assignment",
+      declared(
+        "E3 array destructuring write",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'let CAT_KEEP_KEY = "categorySuggestion";\n[CAT_KEEP_KEY] = ["nope"];',
+      ),
+      KEEP_RESOLVES,
+    ],
+    [
+      "E4 the Keep key is written by an object destructuring assignment",
+      declared(
+        "E4 object destructuring write",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'let CAT_KEEP_KEY = "categorySuggestion";\n({ CAT_KEEP_KEY } = { CAT_KEEP_KEY: "nope" });',
+      ),
+      KEEP_RESOLVES,
+    ],
+    [
+      "A10 the title branch writes through a `for … of` binding over a collection holding a setter",
+      onForm(
+        "A10 for-of setter binding",
+        TITLE_GUARD,
+        `for (const wipe of [setDescription]) { wipe(""); }\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "A11 the title branch writes through a setter read out of an object literal",
+      onForm(
+        "A11 member extract setter",
+        TITLE_GUARD,
+        `const wipe = { run: setDescription }.run;\n        wipe("");\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "A12 the title branch writes through a nested destructuring of a setter",
+      onForm(
+        "A12 nested destructure setter",
+        TITLE_GUARD,
+        `const [[wipe]] = [[setDescription]];\n        wipe("");\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "A13 the title branch writes through a name assigned a setter after declaration",
+      onForm(
+        "A13 assigned alias setter",
+        TITLE_GUARD,
+        `let wipe: (value: string) => void;\n        wipe = setDescription;\n        wipe("");\n        ${TITLE_GUARD}`,
+      ),
+      WRITE_BEFORE_GUARD,
+    ],
+    [
+      "B14 the confirmation sits in `while (true ? false : true)`",
+      onForm("B14 folded while conditional", TITLE_GUARD, `while (true ? false : true) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B15 the confirmation sits in a `while` over an empty template",
+      onForm("B15 while empty template", TITLE_GUARD, 'while (`${""}`) { ' + TITLE_GUARD + " }"),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B16 the confirmation sits in `while (0n)`",
+      onForm("B16 while zero bigint", TITLE_GUARD, `while (0n) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B17 the confirmation sits in `while (Number(0))`",
+      onForm("B17 while folded Number", TITLE_GUARD, `while (Number(0)) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "B18 the confirmation sits in a `for … of` over an empty `Set`",
+      onForm("B18 for-of empty Set", TITLE_GUARD, `for (const _s of new Set()) { ${TITLE_GUARD} }`),
+      UNREACHABLE_GUARD,
+    ],
+    [
+      "C9 the payload's `map` substitutes a value on a branch the callback returns through",
+      onHelper(
+        "C9 map branch substitute",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { if (s.field === "title") return { ...s, suggestedValue: "REPLACED" }; return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "C9b the payload's `map` fabricates from inside a loop the callback returns through",
+      onHelper(
+        "C9b map loop fabricate",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map((s) => { for (let i = 0; i < 1; i += 1) { return {} as never; } return s; }),",
+      ),
+      DISCARDED,
+    ],
+    [
+      "C10 the payload reads a binding that a later assignment replaced with an empty list",
+      onHelper(
+        "C10 reassigned fabricated",
+        SUCCESS_PAYLOAD,
+        [
+          "  let built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  built = { suggestions: [] as never, droppedCategory: false };",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: built.suggestions,",
+          "      droppedCategory: built.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "C11 the fabricated payload is returned behind a `satisfies` cast",
+      onHelper(
+        "C11 satisfies fabricated",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  return ({ ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } } satisfies Record<string, unknown>);",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "C12 the fabricated payload is returned through `Object.freeze`",
+      onHelper(
+        "C12 freeze fabricated",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  return Object.freeze({ ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } });",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "C13 the fabricated payload is returned from an immediately-invoked function",
+      onHelper(
+        "C13 iife fabricated",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  void built;",
+          "  return (() => ({ ok: true as const, value: { suggestions: [], droppedCategory: false, action: opResult.value.action } }))();",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "C14 an unreadable spread written after the reviewed list overrides it",
+      onHelper(
+        "C14 unreadable spread override",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  return {",
+          "    ok: true,",
+          "    value: { suggestions: built.suggestions, ...make() },",
+          "  };",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "C15 the payload concatenates the reviewed list onto itself",
+      onHelper(
+        "C15 concat doubled",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.concat(built.suggestions as never),",
+      ),
+      DISCARDED,
+    ],
+    [
+      "E5 the Keep key is written by a `for … of` assignment header",
+      declared(
+        "E5 for-of write",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'let CAT_KEEP_KEY = "categorySuggestion";\nfor (CAT_KEEP_KEY of ["nope"]) { void CAT_KEEP_KEY; }',
+      ),
+      KEEP_RESOLVES,
+    ],
+    [
+      "E6 the Keep key is written by a `for … in` assignment header",
+      declared(
+        "E6 for-in write",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        "let CAT_KEEP_KEY = \"categorySuggestion\";\nfor (CAT_KEEP_KEY in { nope: 1 }) { void CAT_KEEP_KEY; }",
+      ),
+      KEEP_RESOLVES,
+    ],
+    [
+      "R3-1 the payload's `map` mutates the element it is handed and returns it",
+      onHelper(
+        "R3-1 map in-place mutation",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { s.suggestedValue = "REPLACED"; return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-2 the payload's `map` falls off the end of its body on a branch",
+      onHelper(
+        "R3-2 map fall-off",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { if (s.field === "title") return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-3 the payload's `map` returns a name it re-declared over the element",
+      onHelper(
+        "R3-3 map shadowed name",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { { const s = {} as never; return s; } }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-4 the payload's spread holder has its suggestions overwritten after it is built",
+      onHelper(
+        "R3-4 written spread holder",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  const extra = { suggestions: built.suggestions };",
+          "  extra.suggestions = [];",
+          "  return {",
+          "    ok: true,",
+          "    value: { ...built, ...extra, action: opResult.value.action },",
+          "  };",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-5 the payload's builder is appended to with a compound write",
+      onHelper(
+        "R3-5 compound write",
+        SUCCESS_PAYLOAD,
+        [
+          "  let built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  built += [] as never;",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: built.suggestions,",
+          "      droppedCategory: built.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-6 the Keep key's holder has the property overwritten after it is declared",
+      declared(
+        "R3-6 holder property written",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(HOLDER.KEEP_KEY)}",
+        'const HOLDER = { KEEP_KEY: "categorySuggestion" };\nHOLDER.KEEP_KEY = "nope";',
+      ),
+      KEEP_RESOLVES,
+    ],
+    [
+      "R3-7 the payload's `map` takes the element out of a rest parameter and rebuilds it",
+      onHelper(
+        "R3-7 rest rebuild",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((...args: never[]) => ({ ...args[0], suggestedValue: "R3" })),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-8 the payload's `flatMap` hands the element back twice beside an empty spread",
+      onHelper(
+        "R3-8 flatMap twice",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.flatMap((s) => [s, s, ...[]]),",
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-9 the payload's `map` writes the element through `Object.assign`",
+      onHelper(
+        "R3-9 object assign mutation",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { Object.assign(s, { suggestedValue: "X" }); return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-10 the payload's `map` deletes one of the element's own properties",
+      onHelper(
+        "R3-10 delete mutation",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { delete s.suggestedValue; return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-11 the payload's `map` mutates the element inside a nested function it calls",
+      onHelper(
+        "R3-11 nested mutation",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { const wipe = () => { s.suggestedValue = "X"; }; wipe(); return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R3-12 the payload reads a name an inner scope re-declared over the reviewed builder",
+      onHelper(
+        "R3-12 inner shadow read",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  {",
+          "    const built = { suggestions: [] as never, droppedCategory: false };",
+          "    return {",
+          "      ok: true,",
+          "      value: {",
+          "        suggestions: built.suggestions,",
+          "        droppedCategory: built.droppedCategory,",
+          "        action: opResult.value.action,",
+          "      },",
+          "    };",
+          "  }",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-1 the payload's builder is replaced by a different producer that is handed the reviewed result",
+      onHelper(
+        "R4-1 fabricated producer",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  built = fabricate(opResult.value.fields);",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: built.suggestions,",
+          "      droppedCategory: built.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-2 the payload reads a `catch` parameter that shadows the reviewed builder",
+      onHelper(
+        "R4-2 catch param shadow",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  try {",
+          '    throw new Error("boom");',
+          "  } catch (built) {",
+          "    return { ok: true, value: { suggestions: (built as { suggestions: never[] }).suggestions, droppedCategory: false, action: opResult.value.action } };",
+          "  }",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-3 the payload reads a loop header that shadows the reviewed builder",
+      onHelper(
+        "R4-3 for header shadow",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  for (let built = { suggestions: [] as never, droppedCategory: false } as never; ; ) {",
+          "    return { ok: true, value: { suggestions: (built as { suggestions: never[] }).suggestions, droppedCategory: false, action: opResult.value.action } };",
+          "  }",
+        ].join("\n"),
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-4 the payload's `map` writes the element through `Object.defineProperty`",
+      onHelper(
+        "R4-4 define property",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { Object.defineProperty(s, "suggestedValue", { value: "X", enumerable: true }); return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-5 the payload's `map` writes the element through `Reflect.set`",
+      onHelper(
+        "R4-5 reflect set",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { Reflect.set(s, "suggestedValue", "X"); return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-6 the payload's `map` calls a mutating method on a property of the element",
+      onHelper(
+        "R4-6 method push",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { (s as unknown as { list: string[] }).list.push("x"); return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-7 the payload's `map` hands the element to a callee the gate cannot read",
+      onHelper(
+        "R4-7 unread callee",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map((s) => { mutate(s); return s; }),",
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-8 the payload's `map` replaces the element through the reviewed collection it came from",
+      onHelper(
+        "R4-8 mutation via the source index",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s, i) => { (built.suggestions[i] as { suggestedValue: string }).suggestedValue = "X"; return s; }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-9 the payload's `map` can leave its `switch` without returning",
+      onHelper(
+        "R4-9 switch case break",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { switch (s.field) { default: { if (s.field === "title") { break; } return s; } } }),',
+      ),
+      DISCARDED,
+    ],
+    [
+      "R4-10 the payload's `map` breaks out of its `switch` and then falls off the end",
+      onHelper(
+        "R4-10 break then return",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { switch (s.field) { default: { if (s.field === "title") { break; } } } return s; }),',
       ),
       DISCARDED,
     ],
@@ -1497,6 +3338,368 @@ describe("reportFieldWiring (CF-070 R2 retry-9: the nine fresh survivors and the
         CAT_KEEP,
         "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
         'const CAT_KEEP_KEY = "categorySuggestion";\nfunction unrelated(CAT_KEEP_KEY: string) { CAT_KEEP_KEY = "x"; }\nvoid unrelated;',
+      ),
+    ],
+    [
+      "P11 the payload copies the reviewed suggestions through `[].concat(...)`",
+      onHelper("P11 concat copy", SUCCESS_ANCHOR, "      suggestions: [].concat(built.suggestions as never),"),
+    ],
+    [
+      "P12 the payload copies the reviewed suggestions through `slice()`",
+      onHelper("P12 slice copy", SUCCESS_ANCHOR, "      suggestions: built.suggestions.slice(),"),
+    ],
+    [
+      "P13 the payload copies the reviewed suggestions through `Array.from(...)`",
+      onHelper("P13 array from copy", SUCCESS_ANCHOR, "      suggestions: Array.from(built.suggestions),"),
+    ],
+    [
+      "P14 the payload spreads the reviewed result and adds its own field",
+      onHelper(
+        "P14 spread plus action",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  return {",
+          "    ok: true,",
+          "    value: { ...built, action: opResult.value.action },",
+          "  };",
+        ].join("\n"),
+      ),
+    ],
+    [
+      "P15 the payload spreads the reviewed result over an own empty list",
+      onHelper(
+        "P15 spread overrides own",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  return {",
+          "    ok: true,",
+          "    value: { suggestions: [], ...built, action: opResult.value.action },",
+          "  };",
+        ].join("\n"),
+      ),
+    ],
+    [
+      "Q4 the Keep key resolves the reviewed literal through an object destructuring `const`",
+      declared(
+        "Q4 destructured const",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(KEEP_KEY)}",
+        'const { KEEP_KEY } = { KEEP_KEY: "categorySuggestion" };',
+      ),
+    ],
+    [
+      "P16 the payload's `map` returns the element and ignores the index",
+      onHelper("P16 map two params", SUCCESS_ANCHOR, "      suggestions: built.suggestions.map((s, _i) => s),"),
+    ],
+    [
+      "P17 the payload's `map` returns the element through a local",
+      onHelper(
+        "P17 map local alias",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map((s) => { const copy = s; return copy; }),",
+      ),
+    ],
+    [
+      "P18 the payload copies the reviewed list out of a `flatMap` that wraps each element once",
+      onHelper(
+        "P18 flatMap identity",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.flatMap((s) => [s]),",
+      ),
+    ],
+    [
+      "P19 the payload copies the reviewed list through an identity `Array.from` mapper",
+      onHelper(
+        "P19 array from identity mapper",
+        SUCCESS_ANCHOR,
+        "      suggestions: Array.from(built.suggestions, (s) => s),",
+      ),
+    ],
+    [
+      "P20 the payload copies the reviewed list through `slice(undefined)`",
+      onHelper("P20 slice undefined", SUCCESS_ANCHOR, "      suggestions: built.suggestions.slice(undefined),"),
+    ],
+    [
+      "P21 the payload spreads the reviewed list and an empty tail",
+      onHelper("P21 spread empty tail", SUCCESS_ANCHOR, "      suggestions: [ ...built.suggestions, ...[] ],"),
+    ],
+    [
+      "P22 the payload's `map` takes the element apart and puts every part back",
+      onHelper(
+        "P22 map destructured round trip",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map(({ field, suggestedValue, source, ...rest }) => ({ field, suggestedValue, source, ...rest })),",
+      ),
+    ],
+    [
+      "P23 the payload's value is built by `Object.assign` over the reviewed result",
+      onHelper(
+        "P23 nested object assign value",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  return { ok: true as const, value: Object.assign({ suggestions: [] }, built, { action: opResult.value.action }) };",
+        ].join("\n"),
+      ),
+    ],
+    [
+      "P24 the Keep key is a `satisfies` cast of the reviewed literal",
+      declared(
+        "P24 satisfies keep key",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(KEEP_KEY)}",
+        'const KEEP_KEY = "categorySuggestion" satisfies string;',
+      ),
+    ],
+    [
+      "P25 the confirmation label is a `satisfies` cast of the reviewed copy",
+      onForm(
+        "P25 satisfies confirm label",
+        TITLE_GUARD,
+        'if (!window.confirm(("Replace the existing title with this suggestion?" satisfies string))) return;',
+      ),
+    ],
+    [
+      "P26 the Keep key is read out of the object that holds the reviewed literal",
+      declared(
+        "P26 holder property keep key",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(HOLDER.KEEP_KEY)}",
+        'const HOLDER = { KEEP_KEY: "categorySuggestion" };',
+      ),
+    ],
+    [
+      "P27 the Keep key is read out of the array that holds the reviewed literal",
+      declared(
+        "P27 element read keep key",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(KEEP[0])}",
+        'const KEEP = ["categorySuggestion"];',
+      ),
+    ],
+    [
+      "P28 the Keep key is a `let` a nullish assignment cannot change",
+      declared(
+        "P28 nullish assign preserves",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(CAT_KEEP_KEY)}",
+        'let CAT_KEEP_KEY = "categorySuggestion";\nCAT_KEEP_KEY ??= "nope";',
+      ),
+    ],
+    [
+      "P29 the Keep key is a destructuring default an absent property hands over",
+      declared(
+        "P29 default destructure keeps",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(KEEP_KEY)}",
+        'const { KEEP_KEY = "categorySuggestion" } = {} as { KEEP_KEY?: string };',
+      ),
+    ],
+    [
+      "R3-A1 the payload's builder is assigned the same reviewed call again on a branch",
+      onHelper(
+        "R3-A1 reassign same builder",
+        SUCCESS_PAYLOAD,
+        [
+          "  let built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  if (opResult.value.fields.length > 0) built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: built.suggestions,",
+          "      droppedCategory: built.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+    ],
+    [
+      "R3-A2 the payload's builder is assigned itself",
+      onHelper(
+        "R3-A2 self assign",
+        SUCCESS_PAYLOAD,
+        [
+          "  let built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  built = built;",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: built.suggestions,",
+          "      droppedCategory: built.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+    ],
+    [
+      "R3-A3 the payload's `map` reads the element out of a rest parameter",
+      onHelper(
+        "R3-A3 rest param element",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map((...args: never[]) => args[0]),",
+      ),
+    ],
+    [
+      "R3-A4 the payload's `map` binds the element to a `let` written only with the element",
+      onHelper(
+        "R3-A4 let self write",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map((s) => { let copy = s; copy = s; return copy; }),",
+      ),
+    ],
+    [
+      "R3-A5 the payload's `map` binds the element out of an object-rest pattern",
+      onHelper(
+        "R3-A5 object rest identity",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map(({ ...s }) => s),",
+      ),
+    ],
+    [
+      "R3-A6 the payload's `map` returns the element through both arms of an `if`/`else`",
+      onHelper(
+        "R3-A6 if else returns",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { if (s.field === "title") { return s; } else { return s; } }),',
+      ),
+    ],
+    [
+      "R3-A7 the payload's `flatMap` wraps the element once beside a statically empty spread",
+      onHelper(
+        "R3-A7 flatMap empty extra",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.flatMap((s) => [s, ...[]]),",
+      ),
+    ],
+    [
+      "R3-A8 the payload spreads the reviewed list and an empty tail held in a `const`",
+      onHelper(
+        "R3-A8 bound empty tail",
+        SUCCESS_PAYLOAD,
+        [
+          "  const tail: never[] = [];",
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: [ ...built.suggestions, ...tail ],",
+          "      droppedCategory: built.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+    ],
+    [
+      "R3-A9 the Keep key's holder names the property with a computed literal key",
+      declared(
+        "R3-A9 computed key holder",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(HOLDER.KEEP_KEY)}",
+        'const HOLDER = { ["KEEP_KEY"]: "categorySuggestion" };',
+      ),
+    ],
+    [
+      "R3-A10 the Keep key is destructured out of a holder binding",
+      declared(
+        "R3-A10 destructure holder",
+        CAT_KEEP,
+        "onClick={() => aiSuggestResolve(KEEP_KEY)}",
+        'const HOLDER = { KEEP_KEY: "categorySuggestion" };\nconst { KEEP_KEY } = HOLDER;',
+      ),
+    ],
+    [
+      "R3-A11 the payload's `map` copies the element through `Object.assign` into a fresh object",
+      onHelper(
+        "R3-A11 object assign copy",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map((s) => Object.assign({}, s)),",
+      ),
+    ],
+    [
+      "R3-A12 the payload reads the reviewed builder after an inner scope declared the same name",
+      onHelper(
+        "R3-A12 inner declaration beside the read",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  if (opResult.value.fields.length > 0) {",
+          "    const built = { suggestions: [] as never, droppedCategory: false };",
+          "    void built;",
+          "  }",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: built.suggestions,",
+          "      droppedCategory: built.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+    ],
+    [
+      "R3-A13 the payload's builder is untouched by a write to another binding that aliased it",
+      onHelper(
+        "R3-A13 aliased write",
+        SUCCESS_PAYLOAD,
+        [
+          "  const built = buildReportFieldSuggestions(opResult.value.fields);",
+          "  let alias = built;",
+          "  alias = { suggestions: [] as never, droppedCategory: false } as never;",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      suggestions: built.suggestions,",
+          "      droppedCategory: built.droppedCategory,",
+          "      action: opResult.value.action,",
+          "    },",
+          "  };",
+        ].join("\n"),
+      ),
+    ],
+    [
+      "R4-A1 the payload's `map` returns the element from a `switch` whose clauses fall through",
+      onHelper(
+        "R4-A1 switch fallthrough",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { switch (s.field) { case "a": case "b": return s; default: return s; } }),',
+      ),
+    ],
+    [
+      "R4-A2 the payload's `map` returns the element from a `do … while` body",
+      onHelper(
+        "R4-A2 do while",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { do { return s; } while (s.field === "x"); }),',
+      ),
+    ],
+    [
+      "R4-A3 the payload's `map` returns the element it walks a literal list for",
+      onHelper(
+        "R4-A3 for of literal",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map((s) => { for (const x of [s]) { return x; } }),",
+      ),
+    ],
+    [
+      "R4-A4 the payload's `map` returns the element from a labelled block",
+      onHelper(
+        "R4-A4 labelled block",
+        SUCCESS_ANCHOR,
+        "      suggestions: built.suggestions.map((s) => { L: { return s; } }),",
+      ),
+    ],
+    [
+      "R4-A5 the payload's `map` builds a copy of the element and does not return it",
+      onHelper(
+        "R4-A5 discarded copy",
+        SUCCESS_ANCHOR,
+        '      suggestions: built.suggestions.map((s) => { Object.assign({}, s, { suggestedValue: "X" }); return s; }),',
       ),
     ],
   ]) {
