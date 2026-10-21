@@ -229,6 +229,24 @@ describe("R5 field-stuffing fails even when JSON parses", () => {
     if (!search.ok) expect(search.error.diagnostic).toContain("R5_COORDINATES_NOT_ACCEPTED");
   });
 
+  it("rejects a coordinate offered as a search place", () => {
+    // The place slot is a NAME. A coordinate is never a place, so it is
+    // refused at the contract boundary rather than handed to a filter that
+    // cannot use it.
+    const place = validateSearchFilters({ query: "umbrella", place: "23.8103, 90.4125" });
+    expect(place.ok).toBe(false);
+    if (!place.ok) expect(place.error.diagnostic).toContain("R5_COORDINATES_NOT_ACCEPTED");
+  });
+
+  it("accepts the type and the place slots of a search request", () => {
+    const search = validateSearchFilters({ query: "black wallet", postType: "LOST", place: "Gulshan" });
+    expect(search.ok).toBe(true);
+    if (search.ok) {
+      expect(search.value.postType).toBe("LOST");
+      expect(search.value.place).toBe("Gulshan");
+    }
+  });
+
   it("bounds overlong prose answers", () => {
     const long = normalizeProse("x".repeat(2001), mustProfile(SMOL_TEXT));
     expect(long.ok).toBe(false);

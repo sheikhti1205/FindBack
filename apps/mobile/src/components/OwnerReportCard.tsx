@@ -4,6 +4,7 @@ import { POST_STATUS_LABELS } from "@findback/shared";
 import { CircleAlert, CircleCheck, ImageOff, Link2, MessageSquare, Tag, Heart } from "lucide-react";
 import { Link } from "react-router";
 import { PhotoLightbox } from "./PhotoLightbox";
+import { OwnerReportMenu } from "./OwnerReportActions";
 import { timeAgo } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
 
@@ -82,8 +83,11 @@ function OwnerImage({ post, fileUrl }: { post: PostItem; fileUrl: string }) {
  * status differ.
  *
  * The content links to the detail page while the photo opens the canonical
- * PhotoLightbox (media and link are siblings, never nested). Owner controls (status changes,
- * delete) live on the redesigned detail page — never on this scrolling card.
+ * PhotoLightbox (media and link are siblings, never nested). The row's own
+ * controls live in the overflow menu beside the card
+ * (`OwnerReportMenu`): status, edit, share and delete. The menu is a SIBLING
+ * of the content link, never inside it — a button nested in a link is
+ * invalid DOM (see PostCard home-feed). All testids/classes are unchanged.
  * The card never repeats @currentUser: authorship is implicit on My Reports.
  */
 export function OwnerReportCard({ post }: { post: PostItem }) {
@@ -99,13 +103,12 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
   const lastIndex = lightboxPhotos.length - 1;
   return (
     <article data-testid="owner-report-article">
-      <div
-        className="flex gap-2.5 rounded-[18px] border border-outline-variant bg-surface-container-low p-2.5 shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container"
-      >
-        <div
-          data-testid="owner-report-card"
-           className="grid min-w-0 flex-1 grid-cols-[minmax(0,34%)_minmax(0,1fr)] gap-3"
-        >
+      <div className="flex items-start gap-1">
+        <div className="flex flex-1 gap-2.5 rounded-[18px] border border-outline-variant bg-surface-container-low p-2.5 shadow-sm transition-colors hover:border-on-surface-variant active:bg-surface-container">
+          <div
+            data-testid="owner-report-card"
+             className="grid min-w-0 flex-1 grid-cols-[minmax(0,34%)_minmax(0,1fr)] gap-3"
+          >
           <div data-testid="owner-report-media" className="relative min-w-0">
             {hero ? (
               <button
@@ -170,7 +173,9 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
               <OwnerMetrics post={post} />
             </div>
           </Link>
+          </div>
         </div>
+        <OwnerReportMenu post={post} />
       </div>
       {lightboxIndex !== null && lightboxPhotos.length > 0 && (
         <PhotoLightbox

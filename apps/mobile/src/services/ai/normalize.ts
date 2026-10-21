@@ -430,13 +430,15 @@ export function validateSearchFilters(
     return fail("INVALID_OUTPUT", "R1_BAD_SEARCH_OBJECT");
   }
   const record = value as Record<string, unknown>;
-  const keys = strictKeys(record, ["query", "category", "status", "dateRangeText"], "search");
+  const keys = strictKeys(record, ["query", "category", "status", "postType", "place", "dateRangeText"], "search");
   if (!keys.ok) return keys;
   const fields: Record<string, string | undefined> = {};
   const bounds: Record<string, number> = {
     query: 140,
     category: 40,
     status: 40,
+    postType: 12,
+    place: 80,
     dateRangeText: 40,
   };
   for (const field of Object.keys(bounds)) {
@@ -444,7 +446,7 @@ export function validateSearchFilters(
     if (!checked.ok) return checked;
     if (checked.value !== undefined) fields[field] = checked.value;
   }
-  for (const field of ["query", "dateRangeText"]) {
+  for (const field of ["query", "dateRangeText", "place"]) {
     if (fields[field] !== undefined) {
       const coords = rejectCoordinates(fields[field] as string, field);
       if (!coords.ok) return coords;
@@ -454,6 +456,8 @@ export function validateSearchFilters(
     query: fields["query"],
     category: fields["category"],
     status: fields["status"],
+    postType: fields["postType"],
+    place: fields["place"],
     dateRangeText: fields["dateRangeText"],
   });
 }

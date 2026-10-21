@@ -182,11 +182,21 @@ export interface ReportExtraction {
   readonly action: AssistantAction;
 }
 
-/** Narrow slot set for search-filter extraction (no coordinates). */
+/**
+ * Narrow slot set for search-filter extraction (no coordinates).
+ *
+ * `postType` is the LOST/FOUND type and `place` is a place NAME. Both are
+ * first-class slots: the type used to arrive in `status` and was thrown away
+ * (the status enum has no "lost"), and a place has no home of its own. A
+ * place is never coordinates — the model is told so, and the validator
+ * refuses a coordinate in every free-text slot.
+ */
 export interface SearchFilterFields {
   readonly query?: string;
   readonly category?: string;
   readonly status?: string;
+  readonly postType?: string;
+  readonly place?: string;
   readonly dateRangeText?: string;
 }
 

@@ -39,6 +39,26 @@ describe("extract-search-filters op", () => {
     if (result.ok) expect(result.value.fields.status).toBe("open");
   });
 
+  it("gives the LOST/FOUND type and the place a slot of their own", async () => {
+    const result = await extractSearchFilters(
+      stubGenerate('{"query":"black wallet","postType":"LOST","place":"Gulshan"}'),
+      "Show the black wallet lost in Gulshan.",
+      mustProfile("qwen3-0.6b-dynamic-int4"),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.fields.postType).toBe("LOST");
+      expect(result.value.fields.place).toBe("Gulshan");
+    }
+  });
+
+  it("names the type and the place in the instruction the model reads", () => {
+    // The slots are only extractable if the model is told they exist.
+    expect(SEARCH_SLOTS_INSTRUCTION).toContain('"postType"');
+    expect(SEARCH_SLOTS_INSTRUCTION).toContain('"place"');
+    expect(SEARCH_SLOTS_INSTRUCTION).toMatch(/never invent coordinates/i);
+  });
+
   it("rejects userContext echo with no explicit context (R6 wired)", async () => {
     const userMessage = "searching for a red backpack reported near the north gate last week";
     const result = await extractSearchFilters(

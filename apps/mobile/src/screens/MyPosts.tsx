@@ -1,13 +1,33 @@
-import { useEffect, useRef, useState } from "react";
-import type { PostStatus } from "@findback/shared";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import type { PostItem, PostStatus } from "@findback/shared";
+import { POST_STATUS_LABELS } from "@findback/shared";
 import { BackButton } from "../components/BackButton";
 import { PostList } from "../components/PostList";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { useFeed } from "../hooks/useFeed";
 import { useTabTap } from "../components/TabTap";
 import { useAuth } from "../auth";
+import { announce } from "../components/LiveRegion";
+import {
+  OwnerReportActionsProvider,
+  type OwnerReportActionHandlers,
+} from "../components/OwnerReportActions";
+import { deletePost, updatePostStatus } from "../services/posts";
+import { shareReport } from "../utils/shareReport";
+import { friendlyError } from "../utils/friendlyErrors";
 
 const MY_CACHE_BASE = "my:reports";
+
+/**
+ * How long a scheduled delete can still be undone.
+ *
+ * The same window the notification inbox uses for its undo affordance
+ * (see `UNDO_WINDOW_MS` in screens/Notifications.tsx): long enough to read
+ * the message and press Undo, short enough that a forgotten delete does not
+ * keep a report hanging in the air.
+ */
+export const DELETE_UNDO_WINDOW_MS = 5000;
 
 /** UXN-4 owner-status quick filters. ALL clears the status restriction;
  *  every option keeps the userId feed restriction. */
@@ -21,17 +41,30 @@ const OWNER_STATUS_OPTIONS: { value: OwnerStatusFilter; label: string }[] = [
   { value: "CLOSED", label: "Closed" },
 ];
 
+/** A delete that is waiting for the undo window (or already on its way). */
+interface PendingDelete {
+  id: string;
+  title: string;
+  /** "pending": the undo window is open. "sending": the server call is in flight. */
+  phase: "pending" | "sending";
+}
+
 export function MyPosts() {
   const { user } = useAuth();
   const { tapCount } = useTabTap();
+  const navigate = useNavigate();
   const scrollRef = useRef<PullToRefreshHandle>(null);
   const [ownerStatus, setOwnerStatus] = useState<OwnerStatusFilter>("ALL");
   const filterRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The feed filter carries userId, so the resolved cache key is already
   // user-scoped: `my:reports:<filterKey>`. Passing the base (not a
   // pre-scoped key) keeps it identical to the hook's own key.
-  const { items, total, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore } = useFeed(
+  const { items, total, loading, refreshing, loadingMore, error, hasMore, refresh, loadMore, removeItem, patchItem } = useFeed(
     { userId: user?.id, status: ownerStatus === "ALL" ? "" : ownerStatus },
     { cacheKey: MY_CACHE_BASE, scrollRef },
   );
@@ -44,6 +77,125 @@ export function MyPosts() {
     scrollRef.current?.scrollToTop();
   }, [tapCount]);
 
+  const clearUndoTimer = useCallback(() => {
+    if (undoTimer.current !== null) {
+      clearTimeout(undoTimer.current);
+      undoTimer.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearUndoTimer(), [clearUndoTimer]);
+
+  /**
+   * The delete is DELAYED, and the delay is the point.
+   *
+   * The server's delete is irreversible: once the row is gone, nothing can
+   * bring it back. So the server is NOT called when the user asks to delete
+   * — the request is only scheduled, and the row stays on screen marked as
+   * waiting. If the user undoes inside the window, nothing is ever sent.
+   * Only when the window closes is the delete actually sent, and only a
+   * server acceptance turns the row into a deleted report. A refused delete
+   * puts the row back and says the report was NOT deleted.
+   */
+  const commitDelete = useCallback(
+    async (id: string) => {
+      undoTimer.current = null;
+      setPendingDelete((current) => (current && current.id === id ? { ...current, phase: "sending" } : current));
+      try {
+        await deletePost(id);
+        setPendingDelete(null);
+        removeItem(id);
+        setActionError(null);
+        setNotice("Report deleted.");
+        announce("Report deleted.");
+      } catch (err) {
+        // The server refused: the report is still there, and the screen says
+        // so. It never shows a deleted state the server rejected.
+        setPendingDelete(null);
+        const message = `Report not deleted — ${friendlyError(err).message}`;
+        setActionError(message);
+        announce(message);
+      }
+    },
+    [removeItem],
+  );
+
+  const requestDelete = useCallback(
+    (post: PostItem) => {
+      const ok = window.confirm(
+        `Delete “${post.title}”? Once it’s gone it can’t be restored. You’ll have a few seconds to undo.`,
+      );
+      if (!ok) return;
+      setActionError(null);
+      setNotice(null);
+      clearUndoTimer();
+      setPendingDelete({ id: post.id, title: post.title, phase: "pending" });
+      undoTimer.current = setTimeout(() => {
+        void commitDelete(post.id);
+      }, DELETE_UNDO_WINDOW_MS);
+    },
+    [clearUndoTimer, commitDelete],
+  );
+
+  const undoDelete = useCallback(() => {
+    if (!pendingDelete || pendingDelete.phase === "sending") return;
+    clearUndoTimer();
+    setPendingDelete(null);
+    setNotice("Deletion cancelled — the report is still here.");
+    announce("Deletion cancelled.");
+  }, [clearUndoTimer, pendingDelete]);
+
+  const changeStatus = useCallback(
+    (post: PostItem, status: PostStatus) => {
+      if (status === post.status) return;
+      // Recovered/Closed are terminal for the searcher: confirm explicitly.
+      // All other transitions stay direct. No new statuses are introduced.
+      if ((status === "RECOVERED" || status === "CLOSED")) {
+        const ok = window.confirm(
+          status === "RECOVERED"
+            ? "Mark this report as recovered? It will leave the open search."
+            : "Close this report? It will leave the open search.",
+        );
+        if (!ok) return;
+      }
+      void (async () => {
+        try {
+          const updated = await updatePostStatus(post.id, status);
+          // The row is patched in place: the list neither refetches nor
+          // reorders around the change.
+          patchItem(post.id, { status: updated.status });
+          setActionError(null);
+          setNotice(`Status updated to ${POST_STATUS_LABELS[updated.status]}.`);
+          announce(`Status updated to ${POST_STATUS_LABELS[updated.status]}.`);
+        } catch (err) {
+          const message = friendlyError(err).message;
+          setActionError(message);
+          announce(message);
+        }
+      })();
+    },
+    [patchItem],
+  );
+
+  const shareOne = useCallback((post: PostItem) => {
+    void (async () => {
+      try {
+        announce(await shareReport(post.id, post.title));
+      } catch {
+        announce("Couldn't share this report. Please try again.");
+      }
+    })();
+  }, []);
+
+  const actions: OwnerReportActionHandlers = {
+    onChangeStatus: changeStatus,
+    onEdit: (post) => navigate(`/my/${post.id}/edit`),
+    onShare: shareOne,
+    onDelete: requestDelete,
+    pendingDeleteId: pendingDelete?.id ?? null,
+    onUndoDelete: undoDelete,
+  };
+
   return (
     <div className="flex h-full flex-col gap-4 py-5">
       <header className="flex items-center gap-2 px-4">
@@ -55,6 +207,12 @@ export function MyPosts() {
           </p>
         </div>
       </header>
+
+      {actionError && (
+        <p role="alert" className="mx-4 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
+          {actionError}
+        </p>
+      )}
 
       <div className="fb-scroll-fade mx-4">
         <div
@@ -97,20 +255,45 @@ export function MyPosts() {
         </div>
       </div>
 
-      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="flex-1">
-        <PostList
-          items={items}
-          loading={loading}
-          loadingMore={loadingMore}
-          error={error}
-          hasMore={hasMore}
-          onLoadMore={loadMore}
-          onRetry={refresh}
-          emptyTitle="You have no reports yet"
-          emptySubtitle="Tap Report to post a lost or found item."
-          density="owner-feed"
-        />
-      </PullToRefresh>
+      <OwnerReportActionsProvider value={actions}>
+        <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="flex-1">
+          <PostList
+            items={items}
+            loading={loading}
+            loadingMore={loadingMore}
+            error={error}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            onRetry={refresh}
+            emptyTitle="You have no reports yet"
+            emptySubtitle="Tap Report to post a lost or found item."
+            density="owner-feed"
+          />
+        </PullToRefresh>
+      </OwnerReportActionsProvider>
+
+      {pendingDelete && pendingDelete.phase === "pending" && (
+        <div
+          role="status"
+          data-testid="my-posts-delete-undo"
+          className="sticky bottom-3 mx-4 flex items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
+        >
+          <span className="flex-1">Delete scheduled — Undo for a few seconds</span>
+          <button
+            type="button"
+            onClick={undoDelete}
+            className="min-h-[44px] rounded-full px-3 font-semibold underline"
+          >
+            Undo
+          </button>
+        </div>
+      )}
+
+      {notice && !pendingDelete && (
+        <p role="status" data-testid="my-posts-notice" className="mx-4 text-sm text-on-surface-variant">
+          {notice}
+        </p>
+      )}
     </div>
   );
 }

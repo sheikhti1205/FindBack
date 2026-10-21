@@ -26,6 +26,7 @@ import { ProfileEdit } from "./screens/ProfileEdit";
 import { PublicProfile } from "./screens/PublicProfile";
 import { About } from "./screens/About";
 import { MyPosts } from "./screens/MyPosts";
+import { EditReport } from "./screens/EditReport";
 import { SavedReports } from "./screens/SavedReports";
 import { Help } from "./screens/Help";
 import { AiConnection } from "./screens/AiConnection";
@@ -152,6 +153,7 @@ export function App() {
               <Route path="/report" element={<CreateReport />} />
               <Route path="/posts/:id" element={<PostDetail />} />
               <Route path="/my" element={<MyPosts />} />
+              <Route path="/my/:id/edit" element={<EditReport />} />
               <Route path="/saved" element={<SavedReports />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/profile/edit" element={<ProfileEdit />} />

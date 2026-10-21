@@ -116,7 +116,14 @@ const STRUCTURED_STRATEGIES: Readonly<Record<string, StructuredStrategy>> = {
       properties: {
         query: { type: "string", description: "Search terms as stated by the user" },
         category: { type: "string", description: "Item category filter as stated by the user" },
-        status: { type: "string", description: "Lost or found status filter as stated by the user" },
+        status: { type: "string", description: "Report status filter as stated by the user (open, matched, recovered, closed)" },
+        // The LOST/FOUND type has its own slot: the status enum has no "lost",
+        // so a type that arrives in `status` is a type the reader can never
+        // filter by.
+        postType: { type: "string", description: "Whether the reader lost the item or found it", enum: ["LOST", "FOUND"] },
+        // A place NAME. Never coordinates — the client has no geo filter and
+        // must never be handed one.
+        place: { type: "string", description: "Place name as stated by the user (a name, never coordinates)" },
         dateRangeText: { type: "string", description: "Date range filter as stated by the user" },
       },
       required: [],
@@ -222,6 +229,12 @@ export class ApplicationAiService {
   private version = 0;
   private notices = new Map<string, string>();
   private operating = new Set<string>();
+  /**
+   * Models with a download REQUEST in flight that has not registered its
+   * transfer yet. The device registers a transfer a tick after the click, so
+   * this is the window in which a second tap could start a second transfer.
+   */
+  private claiming = new Set<string>();
   /** Cached device ABI set (from native facts); undefined until first read. */
   private deviceAbiCache: readonly string[] | undefined;
   /** Per-model compatibility snapshot for the UI; refreshed by ensureCompatibility. */
@@ -242,7 +255,7 @@ export class ApplicationAiService {
   /** Residency/operation snapshot for diagnostics (owner, exclusive claim, flights). */
   get residency() { return this.coordinator.snapshot(); }
   notice(modelId: string) { return this.notices.get(modelId) ?? null; }
-  busy(modelId: string) { return this.operating.has(modelId); }
+  busy(modelId: string) { return this.operating.has(modelId) || this.claiming.has(modelId); }
 
   constructor(options: { android: boolean; driver?: ModelDownloadDriver; needle?: NeedleBridge; smol?: SmolBridge; qwenText?: QwenTextBridge; llama?: LlamaNativeBridge; descriptors?: readonly ModelDescriptor[]; defaultVisionModelId?: string }) {
     this.android = options.android;
@@ -410,48 +423,67 @@ export class ApplicationAiService {
   }
   async download(modelId: string, mirror?: string | ArtifactMirrors, signal?: AbortSignal): Promise<void> {
     this.requireAndroid();
-    const resetVersion = this.coordinator.resetVersion;
-    await this.ready;
-    if (signal?.aborted) throw new Error("Download cancelled.");
-    // Model files back the resident engines: no download may cross the
-    // reset barrier while cleanup is pending.
-    if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
-    if (this.active.has(modelId) || this.operating.has(modelId)) return;
-    const model = this.model(modelId);
-    const mirrors = typeof mirror === "string" ? { [model.fileName]: mirror } : mirror ?? {};
-    validateArtifactMirrors(model, mirrors);
-    // Acquisition eligibility is separate from task qualification. Advanced
-    // models with immutable byte pins may be acquired without product roles.
-    if (model.downloadable !== true || distributionPolicyOf(model) !== "downloadable") {
-      const reason = (model.distributionNote ?? "").trim() !== ""
-        ? (model.distributionNote as string)
-        : "This model is not offered as a download.";
-      this.notices.set(modelId, reason);
-      this.changed();
-      throw new Error(reason);
-    }
-    await this.requireCompatible(model);
-    if (signal?.aborted || resetVersion !== this.coordinator.resetVersion) throw new Error("Download cancelled.");
-    // Compatibility awaits native facts. Recheck ownership synchronously
-    // before registering work: a racing duplicate must not replace the first
-    // transfer's cancellation owner (even if its own manager gate refuses it).
-    if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
-    if (this.active.has(modelId) || this.operating.has(modelId)) return;
-    const abort = new AbortController();
-    const cancel = () => abort.abort();
-    signal?.addEventListener("abort", cancel, { once: true });
-    const work = (async () => {
-      const result = model.companions?.length
-        ? await runManagedBundle(this.manager, this.driver!, model, abort.signal, mirrors)
-        : await runManagedDownload(this.manager, this.driver!, { ...model, sources: sourcesFor(model, mirrors[model.fileName]), maxBytes: model.bytes, userInitiated: true, signal: abort.signal });
-      this.notices.set(modelId, result.ok ? "Installed and checksum verified." : result.reason);
-    })().catch(() => { this.notices.set(modelId, "Download failed; retry to resume verified staging."); }).finally(() => {
-      signal?.removeEventListener("abort", cancel);
-      this.active.delete(modelId); this.changed();
-    });
-    this.active.set(modelId, { abort, work });
+    // Claim the model BEFORE the first await.
+    //
+    // The device registers a transfer a tick AFTER the click (the readiness
+    // and compatibility probes run first), so two taps inside that window
+    // used to reach the ownership checks together and could both register a
+    // transfer against the same staging path. The claim makes the second
+    // request a no-op, and `busy()` reports it so the surface that owns the
+    // button can disable it while the request is in flight. The claim is
+    // released as soon as the transfer owns the model, and released again if
+    // the attempt fails — so a retry after a failure is never refused.
+    if (this.claiming.has(modelId) || this.active.has(modelId) || this.operating.has(modelId)) return;
+    this.claiming.add(modelId);
     this.changed();
-    await work;
+    try {
+      const resetVersion = this.coordinator.resetVersion;
+      await this.ready;
+      if (signal?.aborted) throw new Error("Download cancelled.");
+      // Model files back the resident engines: no download may cross the
+      // reset barrier while cleanup is pending.
+      if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
+      if (this.active.has(modelId) || this.operating.has(modelId)) return;
+      const model = this.model(modelId);
+      const mirrors = typeof mirror === "string" ? { [model.fileName]: mirror } : mirror ?? {};
+      validateArtifactMirrors(model, mirrors);
+      // Acquisition eligibility is separate from task qualification. Advanced
+      // models with immutable byte pins may be acquired without product roles.
+      if (model.downloadable !== true || distributionPolicyOf(model) !== "downloadable") {
+        const reason = (model.distributionNote ?? "").trim() !== ""
+          ? (model.distributionNote as string)
+          : "This model is not offered as a download.";
+        this.notices.set(modelId, reason);
+        this.changed();
+        throw new Error(reason);
+      }
+      await this.requireCompatible(model);
+      if (signal?.aborted || resetVersion !== this.coordinator.resetVersion) throw new Error("Download cancelled.");
+      // Compatibility awaits native facts. Recheck ownership synchronously
+      // before registering work: a racing duplicate must not replace the first
+      // transfer's cancellation owner (even if its own manager gate refuses it).
+      if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
+      if (this.active.has(modelId) || this.operating.has(modelId)) return;
+      const abort = new AbortController();
+      const cancel = () => abort.abort();
+      signal?.addEventListener("abort", cancel, { once: true });
+      const work = (async () => {
+        const result = model.companions?.length
+          ? await runManagedBundle(this.manager, this.driver!, model, abort.signal, mirrors)
+          : await runManagedDownload(this.manager, this.driver!, { ...model, sources: sourcesFor(model, mirrors[model.fileName]), maxBytes: model.bytes, userInitiated: true, signal: abort.signal });
+        this.notices.set(modelId, result.ok ? "Installed and checksum verified." : result.reason);
+      })().catch(() => { this.notices.set(modelId, "Download failed; retry to resume verified staging."); }).finally(() => {
+        signal?.removeEventListener("abort", cancel);
+        this.active.delete(modelId); this.changed();
+      });
+      this.active.set(modelId, { abort, work });
+      // The transfer owns the model from here; the claim is done.
+      this.claiming.delete(modelId);
+      this.changed();
+      await work;
+    } finally {
+      this.claiming.delete(modelId);
+    }
   }
   async pause(modelId: string) {
     const active = this.active.get(modelId);

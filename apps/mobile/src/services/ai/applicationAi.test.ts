@@ -130,6 +130,64 @@ describe("application-owned AI", () => {
     await expect(service.embedNeedle(["umbrella"])).rejects.toThrow(/installed/);
   });
 
+  it("claims the model before the first await, so a second tap cannot start a second transfer", async () => {
+    // The device registers a transfer a tick AFTER the click, so two taps
+    // inside that window used to reach the ownership checks together and
+    // could both register a transfer against the same staging path. The
+    // claim makes the second request a no-op, and `busy()` reports it so
+    // the surface that owns the button can disable it.
+    const p = platform();
+    let release!: () => void;
+    p.driver.download = async (attempt) => {
+      p.calls.push("download");
+      await new Promise<void>((resolve) => { release = resolve; });
+      return {
+        receivedBytes: attempt.maxBytes,
+        totalBytes: attempt.maxBytes,
+        actualHex: attempt.expectedSha256,
+        finalUrl: attempt.url,
+      };
+    };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    const id = NEEDLE_DESCRIPTOR.modelId;
+
+    const first = service.download(id);
+    // The claim is taken synchronously — before the first await — so the
+    // row knows the device is busy with the request itself.
+    expect(service.busy(id)).toBe(true);
+
+    // The second request is refused at once and never reaches the device.
+    await service.download(id);
+    await vi.waitFor(() => expect(p.calls.filter(call => call === "download")).toHaveLength(1));
+    release();
+    await first;
+
+    expect(p.calls.filter(call => call === "download")).toHaveLength(1);
+    expect(service.busy(id)).toBe(false);
+  });
+
+  it("releases the claim when the attempt fails, so a retry is never refused", async () => {
+    const p = platform();
+    let attempts = 0;
+    p.driver.download = async () => {
+      attempts += 1;
+      throw new Error("network is down");
+    };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    const id = NEEDLE_DESCRIPTOR.modelId;
+
+    await service.download(id);
+    expect(attempts).toBe(1);
+    expect(service.busy(id)).toBe(false);
+
+    // The retry reaches the device: a failed attempt must not leave the
+    // model claimed forever.
+    await service.download(id);
+    expect(attempts).toBe(2);
+  });
+
   it("recovers installs only after rehashing the current pinned file, never from persisted claims", async () => {
     const p = platform();
     const first = new ApplicationAiService({ android: true, ...p });

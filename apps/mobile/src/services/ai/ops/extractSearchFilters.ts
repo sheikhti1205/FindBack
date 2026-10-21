@@ -1,11 +1,15 @@
 /**
  * Narrow op: extract-search-filters.
  *
- * The model emits ONE small slot object (query, category, status,
- * dateRangeText). Ambiguous or empty filters are a successful ASK_USER
- * state (faultScenarios search-ambiguous-place). Status stays free text:
- * no report-status enum exists in this contract (schema is out of scope),
- * so enum binding is deferred to the schema owner.
+ * The model emits ONE small slot object (query, category, status, postType,
+ * place, dateRangeText). Ambiguous or empty filters are a successful
+ * ASK_USER state (faultScenarios search-ambiguous-place). Status stays free
+ * text: no report-status enum exists in this contract (schema is out of
+ * scope), so enum binding is deferred to the schema owner.
+ *
+ * The LOST/FOUND type and the PLACE have slots of their own: the type used
+ * to arrive in `status`, where the status enum has no "lost" and the reader
+ * could never filter by it, and a place had no home at all.
  */
 import type { ModelProfile } from "../modelProfiles";
 import { makeAskUserPrompt } from "../clarificationCopy";
@@ -19,7 +23,8 @@ import type {
 
 export const SEARCH_SLOTS_INSTRUCTION =
   "Extract search filters. Return ONLY one JSON object with any of " +
-  '"query", "category", "status", "dateRangeText" as short strings. Omit ' +
+  '"query", "category", "status", "postType", "place", "dateRangeText" as short strings. ' +
+  '"postType" is LOST or FOUND. "place" is a place name. Omit ' +
   "unknown slots. Never invent coordinates. No markdown, no commentary.";
 
 export function buildSearchSlotsPrompt(userMessage: string): string {
@@ -53,6 +58,8 @@ export async function extractSearchFilters(
     parsed.value.query !== undefined ||
     parsed.value.category !== undefined ||
     parsed.value.status !== undefined ||
+    parsed.value.postType !== undefined ||
+    parsed.value.place !== undefined ||
     parsed.value.dateRangeText !== undefined;
   const action: AssistantAction = hasFilter
     ? { action: "NONE" }

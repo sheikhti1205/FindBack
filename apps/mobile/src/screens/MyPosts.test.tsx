@@ -1,16 +1,26 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchFeedMock } = vi.hoisted(() => ({ fetchFeedMock: vi.fn() }));
+const { fetchFeedMock, updatePostStatusMock, deletePostMock, shareReportMock } = vi.hoisted(() => ({
+  fetchFeedMock: vi.fn(),
+  updatePostStatusMock: vi.fn(),
+  deletePostMock: vi.fn(),
+  shareReportMock: vi.fn(),
+}));
 
-vi.mock("../services/posts", () => ({ fetchFeed: fetchFeedMock }));
+vi.mock("../services/posts", () => ({
+  fetchFeed: fetchFeedMock,
+  updatePostStatus: updatePostStatusMock,
+  deletePost: deletePostMock,
+}));
+vi.mock("../utils/shareReport", () => ({ shareReport: shareReportMock }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "alice" } }) }));
 vi.mock("../components/TabTap", () => ({ useTabTap: () => ({ tapCount: 0 }) }));
 
 import { clearFeedCaches } from "../hooks/feedCache";
-import { MyPosts } from "./MyPosts";
+import { MyPosts, DELETE_UNDO_WINDOW_MS } from "./MyPosts";
 
 // PostList paginates via IntersectionObserver (absent in jsdom); stub it
 // following the PostCardDensity.test.tsx precedent.
@@ -62,17 +72,26 @@ function renderMyPosts() {
 
 beforeEach(() => {
   fetchFeedMock.mockReset();
+  updatePostStatusMock.mockReset();
+  deletePostMock.mockReset();
+  shareReportMock.mockReset();
   clearFeedCaches();
   fetchFeedMock.mockResolvedValue({
     items: [post("p1"), post("p2")],
     nextCursor: null,
     total: 2,
   });
+  updatePostStatusMock.mockImplementation(async (id: string, status: string) => post(id, status));
+  deletePostMock.mockResolvedValue(undefined);
+  shareReportMock.mockResolvedValue("Link copied to clipboard.");
+  vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 afterEach(() => {
   cleanup();
   clearFeedCaches();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("MyPosts (My Reports alignment)", () => {
@@ -161,5 +180,108 @@ describe("MyPosts (My Reports alignment)", () => {
     // Back affordance and header survive the redesign.
     expect(screen.getByRole("heading", { name: /my reports/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /back to profile/i })).toBeTruthy();
+  });
+});
+
+/** Open the overflow menu of the first report row. */
+function openFirstRowMenu() {
+  const trigger = screen.getAllByRole("button", { name: /manage report/i })[0]!;
+  fireEvent.click(trigger);
+  return screen.getByRole("menu");
+}
+
+describe("MyPosts management (owner row actions)", () => {
+  it("offers the canonical statuses plus edit, share and delete on every row", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    const statuses = within(menu).getAllByRole("menuitemradio").map((el) => el.textContent);
+    expect(statuses.map((text) => text?.replace("Current", "").trim())).toEqual([
+      "Open",
+      "Matched",
+      "Recovered",
+      "Closed",
+    ]);
+    expect(within(menu).getByRole("menuitem", { name: /edit details/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /share/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /delete report/i })).toBeTruthy();
+  });
+
+  it("changes the status in place through the canonical status path", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledWith("p1", "MATCHED"));
+    // The row is patched where it sits — no refetch, no reorder.
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
+    );
+  });
+
+  it("shares through the canonical share path", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /share/i }));
+    await waitFor(() => expect(shareReportMock).toHaveBeenCalledWith("p1", "Report p1"));
+  });
+
+  it("does NOT send the delete before the undo window closes, and Undo cancels it", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    vi.useFakeTimers();
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /delete report/i }));
+    expect(window.confirm).toHaveBeenCalled();
+    // Nothing is sent, and the report is still there — it is NOT shown as
+    // deleted before the server accepted the delete.
+    expect(deletePostMock).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2);
+    expect(screen.getAllByTestId("owner-report-delete-pending")).toHaveLength(1);
+
+    fireEvent.click(
+      within(screen.getByTestId("my-posts-delete-undo")).getByRole("button", { name: /undo/i }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 500);
+    });
+    expect(deletePostMock).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2);
+    expect(screen.getByTestId("my-posts-notice").textContent).toMatch(/cancelled/i);
+  });
+
+  it("sends the delete when the undo window closes and drops the row only after the server accepted", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    vi.useFakeTimers();
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /delete report/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10);
+    });
+    expect(deletePostMock).toHaveBeenCalledWith("p1");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // The row goes away only now — after the server accepted the delete.
+    expect(screen.getAllByTestId("owner-report-card")).toHaveLength(1);
+  });
+
+  it("keeps the row and says the report was NOT deleted when the server refuses", async () => {
+    deletePostMock.mockRejectedValue(new Error("network is down"));
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    vi.useFakeTimers();
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /delete report/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("alert").textContent).toMatch(/not deleted/i);
+    expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2);
   });
 });
