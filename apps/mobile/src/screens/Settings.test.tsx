@@ -168,6 +168,9 @@ describe("Settings home", () => {
       "/settings/help",
       "/onboarding?replay=1",
       "/settings/about",
+      "/settings/terms",
+      "/settings/privacy-policy",
+      "/settings/community-guidelines",
     ]) {
       expect(hrefs, `row linking to ${href} exists`).toContain(href);
     }
@@ -198,12 +201,13 @@ describe("Settings home", () => {
     expect(screen.getByRole("link", { name: /Feed layout/ }).textContent).toMatch(/Compact/);
   });
 
-  it("groups moved rows under the Advanced and Help & about disclosures", () => {
+  it("groups moved rows under the Advanced, Legal and Help & about disclosures", () => {
     renderSettings();
     const more = screen.getByRole("region", { name: "More" });
     expect(within(more).getByText("Advanced")).toBeTruthy();
+    expect(within(more).getByText("Legal")).toBeTruthy();
     expect(within(more).getByText("Help & about")).toBeTruthy();
-    expect(document.querySelectorAll("details.fb-settings-nested")).toHaveLength(2);
+    expect(document.querySelectorAll("details.fb-settings-nested")).toHaveLength(3);
   });
 
   it("keeps every root row keyboard-focusable with a real target", () => {

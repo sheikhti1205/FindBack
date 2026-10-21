@@ -104,6 +104,9 @@ const BACK_TO_ROUTES = [
   "/ai-connection",
   "/ai-models",
   "/profile/edit",
+  "/settings/terms",
+  "/settings/privacy-policy",
+  "/settings/community-guidelines",
 ] as const;
 
 describe("QA L: every settings backTo lands on a mounted route", () => {
@@ -113,6 +116,21 @@ describe("QA L: every settings backTo lands on a mounted route", () => {
       expect(document.body.textContent!.length).toBeGreaterThan(0);
     });
     expect(screen.queryByText("Loading FindBack…")).toBeNull();
+  });
+});
+
+describe("QA L: the legal documents are reachable and say what they are", () => {
+  it.each([
+    ["/settings/terms", "Terms of use"],
+    ["/settings/privacy-policy", "Privacy policy"],
+    ["/settings/community-guidelines", "Community guidelines"],
+  ] as const)("route %s renders its own document", async (route, heading) => {
+    renderAt(route);
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { level: 1, name: heading })).not.toBeNull();
+    });
+    // A legal document is not a placeholder: it carries text.
+    expect((document.body.textContent ?? "").length).toBeGreaterThan(200);
   });
 });
 

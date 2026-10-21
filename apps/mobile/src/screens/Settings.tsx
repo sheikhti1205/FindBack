@@ -12,10 +12,12 @@ import {
   LogOut,
   Palette,
   RotateCcw,
+  Scale,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   UserRound,
+  Users,
 } from "lucide-react";
 import type { PublicUser } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -269,6 +271,31 @@ export function Settings() {
                 icon={Activity}
                 iconTone="privacy"
                 route="/settings/diagnostics"
+              />
+            </SettingsNestedGroup>
+            <SettingsNestedGroup
+              title="Legal"
+              description="Terms, privacy and rules."
+              icon={Scale}
+              iconTone="about"
+            >
+              <SettingsRow
+                title="Terms of use"
+                icon={Scale}
+                iconTone="about"
+                route="/settings/terms"
+              />
+              <SettingsRow
+                title="Privacy policy"
+                icon={ShieldCheck}
+                iconTone="privacy"
+                route="/settings/privacy-policy"
+              />
+              <SettingsRow
+                title="Community guidelines"
+                icon={Users}
+                iconTone="help"
+                route="/settings/community-guidelines"
               />
             </SettingsNestedGroup>
             <SettingsNestedGroup

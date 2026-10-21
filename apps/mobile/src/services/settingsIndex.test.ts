@@ -30,9 +30,20 @@ describe("settingsIndex", () => {
         "/settings/media",
         "/settings/notifications",
         "/settings/privacy",
+        // The three consumer documents. They postdate the 2026-10-03 route map
+        // this test was written against, like the local-intelligence rows.
+        "/settings/terms",
+        "/settings/privacy-policy",
+        "/settings/community-guidelines",
         "/onboarding?replay=1",
       ].sort(),
     );
+  });
+
+  it("finds the three legal documents by the words a reader would type", () => {
+    expect(searchSettings("terms").map((r) => r.id)).toContain("terms");
+    expect(searchSettings("guidelines").map((r) => r.id)).toContain("community-guidelines");
+    expect(searchSettings("privacy policy").map((r) => r.id)).toContain("privacy-policy");
   });
 
   it("matches alias terms from settings_search_index.csv", () => {

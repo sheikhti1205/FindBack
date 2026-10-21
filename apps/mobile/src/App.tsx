@@ -46,6 +46,7 @@ import { AiSettings } from "./screens/AiSettings";
 import { AiPrivacy } from "./screens/AiPrivacy";
 import { AiAdvanced } from "./screens/AiAdvanced";
 import { HelpGuide } from "./screens/HelpGuide";
+import { CommunityGuidelines, PrivacyPolicy, Terms } from "./screens/Legal";
 import { Diagnostics } from "./screens/Diagnostics";
 import { Capacitor } from "@capacitor/core";
 import { ReportLinkHandler } from "./components/ReportLinkHandler";
@@ -179,6 +180,9 @@ export function App() {
               <Route path="/settings/ai/advanced" element={<AiAdvanced />} />
               <Route path="/settings/help" element={<HelpGuide />} />
               <Route path="/settings/about" element={<About />} />
+              <Route path="/settings/terms" element={<Terms />} />
+              <Route path="/settings/privacy-policy" element={<PrivacyPolicy />} />
+              <Route path="/settings/community-guidelines" element={<CommunityGuidelines />} />
               <Route path="/settings/diagnostics" element={<Diagnostics />} />
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />

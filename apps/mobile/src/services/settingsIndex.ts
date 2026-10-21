@@ -10,9 +10,11 @@ import {
   LayoutGrid,
   Palette,
   RotateCcw,
+  Scale,
   ShieldCheck,
   Sparkles,
   UserRound,
+  Users,
 } from "lucide-react";
 import type { SettingsSearchResult } from "../components/settings";
 
@@ -197,6 +199,39 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
     description: "More · Help & about",
     icon: Info,
     iconTone: "about",
+  },
+  // The three consumer documents. They live in the collapsed "Legal" group,
+  // so without these rows a reader who types "terms" or "guidelines" into
+  // Settings search finds nothing at all.
+  {
+    id: "terms",
+    title: "Terms of use",
+    keywords: "terms conditions rules of use legal agreement",
+    group: "Legal",
+    route: "/settings/terms",
+    description: "More · Legal",
+    icon: Scale,
+    iconTone: "about",
+  },
+  {
+    id: "privacy-policy",
+    title: "Privacy policy",
+    keywords: "privacy policy data personal information legal",
+    group: "Legal",
+    route: "/settings/privacy-policy",
+    description: "More · Legal",
+    icon: ShieldCheck,
+    iconTone: "privacy",
+  },
+  {
+    id: "community-guidelines",
+    title: "Community guidelines",
+    keywords: "community guidelines rules conduct behaviour legal",
+    group: "Legal",
+    route: "/settings/community-guidelines",
+    description: "More · Legal",
+    icon: Users,
+    iconTone: "help",
   },
 ];
 
