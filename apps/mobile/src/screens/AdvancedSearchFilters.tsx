@@ -5,7 +5,7 @@ import { CATEGORIES, POST_STATUSES, type Category, type PostStatus } from "@find
 import { SlidersHorizontal, X } from "lucide-react";
 import { BottomSheet } from "../components/BottomSheet";
 import { CategoryField } from "../components/CategoryField";
-import { SelectField } from "../components/Fields";
+import { SelectField, TextField } from "../components/Fields";
 import { STATUS_OPTIONS, statusLabel } from "../components/Segmented";
 import { useUrlParam } from "../hooks/useUrlParam";
 import {
@@ -16,6 +16,12 @@ import {
   pressFeedback,
   scaleInVariants,
 } from "../components/uiMotion";
+
+/** The first value that is actually there: an empty string is "not there". */
+function firstPresent(...values: (string | undefined)[]): string {
+  for (const value of values) if (value) return value;
+  return "";
+}
 
 /** Keep the legacy /search and Home filter URL contract identical. */
 export function useAdvancedSearchFilters() {
@@ -118,6 +124,7 @@ export function AdvancedSearchFilters({
   open: controlledOpen,
   onOpenChange,
   hideTrigger = false,
+  dateRange,
 }: {
   filters: AdvancedFilters;
   /** Controlled sheet state (Home embeds its own trigger inside the search bar). */
@@ -125,15 +132,38 @@ export function AdvancedSearchFilters({
   onOpenChange?: (open: boolean) => void;
   /** Hide the default full-width trigger when the caller renders its own. */
   hideTrigger?: boolean;
+  /** Search can expose dates without changing Home's filter/URL contract. */
+  dateRange?: {
+    /** The APPLIED bounds. The chips count these: a value the feed never
+     *  received must never be counted as a filter the reader has on. */
+    from: string;
+    to: string;
+    /** What the date FIELDS show. Defaults to the applied bounds. A range the
+     *  reader entered but that is not applied (a reversed range) is shown as
+     *  entered, so the mistake can be fixed instead of silently vanishing. */
+    draftFrom?: string;
+    draftTo?: string;
+    onFromChange: (value: string) => void;
+    onToChange: (value: string) => void;
+  };
 }) {
   const { category, status, sort, setCategory, setStatus, setSort, clearAll } = filters;
   const [internalOpen, setInternalOpen] = useState(false);
   const sheetOpen = controlledOpen ?? internalOpen;
   const setSheetOpen = onOpenChange ?? setInternalOpen;
+  // The date FIELDS may show what the reader entered even when that range is
+  // not applied (a reversed range), so the mistake can be fixed instead of
+  // silently vanishing. The CHIPS keep the applied bounds. An EMPTY draft
+  // means "no draft": it falls back to the applied bound, so a caller that
+  // has no draft to offer still shows what is in force.
+  const dateFromField = firstPresent(dateRange?.draftFrom, dateRange?.from);
+  const dateToField = firstPresent(dateRange?.draftTo, dateRange?.to);
   const active = [
     category ? { key: "category", label: `Category: ${category}`, clear: () => setCategory("") } : null,
     status ? { key: "status", label: `Status: ${statusLabel(status)}`, clear: () => setStatus("") } : null,
     sort !== "newest" ? { key: "sort", label: "Sort: Oldest first", clear: () => setSort("newest") } : null,
+    dateRange?.from ? { key: "start date", label: `From: ${dateRange.from}`, clear: () => dateRange.onFromChange("") } : null,
+    dateRange?.to ? { key: "end date", label: `To: ${dateRange.to}`, clear: () => dateRange.onToChange("") } : null,
   ].filter((item): item is { key: string; label: string; clear: () => void } => item !== null);
 
   return (
@@ -188,12 +218,16 @@ export function AdvancedSearchFilters({
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         title="Filters"
-        description="Category, status and sort. Changes apply immediately."
-        height="medium"
+        description={dateRange ? "Changes apply immediately." : "Category, status and sort. Changes apply immediately."}
+        height={dateRange ? "large" : "medium"}
       >
         <div className="flex flex-col gap-3 pb-2">
           <CategoryField value={category} onChange={setCategory} />
           <SelectField label="Status" value={status} onChange={e => setStatus(e.target.value as PostStatus | "")} options={STATUS_OPTIONS} />
+          {dateRange && <>
+            <TextField label="From date" type="date" style={{ paddingInline: 12 }} value={dateFromField} max={dateToField || undefined} onChange={e => dateRange.onFromChange(e.target.value)} />
+            <TextField label="To date" type="date" style={{ paddingInline: 12 }} value={dateToField} min={dateFromField || undefined} onChange={e => dateRange.onToChange(e.target.value)} />
+          </>}
           <SelectField label="Sort" value={sort} onChange={e => setSort(e.target.value as "newest" | "oldest")} options={[
             { value: "newest", label: "Newest first" },
             { value: "oldest", label: "Oldest first" },

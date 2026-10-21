@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { BottomSheet } from "../components/BottomSheet";
 import { Button } from "../components/Button";
 import { SettingsGroup, SettingsPage, SettingsRow } from "../components/settings";
@@ -10,15 +10,28 @@ import {
 } from "../services/ai/localIntelligenceView";
 
 /** Shared helper row; the two screens read and act on the same lifecycle. */
-export function LocalSearchHelperRow({ service, descriptor, phase, onRemove }: {
+export function LocalSearchHelperRow({ service, descriptor, phase, onRemove, description = "Understands search phrases and helps with report text and categories.", onBusyChange }: {
   service: LocalIntelligenceService;
   descriptor: ModelDescriptor | undefined;
   phase: "checking" | "ready" | "storage-unverified" | "failed";
   onRemove?: () => void;
+  /** Search already explains the offer; settings retain the fuller guidance. */
+  description?: ReactNode;
+  /**
+   * The device is busy with this row's operation.
+   *
+   * The row knows it is busy from the CLICK, while the transfer itself is
+   * registered by the device a tick later. A surface that offers a way out
+   * around this row (the Search offer) has to hear about the whole window,
+   * or it would offer to dismiss a download the device has already started.
+   */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const titleId = useId();
   const [pending, setPending] = useState<LocalAssetAction | null>(null);
   const operation = useRef(0);
+  /** How many operations are in flight at once (overlapping actions count). */
+  const busyOperations = useRef(0);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const modelId = descriptor?.modelId;
@@ -49,17 +62,27 @@ export function LocalSearchHelperRow({ service, descriptor, phase, onRemove }: {
     if (!modelId || locked) return;
     const id = ++operation.current;
     setPending(action); setError(null); setFeedback(null);
+    // The device is busy with this row's operation from the click onward, so
+    // the surface around it hears about the whole window. Overlapping
+    // operations are counted, not toggled: the row stays busy until the LAST
+    // one settles.
+    busyOperations.current += 1;
+    onBusyChange?.(true);
     void service[action](modelId).then(() => {
       if (action === "verify" && service.manager.statusOf(modelId)?.checksumVerified) setFeedback("Downloaded file checked.");
     }).catch((reason: unknown) => {
       setError(localOperationNotice(reason instanceof Error ? reason.message : "unknown"));
-    }).finally(() => { if (operation.current === id) setPending(null); });
+    }).finally(() => {
+      if (operation.current === id) setPending(null);
+      busyOperations.current = Math.max(0, busyOperations.current - 1);
+      onBusyChange?.(busyOperations.current > 0);
+    });
   }
 
   return <article aria-labelledby={titleId} className="flex min-w-0 flex-col gap-2 px-1 py-3">
     <div className="min-w-0">
       <h3 id={titleId} className="text-sm font-medium">Local search helper</h3>
-      <p className="text-sm text-on-surface-variant">Understands search phrases and helps with report text and categories.</p>
+      {description && <p className="text-sm text-on-surface-variant">{description}</p>}
     </div>
     <p role="status" className="text-sm text-on-surface-variant">{state}</p>
     {view && <>
