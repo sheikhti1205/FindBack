@@ -40,9 +40,9 @@ describe("local-helper copy", () => {
 
   it("offers the install only where installing can change the outcome", () => {
     for (const notes of MAPS) {
-      expect(notes["not-set-up"]).toMatch(/manage ai models/i);
+      expect(notes["not-set-up"]).toMatch(/manage local tools/i);
       for (const state of STATES.filter((s) => s !== "not-set-up")) {
-        expect(notes[state]).not.toMatch(/manage ai models/i);
+        expect(notes[state]).not.toMatch(/manage local tools/i);
       }
     }
   });

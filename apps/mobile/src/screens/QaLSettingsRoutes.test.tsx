@@ -92,6 +92,8 @@ const BACK_TO_ROUTES = [
   "/settings/ai/models",
   "/settings/ai/connections",
   "/settings/ai/advanced",
+  "/settings/local-intelligence",
+  "/settings/local-intelligence/downloads",
   "/onboarding?replay=1",
   "/verify",
   "/my",
@@ -131,7 +133,13 @@ const CONSUMER_FORBIDDEN =
   /sha-?256|\bsha\b|checksum|catalogue pin|revision|ttft|tokens\/s|\.gguf|\.onnx|quantiz|unknown model \S+/i;
 
 describe("QA L: consumer-tier AI screens render no raw technical terms", () => {
-  it.each(["/settings/ai", "/settings/ai/models", "/settings/ai/connections"] as const)(
+  it.each([
+    "/settings/ai",
+    "/settings/ai/models",
+    "/settings/ai/connections",
+    "/settings/local-intelligence",
+    "/settings/local-intelligence/downloads",
+  ] as const)(
     "screen %s stays consumer-worded",
     async (route) => {
       renderAt(route);

@@ -55,7 +55,7 @@ describe("Help streaming partial teardown (U1)", () => {
         </Routes>
       </MemoryRouter>,
     );
-    fireEvent.change(screen.getByLabelText("Ask the Help & FAQ"), { target: { value: "hi" } });
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "hi" } });
     fireEvent.submit(screen.getByTestId("chat-composer"));
     await screen.findByText("Exactly one answer.");
     // The 120 ms partial throttle must never resurrect a second bubble after

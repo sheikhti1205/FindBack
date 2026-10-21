@@ -149,6 +149,10 @@ export function ChatComposer({
   const fileInputId = useId();
   const cameraInputId = useId();
   const filesInputId = useId();
+  // One normalized chip label: an empty or whitespace-only title must not
+  // render an empty chip, and the visible label and the accessible name must
+  // always agree.
+  const chipTitle = modelTitle !== null && modelTitle.trim() !== "" ? modelTitle.trim() : "Choose model";
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -548,12 +552,15 @@ export function ChatComposer({
             onClick={onOpenModels}
             data-testid="composer-model-chip"
             disabled={disabled || busy || modelDisabled}
-            aria-label={`Choose model, currently ${modelTitle ?? "Automatic"}`}
-            title={modelTitle ?? "Automatic"}
+            // No model chosen yet: the chip invites the choice. It must never
+            // fall back to "Automatic" — that was the retired assistant-mode
+            // label, and Chat is cloud-only now.
+            aria-label={chipTitle === "Choose model" ? "Choose model" : `Choose model, currently ${chipTitle}`}
+            title={chipTitle}
             className="flex min-h-[48px] max-w-full items-center gap-1 truncate rounded-full border border-outline-variant px-3 text-xs font-medium text-on-surface hover:bg-surface-container disabled:opacity-60"
           >
             <ChevronDown size={14} aria-hidden className="shrink-0" />
-            <span className="truncate">{modelTitle ?? "Automatic"}</span>
+            <span className="truncate">{chipTitle}</span>
           </button>
         </div>
       )}

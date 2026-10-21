@@ -1,6 +1,14 @@
 /* Settings content never owns safe-area insets or scrolling; Shell owns those. */
 /* C5/C6: sticky chrome + list-first. Rows are separators+typography (no cards);
    the sticky bar is the single canonical escape chrome (one system). */
+
+/* The page heading is focused programmatically on mount so assistive tech
+ * announces the new page. It is not an interactive control, so it must not
+ * paint a focus ring: the app-wide indicator stays on real controls. */
+.fb-settings-page h1[tabindex="-1"]:focus,
+.fb-settings-page h1[tabindex="-1"]:focus-visible {
+  outline: none;
+}
 .fb-settings-page {
   width: 100%;
   max-width: 44rem;

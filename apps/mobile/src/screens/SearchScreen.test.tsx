@@ -264,7 +264,7 @@ describe("SearchScreen URL filters", () => {
       // screen reader hears and the link beside it is a sibling.
       expect(
         await screen.findByText(
-          "Smart Search needs the on-device model, which isn't set up on this device yet — open Manage AI models to install it.",
+          "Smart Search needs the on-device model, which isn't set up on this device yet — open Manage local tools to install it.",
         ),
       ).toBeTruthy();
       expect(screen.queryByText("No confident filters found — nothing changed.")).toBeNull();
@@ -275,12 +275,12 @@ describe("SearchScreen URL filters", () => {
       const noteRow = screen.getByTestId("smart-search-note-row");
       expect(noteRow.querySelectorAll("a")).toHaveLength(1);
       const manageModels = screen.getByTestId("smart-search-manage-models");
-      expect(manageModels.getAttribute("href")).toBe("/settings/ai/models");
-      expect(manageModels.textContent).toBe("Manage AI models");
+      expect(manageModels.getAttribute("href")).toBe("/settings/local-intelligence/downloads");
+      expect(manageModels.textContent).toBe("Manage local tools");
 
       fireEvent.click(manageModels);
       await waitFor(() =>
-        expect(screen.getByTestId("location").textContent).toBe("/settings/ai/models"),
+        expect(screen.getByTestId("location").textContent).toBe("/settings/local-intelligence/downloads"),
       );
     });
 

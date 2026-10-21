@@ -1,43 +1,42 @@
 import { useEffect, useState } from "react";
-import { Cloud, Cpu, SlidersHorizontal } from "lucide-react";
+import { Cpu, KeyRound, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
 import { useAuth } from "../auth";
-import { announce } from "../components/LiveRegion";
 import {
-  AdvancedDisclosure,
   SettingsGroup,
   SettingsPage,
   SettingsRow,
-  StatusPill,
 } from "../components/settings";
 import { aiCredentials } from "../services/aiCredentials";
 import {
-  loadSeededAiPreferences,
-  updateAiPreferences,
-  type AssistantModePreference,
-} from "../services/ai/aiPreferences";
+  CLOUD_DEFAULT_ROUTE,
+  CLOUD_PROVIDER_LABELS,
+  loadCloudModelPreferences,
+  type CloudProvider,
+} from "../services/ai/cloudModelPreferences";
 
 type CloudState = "unknown" | "connected" | "not-connected";
 
 /**
- * Consumer AI root (`/settings/ai`). Presentation only: the AI mode radios
- * read/write the single authoritative account-scoped store
- * (`aiPreferences.assistantMode`, no new semantics), the cloud summary is a
- * read-only look at the OpenRouter vault slot, and every row routes to a
- * detail screen the integrator mounts. Automatic is local-first.
- * A legacy stored offline-first value migrates to on-device-only (fail
- * closed), which IS offered, so no hidden-value note is needed.
+ * Consumer AI root (`/settings/ai`). Presentation only: the cloud summary is
+ * a read-only look at the vault slot of the provider Chat actually uses, and
+ * every row routes to a detail screen the integrator mounts.
+ *
+ * The summary is provider-scoped on purpose. Ten cloud providers can each
+ * hold their own key, so a line that read one slot while speaking for all of
+ * them would be wrong for every setup but one. The provider named here is the
+ * one behind the saved Chat model, and the copy names it.
+ *
+ * The former "AI mode" radio group is gone: Chat is cloud-only now, so an
+ * Automatic/On-device/Cloud switch no longer describes what the app does. The
+ * privacy decision that still exists — which local tools run on this phone —
+ * lives under Local intelligence, and the cloud decisions (provider key,
+ * model) live under AI Chat.
  */
 export function AiSettings({ accountId }: { accountId?: string }) {
   const { user } = useAuth();
   const account = accountId ?? user?.id ?? "local";
-  const [mode, setMode] = useState<AssistantModePreference>(
-    () => loadSeededAiPreferences(account).assistantMode,
-  );
   const [cloud, setCloud] = useState<CloudState>("unknown");
-
-  useEffect(() => {
-    setMode(loadSeededAiPreferences(account).assistantMode);
-  }, [account]);
+  const [provider, setProvider] = useState<CloudProvider>(CLOUD_DEFAULT_ROUTE.provider);
 
   useEffect(() => {
     let alive = true;
@@ -48,8 +47,10 @@ export function AiSettings({ accountId }: { accountId?: string }) {
         alive = false;
       };
     }
+    const active = loadCloudModelPreferences(account).defaultModel?.provider ?? CLOUD_DEFAULT_ROUTE.provider;
+    setProvider(active);
     void aiCredentials
-      .get(account)
+      .get(account, active)
       .then((value) => {
         if (alive) setCloud(value === null ? "not-connected" : "connected");
       })
@@ -61,93 +62,67 @@ export function AiSettings({ accountId }: { accountId?: string }) {
     };
   }, [account]);
 
-  function chooseMode(next: OfferedMode) {
-    // Single authoritative write: the same store the Help send-gate reads.
-    // No legacy mirrored write — the legacy key is migration-source only.
-    setMode(updateAiPreferences(account, { assistantMode: next }).assistantMode);
-    announce(`AI mode ${MODE_COPY[next].label}.`);
-  }
+  const providerLabel = CLOUD_PROVIDER_LABELS[provider];
+  // Without an account there is no key slot at all: naming a provider here
+  // would put an implementation default (OpenRouter) on screen as if the
+  // reader had chosen it.
+  const signedIn = account !== "local" && account !== "";
+  const cloudDescription = !signedIn
+    ? "Sign in to add a provider key for Chat."
+    : cloud === "unknown"
+      ? `Your ${providerLabel} key for Chat.`
+      : cloud === "connected"
+        ? `Your ${providerLabel} key for Chat. Connected.`
+        : `Your ${providerLabel} key for Chat. No key saved yet.`;
 
   return (
     <SettingsPage
       title="AI & intelligence"
-      description="Downloaded on-device tools and optional cloud connections. Core features work without AI setup."
+      description="Optional cloud chat and the local tools stored on this phone. Core features work without any AI setup."
       backTo="/settings"
     >
       <SettingsGroup
-        title="AI mode"
-        description="How FindBack answers when you ask for help."
+        title="AI Chat"
+        description="Chat uses a cloud provider. Your provider receives the messages you send; FindBack's core features don't need a key."
       >
-        <div
-          role="radiogroup"
-          aria-label="AI mode"
-          className="fb-ai-mode-list"
-        >
-          {(Object.keys(MODE_COPY) as OfferedMode[]).map((option) => {
-            const checked = mode === option;
-            return (
-              <label
-                key={option}
-                className="fb-ai-mode-option focus-within:outline-2 focus-within:outline-solid focus-within:outline-offset-2 focus-within:outline-focus"
-              >
-                <input
-                  type="radio"
-                  name="ai-mode"
-                  value={option}
-                  checked={checked}
-                  onChange={() => chooseMode(option)}
-                  className="sr-only"
-                />
-                <span className="flex items-center gap-2 text-sm font-medium">
-                  <span aria-hidden="true">{checked ? "●" : "○"}</span>
-                  {MODE_COPY[option].label}
-                </span>
-                <span className="text-xs text-on-surface-variant">
-                  {MODE_COPY[option].detail}
-                </span>
-              </label>
-            );
-          })}
-        </div>
-        <AdvancedDisclosure title="How Automatic chooses">
-          <p>
-            Automatic tries on-device processing first when a compatible tool is
-            downloaded. Text may fall back to a connected cloud model only after
-            local AI is unavailable or fails. Stopping a request never sends to
-            cloud. Model names, routing rules, and capability details live in
-            Advanced and Diagnostics.
-          </p>
-        </AdvancedDisclosure>
+        <SettingsRow
+          title="Providers"
+          description={cloudDescription}
+          icon={KeyRound}
+          iconTone="ai"
+          route="/settings/ai/connections"
+        />
+        <SettingsRow
+          title="Models"
+          description="Choose the model Chat uses, and keep favorites for next time."
+          icon={Sparkles}
+          iconTone="ai"
+          route="/settings/ai/chat-models"
+        />
       </SettingsGroup>
-
-      <SettingsGroup title="Options">
+      <SettingsGroup
+        title="On this device"
+        description="Tools that run on this phone once downloaded."
+      >
+        <SettingsRow
+          title="Local intelligence"
+          description="Search and report-text tools that run here. Downloaded models are managed under it."
+          icon={Cpu}
+          iconTone="ai"
+          route="/settings/local-intelligence"
+        />
         <SettingsRow
           title="On-device AI"
-          description="Tools that run on this phone once downloaded."
-          icon={Cpu}
+          description="Photo analysis and other models that run on this phone."
+          icon={Smartphone}
           iconTone="ai"
           route="/settings/ai/models"
         />
-        <SettingsRow
-          title="Cloud connections"
-          description={
-            cloud === "connected"
-              ? "OpenRouter Connected"
-              : cloud === "not-connected"
-                ? "OpenRouter Not connected"
-                : "OpenRouter · checking…"
-          }
-          icon={Cloud}
-          iconTone="ai"
-          value={
-            cloud === "unknown" ? null : (
-              <StatusPill tone={cloud === "connected" ? "success" : "neutral"}>
-                {cloud === "connected" ? "Connected" : "Not connected"}
-              </StatusPill>
-            )
-          }
-          route="/settings/ai/connections"
-        />
+      </SettingsGroup>
+      <SettingsGroup
+        title="More"
+        description="Technical details and diagnostics."
+      >
         <SettingsRow
           title="Advanced"
           description="Performance tests and technical details."
@@ -159,25 +134,3 @@ export function AiSettings({ accountId }: { accountId?: string }) {
     </SettingsPage>
   );
 }
-
-/**
- * Every preference mode is offered here: a legacy stored offline-first
- * value migrates (fail closed) to on-device-only, which is selectable, so
- * there is no hidden-value case to preserve.
- */
-type OfferedMode = AssistantModePreference;
-
-const MODE_COPY: Record<OfferedMode, { label: string; detail: string }> = {
-  automatic: {
-    label: "Automatic",
-    detail: "On-device first when ready. Your photo stays on this device; cloud is used only after you allow it.",
-  },
-  "on-device-only": {
-    label: "On-device only",
-    detail: "On-device processing. Your photo stays on this device and is never sent to the internet.",
-  },
-  "cloud-only": {
-    label: "Cloud only",
-    detail: "Cloud processing, sent only after you allow it. Never runs on this device.",
-  },
-};

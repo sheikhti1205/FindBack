@@ -28,7 +28,10 @@ import { About } from "./screens/About";
 import { MyPosts } from "./screens/MyPosts";
 import { Help } from "./screens/Help";
 import { AiConnection } from "./screens/AiConnection";
+import { CloudModels } from "./screens/CloudModels";
 import { AiModelsRoute } from "./screens/AiModelsRoute";
+import { LocalIntelligence } from "./screens/LocalIntelligence";
+import { DownloadedModels } from "./screens/DownloadedModels";
 import { Notifications } from "./screens/Notifications";
 import { Settings } from "./screens/Settings";
 import { AccountSettings } from "./screens/AccountSettings";
@@ -160,8 +163,11 @@ export function App() {
               <Route path="/settings/privacy" element={<PrivacySettings />} />
               <Route path="/settings/ai" element={<AiSettings />} />
               <Route path="/settings/ai/connections" element={<AiConnection />} />
+              <Route path="/settings/ai/chat-models" element={<CloudModels />} />
               <Route path="/settings/ai/privacy" element={<AiPrivacy />} />
               <Route path="/settings/ai/models" element={<AiModelsRoute />} />
+              <Route path="/settings/local-intelligence" element={<LocalIntelligence />} />
+              <Route path="/settings/local-intelligence/downloads" element={<DownloadedModels />} />
               <Route path="/settings/ai/advanced" element={<AiAdvanced />} />
               <Route path="/settings/help" element={<HelpGuide />} />
               <Route path="/settings/about" element={<About />} />

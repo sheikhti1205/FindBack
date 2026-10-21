@@ -170,10 +170,10 @@ export function PrivacySettings() {
       <SettingsGroup title="AI">
         <SettingsRow
           title="AI privacy"
-          description="Your provider key stays on this device."
+          description="How FindBack handles optional AI requests."
           icon={Sparkles}
           iconTone="ai"
-          route="/ai-connection"
+          route="/settings/ai/privacy"
         />
       </SettingsGroup>
     </SettingsPage>

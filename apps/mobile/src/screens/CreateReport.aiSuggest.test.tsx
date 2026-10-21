@@ -395,7 +395,7 @@ describe("CreateReport field suggestions from description", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /^fill missing details$/i }));
 
-    await screen.findByText(/open Manage AI models to install it/i);
+    await screen.findByText(/open Manage local tools to install it/i);
     expect(screen.queryByText(/keep writing/i)).toBeNull();
   });
 

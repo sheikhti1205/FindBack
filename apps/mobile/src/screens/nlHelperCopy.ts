@@ -18,7 +18,7 @@ import { OFFLINE_NEEDS_ANDROID } from "./AiModels";
 
 /** Smart Search's not-set-up sentence: it names the one action that fixes it. */
 const NL_HELPER_NOT_SET_UP_NOTE =
-  "Smart Search needs the on-device model, which isn't set up on this device yet — open Manage AI models to install it.";
+  "Smart Search needs the on-device model, which isn't set up on this device yet — open Manage local tools to install it.";
 
 /**
  * The report form's not-set-up sentence. Separate wording because the failing
@@ -26,7 +26,7 @@ const NL_HELPER_NOT_SET_UP_NOTE =
  * owed a sentence about search filters.
  */
 const SUGGESTION_NOT_SET_UP_NOTE =
-  "Fill missing details needs the on-device model, which isn't set up on this device yet — open Manage AI models to install it.";
+  "Fill missing details needs the on-device model, which isn't set up on this device yet — open Manage local tools to install it.";
 
 const SEARCH_EMPTY_NOTE = "No confident filters found — nothing changed.";
 /**

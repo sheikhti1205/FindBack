@@ -34,7 +34,7 @@ function renderHelp(deps: HelpAssistantDeps = {}) {
   return render(<MemoryRouter><Help deps={{ listCatalog: async () => [], ...deps }} /></MemoryRouter>);
 }
 function composer() {
-  return screen.getByLabelText("Ask the Help & FAQ") as HTMLTextAreaElement;
+  return screen.getByLabelText("Message") as HTMLTextAreaElement;
 }
 function send(question: string) {
   fireEvent.change(composer(), { target: { value: question } });
@@ -106,7 +106,7 @@ describe("Help response lifecycle (pre-U6.1)", () => {
     expect(screen.queryByText("SAME ANSWERSAME ANSWER")).toBeNull();
   });
 
-  it("D: a partial painted by a failing attempt is cleared before the built-in fallback", async () => {
+  it("D: a partial painted by a failing attempt is cleared before the retry error", async () => {
     const adapter: ProviderAdapter = {
       id: "openrouter",
       capabilities: caps,
@@ -118,8 +118,9 @@ describe("Help response lifecycle (pre-U6.1)", () => {
     };
     renderHelp({ createAdapter: () => adapter, getKey: async () => "test-key" });
     send("How do I search?");
-    // The app-help failure substitutes a labelled built-in answer.
-    await screen.findByText("Built-in answer");
+    // Packet 11: even app-help failures never substitute a FAQ answer.
+    await screen.findByTestId("chat-error");
+    expect(screen.queryByText("Built-in answer")).toBeNull();
     await waitFor(() => expect(screen.queryByTestId("chat-partial")).toBeNull());
     expect(screen.queryByText("half-written draft")).toBeNull();
   });

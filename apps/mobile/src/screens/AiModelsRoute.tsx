@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
-import { Gauge } from "lucide-react";
+import { Cpu, Gauge } from "lucide-react";
 import { Button } from "../components/Button";
 import {
   SettingsGroup,
@@ -13,6 +13,7 @@ import {
   type ApplicationAiService,
 } from "../services/ai/applicationAi";
 import { tierOf, type ModelDescriptor } from "../services/ai/modelDescriptors";
+import { isLocalIntelligenceOwnedModel } from "../services/ai/localIntelligenceView";
 import { qualifiedUiRolesForOfflineModel } from "../services/ai/uiModelRoles";
 import { canShowAuto } from "../services/ai/uiGates";
 import { AdvancedModelSupply } from "./AiModelsRouteAdvanced";
@@ -323,7 +324,7 @@ export function AiModelsRoute({ service = getApplicationAi() }: { service?: Appl
         </p>
       ) : null}
       <SettingsGroup title="Tools">
-        {service.registry.catalogue().map((descriptor) => (
+        {service.registry.catalogue().filter((descriptor) => !isLocalIntelligenceOwnedModel(descriptor.modelId)).map((descriptor) => (
           <ConsumerCard
             key={descriptor.modelId}
             descriptor={descriptor}
@@ -331,6 +332,16 @@ export function AiModelsRoute({ service = getApplicationAi() }: { service?: Appl
             reportError={setError}
           />
         ))}
+        {/* ONE owner per artifact (AGENTS.md rule 7). The local search helper
+            is downloaded and removed under Local intelligence; this catalogue
+            must not offer the same bytes under a second name. */}
+        <SettingsRow
+          title="Local search helper"
+          description="Search phrases, report text and categories. Managed under Local intelligence."
+          icon={Cpu}
+          iconTone="ai"
+          route="/settings/local-intelligence/downloads"
+        />
       </SettingsGroup>
         <SettingsGroup
           title="Advanced"

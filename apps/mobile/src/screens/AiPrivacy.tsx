@@ -1,19 +1,26 @@
 import { Link } from "react-router";
 import { AdvancedDisclosure, SettingsGroup, SettingsPage } from "../components/settings";
 
-/** Authoritative Assistant disclosure, separate from the compact chat sheet. */
+/**
+ * Authoritative AI disclosure, separate from the compact chat sheet.
+ *
+ * The copy follows the shipped surfaces: Chat is cloud-only (the provider the
+ * reader chooses receives the messages), the local helpers that run on the
+ * phone never reach a provider, and the retired Automatic/On-device-only/
+ * Cloud-only switch is not described as if it still existed.
+ */
 export function AiPrivacy() {
   return <SettingsPage title="AI & privacy" backTo="/settings/help" description="How FindBack handles optional AI requests.">
     <SettingsGroup title="How answers work">
-      <p className="text-sm leading-relaxed">Automatic starts on this phone when ready. Your photo stays on this device unless you choose to share it for that message.</p>
-      <p className="text-sm leading-relaxed">On-device processing keeps your photo on this device and never uses the internet. Cloud processing is sent only after you allow it, and only what you approved for that message.</p>
+      <p className="text-sm leading-relaxed">Chat answers come from the cloud provider you pick in Settings → AI & models → Providers. That provider receives the messages you send and the conversation context needed to reply.</p>
+      <p className="text-sm leading-relaxed">Search and report-field suggestions can run on this phone. Those requests stay on the device and are never sent to a provider.</p>
     </SettingsGroup>
     <SettingsGroup title="Your choices">
-      <p className="text-sm leading-relaxed">Photos are never attached on their own. Only the photos you pick for a message are shared. Built-in help needs no connection and never analyzes a photo.</p>
-      <Link to="/settings/ai/connections" className="inline-flex min-h-[48px] items-center text-sm underline">Cloud connections</Link>
+      <p className="text-sm leading-relaxed">You choose which provider and model Chat uses, and you can change it at any time. Saved chat history stays on this device, separate for each account.</p>
+      <Link to="/settings/ai/connections" className="inline-flex min-h-[48px] items-center text-sm underline">Providers</Link>
     </SettingsGroup>
     <AdvancedDisclosure title="Technical details">
-      <p className="text-sm leading-relaxed">Automatic picks only qualified options for your message. A failed on-device attempt keeps your draft instead of quietly switching. Model names, routing rules, capability tables, and runtime or schema details live here and in Diagnostics — never on the ordinary surface above.</p>
+      <p className="text-sm leading-relaxed">Routing rules, model qualification tables, and runtime or schema details live here and in Diagnostics — never on the ordinary surface above.</p>
     </AdvancedDisclosure>
     <Link to="/settings/privacy" className="inline-flex min-h-[48px] items-center text-sm underline">Privacy settings</Link>
   </SettingsPage>;

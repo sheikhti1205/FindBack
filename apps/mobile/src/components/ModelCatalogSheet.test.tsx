@@ -145,7 +145,7 @@ describe("ModelCatalogSheet assistant picker (U3)", () => {
     expect(screen.getByRole("heading", { name: "Chat" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Vision" })).toBeTruthy();
     expect(screen.getByText("Cloud")).toBeTruthy();
-    expect(screen.getByTestId("model-manage-link").getAttribute("href")).toBe("/settings/ai/models");
+    expect(screen.getByTestId("model-manage-link").getAttribute("href")).toBe("/settings/local-intelligence/downloads");
   });
 
   it("surfaces a free row above a paid row and marks it Recommended, keeping paid selectable", () => {

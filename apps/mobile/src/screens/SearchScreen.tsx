@@ -309,11 +309,11 @@ export function SearchScreen(props: {
             </p>
             {nlHelperMissing && (
               <Link
-                to="/settings/ai/models"
+                to="/settings/local-intelligence/downloads"
                 data-testid="smart-search-manage-models"
                 className="inline-flex min-h-[48px] items-center rounded-full border border-outline-variant px-4 text-sm font-medium text-on-surface transition-colors hover:bg-surface-container"
               >
-                Manage AI models
+                Manage local tools
               </Link>
             )}
           </div>

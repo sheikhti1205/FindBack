@@ -85,16 +85,16 @@ const SEND_FAILED_COPY = "The assistant could not answer just now. Try again.";
  * because a function is not nullish (CF-070 R2 finding 3).
  */
 const TRANSPORT_ERROR_COPY: Record<string, string> = Object.assign(Object.create(null), {
-  "auth-invalid": "The saved AI key was rejected. Check it under Manage AI models, then try again.",
-  "auth-forbidden": "The AI provider refused that key for this model. Check it under Manage AI models.",
-  "auth-missing": "No AI key is saved for this account yet. Add one under Manage AI models.",
+  "auth-invalid": "The saved AI key was rejected. Check it in Chat options → Providers, then try again.",
+  "auth-forbidden": "The AI provider refused that key for this model. Check it in Chat options → Providers.",
+  "auth-missing": "No AI key is saved for this account yet. Add one in Chat options → Providers.",
   "payment-required": "The AI provider reports no remaining credit for this key.",
   "rate-limited": "Too many requests right now. Try again in a moment.",
   "network-error": "The assistant could not reach the network. Check your connection and try again.",
   "provider-error": "The AI service is having trouble. Try again in a moment.",
   "request-failed": "The assistant could not reach the AI service. Try again.",
   "bad-request": "The assistant could not send that request. Pick another model and try again.",
-  "not-found": "That AI model is no longer available. Choose another under Manage AI models.",
+  "not-found": "That AI model is no longer available. Pick another with the model button above the message box.",
 } as Record<string, string>);
 
 const CONTROLLER_FAILURE_COPY: Record<string, string> = Object.assign(Object.create(null), {

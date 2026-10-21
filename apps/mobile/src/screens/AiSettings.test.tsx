@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 const mocks = vi.hoisted(() => ({
@@ -15,13 +15,6 @@ vi.mock("../services/aiCredentials", () => ({
 }));
 
 import { AiSettings } from "./AiSettings";
-import { refuseHelpSend } from "./Help";
-import type { ModelRecord } from "../services/ai/providerContract";
-import {
-  aiPreferencesKey,
-  loadEffectiveAssistantMode,
-  loadSeededAiPreferences,
-} from "../services/ai/aiPreferences";
 
 const FORBIDDEN = [
   "checksum",
@@ -33,6 +26,10 @@ const FORBIDDEN = [
   "challenger",
   "fresh passing measurement",
   "device required",
+  // Retired vocabulary: the AI mode radio is gone with the cloud-only Chat.
+  "on-device only",
+  "cloud only",
+  "offline-first",
 ];
 
 function expectNormalTierCopy(container: HTMLElement) {
@@ -51,22 +48,6 @@ function renderSettings() {
   );
 }
 
-const FREE_ROW: ModelRecord = {
-  provider: "openrouter",
-  id: "openrouter/free",
-  displayName: "Free test chat",
-  qualifiedRoles: ["chat"],
-  input: ["text"],
-  output: ["text"],
-  prices: [
-    { amountDecimal: "0", currency: "USD", unit: "token", dimension: "input", sourceField: "pricing.prompt" },
-    { amountDecimal: "0", currency: "USD", unit: "token", dimension: "output", sourceField: "pricing.completion" },
-  ],
-  priceClass: "free",
-  retrievedAt: "2026-09-26T00:00:00.000Z",
-  entitlement: "untested",
-};
-
 describe("AiSettings consumer root", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,86 +63,48 @@ describe("AiSettings consumer root", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(
       /ai & intelligence/i,
     );
+    expect(screen.getByRole("link", { name: /^providers$/i }).getAttribute("href")).toBe(
+      "/settings/ai/connections",
+    );
+    expect(screen.getByRole("link", { name: /^models$/i }).getAttribute("href")).toBe(
+      "/settings/ai/chat-models",
+    );
+    expect(screen.getByRole("link", { name: /local intelligence/i }).getAttribute("href")).toBe(
+      "/settings/local-intelligence",
+    );
     expect(screen.getByRole("link", { name: /on-device ai/i }).getAttribute("href")).toBe(
       "/settings/ai/models",
-    );
-    expect(screen.getByRole("link", { name: /cloud connections/i }).getAttribute("href")).toBe(
-      "/settings/ai/connections",
     );
     expect(screen.getByRole("link", { name: /advanced/i }).getAttribute("href")).toBe(
       "/settings/ai/advanced",
     );
     expect(screen.getByRole("button", { name: /back to settings/i })).toBeTruthy();
     await waitFor(() => expect(mocks.get).toHaveBeenCalled());
-    await screen.findByText(/openrouter/i);
     expectNormalTierCopy(view.container);
   });
 
-  it("binds AI mode to the single authoritative aiPreferences store with honest options only", () => {
+  it("groups the rows by what the reader is choosing", () => {
     renderSettings();
-    const group = screen.getByRole("radiogroup", { name: /ai mode/i });
-    expect(group).toBeTruthy();
-    // Only options this build can honor.
-    expect(screen.getByRole("radio", { name: /automatic/i })).toBeTruthy();
-    expect(screen.getByRole("radio", { name: /automatic/i }).closest("label")?.textContent).toMatch(/on-device first.*cloud/i);
-    expect(screen.getByRole("radio", { name: /on-device only/i })).toBeTruthy();
-    expect(screen.getByRole("radio", { name: /cloud only/i })).toBeTruthy();
-    // Default with no stored preference.
-    expect(
-      (screen.getByRole("radio", { name: /automatic/i }) as HTMLInputElement).checked,
-    ).toBe(true);
-    fireEvent.click(screen.getByRole("radio", { name: /on-device only/i }));
-    expect(loadSeededAiPreferences("user-1").assistantMode).toBe("on-device-only");
-    // The legacy key is migration-source only: no new writes land there.
-    expect(globalThis.localStorage?.getItem("findback.ai.assistantMode.v1.user-1")).toBeNull();
-    expect(
-      (screen.getByRole("radio", { name: /on-device only/i }) as HTMLInputElement).checked,
-    ).toBe(true);
+    for (const name of ["AI Chat", "On this device", "More"]) {
+      expect(screen.getByRole("region", { name })).toBeTruthy();
+    }
+    // The local download owner is reached from the local row, not from a
+    // second competing "manage models" entry point.
+    expect(screen.getAllByRole("link", { name: /local intelligence/i })).toHaveLength(1);
   });
 
-  it("migrates a legacy stored offline-first mode fail-closed to offered on-device-only", () => {
-    globalThis.localStorage?.setItem("findback.ai.assistantMode.v1.user-1", "offline-first");
+  it("offers no AI mode switch: Chat is cloud-only, so the retired radio cannot come back", () => {
     renderSettings();
-    // Migrated (fail closed) to the offered on-device-only option — checked.
-    expect(
-      (screen.getByRole("radio", { name: /on-device only/i }) as HTMLInputElement).checked,
-    ).toBe(true);
-    expect(loadSeededAiPreferences("user-1").assistantMode).toBe("on-device-only");
-  });
-
-  it("changing mode in AiSettings is observed by the Help send-gate (single store)", () => {
-    renderSettings();
-    fireEvent.click(screen.getByRole("radio", { name: /on-device only/i }));
-    // The exact reader Help uses at send time sees the AiSettings write.
-    expect(loadEffectiveAssistantMode("user-1")).toBe("offline-only");
-    // …and the actual send-gate refuses cloud rows for it (nothing sent).
-    expect(
-      refuseHelpSend({
-        provider: "openrouter",
-        record: FREE_ROW,
-        mode: loadEffectiveAssistantMode("user-1"),
-        hasImages: false,
-      }),
-    ).toMatch(/offline-only mode/i);
-    fireEvent.click(screen.getByRole("radio", { name: /cloud only/i }));
-    expect(loadEffectiveAssistantMode("user-1")).toBe("cloud-only");
-    expect(
-      refuseHelpSend({
-        provider: "offline",
-        record: null,
-        mode: loadEffectiveAssistantMode("user-1"),
-        hasImages: false,
-      }),
-    ).toMatch(/cloud-only mode/i);
-    // A sibling account still reads the safe default (per-account isolation).
-    expect(loadEffectiveAssistantMode("user-2")).toBe("auto");
-    expect(globalThis.localStorage?.getItem(aiPreferencesKey("user-2"))).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: /ai mode/i })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /on-device only/i })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /cloud only/i })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /automatic/i })).toBeNull();
   });
 
   it("summarizes the cloud connection without technical detail", async () => {
     mocks.get.mockResolvedValue("sk-or-v1-abcdefgh1234");
     const view = renderSettings();
-    await waitFor(() => expect(screen.getByText(/openrouter connected/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Connected\./)).toBeTruthy());
     expect(view.container.textContent).not.toContain("sk-or-v1-abcdefgh1234");
     expectNormalTierCopy(view.container);
   });
@@ -169,6 +112,37 @@ describe("AiSettings consumer root", () => {
   it("shows not connected when no provider key is saved", async () => {
     mocks.get.mockResolvedValue(null);
     renderSettings();
-    await waitFor(() => expect(screen.getByText(/openrouter not connected/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/No key saved yet\./)).toBeTruthy());
+  });
+
+  it("keeps the core features independent from any AI setup", async () => {
+    mocks.get.mockResolvedValue(null);
+    const view = renderSettings();
+    await waitFor(() => expect(screen.getByText(/No key saved yet\./)).toBeTruthy());
+    expect(view.container.textContent).toMatch(/core features work without any ai setup/i);
+  });
+
+  it("summarizes the provider Chat actually uses, and names it", async () => {
+    // Ten providers hold their own keys, so the summary must read the slot of
+    // the saved Chat model — not the default provider's slot.
+    globalThis.localStorage.setItem(
+      "findback.cloud.models.v1.user-1",
+      JSON.stringify({ defaultModel: { provider: "anthropic", modelId: "claude-sonnet" }, favorites: [], lastUsed: [] }),
+    );
+    mocks.get.mockResolvedValue(null);
+    renderSettings();
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledWith("user-1", "anthropic"));
+    expect(screen.getByText(/Your Anthropic key for Chat\./)).toBeTruthy();
+  });
+
+  it("names no provider when there is no account to hold a key", async () => {
+    // Signed out: OpenRouter is only the app's default route, not a choice
+    // this reader made, so the row must not put it on screen.
+    mocks.currentUserId = null;
+    mocks.get.mockResolvedValue(null);
+    const view = renderSettings();
+    await waitFor(() => expect(screen.getByText(/Sign in to add a provider key for Chat\./)).toBeTruthy());
+    expect(view.container.textContent).not.toMatch(/OpenRouter key/i);
+    expect(mocks.get).not.toHaveBeenCalled();
   });
 });

@@ -115,9 +115,13 @@ export function legacyAssistantModeToPreference(mode: unknown): AssistantModePre
 
 /**
  * Reverse map: preference vocabulary back onto the legacy assistant-mode
- * vocabulary the Help send-gate (`refuseHelpSend`) still switches on.
+ * vocabulary that the retired local assistant gate used to switch on.
  * `on-device-only` maps to `offline-only` (fail closed: cloud sends stay
  * blocked); `automatic`/`cloud-only` map to `auto`/`cloud-only`.
+ *
+ * The consumer Chat surface is cloud-only and no longer reads a mode; the
+ * mapping survives only for the legacy local-assistant paths that still
+ * consult the store.
  */
 export function preferenceToAssistantMode(
   mode: AssistantModePreference,
@@ -161,10 +165,10 @@ export function loadSeededAiPreferences(accountId: string): AiPreferences {
 }
 
 /**
- * The mode value the Help send-gate must switch on: the seeded authoritative
- * preference mapped back onto the gate vocabulary. Safe by construction —
- * unknown/corrupt storage reads as `auto` (local-first default), cloud-only
- * consent semantics unchanged.
+ * The mode value the retired local-assistant gate switched on: the seeded
+ * authoritative preference mapped back onto the gate vocabulary. Safe by
+ * construction — unknown/corrupt storage reads as `auto` (local-first
+ * default), cloud-only consent semantics unchanged.
  */
 export function loadEffectiveAssistantMode(
   accountId: string,

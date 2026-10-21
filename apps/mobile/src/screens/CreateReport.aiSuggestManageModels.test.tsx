@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * CF-020 MINOR-2: the report form's "Fill missing details" failure copy tells a
- * person on a device without the on-device model to "open Manage AI models" —
+ * person on a device without the on-device model to "open Manage local tools" —
  * so this screen must offer that control. The frozen retry-7 suite cannot be
  * edited (byte-frozen), hence a separate focused file for the new affordance.
  */
@@ -163,7 +163,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("CreateReport suggestion failure — Manage AI models affordance (MINOR-2)", () => {
+describe("CreateReport suggestion failure — Manage local tools affordance (MINOR-2)", () => {
   const ENGINE_FAILURE = {
     ok: false as const,
     error: { errorClass: "RUNTIME_ERROR", diagnostic: "FIELDS_GENERATION_FAILED" },
@@ -184,16 +184,16 @@ describe("CreateReport suggestion failure — Manage AI models affordance (MINOR
     nlHelperStateMock.mockResolvedValue("not-set-up");
     await failSuggestion();
 
-    await screen.findByText(/open Manage AI models to install it/i);
+    await screen.findByText(/open Manage local tools to install it/i);
     // A destination, not an action: link semantics, a hash-correct href (the app
     // mounts HashRouter, so a hash-less literal matches no route), in-app
     // navigation on a plain click, and the browser's own handling on a modifier
     // click.
-    const manage = screen.getByRole("link", { name: "Manage AI models" });
-    expect(manage.getAttribute("href")).toBe("#/settings/ai/models");
+    const manage = screen.getByRole("link", { name: "Manage local tools" });
+    expect(manage.getAttribute("href")).toBe("#/settings/local-intelligence/downloads");
     fireEvent.click(manage);
     expect(navigateMock).toHaveBeenCalledTimes(1);
-    expect(navigateMock).toHaveBeenCalledWith("/settings/ai/models");
+    expect(navigateMock).toHaveBeenCalledWith("/settings/local-intelligence/downloads");
 
     navigateMock.mockClear();
     // Cmd/Ctrl-click must not be intercepted: the browser opens a new tab.
@@ -211,7 +211,7 @@ describe("CreateReport suggestion failure — Manage AI models affordance (MINOR
     // separate control parked next to it.
     const note = await screen.findByTestId("report-suggestion-note-row");
     expect(note.getAttribute("role")).toBe("alert");
-    expect(note.textContent).toMatch(/open Manage AI models to install it/i);
+    expect(note.textContent).toMatch(/open Manage local tools to install it/i);
     expect(note.contains(screen.getByTestId("report-suggestion-manage-models"))).toBe(true);
   });
 
@@ -261,7 +261,7 @@ describe("CreateReport suggestion failure — Manage AI models affordance (MINOR
   });
 
   it("keeps the typed helper sentence across the install round-trip", async () => {
-    // The copy this affordance serves says to open Manage AI models and come
+    // The copy this affordance serves says to open Manage local tools and come
     // back. The sentence typed into the helper must survive that trip, exactly
     // like the title and description do.
     render(<CreateReport />);

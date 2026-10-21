@@ -34,7 +34,7 @@ export type ModelCatalogSheetProps = {
    * Presentation variant. "library" is the settings model library (price +
    * capability filters, full rows). "assistant" is the send-time picker:
    * Automatic first, Chat/Vision sections, conversational rows only, and a
-   * Manage AI models link. Callers filter rows; the assistant variant never
+   * Manage local tools link. Callers filter rows; the assistant variant never
    * lists tools/embeddings/speech rows it is given.
    */
   readonly variant?: "library" | "assistant";
@@ -466,11 +466,11 @@ function AssistantPickerSections({
         </p>
       ) : null}
       <Link
-        to="/settings/ai/models"
+        to="/settings/local-intelligence/downloads"
         data-testid="model-manage-link"
         className="flex min-h-[48px] items-center justify-center rounded-m3-sm border border-outline-variant px-3 text-sm font-medium"
       >
-        Manage AI models
+        Manage local tools
       </Link>
     </section>
   );

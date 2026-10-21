@@ -12,7 +12,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { searchSettings } from "../services/settingsIndex";
 import { toConsumerNotice } from "./AiModelsRoute";
-import { aiModeSummary } from "./Settings";
 
 /* ------------------------------------------------------------------ */
 /* 1. Search index against packet matrix settings_search_index.csv      */
@@ -24,8 +23,8 @@ const SEARCH_MATRIX: ReadonlyArray<{ title: string; keywords: string; route: str
   { title: "Accessibility", keywords: "font text size motion reduce animation", route: "/settings/accessibility" },
   { title: "Media & uploads", keywords: "photo image quality data storage upload", route: "/settings/media" },
   { title: "Notifications", keywords: "push comment mention like status report bell", route: "/settings/notifications" },
-  { title: "AI & models", keywords: "ai local offline model automatic cpu gpu cloud", route: "/settings/ai" },
-  { title: "Cloud connections", keywords: "openrouter api key provider openai google mistral groq", route: "/settings/ai/connections" },
+  { title: "AI & models", keywords: "ai local on device model cpu gpu cloud chat providers", route: "/settings/ai" },
+  { title: "Providers", keywords: "providers cloud connections openrouter api key provider openai google mistral groq", route: "/settings/ai/connections" },
   { title: "Privacy & permissions", keywords: "privacy location permission sharing", route: "/settings/privacy" },
   { title: "Diagnostics", keywords: "debug build logs export support", route: "/settings/diagnostics" },
   { title: "Help & guide", keywords: "faq tutorial onboarding lost found search recover", route: "/settings/help" },
@@ -171,7 +170,7 @@ describe("QA L: every settings row click lands on its route", () => {
   });
 });
 
-describe("QA L: moved Cloud connections stays reachable through AI & models", () => {
+describe("QA L: Providers stays reachable through AI & models", () => {
   beforeEach(() => {
     mockFetchPrefs.mockResolvedValue({ pushEnabled: true });
     mockHasSaved.mockResolvedValue(false);
@@ -183,7 +182,7 @@ describe("QA L: moved Cloud connections stays reachable through AI & models", ()
     localStorage.clear();
   });
 
-  it("root → AI & models → Cloud connections lands on its route", async () => {
+  it("root → AI & models → Providers lands on its route", async () => {
     render(
       <MemoryRouter initialEntries={["/settings"]}>
         <Routes>
@@ -194,7 +193,7 @@ describe("QA L: moved Cloud connections stays reachable through AI & models", ()
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("link", { name: /AI & models/ }));
-    const cloudRow = await screen.findByRole("link", { name: /Cloud connections/ });
+    const cloudRow = await screen.findByRole("link", { name: /^providers$/i });
     expect(cloudRow.getAttribute("href")).toBe("/settings/ai/connections");
     fireEvent.click(cloudRow);
     await waitFor(() => {
@@ -203,7 +202,7 @@ describe("QA L: moved Cloud connections stays reachable through AI & models", ()
   });
 });
 
-describe("QA L: AI & models summary is live, not hard-coded", () => {
+describe("QA L: AI & models row shows no retired mode value", () => {
   beforeEach(() => {
     mockFetchPrefs.mockResolvedValue({ pushEnabled: true });
     mockHasSaved.mockResolvedValue(false);
@@ -225,25 +224,19 @@ describe("QA L: AI & models summary is live, not hard-coded", () => {
     );
   }
 
-  it("maps stored assistant modes to truthful labels", () => {
-    expect(aiModeSummary("auto")).toBe("Automatic");
-    expect(aiModeSummary("offline-only")).toBe("On-device only");
-    expect(aiModeSummary("cloud-only")).toBe("Cloud only");
-    expect(aiModeSummary("offline-first")).toBe("Offline-first");
-  });
-
-  it("shows Automatic when no mode is stored", async () => {
+  it("never offers the retired Automatic/Offline-first/Cloud-only mode vocabulary", async () => {
+    // A stored legacy mode (even a fail-closed migrated one) must not leak
+    // back into the root row: Chat is cloud-only and has no mode switch.
+    localStorage.setItem(assistantModeKey("u1"), "offline-first");
     renderSettings();
     const row = await screen.findByRole("link", { name: /AI & models/ });
-    expect(row.textContent).toContain("Automatic");
+    expect(row.textContent).not.toMatch(/Automatic|Offline-first|On-device only|Cloud only/);
   });
 
-  it("shows the stored mode instead of a hard-coded value", async () => {
-    localStorage.setItem(assistantModeKey("u1"), "cloud-only");
+  it("describes what the AI row leads to instead of a mode label", async () => {
     renderSettings();
     const row = await screen.findByRole("link", { name: /AI & models/ });
-    expect(row.textContent).toContain("Cloud only");
-    expect(row.textContent).not.toMatch(/Automatic/);
+    expect(row.textContent).toMatch(/cloud chat/i);
   });
 });
 

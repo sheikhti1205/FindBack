@@ -5,8 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Help, type HelpAssistantDeps } from "./Help";
 import { ChatStore } from "../services/ai/chatStore";
 import type { ProviderAdapter } from "../services/ai/providerContract";
-import { buildPng } from "../services/media/__fixtures__/synthetic";
-import { importImage } from "../services/media/importImage";
 import { resetBackInterceptors } from "../components/backNavigation";
 
 const boundary = vi.hoisted(() => ({ account: "account-A" as string | null, choose: vi.fn() }));
@@ -53,33 +51,21 @@ function send(text = "A private question") {
   fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
   fireEvent.submit(screen.getByTestId("chat-composer"));
 }
-function pick() {
-  fireEvent.click(screen.getByTestId("chat-add-photos"));
-  fireEvent.click(screen.getByTestId("chat-gallery"));
-}
-async function photo() {
-  return importImage({ bytes: buildPng(4, 4), fileName: "A-private.png" }, { transcode: async () => buildPng(4, 4), webpEncodeSupported: false });
-}
 
 describe("Help account-owned UI and async lifecycle", () => {
-  it("does not replay A's already-consumed route prompt into B's composer", async () => {
+  it("does not consume the retired report handoff into either account's composer", async () => {
     const view = mount({}, { assistantPrompt: "A private route prompt" });
-    await waitFor(() => expect(screen.getByRole("textbox")).toHaveProperty("value", "A private route prompt"));
+    expect(screen.getByRole("textbox")).toHaveProperty("value", "");
     view.switchAccount("account-B");
     expect(screen.getByRole("textbox")).toHaveProperty("value", "");
   });
 
-  it.each(["account-B", null])("clears A's unsent draft and ready photo when identity becomes %s", async (next) => {
-    const item = await photo();
-    boundary.choose.mockResolvedValue(item);
+  it.each(["account-B", null])("clears A's unsent draft when identity becomes %s", async (next) => {
     const view = mount();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "A unsent private draft" } });
-    pick();
-    await screen.findByTestId(`chat-selection-${item.id}`);
     view.switchAccount(next);
     expect(screen.getByRole("textbox")).toHaveProperty("value", "");
     expect(screen.queryByTestId("chat-selections")).toBeNull();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:account-photo");
   });
 
   it("aborts A's send and rejects late stream output after B mounts", async () => {
@@ -117,15 +103,11 @@ describe("Help account-owned UI and async lifecycle", () => {
     expect(screen.getByRole("textbox")).toHaveProperty("value", "");
   });
 
-  it("discards A's pending native photo without minting a preview after B mounts", async () => {
-    const item = await photo();
-    const pending = deferred<typeof item>();
-    boundary.choose.mockReturnValue(pending.promise);
+  it("never offers native photo intake in either account", async () => {
     const view = mount();
-    pick();
-    await waitFor(() => expect(boundary.choose).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("chat-add-photos")).toBeNull();
     view.switchAccount("account-B");
-    await act(async () => { pending.resolve(item); await pending.promise; });
+    expect(boundary.choose).not.toHaveBeenCalled();
     expect(screen.queryByTestId("chat-selections")).toBeNull();
     expect(URL.createObjectURL).not.toHaveBeenCalled();
   });

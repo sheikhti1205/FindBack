@@ -60,6 +60,8 @@ vi.mock("./screens/MyPosts", () => ({ MyPosts: () => <p>MyPosts screen</p> }));
 vi.mock("./screens/Help", () => ({ Help: () => <p>Help screen</p> }));
 vi.mock("./screens/AiConnection", () => ({ AiConnection: () => <p>AiConnection screen</p> }));
 vi.mock("./screens/AiModelsRoute", () => ({ AiModelsRoute: () => <p>AiModelsRoute screen</p> }));
+vi.mock("./screens/LocalIntelligence", () => ({ LocalIntelligence: () => <p>LocalIntelligence screen</p> }));
+vi.mock("./screens/DownloadedModels", () => ({ DownloadedModels: () => <p>DownloadedModels screen</p> }));
 vi.mock("./screens/Notifications", () => ({ Notifications: () => <p>Notifications screen</p> }));
 vi.mock("./screens/SharedReport", () => ({ SharedReport: () => <p>SharedReport screen</p> }));
 vi.mock("./screens/Settings", () => ({ Settings: marker("Settings") }));
@@ -200,6 +202,8 @@ describe("consumer route map", () => {
     ["/settings/ai", "AiSettings screen"],
     ["/settings/ai/connections", "AiConnection screen"],
     ["/settings/ai/models", "AiModelsRoute screen"],
+    ["/settings/local-intelligence", "LocalIntelligence screen"],
+    ["/settings/local-intelligence/downloads", "DownloadedModels screen"],
     ["/settings/ai/advanced", "AiAdvanced screen"],
     ["/settings/help", "HelpGuide screen"],
     ["/settings/about", "About screen"],

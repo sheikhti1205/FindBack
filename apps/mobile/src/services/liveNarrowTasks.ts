@@ -17,12 +17,12 @@
  *   AbortError always propagates (never swallowed).
  * - `liveGenerateFor(taskId)` is the composer the consumer features use. It is
  *   local-only, so a local failure surfaces to the caller unchanged.
- * - The legacy cloud transports (`generateCloud`, `generateCloudForAccount`) sit
- *   outside the narrow-task path and survive only as long as the guided Help
- *   assistant does: `Help.tsx` imports `generateCloudForAccount`, and
- *   `generateCloud` has no production consumer at all — only this module's own
- *   tests import it. Both go when Help's cloud transports go; nothing in the
- *   narrow-task path calls either.
+ * - The legacy cloud transports (`generateCloud`, `generateCloudForAccount`)
+ *   sit outside the narrow-task path and survive only as long as the legacy
+ *   guided Help assistant does: the cloud-only consumer Chat screen does not
+ *   import them, and `generateCloud` has no production consumer at all — only
+ *   this module's own tests import it. Both go with the legacy assistant
+ *   cleanup; nothing in the narrow-task path calls either.
  */
 import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi";
 import { describeOfflineReadiness } from "./ai/providers/offline";

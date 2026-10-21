@@ -459,8 +459,9 @@ function ReportForm() {
   const [aiCatDropped, setAiCatDropped] = useState(false);
   const [aiSuggestBusy, setAiSuggestBusy] = useState(false);
   const [aiSuggestError, setAiSuggestError] = useState<string | null>(null);
-  // MINOR-2: the not-set-up sentence tells the person to open Manage AI models,
-  // so this surface owes them that control — this screen has no other way there.
+  // MINOR-2: the not-set-up sentence tells the person to open Manage local
+  // tools, so this surface owes them that control — this screen has no other
+  // way there.
   const [aiSuggestManageModels, setAiSuggestManageModels] = useState(false);
   const [aiSuggestResolved, setAiSuggestResolved] = useState<Record<string, boolean>>({});
   // Generation token: a response that resolves after
@@ -1808,18 +1809,18 @@ function ReportForm() {
               // usable here because the frozen retry-7 suite mocks `react-router`
               // with `useNavigate` only.
               <a
-                href="#/settings/ai/models"
+                href="#/settings/local-intelligence/downloads"
                 data-testid="report-suggestion-manage-models"
                 onClick={(event) => {
                   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
                     return;
                   }
                   event.preventDefault();
-                  navigate("/settings/ai/models");
+                  navigate("/settings/local-intelligence/downloads");
                 }}
                 className="inline-flex min-h-[48px] items-center justify-center rounded-m3-md border border-outline px-5 text-sm font-medium text-on-surface transition-colors hover:bg-surface-container"
               >
-                Manage AI models
+                Manage local tools
               </a>
             )}
           </div>

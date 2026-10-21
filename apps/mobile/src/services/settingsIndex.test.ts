@@ -16,9 +16,16 @@ describe("settingsIndex", () => {
         "/settings/diagnostics",
         // CF-010 (packet `09` §6, §23): the feed layout preference is a settings
         // row like the others. It postdates the 2026-10-03 route map this test
-        // was written against, which is the only reason it is the lone entry
-        // without a route_map.csv line.
+        // was written against.
         "/settings/feed-layout",
+        // Local intelligence (packet `07` §1/§6) is the consumer owner of the
+        // on-device local tools; it also postdates that route map.
+        "/settings/local-intelligence",
+        // The consumer AI screens added with the cloud-only Chat and the
+        // local-download owner; they postdate that route map too.
+        "/settings/local-intelligence/downloads",
+        "/settings/ai/chat-models",
+        "/settings/ai/models",
         "/settings/help",
         "/settings/media",
         "/settings/notifications",

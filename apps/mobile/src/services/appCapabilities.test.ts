@@ -59,12 +59,20 @@ describe("capability docs", () => {
     }
   });
 
-  it("names the OpenRouter free route and the connected-provider architecture", () => {
+  it("names the OpenRouter default route and the connected-provider architecture, without a retired price gate", () => {
     expect(APP_CAPABILITIES.aiConnection.join(" ")).toMatch(/openrouter\/free/i);
+    expect(APP_CAPABILITIES.aiConnection.join(" ")).toMatch(/billed by your provider/i);
     expect(APP_CAPABILITIES.photoAnalysis.join(" ")).toMatch(/AI provider/i);
     expect(APP_CAPABILITIES.helpAssistant.join(" ")).toMatch(/AI provider/i);
     expect(APP_CAPABILITIES.privacy.join(" ")).toMatch(/provider you connect/i);
     expect(edgeSummary).toMatch(/openrouter\/free/i);
+    // The retired free-only gate is the opposite of what ships: the model you
+    // pick is billed by your provider. Neither copy may claim the gate again.
+    for (const copy of [mobileCopy, edgeSummary]) {
+      expect(copy).not.toMatch(/never switches to a paid model/i);
+      expect(copy).not.toMatch(/free-only by default/i);
+      expect(copy).not.toMatch(/free route by default/i);
+    }
   });
 
   it("keeps photos consented and off the server unless the user asks", () => {
@@ -105,6 +113,31 @@ describe("capability docs", () => {
     expect(edgeSummary).toMatch(/inbox for reactions, comments, mentions/i);
     expect(edgeSummary).not.toMatch(/one like\/dislike per user/);
     expect(edgeSummary).not.toMatch(/inbox for likes, dislikes/);
+  });
+});
+
+describe("capability corpus containment", () => {
+  it("has no production consumer, so its stale AI entries cannot reach a surface", () => {
+    // The corpus still describes retired surfaces (photo assistant, AI modes,
+    // free-only price policy). It is rewritten or deleted in the
+    // local-generative pruning wave; until then nothing may consume it.
+    const srcRoot = join(repoRoot, "apps", "mobile", "src");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(path);
+          continue;
+        }
+        if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+        if (path.endsWith(join("services", "appCapabilities.ts"))) continue;
+        if (path.endsWith(join("services", "appCapabilities.test.ts"))) continue;
+        if (readFileSync(path, "utf8").includes("APP_CAPABILITIES")) offenders.push(path);
+      }
+    };
+    walk(srcRoot);
+    expect(offenders).toEqual([]);
   });
 });
 

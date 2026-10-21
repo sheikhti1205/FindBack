@@ -47,11 +47,11 @@ export function About() {
             experience into a public-data free-for-all.
           </p>
           <p className="fb-about-ai">
-            Optional AI features use a provider key you add (Settings → AI & intelligence → Cloud connections).
-            Photo help is local-first on Android when ready:
-            automatic mode tries on-device processing first and may fall back to
-            cloud only with your permission; on-device-only keeps your photo on this device, and cloud-only
-            skips on-device work. Reports, search and other core features work without AI.
+            Optional AI features use a provider key you add (Settings → AI & models → Providers).
+            The provider you choose receives the messages you send; FindBack's own servers never see them.
+            Local helpers can run on this phone: search and report-field suggestions stay on the device
+            once the helper is downloaded (Settings → Local intelligence).
+            Reports, search and other core features work without AI.
           </p>
         </div>
       </SettingsGroup>

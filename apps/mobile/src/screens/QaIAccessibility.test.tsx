@@ -181,26 +181,20 @@ describe("QA I — visible focus contracts (SC 2.4.7, house 2px/3:1)", () => {
     expect(input.className).toMatch(/focus:border-on-surface/);
   });
 
-  it("AI-mode radio labels expose the 2px focus ring when a radio has keyboard focus", () => {
+  it("the retired AI-mode radios stay retired in the AI hub, and its controls keep a visible focus indicator", () => {
     authState.user = baseUser;
     render(
       <MemoryRouter>
         <AiSettings />
       </MemoryRouter>,
     );
-    const radio = screen.getByRole("radio", { name: /automatic/i });
-    const label = radio.closest("label");
-    expect(label).toBeTruthy();
-    // The input itself is visually hidden (sr-only), so the label must
-    // carry the ring via :focus-within with the --fb-focus color.
-    for (const cls of [
-      "focus-within:outline-2",
-      "focus-within:outline-solid",
-      "focus-within:outline-offset-2",
-      "focus-within:outline-focus",
-    ]) {
-      expect(label!.className).toContain(cls);
-    }
+    // The mode selector was removed with the cloud-only Chat: the consumer
+    // AI hub must not bring a radio group back.
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
+    // Real controls keep the app-wide focus ring (no outline suppression).
+    const back = screen.getByRole("button", { name: /back to settings/i });
+    expect(back.className).not.toMatch(/outline-none/);
   });
 });
 

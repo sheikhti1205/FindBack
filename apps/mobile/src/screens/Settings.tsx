@@ -4,6 +4,7 @@ import {
   Activity,
   Bell,
   CircleHelp,
+  Cpu,
   Image,
   Info,
   LayoutGrid,
@@ -39,8 +40,6 @@ import { searchSettings } from "../services/settingsIndex";
 import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
 import { resolveFeedLayout, useViewportWidth } from "../components/responsive";
 import { feedLayoutSummary } from "./FeedLayoutSettings";
-import { type AssistantMode } from "./AiModels";
-import { loadEffectiveAssistantMode } from "../services/ai/aiPreferences";
 import { fetchNotificationPreferences, type NotificationPreferences } from "../services/notificationPreferences";
 import { pushController } from "../services/pushRuntime";
 import type { PushPermissionState } from "../services/pushNotifications";
@@ -111,23 +110,6 @@ export function notificationSummary(
 }
 
 /**
- * Consumer-tier AI mode labels (match AiSettings MODE_COPY; a legacy stored
- * offline-first value migrates fail-closed to on-device-only, which is an
- * offered mode). Read live from the authoritative aiPreferences store (via
- * the effective gate mode) so the row stays truthful when the mode changes.
- */
-const AI_MODE_LABELS: Record<AssistantMode, string> = {
-  auto: "Automatic",
-  "offline-first": "Offline-first",
-  "offline-only": "On-device only",
-  "cloud-only": "Cloud only",
-};
-
-export function aiModeSummary(mode: AssistantMode): string {
-  return AI_MODE_LABELS[mode];
-}
-
-/**
  * Settings root: profile header, search, packet groups, sign-out.
  *
  * IA (W4): Account / Preferences / Intelligence / Privacy / More. Moved rows
@@ -145,9 +127,6 @@ export function Settings() {
   const viewportWidth = useViewportWidth();
   const [query, setQuery] = useState("");
   const [notifValue, setNotifValue] = useState<string | null>(null);
-  const [aiMode, setAiMode] = useState<AssistantMode>(() =>
-    user ? loadEffectiveAssistantMode(user.id) : "auto",
-  );
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
@@ -172,10 +151,6 @@ export function Settings() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (user) setAiMode(loadEffectiveAssistantMode(user.id));
-  }, [user]);
 
   if (!user) return null;
 
@@ -253,10 +228,17 @@ export function Settings() {
           </SettingsGroup>
           <SettingsGroup title="Intelligence">
             <SettingsRow
+              title="Local intelligence"
+              description="Search and report tools that run on this phone."
+              icon={Cpu}
+              iconTone="ai"
+              route="/settings/local-intelligence"
+            />
+            <SettingsRow
               title="AI & models"
+              description="Cloud chat, and models that run on this phone."
               icon={Sparkles}
               iconTone="ai"
-              value={aiModeSummary(aiMode)}
               route="/settings/ai"
             />
           </SettingsGroup>

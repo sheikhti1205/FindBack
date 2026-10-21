@@ -82,7 +82,7 @@ describe("PrivacySettings", () => {
     expect(isDiagEnabled()).toBe(true);
     expect(logging.getAttribute("aria-checked")).toBe("true");
 
-    expect(screen.getByRole("link", { name: /ai privacy/i }).getAttribute("href")).toBe("/ai-connection");
+    expect(screen.getByRole("link", { name: /ai privacy/i }).getAttribute("href")).toBe("/settings/ai/privacy");
     expect(screen.getByRole("heading", { name: /crash reports/i })).toBeTruthy();
   });
 });

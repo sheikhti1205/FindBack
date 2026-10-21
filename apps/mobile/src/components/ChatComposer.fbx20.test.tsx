@@ -30,6 +30,13 @@ describe("ChatComposer FBX-020 (model chip + attach menu)", () => {
     expect(screen.queryByTestId("composer-model-chip")).toBeNull();
   });
 
+  it("never falls back to the retired Automatic mode label", () => {
+    render(<ChatComposer {...baseProps()} onOpenModels={() => {}} />);
+    const chip = screen.getByTestId("composer-model-chip");
+    expect(chip.textContent).not.toMatch(/automatic/i);
+    expect(chip.getAttribute("aria-label")).toBe("Choose model");
+  });
+
   it("disables the model chip while a send is in flight", () => {
     render(
       <ChatComposer {...baseProps()} busy modelTitle="Free model router" onOpenModels={() => {}} modelDisabled />,
@@ -78,7 +85,7 @@ describe("ChatComposer FBX-020 (model chip + attach menu)", () => {
   });
 
   it("keeps the textarea auto-grow bounded to five lines", () => {
-    render(<ChatComposer {...baseProps()} modelTitle="Automatic" onOpenModels={() => {}} />);
+    render(<ChatComposer {...baseProps()} modelTitle="Chat model" onOpenModels={() => {}} />);
     const field = screen.getByRole("textbox") as HTMLTextAreaElement;
     expect(field.getAttribute("rows")).toBe("1");
     expect(field.className).toMatch(/max-h-\[9rem\]/);

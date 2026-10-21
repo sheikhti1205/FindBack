@@ -6,14 +6,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { ApplicationAiService } from "../services/ai/applicationAi";
 import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, SMOL_VISION_MODEL_ID } from "../services/ai/modelDescriptors";
-import { NEEDLE_MODEL_ID } from "../services/ai/needle/embedder";
 import { AiModelsRoute } from "./AiModelsRoute";
 import { buildJournal } from "../services/ai/download/journal";
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 vi.mock("../services/supabaseClient", () => ({ getSupabase: () => ({ auth: { getSession: async () => ({ data: { session: null } }) } }) }));
 afterEach(cleanup);
 
-const NEEDLE = NEEDLE_MODEL_ID;
 const VISION = SMOL_VISION_MODEL_ID;
 
 const FORBIDDEN = [
@@ -85,10 +83,22 @@ describe("AiModelsRoute consumer cards", () => {
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/on-device ai/i);
-    expect(screen.getByRole("heading", { name: /local text tools/i })).toBeTruthy();
     expect(screen.getByRole("heading", { name: /photo analysis/i })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /download local text tools/i })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: /download photo analysis/i })).toHaveLength(1);
+    expectNormalTierCopy(view.container);
+  });
+
+  it("does not offer a second download owner for the local search helper", async () => {
+    const { service } = androidService();
+    await service.ready;
+    const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
+    // The helper is downloaded and removed under Local intelligence only.
+    expect(screen.queryByRole("heading", { name: /local text tools/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /download local text tools/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /remove local text tools/i })).toBeNull();
+    // The catalogue points at that single owner instead of duplicating it.
+    const pointer = screen.getByRole("link", { name: /local search helper/i });
+    expect(pointer.getAttribute("href")).toBe("/settings/local-intelligence/downloads");
     expectNormalTierCopy(view.container);
   });
 
@@ -96,19 +106,19 @@ describe("AiModelsRoute consumer cards", () => {
     const { service, offsets } = androidService();
     await service.ready;
     const transitions: string[] = [];
-    service.manager.subscribe(() => transitions.push(service.manager.statusOf(NEEDLE)!.download));
+    service.manager.subscribe(() => transitions.push(service.manager.statusOf(VISION)!.download));
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("button", { name: "Download Local text tools" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Pause Local text tools" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Resume Local text tools" }));
-    await screen.findByText("Ready · 35 MB");
+    fireEvent.click(screen.getByRole("button", { name: "Download Photo analysis" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pause Photo analysis" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resume Photo analysis" }));
+    await screen.findByText("Ready · 361 MB");
     expect(view.container.textContent).not.toContain("Installed and checksum verified.");
     expect(offsets).toEqual([0, 1024]);
     expect(transitions).toContain("verifying");
-    expect(service.manager.statusOf(NEEDLE)?.checksumVerified).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Remove Local text tools" }));
-    await screen.findByRole("button", { name: "Download Local text tools" });
-    expect(service.manager.statusOf(NEEDLE)?.download).toBe("not-installed");
+    expect(service.manager.statusOf(VISION)?.checksumVerified).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Photo analysis" }));
+    await screen.findByRole("button", { name: "Download Photo analysis" });
+    expect(service.manager.statusOf(VISION)?.download).toBe("not-installed");
     expectNormalTierCopy(view.container);
   });
 
@@ -117,16 +127,16 @@ describe("AiModelsRoute consumer cards", () => {
     await service.ready;
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
     act(() => {
-      service.manager.dispatch(NEEDLE, { type: "QUEUE_DOWNLOAD", userInitiated: true });
-      service.manager.dispatch(NEEDLE, { type: "START" });
-      service.manager.dispatch(NEEDLE, {
+      service.manager.dispatch(VISION, { type: "QUEUE_DOWNLOAD", userInitiated: true });
+      service.manager.dispatch(VISION, { type: "START" });
+      service.manager.dispatch(VISION, {
         type: "PROGRESS",
-        downloadedBytes: Math.round(NEEDLE_DESCRIPTOR.bytes * 0.42),
+        downloadedBytes: Math.round(SMOL_VISION_DESCRIPTOR.bytes * 0.42),
       });
     });
     expect(await screen.findByText("Downloading 42%")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Pause Local text tools" })).toBeTruthy();
-    expect(screen.getByRole("progressbar", { name: /local text tools download progress/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Pause Photo analysis" })).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: /photo analysis download progress/i })).toBeTruthy();
     expectNormalTierCopy(view.container);
   });
 
@@ -179,7 +189,7 @@ describe("AiModelsRoute consumer cards", () => {
       "/settings/ai/advanced",
     );
     expectNormalTierCopy(view.container);
-    await waitFor(() => expect(view.container.textContent).toContain("Local text tools"));
+    await waitFor(() => expect(view.container.textContent).toContain("Photo analysis"));
   });
 
   it("names an incompatible device instead of offering a dead download", async () => {
@@ -206,8 +216,9 @@ describe("AiModelsRoute consumer cards", () => {
     });
     await service.ready;
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
-    // All three Recommended cards name the state once facts load.
-    expect(await screen.findAllByText("Unavailable on this device.")).toHaveLength(3);
+    // The catalogue's own Recommended cards name the state once facts load.
+    // (The local search helper is owned by Local intelligence, not here.)
+    expect(await screen.findAllByText("Unavailable on this device.")).toHaveLength(2);
     for (const button of screen.getAllByRole("button", { name: /download/i })) {
       expect((button as HTMLButtonElement).disabled).toBe(true);
       expect((button as HTMLButtonElement).title).toBe("Unavailable on this device.");
@@ -271,7 +282,7 @@ describe("AiModelsRoute consumer cards", () => {
     expect(screen.getByText("Answers questions")).toBeTruthy();
     expect(screen.queryByText("Answers questions · Fills in reports")).toBeNull();
     expect(screen.getByRole("button", { name: "Download On-device assistant" })).toBeTruthy();
-    expect(screen.getAllByText("Recommended").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText("Recommended").length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByRole("button", { name: "Import model files" })).toBeNull();
     expect(screen.queryByLabelText("Model")).toBeNull();
     expectNormalTierCopy(view.container);

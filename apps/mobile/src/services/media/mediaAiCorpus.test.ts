@@ -8,7 +8,6 @@ vi.mock("../ai/applicationAi", () => ({
   }),
 }));
 
-import { refuseHelpSend } from "../../screens/Help";
 import {
   buildHeicFtyp,
   buildJpeg,
@@ -18,6 +17,8 @@ import {
   type ImportDeps,
 } from "./importImage";
 import { sniffImage, probeDimensions } from "./importImage";
+import { SMOL_VISION_MODEL_ID } from "../ai/modelDescriptors";
+import { rolesForCatalogRecord, supportsAssistantMessage } from "../ai/uiModelRoles";
 
 function fakeDeps(): ImportDeps {
   return {
@@ -61,38 +62,26 @@ describe("B1/B2 corpus: HEIC, 48MP-class, loop/echo", () => {
 });
 
 describe("B3 corpus: vision-only never owns text-only chat", () => {
+  // The rule lives in one place: the consumer UI-role predicate, which derives
+  // qualification from the production registry (never from a row's own claims).
   const smolRecord = {
-    id: "smolvlm2-500M-vision",
+    id: SMOL_VISION_MODEL_ID,
     provider: "offline" as const,
     input: ["text", "image"] as ("text" | "image")[],
     output: ["text"] as ("text")[],
     qualifiedRoles: [] as never[],
     priceClass: "free" as const,
+    prices: [],
     retrievedAt: "2026-10-08T00:00:00.000Z",
     entitlement: "untested" as const,
   };
 
-  it("explicit Smol pin on a text-only turn gets a routing choice, never an image demand", () => {
-    const copy = refuseHelpSend({
-      provider: "offline",
-      record: smolRecord as never,
-      mode: "auto",
-      hasImages: false,
-    });
-    expect(copy).toMatch(/can't answer text-only chat/i);
-    expect(copy).toMatch(/Use Automatic/i);
-    expect(copy).not.toMatch(/needs one approved image/i);
-    expect(copy).not.toMatch(/needs an approved image/i);
+  it("never lets a vision-only local model own a text-only assistant message", () => {
+    expect(rolesForCatalogRecord(smolRecord)).toEqual(["vision"]);
+    expect(supportsAssistantMessage(smolRecord, false)).toBe(false);
   });
 
-  it("image turns with a text-only pin route to a vision model, not a silent drop", () => {
-    const copy = refuseHelpSend({
-      provider: "offline",
-      record: smolRecord as never,
-      mode: "auto",
-      hasImages: true,
-    });
-    // Smol IS qualified for images: no refusal owns this turn.
-    expect(copy).toBeNull();
+  it("routes an image turn to the vision model instead of dropping it", () => {
+    expect(supportsAssistantMessage(smolRecord, true)).toBe(true);
   });
 });

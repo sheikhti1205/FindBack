@@ -144,6 +144,13 @@ describe("Settings home", () => {
     expect(header.textContent).toMatch(/edit profile/i);
   });
 
+  it("offers the local surfaces from the Intelligence group", () => {
+    renderSettings();
+    const group = screen.getByRole("region", { name: "Intelligence" });
+    expect(within(group).getByRole("link", { name: /Local intelligence/ })).toBeTruthy();
+    expect(within(group).getByRole("link", { name: /AI & models/ })).toBeTruthy();
+  });
+
   it("links every row to its real route_map.csv target (nested disclosures included)", () => {
     renderSettings();
     const hrefs = rootHrefs();
@@ -154,6 +161,7 @@ describe("Settings home", () => {
       "/settings/notifications",
       "/settings/accessibility",
       "/settings/ai",
+      "/settings/local-intelligence",
       "/settings/privacy",
       "/settings/media",
       "/settings/diagnostics",
@@ -166,6 +174,13 @@ describe("Settings home", () => {
     // Cloud connections moved inside AI & models: reachable via the AI row + search, not a root row.
     const aiRow = screen.getByRole("link", { name: /AI & models/ });
     expect(aiRow.getAttribute("href")).toBe("/settings/ai");
+  });
+
+  it("routes Local intelligence to the consumer local surfaces, not the technical catalogue", () => {
+    renderSettings();
+    const row = screen.getByRole("link", { name: /Local intelligence/ });
+    expect(row.getAttribute("href")).toBe("/settings/local-intelligence");
+    expect(row.textContent).toMatch(/on this phone/i);
   });
 
   it("offers the CF-010 feed layout row, showing what it resolves to on this screen", () => {
@@ -236,7 +251,7 @@ describe("Settings home", () => {
 
     fireEvent.change(search, { target: { value: "key" } });
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: /cloud connections/i })).toBeTruthy();
+      expect(screen.getByRole("link", { name: /providers/i })).toBeTruthy();
     });
 
     fireEvent.change(search, { target: { value: "zxqv-nonexistent" } });
