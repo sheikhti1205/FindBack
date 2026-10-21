@@ -41,6 +41,8 @@ describe("HistorySheet FBX-020 regions", () => {
     fireEvent.click(screen.getByTestId("history-new-chat"));
     expect(props.onNew).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId("history-clear"));
-    expect(screen.getByText(/delete every saved chat/i)).toBeTruthy();
+    // The chat history lives in this session's memory only, so the copy says
+    // exactly that: it is not a saved, permanent history.
+    expect(screen.getByText(/delete every chat kept in this session/i)).toBeTruthy();
   });
 });

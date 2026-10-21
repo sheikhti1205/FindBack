@@ -355,6 +355,108 @@ export async function updatePostStatus(id: string, status: PostStatus): Promise<
   return fetchPost(id);
 }
 
+/**
+ * The optional fields the report-update RPC can EMPTY.
+ *
+ * The RPC merges every incoming value into the stored row, so a null or empty
+ * argument means "keep what is stored" and a field could never be emptied.
+ * Migration 20261022103000 adds ONE explicit argument — `p_clear_fields` —
+ * that NAMES the fields to clear, so the client never has to pretend a
+ * no-op was a change.
+ *
+ * Only the fields that are genuinely optional in the stored schema are
+ * listed. `title`, `description`, `category`, `event_date` and `type` are
+ * required on every report; the server refuses to clear them (22023) and
+ * the client never offers it.
+ *
+ * The argument itself is sent ONLY when the owner emptied something, so an
+ * ordinary edit never names an argument the deployed function does not have.
+ */
+export const CLEARABLE_POST_FIELDS = ["location_label", "latitude", "longitude"] as const;
+export type ClearablePostField = (typeof CLEARABLE_POST_FIELDS)[number];
+
+export interface UpdatePostInput {
+  type?: PostType;
+  title?: string;
+  description?: string;
+  category?: Category;
+  eventDate?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  locationLabel?: string | null;
+  youtubeUrl?: string | null;
+  /**
+   * Fields the owner explicitly emptied. Each name is sent to the server as
+   * an explicit clear request — it is never inferred from an empty value,
+   * so a field the user did not touch keeps its stored value.
+   */
+  clearFields?: readonly ClearablePostField[];
+}
+
+/**
+ * Update one of the caller's own reports and return the stored row.
+ *
+ * The write goes through `findback_update_post_client`, the ONE update path
+ * the backend offers: it validates the values you send, as the shipped
+ * function always has — it never validates the stored row, so a report whose
+ * stored values are not valid can still be edited — it is scoped to the
+ * caller's own post, and it refuses a report the caller does not own. A
+ * clear request is expressed through `p_clear_fields` — the array is only
+ * sent when the owner actually emptied something, so an ordinary partial
+ * update keeps the shipped "null means keep" behaviour.
+ *
+ * `p_clear_fields` is added to the RPC arguments ONLY when there is
+ * something to clear. PostgREST resolves a function by its NAMED arguments,
+ * so an argument the deployed function does not have is an error whatever
+ * its value is: until migration 20261022103000 is applied, the deployed RPC
+ * has ten arguments, and an ordinary edit must not name an eleventh.
+ */
+export async function updatePost(id: string, input: UpdatePostInput): Promise<PostItem> {
+  const clearFields = (input.clearFields ?? []).filter((field): field is ClearablePostField =>
+    (CLEARABLE_POST_FIELDS as readonly string[]).includes(field),
+  );
+  const args: Record<string, unknown> = {
+    p_post_id: id,
+    p_type: input.type ?? null,
+    p_title: input.title ?? null,
+    p_description: input.description ?? null,
+    p_category: input.category ?? null,
+    p_event_date: input.eventDate ?? null,
+    p_latitude: input.latitude ?? null,
+    p_longitude: input.longitude ?? null,
+    p_location_label: input.locationLabel ?? null,
+    p_youtube_url: input.youtubeUrl ?? null,
+  };
+  if (clearFields.length > 0) {
+    args.p_clear_fields = [...clearFields];
+  }
+  const { error } = await getSupabase().rpc("findback_update_post_client", args);
+  if (error) {
+    // 42501 is the server's "not your report" refusal; 22023 is a validation
+    // refusal. Both are real answers and both are shown as they are.
+    const status = error.code === "42501" ? 403 : error.code === "22023" ? 400 : 400;
+    throw new ApiError(error.message, status, error.code);
+  }
+  return fetchPost(id);
+}
+
+/**
+ * Delete one of the caller's own reports.
+ *
+ * This is IRREVERSIBLE: the server removes the row, and nothing can bring
+ * it back. The client therefore never calls it as the first step of a
+ * delete — it is called only after the undo window has closed without an
+ * undo (see the delayed-delete flow on the My Reports screen).
+ */
+export async function deletePost(id: string): Promise<void> {
+  const { error } = await getSupabase().rpc("findback_delete_post_client", {
+    p_post_id: id,
+  });
+  if (error) {
+    throw new ApiError(error.message, error.code === "42501" ? 403 : 400, error.code);
+  }
+}
+
 /** A comment RPC row carries only public author fields — never email/phone. */
 interface ClientCommentRow {
   id: string;
