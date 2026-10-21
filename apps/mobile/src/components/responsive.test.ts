@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { masonryListPaddingRem } from "../test-utils/masonryListClass";
 import {
   COMPACT_MAX_PX,
@@ -15,6 +15,7 @@ import {
   WIDE_CANVAS_CLASS,
   masonryColumns,
   resolveFeedLayout,
+  useContentWidth,
   useViewportWidth,
   widthBand,
 } from "./responsive";
@@ -175,5 +176,83 @@ describe("useViewportWidth", () => {
       window.dispatchEvent(new Event("resize"));
     });
     expect(result.current).toBe(1024);
+  });
+});
+
+/**
+ * The side rail is an in-flow sibling, so it comes out of the width the feed
+ * gets. These pin the floor at the widths the review measured, using the width
+ * the feed actually receives rather than the viewport.
+ */
+describe("masonry beside the side rail", () => {
+  const RAIL_PX = 6.5 * 16; // 6.5rem at the default root
+
+  it.each([600, 640, 667, 1116, 1152])(
+    "keeps every card at or above the floor at a %ipx viewport",
+    (viewport) => {
+      const content = viewport - RAIL_PX;
+      const columns = masonryColumns(content);
+      const container = Math.min(content, MASONRY_CANVAS_MAX_PX) - MASONRY_CONTAINER_INSET_PX;
+      expect(columns * MASONRY_MIN_CARD_PX + (columns - 1) * MASONRY_GUTTER_PX)
+        .toBeLessThanOrEqual(container);
+      // The viewport-shaped count is exactly the bug: it over-picks here.
+      expect(columns).toBeLessThan(masonryColumns(viewport));
+    },
+  );
+
+  it("picks one column at 600/667 and three at 1116 once the rail is removed", () => {
+    expect(masonryColumns(600)).toBe(2);
+    expect(masonryColumns(600 - RAIL_PX)).toBe(1);
+    expect(masonryColumns(667 - RAIL_PX)).toBe(1);
+    expect(masonryColumns(1116)).toBe(4);
+    expect(masonryColumns(1116 - RAIL_PX)).toBe(3);
+  });
+});
+
+describe("useContentWidth", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function probe() {
+    const el = document.createElement("div");
+    const ref: { current: HTMLDivElement | null } = { current: el };
+    return { el, ref };
+  }
+
+  it("falls back until the box can be measured, then follows it", () => {
+    const callbacks: Array<() => void> = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          callbacks.push(callback);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const { el, ref } = probe();
+    const { result, unmount } = renderHook(() => useContentWidth(ref, 600));
+    // jsdom reports every clientWidth as 0, so the viewport fallback stands.
+    expect(result.current).toBe(600);
+
+    Object.defineProperty(el, "clientWidth", { configurable: true, value: 496 });
+    act(() => {
+      for (const callback of callbacks) callback();
+    });
+    expect(result.current).toBe(496);
+    unmount();
+  });
+
+  it("also re-reads on a window resize, for engines without ResizeObserver", () => {
+    const { el, ref } = probe();
+    const { result } = renderHook(() => useContentWidth(ref, 600));
+    Object.defineProperty(el, "clientWidth", { configurable: true, value: 1012 });
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(result.current).toBe(1012);
   });
 });

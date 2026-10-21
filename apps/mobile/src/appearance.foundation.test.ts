@@ -20,6 +20,7 @@ describe("consumer appearance migration", () => {
     }));
     expect(appearance.loadAppearance()).toEqual({
       accent: next, textScale: "xlarge", reduceMotion: "reduce", highQualityPhoto: true,
+      navLayout: "bottom",
     });
   });
 

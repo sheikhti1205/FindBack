@@ -6,6 +6,7 @@ import { FixtureRoute } from "./FixtureRoute";
 import { cardWidthAt, rootPxFor } from "./sections/FeedLayoutFixtures";
 import { masonryListPaddingRem } from "../test-utils/masonryListClass";
 import { ALL_VARIANTS, LARGE_TEXT_PERCENT, STANDARD_TEXT_PERCENT } from "./FixtureSection";
+import { NAV_VARIANTS } from "./sections/NavigationFixtures";
 import {
   APPEARANCE_EVENT,
   APPEARANCE_STORAGE_KEY,
@@ -24,6 +25,7 @@ const SECTIONS = [
   "home",
   "feed-layouts",
   "home-chrome",
+  "navigation",
   "detail",
   "create",
   "comments",
@@ -90,7 +92,10 @@ describe("visual fixture route (static preflight)", () => {
   it.each(SECTIONS)("section %s renders every variant without crashing", (section) => {
     renderRoute();
     const root = screen.getByTestId(`fixture-section-${section}`);
-    for (const variant of ALL_VARIANTS) {
+    // Navigation is data-free, so it renders only the variants that can change
+    // its paint (see NAV_VARIANTS); every other section keeps the full matrix.
+    const variants = section === "navigation" ? NAV_VARIANTS : ALL_VARIANTS;
+    for (const variant of variants) {
       const frames = within(root).getAllByTestId(`fixture-${section}-${variant}`);
       expect(
         frames.length,
@@ -448,5 +453,69 @@ describe("fixture frames are trustworthy evidence", () => {
     for (const frame of frames) {
       expect(frame.getAttribute("data-fixture-large-text")).toBe("extralarge");
     }
+  });
+});
+
+describe("navigation preflight renders the production nav", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  function storeNavLayout(navLayout: "bottom" | "rail") {
+    localStorage.setItem(
+      APPEARANCE_STORAGE_KEY,
+      JSON.stringify({ ...DEFAULT_APPEARANCE, navLayout }),
+    );
+  }
+
+  it("renders one production navigation with all five actions in every variant", () => {
+    renderRoute();
+    for (const variant of NAV_VARIANTS) {
+      const demo = screen.getByTestId(`fixture-nav-demo-${variant}`);
+      const nav = within(demo).getByRole("navigation", { name: "Primary" });
+      expect(nav.getAttribute("data-layout")).toBe("bottom");
+      expect(within(nav).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+        "/", "/my", "/profile", "/notifications", "/report",
+      ]);
+    }
+  });
+
+  it("renders a destination other than Home as selected in the rail", () => {
+    storeNavLayout("rail");
+    renderRoute();
+    const demo = screen.getByTestId("fixture-nav-demo-normal");
+    expect(demo.getAttribute("data-nav-layout")).toBe("rail");
+    const selected = within(demo)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(selected.map((link) => link.textContent?.trim())).toEqual(["Notifications"]);
+  });
+
+  it("resolves the stored rail to the bar in the small-width frame", () => {
+    storeNavLayout("rail");
+    renderRoute();
+    expect(
+      screen.getByTestId("fixture-nav-demo-small-width").getAttribute("data-nav-layout"),
+    ).toBe("bottom");
+  });
+
+  it("resolves the stored rail to a rail in the wide frames", () => {
+    storeNavLayout("rail");
+    renderRoute();
+    for (const variant of ["normal", "dark", "amoled", "large-text"] as const) {
+      const demo = screen.getByTestId(`fixture-nav-demo-${variant}`);
+      expect(demo.getAttribute("data-nav-layout")).toBe("rail");
+      expect(
+        within(demo).getByRole("navigation", { name: "Primary" }).getAttribute("data-layout"),
+      ).toBe("rail");
+    }
+  });
+
+  it("keeps the stored bottom bar on the wide frames", () => {
+    storeNavLayout("bottom");
+    renderRoute();
+    expect(
+      screen.getByTestId("fixture-nav-demo-normal").getAttribute("data-nav-layout"),
+    ).toBe("bottom");
   });
 });

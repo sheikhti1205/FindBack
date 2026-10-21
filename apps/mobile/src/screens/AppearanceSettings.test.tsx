@@ -109,4 +109,30 @@ describe("AppearanceSettings", () => {
     expect(rule).toContain("var(--fb-found-ink)");
     expect(rule).not.toContain("--fb-primary-container");
   });
+
+  it("offers Bottom bar and Side rail with the phone caveat, bottom checked by default", () => {
+    renderScreen();
+    const bottom = screen.getByRole("radio", { name: /^Bottom bar/ });
+    const rail = screen.getByRole("radio", { name: /^Side rail/ });
+    expect((bottom as HTMLInputElement).checked).toBe(true);
+    expect((rail as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/side rail is used on wider screens/i)).toBeTruthy();
+    expect(screen.getByText(/on a phone, the bottom bar always stays/i)).toBeTruthy();
+  });
+
+  it("persists the navigation choice immediately with no save step", () => {
+    renderScreen();
+    act(() => { screen.getByRole("radio", { name: /^Side rail/ }).click(); });
+    expect(JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "{}").navLayout).toBe("rail");
+    expect((screen.getByRole("radio", { name: /^Side rail/ }) as HTMLInputElement).checked).toBe(true);
+
+    act(() => { screen.getByRole("radio", { name: /^Bottom bar/ }).click(); });
+    expect(JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "{}").navLayout).toBe("bottom");
+  });
+
+  it("shows a stored rail as selected", () => {
+    localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify({ navLayout: "rail" }));
+    renderScreen();
+    expect((screen.getByRole("radio", { name: /^Side rail/ }) as HTMLInputElement).checked).toBe(true);
+  });
 });

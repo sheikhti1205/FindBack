@@ -59,6 +59,45 @@ html.fb-reduce-motion .fb-nav-link-active .fb-nav-icon { transform: none; }
 .fb-nav-create:focus-visible, .fb-nav-link:focus-visible {
   outline: 3px solid var(--fb-focus); outline-offset: 2px;
 }
+/* Adaptive navigation (owner ruling 4(e)): at the compact breakpoint and up a
+   reader who picks "Side rail" gets a vertical column that takes layout space
+   as a flex sibling of <main>. It is never fixed, absolute or a drawer, so it
+   cannot cover content. Below the breakpoint this element is not rendered at
+   all — the bottom bar above owns phones. Width is in rem so the rail grows
+   with the reader's text scale instead of clipping the labels.
+   Safe-area insets belong to `.fb-app-viewport` alone (index.css): the rail is
+   inside that box, so it pads by its own 12px and never repeats env(). */
+.fb-nav-rail {
+  display: flex; flex-direction: column; flex: none;
+  width: 6.5rem; gap: 8px;
+  padding: 12px 8px;
+  background: var(--fb-surface);
+  border-inline-end: 1px solid var(--fb-outline-variant);
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.fb-nav-rail-list {
+  display: flex; flex-direction: column; gap: 4px; min-height: 0;
+}
+/* Vertical items keep the bar's geometry (56px tall, 16px corners) and turn
+   the icon-over-label layout into a readable column instead of a strip. */
+.fb-nav-rail .fb-nav-link {
+  flex: none; width: 100%; min-height: 56px;
+  flex-direction: column; gap: 2px;
+  padding: 8px 4px; border-radius: 16px;
+}
+.fb-nav-rail .fb-nav-link-active { flex: none; }
+/* Every destination is named in the rail, selected or not. The label wraps
+   rather than truncating, so "My Reports" stays readable at large text. */
+.fb-nav-rail .fb-nav-label {
+  white-space: normal; overflow: visible; overflow-wrap: anywhere;
+  line-height: 1.15;
+}
+.fb-nav-rail .fb-nav-create-wrap { width: fit-content; margin-inline: auto; }
+/* The unread badge stays next to the bell icon rather than the far edge. */
+.fb-nav-rail .fb-nav-link > [data-testid="notifications-unread-badge"] {
+  right: 50%; transform: translateX(22px);
+}
 /* Fullscreen editor is a body-level portal: never leave shell chrome behind it
    as an extra tab stop, even though the editor itself lives outside Shell. */
-body:has(#report-editor-overlay) .fb-nav-slot { display: none; }
+body:has(#report-editor-overlay) .fb-nav-slot,
+body:has(#report-editor-overlay) .fb-nav-rail { display: none; }

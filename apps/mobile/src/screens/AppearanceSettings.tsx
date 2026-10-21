@@ -2,6 +2,7 @@ import { ACCENT_OPTIONS, useAppearance } from "../appearance";
 import { useTheme, type Theme } from "../theme";
 import {
   AccentSwatch,
+  PreferenceRadioRow,
   PreferenceSwitchRow,
   SettingsGroup,
   SettingsPage,
@@ -17,11 +18,13 @@ const THEME_LABELS: Record<Theme, string> = {
 };
 
 /**
- * Settings → Appearance (`/settings/appearance`): theme + accent only, plus a
- * live preview. Everything applies and persists through `useTheme()` /
- * `useAppearance()` the moment it is picked — there is no Save step. The
- * true-black toggle is a modifier that only surfaces when the resolved mode can
- * be dark; picking Dark never forces true black on its own.
+ * Settings → Appearance (`/settings/appearance`): theme, accent, navigation
+ * layout and a live preview. Everything applies and persists through
+ * `useTheme()` / `useAppearance()` the moment it is picked — there is no Save
+ * step. The true-black toggle is a modifier that only surfaces when the
+ * resolved mode can be dark; picking Dark never forces true black on its own.
+ * The navigation choice is stored even on a phone where the bottom bar still
+ * renders, so it takes effect as soon as the reader has a wider screen.
  */
 export function AppearanceSettings() {
   const { theme, trueBlackDark, setTheme, setTrueBlackDark } = useTheme();
@@ -89,6 +92,35 @@ export function AppearanceSettings() {
                 onChange={(accent) => update({ accent })}
               />
             ))}
+          </div>
+        </fieldset>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Navigation"
+        description="The side rail is used on wider screens. On a phone, the bottom bar always stays."
+      >
+        <fieldset className="fb-choice-fieldset">
+          {/* The group already announces "Navigation" from the section title;
+              naming the fieldset "Layout" avoids announcing it twice. */}
+          <legend className="sr-only">Layout</legend>
+          <div className="fb-choice-list">
+            <PreferenceRadioRow
+              name="appearance-nav-layout"
+              value="bottom"
+              title="Bottom bar"
+              description="Along the bottom edge, within thumb reach."
+              checked={settings.navLayout === "bottom"}
+              onChange={() => update({ navLayout: "bottom" })}
+            />
+            <PreferenceRadioRow
+              name="appearance-nav-layout"
+              value="rail"
+              title="Side rail"
+              description="Down the left edge, on wider screens."
+              checked={settings.navLayout === "rail"}
+              onChange={() => update({ navLayout: "rail" })}
+            />
           </div>
         </fieldset>
       </SettingsGroup>

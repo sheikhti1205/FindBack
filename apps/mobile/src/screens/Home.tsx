@@ -3,7 +3,7 @@ import type { PostType } from "@findback/shared";
 import { HomeFilterChips, HomeScopeChips } from "./HomeFilterChips";
 import { HomeTopBar } from "./HomeTopBar";
 import { PostList } from "../components/PostList";
-import { MASONRY_CANVAS_CLASS, READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, useViewportWidth } from "../components/responsive";
+import { MASONRY_CANVAS_CLASS, READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, useContentWidth, useViewportWidth } from "../components/responsive";
 import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
 import { CHROME_TOP_ZONE, useScrollChrome } from "../components/scrollChrome";
@@ -67,6 +67,12 @@ export function Home() {
   // for the single-column layouts, so a desktop window does not stretch titles
   // to absurd line lengths. Both are centred, so no phone-width strip survives.
   const canvasClass = resolvedLayout === "masonry" ? MASONRY_CANVAS_CLASS : READABLE_COLUMN_CLASS;
+  // The feed's column count follows the box the feed actually gets, not the
+  // viewport: with the side rail on, the rail takes 6.5rem out of this row and
+  // a viewport-based count would drop cards under their 260px floor. Measured
+  // (not computed from a rail constant) so it stays right at every text scale.
+  const feedRef = useRef<HTMLDivElement | null>(null);
+  const feedWidth = useContentWidth(feedRef, viewportWidth);
   // Type + search survive in the URL so back-nav, deep-links, and copied
   // links restore the feed the reader was looking at.
   const [typeParam, setTypeParam] = useUrlParam("type");
@@ -606,7 +612,7 @@ export function Home() {
             PostList itself is untouched — the provider flows state to each
             home-feed card's Love toggle via context. */}
         <FeedLoveProvider items={items} patchItem={patchItem}>
-          <div className={canvasClass}>
+          <div className={canvasClass} ref={feedRef} data-testid="home-feed-canvas">
             <PostList
               items={items}
               loading={loading}
@@ -616,7 +622,7 @@ export function Home() {
               onLoadMore={loadMore}
               onRetry={refresh}
               density={feedDensity(resolvedLayout)}
-              masonryColumns={masonryColumns(viewportWidth)}
+              masonryColumns={masonryColumns(feedWidth)}
               emptyTitle={appliedQuery || advanced.category || advanced.status || nearbyActive ? "No matches" : "Nothing here yet"}
               emptySubtitle={
                 nearbyActive

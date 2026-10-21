@@ -27,12 +27,13 @@ afterEach(() => {
 });
 
 describe("appearance settings module (AI-011 Quick Appearance)", () => {
-  it("exposes defaults: mono accent, standard scale, system motion, standard photo", () => {
+  it("exposes defaults: mono accent, standard scale, system motion, standard photo, bottom bar", () => {
     expect(DEFAULT_APPEARANCE).toEqual({
       accent: "mono",
       textScale: "standard",
       reduceMotion: "system",
       highQualityPhoto: false,
+      navLayout: "bottom",
     });
   });
 
@@ -53,6 +54,18 @@ describe("appearance settings module (AI-011 Quick Appearance)", () => {
     expect(loaded.textScale).toBe(DEFAULT_APPEARANCE.textScale);
     expect(loaded.reduceMotion).toBe(DEFAULT_APPEARANCE.reduceMotion);
     expect(loaded.highQualityPhoto).toBe(false);
+    expect(loaded.navLayout).toBe("bottom");
+  });
+
+  it("persists the chosen navigation layout and falls back on unknown values", () => {
+    saveAppearance({ ...DEFAULT_APPEARANCE, navLayout: "rail" });
+    expect(loadAppearance().navLayout).toBe("rail");
+
+    localStorage.setItem(
+      APPEARANCE_STORAGE_KEY,
+      JSON.stringify({ ...DEFAULT_APPEARANCE, navLayout: "drawer" }),
+    );
+    expect(loadAppearance().navLayout).toBe("bottom");
   });
 
   it("round-trips save/load and notifies listeners immediately (no Save button)", () => {
@@ -64,6 +77,7 @@ describe("appearance settings module (AI-011 Quick Appearance)", () => {
         textScale: "large",
         reduceMotion: "reduce",
         highQualityPhoto: true,
+        navLayout: "rail",
       };
       saveAppearance(next);
       expect(loadAppearance()).toEqual(next);
@@ -97,6 +111,7 @@ describe("appearance settings module (AI-011 Quick Appearance)", () => {
       textScale: "large",
       reduceMotion: "reduce",
       highQualityPhoto: false,
+      navLayout: "bottom",
     });
     const root = document.documentElement;
     const swatch = ACCENT_OPTIONS.find((a) => a.id === "blue")!.swatch;

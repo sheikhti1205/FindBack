@@ -13,7 +13,7 @@
  * Pure module: no DOM at import time, no listeners. `useViewportWidth` is the
  * only hook and it is opt-in.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 
 /** Below this width the canvas is a phone: one column, compact gutters. */
 export const COMPACT_MAX_PX = 600;
@@ -96,7 +96,13 @@ export const MASONRY_CANVAS_CLASS = "mx-auto w-full max-w-[1152px]";
 export const MASONRY_CONTAINER_INSET_PX = 40;
 
 /**
- * How many masonry columns fit a viewport.
+ * How many masonry columns fit a canvas `widthPx` CSS pixels wide.
+ *
+ * `widthPx` is the width the feed *receives*, not the viewport: when the reader
+ * chose the side rail, the rail is an in-flow sibling and the feed gets less.
+ * `Home` measures its own canvas with `useContentWidth` and passes that number;
+ * passing `window.innerWidth` there is what let 600–667 px render 226–259 px
+ * cards under the rail. Without a measured canvas the width is the viewport.
  *
  * Cards never go below `MASONRY_MIN_CARD_PX`, so a wide-but-not-huge viewport
  * lands on 2 (small tablet) or 3 (tablet/landscape) columns rather than
@@ -161,6 +167,65 @@ export function feedDensity(layout: ResolvedFeedLayout): "home-feed" | "compact"
 }
 
 /**
+ * The one width gate for the optional side rail: at `COMPACT_MAX_PX` and up a
+ * stored `rail` applies; below it the bottom bar always wins. Derived from the
+ * band constant above so the breakpoint cannot drift from `widthBand`.
+ */
+export const NAV_RAIL_MEDIA_QUERY = `(min-width: ${COMPACT_MAX_PX}px)`;
+
+/** `matchMedia` when the environment has it; jsdom has no media support. */
+function wideViewportQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null;
+  return window.matchMedia(NAV_RAIL_MEDIA_QUERY);
+}
+
+function readWideViewport(): boolean {
+  if (typeof window === "undefined") return false;
+  const query = wideViewportQuery();
+  return query ? query.matches : window.innerWidth >= COMPACT_MAX_PX;
+}
+
+/**
+ * Whether the viewport is at or above the rail breakpoint.
+ *
+ * The query is the owner, with a `resize` listener as the fallback the test
+ * environment (jsdom has no `matchMedia`) and older WebViews need. Both funnel
+ * into one state update, so a width change re-renders without a reload and the
+ * two sources can never disagree about the stored preference.
+ */
+export function useWideViewport(): boolean {
+  const [wide, setWide] = useState(readWideViewport);
+
+  useEffect(() => {
+    const query = wideViewportQuery();
+    const sync = () => setWide(query ? query.matches : readWideViewport());
+    // Re-read once: the width can change between the initial render and effect
+    // attachment (rotation, desktop window resize).
+    sync();
+    if (query) {
+      if (typeof query.addEventListener === "function") {
+        query.addEventListener("change", sync);
+      } else {
+        query.addListener(sync);
+      }
+    }
+    window.addEventListener("resize", sync);
+    return () => {
+      if (query) {
+        if (typeof query.removeEventListener === "function") {
+          query.removeEventListener("change", sync);
+        } else {
+          query.removeListener(sync);
+        }
+      }
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
+
+  return wide;
+}
+
+/**
  * Live viewport width in CSS pixels.
  *
  * Starts from `window.innerWidth` so the first paint already has the right
@@ -180,4 +245,44 @@ export function useViewportWidth(): number {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   return width;
+}
+
+/**
+ * Live width of the box an element actually got, in CSS pixels.
+ *
+ * Column maths must come from the width the feed receives, not from
+ * `window.innerWidth`: the optional side rail is an in-flow sibling and takes
+ * `6.5rem` out of the same row, so a viewport-width column count put 226–259 px
+ * cards beside it at 600–667 px. Measuring is also the only answer that stays
+ * right at every text scale — the rail is sized in `rem` and grows with the
+ * reader's scale — and it keeps `masonryColumns`' guarantee honest where the
+ * canvas is capped by `MASONRY_CANVAS_MAX_PX`.
+ *
+ * `fallback` covers the first render and environments with no layout engine
+ * (jsdom, where every `clientWidth` is 0). In a browser the observer fires
+ * after layout and before paint, so the fallback's column count is never
+ * painted.
+ */
+export function useContentWidth(
+  ref: RefObject<HTMLElement | null>,
+  fallback: number,
+): number {
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const read = () => {
+      const next = Math.round(ref.current?.clientWidth ?? 0);
+      if (next > 0) setWidth((current) => (current === next ? current : next));
+    };
+    read();
+    const el = ref.current;
+    const Observer = typeof ResizeObserver === "function" ? ResizeObserver : null;
+    const observer = Observer && el ? new Observer(read) : null;
+    if (observer && el) observer.observe(el);
+    window.addEventListener("resize", read);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", read);
+    };
+  }, [ref]);
+  return width > 0 ? width : fallback;
 }

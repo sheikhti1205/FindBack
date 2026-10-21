@@ -5,6 +5,7 @@ import { CreateFixtures } from "./sections/CreateFixtures";
 import { DetailFixtures } from "./sections/DetailFixtures";
 import { FeedLayoutFixtures } from "./sections/FeedLayoutFixtures";
 import { HomeFixtures } from "./sections/HomeFixtures";
+import { NavigationFixtures } from "./sections/NavigationFixtures";
 import { SocialFixtures } from "./sections/SocialFixtures";
 import { SystemFixtures } from "./sections/SystemFixtures";
 
@@ -12,6 +13,7 @@ const SECTION_LINKS = [
   { id: "home", label: "Home feed" },
   { id: "feed-layouts", label: "Feed layouts" },
   { id: "home-chrome", label: "Home chrome" },
+  { id: "navigation", label: "Navigation" },
   { id: "detail", label: "Post detail" },
   { id: "create", label: "Create report" },
   { id: "comments", label: "Comments & composer" },
@@ -77,6 +79,9 @@ export function FixtureRoute() {
       </div>
       <div>
         <BlockedShieldFixtures />
+      </div>
+      <div>
+        <NavigationFixtures />
       </div>
       <div>
         <DetailFixtures />

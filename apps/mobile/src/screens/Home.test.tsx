@@ -23,8 +23,9 @@ vi.mock("../services/realtime", () => ({ onRealtime: onRealtimeMock }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../components/TabTap", () => ({ useTabTap: () => tabTapState }));
 vi.mock("../components/PostList", () => ({
-  PostList: ({ items, error, emptySubtitle, onRetry }: { items: Array<{ id: string }>; error: string | null; emptySubtitle: string; onRetry: () => Promise<void> }) => (
+  PostList: ({ items, error, emptySubtitle, onRetry, masonryColumns }: { items: Array<{ id: string }>; error: string | null; emptySubtitle: string; onRetry: () => Promise<void>; masonryColumns?: number }) => (
     <div>
+      <span data-testid="post-columns">{masonryColumns}</span>
       {error ? <><p role="alert">{error}</p><button onClick={() => void onRetry()}>Try again</button></> : null}
       {!error && items.length === 0 ? <p>{emptySubtitle}</p> : null}
       <ul data-testid="posts">{items.map((i) => <li key={i.id}>{i.id}</li>)}</ul>
@@ -886,5 +887,40 @@ describe("Home feed redesign (reference-inspired)", () => {
     renderHome("/?q=wallet");
     expect(screen.getByLabelText("Search posts")).toBeTruthy();
     expect(consumeBackIntercept()).toBe(false);
+  });
+});
+
+describe("Home masonry width (adaptive navigation)", () => {
+  beforeEach(() => {
+    fetchFeedMock.mockReset();
+    onRealtimeMock.mockClear();
+    handlers.clear();
+    clearFeedCaches();
+    fetchFeedMock.mockResolvedValue({
+      items: ["a", "b", "c"].map((id) => ({ id, title: id })),
+      nextCursor: null,
+      total: 3,
+    });
+  });
+
+  it("counts columns from the feed's own width, not the viewport", async () => {
+    const previous = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    try {
+      renderHome();
+      await waitFor(() => expect(screen.getByTestId("posts")).toBeTruthy());
+      const canvas = screen.getByTestId("home-feed-canvas");
+      // Unmeasured (jsdom): the viewport fallback, i.e. 600 -> two columns.
+      expect(screen.getByTestId("post-columns").textContent).toBe("2");
+
+      // The side rail takes 104px out of this row: the feed reports 496.
+      Object.defineProperty(canvas, "clientWidth", { configurable: true, value: 496 });
+      act(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      await waitFor(() => expect(screen.getByTestId("post-columns").textContent).toBe("1"));
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previous });
+    }
   });
 });

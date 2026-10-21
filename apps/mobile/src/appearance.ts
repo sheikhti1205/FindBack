@@ -3,9 +3,10 @@
  *
  * Single owner for the appearance controls (now rendered by the Settings →
  * Appearance screen; the legacy AppearancePanel was removed):
- * accent color, text scale (root font size), reduce-motion user override, and
- * the high-quality-photo flag. Everything applies to `document.documentElement`
- * and persists to localStorage immediately — there is no Save step.
+ * accent color, text scale (root font size), reduce-motion user override,
+ * navigation layout, and the high-quality-photo flag. Everything applies to
+ * `document.documentElement` and persists to localStorage immediately — there
+ * is no Save step.
  *
  * Layering notes:
  * - The OS reduced-motion preference stays the base signal. `reduceMotion`
@@ -146,11 +147,20 @@ export const REDUCE_MOTION_OPTIONS: readonly {
   { value: "full", label: "Full" },
 ];
 
+/**
+ * Reader choice for the primary navigation at wide widths:
+ * `"bottom"` keeps the bar, `"rail"` moves it to a side rail. Phones always
+ * keep the bottom bar (the width gate lives in `components/navLayout.ts`), so a
+ * stored `"rail"` can never produce a narrow side column or a drawer.
+ */
+export type NavLayout = "bottom" | "rail";
+
 export interface AppearanceSettings {
   accent: AccentId;
   textScale: TextScaleId;
   reduceMotion: ReduceMotionOverride;
   highQualityPhoto: boolean;
+  navLayout: NavLayout;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -158,6 +168,7 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   textScale: "standard",
   reduceMotion: "system",
   highQualityPhoto: false,
+  navLayout: "bottom",
 };
 
 function isAccentId(value: unknown): value is AccentId {
@@ -172,6 +183,10 @@ function isReduceMotionOverride(value: unknown): value is ReduceMotionOverride {
   return value === "system" || value === "reduce" || value === "full";
 }
 
+function isNavLayout(value: unknown): value is NavLayout {
+  return value === "bottom" || value === "rail";
+}
+
 /** Pure field-by-field migration; malformed fields never discard valid peers. */
 export function migrateAppearance(value: unknown): AppearanceSettings {
   const parsed = value && typeof value === "object" && !Array.isArray(value)
@@ -182,6 +197,7 @@ export function migrateAppearance(value: unknown): AppearanceSettings {
     textScale: isTextScaleId(parsed.textScale) ? parsed.textScale : DEFAULT_APPEARANCE.textScale,
     reduceMotion: isReduceMotionOverride(parsed.reduceMotion) ? parsed.reduceMotion : DEFAULT_APPEARANCE.reduceMotion,
     highQualityPhoto: typeof parsed.highQualityPhoto === "boolean" ? parsed.highQualityPhoto : DEFAULT_APPEARANCE.highQualityPhoto,
+    navLayout: isNavLayout(parsed.navLayout) ? parsed.navLayout : DEFAULT_APPEARANCE.navLayout,
   };
 }
 
