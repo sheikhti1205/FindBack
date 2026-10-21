@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { FileQuestion } from "lucide-react";
 import { PostCard } from "./PostCard";
 import { OwnerReportCard } from "./OwnerReportCard";
+import { BlockedByViewerShield } from "./BlockedByViewerShield";
 import { PostCardContent, masonryCardMetrics, type PostCardLayout } from "./PostCardContent";
 import { EmptyState } from "./PostCard";
 import { MorphLoader } from "./MorphLoader";
@@ -124,12 +125,25 @@ export function PostList({
   const indexById = useMemo(() => new Map(items.map((post, i) => [post.id, i])), [items]);
 
   const cardFor = (post: PostItem, index: number) => {
-    if (isOwnerFeed) return <OwnerReportCard post={post} />;
-    const variant = layout === "home-feed" || layout === "masonry" ? layout : "default";
-    return (
-      <PostCard to={`/posts/${post.id}`} index={index} variant={variant}>
+    const card = isOwnerFeed ? (
+      <OwnerReportCard post={post} />
+    ) : (
+      <PostCard
+        to={`/posts/${post.id}`}
+        index={index}
+        variant={layout === "home-feed" || layout === "masonry" ? layout : "default"}
+      >
         <PostCardContent post={post} layout={layout} enableSharedMedia />
       </PostCard>
+    );
+    // O5 mount (CF-060 R10): the shield wraps the whole card from OUTSIDE, so
+    // the reveal control is a sibling of the default variant's wrapping link —
+    // never a button nested in an anchor. Unflagged rows render the card
+    // unchanged (the shield returns its children without a wrapper).
+    return (
+      <BlockedByViewerShield rowId={post.id} blocked={post.blockedAuthor}>
+        {card}
+      </BlockedByViewerShield>
     );
   };
 

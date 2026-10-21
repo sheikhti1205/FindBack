@@ -167,4 +167,39 @@ describe("PublicProfile", () => {
     // The cursor is retained so the user can retry.
     expect(screen.getByRole("button", { name: /load more reports/i })).toBeTruthy();
   });
+  // CF-060 R10: the profile reports row is one of the four mounts, and it is a
+  // real mount test — the shield must sit OUTSIDE the SettingsRow link (its own
+  // docs forbid an interactive control inside the row) and must not appear on
+  // unflagged rows.
+  it("shields only the flagged report row on a profile", async () => {
+    fetchPublicProfileMock.mockResolvedValue(profile);
+    fetchFeedMock.mockResolvedValue({
+      items: [post, { ...post, id: "p2", title: "Blocked report", blockedAuthor: true }],
+      nextCursor: null,
+      total: 2,
+    });
+    renderRoute();
+
+    const shields = await screen.findAllByTestId("blocked-shield");
+    expect(shields).toHaveLength(1);
+    const content = screen.getByTestId("blocked-shield-content");
+    expect(content.getAttribute("inert")).not.toBeNull();
+
+    // The reveal control is outside the row's anchor, never inside it.
+    const reveal = screen.getByRole("button", { name: "Show content" });
+    expect(reveal.closest("a")).toBeNull();
+    expect(content.contains(reveal)).toBe(false);
+
+    // The unblocked row stays an ordinary link.
+    expect(screen.getByRole("link", { name: "Found a wallet" })).toBeTruthy();
+
+    fireEvent.click(reveal);
+    // Row mode never unmounts the warning: it stays in the same grid cell,
+    // invisible and inert, so the row's box height is identical before and
+    // after reveal (no jump for the rows below).
+    const warning = screen.getByTestId("blocked-shield-warning");
+    expect(warning.className).toContain("invisible");
+    expect(warning.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByRole("link", { name: /Blocked report/ })).toBeTruthy();
+  });
 });

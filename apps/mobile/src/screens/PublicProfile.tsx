@@ -4,6 +4,7 @@ import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/sh
 import { fetchPublicProfile, appendReportPage, hasMoreReports } from "../services/profile";
 import { fetchFeed } from "../services/posts";
 import { UserAvatar } from "../components/UserAvatar";
+import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { SettingsGroup, SettingsPage, SettingsRow, StatusPill } from "../components/settings";
 
 /** "Joined January 2026" from an ISO timestamp; tolerant of bad input. */
@@ -119,12 +120,20 @@ export function PublicProfile() {
               <p className="p-4 text-sm text-on-surface-variant">No public reports yet.</p>
             ) : (
               reports.map((report) => (
-                <SettingsRow
+                // O5 mount (CF-060 R10): outside the SettingsRow anchor, whose
+                // own docs forbid an interactive control inside the row.
+                <BlockedByViewerShield
                   key={report.id}
-                  title={report.title}
-                  description={report.type === "LOST" ? "Lost" : "Found"}
-                  route={`/posts/${report.id}`}
-                />
+                  rowId={report.id}
+                  blocked={report.blockedAuthor}
+                  mode="row"
+                >
+                  <SettingsRow
+                    title={report.title}
+                    description={report.type === "LOST" ? "Lost" : "Found"}
+                    route={`/posts/${report.id}`}
+                  />
+                </BlockedByViewerShield>
               ))
             )}
             {hasMoreReports({ items: reports, nextCursor }) && (

@@ -139,6 +139,8 @@ jobs:
         run: psql -h localhost -U postgres -d findback_test -v ON_ERROR_STOP=1 -f supabase/tests/auth_phone_verification_sync.test.sql
       - name: Run static migration-parity suite
         run: node --test supabase/tests/migration_parity.test.mjs
+      - name: Run migration SQL syntax guard
+        run: node --test supabase/tests/migration_sql_syntax.test.mjs
 
   android:
     name: Android build & JVM tests

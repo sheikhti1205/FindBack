@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { PostItem } from "@findback/shared";
 import {
   clearFeedCaches,
   getNewPostCount,
@@ -44,5 +45,28 @@ describe("feedCache", () => {
     // A refresh saves fresh data and clears the flag again.
     saveFeedCache("k1", data);
     expect(loadFeedCache("k1")?.dirty).toBe(false);
+  });
+
+  // CF-060 R10 / F15: the cache stores live PostItem objects (no serialization
+  // and no allowlist), so the O5 bit survives a save/load round-trip — and the
+  // reveal state, which is component-local, must never ride along.
+  it("keeps the O5 bit on a cached row and persists no reveal state", () => {
+    const items = [
+      { id: "p1", blockedAuthor: true },
+      { id: "p2", blockedAuthor: false },
+    ] as PostItem[];
+    saveFeedCache("k", { items, total: 2, cursor: null, scrollTop: 0 });
+
+    const entry = loadFeedCache("k")!;
+    expect(entry.items[0]!.blockedAuthor).toBe(true);
+    expect(entry.items[1]!.blockedAuthor).toBe(false);
+    expect("revealed" in entry.items[0]!).toBe(false);
+    expect("reveal" in entry.items[0]!).toBe(false);
+  });
+
+  it("drops the cached bit with the cache on logout", () => {
+    saveFeedCache("k", { items: [{ id: "p1", blockedAuthor: true }] as PostItem[], total: 1, cursor: null, scrollTop: 0 });
+    clearFeedCaches();
+    expect(loadFeedCache("k")).toBeNull();
   });
 });

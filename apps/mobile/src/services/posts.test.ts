@@ -705,3 +705,120 @@ describe("fetchFeed canonical reaction truth (W1-A FBX-010)", () => {
     expect(post.reactionSummary).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// CF-060 R10 — the O5 block bit on the wire (blocked_author → blockedAuthor).
+// Four readers feed the ordinary surfaces, and the same reader serves feed,
+// nearby, detail and my-reports; each is asserted separately so a future split
+// cannot silently drop the hop on one of them.
+// ---------------------------------------------------------------------------
+describe("O5 block bit mapping (CF-060 R10)", () => {
+  it("carries a true feed bit", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({ blocked_author: true })], error: null });
+
+    const post = (await fetchFeed({})).items[0]!;
+
+    expect(post.blockedAuthor).toBe(true);
+  });
+
+  it("carries a false feed bit as false, not as absent", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({ blocked_author: false })], error: null });
+
+    const post = (await fetchFeed({})).items[0]!;
+
+    expect(post.blockedAuthor).toBe(false);
+    expect("blockedAuthor" in post).toBe(true);
+  });
+
+  it("omits the field on a pre-R10 row (no key, never a guessed false)", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row()], error: null });
+
+    const post = (await fetchFeed({})).items[0]!;
+
+    expect("blockedAuthor" in post).toBe(false);
+  });
+
+  it("carries the bit from the nearby reader", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({ blocked_author: true })], error: null });
+
+    const page = await fetchFeed({ nearLat: 23.8, nearLng: 90.4, radiusM: 5000 });
+
+    expect(clientMock.rpc).toHaveBeenCalledWith(
+      "findback_query_posts_nearby_client",
+      expect.objectContaining({ p_near_lat: 23.8, p_radius_m: 5000 }),
+    );
+    expect(page.items[0]!.blockedAuthor).toBe(true);
+  });
+
+  it("carries the bit from the detail read (the same feed reader by id)", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({ blocked_author: true })], error: null });
+
+    const post = await fetchPost("p1");
+
+    expect(clientMock.rpc).toHaveBeenCalledWith(
+      "findback_query_posts_client",
+      expect.objectContaining({ p_post_id: "p1", p_limit: 1 }),
+    );
+    expect(post.blockedAuthor).toBe(true);
+  });
+
+  it("carries false on the caller's own rows (self-pair is impossible)", async () => {
+    clientMock.auth.getUser.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
+    clientMock.rpc.mockResolvedValue({ data: [row({ blocked_author: false })], error: null });
+
+    const page = await fetchMyPosts();
+
+    expect(clientMock.rpc).toHaveBeenCalledWith(
+      "findback_query_posts_client",
+      expect.objectContaining({ p_user_id: "u1" }),
+    );
+    expect(page.items[0]!.blockedAuthor).toBe(false);
+  });
+
+  it("carries the comment bit and keeps the stored thread position", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [
+        commentRow({ id: "parent", depth: 0, parent_id: null, blocked_author: true }),
+        commentRow({ id: "reply", depth: 1, parent_id: "parent", blocked_author: false }),
+      ],
+      error: null,
+    });
+
+    const comments = await fetchComments("p1");
+
+    expect(comments[0]!.blockedAuthor).toBe(true);
+    expect(comments[1]!.blockedAuthor).toBe(false);
+    // O5 supersedes D19: nothing is promoted, dropped or reparented.
+    expect(comments[1]!.parentId).toBe("parent");
+    expect(comments[1]!.depth).toBe(1);
+    expect(comments).toHaveLength(2);
+  });
+
+  it("leaves the comment bit absent on rows from the add RPC", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [commentRow()], error: null });
+
+    const comments = await fetchComments("p1");
+
+    expect("blockedAuthor" in comments[0]!).toBe(false);
+  });
+
+  it("F14: a wrong wire name (blockedBy) never sets the field", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [row({ blockedBy: true, blocked_author_pending: true })],
+      error: null,
+    });
+
+    const post = (await fetchFeed({})).items[0]!;
+
+    expect("blockedAuthor" in post).toBe(false);
+    expect(post.blockedAuthor).toBeUndefined();
+  });
+
+  it("F14: a non-boolean wire value is never coerced to true", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({ blocked_author: "true" })], error: null });
+
+    const post = (await fetchFeed({})).items[0]!;
+
+    expect("blockedAuthor" in post).toBe(false);
+  });
+});

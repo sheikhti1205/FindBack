@@ -827,3 +827,88 @@ describe("withSentReportRefs (forward-provisioning for I4b)", () => {
     expect("attachments" in merged).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CF-060 R10 — the two detail-surface mounts.
+//
+// The detail page hosts TWO of the four mounts, and they are different rows:
+// the report region (the post's author) and each comment (its own author). These
+// are real mounts, so deleting either shield fails here.
+// ---------------------------------------------------------------------------
+describe("blocked-by-viewer shields on a report detail", () => {
+  const blockedPost = { ...basePost, title: "Blocked report title", blockedAuthor: true };
+
+  beforeEach(() => {
+    postsMock.fetchPost.mockResolvedValue(basePost);
+    postsMock.fetchComments.mockResolvedValue([{ ...longComment, body: "ordinary comment" }]);
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+  });
+
+  afterEach(cleanup);
+
+  it("shields the report region and leaves the comment thread operable", async () => {
+    postsMock.fetchPost.mockResolvedValue(blockedPost);
+    renderDetail();
+
+    // Exactly one shield: the report's own region.
+    const shields = await screen.findAllByTestId("blocked-shield");
+    expect(shields).toHaveLength(1);
+
+    const content = shields[0]!;
+    expect(content.textContent).toContain("Content hidden");
+
+    // The comment thread is OUTSIDE the shield: its composer is reachable and
+    // the comment text is not inside the inert subtree.
+    const comments = screen.getByTestId("detail-comments");
+    const shieldedContent = screen.getByTestId("blocked-shield-content");
+    expect(shieldedContent.contains(comments)).toBe(false);
+    expect(comments.textContent).toContain("ordinary comment");
+    expect(screen.getByTestId("blocked-shield-content").getAttribute("inert")).not.toBeNull();
+
+    // Reveal restores the report without remounting the page.
+    fireEvent.click(screen.getByRole("button", { name: "Show content" }));
+    expect(screen.queryByTestId("blocked-shield-warning")).toBeNull();
+    expect(screen.getByText("Blocked report title")).toBeTruthy();
+  });
+
+  it("shields a blocked comment on its own and keeps an unblocked reply operable", async () => {
+    // The room is grouped by parentId, so the reply is a flat row like the API's.
+    postsMock.fetchComments.mockResolvedValue([
+      { ...longComment, id: "c-blocked", body: "blocked comment body", blockedAuthor: true },
+      {
+        ...longComment,
+        id: "c-reply",
+        body: "ordinary reply body",
+        parentId: "c-blocked",
+        depth: 1,
+        author: { id: "u5", username: "someone-else" },
+      },
+    ]);
+    renderDetail();
+
+    const shields = await screen.findAllByTestId("blocked-shield");
+    expect(shields).toHaveLength(1);
+
+    // The blocked comment's body is inert; the reply's is not.
+    const inert = screen.getByTestId("blocked-shield-content");
+    expect(inert.textContent).toContain("blocked comment body");
+    expect(inert.textContent).not.toContain("ordinary reply body");
+    expect(screen.getByText("ordinary reply body")).toBeTruthy();
+
+    // Per-row reveal: the shielded comment alone is restored, and the reply was
+    // never concealed in the first place.
+    fireEvent.click(screen.getByRole("button", { name: "Show content" }));
+    // Row mode: the warning stays in the cell but is invisible/inert.
+    expect(screen.getByTestId("blocked-shield-warning").className).toContain("invisible");
+    expect(screen.getByTestId("blocked-shield-content").getAttribute("inert")).toBeNull();
+    expect(screen.getByText("blocked comment body")).toBeTruthy();
+    expect(screen.getByText("ordinary reply body")).toBeTruthy();
+  });
+
+  it("never shields a detail page whose rows carry no bit", async () => {
+    renderDetail();
+    expect(await screen.findByText("Blocked report title").catch(() => null)).toBeNull();
+    expect(screen.queryByTestId("blocked-shield")).toBeNull();
+  });
+});

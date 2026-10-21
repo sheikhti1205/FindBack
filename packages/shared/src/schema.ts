@@ -240,6 +240,14 @@ export interface PostItem {
    * the summary (feed list) — callers fall back to likeCount/dislikeCount.
    */
   reactionSummary?: ReactionSummary;
+  /**
+   * O5 block signal (CF-060 R10): true when a block relationship exists
+   * between the caller and this row's author. Caller-scoped and
+   * direction-free — it never says who blocked whom. Absent on rows from a
+   * backend older than the R10 migration; the shield treats absent as "no
+   * shield", which is the pre-R10 rendering.
+   */
+  blockedAuthor?: boolean;
 }
 
 /**
@@ -293,6 +301,13 @@ export interface CommentItem {
    * `reactionSummary`: absent means none, and media still renders from the body.
    */
   attachments?: CommentReportReference[];
+  /**
+   * O5 block signal (CF-060 R10): true when a block relationship exists
+   * between the caller and this comment's author. Caller-scoped and
+   * direction-free; the comment keeps its stored `parentId`/`depth` either way
+   * and is never promoted, dropped or reparented.
+   */
+  blockedAuthor?: boolean;
 }
 
 export interface FeedPage {

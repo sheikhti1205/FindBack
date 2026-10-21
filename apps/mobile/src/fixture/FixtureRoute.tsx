@@ -1,4 +1,5 @@
 import { FixtureLargeTextToggle } from "./FixtureSection";
+import { BlockedShieldFixtures } from "./sections/BlockedShieldFixtures";
 import { ChromeFixtures } from "./sections/ChromeFixtures";
 import { CreateFixtures } from "./sections/CreateFixtures";
 import { DetailFixtures } from "./sections/DetailFixtures";
@@ -73,6 +74,9 @@ export function FixtureRoute() {
       </div>
       <div>
         <ChromeFixtures />
+      </div>
+      <div>
+        <BlockedShieldFixtures />
       </div>
       <div>
         <DetailFixtures />

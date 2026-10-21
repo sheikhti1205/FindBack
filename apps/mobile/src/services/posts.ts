@@ -181,6 +181,11 @@ interface ClientPostRow {
   reaction_counts?: unknown;
   reaction_total?: unknown;
   my_reaction?: unknown;
+  /**
+   * O5 block bit (CF-060 R10). Optional because the same interface is fed by
+   * mocks and by any backend older than the R10 migration.
+   */
+  blocked_author?: unknown;
 }
 
 function decodeCursor(cursor?: string): PostCursor | null {
@@ -203,6 +208,16 @@ function encodeCursor(createdAt: string, id: string): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+}
+
+/**
+ * O5 block bit (CF-060 R10). Only a real boolean is accepted: an older backend
+ * omits the key, and a stringly-typed value must never be read as `true`.
+ * Returns a spreadable fragment so an absent key stays absent (the shield
+ * treats absent exactly as `false`, which is the pre-R10 rendering).
+ */
+function blockedAuthorFromRow(row: { blocked_author?: unknown }): { blockedAuthor?: boolean } {
+  return typeof row.blocked_author === "boolean" ? { blockedAuthor: row.blocked_author } : {};
 }
 
 /** A feed RPC row carries only public author fields — never email/phone. */
@@ -244,6 +259,7 @@ function mapClientPost(row: ClientPostRow): PostItem {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(reactionSummary ? { reactionSummary } : {}),
+    ...blockedAuthorFromRow(row),
   };
 }
 
@@ -360,6 +376,8 @@ interface ClientCommentRow {
   my_reaction?: unknown;
   /** Ordered attachment jsonb; absent on rows from the add RPC. */
   attachments?: unknown;
+  /** O5 block bit (CF-060 R10); absent on rows from the add RPC. */
+  blocked_author?: unknown;
 }
 
 function mapClientComment(row: ClientCommentRow): CommentItem {
@@ -385,6 +403,7 @@ function mapClientComment(row: ClientCommentRow): CommentItem {
     // Conditional spread, never `attachments: []`: the list path's exact-shape
     // assertion pins a row with no descriptors to no field at all.
     ...(attachments.length ? { attachments } : {}),
+    ...blockedAuthorFromRow(row),
   };
 }
 

@@ -3997,3 +3997,194 @@ describe("visibility kernel, blocking and the O5/D21 readers (20261017070000)", 
     );
   });
 });
+
+describe("CF-060 R10 feed block flag (20261020090000 + 20261020090500)", () => {
+  const FEED_R10 = "20261020090000_cf060_r10_feed_block_flag.sql";
+  const NEARBY_R10 = "20261020090500_cf060_r10_nearby_block_flag.sql";
+  const B1 = "20261017070000_visibility_kernel_and_blocks.sql";
+  const VERIFY = join(ROOT, "tests", "verify_20261020090500_cf060_r10_feed_block_flag.sql");
+
+  const squash = (s) => s.replace(/\s+/g, " ").trim();
+
+  /** Drop line comments so prose can never satisfy or trip a statement check. */
+  const code = (sql) =>
+    sql
+      .split("\n")
+      .map((line) => {
+        const at = line.indexOf("--");
+        return at < 0 ? line : line.slice(0, at);
+      })
+      .join("\n");
+
+  /** The offset of the function's own `create [or replace] function`. */
+  const createAt = (sql, fn) => {
+    const match = new RegExp(`create (?:or replace )?function public\\.${fn}\\s*\\(`).exec(sql);
+    assert.ok(match, `${fn} is created in this file`);
+    return match.index;
+  };
+
+  /** The `returns table (...)` columns of that function, in source order. */
+  const returnsColumns = (sql, fn) => {
+    const start = createAt(sql, fn);
+    const returnsAt = sql.indexOf("returns table (", start);
+    assert.ok(returnsAt >= 0, `${fn} declares a returns table`);
+    const open = sql.indexOf("(", returnsAt);
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < sql.length; i += 1) {
+      if (sql[i] === "(") depth += 1;
+      else if (sql[i] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    assert.ok(end > open, "the returns table list is closed");
+    return sql
+      .slice(open + 1, end)
+      .split(",")
+      .map(squash)
+      .filter(Boolean);
+  };
+
+  /** The final `select` projection of the function's SQL body. */
+  const projectionOf = (sql, fn) => {
+    const start = createAt(sql, fn);
+    const bodyAt = sql.indexOf("as $$", start);
+    assert.ok(bodyAt >= 0, `${fn} has an SQL body`);
+    const endAt = sql.indexOf("$$;", bodyAt);
+    assert.ok(endAt > bodyAt, `${fn}'s body is closed`);
+    const body = sql.slice(bodyAt + 5, endAt);
+    const selectAt = body.lastIndexOf("select");
+    assert.ok(selectAt >= 0, `${fn} ends with a select`);
+    const fromAt = body.indexOf("from filtered", selectAt);
+    assert.ok(fromAt > selectAt, `${fn} selects from the filtered CTE`);
+    return body
+      .slice(selectAt + "select".length, fromAt)
+      .split(",")
+      .map(squash)
+      .filter(Boolean);
+  };
+
+  for (const [file, fn, label] of [
+    [FEED_R10, "findback_query_posts_client", "feed/detail/my-reports"],
+    [NEARBY_R10, "findback_query_posts_nearby_client", "nearby"],
+  ]) {
+    describe(`${label} reader`, () => {
+      it("is one explicit transaction around a drop and a faithful create", () => {
+        const sql = code(mig(file)).toLowerCase();
+        const parts = sql
+          .split(";")
+          .map(squash)
+          .filter(Boolean);
+        assert.equal(parts[0], "begin", "begin is the first statement");
+        assert.equal(parts.at(-1), "commit", "commit is the last statement");
+        const dropAt = parts.findIndex((s) => s.startsWith(`drop function if exists public.${fn}(`));
+        const createAtIndex = parts.findIndex((s) => s.startsWith(`create function public.${fn}(`));
+        assert.ok(dropAt >= 0, "the old OUT-shape function is dropped");
+        assert.ok(createAtIndex >= 0, "the function is re-created");
+        assert.ok(dropAt < createAtIndex, "the drop precedes the create");
+        assert.ok(
+          !parts.some((s) => s.startsWith(`create or replace function public.${fn}(`)),
+          "a replace could not add an OUT column, so it must be drop + create",
+        );
+      });
+
+      it("appends the bit LAST in both the returns table and the projection", () => {
+        const sql = code(mig(file));
+        const columns = returnsColumns(sql, fn);
+        assert.equal(columns.at(-1), "blocked_author boolean", "the column is appended last");
+        assert.equal(
+          columns.filter((c) => c === "blocked_author boolean").length,
+          1,
+          "the bit is declared exactly once",
+        );
+        const projection = projectionOf(sql, fn);
+        assert.equal(projection.at(-1), "blocked_author", "the projection appends it last");
+        assert.equal(
+          projection.filter((p) => p === "blocked_author").length,
+          1,
+          "the projection names it exactly once",
+        );
+      });
+
+      it("preserves every pre-existing column, in order, from the applied B1 text", () => {
+        const before = returnsColumns(code(mig(B1)), fn);
+        const after = returnsColumns(code(mig(file)), fn);
+        assert.ok(before.length > 20, "the B1 reader is the real 29-column baseline");
+        assert.deepEqual(
+          after.slice(0, before.length),
+          before,
+          "the pre-existing returns-table columns keep their exact order",
+        );
+        assert.equal(after.length, before.length + 1, "exactly one column was added");
+        const projBefore = projectionOf(code(mig(B1)), fn);
+        const projAfter = projectionOf(code(mig(file)), fn);
+        assert.deepEqual(
+          projAfter.slice(0, projBefore.length),
+          projBefore,
+          "the pre-existing projection is unchanged, in order",
+        );
+        assert.equal(projAfter.length, projBefore.length + 1, "exactly one projection entry was added");
+      });
+
+      it("keeps invoker rights, the page clamp and the same ACL as B1", () => {
+        const sql = code(mig(file)).toLowerCase();
+        assert.ok(sql.includes("security invoker"), "no definer escalation on a feed reader");
+        assert.ok(!sql.includes("security definer"), "the reader is not made definite");
+        assert.ok(sql.includes("limit least(greatest(p_limit, 0), 20)"), "the page clamp is preserved");
+        assert.ok(sql.includes(`revoke all on function public.${fn}(`), "public revoke restored");
+        assert.ok(sql.includes("from anon"), "anon revoke restored");
+        assert.ok(
+          sql.includes(`grant execute on function public.${fn}(`),
+          "the authenticated grant is restored",
+        );
+        assert.ok(sql.includes("to authenticated"), "authenticated is the grantee");
+        assert.ok(!/grant execute[\s\S]{0,200}to anon/.test(sql), "anon gains nothing");
+        assert.ok(!/grant all on table[\s\S]{0,40}user_blocks/i.test(sql), "no table grant on blocks");
+        assert.ok(sql.includes(`comment on function public.${fn}(`), "the comment is restored");
+      });
+
+      it("never reads the pairing primitives directly and never filters a row", () => {
+        const body = code(mig(file)).toLowerCase();
+        assert.ok(!body.includes("public.user_blocks"), "the reader never reads user_blocks");
+        assert.ok(
+          !body.includes("findback_is_blocked_pair"),
+          "no pair predicate is re-derived in the reader",
+        );
+        assert.ok(!body.includes("findback_is_blocked_with_me"), "the view stays the only caller");
+        assert.ok(!/where[\s\S]{0,400}not blocked_author/.test(body), "the bit never filters a row");
+        assert.ok(body.includes("from public.findback_visible_posts"), "rows still come from the view");
+      });
+    });
+  }
+
+  it("ships an engine verification file whose hosted stanzas are marked UNRUN", () => {
+    const sql = read(VERIFY);
+    for (const stanza of ["F2", "F3", "F4", "F8", "F9", "F13"]) {
+      assert.ok(sql.includes(stanza), `${stanza} has a stanza`);
+    }
+    assert.match(sql, /UNRUN/, "the file states that execution is UNRUN");
+    assert.ok(!/^\s*F\d+\s*:\s*PASS\b/im.test(sql), "no stanza claims a PASS");
+    // A checklist may describe the same item as engine-proven and as owed, but
+    // only when it names the layer that ran and the layer that did not; the
+    // original wording claimed the whole matrix had run and still owed it
+    // (review CF060-R10 MINOR-2).
+    const owedAt = sql.search(/\bare owed\b/);
+    if (owedAt >= 0) {
+      const window = sql.slice(Math.max(0, owedAt - 600), owedAt + 500);
+      assert.match(window, /hosted/i, "an item listed as owed names the hosted layer it is unrun in");
+    }
+  });
+
+  it("keeps the client's advertised schema stamp on the newest prefix", () => {
+    const caps = read(join(ROOT, "..", "apps", "mobile", "src", "services", "appCapabilities.ts"));
+    const newest = ls().at(-1).match(/^(\d{14})_/)[1];
+    assert.ok(
+      caps.includes(`BACKEND_SCHEMA_VERSION = "${newest}"`),
+      "BACKEND_SCHEMA_VERSION names the newest migration prefix",
+    );
+  });
+});

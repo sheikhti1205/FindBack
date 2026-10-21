@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { PostItem } from "@findback/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { PostList } from "./PostList";
 
@@ -182,5 +182,60 @@ describe("PostList pagination identity (CF-010 §10)", () => {
     // Same node for the row that was already on screen — no list replacement.
     expect(screen.getByText("Keys")).toBe(loadedBefore);
     expect(screen.getByText("Wallet")).toBeTruthy();
+  });
+  // CF-060 R10 / F5: a real mount, not a component unit test. The feed list
+  // must actually shield a flagged row — deleting the mount (or ignoring the
+  // bit) fails this, which is what the F5 mutant demands.
+  it("shields a flagged row in the real card factory and leaves others alone", () => {
+    render(
+      <MemoryRouter>
+        <PostList
+          items={[
+            post("p1", "Blocked row", { blockedAuthor: true }),
+            post("p2", "Ordinary row"),
+            post("p3", "Explicitly unblocked", { blockedAuthor: false }),
+          ]}
+          {...base}
+        />
+      </MemoryRouter>,
+    );
+
+    // Exactly one shield, on the flagged row only.
+    expect(screen.getAllByTestId("blocked-shield")).toHaveLength(1);
+    expect(screen.getByTestId("blocked-shield").textContent).toContain("Content hidden");
+    expect(screen.getAllByTestId("blocked-shield-content")).toHaveLength(1);
+
+    // The ordinary rows keep the pre-R10 rendering: readable and linked.
+    expect(screen.getByRole("link", { name: /Ordinary row/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Explicitly unblocked/ })).toBeTruthy();
+
+    // The shielded row's own link is inert, and the reveal control is a
+    // sibling of it — never a button inside an anchor.
+    const content = screen.getByTestId("blocked-shield-content");
+    expect(content.getAttribute("inert")).not.toBeNull();
+    const reveal = screen.getByRole("button", { name: "Show content" });
+    expect(content.contains(reveal)).toBe(false);
+    expect(reveal.closest("a")).toBeNull();
+
+    // Revealing restores the row's own content without touching the others.
+    fireEvent.click(reveal);
+    expect(screen.queryByTestId("blocked-shield-warning")).toBeNull();
+    expect(screen.getByRole("link", { name: /Blocked row/ })).toBeTruthy();
+  });
+
+  it("applies the same rule to an owner-feed row that carries the bit", () => {
+    // The bit is per row and the mount lives in the one card factory, so it must
+    // not depend on which card the factory chose. A self-pair is impossible
+    // server-side, so this can only happen if the server ever flags an author's
+    // own row — and in that case the content is still concealed rather than
+    // rendered because "it is my own report".
+    render(
+      <MemoryRouter>
+        <PostList items={[post("p1", "My report", { blockedAuthor: true })]} {...base} density="owner-feed" />
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByTestId("blocked-shield")).toHaveLength(1);
+    expect(screen.getByTestId("blocked-shield-content").getAttribute("inert")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Show content" })).toBeTruthy();
   });
 });

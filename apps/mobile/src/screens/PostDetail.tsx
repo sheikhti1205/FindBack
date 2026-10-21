@@ -21,6 +21,7 @@ import { DetailHeroGallery } from "../components/detail/DetailHeroGallery";
 import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
 import { PhotoLightbox } from "../components/PhotoLightbox";
 import { MarkdownView } from "../components/MarkdownView";
+import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { ReportReferenceCard } from "../components/ReportReferenceCard";
 import { ReportPreviewProvider } from "../components/CommentReportPreviews";
 import { CommentComposer } from "../components/CommentComposer";
@@ -890,6 +891,11 @@ export function PostDetail() {
             @{parentName}
           </button>
         )}
+        {/* O5 mount (CF-060 R10): this comment's own content only. The child
+            reply list, the thread controls and the @parent jump stay outside,
+            so an unblocked reply (or a blocked reply's own reveal control) is
+            never inert beneath this shield. */}
+        <BlockedByViewerShield rowId={c.id} blocked={c.blockedAuthor} mode="row" contentClassName="flex flex-col">
         <div className="flex items-center gap-2">
           <UserAvatar avatarUrl={c.author.avatarUrl} username={c.author.username} size={28} />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
@@ -958,6 +964,7 @@ export function PostDetail() {
             ))}
           </div>
         )}
+        </BlockedByViewerShield>
         <div className="mt-2 flex items-center gap-1">
           <button
             type="button"
@@ -1015,6 +1022,16 @@ export function PostDetail() {
       )}
 
       <article className="flex flex-col gap-4 px-4">
+        {/* O5 mount (CF-060 R10): the report-content region only — summary
+            through the matches section, ending BEFORE detail-comments. The
+            comment thread stays a sibling: wrapping the <article> would blur
+            every comment (the bit is per row) and put their reveal controls
+            inside an inert subtree. */}
+        <BlockedByViewerShield
+          rowId={post.id}
+          blocked={post.blockedAuthor}
+          contentClassName="flex flex-col gap-4"
+        >
         {/* Primary info card */}
         <section aria-label="Report summary" className="flex flex-col gap-2">
           <div>
@@ -1240,6 +1257,7 @@ export function PostDetail() {
           </p>
           {post.status === "OPEN" && <PossibleMatches post={post} />}
         </section>
+        </BlockedByViewerShield>
 
         {/* Comments */}
         <section data-testid="detail-comments" id="detail-comments" tabIndex={-1} aria-label="Comments" className="flex scroll-mt-4 flex-col gap-3">
