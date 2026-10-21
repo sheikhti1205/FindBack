@@ -31,6 +31,8 @@ import type { CommentReportReference } from "@findback/shared";
 
 /** Photo cap enforced by the picker, the client gate and the grid layout. */
 export const COMMENT_ATTACH_MAX = 4;
+/** §13.7: separate reviewed flip + fresh hosted evidence required before release. */
+export const COMMENT_REPORTS_ENABLED = false;
 export const COMMENT_ATTACH_MAX_BYTES = 25_000_000;
 
 /**

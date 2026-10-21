@@ -617,7 +617,7 @@ export function PostDetail() {
    * observe no change; descriptors travel only when staged.
    */
   async function postCommentBody(body: string, attachments?: readonly CommentAttachmentDescriptor[]) {
-    if (!body.trim() || body.length > 1000) return;
+    if ((!body.trim() && !attachments?.length) || body.length > 1000) return;
     const snap = { postId: current.id, viewer: user?.id };
     const comment =
       attachments && attachments.length > 0

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Film, ImageOff, ImagePlus, Search, SendHorizonal, Sticker, X } from "lucide-react";
+import { FileText, Film, ImageOff, ImagePlus, Search, SendHorizonal, Sticker, X } from "lucide-react";
+import { CommentReportPicker } from "./CommentReportPicker";
 import { UserAvatar } from "./UserAvatar";
 import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
 import {
   COMMENT_ATTACH_ACCEPT,
   COMMENT_ATTACH_MAX,
+  COMMENT_REPORTS_ENABLED,
   createCommentAttachment,
   createKlipyAttachment,
   importCommentPhotoFromNativeUri,
@@ -36,6 +38,7 @@ import {
   MAX_COMMENT_BODY,
 } from "../services/commentBodyMedia";
 import type { CommentAttachmentDescriptor } from "../services/posts";
+import { ApiError } from "../services/session";
 import { friendlyError } from "../utils/friendlyErrors";
 
 /**
@@ -73,7 +76,12 @@ import { friendlyError } from "../utils/friendlyErrors";
  * offline device or an expired session is the one case where a plain "try
  * again" would be a lie, so the sentence gains that single instruction.
  */
-function commentSendFailureCopy(err: unknown): string {
+function commentSendFailureCopy(err: unknown, hasReport: boolean): string {
+  // P0002 also names a missing parent. Never ask a text-only sender to remove
+  // a reference they do not have. With a staged reference retain §13.7's copy.
+  if (hasReport && err instanceof ApiError && err.code === "P0002") {
+    return "Report unavailable — remove the reference to post your comment.";
+  }
   switch (friendlyError(err).code) {
     case "OFFLINE":
       return "Couldn't post your comment. Check your connection and try again.";
@@ -123,17 +131,32 @@ export interface CommentComposerProps {  postId: string;
  * the posts service keep a working composer: the service only forwards
  * descriptors opaquely, while PostDetail imports just the descriptor type.
  */
+type StagedReportAttachment = {
+  id: string;
+  kind: "report";
+  status: "uploaded";
+  reportPostId: string;
+  title: string;
+};
+type ComposerAttachment = CommentAttachment | StagedReportAttachment;
+
+function attachmentReady(a: ComposerAttachment): boolean {
+  return a.status === "uploaded" && (a.kind === "report"
+    ? Boolean(a.reportPostId)
+    : typeof a.remoteUrl === "string" && a.remoteUrl.startsWith("https://"));
+}
+
 export function toCommentAttachmentDescriptors(
-  attachments: readonly CommentAttachment[],
+  attachments: readonly ComposerAttachment[],
 ): CommentAttachmentDescriptor[] {
   return attachments
-    .filter(
-      (a) =>
-        a.status === "uploaded" &&
-        typeof a.remoteUrl === "string" &&
-        a.remoteUrl.startsWith("https://"),
-    )
+    .filter(attachmentReady)
     .map((a, index) => {
+      // Deliberately construct only these keys; report references have no bytes,
+      // URLs or provenance, even if an upstream object accidentally carries them.
+      if (a.kind === "report") return {
+        kind: "report", display_order: index + 1, report_post_id: a.reportPostId,
+      };
       const descriptor: CommentAttachmentDescriptor = {
         kind: a.kind === "gif" && a.klipyKind === "stickers" ? "sticker" : a.kind,
         display_order: index + 1,
@@ -180,8 +203,12 @@ export function CommentComposer({
   onSent,
 }: CommentComposerProps) {
   const [text, setText] = useState("");
-  const [attachments, setAttachments] = useState<CommentAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [reportOpen, setReportOpen] = useState(false);
+  const reportTriggerRef = useRef<HTMLButtonElement>(null);
   const [sending, setSending] = useState(false);
+  const [preparingPhotos, setPreparingPhotos] = useState(false);
+  const photoIntakeRef = useRef(false);
   const [gifOpen, setGifOpen] = useState(false);
   const [gifTab, setGifTab] = useState<GifTab>("gifs");
   const [gifQuery, setGifQuery] = useState("");
@@ -199,7 +226,7 @@ export function CommentComposer({
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const filesRef = useRef(new Map<string, File>());
-  const attachmentsRef = useRef<CommentAttachment[]>([]);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
   const submittedRef = useRef(false);
   const klipyCtl = useRef<KlipySearchController | null>(null);
   const gifEnabled = isKlipyEnabled();
@@ -239,7 +266,7 @@ export function CommentComposer({
     () => () => {
       if (submittedRef.current) return;
       const staged = attachmentsRef.current.filter(
-        (a) => a.status === "uploaded" && a.objectKey && a.remoteUrl,
+        (a): a is CommentAttachment => a.kind !== "report" && a.status === "uploaded" && Boolean(a.objectKey && a.remoteUrl),
       );
       for (const entry of staged) {
         // Fire-and-forget: never blocks unmount, never logs at error level
@@ -303,7 +330,7 @@ export function CommentComposer({
   }
 
   function patchAttachment(id: string, patch: Partial<CommentAttachment>) {
-    setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+    setAttachments((prev) => prev.map((a) => (a.kind !== "report" && a.id === id ? { ...a, ...patch } : a)));
   }
 
   async function startUpload(entry: CommentAttachment, file: File) {
@@ -325,6 +352,7 @@ export function CommentComposer({
   }
 
   function addFiles(fileList: FileList | File[]) {
+    if (photoIntakeRef.current) return;
     const picked = [...fileList];
     if (picked.length === 0) return;
     setAttachNotice(null);
@@ -406,21 +434,50 @@ export function CommentComposer({
   }
 
   async function handleAttachClick() {
-    if (disabled || sending) return;
-    if (await isNativeCommentPhotoIntakeAvailable()) {
-      await pickNativePhotos();
-      return;
+    if (disabled || sending || photoIntakeRef.current) return;
+    // Reserve the tray during native chooser/preparation, before any awaits.
+    // Otherwise a report/GIF can take a slot promised to a pending photo.
+    photoIntakeRef.current = true;
+    setPreparingPhotos(true);
+    setReportOpen(false);
+    setGifOpen(false);
+    try {
+      if (await isNativeCommentPhotoIntakeAvailable()) {
+        await pickNativePhotos();
+      } else {
+        fileInputRef.current?.click();
+      }
+    } finally {
+      photoIntakeRef.current = false;
+      setPreparingPhotos(false);
     }
-    fileInputRef.current?.click();
   }
 
-  async function removeAttachment(entry: CommentAttachment) {
+  async function removeAttachment(entry: ComposerAttachment) {
+    if (disabled || sending) return;
     filesRef.current.delete(entry.id);
     setAttachments((prev) => prev.filter((a) => a.id !== entry.id));
-    await removeCommentAttachment(entry);
+    if (entry.kind !== "report") await removeCommentAttachment(entry);
+    else fieldRef.current?.focus();
+  }
+
+  function closeReportPicker() {
+    setReportOpen(false);
+    reportTriggerRef.current?.focus();
+  }
+
+  function pickReport(report: { id: string; title: string }) {
+    if (photoIntakeRef.current) return;
+    setAttachments((prev) => {
+      if (prev.length >= COMMENT_ATTACH_MAX || prev.some((a) => a.kind === "report" && a.reportPostId === report.id)) return prev;
+      return [...prev, { id: `report-${report.id}`, kind: "report", status: "uploaded", reportPostId: report.id, title: report.title }];
+    });
+    closeReportPicker();
+    fieldRef.current?.focus();
   }
 
   function pickGif(item: KlipyItem) {
+    if (photoIntakeRef.current) return;
     if (attachments.length >= COMMENT_ATTACH_MAX) {
       setAttachNotice(`Comments hold up to ${COMMENT_ATTACH_MAX} attachments. Remove one first.`);
       return;
@@ -438,21 +495,24 @@ export function CommentComposer({
   }
 
   const uploading = attachments.some((a) => a.status === "uploading");
-  const failed = attachments.filter((a) => a.status === "failed");
-  const readyToPost = attachments.filter((a) => a.status === "uploaded" && a.remoteUrl);
+  const failed = attachments.filter((a): a is CommentAttachment => a.kind !== "report" && a.status === "failed");
+  const readyToPost = attachments.filter(attachmentReady);
+  const readyMedia = readyToPost.filter((a): a is CommentAttachment => a.kind !== "report");
   const pendingLocal = attachments.filter((a) => a.status === "ready" || a.status === "uploading");
   const bodyPreview = appendBodyMedia(
     text,
-    readyToPost.map((a) => ({ kind: a.kind, remoteUrl: a.remoteUrl as string })),
+    readyMedia.map((a) => ({ kind: a.kind, remoteUrl: a.remoteUrl as string })),
   );
   const overLimit = bodyPreview.length > MAX_COMMENT_BODY;
   const sendDisabled =
     disabled ||
     sending ||
+    preparingPhotos ||
     uploading ||
     pendingLocal.length > 0 ||
     failed.length > 0 ||
     overLimit ||
+    attachments.length > COMMENT_ATTACH_MAX ||
     (text.trim() === "" && readyToPost.length === 0);
 
   async function onSend() {
@@ -470,20 +530,21 @@ export function CommentComposer({
     }
     const body = appendBodyMedia(
       text,
-      readyToPost.map((a) => ({ kind: a.kind, remoteUrl: a.remoteUrl as string })),
+      readyMedia.map((a) => ({ kind: a.kind, remoteUrl: a.remoteUrl as string })),
     );
-    if (body.trim() === "" || body.length > MAX_COMMENT_BODY) return;
+    const descriptors = toCommentAttachmentDescriptors(readyToPost);
+    if ((body.trim() === "" && descriptors.length === 0) || body.length > MAX_COMMENT_BODY) return;
     // Snapshot Klipy picks for post-only share-tracking.
-    const shares = attachments
+    const shares = readyMedia
       .filter((a) => a.kind === "gif" && a.klipySlug)
       .map((a) => ({ kind: a.klipyKind ?? ("gifs" as const), slug: a.klipySlug as string }));
     setSending(true);
+    setReportOpen(false);
     try {
       // Ordered descriptors for the atomic RPC travel alongside the body
       // (the body keeps its https media lines for legacy readers). A
       // body-only send stays a single-arg call so existing callers observe
       // no change.
-      const descriptors = toCommentAttachmentDescriptors(readyToPost);
       if (descriptors.length > 0) {
         await onSubmit(body, descriptors);
       } else {
@@ -498,7 +559,7 @@ export function CommentComposer({
       // keys that are now row-referenced server-side.
       submittedRef.current = true;
       for (const a of attachments) {
-        if (a.previewUrl.startsWith("blob:")) {
+        if (a.kind !== "report" && a.previewUrl.startsWith("blob:")) {
           try {
             URL.revokeObjectURL(a.previewUrl);
           } catch {
@@ -512,7 +573,7 @@ export function CommentComposer({
       setAttachNotice(null);
       onSent?.();
     } catch (err) {
-      onError(commentSendFailureCopy(err));
+      onError(commentSendFailureCopy(err, descriptors.some((a) => a.kind === "report")));
     } finally {
       setSending(false);
     }
@@ -557,19 +618,27 @@ export function CommentComposer({
           </button>
         </div>
 
-        {/* Accessory row: attach + emoji + GIF live under the input so the
+        {/* Accessory row: photo, report and GIF live under the input so the
             text field keeps the full usable width at 320dp. */}
         <div className="mt-1 flex items-center gap-1">
           <button
             type="button"
             data-testid="comment-attach"
             onClick={() => void handleAttachClick()}
-            disabled={disabled || sending}
+            disabled={disabled || sending || preparingPhotos}
             aria-label="Attach a photo"
             className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container disabled:opacity-60"
           >
             <ImagePlus size={20} aria-hidden />
           </button>
+          {COMMENT_REPORTS_ENABLED && (
+            <button ref={reportTriggerRef} type="button" aria-label="Attach a report" aria-expanded={reportOpen}
+              disabled={disabled || sending || preparingPhotos || attachments.length >= COMMENT_ATTACH_MAX}
+              onClick={() => { setReportOpen((open) => !open); setGifOpen(false); }}
+              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-on-surface">
+              <FileText size={20} aria-hidden />
+            </button>
+          )}
           <input
             ref={fileInputRef}
             data-testid="comment-file-input"
@@ -591,8 +660,9 @@ export function CommentComposer({
               data-testid="comment-gif"
               onClick={() => {
                 setGifOpen((o) => !o);
+                setReportOpen(false);
               }}
-              disabled={disabled || sending}
+              disabled={disabled || sending || preparingPhotos}
               aria-label="Add a GIF or sticker"
               aria-expanded={gifOpen}
               className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container disabled:opacity-60"
@@ -607,6 +677,12 @@ export function CommentComposer({
           )}
         </div>
 
+        {COMMENT_REPORTS_ENABLED && reportOpen && (
+          <CommentReportPicker disabled={disabled || sending || attachments.length >= COMMENT_ATTACH_MAX}
+            onPick={pickReport} onClose={closeReportPicker} />
+        )}
+
+        {preparingPhotos && <p role="status" className="mt-1 text-xs text-on-surface-variant">Preparing photos…</p>}
         {attachNotice && (
           <p data-testid="comment-attach-notice" role="status" className="mt-1 text-[11px] text-on-surface-variant">
             {attachNotice}
@@ -629,6 +705,17 @@ export function CommentComposer({
             className="mt-1 grid grid-cols-4 gap-1.5"
           >
             {attachments.map((a, index) => {
+              if (a.kind === "report") return (
+                <div key={a.id} className="col-span-4 flex min-w-0 items-center gap-2 border-b border-outline-variant py-1 text-on-surface">
+                  <FileText size={16} aria-hidden className="shrink-0" />
+                  <span className="min-w-0 flex-1 break-words text-xs">{a.title}</span>
+                  <button type="button" aria-label={`Remove report: ${a.title}`} disabled={disabled || sending}
+                    onClick={() => void removeAttachment(a)}
+                    className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full hover:bg-surface-container disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-on-surface">
+                    <X size={16} aria-hidden />
+                  </button>
+                </div>
+              );
               const source =
                 a.kind === "gif" ? ("klipy" as const) : a.remoteUrl ? commentMediaProvenance(a.remoteUrl) : null;
               return (
@@ -709,6 +796,7 @@ export function CommentComposer({
                 <button
                   type="button"
                   data-testid={`comment-attachment-remove-${a.id}`}
+                  disabled={disabled || sending}
                   onClick={() => void removeAttachment(a)}
                   aria-label={`Remove ${a.fileName}`}
                   className="absolute -right-2 -top-2 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-outline-variant bg-surface text-on-surface shadow"

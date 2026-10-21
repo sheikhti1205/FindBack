@@ -54,6 +54,12 @@ beforeEach(() => {
 });
 
 describe("recordOperation (allowlisted seam)", () => {
+  it("accepts report attachment kind as a token without any target metadata", () => {
+    recordOperation({ name: "social.comment", fields: { ok: true, attachmentCount: 1, attachmentKind: "report" } });
+    expect(mockedReportLog).toHaveBeenCalledWith("info", "op:social.comment", {
+      op: "social.comment", ok: "true", attachmentCount: "1", attachmentKind: "report",
+    });
+  });
   it("dispatches allowlisted events with counts/codes/booleans/enums only", () => {
     expect(() =>
       recordOperation({ name: "app.boot", fields: { ok: true } }),

@@ -24,7 +24,7 @@ import {
 type AuthMode = "signin" | "signup";
 type MediaKind = "photo" | "video" | "gif" | "sticker";
 type MediaSource = "camera" | "gallery" | "klipy" | "storage";
-type AttachmentKind = "photo" | "video" | "gif" | "sticker" | "mixed" | "none";
+type AttachmentKind = "photo" | "video" | "gif" | "sticker" | "report" | "mixed" | "none";
 type ResultClass = "zero" | "few" | "many";
 type MapSource = "nominatim" | "unified";
 type AiProvider = "openrouter" | "local" | "none";
@@ -124,7 +124,7 @@ function isEnum<T extends string>(values: readonly T[]): FieldValidator {
 const AUTH_MODES = ["signin", "signup"] as const;
 const MEDIA_KINDS = ["photo", "video", "gif", "sticker"] as const;
 const MEDIA_SOURCES = ["camera", "gallery", "klipy", "storage"] as const;
-const ATTACHMENT_KINDS = ["photo", "video", "gif", "sticker", "mixed", "none"] as const;
+const ATTACHMENT_KINDS = ["photo", "video", "gif", "sticker", "report", "mixed", "none"] as const;
 const RESULT_CLASSES = ["zero", "few", "many"] as const;
 const MAP_SOURCES = ["nominatim", "unified"] as const;
 const AI_PROVIDERS = ["openrouter", "local", "none"] as const;

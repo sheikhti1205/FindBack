@@ -26,6 +26,11 @@ const { postsMock, findMock, authState } = vi.hoisted(() => ({
   findMock: vi.fn(),
   authState: { user: { id: "u9", username: "reader" } as { id: string; username: string } | null },
 }));
+const reportGate = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../services/commentAttachments", async (original) => ({
+  ...await original<typeof import("../services/commentAttachments")>(),
+  get COMMENT_REPORTS_ENABLED() { return reportGate.enabled; },
+}));
 
 vi.mock("../services/posts", () => postsMock);
 vi.mock("../services/realtime", () => ({
@@ -40,6 +45,7 @@ import { PostDetail, withSentReportRefs } from "./PostDetail";
 import { LiveRegion } from "../components/LiveRegion";
 
 beforeEach(() => {
+  reportGate.enabled = false;
   authState.user = { id: "u9", username: "reader" };
 });
 
@@ -184,6 +190,29 @@ describe("PostDetail comments", () => {
     expect(submitButton).toHaveProperty("disabled", true);
     fireEvent.click(submitButton);
     expect(postsMock.addComment).not.toHaveBeenCalled();
+  });
+
+  it("persists a report-only comment through the real composer callback and renders its reference", async () => {
+    reportGate.enabled = true;
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", "https://findback.example");
+    const id = "11111111-1111-4111-8111-111111111111";
+    postsMock.fetchPost.mockImplementation(async (target: string) => target === id
+      ? { ...basePost, id, title: "Found blue wallet" }
+      : basePost);
+    postsMock.addComment.mockResolvedValue({ ...longComment, id: "c-reference", body: "", author: { id: "u9", username: "reader" } });
+    try {
+      renderDetail();
+      fireEvent.click(await screen.findByRole("button", { name: "Attach a report" }));
+      fireEvent.change(screen.getByLabelText("Report link"), { target: { value: `https://findback.example/r/${id}` } });
+      fireEvent.click(screen.getByRole("button", { name: "Add report" }));
+      await screen.findByRole("button", { name: "Remove report: Found blue wallet" });
+      fireEvent.click(screen.getByRole("button", { name: "Send comment" }));
+      await waitFor(() => expect(postsMock.addComment).toHaveBeenCalledWith("p1", "", null, [
+        { kind: "report", display_order: 1, report_post_id: id },
+      ]));
+      expect((await screen.findByTestId("report-reference")).textContent).toContain("Found blue wallet");
+      expect(screen.queryByRole("button", { name: /Remove report:/ })).toBeNull();
+    } finally { vi.unstubAllEnvs(); }
   });
 });
 

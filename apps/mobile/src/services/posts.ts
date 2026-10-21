@@ -426,7 +426,7 @@ export async function fetchComments(postId: string): Promise<CommentItem[]> {
   const { data, error } = await getSupabase().rpc("findback_list_comments_client", {
     p_post_id: postId,
   });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
   return ((data ?? []) as ClientCommentRow[]).map(mapClientComment);
 }
 
@@ -437,12 +437,11 @@ export async function fetchComments(postId: string): Promise<CommentItem[]> {
  * Field names mirror the RPC's descriptor shape exactly: STORAGE picks carry
  * `storage_key` (a caller-owned `<uid>/…` key, never a URL); Klipy picks
  * carry `klipy_slug` (provider identity, never a URL) plus `klipy_kind`;
- * every descriptor carries an `https://` `remote_url`. `display_order` is
- * 1-based in tile order. Optional provenance (preview/mime/name/…) is sent
- * only when known — the RPC treats every field but kind/order/remote as
- * nullable.
+ * Media descriptors carry an `https://` `remote_url`; report references carry
+ * only their target and position, never media/provenance fields (M2).
+ * `display_order` is 1-based across both kinds in tray order.
  */
-export interface CommentAttachmentDescriptor {
+interface CommentMediaAttachmentDescriptor {
   kind: "photo" | "video" | "gif" | "sticker";
   display_order: number;
   storage_key?: string | null;
@@ -456,6 +455,12 @@ export interface CommentAttachmentDescriptor {
   width?: number | null;
   height?: number | null;
 }
+
+export type CommentAttachmentDescriptor = CommentMediaAttachmentDescriptor | {
+  kind: "report";
+  display_order: number;
+  report_post_id: string;
+};
 
 export async function addComment(
   postId: string,
@@ -502,7 +507,7 @@ export async function addComment(
         attachmentKind,
       },
     });
-    throw new ApiError(error.message, socialErrorStatus(error.code));
+    throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
   }
   const row = ((data ?? []) as ClientCommentRow[])[0];
   if (!row) {
@@ -523,7 +528,7 @@ export async function deleteComment(_postId: string, commentId: string): Promise
   const { error } = await getSupabase().rpc("findback_delete_comment_client", {
     p_comment_id: commentId,
   });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
 }
 
 export interface ReactionResult {
@@ -560,7 +565,7 @@ export async function reactToPost(
       name: "social.reaction",
       fields: { ok: false, code: String(socialErrorStatus(error.code)), kind },
     });
-    throw new ApiError(error.message, socialErrorStatus(error.code));
+    throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
   }
   const row = ((data ?? []) as ClientReactionRow[])[0];
   if (!row) {
@@ -601,7 +606,7 @@ export async function ratePost(postId: string, score: number): Promise<{
     p_post_id: postId,
     p_score: score,
   });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
   const row = ((data ?? []) as ClientRatingRow[])[0];
   if (!row) throw new ApiError("Rating was not saved", 400);
   return {
@@ -619,7 +624,7 @@ export async function fetchSocialState(
   const { data, error } = await getSupabase().rpc("findback_post_social_state_client", {
     p_post_id: postId,
   });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code));
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
   const row = ((data ?? []) as { my_reaction: string | null; my_rating: number | null }[])[0];
   // L-CONSOLIDATE: the caller's reaction parses through the ONE row
   // aggregator, so a legacy LIKE hydrates as canonical LOVE (exactly like
@@ -734,4 +739,3 @@ export async function publishReportWithPhotos(
     throw err;
   }
 }
-

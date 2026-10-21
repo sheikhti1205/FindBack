@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "./session";
 import {
   addComment,
   createPost,
@@ -75,6 +76,27 @@ function base64url(value: string): string {
 beforeEach(() => {
   clientMock.rpc.mockReset();
   clientMock.auth.getUser.mockReset();
+});
+
+describe("social SQLSTATE preservation", () => {
+  it.each([
+    ["addComment", () => addComment("p1", "")],
+    ["fetchComments", () => fetchComments("p1")],
+    ["deleteComment", () => deleteComment("p1", "c1")],
+    ["reactToPost", () => reactToPost("p1", "LOVE")],
+    ["ratePost", () => ratePost("p1", 5)],
+    ["fetchSocialState", () => fetchSocialState("p1")],
+  ])("%s carries P0002 without changing the 404 mapping", async (_name, run) => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: { message: "Unavailable", code: "P0002" } });
+    await expect(run()).rejects.toMatchObject({ name: "ApiError", status: 404, code: "P0002" });
+  });
+
+  it("keeps the two-argument ApiError constructor backwards compatible", () => {
+    const error = new ApiError("Post not found", 404);
+    expect(error.message).toBe("Post not found");
+    expect(error.status).toBe(404);
+    expect(error.code).toBeUndefined();
+  });
 });
 
 describe("fetchFeed", () => {
