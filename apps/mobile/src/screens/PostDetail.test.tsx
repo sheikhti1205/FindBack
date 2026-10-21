@@ -36,7 +36,7 @@ vi.mock("../services/realtime", () => ({
 vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
 
-import { PostDetail } from "./PostDetail";
+import { PostDetail, withSentReportRefs } from "./PostDetail";
 import { LiveRegion } from "../components/LiveRegion";
 
 beforeEach(() => {
@@ -710,5 +710,120 @@ describe("PostDetail threaded replies", () => {
       expect(screen.queryByText("top level")).toBeNull();
       expect(screen.queryByText("nested reply")).toBeNull();
     });
+  });
+});
+
+describe("PostDetail comment report references", () => {
+  const MEDIA_URL = "https://abc.supabase.co/storage/v1/object/public/findback-comment-media/u1/a.jpg";
+  const referenced = {
+    ...basePost,
+    id: "r1",
+    title: "Blue bike near the station",
+    author: { id: "u7", username: "reporter" },
+    locationLabel: null,
+  };
+
+  function commentWith(overrides: Record<string, unknown>) {
+    return {
+      ...longComment,
+      id: "c-ref",
+      body: "seen here",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    // Page read vs referenced-report read are distinguishable by id.
+    postsMock.fetchPost.mockImplementation((id: string) =>
+      Promise.resolve(id === "p1" ? basePost : referenced),
+    );
+    postsMock.fetchComments.mockResolvedValue([]);
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+  });
+
+  afterEach(cleanup);
+
+  it("renders a descriptor card after the media gallery, in descriptor order", async () => {
+    postsMock.fetchComments.mockResolvedValue([
+      commentWith({
+        body: `found it\n![photo](${MEDIA_URL})`,
+        attachments: [
+          { kind: "report", reportPostId: "r1", displayOrder: 1 },
+          { kind: "report", reportPostId: null, displayOrder: 2 },
+        ],
+      }),
+    ]);
+    renderDetail();
+
+    const gallery = await screen.findByTestId("comment-media-c-ref");
+    const card = await screen.findByTestId("report-reference");
+    expect(
+      gallery.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(card.getAttribute("href")).toBe("/posts/r1");
+    // The tombstone is a card too, never an empty comment.
+    expect(screen.getByTestId("report-unavailable")).toBeTruthy();
+  });
+
+  it("reads one reference once when several comments point at it", async () => {
+    postsMock.fetchComments.mockResolvedValue([
+      commentWith({
+        id: "c-a",
+        attachments: [{ kind: "report", reportPostId: "r1", displayOrder: 1 }],
+      }),
+      commentWith({
+        id: "c-b",
+        attachments: [{ kind: "report", reportPostId: "r1", displayOrder: 1 }],
+      }),
+    ]);
+    renderDetail();
+
+    await waitFor(() => expect(screen.getAllByTestId("report-reference")).toHaveLength(2));
+    const reportReads = postsMock.fetchPost.mock.calls.filter(([id]) => id === "r1");
+    expect(reportReads).toHaveLength(1);
+  });
+});
+
+describe("withSentReportRefs (forward-provisioning for I4b)", () => {
+  const sent = {
+    id: "c-new",
+    postId: "p1",
+    body: "look",
+    createdAt: "2026-09-02T00:00:00.000Z",
+    updatedAt: "2026-09-02T00:00:00.000Z",
+    author: {
+      id: "u9",
+      username: "reader",
+      emailVerified: false,
+      phoneVerified: false,
+      avatarUrl: null,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    },
+  };
+
+  it("merges only report descriptors, tombstones included", () => {
+    const merged = withSentReportRefs(sent, [
+      { kind: "photo", display_order: 1, remote_url: "https://cdn.test/a.jpg" },
+      { kind: "report", display_order: 2, report_post_id: "11111111-1111-4111-8111-111111111111" },
+      { kind: "report", display_order: 3, report_post_id: null },
+    ] as unknown as Parameters<typeof withSentReportRefs>[1]);
+    expect(merged.attachments).toEqual([
+      {
+        kind: "report",
+        reportPostId: "11111111-1111-4111-8111-111111111111",
+        displayOrder: 2,
+      },
+      { kind: "report", reportPostId: null, displayOrder: 3 },
+    ]);
+    expect(merged.body).toBe("look");
+  });
+
+  it("leaves the comment untouched when no report descriptor was sent", () => {
+    const merged = withSentReportRefs(sent, [
+      { kind: "photo", display_order: 1, remote_url: "https://cdn.test/a.jpg" },
+    ]);
+    expect(merged).toBe(sent);
+    expect("attachments" in merged).toBe(false);
   });
 });

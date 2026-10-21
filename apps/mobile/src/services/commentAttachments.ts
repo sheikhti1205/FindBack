@@ -4,6 +4,7 @@ import { normalizeImage } from "./image";
 import { diag } from "./diag";
 import { ACCEPTED_STILL_MIME_TYPES } from "./media/mediaPolicy";
 import type { ImportedImage } from "./media/importImage";
+import type { CommentReportReference } from "@findback/shared";
 
 /**
  * Comment attachments.
@@ -138,6 +139,48 @@ function extensionFor(mimeType: string, name: string): string {
 function safeFileName(name: string): string {
   const base = name.split(/[\\/]/).pop()?.trim() ?? "";
   return (base || "attachment").slice(0, 120);
+}
+
+/**
+ * Typed report references from the list RPC's `attachments` jsonb (M2).
+ *
+ * The projection is kind-agnostic — every media row also carries a null
+ * `report_post_id` — so the mapper gates on `kind` BEFORE reading the pointer;
+ * a stray pointer on a media row stays inert (M2 D6).
+ *
+ * Tombstone-preserving: a `kind: "report"` row whose pointer is null, absent,
+ * empty or not a string is KEPT with `reportPostId: null`. The target report
+ * was deleted (FK `on delete set null`), the row stays readable by design, and
+ * "unavailable" is a render state — dropping the entry here would silently
+ * erase the reference.
+ *
+ * Element-guarded: the parameter is `unknown`, so non-array input yields no
+ * descriptors and a null/non-object element is skipped instead of
+ * dereferenced. Server-authored jsonb is not expected to contain either.
+ */
+export function mapCommentAttachmentRefs(rows: unknown): CommentReportReference[] {
+  if (!Array.isArray(rows)) return [];
+  const refs: CommentReportReference[] = [];
+  for (const [index, row] of rows.entries()) {
+    if (!row || typeof row !== "object") continue;
+    const descriptor = row as {
+      kind?: unknown;
+      report_post_id?: unknown;
+      display_order?: unknown;
+    };
+    if (descriptor.kind !== "report") continue;
+    const pointer = descriptor.report_post_id;
+    refs.push({
+      kind: "report",
+      reportPostId: typeof pointer === "string" && pointer.length > 0 ? pointer : null,
+      // 1-based tile order; a tombstone keeps its slot.
+      displayOrder:
+        typeof descriptor.display_order === "number" && Number.isFinite(descriptor.display_order)
+          ? descriptor.display_order
+          : index + 1,
+    });
+  }
+  return refs;
 }
 
 /**

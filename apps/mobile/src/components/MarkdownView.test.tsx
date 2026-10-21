@@ -1,11 +1,21 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { MarkdownView } from "./MarkdownView";
+import { ReportPreviewProvider } from "./CommentReportPreviews";
+import { ApiError } from "../services/session";
+import type { PostItem } from "@findback/shared";
 import { stripMarkdown } from "../utils/stripMarkdown";
 
-afterEach(cleanup);
+const { fetchPost } = vi.hoisted(() => ({ fetchPost: vi.fn() }));
+vi.mock("../services/posts", () => ({ fetchPost }));
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+  fetchPost.mockReset();
+});
 
 describe("MarkdownView", () => {
   it("renders bold/italic/list/link/table/breaks", () => {
@@ -71,6 +81,120 @@ describe("MarkdownView", () => {
     expect(container.textContent).toContain(word);
     const wrapper = container.firstElementChild;
     expect(wrapper?.className).toContain("break-words");
+  });
+});
+
+describe("MarkdownView report unfurl", () => {
+  const REPORT_ID = "11111111-1111-4111-8111-111111111111";
+  const ORIGIN = "https://findback.test";
+  const LINK = `${ORIGIN}/r/${REPORT_ID}`;
+
+  function referencedPost(): PostItem {
+    return {
+      id: REPORT_ID,
+      userId: "u7",
+      author: {
+        id: "u7",
+        username: "reporter",
+        displayName: null,
+        avatarUrl: null,
+        emailVerified: false,
+        phoneVerified: false,
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+      type: "FOUND",
+      title: "Blue bike near the station",
+      description: "",
+      category: "Electronics",
+      status: "OPEN",
+      eventDate: "2026-09-01",
+      latitude: null,
+      longitude: null,
+      locationLabel: null,
+      youtubeUrl: null,
+      attachments: [],
+      likeCount: 0,
+      dislikeCount: 0,
+      ratingAvg: null,
+      ratingCount: 0,
+      commentCount: 0,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    };
+  }
+
+  function renderUnfurl(text: string, unfurlReports = true) {
+    return render(
+      <MemoryRouter>
+        <ReportPreviewProvider resetKey="u9">
+          <MarkdownView text={text} unfurlReports={unfurlReports} />
+        </ReportPreviewProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("renders a canonical report link as the one inline card", async () => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", ORIGIN);
+    fetchPost.mockResolvedValue(referencedPost());
+    const { container } = renderUnfurl(`Found it: [report](${LINK})`);
+
+    const card = await screen.findByTestId("report-reference");
+    expect(card.getAttribute("href")).toBe(`/posts/${REPORT_ID}`);
+    expect(fetchPost).toHaveBeenCalledWith(REPORT_ID);
+    // The card lives inside the markdown paragraph as phrasing content only.
+    expect(container.querySelector("p a")).toBeTruthy();
+    expect(container.querySelector("p div, p article, p figure")).toBeNull();
+  });
+
+  it("falls through to the plain link for a wrong-origin URL", () => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", ORIGIN);
+    renderUnfurl(`[report](https://evil.test/r/${REPORT_ID})`);
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe(`https://evil.test/r/${REPORT_ID}`);
+    expect(screen.queryByTestId("report-reference")).toBeNull();
+    expect(fetchPost).not.toHaveBeenCalled();
+  });
+
+  it("falls through for http and for a non-UUID id", () => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", ORIGIN);
+    const { container } = renderUnfurl(
+      `[a](${ORIGIN.replace("https", "http")}/r/${REPORT_ID}) and [b](${ORIGIN}/r/not-a-uuid)`,
+    );
+    expect(screen.queryByTestId("report-reference")).toBeNull();
+    expect(container.querySelectorAll("a")).toHaveLength(2);
+    expect(fetchPost).not.toHaveBeenCalled();
+  });
+
+  it("stays a plain link, without crashing, when the origin is not configured", () => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", "");
+    renderUnfurl(`[report](${LINK})`);
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe(LINK);
+    expect(screen.queryByTestId("report-reference")).toBeNull();
+    expect(fetchPost).not.toHaveBeenCalled();
+  });
+
+  it("renders the one unavailable card when the target is not found", async () => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", ORIGIN);
+    fetchPost.mockRejectedValue(new ApiError("Post not found", 404));
+    renderUnfurl(`[report](${LINK})`);
+    expect((await screen.findByTestId("report-unavailable")).textContent).toBe("Report unavailable");
+  });
+
+  it("leaves text with no report link unchanged", () => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", ORIGIN);
+    const { container } = renderUnfurl("just a plain comment");
+    expect(container.textContent).toContain("just a plain comment");
+    expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("stays off by default so other consumers are unaffected", () => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", ORIGIN);
+    renderUnfurl(`[report](${LINK})`, false);
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe(LINK);
+    expect(screen.queryByTestId("report-reference")).toBeNull();
+    expect(fetchPost).not.toHaveBeenCalled();
   });
 });
 

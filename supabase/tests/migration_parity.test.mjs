@@ -3466,6 +3466,64 @@ describe("visibility kernel, blocking and the O5/D21 readers (20261017070000)", 
     );
   });
 
+  it("keeps the M2 typed-reference shape the I4a client depends on", () => {
+    // Read the LAST migration that creates or replaces the reader, not B1 by
+    // name: the client receives whatever body applies last, so a later
+    // re-creation that drops the pointer, the kind, the order or the unfiltered
+    // subquery fails here. Today that file is B1; the M2 block above pins the
+    // historical body it was sliced from.
+    const readerFile = ls()
+      .filter((name) => mig(name).includes("create or replace function public.findback_list_comments_client("))
+      .pop();
+    assert.ok(readerFile, "some migration creates the comment reader");
+    const authored = bodyLines(mig(readerFile), "findback_list_comments_client");
+    const joined = authored.join("\n");
+    for (const field of [
+      "'kind', a.kind,",
+      "'display_order', a.display_order,",
+      "'report_post_id', a.report_post_id,",
+    ]) {
+      assert.ok(joined.includes(field), `the attachment projection still carries ${field}`);
+    }
+
+    // No kind filter and no pointer filter: a `report` row AND a tombstone
+    // (`report_post_id is null`) both reach the client. The mapper gates on
+    // kind; if the reader filtered here, state B could never render.
+    const fromAt = authored.indexOf("from public.comment_attachments a");
+    assert.ok(fromAt >= 0, "the attachment subquery still reads the attachment table");
+    assert.equal(
+      authored[fromAt + 1],
+      "where a.comment_id = c.id",
+      "the subquery is scoped to the comment only — never filtered by kind or pointer",
+    );
+    assert.equal(
+      authored[fromAt + 2],
+      "), '[]'::jsonb) as attachments,",
+      "the aggregate stays the attachments OUT value",
+    );
+    assert.ok(
+      joined.includes("order by a.display_order asc, a.created_at asc, a.id asc"),
+      "descriptor order is still server-ordered",
+    );
+
+    // The OUT declaration keeps the column the mapper reads.
+    const marker = "create or replace function public.findback_list_comments_client";
+    const declaration = norm(
+      mig(readerFile).slice(
+        mig(readerFile).indexOf(marker),
+        mig(readerFile).indexOf("as $$", mig(readerFile).indexOf(marker)),
+      ),
+    );
+    assert.ok(declaration.includes("attachments jsonb"), "attachments is still an OUT column");
+
+    // The writer returns comment + author columns only, so a just-sent card can
+    // appear before refetch only through the local merge.
+    const writer = bodyText(mig(M2), "findback_add_comment_with_attachments");
+    const returnAt = writer.indexOf("return query");
+    assert.ok(returnAt >= 0, "the atomic create RPC returns a row");
+    assert.ok(!writer.slice(returnAt).includes("attachments"), "the writer never returns attachments");
+  });
+
   it("re-creates the trigger as the applied body plus exactly the D21 guards", () => {
     const applied = bodyLines(mig(TRIGGER), "findback_notify_comment");
     const authored = bodyLines(mig(B1), "findback_notify_comment");

@@ -262,6 +262,19 @@ export interface ReactionSummary {
   total: number;
 }
 
+/**
+ * Typed report reference carried by a comment attachment row (M2).
+ *
+ * Deliberately not a generic attachment list: a media descriptor has no
+ * `reportPostId`, so this field can never render one as a card.
+ */
+export interface CommentReportReference {
+  kind: "report";
+  /** null = the tombstone: the target report was deleted (FK ON DELETE SET NULL). Never dropped. */
+  reportPostId: string | null;
+  displayOrder: number;
+}
+
 export interface CommentItem {
   id: string;
   postId: string;
@@ -275,6 +288,11 @@ export interface CommentItem {
   updatedAt: string;
   /** Optional so pre-multi-kind rows/mappers stay valid; absent is treated as empty. */
   reactionSummary?: ReactionSummary;
+  /**
+   * Report references in tile order (I4a). Optional exactly like
+   * `reactionSummary`: absent means none, and media still renders from the body.
+   */
+  attachments?: CommentReportReference[];
 }
 
 export interface FeedPage {

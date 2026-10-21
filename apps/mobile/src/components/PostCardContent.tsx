@@ -1,8 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import type { ComponentType } from "react";
 import type { PostItem, PostStatus } from "@findback/shared";
 import { motion } from "framer-motion";
-import { CircleAlert, CircleCheck, ImageOff, Link2, Lock, MapPin, MessageSquare, Star, Tag, ThumbsDown, ThumbsUp } from "lucide-react";
+import { ImageOff, MapPin, MessageSquare, Star, Tag, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Link } from "react-router";
 import { timeAgo } from "../utils/dates";
 import { stripMarkdown } from "../utils/stripMarkdown";
@@ -10,6 +9,7 @@ import { displaySizeOrNull } from "../services/media/displayDimensions";
 import { MASONRY_FALLBACK_RATIO, masonryAspectRatio } from "./masonryLayout";
 import { HomeFeedLoveButton } from "./HomeFeedLoveButton";
 import { ReportShareButton } from "./ReportShareButton";
+import { StatusChip } from "./StatusChip";
 import { PhotoLightbox } from "./PhotoLightbox";
 import { FeedMediaCarousel } from "./FeedMediaCarousel";
 import {
@@ -358,60 +358,6 @@ function CompactContent({ post, enableSharedMedia = false }: { post: PostItem; e
         )}
       </div>
     </div>
-  );
-}
-
-type SemanticStatusKind = "lost" | "found" | "matched" | "recovered" | "closed";
-
-/**
- * Derive the single semantic status chip from existing PostItem fields only —
- * no invented statuses. An OPEN report reads as its type (Lost/Found); any
- * resolved lifecycle state supersedes it (Matched/Recovered/Closed).
- */
-function semanticStatus(post: PostItem): { kind: SemanticStatusKind; label: string } {
-  switch (post.status) {
-    case "MATCHED":
-      return { kind: "matched", label: "Matched" };
-    case "RECOVERED":
-      return { kind: "recovered", label: "Recovered" };
-    case "CLOSED":
-      return { kind: "closed", label: "Closed" };
-    default:
-      return post.type === "LOST"
-        ? { kind: "lost", label: "Lost" }
-        : { kind: "found", label: "Found" };
-  }
-}
-
-const STATUS_ICONS: Record<SemanticStatusKind, ComponentType<{ size?: number; "aria-hidden"?: boolean }>> = {
-  lost: CircleAlert,
-  found: CircleCheck,
-  matched: Link2,
-  recovered: CircleCheck,
-  closed: Lock,
-};
-
-const STATUS_TONE: Record<SemanticStatusKind, string> = {
-  lost: "fb-status-lost",
-  found: "fb-status-found",
-  matched: "fb-status-matched",
-  recovered: "fb-status-recovered",
-  closed: "fb-status-closed",
-};
-
-/** Semantic status chip: text + icon carry the meaning, never color alone. */
-function StatusChip({ post }: { post: PostItem }) {
-  const status = semanticStatus(post);
-  const Icon = STATUS_ICONS[status.kind];
-  return (
-    <span
-      data-testid="post-status-chip"
-      data-status={status.kind}
-      className={`fb-type-badge ${STATUS_TONE[status.kind]}`}
-    >
-      <Icon size={14} aria-hidden />
-      {status.label}
-    </span>
   );
 }
 

@@ -332,6 +332,34 @@ describe("fetchComments", () => {
     });
     expect("email" in comments[0]!.author).toBe(false);
     expect("phone" in comments[0]!.author).toBe(false);
+    // Conditional spread: a comment with no descriptors carries no field at
+    // all, which is what keeps the exact-shape assertion above green.
+    expect("attachments" in comments[0]!).toBe(false);
+  });
+
+  it("carries only typed report references from the row's attachments", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: [
+        commentRow({
+          attachments: [
+            // The list RPC is kind-agnostic: every media row also carries a
+            // null `report_post_id`, so the mapper must gate on kind first.
+            { kind: "photo", display_order: 1, report_post_id: null, remote_url: "https://cdn.test/a.jpg" },
+            { kind: "report", display_order: 2, report_post_id: "11111111-1111-4111-8111-111111111111" },
+            // A tombstone (deleted target) is kept, not dropped.
+            { kind: "report", display_order: 3, report_post_id: null },
+          ],
+        }),
+      ],
+      error: null,
+    });
+
+    const comments = await fetchComments("p1");
+
+    expect(comments[0]!.attachments).toEqual([
+      { kind: "report", reportPostId: "11111111-1111-4111-8111-111111111111", displayOrder: 2 },
+      { kind: "report", reportPostId: null, displayOrder: 3 },
+    ]);
   });
 });
 

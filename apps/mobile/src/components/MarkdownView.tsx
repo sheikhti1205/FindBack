@@ -6,6 +6,8 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { motionDurations, pressFeedback } from "./uiMotion";
+import { ReportReferenceCard } from "./ReportReferenceCard";
+import { tryParseReportLink } from "../utils/reportLinks";
 
 /**
  * Shared safe Markdown renderer for untrusted user/AI content.
@@ -113,10 +115,17 @@ function remarkMentionLinks() {
 export const MarkdownView = memo(function MarkdownView({
   text,
   linkMentions = false,
+  unfurlReports = false,
 }: {
   text: string;
   /** Opt-in @mention → /u/<handle> links (default off; other consumers unaffected). */
   linkMentions?: boolean;
+  /**
+   * Opt-in: a canonical public report link renders as the inline report card
+   * (comment bodies only). Anything the parser rejects falls through to the
+   * ordinary link, so an unsafe URL never becomes a card.
+   */
+  unfurlReports?: boolean;
 }) {
   return (
     <div className="fb-markdown break-words text-sm leading-relaxed">
@@ -138,27 +147,38 @@ export const MarkdownView = memo(function MarkdownView({
           // native surface — Motion never animates the hand-off itself. The
           // scale token is a no-op on inline boxes, so opacity carries the
           // acknowledgement there.
-          a: ({ href, children }) =>
-            linkMentions && href && INTERNAL_MENTION_HREF_RE.test(href) ? (
+          a: ({ href, children }) => {
+            if (linkMentions && href && INTERNAL_MENTION_HREF_RE.test(href)) {
               // W5: @mention links use the functional blue/teal family
               // (`--fb-mention`), never the user accent.
-              <Link to={href} className="break-words font-medium text-mention underline">
-                {children}
-              </Link>
-            ) : isSafeHref(href) ? (
-              <motion.a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                whileTap={{ ...pressFeedback.button, opacity: 0.7 }}
-                transition={{ duration: motionDurations.instant }}
-                className="break-all underline"
-              >
-                {children}
-              </motion.a>
-            ) : (
-              <span>{children}</span>
-            ),
+              return (
+                <Link to={href} className="break-words font-medium text-mention underline">
+                  {children}
+                </Link>
+              );
+            }
+            // Unfurl only after the mention branch and before the generic link:
+            // a parsed canonical link becomes the one card; every rejection
+            // (wrong origin, http, userinfo, bad query, non-UUID, unset origin)
+            // falls through to the plain link below.
+            const report = unfurlReports && href ? tryParseReportLink(href) : null;
+            if (report) return <ReportReferenceCard postId={report.postId} />;
+            if (isSafeHref(href)) {
+              return (
+                <motion.a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  whileTap={{ ...pressFeedback.button, opacity: 0.7 }}
+                  transition={{ duration: motionDurations.instant }}
+                  className="break-all underline"
+                >
+                  {children}
+                </motion.a>
+              );
+            }
+            return <span>{children}</span>;
+          },
           img: () => null,
           iframe: () => null,
           table: ({ children }) => (

@@ -52,3 +52,13 @@ export function parseReportLink(input: string, origin?: string): ReportLink | nu
     return null;
   }
 }
+
+/**
+ * Named seam for the comment unfurl branch. `parseReportLink` already catches
+ * an unset/invalid origin and returns null, so this is behaviourally identical
+ * today; it exists only so the unfurl branch has one testable entry point and
+ * can be dropped without changing the observable outcome.
+ */
+export function tryParseReportLink(input: string): ReportLink | null {
+  return parseReportLink(input);
+}

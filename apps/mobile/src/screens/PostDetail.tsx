@@ -21,8 +21,11 @@ import { DetailHeroGallery } from "../components/detail/DetailHeroGallery";
 import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
 import { PhotoLightbox } from "../components/PhotoLightbox";
 import { MarkdownView } from "../components/MarkdownView";
+import { ReportReferenceCard } from "../components/ReportReferenceCard";
+import { ReportPreviewProvider } from "../components/CommentReportPreviews";
 import { CommentComposer } from "../components/CommentComposer";
 import { commentMediaProvenance, parseCommentBody } from "../services/commentBodyMedia";
+import { mapCommentAttachmentRefs } from "../services/commentAttachments";
 import { RatingStars } from "../components/RatingStars";
 import { ReportShareButton } from "../components/ReportShareButton";
 import { PossibleMatches } from "../components/PossibleMatches";
@@ -79,6 +82,21 @@ function scrollToSection(id: string) {
   const reduced = shouldReduceMotion();
   el.focus({ preventScroll: true });
   el.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" });
+}
+
+/**
+ * Forward-provisioning for typed report references (I4b): the writer RPC
+ * returns comment + author columns only, so the descriptors just sent are
+ * merged onto the local comment and the card appears before any refetch.
+ * Media descriptors are ignored here — they render from the body — and the
+ * refs go through the same kind-gated mapper as the list path.
+ */
+export function withSentReportRefs(
+  comment: CommentItem,
+  attachments?: readonly CommentAttachmentDescriptor[],
+): CommentItem {
+  const refs = mapCommentAttachmentRefs(attachments);
+  return refs.length ? { ...comment, attachments: refs } : comment;
 }
 
 /**
@@ -165,6 +183,9 @@ export function PostDetail() {
   // never block the post shell.
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentsError, setCommentsError] = useState<string | null>(null);
+  // Bumped on every applied list read: the report-preview map is dropped on a
+  // refetch, so a resolved preview never outlives the list that produced it.
+  const [commentsEpoch, setCommentsEpoch] = useState(0);
   const [socialLoading, setSocialLoading] = useState(true);
   const [socialError, setSocialError] = useState<string | null>(null);
   // Mutation failures stay inline + announce; they never own the page.
@@ -260,6 +281,7 @@ export function PostDetail() {
         if (loadGen.current !== gen || commentsSeq.current !== seq) return;
         setCommentsError(null);
         setComments(cs);
+        setCommentsEpoch((n) => n + 1);
       } catch (err) {
         recordLoadTiming("comments", Date.now() - startedAt);
         if (loadGen.current !== gen || commentsSeq.current !== seq) return;
@@ -601,7 +623,8 @@ export function PostDetail() {
         ? await addComment(current.id, body, replyTo?.id ?? null, attachments)
         : await addComment(current.id, body, replyTo?.id ?? null);
     if (isStaleMutation(snap)) return;
-    setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, comment]));
+    const withRefs = withSentReportRefs(comment, attachments);
+    setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, withRefs]));
   }
 
   function commentFailed(message: string) {
@@ -875,7 +898,7 @@ export function PostDetail() {
           </span>
         </div>
         <div className="mt-1 text-sm leading-relaxed">
-          <MarkdownView text={bodyParts.text || c.body} linkMentions />
+          <MarkdownView text={bodyParts.text || c.body} linkMentions unfurlReports />
         </div>
         {bodyParts.media.length > 0 && (
           <div
@@ -920,6 +943,19 @@ export function PostDetail() {
                 </figure>
               );
             })}
+          </div>
+        )}
+        {c.attachments && c.attachments.length > 0 && (
+          <div
+            data-testid={`comment-reports-${c.id}`}
+            className="mt-2 flex flex-wrap items-center gap-1.5"
+          >
+            {c.attachments.map((ref) => (
+              <ReportReferenceCard
+                key={`${ref.displayOrder}-${ref.reportPostId ?? "unavailable"}`}
+                postId={ref.reportPostId}
+              />
+            ))}
           </div>
         )}
         <div className="mt-2 flex items-center gap-1">
@@ -1263,9 +1299,11 @@ export function PostDetail() {
               {comments.length === 0 && (
                 <p className="text-sm text-on-surface-variant">No comments yet.</p>
               )}
-              <ul className="flex flex-col gap-3">
-                {visibleRoots.map((c) => renderComment(c, 0))}
-              </ul>
+              <ReportPreviewProvider resetKey={`${user?.id ?? "anon"}:${commentsEpoch}`}>
+                <ul className="flex flex-col gap-3">
+                  {visibleRoots.map((c) => renderComment(c, 0))}
+                </ul>
+              </ReportPreviewProvider>
               {!commentsExpanded && !linkedComment && commentRoots.length > COMMENTS_PREVIEW_COUNT && (
                 <button
                   type="button"

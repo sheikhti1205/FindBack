@@ -10,6 +10,7 @@ import type {
   ReactionSummary,
 } from "@findback/shared";
 import { reactionSummaryFromRow } from "./reactions";
+import { mapCommentAttachmentRefs } from "./commentAttachments";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 import { createPost, createPostMulti, type CreatePostInput } from "./postsCreate";
@@ -357,10 +358,13 @@ interface ClientCommentRow {
   reaction_counts?: unknown;
   /** Caller's own reaction (W3.3); absent on rows from the add RPC. */
   my_reaction?: unknown;
+  /** Ordered attachment jsonb; absent on rows from the add RPC. */
+  attachments?: unknown;
 }
 
 function mapClientComment(row: ClientCommentRow): CommentItem {
   const reactionSummary = reactionSummaryFromRow(row);
+  const attachments = mapCommentAttachmentRefs(row.attachments);
   return {
     id: row.id,
     postId: row.post_id,
@@ -378,6 +382,9 @@ function mapClientComment(row: ClientCommentRow): CommentItem {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(reactionSummary ? { reactionSummary } : {}),
+    // Conditional spread, never `attachments: []`: the list path's exact-shape
+    // assertion pins a row with no descriptors to no field at all.
+    ...(attachments.length ? { attachments } : {}),
   };
 }
 
