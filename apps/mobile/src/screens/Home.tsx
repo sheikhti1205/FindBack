@@ -84,6 +84,16 @@ export function Home() {
   // Search activation: the field rests as a compact affordance and expands
   // into its active state on focus/input; clear/cancel collapse it back.
   const [searchFocused, setSearchFocused] = useState(false);
+  /**
+   * Whether the *text field* has DOM focus, as opposed to the row being
+   * engaged. Close, Clear and Filters live inside the row, so tabbing to them
+   * keeps `searchFocused` true while the field is no longer focused, and
+   * Android Back must follow the field (review HOME-SCROLL-FIXFORWARD-R2
+   * MINOR-1). A ref, not state: this is only read when Back is pressed, and a
+   * state update on every focus change would re-render the animated row while
+   * the browser is moving focus into it.
+   */
+  const searchFieldFocused = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchActive = searchFocused || query.length > 0;
   // Toolbar separation: a subtle border/shadow once the feed scrolls.
@@ -421,8 +431,17 @@ export function Home() {
   // Scroll events from the PullToRefresh container do not bubble, but React
   // listens in the capture phase — one guarded setState per crossing, never
   // per pixel, so the toolbar toggle cannot rerender the feed on scroll.
+  //
+  // Capture phase also means *every* scroll inside the screen arrives here: the
+  // filter rail and each card's photo carousel included. Their vertical offset
+  // is always 0, so reading `e.target.scrollTop` would read a horizontal swipe
+  // as "back at the top" — the chrome and the wordmark would pop in, and the
+  // next few pixels of real travel would rebase `lastY` and hide it again
+  // without the 24px hysteresis. Only the feed's own scroller may decide.
   function handleFeedScroll(e: SyntheticEvent) {
-    const top = (e.target as HTMLElement).scrollTop ?? 0;
+    const feed = scrollRef.current?.element ?? null;
+    if (!feed || e.target !== feed) return;
+    const top = feed.scrollTop;
     const next = top > 8;
     if (next !== toolbarSeparatedRef.current) {
       toolbarSeparatedRef.current = next;
@@ -434,6 +453,7 @@ export function Home() {
   function collapseSearch() {
     setQuery("");
     setSearchFocused(false);
+    searchFieldFocused.current = false;
     searchInputRef.current?.blur();
   }
 
@@ -453,15 +473,18 @@ export function Home() {
   // interceptor is only armed while the field has focus: a typed-but-unfocused
   // query is a browsing filter by then, and Back must keep its navigation
   // meaning rather than silently discard it.
-  useEffect(() => {
-    if (!searchFocused) return;
-    return registerBackInterceptor(() => {
-      setQuery("");
-      setSearchFocused(false);
-      searchInputRef.current?.blur();
-      return true;
-    });
-  }, [searchFocused]);
+  useEffect(
+    () =>
+      registerBackInterceptor(() => {
+        if (!searchFieldFocused.current) return false;
+        searchFieldFocused.current = false;
+        setQuery("");
+        setSearchFocused(false);
+        searchInputRef.current?.blur();
+        return true;
+      }),
+    [],
+  );
 
   return (
     <div className="flex h-full flex-col gap-4" onScrollCapture={handleFeedScroll}>
@@ -486,8 +509,17 @@ export function Home() {
           onOpen={openSearch}
           onClear={() => setQuery("")}
           onClose={collapseSearch}
-          onFocus={() => setSearchFocused(true)}
-          onBlur={() => setSearchFocused(false)}
+          onFocus={() => {
+            searchFieldFocused.current = true;
+            setSearchFocused(true);
+          }}
+          onFieldBlur={() => {
+            searchFieldFocused.current = false;
+          }}
+          onBlur={() => {
+            searchFieldFocused.current = false;
+            setSearchFocused(false);
+          }}
           onBrandTap={onBrandTap}
           inputRef={searchInputRef}
           filterButton={

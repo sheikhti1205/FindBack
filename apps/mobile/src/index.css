@@ -316,14 +316,65 @@ body {
  * divider between the back button and the text, thickens the top/bottom edges
  * and squares the pill's right cap. The ring is therefore drawn on the pill
  * itself and the inner one is suppressed. Scoped to that field, so the
- * app-wide indicator is unchanged everywhere else. */
+ * app-wide indicator is unchanged everywhere else.
+ *
+ * On modern engines the ring is scoped to the INPUT, not to `:focus-within`.
+ * Unconditional `:focus-within` also fired when Tab reached Close or Clear, so
+ * those buttons painted their own 2px `:focus-visible` ring *and* the pill's —
+ * two contours, with the inner one crossing the pill's left border. Each control
+ * now shows exactly one: the pill for the input, the button for the buttons. The
+ * pill keeps its `focus-within:border-on-surface` utility for the pointer path,
+ * so an open field still reads as active without a ring.
+ *
+ * The `:focus-within` rule below is the FALLBACK, not the modern ring. `:has()`
+ * needs Chromium 105+; the app's floor is `minSdk 24` with no browserslist
+ * entry, so a WebView older than that must still show something. A `:has`-only
+ * ring plus the unconditional `outline: none` on the input would leave the field
+ * with NO focus indicator at all there. `:focus-within` has shipped since
+ * Chromium 60, so the pill still paints a ring on those engines; the trade-off
+ * is that a button focus also shows the pill contour there (two contours, not
+ * zero). The `@supports` block upgrades that to input-only where `:has()`
+ * exists. */
 .fb-home-search-field:focus-within {
   outline: 2px solid var(--fb-focus);
   outline-offset: 2px;
 }
 
+/* Unconditional: inside the pill the input's own ring paints a divider between
+ * the back button and the text, in both engine generations. */
 .fb-home-search-field input:focus-visible {
   outline: none;
+}
+
+@supports selector(:has(*)) {
+  /* Modern engines: retire the fallback contour for every focus inside the
+   * pill, then restore it for the input alone. */
+  .fb-home-search-field:focus-within {
+    outline: none;
+  }
+
+  .fb-home-search-field:has(input:focus-visible) {
+    outline: 2px solid var(--fb-focus);
+    outline-offset: 2px;
+  }
+}
+
+/* The app bar's search trigger leaves the row with framer's `popLayout`, which
+ * pins the exiting node absolutely at its measured box and tags it
+ * `data-motion-pop-id`. The right-aligned filter button slides into that exact
+ * box once the trigger leaves flow, and the popped ghost is later in DOM order,
+ * so for the whole 150ms exit it would paint over the filter icon and swallow a
+ * tap aimed at it. It has already handed the slot over: hide it and let pointer
+ * events through for as long as it is popped. `visibility: hidden` is what
+ * removes it from hit testing; `pointer-events: none` keeps the intent explicit
+ * (and covers the frame in which the animation has not started yet).
+ *
+ * Scoped to the trailing action cluster, not the row: the row's other
+ * `AnimatePresence` pops the brand/field branch into the same slot on purpose —
+ * that crossfade is the approved motion and must keep painting. */
+.fb-home-search-actions [data-motion-pop-id] {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 ::selection {

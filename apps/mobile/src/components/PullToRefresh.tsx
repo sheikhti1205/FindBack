@@ -21,6 +21,12 @@ interface PullToRefreshProps {
 export interface PullToRefreshHandle {
   scrollToTop: (behavior?: ScrollBehavior) => void;
   scrollTop: number;
+  /**
+   * The live scroll container, or null while it is detached. Callers that
+   * observe scrolls on an ancestor need this to tell *this* scroller apart from
+   * a horizontal rail or a card carousel nested inside it.
+   */
+  readonly element: HTMLDivElement | null;
 }
 
 /** Gesture direction, decided from the first *decisive* move (not the first jitter). */
@@ -118,6 +124,9 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
         // flight when the consumer unmounts.
         lastScrollTopRef.current = 0;
         scrollRef.current?.scrollTo({ top: 0, behavior });
+      },
+      get element() {
+        return scrollRef.current;
       },
       get scrollTop() {
         return scrollRef.current?.scrollTop ?? lastScrollTopRef.current;

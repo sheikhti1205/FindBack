@@ -34,6 +34,9 @@ function ChromeContent({
   const expanded = searchFocused || query.length > 0;
   const [type, setType] = useState<"ALL" | "LOST" | "FOUND">("ALL");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Mirrors Home: the field's own focus is distinct from the row being engaged,
+  // so the fixture shows the same open-but-unfocused state production allows.
+  const searchFieldFocused = useRef(false);
   // Focus must move on the state change here too, exactly as Home.tsx does it;
   // otherwise this preflight surface renders the opened field *unfocused* and
   // cannot show the production open state (no caret, no focus ring).
@@ -42,9 +45,13 @@ function ChromeContent({
   }, [searchFocused]);
   return (
     <>
+      {/* Rest state, exactly as Home paints it at the top of the feed: the
+          header's border and shadow only exist once the feed is scrolled away
+          (`toolbarSeparated`), and this fixture section never scrolls, so it
+          must not show separation ink production does not show. */}
       <header
         data-testid="fixture-chrome-toolbar"
-        className="border-b border-outline-variant pt-5 shadow-sm"
+        className="border-b border-transparent pt-5 shadow-none"
       >
         <div className="px-4">
           <HomeTopBar
@@ -58,8 +65,17 @@ function ChromeContent({
               setQuery("");
               setSearchFocused(false);
             }}
-            onFocus={() => setSearchFocused(true)}
-            onBlur={() => setSearchFocused(false)}
+            onFocus={() => {
+              searchFieldFocused.current = true;
+              setSearchFocused(true);
+            }}
+            onFieldBlur={() => {
+              searchFieldFocused.current = false;
+            }}
+            onBlur={() => {
+              searchFieldFocused.current = false;
+              setSearchFocused(false);
+            }}
             onBrandTap={() => undefined}
             inputRef={inputRef}
             filterButton={

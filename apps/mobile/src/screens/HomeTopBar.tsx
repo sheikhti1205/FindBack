@@ -44,6 +44,7 @@ export function HomeTopBar({
   onClear,
   onClose,
   onFocus,
+  onFieldBlur,
   onBlur,
   onBrandTap,
   inputRef,
@@ -53,9 +54,10 @@ export function HomeTopBar({
   /**
    * The reader has scrolled the feed away: the brand row shows the mark alone.
    * Owner ruling 2026-10-19 — the Threads behaviour, where the word leaves and
-   * comes back. It is the first stage of the chrome collapse (`scrollChrome.ts`)
-   * and never applies while the search field is open, because that state pins
-   * the chrome open.
+   * comes back. It is the first stage of the chrome collapse (`scrollChrome.ts`).
+   * It is consumed only by the brand branch: the field branch replaces that row
+   * entirely, so a typed-but-unfocused query (which keeps the field mounted
+   * while the chrome is not pinned) never shows the mark-only stage.
    */
   compact: boolean;
   query: string;
@@ -64,6 +66,14 @@ export function HomeTopBar({
   onClear: () => void;
   onClose: () => void;
   onFocus: () => void;
+  /**
+   * The *text field* lost focus, which is not the same event as the row losing
+   * focus: Close, Clear and Filters live inside the row, so tabbing to them
+   * blurs the input while the row keeps focus. Home arms the Android-Back
+   * interceptor on this signal, because a typed-but-unfocused query is a
+   * browsing filter by then (review HOME-SCROLL-FIXFORWARD-R2 MINOR-1).
+   */
+  onFieldBlur: () => void;
   onBlur: () => void;
   onBrandTap: () => void;
   inputRef: RefObject<HTMLInputElement | null>;
@@ -82,7 +92,20 @@ export function HomeTopBar({
   }, [expanded]);
 
   return (
-    <div className="flex min-h-[48px] items-center gap-1">
+    <div
+      data-testid="home-search-row"
+      className="flex min-h-[48px] items-center gap-1"
+      onBlur={(event) => {
+        // Close/Clear/Filters are part of the same interaction. Collapsing an
+        // empty field on the input's blur moves Filters between pointer-down
+        // and pointer-up, and unmounts Close during keyboard navigation.
+        // `relatedTarget` is an `EventTarget`, not necessarily a `Node`; a
+        // non-Node value must fall through to the blur path rather than throw
+        // (review HOME-SCROLL-FIXFORWARD-R2 NIT-3).
+        const next = event.relatedTarget;
+        if (!(next instanceof Node) || !event.currentTarget.contains(next)) onBlur();
+      }}
+    >
       <AnimatePresence initial={false} mode="popLayout">
         {expanded ? (
           <motion.div
@@ -121,7 +144,7 @@ export function HomeTopBar({
               value={query}
               onChange={(e) => onQueryChange(e.target.value)}
               onFocus={onFocus}
-              onBlur={onBlur}
+              onBlur={onFieldBlur}
               // Short enough to survive the field's 320dp + Extra-large-text
               // width measured in the render harness; the accessible name
               // ("Search posts") carries the same meaning for assistive tech.
@@ -142,7 +165,13 @@ export function HomeTopBar({
                 <motion.button
                   key="home-search-clear"
                   type="button"
-                  onClick={onClear}
+                  onClick={() => {
+                    onClear();
+                    // Clearing is done to retype: without this the button
+                    // unmounts and focus falls to <body>, so the next Tab skips
+                    // the input entirely (review R2 MINOR-2).
+                    inputRef.current?.focus();
+                  }}
                   aria-label="Clear search"
                   whileTap={pressFeedback.iconButton}
                   variants={scaleInVariants}
@@ -166,7 +195,7 @@ export function HomeTopBar({
             transition={swap}
             className="flex min-w-0 flex-1 items-center"
           >
-            <h1 className="min-w-0 text-base font-semibold tracking-tight">
+            <h1 aria-label="FindBack" className="min-w-0 text-base font-semibold tracking-tight">
               <button
                 type="button"
                 data-testid="home-brand"
@@ -202,9 +231,23 @@ export function HomeTopBar({
       {/* The 48px hit areas carry their own padding, so the cluster is pulled
           10px toward the edge to align the trailing icon's optical edge with
           the brand tile instead of reading inset-left / padded-right. */}
-      <div className="-mr-2.5 flex shrink-0 items-center">
+      <div className="fb-home-search-actions -mr-2.5 flex shrink-0 items-center">
         {filterButton}
-        <AnimatePresence initial={false}>
+        {/* `popLayout` is load-bearing: the trigger and the field share one flex
+            slot. Without it the outgoing trigger keeps its 48px in flow for the
+            whole 150ms exit, so the entering pill renders ~48px narrower than it
+            settles and snaps wider on the last frame. Popped out, the field owns
+            the slot from its first frame.
+
+            Popping alone would put two controls in one place: the filter button
+            slides right into the 48px slot the trigger vacates, and the popped
+            ghost keeps that same box for its whole exit, later in DOM order. The
+            ghost therefore neither paints nor accepts pointer events while it is
+            popped (`.fb-home-search-actions [data-motion-pop-id]` in index.css)
+            — it hands the slot over at the first frame instead of crossfading on
+            top of a live target. `Home.test` samples a tap through the whole
+            transition. */}
+        <AnimatePresence initial={false} mode="popLayout">
           {!expanded && (
             <motion.button
               key="home-search-open"
