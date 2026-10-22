@@ -20,7 +20,8 @@
  * there is no `.from(` in it at all.
  */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { rpcMock } = vi.hoisted(() => ({ rpcMock: vi.fn() }));
@@ -47,7 +48,7 @@ import {
   submitReport,
 } from "./moderation";
 
-const REPO_ROOT = resolve(process.cwd(), "../..");
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const MIGRATION = resolve(
   REPO_ROOT,
   "supabase/migrations/20261022173000_moderation_reports_sanctions_appeals.sql",
@@ -58,7 +59,7 @@ const VISIBILITY_MIGRATION = resolve(
   REPO_ROOT,
   "supabase/migrations/20261017070000_visibility_kernel_and_blocks.sql",
 );
-const SERVICE_SOURCE = resolve(process.cwd(), "src/services/moderation.ts");
+const SERVICE_SOURCE = resolve(REPO_ROOT, "apps/mobile/src/services/moderation.ts");
 
 function migration(): string {
   return readFileSync(MIGRATION, "utf8");
