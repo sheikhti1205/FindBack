@@ -54,3 +54,17 @@ a868ac972260f6b6015898186968ab8903c1b58c
 # Gates convention (enforced on every new HEAD).
 2174bd139ec7f0513e3afc240efd2e4b19aab3ef
 d899234d8ac816dae7ebf4bc0297db9d1e6f31b8
+# Exception 2026-10-22 (accepted unpushed stack): six commits authored by
+# earlier accepted waves use `type(scope): ...` subjects, which this
+# convention rejects, and they had never been pushed so CI never saw them.
+# Their SHAs are cited as evidence in accepted internal handoffs and packets
+# (the E1 repair, the AI op, the search helper, the reports editor, the copy
+# alignment). Rewording them would invalidate that accepted trace, and the
+# owner requires append-only fix-forward history rather than rewriting.
+# Grandfathered with reason; every commit from here on is enforced normally.
+9bd6770780af2240dd491b97f78158816ffef886
+cce829723299a34ea1a7e3e22cd691767c311c42
+8e6d05e11cf7afdbdc7c968ba2b711fc56dc0c3b
+6beccfa1fc4757622ec27d32e73ac0b2bc9ac3dc
+a944ebcc150db37e96132b6ce9694b47d5a47c79
+0961a2134c8af9d04607449eac27283f68c6b30a
