@@ -547,6 +547,8 @@ declare
   v_uid text := auth.uid()::text;
   v_email text;
   v_verified integer;
+  v_previous_role text;
+  v_previous_capabilities text[];
   v_now text := to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
 begin
   if v_uid is null then
@@ -584,6 +586,19 @@ begin
     raise exception 'An admin already exists' using errcode = '42501';
   end if;
 
+  -- Snapshot what this claim REPLACES, before it deletes anything: the audit
+  -- row is the only record of the account's prior state.
+  select r.role into v_previous_role
+    from public.user_roles r
+   where r.user_id = v_uid
+   order by case when r.role = 'ADMIN' then 0 else 1 end asc
+   limit 1;
+
+  select coalesce(array_agg(c.capability order by c.capability), '{}'::text[])
+    into v_previous_capabilities
+    from public.user_role_capabilities c
+   where c.user_id = v_uid;
+
   -- The claim REPLACES any role the account already held, exactly as a grant
   -- does: leaving a MODERATOR row beside the ADMIN row would make the account
   -- an admin now and a moderator again after any later demotion. The matrix is
@@ -603,7 +618,7 @@ begin
     'user_roles',
     v_uid,
     'First admin claim from the bootstrap allowlist',
-    jsonb_build_object('role', null),
+    jsonb_build_object('role', v_previous_role, 'capabilities', to_jsonb(v_previous_capabilities), 'email', v_email),
     jsonb_build_object('role', 'ADMIN', 'email', v_email)
   );
 

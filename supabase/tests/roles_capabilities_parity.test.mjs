@@ -506,6 +506,36 @@ describe("the roles migration is shaped for the hosted schema", () => {
     );
   });
 
+  it("makes the one-time claim REPLACE a held role and audit what it removed", () => {
+    // A claim by an account that already holds MODERATOR must not leave both
+    // rows behind, and the audit row must say what was there — the same rule
+    // the grant follows.
+    const claim = functionBody("findback_bootstrap_admin");
+    assert.ok(claim, "public.findback_bootstrap_admin is declared");
+
+    const deleteRoleAt = claim.search(/delete\s+from\s+public\.user_roles\s+r\s+where\s+r\.user_id\s*=\s*v_uid\s+and\s+r\.role\s*<>\s*'ADMIN'/i);
+    assert.ok(deleteRoleAt >= 0, "the claim deletes a non-ADMIN role row for the caller");
+    assert.match(
+      claim,
+      /delete\s+from\s+public\.user_role_capabilities\s+c\s+where\s+c\.user_id\s*=\s*v_uid/i,
+      "the claim clears the caller's capability rows",
+    );
+
+    const snapshotAt = claim.search(/select\s+r\.role\s+into\s+v_previous_role/i);
+    assert.ok(snapshotAt >= 0 && snapshotAt < deleteRoleAt, "the claim snapshots the replaced role BEFORE deleting it");
+    assert.match(claim, /into\s+v_previous_capabilities/i, "the claim snapshots the replaced capability set");
+    assert.match(
+      claim,
+      /'role'\s*,\s*v_previous_role/i,
+      "BOOTSTRAP_ADMIN records the previous role",
+    );
+    assert.doesNotMatch(
+      claim,
+      /'First admin claim from the bootstrap allowlist'\s*,\s*jsonb_build_object\('role'\s*,\s*null\)/i,
+      "BOOTSTRAP_ADMIN no longer writes a hard-coded null previous state",
+    );
+  });
+
   it("takes the SAME advisory lock in every mutation that can change the admin set (A2.3)", () => {    const keys = {};
     for (const name of [
       "findback_bootstrap_admin",
