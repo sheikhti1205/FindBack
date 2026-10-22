@@ -86,6 +86,25 @@ describe("summarize-local-context op", () => {
     if (!result.ok) expect(result.error.diagnostic).toBe("R5_COORDINATES_NOT_ACCEPTED:summary");
   });
 
+  it("rejects every coordinate notation a model actually writes", async () => {
+    // The narrow decimal-comma regex missed the way a model really writes a
+    // position: with a degree sign, a hemisphere letter, or DMS.
+    for (const notation of [
+      "23.8103\u00b0 N, 90.4125\u00b0 E",
+      "23.8103N, 90.4125E",
+      "23\u00b048'37\"N 90\u00b024'45\"E",
+      "90.4125, 23.8103",
+    ]) {
+      const result = await summarizeLocalContext(
+        stubGenerate(`Found at ${notation} near the gate.`),
+        { notes: "found: umbrella near the gate" },
+        mustProfile(PROFILE),
+      );
+      expect(result.ok, notation).toBe(false);
+      if (!result.ok) expect(result.error.diagnostic, notation).toBe("R5_COORDINATES_NOT_ACCEPTED:summary");
+    }
+  });
+
   it("propagates refusals as typed refusals", async () => {
     const result = await summarizeLocalContext(
       stubGenerate(REFUSAL_TEXT),

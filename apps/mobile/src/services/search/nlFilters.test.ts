@@ -207,6 +207,21 @@ describe("extractNlFilters (op consumer)", () => {
     expect(isNlPatchEmpty(patch)).toBe(true);
   });
 
+  it("never applies a coordinate as the place filter, in any notation", async () => {
+    // The op contract refuses a coordinate, and the consumer boundary
+    // refuses it too; this pins the whole path so a coordinate can never
+    // become an applied place filter.
+    for (const place of ["23.8103° N, 90.4125° E", "23.8103N, 90.4125E", "23°48'37\"N 90°24'45\"E"]) {
+      const patch = await extractNlFilters(
+        stubGenerate(JSON.stringify({ query: "umbrella", place })),
+        `umbrella near ${place}`,
+        mustProfile(PROFILE),
+        { now: NOW },
+      );
+      expect(patch.place, place).toBeUndefined();
+    }
+  });
+
   it("maps a typed phrase to the type and the place the reader named", async () => {
     const patch = await extractNlFilters(
       stubGenerate(

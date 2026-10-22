@@ -13,6 +13,7 @@ import { extractSearchFilters } from "../ai/ops/extractSearchFilters";
 import type { GenerateFn, SearchFilterFields } from "../ai/types";
 import { recentCutoffDate } from "../nearby";
 import { cleanPlace } from "./placeScope";
+import { looksLikeCoordinates } from "./coordinates";
 
 export interface NlFilterPatch {
   readonly query?: string;
@@ -41,7 +42,6 @@ export interface NlFilterRange {
   readonly dateTo?: string;
 }
 
-const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function isoDay(date: Date): string {
@@ -143,7 +143,7 @@ export function resolveNlPlace(value: string | undefined): string | undefined {
 export function resolveNlDateRange(value: string | undefined, now: Date = new Date()): NlFilterRange {
   if (value === undefined) return {};
   const text = value.trim().toLowerCase();
-  if (text === "" || COORD_PATTERN.test(text)) return {};
+  if (text === "" || looksLikeCoordinates(text)) return {};
   const today = isoDay(now);
   if (text === "today") return { dateFrom: today, dateTo: today };
   if (text === "yesterday") {
@@ -163,7 +163,7 @@ export function resolveNlDateRange(value: string | undefined, now: Date = new Da
 export function toValidatedPatch(fields: SearchFilterFields, now: Date = new Date()): NlFilterPatch {
   const patch: Record<string, string | undefined | boolean> = {};
   const query = fields.query?.trim();
-  if (query !== undefined && query !== "" && query.length <= 140 && !COORD_PATTERN.test(query)) {
+  if (query !== undefined && query !== "" && query.length <= 140 && !looksLikeCoordinates(query)) {
     patch["query"] = query;
   }
   const category = resolveNlCategory(fields.category);

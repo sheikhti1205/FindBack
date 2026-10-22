@@ -188,6 +188,39 @@ describe("application-owned AI", () => {
     expect(attempts).toBe(2);
   });
 
+  it("notifies subscribers when a claim is released before any transfer exists", async () => {
+    // A claim that never reaches the device — an already-aborted signal, an
+    // invalid mirror, a reset crossing the prerequisites, an incompatible
+    // runtime — must still publish its release. Otherwise the row stays
+    // disabled on a busy flag that a direct `busy()` read already reports as
+    // false, and the surface never learns the attempt is over.
+    const p = platform();
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    const id = NEEDLE_DESCRIPTOR.modelId;
+    const observed: boolean[] = [];
+    const versions: number[] = [];
+    const unsubscribe = service.subscribe(() => {
+      observed.push(service.busy(id));
+      versions.push(service.snapshot());
+    });
+    try {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(service.download(id, undefined, controller.signal)).rejects.toThrow(/cancel/i);
+    } finally {
+      unsubscribe();
+    }
+    // The claim was observed, then its release was published: the LAST event
+    // a subscriber saw is `not busy`, and the snapshot moved with it.
+    expect(observed.length).toBeGreaterThanOrEqual(2);
+    expect(observed[0]).toBe(true);
+    expect(observed.at(-1)).toBe(false);
+    expect(new Set(versions).size).toBe(versions.length);
+    expect(service.busy(id)).toBe(false);
+    expect(p.calls).not.toContain("download");
+  });
+
   it("recovers installs only after rehashing the current pinned file, never from persisted claims", async () => {
     const p = platform();
     const first = new ApplicationAiService({ android: true, ...p });

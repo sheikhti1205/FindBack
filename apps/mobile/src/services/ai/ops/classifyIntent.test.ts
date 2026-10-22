@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { classifyIntent } from "./classifyIntent";
 import { FakeAiProvider } from "../testing/FakeAiProvider";
 import { fakeGenerate, mustProfile, stubGenerate } from "./testSupport";
+import { looksLikeCoordinates } from "../../search/coordinates";
 
 describe("classify-intent op", () => {
   it("classifies a search request and defaults the action", async () => {
@@ -35,7 +36,7 @@ describe("classify-intent op", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.action.action).toBe("ASK_USER");
-      expect(JSON.stringify(result.value)).not.toMatch(/-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/);
+      expect(looksLikeCoordinates(JSON.stringify(result.value))).toBe(false);
     }
   });
 

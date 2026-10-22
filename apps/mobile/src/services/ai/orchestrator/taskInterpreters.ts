@@ -32,6 +32,7 @@ import { validateCategoryPayload } from "../ops/classifyCategory";
 import { validateRouteIntent, type RouteIntentInput } from "../ops/routeIntent";
 import { SUMMARY_MAX_CHARS } from "../ops/summarizeLocalContext";
 import { isIntent, type AiResult, type AiTaskId } from "../types";
+import { looksLikeCoordinates } from "../../search/coordinates";
 
 /** How the runtime must generate for this task before interpretation. */
 export type TaskGenerationMode = "structured" | "raw" | "typed";
@@ -113,7 +114,6 @@ function asRouteIntentInput(input: unknown): RouteIntentInput | undefined {
   };
 }
 
-const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
 const VISION_TEXT_MAX_CHARS = 4_000;
 
 function interpretEmbedVectors(taskId: string, raw: unknown): TaskInterpretation {
@@ -219,7 +219,7 @@ const INTERPRETERS: readonly TaskInterpreter[] = [
       const summary = raw.trim();
       // Local summaries must never leak coordinates, even when the model
       // echoes them from the notes.
-      if (COORD_PATTERN.test(summary)) {
+      if (looksLikeCoordinates(summary)) {
         return { ok: false, error: `Task "${ctx.taskId}" output failed its contract: INVALID_OUTPUT:R5_COORDINATES_NOT_ACCEPTED:summary` };
       }
       return { ok: true, value: { summary } };
@@ -227,7 +227,7 @@ const INTERPRETERS: readonly TaskInterpreter[] = [
     revalidate: (value, ctx) => {
       if (!isRecord(value) || typeof value["summary"] !== "string") return false;
       if (proseBounds(ctx.taskId, value["summary"], SUMMARY_MAX_CHARS) !== undefined) return false;
-      return !COORD_PATTERN.test(value["summary"].trim());
+      return !looksLikeCoordinates(value["summary"].trim());
     },
   },
   {

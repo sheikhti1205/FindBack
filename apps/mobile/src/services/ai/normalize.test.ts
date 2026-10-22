@@ -238,6 +238,30 @@ describe("R5 field-stuffing fails even when JSON parses", () => {
     if (!place.ok) expect(place.error.diagnostic).toContain("R5_COORDINATES_NOT_ACCEPTED");
   });
 
+  it("rejects the ordinary coordinate notations a reader or model would emit", () => {
+    // Decimal-comma is not the only way a position is written. A degree
+    // symbol, a hemisphere letter, or degrees/minutes/seconds is still a
+    // position, and the place slot is a NAME in every notation.
+    for (const place of [
+      "23.8103° N, 90.4125° E",
+      "23.8103N, 90.4125E",
+      "23°48'37\"N 90°24'45\"E",
+      "23.8103 N 90.4125 E",
+      "near 23.8103°N 90.4125°E",
+      "90.4125, 23.8103",
+    ]) {
+      const result = validateSearchFilters({ query: "umbrella", place });
+      expect(result.ok, `place ${place} must be refused`).toBe(false);
+      if (!result.ok) expect(result.error.diagnostic).toContain("R5_COORDINATES_NOT_ACCEPTED");
+    }
+  });
+
+  it("keeps a real place name that merely contains a number or a hemisphere word", () => {
+    for (const place of ["221B Baker Street", "Sector 12, Uttara", "12 North Street", "West Dhaka"]) {
+      expect(validateSearchFilters({ query: "umbrella", place }).ok, `place ${place} is a name`).toBe(true);
+    }
+  });
+
   it("accepts the type and the place slots of a search request", () => {
     const search = validateSearchFilters({ query: "black wallet", postType: "LOST", place: "Gulshan" });
     expect(search.ok).toBe(true);

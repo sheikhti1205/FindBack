@@ -68,6 +68,21 @@ describe("classify-category op", () => {
     expect(generate.calls).toBe(0);
   });
 
+  it("rejects every coordinate notation in category input", async () => {
+    for (const notation of [
+      "23.8103\u00b0 N, 90.4125\u00b0 E",
+      "23.8103N, 90.4125E",
+      "23\u00b048'37\"N 90\u00b024'45\"E",
+      "90.4125, 23.8103",
+    ]) {
+      const generate = stubGenerate('{"category":"bags"}');
+      const result = await classifyCategory(generate, { text: `bag lost at ${notation}` }, mustProfile(PROFILE));
+      expect(result.ok, notation).toBe(false);
+      if (!result.ok) expect(result.error.diagnostic, notation).toBe("R5_COORDINATES_NOT_ACCEPTED:text");
+      expect(generate.calls, notation).toBe(0);
+    }
+  });
+
   it("surfaces cancellation without calling generate", async () => {
     const generate = stubGenerate('{"category":"keys"}');
     const controller = new AbortController();

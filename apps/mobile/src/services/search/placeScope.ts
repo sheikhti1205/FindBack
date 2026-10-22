@@ -17,7 +17,7 @@
  * Everything is Unicode-aware: a place name may be written in any script.
  */
 
-const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
+import { looksLikeCoordinates } from "./coordinates";
 
 /** Longest place name the app accepts (a name, not a paragraph). */
 export const MAX_PLACE_CHARS = 80;
@@ -42,7 +42,7 @@ export function placeRejection(value: string | null | undefined): PlaceRejection
   const trimmed = normalizePlace(value);
   if (trimmed === "") return null;
   if (trimmed.length > MAX_PLACE_CHARS) return "too-long";
-  if (COORD_PATTERN.test(trimmed)) return "coordinate";
+  if (looksLikeCoordinates(trimmed)) return "coordinate";
   if (/^[\d\s.,#-]+$/.test(trimmed)) return "number";
   return null;
 }

@@ -13,6 +13,30 @@ describe("cleanPlace", () => {
     expect(cleanPlace("near 12.3456, 65.4321")).toBe("");
   });
 
+  it("refuses every ordinary coordinate notation, not only decimal-comma", () => {
+    // A model or a reader may write a position with a degree symbol, a
+    // hemisphere letter, or degrees/minutes/seconds. All of them are
+    // positions, so none of them may become a place filter.
+    for (const value of [
+      "23.8103° N, 90.4125° E",
+      "23.8103N, 90.4125E",
+      "23°48'37\"N 90°24'45\"E",
+      "23.8103 N 90.4125 E",
+      "-23.8103, -90.4125",
+      "90.4125, 23.8103",
+      "90.4125 23.8103",
+    ]) {
+      expect(cleanPlace(value), value).toBe("");
+      expect(placeRejection(value), value).toBe("coordinate");
+    }
+  });
+
+  it("keeps a name that contains a number or a compass word", () => {
+    for (const value of ["221B Baker Street", "Sector 12, Uttara", "12 North Street", "West Dhaka", "North Road"]) {
+      expect(placeRejection(value), value).toBeNull();
+    }
+  });
+
   it("refuses a bare number and a paragraph", () => {
     expect(cleanPlace("221")).toBe("");
     expect(cleanPlace("x".repeat(81))).toBe("");

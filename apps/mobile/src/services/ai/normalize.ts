@@ -25,6 +25,7 @@ import {
 } from "./testing/FakeAiProvider";
 import type { ModelProfile } from "./modelProfiles";
 import { makeAskUserPrompt } from "./clarificationCopy";
+import { looksLikeCoordinates } from "../search/coordinates";
 import {
   isAction,
   isAskUserPrompt,
@@ -59,7 +60,6 @@ export const MAX_HELP_CHARS = 2000;
 const MIN_ECHO_CHARS = 40;
 const MIN_STUFF_VALUE_CHARS = 4;
 const CROSS_FIELD_STUFF_LIMIT = 3;
-const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
 const SCHEMA_ECHO_PATTERN = /string\s*(\[\]| *\| *null)/i;
 
 export interface NormalizeContext {
@@ -217,7 +217,7 @@ function checkStringArraySlot(
 }
 
 function rejectCoordinates(value: string, field: string): AiResult<string> {
-  if (COORD_PATTERN.test(value)) {
+  if (looksLikeCoordinates(value)) {
     return fail("INVALID_OUTPUT", `R5_COORDINATES_NOT_ACCEPTED:${field}`);
   }
   return pass(value);

@@ -7,6 +7,7 @@
  */
 import { isProposalOp, type Proposal } from "./proposals";
 import { INTENTS } from "../types";
+import { looksLikeCoordinates } from "../../search/coordinates";
 
 export type GateDenyCode =
   | "UNKNOWN_OP"
@@ -67,9 +68,6 @@ const TEXT_FIELD_MAX = 2000;
 const COMMENT_BODY_MAX = 1000;
 const REFERENCE_ID_MAX = 256;
 
-/** Coordinate-like text is never accepted in draft slots (R5). */
-const COORDINATE_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -117,7 +115,7 @@ function validateFillReportFields(args: unknown): boolean {
     if (!(REPORT_SLOT_KEYS as readonly string[]).includes(key)) return false;
     const value = args[key];
     if (!isBoundedText(value, TEXT_FIELD_MAX)) return false;
-    if (COORDINATE_PATTERN.test(value)) return false;
+    if (looksLikeCoordinates(value)) return false;
   }
   return true;
 }
@@ -155,7 +153,7 @@ function validateRouteIntent(args: unknown): boolean {
   if (typeof intent !== "string" || !(INTENTS as readonly string[]).includes(intent)) return false;
   const route = args["route"];
   return (
-    isBoundedText(route, TEXT_FIELD_MAX) && !COORDINATE_PATTERN.test(route) && !isDestructiveOp(route)
+    isBoundedText(route, TEXT_FIELD_MAX) && !looksLikeCoordinates(route) && !isDestructiveOp(route)
   );
 }
 
@@ -168,7 +166,7 @@ function validateEmbedTexts(args: unknown): boolean {
   return texts.every(
     (entry): boolean =>
       isBoundedText(entry, TEXT_FIELD_MAX) &&
-      !COORDINATE_PATTERN.test(entry) &&
+      !looksLikeCoordinates(entry) &&
       !isReferenceId(entry),
   );
 }
@@ -180,7 +178,7 @@ function validateGroundObjects(args: unknown): boolean {
   return (
     isReferenceId(args["imageId"]) &&
     isBoundedText(args["query"], TEXT_FIELD_MAX) &&
-    !COORDINATE_PATTERN.test(args["query"] as string)
+    !looksLikeCoordinates(args["query"] as string)
   );
 }
 
@@ -190,7 +188,7 @@ function validateClassifyCategory(args: unknown): boolean {
   if (!keys.has("category") || keys.size > 2) return false;
   if (
     !isBoundedText(args["category"], TEXT_FIELD_MAX) ||
-    COORDINATE_PATTERN.test(args["category"] as string)
+    looksLikeCoordinates(args["category"] as string)
   ) {
     return false;
   }
@@ -208,7 +206,7 @@ function validateSummarizeLocalContext(args: unknown): boolean {
   if (!keys.has("summary") || keys.size > 2) return false;
   if (
     !isBoundedText(args["summary"], TEXT_FIELD_MAX) ||
-    COORDINATE_PATTERN.test(args["summary"] as string)
+    looksLikeCoordinates(args["summary"] as string)
   ) {
     return false;
   }

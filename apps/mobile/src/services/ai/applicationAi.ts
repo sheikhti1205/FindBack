@@ -482,7 +482,11 @@ export class ApplicationAiService {
       this.changed();
       await work;
     } finally {
-      this.claiming.delete(modelId);
+      // Publish the release on EVERY exit, including the ones that never
+      // reached the device (aborted signal, invalid mirror, reset, refused
+      // compatibility). Without this the row keeps a busy flag the service
+      // already reads as false, and no subscriber is told the attempt ended.
+      if (this.claiming.delete(modelId)) this.changed();
     }
   }
   async pause(modelId: string) {

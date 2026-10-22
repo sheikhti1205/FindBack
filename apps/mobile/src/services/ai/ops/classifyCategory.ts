@@ -9,8 +9,7 @@
 import type { ModelProfile } from "../modelProfiles";
 import { normalizeJsonOp, validateSlotEnvelope, type NormalizeContext, type NormalizeOptions } from "../normalize";
 import { makeAiError, type AiResult, type GenerateFn } from "../types";
-
-const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
+import { looksLikeCoordinates } from "../../search/coordinates";
 
 /** Lost-and-found category vocabulary. Anything else is refused. */
 export const ITEM_CATEGORIES = [
@@ -129,7 +128,7 @@ export async function classifyCategory(
   if (input.text.trim().length > CATEGORY_TEXT_MAX_CHARS) {
     return { ok: false, error: makeAiError("INVALID_OUTPUT", "R5_INPUT_TOO_LONG:text") };
   }
-  if (COORD_PATTERN.test(input.text)) {
+  if (looksLikeCoordinates(input.text)) {
     return { ok: false, error: makeAiError("INVALID_OUTPUT", "R5_COORDINATES_NOT_ACCEPTED:text") };
   }
   let rawText: string;

@@ -408,6 +408,21 @@ describe("invisible long-chat compaction via summarize-local-context", () => {
     return found;
   }
 
+  it("never checkpoints a degree-notation coordinate from the model", async () => {
+    // A position is never a summary fact, in any notation. The old
+    // decimal-comma scan accepted this text and compacted it.
+    const generate = async (): Promise<string> => "Umbrella found at 23.8103\u00b0 N, 90.4125\u00b0 E.";
+    const outcome = await compactLongChatLocal({
+      olderTurns: conversation().slice(0, 2),
+      generate,
+      profile: await profile(),
+    });
+    expect(outcome.action).toBe("compacted");
+    if (outcome.action !== "compacted") return;
+    expect(outcome.generatedBy).toBe("local-extractive");
+    expect(outcome.summaryText).not.toMatch(/23\.8103|90\.4125/);
+  });
+
   it("compacts through the op and preserves draft + latest request verbatim", async () => {
     const seen: string[] = [];
     const generate = async (prompt: string): Promise<string> => {

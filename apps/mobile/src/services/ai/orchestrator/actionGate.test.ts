@@ -69,6 +69,22 @@ describe("actionGate", () => {
     if (decision.decision === "deny") expect(decision.code).toBe("INVALID_ARGS");
   });
 
+  it("denies degree, hemisphere, DMS and longitude-first coordinates in a slot", () => {
+    for (const notation of [
+      "23.8103\u00b0 N, 90.4125\u00b0 E",
+      "23.8103N, 90.4125E",
+      "23\u00b048'37\"N 90\u00b024'45\"E",
+      "90.4125, 23.8103",
+    ]) {
+      const decision = evaluateProposal(
+        { op: "fill_report_fields", args: { title: "Keys", locationNote: notation } },
+        SIGNED_IN,
+      );
+      expect(decision.decision, notation).toBe("deny");
+      if (decision.decision === "deny") expect(decision.code, notation).toBe("INVALID_ARGS");
+    }
+  });
+
   it("denies propose_comment without comment permission", () => {
     const decision = evaluateProposal(
       { op: "propose_comment", args: { reportId: "r-1", body: "Is this yours?" } },

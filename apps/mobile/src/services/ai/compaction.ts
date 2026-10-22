@@ -45,6 +45,7 @@ import { computeContextBudget } from "./contextBudget";
 import type { ContextBudgetInput } from "./contextBudget";
 import type { ModelProfile } from "./modelProfiles";
 import { SUMMARY_NOTES_MAX_CHARS, summarizeLocalContext, type SummaryDensity } from "./ops/summarizeLocalContext";
+import { looksLikeCoordinates } from "../search/coordinates";
 import type { GenerateFn } from "./types";
 
 export class CompactionError extends Error {
@@ -359,8 +360,6 @@ export function recompactForModelSwitch(input: RecompactInput): RecompactResult 
   };
 }
 
-const LOCAL_COMPACTION_COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
-
 function nonEmptyText(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   return value.trim() === "" ? undefined : value;
@@ -420,7 +419,7 @@ export async function compactLongChatLocal(
 
   const extractiveFallback = (): LongChatCompactionOutcome => {
     const { summaryText } = buildExtractiveSummary(request.olderTurns, { forbiddenTexts: forbidden });
-    if (isSummaryPoisoned(summaryText) || LOCAL_COMPACTION_COORD_PATTERN.test(summaryText)) {
+    if (isSummaryPoisoned(summaryText) || looksLikeCoordinates(summaryText)) {
       return { action: "failed", reason: "no-safe-summary" };
     }
     return {
@@ -454,7 +453,7 @@ export async function compactLongChatLocal(
   } catch {
     return extractiveFallback();
   }
-  if (isSummaryPoisoned(summaryText) || LOCAL_COMPACTION_COORD_PATTERN.test(summaryText)) {
+  if (isSummaryPoisoned(summaryText) || looksLikeCoordinates(summaryText)) {
     return extractiveFallback();
   }
   return {

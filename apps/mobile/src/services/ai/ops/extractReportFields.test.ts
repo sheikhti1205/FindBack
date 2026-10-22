@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { REPORT_SLOTS_INSTRUCTION, extractReportFields } from "./extractReportFields";
 import { mustProfile, stubGenerate } from "./testSupport";
+import { looksLikeCoordinates } from "../../search/coordinates";
 
 describe("extract-report-fields op", () => {
   it("extracts slots with a known location and no clarification", async () => {
@@ -30,7 +31,7 @@ describe("extract-report-fields op", () => {
     if (result.ok) {
       expect(result.value.action.action).toBe("ASK_USER");
       expect(result.value.action.prompt?.field).toBe("location");
-      expect(JSON.stringify(result.value)).not.toMatch(/-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/);
+      expect(looksLikeCoordinates(JSON.stringify(result.value))).toBe(false);
     }
   });
 

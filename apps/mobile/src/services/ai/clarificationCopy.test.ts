@@ -15,8 +15,7 @@ import { validateIntentPayload } from "./normalize";
 import { extractReportFields } from "./ops/extractReportFields";
 import { extractSearchFilters } from "./ops/extractSearchFilters";
 import { mustProfile, stubGenerate } from "./ops/testSupport";
-
-const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
+import { looksLikeCoordinates } from "../search/coordinates";
 
 describe("clarification copy defaults per field", () => {
   it("covers every clarification field with a bounded question", () => {
@@ -25,7 +24,7 @@ describe("clarification copy defaults per field", () => {
       const question = defaultClarificationQuestion(field);
       expect(question.trim().length).toBeGreaterThan(0);
       expect(question.length).toBeLessThanOrEqual(ASK_USER_QUESTION_MAX);
-      expect(question).not.toMatch(COORD_PATTERN);
+      expect(looksLikeCoordinates(question)).toBe(false);
       expect(isAskUserPrompt({ question, field })).toBe(true);
     }
   });

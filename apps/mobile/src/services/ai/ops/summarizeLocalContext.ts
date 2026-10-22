@@ -10,8 +10,7 @@
 import type { ModelProfile } from "../modelProfiles";
 import { normalizeProse, type NormalizeOptions } from "../normalize";
 import { makeAiError, type AiResult, type GenerateFn } from "../types";
-
-const COORD_PATTERN = /-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+/;
+import { looksLikeCoordinates } from "../../search/coordinates";
 
 /** Summary density. Anything else is refused (invalid enum). */
 export const SUMMARY_DENSITIES = ["short", "detailed"] as const;
@@ -120,7 +119,7 @@ export async function summarizeLocalContext(
   if (parsed.value.length > SUMMARY_MAX_CHARS) {
     return { ok: false, error: makeAiError("INVALID_OUTPUT", "R5_SUMMARY_TOO_LONG") };
   }
-  if (COORD_PATTERN.test(parsed.value)) {
+  if (looksLikeCoordinates(parsed.value)) {
     return { ok: false, error: makeAiError("INVALID_OUTPUT", "R5_COORDINATES_NOT_ACCEPTED:summary") };
   }
   return { ok: true, value: { summaryText: parsed.value, density } };
