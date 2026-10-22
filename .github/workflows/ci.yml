@@ -143,6 +143,88 @@ jobs:
         run: node --test supabase/tests/migration_sql_syntax.test.mjs
       - name: Run report-edit contract and mutation guards
         run: node --test supabase/tests/post_update_clear_fields_parity.test.mjs supabase/tests/post_update_clear_fields_contract.test.mjs
+      - name: Run match-candidate contract and mutation guards
+        run: node --test supabase/tests/match_candidates_reader_parity.test.mjs
+      - name: Run roles and capability contract guard
+        run: node --test supabase/tests/roles_capabilities_parity.test.mjs
+
+  candidate-reader-sql:
+    name: Full-chain candidate reader SQL behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: findback_sql_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: 127.0.0.1
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: findback_sql_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Ensure psql client
+        run: command -v psql >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y postgresql-client; }
+      - name: SQL runner unit and live failure-path regressions
+        run: node --test scripts/sql-behavior.test.mjs scripts/sql-behavior.engine.test.mjs
+      - name: Apply full available migration chain and assert candidate behavior
+        # SELECT/WITH probes must return exactly one row: errors AND empty
+        # assertions are fatal. Fixtures run once in one session and roll back.
+        # Platform stubs are local-only, not hosted or JWT acceptance evidence.
+        run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022160000_match_candidates_reader.sql
+
+  roles-capabilities-sql:
+    name: Full-chain roles and invitation SQL behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: findback_sql_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: 127.0.0.1
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: findback_sql_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Ensure psql client
+        run: command -v psql >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y postgresql-client; }
+      - name: SQL runner unit and live failure-path regressions
+        run: node --test scripts/sql-behavior.test.mjs scripts/sql-behavior.engine.test.mjs
+      - name: Apply full available chain and assert role and real auth-trigger behavior
+        # Empty SELECT probes and SQL errors fail; fixtures run once and roll
+        # back. Platform stubs are local-only, never hosted or JWT evidence.
+        run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022143000_roles_capabilities.sql --probe supabase/tests/verify_roles_invitation_regressions.sql
+      - name: Two-connection role-lock regression (queued caller re-authorized)
+        # Single-transaction probes cannot express a waiter whose permission is
+        # revoked while it blocks. Two real sessions; a queued grant must be
+        # refused with 42501 and leave no role and no ROLE_GRANTED row.
+        run: node scripts/roles-lock-concurrency.mjs
 
   android:
     name: Android build & JVM tests

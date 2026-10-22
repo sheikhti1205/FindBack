@@ -200,24 +200,39 @@ describe("fetchFeed", () => {
 });
 
 describe("fetchMatchCandidates", () => {
-  it("requests the spec pool min(OPEN opposite-type, 20)", async () => {
+  it("asks the server's candidate reader about the TARGET, not about a type", async () => {
     clientMock.rpc.mockResolvedValue({ data: [row({ id: "c1", type: "FOUND" })], error: null });
 
-    const items = await fetchMatchCandidates("FOUND");
+    const items = await fetchMatchCandidates("p-target");
 
-    expect(clientMock.rpc).toHaveBeenCalledWith(
-      "findback_query_posts_client",
-      expect.objectContaining({ p_type: "FOUND", p_status: "OPEN", p_limit: 20 }),
-    );
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_match_candidates_client", {
+      p_target_id: "p-target",
+      p_limit: 20,
+    });
+    // The client names the target and the pool size. It never names a type:
+    // the reader works the opposite type out itself, from the target it can
+    // see, so a lying client cannot widen the pool.
+    expect(JSON.stringify(clientMock.rpc.mock.calls[0])).not.toContain("p_type");
     expect(items).toHaveLength(1);
     expect(items[0]!.id).toBe("c1");
+  });
+
+  it("does not ask the ordinary feed reader for candidates", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [], error: null });
+
+    await fetchMatchCandidates("p-target");
+
+    expect(clientMock.rpc).not.toHaveBeenCalledWith(
+      "findback_query_posts_client",
+      expect.anything(),
+    );
   });
 
   it("caps an over-long server response at 20", async () => {
     const rows = Array.from({ length: 25 }, (_, i) => row({ id: `c${i}` }));
     clientMock.rpc.mockResolvedValue({ data: rows, error: null });
 
-    expect(await fetchMatchCandidates("FOUND")).toHaveLength(20);
+    expect(await fetchMatchCandidates("p-target")).toHaveLength(20);
   });
 });
 

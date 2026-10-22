@@ -8,9 +8,9 @@ vi.mock("./posts", () => ({ MATCH_CANDIDATE_LIMIT: 20, fetchMatchCandidates }));
 const target = { id: "lost-1", type: "LOST", status: "OPEN", title: "black umbrella", description: "wooden handle", category: "Clothing", eventDate: null, locationLabel: null, latitude: null, longitude: null } as never;
 
 /**
- * A RAW candidate row, the way the feed reader returns it. The service
- * excludes the rows it must not compare BEFORE they are mapped to a
- * candidate, so the injected rows are raw posts, not candidates.
+ * A RAW candidate row, the way the reader returns it. The reader has
+ * already excluded a candidate whose author the viewer is blocked with, so
+ * the injected rows are raw posts, not candidates.
  */
 function rawPost(id: string, overrides: Partial<PostItem> = {}): PostItem {
   return {
@@ -44,10 +44,13 @@ describe("findPossibleMatches", () => {
     const result = await findPossibleMatches(target, { embed: async () => [[1, 0], [1, 0]] });
     expect(result.matches[0]?.post).toMatchObject({ id: "found-1", photoUrl: "https://example.com/photo.jpg" });
   });
-  it("only compares with relevant open reports of the opposite type", async () => {
+  it("asks the reader about the TARGET, and never about a type", async () => {
+    // The reader works out the opposite type itself, from the target it can
+    // see. A client that named the type could widen the pool by lying
+    // about the target, so it names the target and nothing else.
     const fetchCandidates = vi.fn().mockResolvedValue([]);
     await findPossibleMatches(target, { fetchCandidates, embed: vi.fn().mockResolvedValue([[1, 0]]) });
-    expect(fetchCandidates).toHaveBeenCalledWith("FOUND");
+    expect(fetchCandidates).toHaveBeenCalledWith("lost-1");
   });
 
   it("embeds the target and candidates in one batch and caps at three", async () => {
@@ -65,7 +68,7 @@ describe("findPossibleMatches", () => {
     expect(result).toEqual({ matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" });
   });
 
-  it("caps the candidate pool at 20, the spec min(OPEN opposite-type, 20)", async () => {
+  it("caps the candidate pool at 20, the spec pool", async () => {
     const candidates = Array.from({ length: 25 }, (_, i) => rawPost(`c${i}`));
     // The embedder is called with 21 texts (1 target + 20 capped candidates) and
     // must answer with exactly 21 vectors — surplus vectors are not a valid payload.
@@ -76,13 +79,27 @@ describe("findPossibleMatches", () => {
     expect(embed.mock.calls[0]![0]).toHaveLength(21);
   });
 
-  it("asks the reader for a wider raw window, so the excluded rows do not shrink the pool", async () => {
-    // The O5 exclusion runs on the client until the server-side candidate
-    // reader exists, so the raw window is wider than the pool: the compared
-    // set stays the size the server-side end state would give.
+  it("asks the reader for the pool itself, and never for a wider window", async () => {
+    // The exclusion is the SERVER's, in the reader's WHERE clause, so a
+    // blocked counterpart never reaches the client at all. There is nothing
+    // left for the client to filter, and therefore no reason to ask for a
+    // wider window: the pool the reader returns IS the pool that is
+    // compared.
     fetchMatchCandidates.mockResolvedValue([]);
-    await findPossibleMatches(target, { embed: vi.fn().mockResolvedValue([[1, 0]]) });
-    expect(fetchMatchCandidates).toHaveBeenCalledWith("FOUND", 40);
+    await findPossibleMatches(target, { embed: async () => [[1, 0]] });
+    expect(fetchMatchCandidates).toHaveBeenCalledWith("lost-1", 20);
+  });
+
+  it("never asks the reader for anything about a block", async () => {
+    // The client carries no block knowledge at all: no flag, no filtered
+    // id list, no second call. A blocked candidate is simply not returned.
+    fetchMatchCandidates.mockResolvedValue([rawPost("c0")]);
+    await findPossibleMatches(target, { embed: async () => [[1, 0], [1, 0]] });
+    const args = fetchMatchCandidates.mock.calls[0]!;
+    expect(args).toHaveLength(2);
+    expect(args[0]).toBe("lost-1");
+    expect(args[1]).toBe(20);
+    expect(JSON.stringify(args)).not.toContain("block");
   });
 
   // Seam contract: vectors are validated BEFORE cosine. A short/malformed payload

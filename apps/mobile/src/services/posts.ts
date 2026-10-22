@@ -755,23 +755,27 @@ export async function fetchMyPosts(): Promise<FeedPage> {
 
 /**
  * Candidate pool for on-device possible-matches: the most recent OPEN
- * opposite-type reports.
+ * opposite-type reports FOR A TARGET REPORT.
  *
- * The limit is a parameter because the caller may need a WIDER raw window
- * than the pool it will finally keep: the client-side O5 exclusion (see
- * `services/possibleMatches.ts`) drops the rows whose author the reader is
- * blocked with, and a pool that is capped BEFORE the exclusion would be
- * silently smaller than the server-side end state. The default is the pool
- * size, so every other caller keeps exactly the rows it had.
+ * THE SERVER DOES THE FILTERING. `findback_match_candidates_client` reads the
+ * target from the visible view — so the client cannot lie about the target's
+ * type to widen the pool — and EXCLUDES a candidate whose author the reader
+ * is blocked with in its WHERE clause. Nothing about a block is projected
+ * back to the client, so there is no client-side exclusion to run here and no
+ * block copy on the candidate surface.
+ *
+ * The limit is the pool the reader keeps; the server clamps it to 1..20 as
+ * well, and the client keeps its own cap so an over-long response can never
+ * widen the pool.
  */
 export async function fetchMatchCandidates(
-  oppositeType: PostType,
+  targetId: string,
   limit: number = MATCH_CANDIDATE_LIMIT,
 ): Promise<PostItem[]> {
-  const { data, error } = await getSupabase().rpc(
-    CLIENT_FEED_RPC,
-    feedArgs({ type: oppositeType, status: "OPEN" }, limit, null),
-  );
+  const { data, error } = await getSupabase().rpc("findback_match_candidates_client", {
+    p_target_id: targetId,
+    p_limit: limit,
+  });
   if (error) throw new ApiError(error.message, 400);
   return ((data ?? []) as ClientPostRow[]).slice(0, limit).map(mapClientPost);
 }

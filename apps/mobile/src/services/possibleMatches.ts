@@ -2,7 +2,7 @@ import { MATCH_CANDIDATE_LIMIT, fetchMatchCandidates } from "./posts";
 import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi";
 import { embeddingInput, embedTexts, validateEmbeddingVectors } from "./embeddings";
 import { stripMarkdown } from "../utils/stripMarkdown";
-import type { PostItem, PostType } from "@findback/shared";
+import type { PostItem } from "@findback/shared";
 import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
 
 /** Matching engine selection. USE is the default incumbent; Needle is an
@@ -20,19 +20,6 @@ export function resolveMatchingBackend(
 
 /** Maximum number of candidate posts to consider: min(OPEN opposite-type, 20). */
 const PAGE_LIMIT = MATCH_CANDIDATE_LIMIT;
-
-/**
- * How many RAW rows the interim fetcher asks for before the O5 exclusion.
- *
- * The end state (CF-050) excludes blocked candidates in the candidate RPC's
- * `WHERE` clause, so the pool is 20 OPEN opposite-type rows that the reader
- * may actually be shown. The interim exclusion below happens on the client,
- * AFTER the rows arrive — so a pool capped at 20 raw rows would be SMALLER
- * than the end state whenever any of those 20 is blocked. Asking for a
- * wider window and then keeping the first 20 unblocked rows keeps the
- * compared set the same size the end state would give.
- */
-const RAW_CANDIDATE_WINDOW = PAGE_LIMIT * 2;
 
 /** Result of a possible matches query. */
 export interface PossibleMatchesResult {
@@ -59,15 +46,16 @@ function toMatchCandidate(post: PostItem): MatchCandidate {
 }
 
 /**
- * Default candidate fetcher: the most recent relevant open reports of the
- * opposite type, as RAW rows.
+ * Default candidate fetcher: the server's candidate reader, asked about a
+ * TARGET report.
  *
- * The rows are returned unmapped on purpose: the O5 exclusion runs on them
- * BEFORE they become candidates, so a blocked counterpart is never even
- * compared, let alone suggested.
+ * The reader is asked for the target, not for a type: it reads the target
+ * from the visible view, works out the opposite type itself, and excludes a
+ * candidate whose author the reader is blocked with. The client is told
+ * neither the target's type nor anything about a block.
  */
-async function defaultFetchCandidates(oppositeType: PostType): Promise<PostItem[]> {
-  return fetchMatchCandidates(oppositeType, RAW_CANDIDATE_WINDOW);
+async function defaultFetchCandidates(targetId: string): Promise<PostItem[]> {
+  return fetchMatchCandidates(targetId, PAGE_LIMIT);
 }
 
 /** Finds possible matches for a target post by comparing against the most recent relevant open reports.
@@ -76,7 +64,7 @@ async function defaultFetchCandidates(oppositeType: PostType): Promise<PostItem[
 export async function findPossibleMatches(
   target: PostItem,
   deps?: {
-    fetchCandidates?: (oppositeType: PostType) => Promise<PostItem[]>;
+    fetchCandidates?: (targetId: string) => Promise<PostItem[]>;
     embed?: (texts: string[]) => Promise<number[][]>;
     aiService?: Pick<ApplicationAiService, "matchingBackend" | "embedNeedle">;
   },
@@ -87,39 +75,25 @@ export async function findPossibleMatches(
   // Needle embed failure degrades to unavailable — never a silent USE fallback.
   const embed = deps?.embed ?? (resolveMatchingBackend(ai) === "needle" ? (texts: string[]) => ai.embedNeedle(texts) : embedTexts);
 
-  const oppositeType: PostType = target.type === "LOST" ? "FOUND" : "LOST";
-
   let fetched: PostItem[];
   try {
-    fetched = await fetchCandidates(oppositeType);
+    fetched = await fetchCandidates(target.id);
   } catch {
     return { matches: [], candidatesConsidered: 0, available: false, unavailableReason: "candidates" };
   }
 
-  // O5 (CF-050) — INTERIM, on the client, until the server-side candidate
-  // reader exists.
+  // O5 (CF-050) — the exclusion is the SERVER's, and it is total.
   //
-  // The candidate surface is licensed to differ from ordinary public
-  // visibility (MODERATION-CONTRACT-DECISION.md §13.9 branch 1, and the
-  // CF-050 D40/D41 gate's Decision 1): a candidate whose author the caller
-  // is blocked with is EXCLUDED from the pool, never surfaced as a
-  // suggestion. A match card exists to suggest reaching that person, so a
-  // shielded-but-visible card would still read as a suggestion.
+  // `findback_match_candidates_client` excludes a candidate whose author the
+  // reader is blocked with in its WHERE clause, so a blocked counterpart is
+  // never returned and never compared, let alone suggested. No block bit is
+  // projected to the client, the candidate type is not widened, and the
+  // consumer surface shows no block copy: a candidate that is blocked simply
+  // is not proposed.
   //
-  // The gate's END STATE is an exclusion in the candidate RPC's `WHERE`
-  // clause, with NO client-visible column and no widened candidate type:
-  // that reader does not exist in the database yet, so this filter is the
-  // documented interim that stands in for it. It reads the canonical
-  // `blocked_author` bit the feed rows already carry, it runs on the RAW
-  // rows BEFORE they are mapped to a candidate, and it is dropped the moment
-  // the server-side reader lands (lane D5-CANDIDATES).
-  //
-  // The exclusion happens BEFORE the pool cap: capping first would make the
-  // compared set silently smaller than the end state, and the compared count
-  // has to be the number of reports that were really compared.
-  const unblocked = fetched.filter((post) => post.blockedAuthor !== true);
-  // Enforce the spec pool cap even for injected fetchers.
-  const candidates = unblocked.slice(0, PAGE_LIMIT).map(toMatchCandidate);
+  // The cap is applied here as well as on the server, so an injected fetcher
+  // cannot widen the pool.
+  const candidates = fetched.slice(0, PAGE_LIMIT).map(toMatchCandidate);
 
   // Build embedding inputs: target first, then candidates (even if empty, to detect embed failure)
   // Plain-text embedding inputs: never embed Markdown syntax clutter.
