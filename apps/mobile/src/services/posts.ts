@@ -437,7 +437,10 @@ export async function updatePost(id: string, input: UpdatePostInput): Promise<Po
     // (PGRST202, before the clear-fields migration is applied) or a
     // transport failure. Those are server troubles, and they must never
     // reach the owner as raw server text.
-    const status =
+    // PGRST300 is server misconfiguration, NOT a session failure. Only
+    // 301..303 mean a missing/invalid token (PostgREST's documented 401s).
+    const authFailure = error.code === "28000" || /^PGRST30[1-3]$/.test(error.code ?? "");
+    const status = authFailure ? 401 :
       error.code === "42501" ? 403 : error.code === "22023" ? 400 : 500;
     throw new ApiError(error.message, status, error.code);
   }

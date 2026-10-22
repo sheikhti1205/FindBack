@@ -8,6 +8,7 @@ import { GuestOnly, OnboardingRoute, RequireAuth } from "./components/Guards";
 import { Shell } from "./components/Shell";
 import { BackButtonHandler } from "./components/BackButtonHandler";
 import { AccountDeletionFeedback } from "./components/AccountDeletionFeedback";
+import { ReportDeletionFeedbackProvider } from "./components/ReportDeletionFeedback";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Splash } from "./screens/Splash";
 import { AuthGateway } from "./screens/AuthGateway";
@@ -96,7 +97,8 @@ export function App() {
           <ReportLinkHandler />
           <BackButtonHandler />
           <ErrorBoundary>
-           <AccountDeletionFeedback />
+            <AccountDeletionFeedback />
+            <ReportDeletionFeedbackProvider>
            <Routes>
              <Route path="/shared/:id" element={<SharedReport />} />
              <Route path="/" element={<StartScreen />}>
@@ -189,6 +191,7 @@ export function App() {
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />
           </Routes>
+            </ReportDeletionFeedbackProvider>
           </ErrorBoundary>
         </HashRouter>
         </AppMotionConfig>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fetchFeedMock, updatePostStatusMock, deletePostMock, shareReportMock } = vi.hoisted(() => ({
@@ -21,6 +21,7 @@ vi.mock("../components/TabTap", () => ({ useTabTap: () => ({ tapCount: 0 }) }));
 
 import { clearFeedCaches } from "../hooks/feedCache";
 import { MyPosts, DELETE_UNDO_WINDOW_MS } from "./MyPosts";
+import { ReportDeletionFeedbackProvider } from "../components/ReportDeletionFeedback";
 
 // PostList paginates via IntersectionObserver (absent in jsdom); stub it
 // following the PostCardDensity.test.tsx precedent.
@@ -65,7 +66,7 @@ function post(id: string, status = "OPEN") {
 function renderMyPosts() {
   return render(
     <MemoryRouter initialEntries={["/my-reports"]}>
-      <MyPosts />
+      <ReportDeletionFeedbackProvider><MyPosts /></ReportDeletionFeedbackProvider>
     </MemoryRouter>,
   );
 }
@@ -283,5 +284,84 @@ describe("MyPosts management (owner row actions)", () => {
     });
     expect(screen.getByRole("alert").textContent).toMatch(/not deleted/i);
     expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2);
+  });
+
+  it("does not abandon the first scheduled delete when another row requests deletion", async () => {
+    renderMyPosts();
+    await screen.findAllByTestId("owner-report-card");
+    vi.useFakeTimers();
+    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /manage report/i })[1]!);
+    fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: /delete report/i }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10); });
+    expect(deletePostMock.mock.calls).toEqual([["p1"]]);
+    expect(screen.getByText("Report p2")).toBeTruthy();
+  });
+
+  it("sends a pending deletion exactly once on leaving, never again from the old timer", async () => {
+    const view = renderMyPosts();
+    await screen.findAllByTestId("owner-report-card");
+    vi.useFakeTimers();
+    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    view.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10); });
+    expect(deletePostMock.mock.calls).toEqual([["p1"]]);
+  });
+
+  it("does not send again on leaving while deletion is already in flight", async () => {
+    let resolve!: () => void;
+    deletePostMock.mockReturnValue(new Promise<void>((done) => { resolve = done; }));
+    const view = renderMyPosts();
+    await screen.findAllByTestId("owner-report-card");
+    vi.useFakeTimers();
+    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10); });
+    view.unmount();
+    await act(async () => { resolve(); });
+    expect(deletePostMock.mock.calls).toEqual([["p1"]]);
+  });
+
+  it("Undo immediately followed by unmount never sends the cancelled request", async () => {
+    const view = renderMyPosts();
+    await screen.findAllByTestId("owner-report-card");
+    vi.useFakeTimers();
+    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    act(() => {
+      within(screen.getByTestId("my-posts-delete-undo")).getByRole("button", { name: "Undo" }).click();
+      view.unmount();
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10); });
+    expect(deletePostMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a refused deletion visible after navigating away from My reports", async () => {
+    deletePostMock.mockRejectedValue(new Error("connection lost"));
+    render(<MemoryRouter initialEntries={["/my"]}>
+      <ReportDeletionFeedbackProvider><Routes>
+        <Route path="/my" element={<MyPosts />} />
+        <Route path="/profile" element={<h1>Profile</h1>} />
+      </Routes></ReportDeletionFeedbackProvider>
+    </MemoryRouter>);
+    await screen.findAllByTestId("owner-report-card");
+    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    fireEvent.click(screen.getByRole("button", { name: /back to profile/i }));
+    await screen.findByRole("heading", { name: "Profile" });
+    expect((await screen.findByRole("alert")).textContent).toMatch(/report not deleted/i);
+    expect(deletePostMock.mock.calls).toEqual([["p1"]]);
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("removes a changed report from a status-filtered list and its count, without a refetch", async () => {
+    renderMyPosts();
+    await screen.findAllByTestId("owner-report-card");
+    fireEvent.click(screen.getByRole("radio", { name: "Open" }));
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ status: "OPEN" }), undefined));
+    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitemradio", { name: /matched/i }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText("Report p1")).toBeNull());
+    expect(screen.getByText(/1 report ·/)).toBeTruthy();
+    expect(screen.getByText("Report p2")).toBeTruthy();
+    expect(fetchFeedMock).toHaveBeenCalledTimes(2);
   });
 });

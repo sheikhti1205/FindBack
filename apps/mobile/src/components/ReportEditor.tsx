@@ -52,15 +52,17 @@ export interface ReportEditorProps {
    */
   photos?: readonly Attachment[];
   /**
-   * Keep a published map pin when the place text is edited.
+   * The original published location, not the current draft. It lets a
+   * clear-then-retype restore the pin visibly, rather than silently keeping
+   * it only on the server (where null arguments mean keep).
    *
    * A report that already carries a map pin must not lose it because the
    * owner retyped the place name: the picker cannot resolve free text to
    * coordinates, so a text edit arrives with no coordinates at all. When
-   * this is on, the editor keeps the stored coordinates and the owner
+   * this is supplied, the editor keeps the stored coordinates and the owner
    * removes the pin by clearing the place.
    */
-  keepPinOnLabelEdit?: boolean;
+  publishedLocation?: LocationValue;
   /** Disable every control (a save is in flight). */
   disabled?: boolean;
 }
@@ -104,15 +106,20 @@ function sameLocation(a: LocationValue, b: LocationValue): boolean {
  * The owner removes the pin by CLEARING the place: an empty label means
  * "no place", and the coordinates go with it.
  */
-export function keepPublishedPin(current: LocationValue, next: LocationValue): LocationValue {
+export function keepPublishedPin(
+  current: LocationValue,
+  next: LocationValue,
+  published: LocationValue = current,
+): LocationValue {
   const nextLabel = (next.label ?? "").trim();
   // The place was removed: the pin goes with it.
   if (nextLabel === "") return next;
   // The owner picked a new point: the new pin wins.
   if (next.latitude != null && next.longitude != null) return next;
-  // There is no published pin to keep.
-  if (current.latitude == null || current.longitude == null) return next;
-  return { ...next, latitude: current.latitude, longitude: current.longitude };
+  // Preserve a newly picked draft pin first, otherwise the published pin.
+  // Keep even legacy half-pins explicit rather than hiding a stored value.
+  const pin = current.latitude != null || current.longitude != null ? current : published;
+  return { ...next, latitude: pin.latitude, longitude: pin.longitude };
 }
 
 /**
@@ -238,7 +245,7 @@ export function ReportEditor({
   errors = {},
   photos = [],
   disabled = false,
-  keepPinOnLabelEdit = false,
+  publishedLocation,
 }: ReportEditorProps) {
   const editorRef = useRef<Editor | null>(null);
 
@@ -304,8 +311,8 @@ export function ReportEditor({
         value={values.location}
         onChange={(location) =>
           onChange({
-            location: keepPinOnLabelEdit
-              ? keepPublishedPin(values.location, location)
+            location: publishedLocation
+              ? keepPublishedPin(values.location, location, publishedLocation)
               : location,
           })
         }
@@ -314,11 +321,11 @@ export function ReportEditor({
       {errors.location && (
         <span className="mt-1 block text-xs text-error">{errors.location}</span>
       )}
-      <p className="mt-1 text-xs text-on-surface-variant">
-        {keepPinOnLabelEdit
-          ? "Editing the place name keeps the map pin that is already published. Clearing the place removes the name and the pin."
-          : "Clearing the place removes the place name and the map pin."}
-      </p>
+      {publishedLocation && (
+        <p className="mt-1 text-xs text-on-surface-variant">
+          Editing the place name keeps the map pin that is already published. Clearing the place removes the name and the pin when you save.
+        </p>
+      )}
     </div>
   );
 }

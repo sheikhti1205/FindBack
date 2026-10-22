@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../services/session";
 import { friendlyError } from "./friendlyErrors";
 
@@ -20,6 +20,16 @@ describe("friendlyError", () => {
     const friendly = friendlyError(error);
     expect(friendly.message).toMatch(/was saved/i);
     expect(friendly.message).not.toMatch(/having trouble/i);
+  });
+
+  it("uses app-owned saved copy even if the read-back error carries server text or the network drops", () => {
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      const friendly = friendlyError(new ApiError("postgres internal relation secret", 500, "READ_BACK_FAILED"));
+      expect(friendly.message).toBe("Your report was saved, but the app could not read it back. Refresh to see it.");
+    } finally {
+      online.mockRestore();
+    }
   });
 
   it("turns a server fault into the server's own copy, not the server's text", () => {

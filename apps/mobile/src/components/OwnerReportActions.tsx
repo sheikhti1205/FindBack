@@ -193,7 +193,7 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
             <span className="flex-1">Edit details</span>
           </button>
           {resolved && (
-            <p className="px-3 pb-1 text-xs text-on-surface-variant">
+            <p role="presentation" className="px-3 pb-1 text-xs text-on-surface-variant">
               A recovered or closed report is no longer edited in the app.
             </p>
           )}

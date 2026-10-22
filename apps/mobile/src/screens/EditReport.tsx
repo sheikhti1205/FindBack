@@ -47,9 +47,9 @@ export const UNSAVED_CHANGES_MESSAGE =
  * Build the update payload from the editor values and the baseline the
  * editor was hydrated with.
  *
- * The ONLY thing that decides a clear is the BASELINE: a field is emptied
- * because the owner emptied it, never because a value happens to be empty.
- * That is what makes the server's explicit clear request safe to send.
+ * Compare the baseline and the draft: an already-empty field is not a
+ * removal, and a coordinate still present in the draft must never also be
+ * named in the clear request.
  *
  * THE MAP PIN IS NOT A CLEAR ON A TEXT EDIT. The picker cannot turn free
  * text into coordinates, so retyping the place name arrives with no
@@ -66,12 +66,10 @@ export function buildUpdateInput(
   const nextLabel = (values.location.label ?? "").trim();
   // A half-pin (a legacy row with only one coordinate) is a pin too.
   const hadPin = baseline.location.latitude != null || baseline.location.longitude != null;
-  // The place is removed when the owner empties the place text.
-  const placeRemoved = nextLabel === "" && (baselineLabel !== "" || hadPin);
-
-  if (placeRemoved) {
-    clearFields.push("location_label");
-    if (hadPin) clearFields.push("latitude", "longitude");
+  if (nextLabel === "" && baselineLabel !== "") clearFields.push("location_label");
+  if (nextLabel === "" && hadPin &&
+      values.location.latitude == null && values.location.longitude == null) {
+    clearFields.push("latitude", "longitude");
   }
 
   return {
@@ -311,7 +309,7 @@ export function EditReport({ postId }: EditReportProps) {
             errors={fieldErrors}
             photos={post.attachments}
             disabled={saving}
-            keepPinOnLabelEdit
+            publishedLocation={baselineRef.current?.location}
           />
           {post.youtubeUrl && <ReadOnlyField label="YouTube link (not editable here)" value={post.youtubeUrl} />}
           <div className="flex flex-wrap items-center gap-2">

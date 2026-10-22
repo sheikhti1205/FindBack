@@ -141,6 +141,8 @@ jobs:
         run: node --test supabase/tests/migration_parity.test.mjs
       - name: Run migration SQL syntax guard
         run: node --test supabase/tests/migration_sql_syntax.test.mjs
+      - name: Run report-edit contract and mutation guards
+        run: node --test supabase/tests/post_update_clear_fields_parity.test.mjs supabase/tests/post_update_clear_fields_contract.test.mjs
 
   android:
     name: Android build & JVM tests

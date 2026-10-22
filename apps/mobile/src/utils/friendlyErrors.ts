@@ -30,19 +30,17 @@ function clean(message: string): string {
 }
 
 export function friendlyError(err: unknown): FriendlyError {
+  // A confirmed write stays confirmed even if connectivity drops before
+  // read-back. Never echo an arbitrary message just because it has this code.
+  if (err instanceof ApiError && err.code === "READ_BACK_FAILED") {
+    return { code: "SERVER", message: "Your report was saved, but the app could not read it back. Refresh to see it." };
+  }
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return { code: "OFFLINE", message: "You are offline. Check your connection and try again." };
   }
   const status = err instanceof ApiError ? err.status : null;
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const lower = raw.toLowerCase();
-
-  // A write that landed but could not be read back keeps its own wording:
-  // the generic "the server is having trouble" would tell the owner their
-  // save failed when it did not.
-  if (err instanceof ApiError && err.code === "READ_BACK_FAILED") {
-    return { code: "SERVER", message: err.message };
-  }
 
   if (status === 401) return { code: "AUTH", message: "Your session expired. Please sign in again." };
   if (status === 403)

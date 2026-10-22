@@ -181,6 +181,34 @@ describe("EditReport", () => {
     expect(input.clearFields).toEqual([]);
   });
 
+  it.each([90.41, null])("never clears an unchanged legacy pin with an empty label (longitude %s)", async (longitude) => {
+    fetchPostMock.mockResolvedValue(post({ locationLabel: "", longitude }));
+    renderEditor();
+    await waitFor(() => expect(screen.getByLabelText("What did you lose?")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("What did you lose?"), { target: { value: "Another title" } });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(updatePostMock).toHaveBeenCalled());
+    expect(updatePostMock.mock.calls[0]![1]).toMatchObject({
+      clearFields: [], latitude: 23.81, longitude,
+    });
+  });
+
+  it("shows and saves the published pin after clearing then retyping the place", async () => {
+    renderEditor();
+    await waitFor(() => expect(screen.getByLabelText("What did you lose?")).toBeTruthy());
+    const place = screen.getByPlaceholderText("Place, decimal coords, or a Google Maps link");
+    fireEvent.change(place, { target: { value: "" } });
+    fireEvent.change(place, { target: { value: "Dhaka Cantonment" } });
+    // The real picker must show the pin the request will preserve, not an
+    // unpinned draft whose null arguments silently keep the server's pin.
+    expect(screen.getAllByText(/23\.81/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(updatePostMock).toHaveBeenCalled());
+    expect(updatePostMock.mock.calls[0]![1]).toMatchObject({
+      clearFields: [], latitude: 23.81, longitude: 90.41, locationLabel: "Dhaka Cantonment",
+    });
+  });
+
   it("clears a HALF pin (a legacy row with only one coordinate) when the place is emptied", async () => {
     fetchPostMock.mockResolvedValue(post({ longitude: null }));
     renderEditor({ postId: "p1" });

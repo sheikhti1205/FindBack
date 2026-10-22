@@ -168,4 +168,11 @@ describe("keepPublishedPin", () => {
     expect(next.latitude).toBeNull();
     expect(next.longitude).toBeNull();
   });
+
+  it("keeps a legacy half-pin visible in the draft on a label edit", () => {
+    expect(keepPublishedPin(
+      { label: "Dhaka", latitude: 23.81, longitude: null },
+      { label: "Dhaka Cantonment", latitude: null, longitude: null },
+    )).toEqual({ label: "Dhaka Cantonment", latitude: 23.81, longitude: null });
+  });
 });

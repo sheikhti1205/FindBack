@@ -46,8 +46,10 @@ where exists (
     and p.proname = 'findback_update_post_client'
     and p.pronargs = 11
     and p.proargnames[11] = 'p_clear_fields'
-    and p.proargtypes[11] = 'text[]'
-    and p.proargdefaultvals[11] is not null
+    -- oidvector is ZERO-based; proargnames is ONE-based.
+    and p.proargtypes[10] = 'text[]'::regtype
+    and p.pronargdefaults = 10
+    and pg_get_function_arguments(p.oid) like '%p_clear_fields text[] DEFAULT NULL::text[]'
 );
 -- EXPECT: 1 row.
 
@@ -74,7 +76,7 @@ where exists (
       'p_post_id', 'p_type', 'p_title', 'p_description', 'p_category',
       'p_event_date', 'p_latitude', 'p_longitude', 'p_location_label',
       'p_youtube_url'
-    ]::name[]
+    ]::text[]
 );
 -- EXPECT: 1 row.
 
@@ -213,7 +215,8 @@ where n.nspname = 'public' and p.proname = 'findback_update_post_client';
 -- function_settings contains {search_path=public, pg_temp}.
 
 -- R2. The argument list, with the default of the new argument.
-select p.proargnames, p.proargtypes, p.proargdefaultvals
+select p.proargnames, p.proargtypes, p.pronargdefaults,
+       pg_get_function_arguments(p.oid) as arguments_with_defaults
 from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public' and p.proname = 'findback_update_post_client';
@@ -226,8 +229,8 @@ from information_schema.routine_privileges
 where specific_schema = 'public'
   and routine_name = 'findback_update_post_client'
 order by grantee, privilege_type;
--- EXPECT: one row — grantee = authenticated, privilege_type = EXECUTE. No
--- row for anon and no row for PUBLIC.
+-- EXPECT: authenticated has EXECUTE; the function owner may also appear.
+-- No row for anon and no row for PUBLIC.
 
 -- R4. The body, as it landed.
 select pg_get_functiondef(p.oid) as definition

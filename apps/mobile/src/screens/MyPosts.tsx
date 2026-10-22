@@ -16,6 +16,8 @@ import {
 import { deletePost, updatePostStatus } from "../services/posts";
 import { shareReport } from "../utils/shareReport";
 import { friendlyError } from "../utils/friendlyErrors";
+import { invalidateFeedCaches } from "../hooks/feedCache";
+import { useReportDeletionFailure } from "../components/ReportDeletionFeedback";
 
 const MY_CACHE_BASE = "my:reports";
 
@@ -44,6 +46,7 @@ const OWNER_STATUS_OPTIONS: { value: OwnerStatusFilter; label: string }[] = [
 /** A delete that is waiting for the undo window (or already on its way). */
 interface PendingDelete {
   id: string;
+  userId: string;
   title: string;
   /** "pending": the undo window is open. "sending": the server call is in flight. */
   phase: "pending" | "sending";
@@ -51,6 +54,7 @@ interface PendingDelete {
 
 export function MyPosts() {
   const { user } = useAuth();
+  const reportDeletionFailure = useReportDeletionFailure();
   const { tapCount } = useTabTap();
   const navigate = useNavigate();
   const scrollRef = useRef<PullToRefreshHandle>(null);
@@ -60,7 +64,9 @@ export function MyPosts() {
   // The pending delete, readable from the unmount cleanup without making
   // that cleanup depend on the state.
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
-  pendingDeleteRef.current = pendingDelete;
+  const mountedRef = useRef(false);
+  const ownerStatusRef = useRef(ownerStatus);
+  useEffect(() => { ownerStatusRef.current = ownerStatus; }, [ownerStatus]);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -88,23 +94,6 @@ export function MyPosts() {
     }
   }, []);
 
-  // Leaving the screen does NOT abandon a delete the owner asked for. The
-  // undo window exists so the owner can take it back; once the screen is
-  // gone there is nothing left to undo with, so the delete the owner
-  // confirmed is sent. It is never dropped without a word.
-  useEffect(
-    () => () => {
-      clearUndoTimer();
-      const pending = pendingDeleteRef.current;
-      if (pending && pending.phase === "pending") {
-        void deletePost(pending.id).catch(() => {
-          // The report stays: the owner sees it again when they come back.
-        });
-      }
-    },
-    [clearUndoTimer],
-  );
-
   /**
    * The delete is DELAYED, and the delay is the point.
    *
@@ -118,29 +107,54 @@ export function MyPosts() {
    */
   const commitDelete = useCallback(
     async (id: string) => {
-      undoTimer.current = null;
-      setPendingDelete((current) => (current && current.id === id ? { ...current, phase: "sending" } : current));
+      const pending = pendingDeleteRef.current;
+      if (!pending || pending.id !== id || pending.phase !== "pending") return;
+      clearUndoTimer();
+      // Ownership changes synchronously in the event, never during render.
+      // Unmount and timer callbacks therefore cannot send it twice.
+      pendingDeleteRef.current = { ...pending, phase: "sending" };
+      if (mountedRef.current) setPendingDelete(pendingDeleteRef.current);
       try {
         await deletePost(id);
-        setPendingDelete(null);
-        removeItem(id);
-        setActionError(null);
-        setNotice("Report deleted.");
+        invalidateFeedCaches();
+        if (mountedRef.current) {
+          removeItem(id);
+          setActionError(null);
+          setNotice("Report deleted.");
+        }
         announce("Report deleted.");
       } catch (err) {
         // The server refused: the report is still there, and the screen says
         // so. It never shows a deleted state the server rejected.
-        setPendingDelete(null);
         const message = `Report not deleted — ${friendlyError(err).message}`;
-        setActionError(message);
+        reportDeletionFailure({ userId: pending.userId, message });
         announce(message);
+      } finally {
+        pendingDeleteRef.current = null;
+        if (mountedRef.current) setPendingDelete(null);
       }
     },
-    [removeItem],
+    [clearUndoTimer, removeItem, reportDeletionFailure],
   );
+
+  // Navigation commits the confirmed request. Use the exact same owner as
+  // the timer, including its durable, account-scoped failure feedback.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearUndoTimer();
+      const pending = pendingDeleteRef.current;
+      if (pending?.phase === "pending") void commitDelete(pending.id);
+    };
+  }, [clearUndoTimer, commitDelete]);
 
   const requestDelete = useCallback(
     (post: PostItem) => {
+      if (!user || pendingDeleteRef.current) {
+        setActionError("Finish or undo the current deletion before deleting another report.");
+        return;
+      }
       const ok = window.confirm(
         `Delete “${post.title}”? Once it’s gone it can’t be restored. You’ll have a few seconds to undo.`,
       );
@@ -148,21 +162,23 @@ export function MyPosts() {
       setActionError(null);
       setNotice(null);
       clearUndoTimer();
-      setPendingDelete({ id: post.id, title: post.title, phase: "pending" });
+      pendingDeleteRef.current = { id: post.id, userId: user.id, title: post.title, phase: "pending" };
+      setPendingDelete(pendingDeleteRef.current);
       undoTimer.current = setTimeout(() => {
         void commitDelete(post.id);
       }, DELETE_UNDO_WINDOW_MS);
     },
-    [clearUndoTimer, commitDelete],
+    [clearUndoTimer, commitDelete, user],
   );
 
   const undoDelete = useCallback(() => {
-    if (!pendingDelete || pendingDelete.phase === "sending") return;
+    if (pendingDeleteRef.current?.phase !== "pending") return;
     clearUndoTimer();
+    pendingDeleteRef.current = null;
     setPendingDelete(null);
     setNotice("Deletion cancelled — the report is still here.");
     announce("Deletion cancelled.");
-  }, [clearUndoTimer, pendingDelete]);
+  }, [clearUndoTimer]);
 
   const changeStatus = useCallback(
     (post: PostItem, status: PostStatus) => {
@@ -180,9 +196,11 @@ export function MyPosts() {
       void (async () => {
         try {
           const updated = await updatePostStatus(post.id, status);
-          // The row is patched in place: the list neither refetches nor
-          // reorders around the change.
-          patchItem(post.id, { status: updated.status });
+          // In All, patch in place. In a status-only list, a row that no
+          // longer belongs must leave with its count; do not refetch/reorder.
+          invalidateFeedCaches();
+          if (ownerStatusRef.current !== "ALL" && ownerStatusRef.current !== updated.status) removeItem(post.id);
+          else patchItem(post.id, { status: updated.status });
           setActionError(null);
           setNotice(`Status updated to ${POST_STATUS_LABELS[updated.status]}.`);
           announce(`Status updated to ${POST_STATUS_LABELS[updated.status]}.`);
@@ -193,7 +211,7 @@ export function MyPosts() {
         }
       })();
     },
-    [patchItem],
+    [patchItem, removeItem],
   );
 
   const shareOne = useCallback((post: PostItem) => {

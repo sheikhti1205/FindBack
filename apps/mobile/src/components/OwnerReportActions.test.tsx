@@ -55,10 +55,10 @@ function handlers(overrides: Partial<Parameters<typeof OwnerReportActionsProvide
   };
 }
 
-function renderMenu(value = handlers()) {
+function renderMenu(value = handlers(), report = post) {
   render(
     <OwnerReportActionsProvider value={value}>
-      <OwnerReportMenu post={post} />
+      <OwnerReportMenu post={report} />
     </OwnerReportActionsProvider>,
   );
   return value;
@@ -84,15 +84,15 @@ describe("the overflow menu", () => {
     expect(screen.getAllByRole("menuitem").length).toBeGreaterThan(0);
   });
 
-  it("gives every child of the menu a role the menu pattern allows", () => {
-    renderMenu();
+  it.each(["OPEN", "RECOVERED", "CLOSED"] as const)("gives every menu child an allowed role for a %s report", (status) => {
+    renderMenu(handlers(), { ...post, status });
     fireEvent.click(screen.getByRole("button", { name: /manage report/i }));
 
     const menu = screen.getByRole("menu");
     for (const child of Array.from(menu.children)) {
       const role = child.getAttribute("role");
       expect(
-        role === null || ["menuitem", "menuitemradio", "presentation", "separator", "group"].includes(role),
+        ["menuitem", "menuitemradio", "presentation", "separator", "group"].includes(role ?? ""),
         `a menu child carries a valid role (got ${role})`,
       ).toBe(true);
     }

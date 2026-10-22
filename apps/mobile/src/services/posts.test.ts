@@ -448,6 +448,16 @@ describe("updatePost", () => {
     });
   });
 
+  it.each(["28000", "PGRST301", "PGRST302", "PGRST303"])("maps session refusal %s to sign-in, not a server outage", async (code) => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: { message: "Not authenticated", code } });
+    await expect(updatePost("p1", { title: "New title" })).rejects.toMatchObject({ status: 401, code });
+  });
+
+  it("keeps PGRST300 server misconfiguration as a server error", async () => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: { message: "JWT secret missing", code: "PGRST300" } });
+    await expect(updatePost("p1", { title: "New title" })).rejects.toMatchObject({ status: 500, code: "PGRST300" });
+  });
+
   it("never reports a landed write as a failed save when only the read-back fails", async () => {
     clientMock.rpc.mockResolvedValueOnce({ data: true, error: null });
     clientMock.rpc.mockResolvedValueOnce({
