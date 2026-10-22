@@ -59,4 +59,30 @@ describe("friendlyError", () => {
     const friendly = friendlyError(error);
     expect(friendly.message.toLowerCase()).not.toMatch(/supabase|postgrest|jwt|\brpc\b/);
   });
+
+  it("says an absent contract is unavailable, not that the server is unwell", () => {
+    const error = new ApiError("Could not find the function public.findback_mark_recovered", 501, "RPC_UNAVAILABLE");
+    const friendly = friendlyError(error);
+    expect(friendly.code).toBe("UNAVAILABLE");
+    expect(friendly.message).toBe("This feature is not available in this build.");
+    expect(friendly.message).not.toMatch(/having trouble/i);
+  });
+
+  it("keeps a refusal that names itself in its own words", () => {
+    const already = friendlyError(new ApiError("You have already rated this recovery", 409, "23505"));
+    expect(already.code).toBe("CONFLICT");
+    expect(already.message).toBe("You have already rated this recovery");
+
+    const limit = friendlyError(new ApiError("you have reached today's limit of 5", 409, "P0001"));
+    expect(limit.code).toBe("RATE_LIMIT");
+    expect(limit.message).toBe("you have reached today's limit of 5");
+  });
+
+  it("does not show a raw catalogue error as if the server had said it", () => {
+    const raw = friendlyError(
+      new ApiError('duplicate key value violates unique constraint "content_reports_pkey"', 409, "23505"),
+    );
+    expect(raw.message).not.toMatch(/constraint|duplicate key/i);
+    expect(raw.message).toMatch(/conflicts with something already saved/i);
+  });
 });

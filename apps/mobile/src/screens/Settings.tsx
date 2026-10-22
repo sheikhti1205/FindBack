@@ -134,9 +134,10 @@ export function Settings() {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   // The staff console entry is offered only to an account the SERVER says is
-  // an admin or a moderator. An unreadable role leaves it hidden: the server
-  // refuses everything an ordinary account asks for, so the client never
-  // offers what would be refused.
+  // an ADMIN. An unreadable role leaves it hidden: the server refuses
+  // everything an ordinary account asks for, so the client never offers what
+  // would be refused. A moderator is staff, but every console destination is
+  // admin-only, so a moderator gets no entry here (not a row that bounces).
   const [staffRole, setStaffRole] = useState<MyRole | null>(null);
 
   useEffect(() => {
