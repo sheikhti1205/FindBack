@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { useAuth } from "../auth";
+import { fetchMyRole } from "../services/roles";
 import { Splash } from "../screens/Splash";
 import { Onboarding } from "../screens/Onboarding";
 import { getPendingReportRoute } from "../utils/pendingReportLink";
@@ -16,6 +17,35 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   // dropping an unverified signed-out user at /auth.
   if (booting || (bootError && !user)) return <Splash />;
   if (!user) return <Navigate to="/auth" replace />;
+  return <>{children}</>;
+}
+
+/**
+ * Staff-only routes. The Settings row is already hidden from a non-admin, but
+ * a typed URL must never reach the console. The database is the authority; this
+ * is the courtesy redirect, so a failed role read counts as "not an admin" and
+ * the reader returns to Settings instead of seeing a half-loaded console.
+ */
+export function RequireAdmin({ children }: { children: ReactNode }) {
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchMyRole()
+      .then((role) => {
+        if (alive) setIsAdmin(role.isAdmin === true);
+      })
+      .catch(() => {
+        if (alive) setIsAdmin(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // One round-trip: no flash of the console before the role is known.
+  if (isAdmin === null) return null;
+  if (!isAdmin) return <Navigate to="/settings" replace />;
   return <>{children}</>;
 }
 

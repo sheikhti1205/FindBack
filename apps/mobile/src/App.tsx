@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
 import { motionConfigValueFor, useAppearance } from "./appearance";
-import { GuestOnly, OnboardingRoute, RequireAuth } from "./components/Guards";
+import { GuestOnly, OnboardingRoute, RequireAdmin, RequireAuth } from "./components/Guards";
 import { Shell } from "./components/Shell";
 import { BackButtonHandler } from "./components/BackButtonHandler";
 import { AccountDeletionFeedback } from "./components/AccountDeletionFeedback";
@@ -48,6 +48,9 @@ import { AiSettings } from "./screens/AiSettings";
 import { AiPrivacy } from "./screens/AiPrivacy";
 import { AiAdvanced } from "./screens/AiAdvanced";
 import { HelpGuide } from "./screens/HelpGuide";
+import { AdminTeam } from "./screens/AdminTeam";
+import { AdminInvite } from "./screens/AdminInvite";
+import { AdminAuditLog } from "./screens/AdminAuditLog";
 import { CommunityGuidelines, PrivacyPolicy, Terms } from "./screens/Legal";
 import { Diagnostics } from "./screens/Diagnostics";
 import { Capacitor } from "@capacitor/core";
@@ -183,6 +186,11 @@ export function App() {
               <Route path="/settings/local-intelligence/downloads" element={<DownloadedModels />} />
               <Route path="/settings/ai/advanced" element={<AiAdvanced />} />
               <Route path="/settings/help" element={<HelpGuide />} />
+              {/* Staff console. The Settings row is role-gated and these routes
+                  are guarded too, so a typed URL never reaches the console. */}
+              <Route path="/settings/team" element={<RequireAdmin><AdminTeam /></RequireAdmin>} />
+              <Route path="/settings/team/invite" element={<RequireAdmin><AdminInvite /></RequireAdmin>} />
+              <Route path="/settings/team/audit" element={<RequireAdmin><AdminAuditLog /></RequireAdmin>} />
               <Route path="/settings/about" element={<About />} />
               <Route path="/settings/terms" element={<Terms />} />
               <Route path="/settings/privacy-policy" element={<PrivacyPolicy />} />

@@ -4,10 +4,11 @@ import { MemoryRouter } from "react-router";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockLogout, mockFetchPrefs, mockPermission } = vi.hoisted(() => ({
+const { mockLogout, mockFetchPrefs, mockPermission, mockFetchMyRole } = vi.hoisted(() => ({
   mockLogout: vi.fn(),
   mockFetchPrefs: vi.fn(),
   mockPermission: vi.fn(),
+  mockFetchMyRole: vi.fn(),
 }));
 
 vi.mock("../auth", () => ({
@@ -56,6 +57,12 @@ vi.mock("../services/pushRuntime", () => ({
   pushController: () => ({ permission: (...args: unknown[]) => mockPermission(...args) }),
 }));
 
+// The staff console entry is decided by the SERVER's role, never by a local
+// flag. The service is mocked, not the network.
+vi.mock("../services/roles", () => ({
+  fetchMyRole: (...args: unknown[]) => mockFetchMyRole(...args),
+}));
+
 import {
   accessibilitySummary,
   accountSummary,
@@ -73,6 +80,8 @@ beforeEach(() => {
   mockFetchPrefs.mockResolvedValue({ pushEnabled: true, likes: true, comments: true, mentions: true, status: true });
   mockPermission.mockResolvedValue("granted");
   mockLogout.mockResolvedValue(undefined);
+  // An ordinary account by default: no role, no capabilities.
+  mockFetchMyRole.mockResolvedValue({ role: null, isAdmin: false, capabilities: [] });
 });
 
 function renderSettings() {
@@ -287,6 +296,50 @@ describe("Settings home", () => {
     }
     const header = screen.getByRole("link", { name: /edit profile/i });
     expect(header.querySelectorAll("button,a,input").length).toBe(0);
+  });
+});
+
+/**
+ * The staff console entry (CONTRACT-ROLES-ADMIN-2026-10-22.md §A2.5).
+ *
+ * The entry is offered only to an account the SERVER says is an admin or a
+ * moderator. An ordinary reader never sees it.
+ */
+describe("the staff console entry", () => {
+  it("is hidden from an ordinary reader", async () => {
+    renderSettings();
+    await waitFor(() => expect(mockFetchMyRole).toHaveBeenCalled());
+    expect(screen.queryByRole("link", { name: /team & permissions/i })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Moderation" })).toBeNull();
+  });
+
+  it("is shown to an admin, pointing at the team console", async () => {
+    mockFetchMyRole.mockResolvedValue({
+      role: "ADMIN",
+      isAdmin: true,
+      capabilities: ["reports_review", "audit_read"],
+    });
+    renderSettings();
+    const row = await screen.findByRole("link", { name: /team & permissions/i });
+    expect(row.getAttribute("href")).toBe("/settings/team");
+  });
+
+  it("is hidden from a moderator, whose destinations are admin-only", async () => {
+    mockFetchMyRole.mockResolvedValue({
+      role: "MODERATOR",
+      isAdmin: false,
+      capabilities: ["reports_review"],
+    });
+    renderSettings();
+    await waitFor(() => expect(mockFetchMyRole).toHaveBeenCalled());
+    expect(screen.queryByRole("link", { name: /team & permissions/i })).toBeNull();
+  });
+
+  it("stays hidden when the role cannot be read", async () => {
+    mockFetchMyRole.mockRejectedValue(new Error("offline"));
+    renderSettings();
+    await waitFor(() => expect(mockFetchMyRole).toHaveBeenCalled());
+    expect(screen.queryByRole("link", { name: /team & permissions/i })).toBeNull();
   });
 });
 

@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  UserCog,
   UserRound,
   Users,
 } from "lucide-react";
@@ -44,6 +45,7 @@ import { resolveFeedLayout, useViewportWidth } from "../components/responsive";
 import { feedLayoutSummary } from "./FeedLayoutSettings";
 import { fetchNotificationPreferences, type NotificationPreferences } from "../services/notificationPreferences";
 import { pushController } from "../services/pushRuntime";
+import { fetchMyRole, type MyRole } from "../services/roles";
 import type { PushPermissionState } from "../services/pushNotifications";
 import { APP_VERSION } from "../services/appCapabilities";
 import { friendlyError } from "../utils/friendlyErrors";
@@ -131,6 +133,25 @@ export function Settings() {
   const [notifValue, setNotifValue] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  // The staff console entry is offered only to an account the SERVER says is
+  // an admin or a moderator. An unreadable role leaves it hidden: the server
+  // refuses everything an ordinary account asks for, so the client never
+  // offers what would be refused.
+  const [staffRole, setStaffRole] = useState<MyRole | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchMyRole()
+      .then((role) => {
+        if (!cancelled) setStaffRole(role);
+      })
+      .catch(() => {
+        if (!cancelled) setStaffRole(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -158,6 +179,10 @@ export function Settings() {
 
   const trimmed = query.trim();
   const matches = trimmed ? searchSettings(trimmed) : null;
+  // Staff console entry. Moderators are staff, but every console destination
+  // is admin-only, so offering them a row would be a tap that bounces back.
+  // The row appears for an ADMIN only.
+  const isStaff = staffRole?.role === "ADMIN";
 
   const handleSignOut = () => {
     if (signingOut) return;
@@ -252,6 +277,17 @@ export function Settings() {
               route="/settings/privacy"
             />
           </SettingsGroup>
+          {isStaff && (
+            <SettingsGroup title="Moderation">
+              <SettingsRow
+                title="Team & permissions"
+                description="Who can moderate, and what each of them may do."
+                icon={UserCog}
+                iconTone="privacy"
+                route="/settings/team"
+              />
+            </SettingsGroup>
+          )}
           <SettingsGroup title="More">
             <SettingsNestedGroup
               title="Advanced"

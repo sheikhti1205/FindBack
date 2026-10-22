@@ -1,0 +1,220 @@
+/* Admin & moderator console.
+ *
+ * List-first, like the rest of Settings: rows separated by hairlines, no
+ * cards around every group, no oversized controls. Every interactive target
+ * keeps at least the house 44px touch target even when the picture is smaller.
+ */
+
+.fb-admin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fb-admin-person {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.875rem 0.25rem;
+}
+
+.fb-admin-person + .fb-admin-person {
+  border-top: 1px solid var(--fb-outline-variant);
+}
+
+.fb-admin-person-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.fb-admin-person-name {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--fb-on-surface);
+  overflow-wrap: anywhere;
+}
+
+.fb-admin-person-email {
+  margin: 0.125rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--fb-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.fb-admin-person-caps {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--fb-on-surface-variant);
+}
+
+.fb-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.fb-admin-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fb-admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.fb-admin-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.5rem 0 0.25rem;
+}
+
+.fb-admin-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.fb-admin-legend {
+  padding: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--fb-on-surface);
+}
+
+.fb-admin-hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--fb-on-surface-variant);
+}
+
+.fb-admin-capability-list {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+
+.fb-admin-capability {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.25rem;
+  cursor: pointer;
+}
+
+.fb-admin-capability + .fb-admin-capability {
+  border-top: 1px solid var(--fb-outline-variant);
+}
+
+.fb-admin-checkbox {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+  accent-color: var(--fb-primary);
+}
+
+.fb-admin-capability-text {
+  font-size: 0.9375rem;
+  color: var(--fb-on-surface);
+}
+
+.fb-admin-note {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--fb-on-surface-variant);
+}
+
+.fb-admin-held {
+  padding: 0.5rem 0.625rem;
+  border-radius: 0.5rem;
+  background: var(--fb-surface-container);
+}
+
+.fb-admin-change {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--fb-on-surface);
+}
+
+.fb-admin-error {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--fb-error);
+}
+
+.fb-admin-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fb-admin-log-row {
+  padding: 0.75rem 0.25rem;
+}
+
+.fb-admin-log-row + .fb-admin-log-row {
+  border-top: 1px solid var(--fb-outline-variant);
+}
+
+.fb-admin-log-headline {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--fb-on-surface);
+}
+
+.fb-admin-log-detail {
+  margin: 0.1875rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--fb-on-surface-variant);
+}
+
+.fb-admin-log-time {
+  margin: 0.1875rem 0 0;
+  font-size: 0.75rem;
+  color: var(--fb-on-surface-variant);
+}
+
+.fb-admin-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--fb-surface-container);
+  border-left: 3px solid var(--fb-error);
+}
+
+.fb-admin-warning p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--fb-on-surface);
+}
+
+.fb-admin-ack {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--fb-on-surface);
+  min-height: 2.75rem;
+}
