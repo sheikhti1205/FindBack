@@ -1,4 +1,5 @@
 import { FixtureLargeTextToggle } from "./FixtureSection";
+import { AdminFixtures } from "./sections/AdminFixtures";
 import { BlockedShieldFixtures } from "./sections/BlockedShieldFixtures";
 import { ChromeFixtures } from "./sections/ChromeFixtures";
 import { CreateFixtures } from "./sections/CreateFixtures";
@@ -22,6 +23,7 @@ const SECTION_LINKS = [
   { id: "my-reports", label: "My Reports" },
   { id: "profile", label: "Profile" },
   { id: "settings", label: "Settings" },
+  { id: "admin", label: "Staff console" },
   { id: "assistant", label: "Assistant" },
   { id: "map-unavailable", label: "Map unavailable" },
 ] as const;
@@ -94,6 +96,9 @@ export function FixtureRoute() {
       </div>
       <div>
         <SystemFixtures />
+      </div>
+      <div>
+        <AdminFixtures />
       </div>
     </main>
   );

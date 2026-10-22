@@ -136,6 +136,10 @@
   font-size: 0.8125rem;
   line-height: 1.45;
   color: var(--fb-on-surface-variant);
+  /* A person is identified by their email, and an address has no spaces to
+     break at. Measured at 320dp: a 46-character address ran past the frame
+     edge and was cut mid-character. */
+  overflow-wrap: anywhere;
 }
 
 .fb-admin-held {
@@ -149,6 +153,7 @@
   font-size: 0.8125rem;
   line-height: 1.45;
   color: var(--fb-on-surface);
+  overflow-wrap: anywhere;
 }
 
 .fb-admin-error {
@@ -177,6 +182,7 @@
   font-size: 0.9375rem;
   line-height: 1.4;
   color: var(--fb-on-surface);
+  overflow-wrap: anywhere;
 }
 
 .fb-admin-log-detail {
@@ -184,6 +190,7 @@
   font-size: 0.8125rem;
   line-height: 1.45;
   color: var(--fb-on-surface-variant);
+  overflow-wrap: anywhere;
 }
 
 .fb-admin-log-time {

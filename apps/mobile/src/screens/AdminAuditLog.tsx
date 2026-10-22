@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { readAuditLog, type AuditEntry } from "../services/roles";
 import { SettingsGroup, SettingsPage } from "../components/settings";
 import { adminErrorMessage, describeActivity } from "../components/adminConsole";
+import { AdminAuditLine } from "../components/AdminConsoleParts";
 import "../components/AdminConsole.css";
 
 /**
@@ -67,13 +68,12 @@ export function AdminAuditLog() {
             {(entries ?? []).map((entry) => {
               const line = describeActivity(entry);
               return (
-                <li key={entry.id} className="fb-admin-log-row">
-                  <p className="fb-admin-log-headline">{line.headline}</p>
-                  {line.detail && (
-                    <p className="fb-admin-log-detail">{line.detail}</p>
-                  )}
-                  {line.time && <p className="fb-admin-log-time">{line.time}</p>}
-                </li>
+                <AdminAuditLine
+                  key={entry.id}
+                  headline={line.headline}
+                  detail={line.detail}
+                  time={line.time}
+                />
               );
             })}
           </ol>

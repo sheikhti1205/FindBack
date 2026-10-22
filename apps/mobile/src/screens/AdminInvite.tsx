@@ -10,7 +10,8 @@ import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import { CapabilityChecklist } from "../components/AdminCapabilityMatrix";
 import { PreferenceRadioRow, SettingsGroup, SettingsPage } from "../components/settings";
-import { adminErrorMessage, capabilityLabels, roleWord } from "../components/adminConsole";
+import { adminErrorMessage, roleWord } from "../components/adminConsole";
+import { AdminReplaceWarning } from "../components/AdminConsoleParts";
 import "../components/AdminConsole.css";
 
 /** The same shape the server accepts, checked here so nothing silly is sent. */
@@ -182,34 +183,12 @@ export function AdminInvite() {
             </p>
           )}
           {replacing && (
-            <div className="fb-admin-warning" role="note">
-              {existing ? (
-                <p>
-                  {existing.email} already has {roleWord(existing.role)} access
-                  {existing.capabilities.length > 0
-                    ? ` with ${capabilityLabels(existing.capabilities).join(", ")}`
-                    : ""}
-                  .
-                </p>
-              ) : (
-                <p>
-                  We could not check whether this address already has a role.
-                </p>
-              )}
-              <p>
-                Giving access again replaces the current role and permissions
-                with what you choose on this screen.
-              </p>
-              <label className="fb-admin-ack">
-                <input
-                  type="checkbox"
-                  checked={replaceAcknowledged}
-                  disabled={submitting}
-                  onChange={(event) => setReplaceAcknowledged(event.target.checked)}
-                />
-                Replace their current role and permissions
-              </label>
-            </div>
+            <AdminReplaceWarning
+              target={existing}
+              acknowledged={replaceAcknowledged}
+              disabled={submitting}
+              onAcknowledged={setReplaceAcknowledged}
+            />
           )}
           <div className="fb-admin-actions">
             <Button type="submit" loading={submitting} disabled={blocked}>
