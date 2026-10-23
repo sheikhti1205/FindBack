@@ -201,6 +201,29 @@ export interface AppealResult {
   appealId: string;
 }
 
+export type AppealStatus = "SUBMITTED" | "UNDER_REVIEW" | "RESOLVED";
+export interface AppealReceipt {
+  id: string;
+  subjectKind: AppealSubjectKind;
+  subjectId: string;
+  status: AppealStatus;
+  submittedAt: string;
+  resolvedAt: string | null;
+}
+export interface AppealSubject {
+  subjectKind: AppealSubjectKind;
+  subjectId: string;
+  targetType: ReportTargetType;
+  targetId: string;
+  action: ModerationAction;
+  reason: ReportReason;
+  createdAt: string;
+  openAppealId: string | null;
+}
+export interface AppealReceiptCursor { submittedAt: string; id: string }
+export interface AppealSubjectCursor { createdAt: string; subjectKind: AppealSubjectKind; subjectId: string }
+export interface AppealPage<T, C> { items: T[]; nextCursor: C | null }
+
 /** Input for `submitReport`. `detail` is optional and bounded to 2000. */
 export interface SubmitReportInput {
   targetType: ReportTargetType;
@@ -593,4 +616,96 @@ export async function submitAppeal(
   const appealId = text(data);
   if (!appealId) throw new ApiError("The server did not return an appeal id.", 500, "UNEXPECTED_SHAPE");
   return { appealId };
+}
+
+function isAppealKind(value: unknown): value is AppealSubjectKind {
+  return value === "MODERATION_ACTION" || value === "SANCTION";
+}
+
+function exactText(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.trim() === value;
+}
+
+/** Validate UTC timestamps, but keep the exact string: it is a SQL sort key. */
+function appealTime(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(value)) return false;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 19) === value.slice(0, 19);
+}
+
+function appealPayloadError(): ApiError {
+  return new ApiError("The server did not return an appeal page.", 500, "UNEXPECTED_SHAPE");
+}
+
+function appealEnvelope(data: unknown): { items: Record<string, unknown>[]; cursor: Record<string, unknown> | null } {
+  const envelope = asRecord(data);
+  if (!envelope || !Array.isArray(envelope.items)) throw appealPayloadError();
+  const cursor = asRecord(envelope.next_cursor);
+  if (envelope.next_cursor !== null && !cursor) throw appealPayloadError();
+  return { items: asRows(envelope.items), cursor };
+}
+
+function appealPageLimit(limit = 50): number {
+  return Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 50;
+}
+
+/** Durable history, independent of live target availability. No local cache. */
+export async function listMyAppeals(options: { limit?: number; before?: AppealReceiptCursor } = {}): Promise<AppealPage<AppealReceipt, AppealReceiptCursor>> {
+  const before = options.before;
+  if (before && (!appealTime(before.submittedAt) || !exactText(before.id))) {
+    throw new ApiError("Choose a valid appeal page.", 400, "INVALID_CURSOR");
+  }
+  const { data, error } = await getSupabase().rpc("findback_my_appeals", {
+    p_limit: appealPageLimit(options.limit),
+    p_before_submitted_at: before?.submittedAt ?? null,
+    p_before_id: before?.id ?? null,
+  });
+  if (error) throw moderationError(error.message, error.code);
+  const { items, cursor } = appealEnvelope(data);
+  let nextCursor: AppealReceiptCursor | null = null;
+  if (cursor) {
+    if (!appealTime(cursor.submitted_at) || !exactText(cursor.id)) throw appealPayloadError();
+    nextCursor = { submittedAt: cursor.submitted_at, id: cursor.id };
+  }
+  return {
+    nextCursor,
+    items: items.flatMap((row): AppealReceipt[] => {
+      if (!exactText(row.id) || !isAppealKind(row.subject_kind) || !exactText(row.subject_id) || !appealTime(row.submitted_at)) return [];
+      if (row.status !== "SUBMITTED" && row.status !== "UNDER_REVIEW" && row.status !== "RESOLVED") return [];
+      if (row.status === "RESOLVED" ? !appealTime(row.resolved_at) : row.resolved_at !== null) return [];
+      return [{ id: row.id, subjectKind: row.subject_kind, subjectId: row.subject_id, status: row.status, submittedAt: row.submitted_at, resolvedAt: row.resolved_at as string | null }];
+    }),
+  };
+}
+
+/** Discovery is not authorization; submitAppeal rechecks the referenced owner. */
+export async function listMyAppealSubjects(options: { limit?: number; before?: AppealSubjectCursor } = {}): Promise<AppealPage<AppealSubject, AppealSubjectCursor>> {
+  const before = options.before;
+  if (before && (!appealTime(before.createdAt) || !isAppealKind(before.subjectKind) || !exactText(before.subjectId))) {
+    throw new ApiError("Choose a valid appeal page.", 400, "INVALID_CURSOR");
+  }
+  const { data, error } = await getSupabase().rpc("findback_my_appeal_subjects", {
+    p_limit: appealPageLimit(options.limit),
+    p_before_created_at: before?.createdAt ?? null,
+    p_before_subject_kind: before?.subjectKind ?? null,
+    p_before_subject_id: before?.subjectId ?? null,
+  });
+  if (error) throw moderationError(error.message, error.code);
+  const { items, cursor } = appealEnvelope(data);
+  let nextCursor: AppealSubjectCursor | null = null;
+  if (cursor) {
+    if (!appealTime(cursor.created_at) || !isAppealKind(cursor.subject_kind) || !exactText(cursor.subject_id)) throw appealPayloadError();
+    nextCursor = { createdAt: cursor.created_at, subjectKind: cursor.subject_kind, subjectId: cursor.subject_id };
+  }
+  return {
+    nextCursor,
+    items: items.flatMap((row): AppealSubject[] => {
+      if (!isAppealKind(row.subject_kind) || !exactText(row.subject_id) || !exactText(row.target_id) || !appealTime(row.created_at) || !isReason(row.reason) || !isAction(row.action)) return [];
+      if (row.open_appeal_id !== null && !exactText(row.open_appeal_id)) return [];
+      const content = row.subject_kind === "MODERATION_ACTION" && (row.target_type === "POST" || row.target_type === "COMMENT") && (row.action === "HIDE" || row.action === "REMOVE");
+      const sanction = row.subject_kind === "SANCTION" && row.target_type === "USER" && ACTION_SANCTION_KINDS[row.action] !== undefined;
+      if (!content && !sanction) return [];
+      return [{ subjectKind: row.subject_kind, subjectId: row.subject_id, targetType: row.target_type as ReportTargetType, targetId: row.target_id, action: row.action, reason: row.reason, createdAt: row.created_at, openAppealId: row.open_appeal_id as string | null }];
+    }),
+  };
 }

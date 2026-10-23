@@ -751,6 +751,8 @@ const CLIENT_REACHABLE_DEFINERS = [
   "findback_mark_recovered",
   "findback_moderation_queue",
   "findback_moderation_target",
+  "findback_my_appeal_subjects",
+  "findback_my_appeals",
   "findback_my_moderation_outcomes",
   "findback_my_post_moderation",
   "findback_my_recoveries",
