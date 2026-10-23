@@ -250,6 +250,17 @@ describe("joinInboxRoom", () => {
     mod.leaveInboxRoom();
     expect(clientMock.removeChannel).toHaveBeenCalledTimes(1);
   });
+
+  it("does not subscribe when the SDK session belongs to a different user", async () => {
+    clientMock.auth.getSession.mockResolvedValue({
+      data: { session: { access_token: "tok-123", user: { id: "other-user" } } },
+    });
+    const mod = await load();
+    mod.connectRealtime();
+    mod.joinInboxRoom("user-1");
+    await flush();
+    expect(channels.filter((c) => c.topic === "notification:user-1")).toHaveLength(0);
+  });
 });
 
 describe("onRealtime", () => {

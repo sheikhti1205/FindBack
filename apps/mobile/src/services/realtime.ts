@@ -262,14 +262,37 @@ export function joinInboxRoom(userId: string): void {
   const c = ensureClient();
   if (!c) return;
   desiredInboxUser = userId;
-  void ready.then(() => {
+  void ready.then(async () => {
     if (client !== c || desiredInboxUser !== userId) return;
+    // Tear down any stale channel bound to a different React user FIRST, so
+    // an account switch never leaves the previous user's topic listening even
+    // if the SDK-identity guard below throws or skips.
     if (inboxChannel && boundInboxUser !== userId) {
       clearRetry("inbox");
       void c.removeChannel(inboxChannel);
       inboxChannel = null;
       boundInboxUser = null;
     }
+    // SDK-before-React identity fencing: resolve the SDK session so teardown
+    // and subscription decisions are based on the actual token owner.
+    let sessionUserId: string | undefined;
+    try {
+      const { data } = await c.auth.getSession();
+      if (client !== c || desiredInboxUser !== userId) return;
+      sessionUserId = data.session?.user?.id;
+    } catch {
+      return;
+    }
+    const skip = !!sessionUserId && sessionUserId !== userId;
+    // Also tear down a channel bound to the same React user whose SDK identity
+    // diverged, even when the guard skips, to close the stale leak.
+    if (skip && inboxChannel && sessionUserId !== boundInboxUser) {
+      clearRetry("inbox");
+      void c.removeChannel(inboxChannel);
+      inboxChannel = null;
+      boundInboxUser = null;
+    }
+    if (skip) return;
     if (inboxChannel) return;
     const channel = bindHandlers(c.channel(`notification:${userId}`, { config: { private: true } }), [
       ["notification:added", "notification:added"],
